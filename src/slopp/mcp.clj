@@ -245,11 +245,12 @@
                                :agent {:type "string"}}
                   :required ["target"]}}
    {:name "test_run"
-    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
+    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run. :isolated true instead runs the project's file-based suite in a FRESH EXTERNAL JVM (clojure -M:test) — for tests that spawn their own images/subprocesses and so can't run in the owned image; returns a parsed summary, not the trace map."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
-                               :fresh {:type "boolean"}}}}
+                               :fresh {:type "boolean"}
+                               :isolated {:type "boolean"}}}}
    {:name "help"
     :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
@@ -598,10 +599,12 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                    {:error (str "no git listener on this session"
                                                 " (ephemeral session, or the port"
                                                 " couldn't bind)")}))
-      "test_run"          (text (api/test-run! session
-                                               (when (:ns a) (sym :ns))
-                                               :only (some->> (:only a) (mapv symbol))
-                                               :fresh (:fresh a)))
+      "test_run"          (text (if (:isolated a)
+                                  (api/isolated-test-run! session)
+                                  (api/test-run! session
+                                                 (when (:ns a) (sym :ns))
+                                                 :only (some->> (:only a) (mapv symbol))
+                                                 :fresh (:fresh a))))
       "help"              (text cheat-sheet)
       "branch_create"     (text (api/branch! session (:name a)))
       "branch_switch"     (text (api/branch-switch! session (:name a)))
@@ -635,29 +638,29 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                       {})))))
 
 ^:unsafe (defn handle
-  "Dispatch a JSON-RPC request map; return a response map, or nil for
+           "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees
   the message); protocol errors become JSON-RPC errors."
-  [session {:keys [id method params]}]
-  (case method
-    "initialize" {:jsonrpc "2.0" :id id
-                  :result {:protocolVersion protocol-version
-                           :capabilities {:tools {}}
-                           :serverInfo {:name "slopp" :version "0.1.0"}}}
-    "notifications/initialized" nil
-    "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
-    "tools/call" {:jsonrpc "2.0" :id id
-                  :result (binding [*hint* (track-hint! session
-                                                        (:name params)
-                                                        (:arguments params))]
-                            (try (call-tool session params)
-                                 (catch Exception e
-                                   (assoc (text (str "error: " (ex-message e)))
-                                          :isError true))))}
-    "ping" {:jsonrpc "2.0" :id id :result {}}
-    (when id
-      {:jsonrpc "2.0" :id id
-       :error {:code -32601 :message (str "method not found: " method)}})))
+           [session {:keys [id method params]}]
+           (case method
+             "initialize" {:jsonrpc "2.0" :id id
+                           :result {:protocolVersion protocol-version
+                                    :capabilities {:tools {}}
+                                    :serverInfo {:name "slopp" :version "0.1.0"}}}
+             "notifications/initialized" nil
+             "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
+             "tools/call" {:jsonrpc "2.0" :id id
+                           :result (binding [*hint* (track-hint! session
+                                                                 (:name params)
+                                                                 (:arguments params))]
+                                     (try (call-tool session params)
+                                          (catch Exception e
+                                            (assoc (text (str "error: " (ex-message e)))
+                                                   :isError true))))}
+             "ping" {:jsonrpc "2.0" :id id :result {}}
+             (when id
+               {:jsonrpc "2.0" :id id
+                :error {:code -32601 :message (str "method not found: " method)}})))
 
 (defn serve!
   "Newline-delimited-JSON stdio loop over `in-reader`/`out-writer`."
@@ -669,29 +672,29 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   nil)
 
 ^:unsafe (defn -main
-  "Start the stdio MCP server. An optional `dir` argument makes the session
+           "Start the stdio MCP server. An optional `dir` argument makes the session
   durable (store at <dir>/.slopp/store.db); without it the session is
   ephemeral. A durable session ALSO opens an in-process git smart-HTTP
   listener on a dir-derived port (localhost), so the user can point their
   git client at slopp with no external daemon — `query_git` reports the
   URL. The listener has its OWN lazy api session so a push never perturbs
   this session's checkout; it boots only on the first push."
-  [& [dir]]
-  (let [session (api/open! (cond-> {:warm-spare? true}
-                             dir (assoc :dir dir)))]
-    (swap! session assoc :require-turns? true)   ; real servers enforce turns
-    (when dir
-      (try
-        (let [srv (git/start-server! (git/derived-port dir) {:dir dir})]
-          (swap! session assoc :git-server srv :git-url (:url srv))
+           [& [dir]]
+           (let [session (api/open! (cond-> {:warm-spare? true}
+                                      dir (assoc :dir dir)))]
+             (swap! session assoc :require-turns? true)   ; real servers enforce turns
+             (when dir
+               (try
+                 (let [srv (git/start-server! (git/derived-port dir) {:dir dir})]
+                   (swap! session assoc :git-server srv :git-url (:url srv))
           ;; stdout is the JSON-RPC channel; banner goes to stderr
-          (binding [*out* *err*]
-            (println (str "slopp git remote: " (:url srv)))))
-        (catch Throwable t                       ; git is optional; MCP must serve
-          (binding [*out* *err*]
-            (println (str "slopp git remote unavailable: " (.getMessage t)))))))
-    (try
-      (serve! session (io/reader System/in) (io/writer System/out))
-      (finally
-        (when-let [srv (:git-server @session)] (git/stop-server! srv))
-        (api/close! session)))))
+                   (binding [*out* *err*]
+                     (println (str "slopp git remote: " (:url srv)))))
+                 (catch Throwable t                       ; git is optional; MCP must serve
+                   (binding [*out* *err*]
+                     (println (str "slopp git remote unavailable: " (.getMessage t)))))))
+             (try
+               (serve! session (io/reader System/in) (io/writer System/out))
+               (finally
+                 (when-let [srv (:git-server @session)] (git/stop-server! srv))
+                 (api/close! session)))))

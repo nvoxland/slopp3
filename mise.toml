@@ -1,0 +1,9 @@
+[tools]
+java = "temurin-21"# Clojure CLI (clojure/clj) — used for the nREPL, test runner, and benchmark entrypoints.
+clojure = "1.12.5"
+babashka = "1.12"
+
+[env]
+# slopp.repl probes homebrew paths for the owned-image launcher before trusting
+# PATH; forcing the bare name makes child images inherit mise's pinned clojure.
+SLOPP_CLOJURE = "clojure"

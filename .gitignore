@@ -1,0 +1,14 @@
+/.cpcache/
+/target/
+/.clj-kondo/.cache/
+.slopp/
+*.class
+.nrepl-port
+scratch/
+sandbox/
+eval-templates/
+.idea
+*.iml
+notes
+projects
+ideas

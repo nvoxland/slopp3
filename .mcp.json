@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "slopp": {
+      "command": "clojure",
+      "args": ["-M", "-m", "slopp.mcp", "."]
+    }
+  }
+}

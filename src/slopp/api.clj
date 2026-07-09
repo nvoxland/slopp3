@@ -11,6 +11,7 @@
   the live image from it. Without `:dir` the session is ephemeral (tests,
   scratch)."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
             [clojure.set :as set]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -1011,44 +1012,44 @@
         {:root root :calls calls}))))
 
 ^:reads (defn query-eval
-  "Observe-only eval against the live image (the oracle): call anything —
+          "Observe-only eval against the live image (the oracle): call anything —
   including effectful fns — but (re)defining code is rejected (T5); writes go
   through the edit tools so provenance stays airtight."
-  [session code]
-  (if-let [err (edit/observe-gate code)]
-    {:error err}
+          [session code]
+          (if-let [err (edit/observe-gate code)]
+            {:error err}
     ;; strip :reload in the owned image — no source files exist to reload, so it
     ;; would only throw FileNotFoundException (store ns) or waste a jar re-read
-    (let [r (repl/eval-checked! (:image @session) (edit/strip-image-reload code))]
-      (if (:err r)                                  ; F-3c2: never a silent []
-        {:error (:err r)}
-        (:values r)))))
+            (let [r (repl/eval-checked! (:image @session) (edit/strip-image-reload code))]
+              (if (:err r)                                  ; F-3c2: never a silent []
+                {:error (:err r)}
+                (:values r)))))
 
 ^:reads (defn query-observe
-  "Run `driver-code` (observe-gated) while capturing the args and return value
+          "Run `driver-code` (observe-gated) while capturing the args and return value
   of up to `:limit` calls to `ns-sym/nm` — the oracle's direct answer to 'what
   flows through this function?' (D2: observe, don't declare)."
-  [session ns-sym nm driver-code & {:keys [limit] :or {limit 10}}]
-  (if-let [err (edit/observe-gate driver-code)]
-    {:error err}
-    (first (repl/eval! (:image @session)
-                       (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
-                               ns-sym nm driver-code limit)))))
+          [session ns-sym nm driver-code & {:keys [limit] :or {limit 10}}]
+          (if-let [err (edit/observe-gate driver-code)]
+            {:error err}
+            (first (repl/eval! (:image @session)
+                               (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
+                                       ns-sym nm driver-code limit)))))
 
 ^:reads (defn query-macroexpand
-  "Expand a form (built-in macros are part of the dialect; expansion is how
+          "Expand a form (built-in macros are part of the dialect; expansion is how
   the oracle explains them). Returns {:expand-1 str :full str} or {:error}."
-  [session code]
-  (try
-    (let [{:keys [error]} (edit/parse-form code)]
+          [session code]
+          (try
+            (let [{:keys [error]} (edit/parse-form code)]
       ;; parse-form also dialect-checks; for expansion we only care that it READS
-      (if (and error (re-find #"unparseable" error))
-        {:error error}
-        {:expand-1 (first (repl/eval! (:image @session)
-                                      (format "(pr-str (macroexpand-1 '%s))" code)))
-         :full     (first (repl/eval! (:image @session)
-                                      (format "(pr-str (macroexpand '%s))" code)))}))
-    (catch Exception e {:error (ex-message e)})))
+              (if (and error (re-find #"unparseable" error))
+                {:error error}
+                {:expand-1 (first (repl/eval! (:image @session)
+                                              (format "(pr-str (macroexpand-1 '%s))" code)))
+                 :full     (first (repl/eval! (:image @session)
+                                              (format "(pr-str (macroexpand '%s))" code)))}))
+            (catch Exception e {:error (ex-message e)})))
 
 (defn query-namespaces
   "What exists? Every store namespace with its form count (orientation, T2)."
@@ -1517,6 +1518,37 @@
           {:delta delta :moved {:form nm :before before}})
         {:error (str "cannot move " nm)}))))
 
+(defn parse-test-summary
+  "Parse a clojure.test runner's terminal summary into
+  {:ran :assertions :failures :errors :status}, or nil if none is present."
+  [output]
+  (when-let [[_ t a f e] (re-find
+                          #"Ran (\d+) tests containing (\d+) assertions\.\s+(\d+) failures?, (\d+) errors?"
+                          (str output))]
+    (let [f (parse-long f) e (parse-long e)]
+      {:ran (parse-long t) :assertions (parse-long a)
+       :failures f :errors e
+       :status (if (and (zero? f) (zero? e)) :green :red)})))
+
+(defn isolated-test-run!
+  "Run the project's file-based test suite in a FRESH EXTERNAL JVM (shells
+  `clojure -M<alias>` in the store's dir, default `:test`) — the out-of-process
+  counterpart to in-image `traced-run`, for tests the owned image can't host
+  (they spawn their OWN images/subprocesses, so running them in-image recurses;
+  a bare image also lacks the project's source on its classpath). Durable
+  sessions only. Returns {:isolated true :status :ran :assertions :failures
+  :errors :exit :output} (last output lines on failure)."
+  [session & {:keys [alias] :or {alias ":test"}}]
+  (if-let [dir (:dir @session)]
+    (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
+          out (str (:out r) "\n" (:err r))]
+      (merge {:isolated true :exit (:exit r)}
+             (or (parse-test-summary out)
+                 {:status :error
+                  :output (->> (str/split-lines out) (remove str/blank?)
+                               (take-last 8) (str/join "\n"))})))
+    {:error "isolated-test-run! needs a durable session (a store dir)"}))
+
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
   `:only`); refreshes the test→form map and records the result (C4).
@@ -1805,29 +1837,29 @@
                    (seq (:deps st)) (assoc :deps (:deps st)))))))))
 
 ^:reads (defn query-commits
-  "Milestones, newest first:
+          "Milestones, newest first:
   [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
   ids plug straight into query-changes :from/:to for between-milestone
   diffs. `:sha` (P4-m8) is the milestone's git commit id — present once the
   git projection has minted it (imported markers carry theirs from birth)."
-  [session]
-  (let [{:keys [dir]} @session
-        shas (when dir
-               (try (with-open [conn (db/open! dir)]
-                      (db/commit-shas conn))
-                    (catch Exception _ nil)))]
-    (->> (store/deltas (:store @session))
-         (filter #(= :commit (:op %)))
-         reverse
-         (mapv (fn [d]
-                 (cond-> {:commit      (:id d)
-                          :description (:description d)
-                          :target      (:target d)
-                          :status      (:status d)
-                          :at          (human-time (:at d))}
-                   (:agent d) (assoc :agent (:agent d))
-                   (or (:git-sha d) (get shas (:id d)))
-                   (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
+          [session]
+          (let [{:keys [dir]} @session
+                shas (when dir
+                       (try (with-open [conn (db/open! dir)]
+                              (db/commit-shas conn))
+                            (catch Exception _ nil)))]
+            (->> (store/deltas (:store @session))
+                 (filter #(= :commit (:op %)))
+                 reverse
+                 (mapv (fn [d]
+                         (cond-> {:commit      (:id d)
+                                  :description (:description d)
+                                  :target      (:target d)
+                                  :status      (:status d)
+                                  :at          (human-time (:at d))}
+                           (:agent d) (assoc :agent (:agent d))
+                           (or (:git-sha d) (get shas (:id d)))
+                           (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; External dependencies (Tier 1) — the per-store manifest
@@ -2541,14 +2573,14 @@
     (doseq [^java.io.File c (reverse (file-seq f))] (.delete c))))
 
 ^:reads (defn- load-line
-  "An inactive line's {:store :conn}: from memory, or lazily from its branch
+          "An inactive line's {:store :conn}: from memory, or lazily from its branch
   db in a durable session. nil if unknown."
-  [session nm]
-  (let [{:keys [lines dir]} @session]
-    (or (get lines nm)
-        (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
-          (let [c (db/open! (line-dir dir nm))]
-            {:store (db/load-store c) :conn c})))))
+          [session nm]
+          (let [{:keys [lines dir]} @session]
+            (or (get lines nm)
+                (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
+                  (let [c (db/open! (line-dir dir nm))]
+                    {:store (db/load-store c) :conn c})))))
 
 (defn branch!
   "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
