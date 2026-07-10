@@ -219,7 +219,7 @@
     :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it (slopp.git server; imported commits keep their pushed sha)."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_git"
-    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch/push over the regular git protocol: milestones (commit_point) are the commits, pushes import through verification, and wip/<branch> mirrors un-milestone'd live state. No external server needed."
+    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch over the regular git protocol (READ-ONLY): milestones (commit_point) are the commits, and wip/<branch> mirrors un-milestone'd live state. Edits arrive through slopp's write tools, not `git push`. No external server needed."
     :inputSchema {:type "object" :properties {}}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
@@ -594,7 +594,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                    {:url u
                                     :remote (str "git remote add slopp " u)
                                     :note (str "milestones (commit_point) are the commits; "
-                                               "push imports through verification; "
+                                               "read-only clone/fetch — no push; "
                                                "wip/<branch> = live un-milestone'd state")}
                                    {:error (str "no git listener on this session"
                                                 " (ephemeral session, or the port"
@@ -671,14 +671,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       (.flush out-writer)))
   nil)
 
-^:unsafe (defn -main
+^:unsafe
+(defn -main
   "Start the stdio MCP server. An optional `dir` argument makes the session
   durable (store at <dir>/.slopp/store.db); without it the session is
   ephemeral. A durable session ALSO opens an in-process git smart-HTTP
-  listener on a dir-derived port (localhost), so the user can point their
-  git client at slopp with no external daemon — `query_git` reports the
-  URL. The listener has its OWN lazy api session so a push never perturbs
-  this session's checkout; it boots only on the first push."
+  listener on a dir-derived port (localhost) — a READ-ONLY remote (clone/fetch
+  of milestones) any git client can point at with no external daemon;
+  `query_git` reports the URL."
   [& [dir]]
   (let [session (api/open! (cond-> {:warm-spare? true}
                              dir (assoc :dir dir)))]
