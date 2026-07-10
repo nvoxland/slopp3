@@ -219,7 +219,7 @@
     :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it (slopp.git server; imported commits keep their pushed sha)."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_git"
-    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch/push over the regular git protocol: milestones (commit_point) are the commits, pushes import through verification, and wip/<branch> mirrors un-milestone'd live state. No external server needed."
+    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch over the regular git protocol (READ-ONLY): milestones (commit_point) are the commits, and wip/<branch> mirrors un-milestone'd live state. Edits arrive through slopp's write tools, not `git push`. No external server needed."
     :inputSchema {:type "object" :properties {}}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
@@ -594,17 +594,17 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                    {:url u
                                     :remote (str "git remote add slopp " u)
                                     :note (str "milestones (commit_point) are the commits; "
-                                               "push imports through verification; "
+                                               "read-only clone/fetch — no push; "
                                                "wip/<branch> = live un-milestone'd state")}
                                    {:error (str "no git listener on this session"
                                                 " (ephemeral session, or the port"
                                                 " couldn't bind)")}))
       "test_run"          (text (if (:isolated a)
-                                  (api/isolated-test-run! session)
-                                  (api/test-run! session
-                                                 (when (:ns a) (sym :ns))
-                                                 :only (some->> (:only a) (mapv symbol))
-                                                 :fresh (:fresh a))))
+                                   (api/isolated-test-run! session)
+                                   (api/test-run! session
+                                                  (when (:ns a) (sym :ns))
+                                                  :only (some->> (:only a) (mapv symbol))
+                                                  :fresh (:fresh a))))
       "help"              (text cheat-sheet)
       "branch_create"     (text (api/branch! session (:name a)))
       "branch_switch"     (text (api/branch-switch! session (:name a)))
@@ -638,29 +638,29 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                       {})))))
 
 ^:unsafe (defn handle
-           "Dispatch a JSON-RPC request map; return a response map, or nil for
+  "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees
   the message); protocol errors become JSON-RPC errors."
-           [session {:keys [id method params]}]
-           (case method
-             "initialize" {:jsonrpc "2.0" :id id
-                           :result {:protocolVersion protocol-version
-                                    :capabilities {:tools {}}
-                                    :serverInfo {:name "slopp" :version "0.1.0"}}}
-             "notifications/initialized" nil
-             "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
-             "tools/call" {:jsonrpc "2.0" :id id
-                           :result (binding [*hint* (track-hint! session
-                                                                 (:name params)
-                                                                 (:arguments params))]
-                                     (try (call-tool session params)
-                                          (catch Exception e
-                                            (assoc (text (str "error: " (ex-message e)))
-                                                   :isError true))))}
-             "ping" {:jsonrpc "2.0" :id id :result {}}
-             (when id
-               {:jsonrpc "2.0" :id id
-                :error {:code -32601 :message (str "method not found: " method)}})))
+  [session {:keys [id method params]}]
+  (case method
+    "initialize" {:jsonrpc "2.0" :id id
+                  :result {:protocolVersion protocol-version
+                           :capabilities {:tools {}}
+                           :serverInfo {:name "slopp" :version "0.1.0"}}}
+    "notifications/initialized" nil
+    "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
+    "tools/call" {:jsonrpc "2.0" :id id
+                  :result (binding [*hint* (track-hint! session
+                                                        (:name params)
+                                                        (:arguments params))]
+                            (try (call-tool session params)
+                                 (catch Exception e
+                                   (assoc (text (str "error: " (ex-message e)))
+                                          :isError true))))}
+    "ping" {:jsonrpc "2.0" :id id :result {}}
+    (when id
+      {:jsonrpc "2.0" :id id
+       :error {:code -32601 :message (str "method not found: " method)}})))
 
 (defn serve!
   "Newline-delimited-JSON stdio loop over `in-reader`/`out-writer`."
@@ -671,30 +671,30 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       (.flush out-writer)))
   nil)
 
-^:unsafe (defn -main
-           "Start the stdio MCP server. An optional `dir` argument makes the session
+^:unsafe
+(defn -main
+  "Start the stdio MCP server. An optional `dir` argument makes the session
   durable (store at <dir>/.slopp/store.db); without it the session is
   ephemeral. A durable session ALSO opens an in-process git smart-HTTP
-  listener on a dir-derived port (localhost), so the user can point their
-  git client at slopp with no external daemon — `query_git` reports the
-  URL. The listener has its OWN lazy api session so a push never perturbs
-  this session's checkout; it boots only on the first push."
-           [& [dir]]
-           (let [session (api/open! (cond-> {:warm-spare? true}
-                                      dir (assoc :dir dir)))]
-             (swap! session assoc :require-turns? true)   ; real servers enforce turns
-             (when dir
-               (try
-                 (let [srv (git/start-server! (git/derived-port dir) {:dir dir})]
-                   (swap! session assoc :git-server srv :git-url (:url srv))
+  listener on a dir-derived port (localhost) — a READ-ONLY remote (clone/fetch
+  of milestones) any git client can point at with no external daemon;
+  `query_git` reports the URL."
+  [& [dir]]
+  (let [session (api/open! (cond-> {:warm-spare? true}
+                             dir (assoc :dir dir)))]
+    (swap! session assoc :require-turns? true)   ; real servers enforce turns
+    (when dir
+      (try
+        (let [srv (git/start-server! (git/derived-port dir) {:dir dir})]
+          (swap! session assoc :git-server srv :git-url (:url srv))
           ;; stdout is the JSON-RPC channel; banner goes to stderr
-                   (binding [*out* *err*]
-                     (println (str "slopp git remote: " (:url srv)))))
-                 (catch Throwable t                       ; git is optional; MCP must serve
-                   (binding [*out* *err*]
-                     (println (str "slopp git remote unavailable: " (.getMessage t)))))))
-             (try
-               (serve! session (io/reader System/in) (io/writer System/out))
-               (finally
-                 (when-let [srv (:git-server @session)] (git/stop-server! srv))
-                 (api/close! session)))))
+          (binding [*out* *err*]
+            (println (str "slopp git remote: " (:url srv)))))
+        (catch Throwable t                       ; git is optional; MCP must serve
+          (binding [*out* *err*]
+            (println (str "slopp git remote unavailable: " (.getMessage t)))))))
+    (try
+      (serve! session (io/reader System/in) (io/writer System/out))
+      (finally
+        (when-let [srv (:git-server @session)] (git/stop-server! srv))
+        (api/close! session)))))
