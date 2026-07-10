@@ -609,3 +609,41 @@ results compress to `{:ok true :delta id :tests {:ran n :pass n} :affected n}`
 when green-and-quiet; full detail on :error / red / NEW warnings / :untested /
 explicit `:verbose true`. Measured: output tokens −32–38% across all three
 benchmark apps (calculator 906→590, inventory 502→311, wordstats 542→370).
+
+## R — run-from-store (`slopp.boot`)
+
+R1 ✅ **A store's program runs directly from `store.db`, no exported source.**
+`slopp.boot` reads every ns's byte-exact source via raw next.jdbc
+(`SELECT ns, source FROM elements ORDER BY ns, pos` — the same bytes
+`render-ns` emits), computes dependency order by parsing each ns form's
+internal requires (a self-contained mirror of `store/ns-dependency-order` —
+it can't use the store value, that's the code it's loading), then
+`load-string`s each ns into THIS jvm with a `*loaded-libs*` stamp (the
+in-process twin of `image/load-ns!`; the stamp is load-bearing — store nses
+have no `.clj` on the classpath, so an un-stamped internal `(require …)`
+would `FileNotFoundException`). Then it invokes the entry (`--main`, default
+`slopp.mcp/-main`). `build!` (files) and `boot` (run) are the two exits from
+the store; boot is the general counterpart — **the store is executable, not
+just materializable.**
+
+R2 ✅ **Two modes behind a switch.** `--snapshot` (default, safe) freezes a
+version at startup; restart to advance. `--live` spawns a watcher that polls
+`data_version` (the exact foreign-commit detector `sync-with-journal!` uses)
+and, on a bump, `load-string`s the namespaces whose rendered source changed
+into the running process — the host tracks its own store. Chosen because
+slopp's core is protocol/record/multimethod-free plain-fn-over-immutable-map
+code (var-indirection makes redefinition safe) and the green-gate guarantees
+only compiling code is ever in the store to load. Documented residual
+hazards (live only): the three long-lived instances (reaper `TimerTask`,
+two git `HttpHandler`s) keep old closure code until re-created, and an
+in-flight request finishes on the old fn body. Snapshot has none of these.
+
+R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
+`slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
+the jar when packaged), NOT per-project source; `rt` is the runtime slopp
+injects into every owned image it spawns. So ANY store runs from its db with
+zero project source files; slopp running itself is just the self-host
+instance. In THIS repo the on-disk kernel is `src/slopp/boot.clj` +
+`src/slopp/rt.clj` + `deps.edn`; the rest of `src/` is no longer needed to
+RUN (still needed to run the file-based system-test suite — separate concern).
+`--at <commit>` (boot a past milestone) is a noted future refinement.

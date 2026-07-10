@@ -10,6 +10,14 @@
 - **No `.clj` files on disk.** The store is the source code; a VFS renders
   source on demand (`query-source`); explicit `build!` materializes files
   only when asked. No file→store reconciliation, ever.
+- **The store is RUN, not just materialized** (`slopp.boot`). A tiny
+  self-contained kernel loads every namespace's byte-exact source straight
+  from `store.db` into the JVM (in dependency order) and invokes the entry
+  point — no exported project source needed. `--snapshot` freezes a version
+  at startup; `--live` tracks the store's `data_version` and hot-reloads
+  changed namespaces into the running process. General: any store runs from
+  its db; slopp running itself is the self-host instance. See
+  `.context/operation-api.md`.
 - **The SQLite journal is the record of truth** (m5a inversion). Durable
   commits are conditional appends (deltas + touched element rows + id
   counter, ONE tx, iff the head still matches the commit's base); the
@@ -61,6 +69,7 @@
 | `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
 | `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
+| `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
 | `slopp.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
 | `slopp.git` | P4-m8 git compatibility: generates `:commit` milestones into an IN-MEMORY git repo (JGit `InMemoryRepository`, deterministic shas, `git_map` pinning) served READ-ONLY (clone/fetch) over smart-HTTP; no on-disk repo, no push-import |

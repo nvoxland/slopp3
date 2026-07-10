@@ -2,7 +2,7 @@
   "mcpServers": {
     "slopp": {
       "command": "clojure",
-      "args": ["-M", "-m", "slopp.mcp", "."]
+      "args": ["-M", "-m", "slopp.boot", ".", "--snapshot"]
     }
   }
 }

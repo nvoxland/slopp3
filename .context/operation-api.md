@@ -192,9 +192,11 @@ rewritten.
 ## Transports
 
 Two transports share the SAME dispatch (`mcp/handle`):
-- **MCP stdio** (`clojure -M -m slopp.mcp [dir]`) — Claude Code (`.mcp.json`
-  in-repo) and Codex (`config.toml` recipe in README). Optional dir = durable
-  session.
+- **MCP stdio** (`clojure -M -m slopp.mcp [dir]`) — Claude Code and Codex
+  (`config.toml` recipe in README). Optional dir = durable session. The
+  in-repo `.mcp.json` runs it THROUGH `slopp.boot` (`-m slopp.boot . --snapshot`)
+  so slopp serves from its own store, no exported source — see
+  "Running from the store" below.
 - **HTTP** (`clojure -M -m slopp.http <port> [dir]`, or
   `http/start-server!` programmatically) — localhost-only JSON for
   curl/scripting/evals; `/metrics` returns per-call payload sizes.
@@ -236,3 +238,22 @@ Two transports share the SAME dispatch (`mcp/handle`):
   protocol errors → JSON-RPC errors.
 - When adding an api op, add: tool schema + `call-tool` case + (usually) a
   `select-keys` whitelist of the result.
+
+## Running from the store (`slopp.boot`)
+
+- The entry `clojure -M -m slopp.boot <dir> [--snapshot|--live]` runs the
+  store's program WITHOUT exported source: `load-store!` reads every ns's
+  byte-exact source with raw next.jdbc, `dependency-order`s them (parses ns
+  requires — a self-contained mirror of `store/ns-dependency-order`), and
+  `load-string`s each into THIS jvm with a `*loaded-libs*` stamp (in-process
+  `image/load-ns!`), then invokes `--main` (default `slopp.mcp/-main <dir>`).
+  This is what `.mcp.json` runs. `slopp.boot` is self-contained (next.jdbc +
+  core only) so it can bootstrap slopp itself; keep it that way.
+- `--snapshot` (default) freezes a version at startup. `--live` runs
+  `watch-live!`: poll `db data_version`, and on a foreign commit `load-string`
+  the changed namespaces into the running host (the host tracks its own
+  store). Safe because the core is plain-fn/immutable-map and the store's
+  green-gate admits only compiling code; caveat — long-lived instances
+  (reaper, git `HttpHandler`) keep old code until re-created. See D-series R.
+- `build!` MATERIALIZES the store to files (for tooling/native-image);
+  `boot` RUNS it in place. Two exits from the store, same source of truth.
