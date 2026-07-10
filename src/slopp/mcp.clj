@@ -245,11 +245,12 @@
                                :agent {:type "string"}}
                   :required ["target"]}}
    {:name "test_run"
-    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run."
+    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run. :isolated true instead runs the project's file-based suite in a FRESH EXTERNAL JVM (clojure -M:test) — for tests that spawn their own images/subprocesses and so can't run in the owned image; returns a parsed summary, not the trace map."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
-                               :fresh {:type "boolean"}}}}
+                               :fresh {:type "boolean"}
+                               :isolated {:type "boolean"}}}}
    {:name "help"
     :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
@@ -598,10 +599,12 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                    {:error (str "no git listener on this session"
                                                 " (ephemeral session, or the port"
                                                 " couldn't bind)")}))
-      "test_run"          (text (api/test-run! session
-                                               (when (:ns a) (sym :ns))
-                                               :only (some->> (:only a) (mapv symbol))
-                                               :fresh (:fresh a)))
+      "test_run"          (text (if (:isolated a)
+                                   (api/isolated-test-run! session)
+                                   (api/test-run! session
+                                                  (when (:ns a) (sym :ns))
+                                                  :only (some->> (:only a) (mapv symbol))
+                                                  :fresh (:fresh a))))
       "help"              (text cheat-sheet)
       "branch_create"     (text (api/branch! session (:name a)))
       "branch_switch"     (text (api/branch-switch! session (:name a)))
