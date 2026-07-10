@@ -1,9 +1,9 @@
 (ns slopp.git-projection-test
   "P4-m8: git compatibility layer, projection core. Commit points carry a
   byte-exact rendered :tree in their marker delta; slopp.git projects them
-  lazily and deterministically into a bare repo at .slopp/git — same journal,
-  same shas, every time. Native d<n> ids stay authoritative; git_map pins
-  each marker's sha at first projection."
+  lazily and deterministically into an in-memory repo (no on-disk repo) — same
+  journal, same shas, every time. Native d<n> ids stay authoritative; git_map
+  pins each marker's sha at first projection."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -128,8 +128,7 @@
             (is (= tip (:sha c2)))
             (is (= (first (:parents info)) (:sha c1)))))
         (git/close-ctx! ctx)
-        (testing "rebuild from scratch mints IDENTICAL shas"
-          (rm-rf (io/file dir ".slopp" "git"))
+        (testing "rebuild from scratch (a fresh in-memory repo) mints IDENTICAL shas"
           (let [ctx2 (git/open-ctx! dir)]
             (try
               (jdbc/execute! (:map-conn ctx2) ["DELETE FROM git_map"])

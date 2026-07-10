@@ -160,40 +160,37 @@
         (git/stop-server! srv)
         (api/close! sess)))))
 
-(deftest wip-refs-are-read-only
-  (let [dir  (temp-dir "slopp-git-wip-ro")
+(deftest remote-is-read-only
+  ;; the remote serves clone/fetch only — git-receive-pack is never advertised,
+  ;; so any push is refused (edits arrive through slopp's write tools, not push).
+  (let [dir  (temp-dir "slopp-git-ro")
         sess (api/open! {:dir dir})
         port (free-port)
         srv  (git/start-server! port {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
       (api/commit-point! sess "v1" :agent "alice")
-      (api/edit-replace! sess 'gs.core 'f "(defn f [x] (+ 10 x))"
-                         :prompt "wip" :agent "alice")
-      (let [clone-dir (temp-dir "slopp-wip-ro-clone")]
+      (let [clone-dir (temp-dir "slopp-ro-clone")]
         (with-open [g (clone! port clone-dir)]
-          (-> g (.checkout) (.setName "wip") (.setCreateBranch true)
-              (.setStartPoint "origin/wip/main") (.call))
           (spit (io/file clone-dir "src" "gs" "core.clj")
                 (str (slurp (io/file clone-dir "src" "gs" "core.clj"))
                      "\n(defn extra [x] x)\n"))
           (-> g (.add) (.addFilepattern ".") (.call))
-          (-> g (.commit) (.setMessage "onto wip")
+          (-> g (.commit) (.setMessage "onto main")
               (.setAuthor "Dana Dev" "dana@example.com")
               (.setCommitter "Dana Dev" "dana@example.com")
               (.setSign false) (.call))
-          (let [cmd (.push g)
-                _ (.setRefSpecs cmd ^java.util.List
-                                (java.util.List/of
-                                 (org.eclipse.jgit.transport.RefSpec.
-                                  "refs/heads/wip:refs/heads/wip/main")))
-                _ (.setForce cmd true)
-                pr ^org.eclipse.jgit.transport.PushResult (first (.call cmd))
-                upd (first (.getRemoteUpdates pr))]
-            (is (not= org.eclipse.jgit.transport.RemoteRefUpdate$Status/OK
-                      (.getStatus upd))
-                (str (.getStatus upd)))
-            (is (str/includes? (str (.getMessage upd)) "read-only")))))
+          (testing "a push is refused — receive-pack is not advertised"
+            (let [outcome (try
+                            {:updates (-> ^org.eclipse.jgit.transport.PushResult
+                                       (first (-> g (.push) (.call)))
+                                          (.getRemoteUpdates))}
+                            (catch Exception e {:threw (.getSimpleName (class e))}))]
+              (is (or (:threw outcome)
+                      (every? #(not= org.eclipse.jgit.transport.RemoteRefUpdate$Status/OK
+                                     (.getStatus %))
+                              (:updates outcome)))
+                  (str "push must fail against a read-only remote: " outcome))))))
       (finally
         (git/stop-server! srv)
         (api/close! sess)))))

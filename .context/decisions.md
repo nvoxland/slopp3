@@ -263,6 +263,18 @@ the change here (same commit).
 
 - **P4-m8 — Git compatibility layer: serve the protocol, project the
   milestones (user-requested; explicit revision of P4-m7's rejection).**
+  > **REVISED (self-host, user-driven): the projection is now IN-MEMORY and
+  > READ-ONLY.** `slopp.git/open-repo!` builds a JGit `InMemoryRepository`
+  > generated from the journal on demand — there is NO on-disk `.slopp/git`
+  > repo (the db is the sole source of truth; the git repo is a pure cache).
+  > **Push-import was DROPPED** — the remote is fetch/clone-only (edits come in
+  > through slopp's write tools, not `git push`), so the "imported commits live
+  > only in the bare repo / `.slopp/git` is durable state" reasoning below no
+  > longer applies (nothing durable to lose). `project-journal!` now inserts a
+  > commit whenever its object isn't already in the live repo (insert-if-absent),
+  > and `slopp.git` no longer depends on `slopp.api`. The determinism, `git_map`
+  > pinning, and `:tree` snapshot mechanics are unchanged.
+
   The user asked for a git-compatible surface: a standalone server any git
   client can talk to (branches + commits + history), push/pull over the
   regular git protocol, stable git-style ids as a COMPATIBILITY layer

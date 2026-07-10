@@ -71,23 +71,29 @@
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 
-## Git projection durability (P4-m8, `slopp.git`)
+## Git projection (P4-m8, `slopp.git`) — in-memory, read-only
 
-- `git_map` (main store.db) pins each `:commit` delta → git sha at first
-  projection, keyed `(delta_id, fingerprint)` — branch journals share
-  main's prefix by VALUE, so shared markers resolve to one row;
-  fingerprint = SHA-256 of `[id at description target]` (a canonical tuple,
-  never the printed map).
-- **Native milestones re-derive from the journal** (`:tree` payload makes
-  each commit a pure function of its marker): the bare repo at
-  `.slopp/git` is a rebuildable cache — delete it + the git_map rows and
-  re-projection mints IDENTICAL shas.
-- **Imported commits (git push) exist only in the bare repo** (the pushed
-  pack); their shas are identity, never re-derived. Once anything has been
-  pushed in, `.slopp/git` is durable state — deleting it rewrites imported
-  history.
-- Projection ordering (crash-safe): journal marker → git objects →
-  git_map row → ref CAS; `ensure-projected!` repairs any interruption.
+- **No on-disk git repo.** `open-repo!` builds a JGit in-memory
+  `InMemoryRepository` (DFS backend) per server; the whole projection is
+  **generated from the journal on demand** and served **read-only** (clone/fetch)
+  over smart-HTTP. `store.db` is the source of truth; the git repo is a pure,
+  rebuildable cache. (Nothing is ever written under `<dir>/.slopp/git`.)
+- **Everything served is a pure function of the journal.** Each `:commit` delta
+  carries a byte-exact `:tree` snapshot and `insert-commit!` is deterministic, so
+  a fresh in-memory repo mints IDENTICAL shas — `project-journal!` inserts a
+  commit whenever its object isn't already live in the repo (insert-if-absent,
+  keyed on the `git_map` pin).
+- `git_map` (main store.db) pins each `:commit` delta → sha at first projection,
+  keyed `(delta_id, fingerprint)` (fingerprint = SHA-256 of `[id at description
+  target]`); query surfaces read it, and it's the insert-skip key above.
+- **Read-only remote — push-import was dropped** (was: git push → import as
+  edits). Edits arrive through slopp's write tools, not `git push`;
+  `git-receive-pack` is never advertised, so pushes are refused. This supersedes
+  the earlier "imported commits live only in the bare repo / `.slopp/git` is
+  durable state" design — there is no bare repo and nothing durable to lose.
+- Projection ordering: journal marker → git objects (content-addressed,
+  idempotent) → git_map row (INSERT OR IGNORE + read-back) → ref CAS;
+  `ensure-projected!` rebuilds the in-memory repo from the journal on demand.
 
 ## m5a: journal-first commits (storage inversion)
 
