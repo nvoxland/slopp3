@@ -234,6 +234,17 @@
                                :dir {:type "string"}
                                :token {:type "string"}}
                   :required ["url" "dir"]}}
+   {:name "git_pull"
+    :description "Absorb the remote's changes since the last common point: a 3-way merge at FORM granularity — the remote wins wherever this store is clean; anything both sides touched becomes a CONFLICT (our version stays live; the remote file is quarantined off-log; git_push is blocked until resolved). Whole-file deletions and comment-only changes are surfaced, never silently applied. Records the remote tip as the new chain point so later pushes fast-forward. Needs a durable session with a saved git-remote (from git_push or a clone)."
+    :inputSchema {:type "object"
+                  :properties {:token {:type "string"}
+                               :agent {:type "string"}}}}
+   {:name "git_conflicts"
+    :description "Unresolved git-pull conflicts: path, namespace, reason, and the RAW remote file content to merge from. Resolve by applying/adapting that content through the edit tools, then git_resolve the path."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "git_resolve"
+    :description "Mark a git-pull conflict resolved (after merging the remote content through the edit tools — or deciding against it). Omit path to clear ALL. Unblocks git_push."
+    :inputSchema {:type "object" :properties {:path {:type "string"}}}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
@@ -631,6 +642,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                    {:error "git_push needs a durable session (a store dir)"}))
       "git_clone"          (text (sync/clone! (:url a) (:dir a)
                                               :token (:token a) :agent (:agent a)))
+      "git_pull"           (text (sync/pull! session
+                                             :token (:token a) :agent (:agent a)))
+      "git_conflicts"      (text (if-let [dir (:dir @session)]
+                                   {:conflicts (sync/conflicts dir)}
+                                   {:error "git_conflicts needs a durable session"}))
+      "git_resolve"        (text (if-let [dir (:dir @session)]
+                                   (sync/resolve! dir (:path a))
+                                   {:error "git_resolve needs a durable session"}))
       "test_run"          (text (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session

@@ -38,6 +38,7 @@
            [org.eclipse.jgit.lib CommitBuilder Constants FileMode NullProgressMonitor
             ObjectId ObjectInserter PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevWalk]
+           [org.eclipse.jgit.revwalk.filter RevFilter]
            [org.eclipse.jgit.transport PacketLineOut PushResult
             RefAdvertiser$PacketLineOutRefAdvertiser RefSpec RemoteRefUpdate
             Transport UploadPack URIish UsernamePasswordCredentialsProvider]
@@ -311,22 +312,28 @@
   repo for every :commit marker whose object isn't already present. Parent =
   the previous marker's sha (journal order IS the chain); `:base` seeds the
   chain — a cloned store grafts its first milestone onto the remote commit it
-  was cloned at. A pinned sha is reused only when its object is live in this
-  repo; on a fresh repo the object is re-inserted deterministically (same
-  sha). Returns the tip sha (= base when no markers) or nil."
+  was cloned at. A marker carrying `:git-sha` (a pull/import) is ADOPTED, not
+  minted: the remote commit itself becomes the chain node (its object arrives
+  by fetch; the remote durably holds its own history). A pinned sha is reused
+  only when its object is live in this repo; on a fresh repo the object is
+  re-inserted deterministically (same sha). Returns the tip sha (= base when
+  no markers) or nil."
   [{:keys [repo map-conn]} line-label deltas & {:keys [base]}]
   (reduce
    (fn [parent d]
      (if (= :commit (:op d))
-       (let [fp     (fingerprint d)
-             pinned (lookup-sha map-conn (:id d) fp)]
-         (if (and pinned
-                  (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
-           pinned
-           (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
-                 sha  (insert-commit! repo parent d tree)]
-             (record-sha! map-conn (:id d) fp sha line-label)
-             sha)))
+       (if-let [gsha (:git-sha d)]
+         (do (record-sha! map-conn (:id d) (fingerprint d) gsha line-label)
+             gsha)
+         (let [fp     (fingerprint d)
+               pinned (lookup-sha map-conn (:id d) fp)]
+           (if (and pinned
+                    (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
+             pinned
+             (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
+                   sha  (insert-commit! repo parent d tree)]
+               (record-sha! map-conn (:id d) fp sha line-label)
+               sha))))
        parent))
    base
    deltas))
@@ -345,30 +352,39 @@
 (defn ensure-projected!
   "Bring the bare repo up to date with the journals — main + every on-disk
   branch — advancing refs/heads/* to each line's newest milestone. A cloned
-  store (`git-base-sha` meta) grafts every line onto that base commit, so
-  local milestones extend the remote's real history; the base OBJECTS come
-  from a prior fetch (`push-to-remote!` fetches first — offline, a ref
-  update against a missing base throws and the caller degrades). Reads the
-  dbs directly (always-current, no session needed), deterministic and
-  idempotent: safe to call before every refs advertisement.
-  Returns {:refs {name sha-or-nil}}."
+  store (`git-base-sha` meta) grafts every line onto that base commit; pull
+  markers (`:git-sha`) adopt remote commits as chain nodes. Chain objects
+  this in-memory repo doesn't hold (fresh process) are fetched from
+  `git-remote` on demand — offline, downstream ref updates throw and the
+  caller degrades. Reads the dbs directly (always-current, no session
+  needed), deterministic and idempotent: safe to call before every refs
+  advertisement. Returns {:refs {name sha-or-nil}}."
   [{:keys [dir repo map-conn lock] :as ctx}]
   (locking lock
     (let [base     (db/get-meta map-conn "git-base-sha")
           main-ds  (db/deltas-after map-conn 0)
-          main-tip (project-journal! ctx "main" main-ds :base base)
-          _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
-          refs     (into {"main" main-tip}
-                         (map (fn [[nm bdir]]
-                                [nm (with-open [conn (db/open! bdir)]
-                                      (let [ds  (db/deltas-after conn 0)
-                                            tip (project-journal! ctx nm ds :base base)]
-                                        (ensure-wip! ctx nm conn ds tip)
-                                        tip))]))
-                         (branch-journals dir))]
-      (doseq [[nm sha] refs :when sha]
-        (set-branch-ref! repo nm sha))
-      {:refs refs})))
+          need     (cond-> (into [] (keep :git-sha) main-ds) base (conj base))
+          missing? (fn [sha] (not (.has (.getObjectDatabase ^Repository repo)
+                                        (ObjectId/fromString sha))))]
+      (when (some missing? need)
+        ;; requiring-resolve: fetch-remote! is defined later in the ns
+        ;; (append-only form order), so late-bind instead of forward-ref
+        (when-let [url (db/get-meta map-conn "git-remote")]
+          (try ((requiring-resolve 'slopp.git/fetch-remote!) repo url)
+               (catch Exception _ nil))))
+      (let [main-tip (project-journal! ctx "main" main-ds :base base)
+            _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
+            refs     (into {"main" main-tip}
+                           (map (fn [[nm bdir]]
+                                  [nm (with-open [conn (db/open! bdir)]
+                                        (let [ds  (db/deltas-after conn 0)
+                                              tip (project-journal! ctx nm ds :base base)]
+                                          (ensure-wip! ctx nm conn ds tip)
+                                          tip))]))
+                           (branch-journals dir))]
+        (doseq [[nm sha] refs :when sha]
+          (set-branch-ref! repo nm sha))
+        {:refs refs}))))
 
 ;; ---------------------------------------------------------------------------
 ;; import: git push → slopp (M3)
@@ -576,3 +592,13 @@
                            " — the remote has history this store doesn't build on (pull first)"))})))
       {:error (str "nothing to push — no " ref-name
                    " in the projection (no milestones yet?)")})))
+^:reads (defn merge-base
+  "The merge base of two commits in `repo`, or nil when the histories are
+  unrelated — standard git ancestry (pull uses it to isolate remote-only
+  changes: diff merge-base→remote-tip, never touching local-only work)."
+  [^Repository repo sha-a sha-b]
+  (with-open [rw (RevWalk. repo)]
+    (.setRevFilter rw RevFilter/MERGE_BASE)
+    (.markStart rw (.parseCommit rw (ObjectId/fromString sha-a)))
+    (.markStart rw (.parseCommit rw (ObjectId/fromString sha-b)))
+    (some-> (.next rw) (.name))))

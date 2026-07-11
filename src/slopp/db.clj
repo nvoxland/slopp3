@@ -51,6 +51,16 @@
                               id      TEXT PRIMARY KEY,
                               surface TEXT,
                               native  TEXT)"])
+      ;; git-pull conflicts, held OFF the journal (G-series): the raw remote
+      ;; file + provenance, kept until the agent resolves — the journal only
+      ;; ever holds slopp-valid forms
+      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS quarantine (
+                              path    TEXT PRIMARY KEY,
+                              ns      TEXT,
+                              source  TEXT,
+                              sha     TEXT NOT NULL,
+                              reason  TEXT NOT NULL,
+                              at      INTEGER NOT NULL)"])
       conn)))
 
 (defn persist!
@@ -282,4 +292,37 @@
   [conn k v]
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES (?,?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" k (str v)])
+  nil)
+(defn quarantine-put!
+  "Record a git-pull conflict for `path` (upsert): the raw remote `source`
+  (nil for deletions), the remote `sha` it came from, and the human `reason`.
+  Off-log by design — never touches the journal."
+  [conn {:keys [path ns source sha reason]}]
+  (jdbc/execute! conn ["INSERT INTO quarantine (path, ns, source, sha, reason, at)
+                        VALUES (?,?,?,?,?,?)
+                        ON CONFLICT(path) DO UPDATE SET
+                          ns = excluded.ns, source = excluded.source,
+                          sha = excluded.sha, reason = excluded.reason,
+                          at = excluded.at"
+                       path (some-> ns str) source sha reason
+                       (System/currentTimeMillis)])
+  nil)
+^:reads (defn quarantine-list
+  "Every unresolved git-pull conflict, oldest first:
+  [{:path :ns :source :sha :reason :at}]."
+  [conn]
+  (mapv (fn [row]
+          {:path   (:quarantine/path row)
+           :ns     (some-> (:quarantine/ns row) symbol)
+           :source (:quarantine/source row)
+           :sha    (:quarantine/sha row)
+           :reason (:quarantine/reason row)
+           :at     (:quarantine/at row)})
+        (jdbc/execute! conn ["SELECT * FROM quarantine ORDER BY at, path"])))
+(defn quarantine-clear!
+  "Resolve one conflict (`path`) — or ALL of them when path is nil."
+  [conn path]
+  (if path
+    (jdbc/execute! conn ["DELETE FROM quarantine WHERE path = ?" path])
+    (jdbc/execute! conn ["DELETE FROM quarantine"]))
   nil)
