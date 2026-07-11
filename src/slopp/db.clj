@@ -272,3 +272,14 @@
      :dep-pure   (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-pure'"])
                              :meta/v edn/read-string) #{})}))
+^:reads (defn get-meta
+  "Read a meta row's value (nil when absent) — the k/v side-table for
+  config the journal doesn't track (e.g. `git-remote`, `git-base-sha`)."
+  [conn k]
+  (:meta/v (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = ?" k])))
+(defn set-meta!
+  "Upsert a meta row — the write side of `get-meta`."
+  [conn k v]
+  (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES (?,?)
+                        ON CONFLICT(k) DO UPDATE SET v = excluded.v" k (str v)])
+  nil)
