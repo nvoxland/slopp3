@@ -248,8 +248,17 @@ Two transports share the SAME dispatch (`mcp/handle`):
   a remote at `dir` (no `.clj` materialized); records `git-remote` +
   `git-base-sha` so pushes from the clone fast-forward. Also a CLI:
   `clojure -M -m slopp.sync clone <url> <dir> | push <dir> [url]`.
+- `git_pull {token? agent?}` → `sync/pull!`: 3-way absorb of remote changes
+  (remote wins where we're clean; both-touched → quarantined conflict, our
+  version stays live). Ends with a `:git-sha` chain marker so later pushes
+  fast-forward.
+- `git_conflicts {}` → unresolved pull conflicts (path, ns, reason, RAW
+  remote source to merge from). `git_resolve {path?}` clears one (or all) —
+  unblocks `git_push`.
 - `query_git` reports the local read-only listener URL AND `:external`
   (`git-remote`/`git-base-sha`) when set.
+- CLI: `clojure -M -m slopp.sync clone <url> <dir> | push <dir> [url] |
+  pull <dir>`.
 
 ## Running from the store (`slopp.boot`)
 

@@ -675,6 +675,26 @@ SLOPP_GIT_TOKEN/GIT_TOKEN env. Verified end-to-end by slopp itself: push →
 plain `git clone` (normal 6-commit repo) → `slopp.sync` clone (30 nses,
 zero `.clj` files) → `slopp.boot` boots and serves it.
 
+G4 ✅ **Pull is a 3-way merge at FORM granularity; conflicts quarantine
+off-log.** `sync/pull!` fetches, takes git `merge-base(ours, tip)`, and
+diffs base→tip trees: the remote wins wherever WE are clean (our form still
+equals the base's — applied as verified `edit-group!`/`ingest!` in remote
+dependency order, then `move-form!` fixup to the remote's form order so
+trees byte-converge); anything BOTH sides touched, whole-file deletions,
+anonymous-form files, and files failing the gates become CONFLICTS: our
+version stays live, the raw remote file lands in the `quarantine` table
+(off the journal — the journal only ever holds slopp-valid forms), and
+**`push!` is refused until the agent resolves** (merge via edit tools →
+`git_resolve`) — git's conflicted-merge semantics, one file coarser.
+Comment/whitespace-only remote changes are surfaced as notes, not applied
+(trivia isn't form-addressable). Each pull ends with a `:git-sha` chain
+marker (`commit-point!` `:target` head + `:extra`): `project-journal!`
+ADOPTS that remote commit as the chain node (never mints), so the next
+local milestone parents on the remote tip and pushes stay fast-forward —
+verified bidirectionally (A→B→A round-trip, byte-exact convergence).
+Un-milestone'd local work rides through a pull untouched; unpushed local
+MILESTONES fold into the next post-pull milestone (documented squash).
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

@@ -106,9 +106,19 @@
   error — push/pull paths always fetch first.
 - The remote is a normal file repo: only MILESTONES cross the wire (a clone
   gets the last commit_point's tree, not un-milestone'd live state); non-source
-  files on a remote (README, CI) are ignored by clone; a `.clj` that fails
-  slopp's gates fails the clone with the reason (quarantine/conflict flow =
-  Phase-2 pull).
+  files on a remote (README, CI) are ignored by clone/pull.
+- **Pull (G4):** `sync/pull!` = fetch → `merge-base(ours, tip)` → 3-way diff
+  applied at form granularity (remote wins where we're clean; verified
+  writes, remote dependency order, form-order fixup). Both-touched forms,
+  file deletions, and gate-failing files → the **`quarantine` table**
+  (path/ns/raw source/sha/reason — OFF the journal); `push!` refuses while
+  rows exist; the agent merges via edit tools then `git_resolve`. The pull
+  ends with a `:commit` marker carrying `:git-sha <tip>`, which
+  `project-journal!` ADOPTS as the chain node (never mints) — the next
+  milestone parents on the remote tip, keeping pushes fast-forward.
+  `ensure-projected!` lazily fetches chain objects it doesn't hold
+  (`requiring-resolve` of `fetch-remote!` — append-order forced the late
+  bind); offline, ref updates throw and callers degrade.
 - Projection ordering: journal marker → git objects (content-addressed,
   idempotent) → git_map row (INSERT OR IGNORE + read-back) → ref CAS;
   `ensure-projected!` rebuilds the in-memory repo from the journal on demand.
