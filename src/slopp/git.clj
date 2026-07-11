@@ -1,9 +1,16 @@
 (ns slopp.git
-  "P4-m8: the git compatibility layer — an IN-MEMORY, generated projection of
-  the journal's :commit milestones, served READ-ONLY (clone/fetch) over
-  smart-HTTP. There is NO on-disk git repo: `open-repo!` builds a JGit in-memory
-  `InMemoryRepository` per server, populated on demand from the store db;
-  `store.db` is the source of truth, the git repo a rebuildable cache.
+  "P4-m8: the git compatibility layer. Two faces over one in-memory JGit
+  repo (`InMemoryRepository` — there is NO on-disk git repo; `store.db` is
+  the source of truth and the git repo a rebuildable cache):
+
+  - SERVER: a generated projection of the journal's :commit milestones,
+    served READ-ONLY (clone/fetch) over local smart-HTTP. Edits arrive
+    through slopp's write tools, never `git push` to this server.
+  - CLIENT: the same projection pushed to a NORMAL external remote (GitHub
+    etc.) — the remote holds real .clj files; fetch reads a remote's tip and
+    tree back (the clone/pull side lives in `slopp.sync`). A cloned store
+    records `git-base-sha`, and the projection GRAFTS onto it so local
+    milestones extend the remote's history — pushes stay fast-forward.
 
   Ids: a git commit id IS the hash of its bytes, so stability comes from
   DETERMINISM — each commit is a pure function of its marker delta (:tree
@@ -13,9 +20,7 @@
 
   Ordering: journal marker → git objects (content-addressed, idempotent) →
   git_map row (INSERT OR IGNORE + read-back) → ref update (CAS);
-  `ensure-projected!` rebuilds the whole thing from the journal on demand. The
-  remote is fetch/clone-only — edits arrive through slopp's write tools, never
-  `git push`."
+  `ensure-projected!` rebuilds the whole thing from the journal on demand."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [next.jdbc :as jdbc]
@@ -28,21 +33,30 @@
            [java.time Instant ZoneOffset]
            [java.util.zip GZIPInputStream]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
-           [org.eclipse.jgit.internal.storage.dfs DfsRepositoryDescription InMemoryRepository]
-           [org.eclipse.jgit.lib CommitBuilder Constants FileMode ObjectId
-            ObjectInserter PersonIdent Repository]
+           [org.eclipse.jgit.internal.storage.dfs DfsRepositoryDescription
+            InMemoryRepository InMemoryRepository$Builder]
+           [org.eclipse.jgit.lib CommitBuilder Constants FileMode NullProgressMonitor
+            ObjectId ObjectInserter PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevWalk]
-           [org.eclipse.jgit.transport PacketLineOut
-            RefAdvertiser$PacketLineOutRefAdvertiser UploadPack]))
+           [org.eclipse.jgit.transport PacketLineOut PushResult
+            RefAdvertiser$PacketLineOutRefAdvertiser RefSpec RemoteRefUpdate
+            Transport UploadPack URIish UsernamePasswordCredentialsProvider]
+           [org.eclipse.jgit.treewalk TreeWalk]
+           [org.eclipse.jgit.util FS]))
 
 ;; ---------------------------------------------------------------------------
 ;; repo + mapping table
 
 (defn open-repo!
   "An in-memory bare repo (JGit DFS `InMemoryRepository`) — the projection is
-  regenerated into it from the journal on demand; nothing touches disk."
+  regenerated into it from the journal on demand; nothing touches disk. Built
+  with a real FS handle: `TransportLocal` resolves file-path remotes through
+  the LOCAL repo's FS, and a DFS repo has none by default (NPE without it)."
   ^Repository [_dir]
-  (let [repo (InMemoryRepository. (DfsRepositoryDescription. "slopp"))]
+  (let [repo (.. (InMemoryRepository$Builder.)
+                 (setRepositoryDescription (DfsRepositoryDescription. "slopp"))
+                 (setFS FS/DETECTED)
+                 (build))]
     (-> repo (.updateRef Constants/HEAD) (.link "refs/heads/main"))
     repo))
 
@@ -251,11 +265,12 @@
   refs/changes/*): tools `git diff origin/main..origin/wip/main`.
   Deterministic (tree from the rows, timestamp from the journal head), so
   concurrent projectors converge; never pinned in git_map, never a
-  milestone parent, rejected on push."
+  milestone parent, rejected on push. On a cloned store the baseline tip
+  may be the graft base itself (no local milestone yet)."
   [{:keys [^Repository repo]} line-name conn deltas tip-sha]
   (let [ref-name (str "refs/heads/wip/" line-name)]
-    (if (nil? tip-sha)
-      (delete-ref! repo ref-name)          ; no milestone = no baseline
+    (if (or (nil? tip-sha) (empty? deltas))
+      (delete-ref! repo ref-name)          ; no baseline / nothing local yet
       (with-open [ins (.newObjectInserter repo)]
         (let [tree-id (insert-tree! ins (commit-paths
                                          (db/rendered-sources conn)
@@ -268,8 +283,8 @@
             (let [mpos  (last (keep-indexed
                                (fn [i d] (when (= :commit (:op d)) i))
                                deltas))
-                  since (- (count deltas) (inc mpos))
-                  desc  (:description (nth deltas mpos))
+                  since (if mpos (- (count deltas) (inc mpos)) (count deltas))
+                  desc  (if mpos (:description (nth deltas mpos)) "the clone base")
                   at    (Instant/ofEpochMilli (long (:at (last deltas))))
                   msg   (if (pos? since)
                           (str "wip: " since " delta"
@@ -294,10 +309,12 @@
 (defn project-journal!
   "Walk one journal's deltas in order, minting a git commit in the in-memory
   repo for every :commit marker whose object isn't already present. Parent =
-  the previous marker's sha (journal order IS the chain). A pinned sha is reused
-  only when its object is live in this repo; on a fresh repo the object is
-  re-inserted deterministically (same sha). Returns the tip sha or nil."
-  [{:keys [repo map-conn]} line-label deltas]
+  the previous marker's sha (journal order IS the chain); `:base` seeds the
+  chain — a cloned store grafts its first milestone onto the remote commit it
+  was cloned at. A pinned sha is reused only when its object is live in this
+  repo; on a fresh repo the object is re-inserted deterministically (same
+  sha). Returns the tip sha (= base when no markers) or nil."
+  [{:keys [repo map-conn]} line-label deltas & {:keys [base]}]
   (reduce
    (fn [parent d]
      (if (= :commit (:op d))
@@ -311,7 +328,7 @@
              (record-sha! map-conn (:id d) fp sha line-label)
              sha)))
        parent))
-   nil
+   base
    deltas))
 
 (defn- branch-journals
@@ -327,20 +344,25 @@
 
 (defn ensure-projected!
   "Bring the bare repo up to date with the journals — main + every on-disk
-  branch — advancing refs/heads/* to each line's newest milestone. Reads the
+  branch — advancing refs/heads/* to each line's newest milestone. A cloned
+  store (`git-base-sha` meta) grafts every line onto that base commit, so
+  local milestones extend the remote's real history; the base OBJECTS come
+  from a prior fetch (`push-to-remote!` fetches first — offline, a ref
+  update against a missing base throws and the caller degrades). Reads the
   dbs directly (always-current, no session needed), deterministic and
   idempotent: safe to call before every refs advertisement.
   Returns {:refs {name sha-or-nil}}."
   [{:keys [dir repo map-conn lock] :as ctx}]
   (locking lock
-    (let [main-ds  (db/deltas-after map-conn 0)
-          main-tip (project-journal! ctx "main" main-ds)
+    (let [base     (db/get-meta map-conn "git-base-sha")
+          main-ds  (db/deltas-after map-conn 0)
+          main-tip (project-journal! ctx "main" main-ds :base base)
           _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
           refs     (into {"main" main-tip}
                          (map (fn [[nm bdir]]
                                 [nm (with-open [conn (db/open! bdir)]
                                       (let [ds  (db/deltas-after conn 0)
-                                            tip (project-journal! ctx nm ds)]
+                                            tip (project-journal! ctx nm ds :base base)]
                                         (ensure-wip! ctx nm conn ds tip)
                                         tip))]))
                          (branch-journals dir))]
@@ -481,3 +503,76 @@
         srv  (start-server! port {:dir dir})]
     (println (str "slopp git server: " (:url srv) "  (store: " dir ")"))
     @(promise)))
+^:reads (defn remote-credentials
+  "CredentialsProvider for token auth against an https remote (GitHub PAT /
+  app token) — the `token` argument, else SLOPP_GIT_TOKEN / GIT_TOKEN env.
+  Nil when no token is set (anonymous / filesystem remotes)."
+  [token]
+  (when-let [t (or token
+                   (System/getenv "SLOPP_GIT_TOKEN")
+                   (System/getenv "GIT_TOKEN"))]
+    (UsernamePasswordCredentialsProvider. "x-access-token" ^String t)))
+(defn fetch-remote!
+  "Fetch `url`'s branches into `repo` under refs/remotes/origin/*. Returns
+  {:tip sha-or-nil} for `branch`. Used to seed a clone, and to bring a
+  remote's objects in before a grafted push. Scheme-less urls are local
+  paths — made absolute (an in-memory repo has no dir to resolve against)."
+  [^Repository repo url & {:keys [token branch] :or {branch "main"}}]
+  (let [s   (str url)
+        uri (URIish. ^String (if (re-find #"^[a-z+]+://" s)
+                                s
+                                (.getAbsolutePath (io/file s))))]
+    (with-open [tn (Transport/open repo uri)]
+      (when-let [creds (remote-credentials token)]
+        (.setCredentialsProvider tn creds))
+      (.fetch tn NullProgressMonitor/INSTANCE
+              [(RefSpec. "+refs/heads/*:refs/remotes/origin/*")])
+      {:tip (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))})))
+^:reads (defn tree-at
+  "{path text} for the whole tree of commit `sha` — UTF-8 blobs, sorted.
+  Works on any repo handle (the in-memory projection or an on-disk remote)."
+  [^Repository repo sha]
+  (with-open [rw (RevWalk. repo)]
+    (let [tree (.getTree (.parseCommit rw (ObjectId/fromString sha)))]
+      (with-open [tw (TreeWalk. repo)]
+        (.addTree tw tree)
+        (.setRecursive tw true)
+        (loop [m (sorted-map)]
+          (if (.next tw)
+            (recur (assoc m (.getPathString tw)
+                          (String. (.getBytes (.open repo (.getObjectId tw 0)))
+                                   StandardCharsets/UTF_8)))
+            m))))))
+(defn push-to-remote!
+  "Push refs/heads/<branch> from the in-memory projection to an external git
+  remote `url` (filesystem path or http(s)). Projects first; a cloned store
+  fetches the remote's objects so its grafted chain is complete. Fast-forward
+  only — a diverged remote is an honest :error, never a force. Returns
+  {:pushed sha :status s} | {:error msg}."
+  [{:keys [^Repository repo map-conn] :as ctx} url
+   & {:keys [token branch] :or {branch "main"}}]
+  (when-let [base (db/get-meta map-conn "git-base-sha")]
+    (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
+      (fetch-remote! repo url :token token)))
+  (ensure-projected! ctx)
+  (let [ref-name (str "refs/heads/" branch)
+        s        (str url)
+        uri      (URIish. ^String (if (re-find #"^[a-z+]+://" s)
+                                    s
+                                    (.getAbsolutePath (io/file s))))]
+    (if-let [tip (.resolve repo ref-name)]
+      (with-open [tn (Transport/open repo uri)]
+        (when-let [creds (remote-credentials token)]
+          (.setCredentialsProvider tn creds))
+        (let [rru    (RemoteRefUpdate. repo ref-name ref-name false nil nil)
+              ^PushResult res (.push tn NullProgressMonitor/INSTANCE [rru])
+              ^RemoteRefUpdate upd (first (.getRemoteUpdates res))
+              status (str (.getStatus upd))]
+          (if (contains? #{"OK" "UP_TO_DATE"} status)
+            {:pushed (.name tip) :status status}
+            {:error (str "push rejected (" status ")"
+                         (when-let [m (.getMessage upd)] (str ": " m))
+                         (when (= status "REJECTED_NONFASTFORWARD")
+                           " — the remote has history this store doesn't build on (pull first)"))})))
+      {:error (str "nothing to push — no " ref-name
+                   " in the projection (no milestones yet?)")})))

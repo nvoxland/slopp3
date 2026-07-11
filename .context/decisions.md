@@ -638,6 +638,43 @@ hazards (live only): the three long-lived instances (reaper `TimerTask`,
 two git `HttpHandler`s) keep old closure code until re-created, and an
 in-flight request finishes on the old fn body. Snapshot has none of these.
 
+## G — git bridge (forms-as-truth, files-in-git, in-memory client)
+
+G1 ✅ **The shared repo holds FILES; the local dir holds FORMS.** A normal
+git remote (GitHub etc.) carries real `.clj` files + a generated `deps.edn`
+— browsable, PR-able, useful to non-slopp users; the local working dir holds
+`.slopp/store.db` and NO project source (nothing for an agent to hand-edit,
+nothing to drift). `git_push` publishes the milestone projection;
+`git_clone`/`slopp.sync/clone!` rebuilds a fileless store from a remote
+(verified dependency-ordered `ingest!`; manifest restored from the remote
+deps.edn). Cross-person merges are GIT-NATIVE (file-level, PR flow) — the
+form-level CRDT merge stays a local capability (branches/forks): the merge
+engine is journal-to-journal and file trees carry no journal. Incoming
+non-slopp-valid files → Phase-2 pull surfaces them as CONFLICTS backed by an
+off-log quarantine table (raw file kept for reference, never in the journal).
+
+G2 ✅ **The graft: clones chain onto the remote's real history.** `clone!`
+records `git-remote` + `git-base-sha` meta; `project-journal!` seeds its
+parent chain with the base, so a clone's first local milestone parents onto
+the remote commit it was cloned at and `push!` is a plain fast-forward
+(verified: push → clone → edit → milestone → push; the new tip's parent IS
+the pre-clone tip). Without this, every clone would mint unrelated history
+and could never push back. Push is fast-forward ONLY — a diverged remote is
+an honest error, never a force. `push-to-remote!` fetches the remote's
+objects first when the graft base isn't in the (per-process) in-memory repo;
+the remote itself is the durable object store for foreign history.
+
+G3 ✅ **slopp is a git CLIENT in memory — no on-disk git state returns.**
+JGit `Transport` push/fetch runs against the same `InMemoryRepository` as the
+local read-only listener (built with `FS/DETECTED` — TransportLocal NPEs on
+an FS-less DFS repo; scheme-less remote urls are absolutized). `slopp.git`
+stays byte-moving (no `slopp.api` dep); `slopp.sync` owns the store side
+(ingest/deps/session). Only MILESTONES cross the wire — a clone reproduces
+the last commit_point, not un-milestone'd live state. Auth: token param or
+SLOPP_GIT_TOKEN/GIT_TOKEN env. Verified end-to-end by slopp itself: push →
+plain `git clone` (normal 6-commit repo) → `slopp.sync` clone (30 nses,
+zero `.clj` files) → `slopp.boot` boots and serves it.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

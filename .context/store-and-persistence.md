@@ -71,13 +71,13 @@
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 
-## Git projection (P4-m8, `slopp.git`) — in-memory, read-only
+## Git bridge (P4-m8 + G-series, `slopp.git` + `slopp.sync`) — in-memory, two faces
 
-- **No on-disk git repo.** `open-repo!` builds a JGit in-memory
-  `InMemoryRepository` (DFS backend) per server; the whole projection is
-  **generated from the journal on demand** and served **read-only** (clone/fetch)
-  over smart-HTTP. `store.db` is the source of truth; the git repo is a pure,
-  rebuildable cache. (Nothing is ever written under `<dir>/.slopp/git`.)
+- **No on-disk git repo, ever.** `open-repo!` builds a JGit in-memory
+  `InMemoryRepository` (DFS backend, built with `FS/DETECTED` — TransportLocal
+  needs an FS to resolve file-path remotes); the whole projection is
+  **generated from the journal on demand**. `store.db` is the source of truth;
+  the git repo is a pure, rebuildable cache.
 - **Everything served is a pure function of the journal.** Each `:commit` delta
   carries a byte-exact `:tree` snapshot and `insert-commit!` is deterministic, so
   a fresh in-memory repo mints IDENTICAL shas — `project-journal!` inserts a
@@ -86,11 +86,29 @@
 - `git_map` (main store.db) pins each `:commit` delta → sha at first projection,
   keyed `(delta_id, fingerprint)` (fingerprint = SHA-256 of `[id at description
   target]`); query surfaces read it, and it's the insert-skip key above.
-- **Read-only remote — push-import was dropped** (was: git push → import as
-  edits). Edits arrive through slopp's write tools, not `git push`;
-  `git-receive-pack` is never advertised, so pushes are refused. This supersedes
-  the earlier "imported commits live only in the bare repo / `.slopp/git` is
-  durable state" design — there is no bare repo and nothing durable to lose.
+- **SERVER face (local, read-only):** milestones served over localhost
+  smart-HTTP (clone/fetch); `git-receive-pack` is never advertised, so pushes
+  to the local listener are refused. Edits arrive through slopp's write tools.
+  (The old push-IMPORT was dropped with the on-disk bare repo — nothing durable
+  to lose.)
+- **CLIENT face (external, G-series):** `git/push-to-remote!` pushes the same
+  projection to a NORMAL remote (GitHub, any bare repo) — fast-forward only,
+  never force; `git/fetch-remote!` + `git/tree-at` read a remote tip and tree
+  back. `slopp.sync/clone!` rebuilds a **fileless store** from a remote (verified
+  dependency-ordered `ingest!`, deps manifest restored from the remote's
+  generated deps.edn); `slopp.sync/push!` saves the remote as `git-remote` meta.
+- **The graft:** a cloned store records `git-base-sha` (the remote tip it was
+  cloned at); `project-journal!` seeds its parent chain with it, so the clone's
+  first local milestone chains onto the remote's REAL history and its pushes
+  fast-forward. `push-to-remote!` fetches the remote's objects first when the
+  base object isn't in the in-memory repo (fresh process). Serving the LOCAL
+  listener for a cloned store offline (base objects unfetched) degrades with an
+  error — push/pull paths always fetch first.
+- The remote is a normal file repo: only MILESTONES cross the wire (a clone
+  gets the last commit_point's tree, not un-milestone'd live state); non-source
+  files on a remote (README, CI) are ignored by clone; a `.clj` that fails
+  slopp's gates fails the clone with the reason (quarantine/conflict flow =
+  Phase-2 pull).
 - Projection ordering: journal marker → git objects (content-addressed,
   idempotent) → git_map row (INSERT OR IGNORE + read-back) → ref CAS;
   `ensure-projected!` rebuilds the in-memory repo from the journal on demand.

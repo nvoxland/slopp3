@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.git :as git]))
+            [slopp.git :as git] [slopp.db :as db] [slopp.sync :as sync]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -216,11 +216,24 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "query_commits"
-    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it (slopp.git server; imported commits keep their pushed sha)."
+    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_git"
-    :description "The git remote URL for THIS session's store, if the embedded git listener is running (durable sessions only). Hand it to `git remote add slopp <url>`, then clone/fetch over the regular git protocol (READ-ONLY): milestones (commit_point) are the commits, and wip/<branch> mirrors un-milestone'd live state. Edits arrive through slopp's write tools, not `git push`. No external server needed."
+    :description "The LOCAL git view of this session's store: the embedded read-only listener's URL (durable sessions only) — `git remote add slopp <url>`, then clone/fetch: milestones (commit_point) are the commits, wip/<branch> mirrors un-milestone'd live state. Plus the saved external remote (git-remote/git-base-sha meta) when this store pushes to or was cloned from one. Edits arrive through slopp's write tools; publishing goes OUT via git_push."
     :inputSchema {:type "object" :properties {}}}
+   {:name "git_push"
+    :description "Push this store's projection — the milestone history as real .clj files + a generated deps.edn — to a normal git remote (GitHub or any bare repo). Pass url once (saved as git-remote; later calls reuse it). Fast-forward only: a diverged remote is an honest error, never a force. A cloned store grafts onto the remote's history, so its pushes fast-forward too. Auth for https: token param, else SLOPP_GIT_TOKEN/GIT_TOKEN env."
+    :inputSchema {:type "object"
+                  :properties {:url {:type "string"}
+                               :token {:type "string"}
+                               :branch {:type "string"}}}}
+   {:name "git_clone"
+    :description "Clone a git remote into dir as a FILELESS slopp store: every src/test namespace is ingested (verified) into <dir>/.slopp/store.db — NO .clj files are materialized locally. Records git-remote + git-base-sha so a later git_push from that store fast-forwards onto the remote's history. dir must not already hold a store. Non-source files on the remote are ignored; a .clj that fails slopp's gates fails the clone with the reason."
+    :inputSchema {:type "object"
+                  :properties {:url {:type "string"}
+                               :dir {:type "string"}
+                               :token {:type "string"}}
+                  :required ["url" "dir"]}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
@@ -590,15 +603,34 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "deps_pure"          (text (if (false? (:pure a))
                                    (api/deps-unpure! session (sym :target) :agent (:agent a))
                                    (api/deps-pure! session (sym :target) :agent (:agent a))))
-      "query_git"          (text (if-let [u (:git-url @session)]
-                                   {:url u
-                                    :remote (str "git remote add slopp " u)
-                                    :note (str "milestones (commit_point) are the commits; "
-                                               "read-only clone/fetch — no push; "
-                                               "wip/<branch> = live un-milestone'd state")}
-                                   {:error (str "no git listener on this session"
-                                                " (ephemeral session, or the port"
-                                                " couldn't bind)")}))
+      "query_git"          (text (let [ext (when-let [conn (:db @session)]
+                                   (when-let [r (db/get-meta conn "git-remote")]
+                                     {:git-remote   r
+                                      :git-base-sha (db/get-meta conn "git-base-sha")}))]
+                               (cond
+                                 (:git-url @session)
+                                 (cond-> {:url (:git-url @session)
+                                          :remote (str "git remote add slopp " (:git-url @session))
+                                          :note (str "milestones (commit_point) are the commits; "
+                                                     "the local listener is read-only clone/fetch; "
+                                                     "publish OUT with git_push; "
+                                                     "wip/<branch> = live un-milestone'd state")}
+                                   ext (assoc :external ext))
+
+                                 ext
+                                 {:external ext
+                                  :note "no local listener; git_push publishes to :external"}
+
+                                 :else
+                                 {:error (str "no git listener on this session"
+                                              " (ephemeral session, or the port"
+                                              " couldn't bind)")})))
+      "git_push"           (text (if-let [dir (:dir @session)]
+                                   (sync/push! dir :url (:url a) :token (:token a)
+                                               :branch (:branch a))
+                                   {:error "git_push needs a durable session (a store dir)"}))
+      "git_clone"          (text (sync/clone! (:url a) (:dir a)
+                                              :token (:token a) :agent (:agent a)))
       "test_run"          (text (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session
@@ -678,7 +710,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   ephemeral. A durable session ALSO opens an in-process git smart-HTTP
   listener on a dir-derived port (localhost) — a READ-ONLY remote (clone/fetch
   of milestones) any git client can point at with no external daemon;
-  `query_git` reports the URL."
+  `query_git` reports the URL. Publishing to a NORMAL external remote
+  (GitHub etc.) goes through `git_push`; `git_clone` rebuilds a fileless
+  store from one (slopp.sync)."
   [& [dir]]
   (let [session (api/open! (cond-> {:warm-spare? true}
                              dir (assoc :dir dir)))]

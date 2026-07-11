@@ -72,7 +72,8 @@
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
 | `slopp.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
-| `slopp.git` | P4-m8 git compatibility: generates `:commit` milestones into an IN-MEMORY git repo (JGit `InMemoryRepository`, deterministic shas, `git_map` pinning) served READ-ONLY (clone/fetch) over smart-HTTP; no on-disk repo, no push-import |
+| `slopp.git` | P4-m8 git compatibility, two faces over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, no on-disk repo): SERVER — milestones served READ-ONLY (clone/fetch) over local smart-HTTP; CLIENT — push the projection to a NORMAL external remote / fetch a remote tip+tree (byte-moving only, no `slopp.api` dep). A cloned store's chain GRAFTS onto its `git-base-sha` so pushes stay fast-forward |
+| `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.api`): `push!` store→remote (saves `git-remote` meta), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored from the remote deps.edn, `git-base-sha` recorded); CLI `-main clone|push` |
 | `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
 
 ## Cross-cutting gotchas

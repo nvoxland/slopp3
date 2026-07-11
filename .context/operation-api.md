@@ -239,6 +239,18 @@ Two transports share the SAME dispatch (`mcp/handle`):
 - When adding an api op, add: tool schema + `call-tool` case + (usually) a
   `select-keys` whitelist of the result.
 
+## Git bridge tools (`git_push` / `git_clone` / `query_git`)
+
+- `git_push {url? token? branch?}` → `sync/push!`: project + push the store's
+  milestone history to a normal remote as real files. `url` once (saved as
+  `git-remote` meta), reused after. Fast-forward only. Durable sessions only.
+- `git_clone {url dir token?}` → `sync/clone!`: rebuild a FILELESS store from
+  a remote at `dir` (no `.clj` materialized); records `git-remote` +
+  `git-base-sha` so pushes from the clone fast-forward. Also a CLI:
+  `clojure -M -m slopp.sync clone <url> <dir> | push <dir> [url]`.
+- `query_git` reports the local read-only listener URL AND `:external`
+  (`git-remote`/`git-base-sha`) when set.
+
 ## Running from the store (`slopp.boot`)
 
 - The entry `clojure -M -m slopp.boot <dir> [--snapshot|--live]` runs the
