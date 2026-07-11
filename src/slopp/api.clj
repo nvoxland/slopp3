@@ -252,8 +252,10 @@
                 (if (:error out)
                   out
                   (let [load-res (when (and load? (not loaded?))
-                                   (hot-load-all! session (:store out)
-                                                  [(:form-id (:delta out))]))]
+                                   (or (some->> (edit/cold-load-errors (:store out) [ns-sym])
+                                                (hash-map :err))
+                                       (hot-load-all! session (:store out)
+                                                      [(:form-id (:delta out))])))]
                     (if (:err load-res)
                       {:error (str "form failed to compile: " (:err load-res))}
                       (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -271,8 +273,10 @@
         (if (:error out0)
           out0
           (let [load-res (when load?
-                           (hot-load-all! session (:store out0)
-                                          [(:form-id (:delta out0))]))]
+                           (or (some->> (edit/cold-load-errors (:store out0) [ns-sym])
+                                        (hash-map :err))
+                               (hot-load-all! session (:store out0)
+                                              [(:form-id (:delta out0))])))]
             (if (:err load-res)
               {:error (str "form failed to compile: " (:err load-res))}
               (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -1440,9 +1444,11 @@
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
-          (let [load-res (hot-load-all! session st
-                                        (keep (fn [[k a]] (when (= :load k) a))
-                                              hots))]
+          (let [load-res (or (some->> (edit/cold-load-errors st (distinct (map :ns steps)))
+                                         (hash-map :err))
+                                (hot-load-all! session st
+                                               (keep (fn [[k a]] (when (= :load k) a))
+                                                     hots)))]
             (cond
               (:err load-res)
               {:error (str "group failed to compile: " (:err load-res))}
@@ -1531,7 +1537,9 @@
 (defn move-form!
   "S2: reorder — move form `nm` to just before `:before` in its namespace (the
   fix for append-only forward references). Image vars are order-independent so
-  nothing re-evals; the next fresh load / restart uses the new order."
+  nothing re-evals; the next fresh load / restart uses the new order — which
+  is exactly why the move itself must pass the cold-load check (S1b): a move
+  can CREATE the forward reference a fresh load dies on."
   [session ns-sym nm & {:keys [before prompt agent]}]
   (cond
     (nil? (store/form-named (:store @session) ns-sym nm))
@@ -1544,9 +1552,11 @@
     (let [base0 (:store @session)]
       (if-let [[st' delta] (store/move-form base0 ns-sym nm before
                                             :prompt prompt :agent agent)]
-        (if-not (try-commit! session base0 st' [ns-sym])
-          {:conflict {:reason "store changed concurrently — retry"}}
-          {:delta delta :moved {:form nm :before before}})
+        (if-let [cold (edit/cold-load-errors st' [ns-sym])]
+          {:error cold}
+          (if-not (try-commit! session base0 st' [ns-sym])
+            {:conflict {:reason "store changed concurrently — retry"}}
+            {:delta delta :moved {:form nm :before before}}))
         {:error (str "cannot move " nm)}))))
 
 (defn- forms-changed-since

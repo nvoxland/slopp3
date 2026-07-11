@@ -266,3 +266,25 @@
                       root)})))))
     (catch Exception e
       {:error (str "remove-require failed: " (ex-message e))})))
+(defn cold-load-errors
+  "The cold-load half of the compile gate: nil when every ns in `ns-syms`
+  renders to a namespace a FRESH load can resolve top-to-bottom; else one
+  actionable message naming each forward reference. Hot-loading into the
+  live image cannot see these (the vars already exist there) — without this
+  check a write can commit a store that boot/restart cannot load."
+  [store ns-syms]
+  (let [findings (mapcat (fn [ns-sym]
+                           (map #(assoc % :ns ns-sym)
+                                (index/forward-refs
+                                 (index/analyze (render/render-ns store ns-sym))
+                                 ns-sym)))
+                         (distinct ns-syms))]
+    (when (seq findings)
+      (str "would not cold-load (a fresh namespace load fails): "
+           (str/join "; "
+                     (map (fn [{:keys [ns form symbol row def-row]}]
+                            (str ns "/" (or form "<top-level>") " (line " row
+                                 ") references " symbol
+                                 " defined later (line " def-row ")"))
+                          findings))
+           " — define it earlier, move it up with edit_move, or add (declare ...)"))))
