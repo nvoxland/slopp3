@@ -51,6 +51,20 @@ The oracle must never return a false verdict. Everything here serves that.
    spare — never leak child JVMs.
 5. **Provenance.** Every verification lands as a `:verify` delta with the
    summary (incl. `:failures`, `:staleness-detected`/`:fresh-confirmed`).
+6. **Cold-load gate (S1b, `edit/cold-load-errors` → `index/forward-refs`).**
+   Hot-loading into the LIVE image cannot see forward references — the vars
+   already exist there — so a write could commit a namespace that
+   boot/restart/a fresh image cannot load (found the hard way: a
+   replace-before-add edit_group; the next `fresh-image!` crashed). Every
+   content/order write path (`rebased-write!` both branches, `edit-group!`,
+   `move-form!`) statically checks the CANDIDATE's rendered namespaces
+   before touching the image: any same-ns var usage positioned (row, col)
+   before the var's first definition-or-declare is refused with the fix
+   options (reorder / declare). Pure kondo analysis, memoized on content —
+   effectively free next to the ns-warnings pass. Known over-approximation:
+   syntax-quoted own-ns symbols count as usages (a declare satisfies).
+   `ingest!`/`ns_create` are exempt — a brand-new ns cold-loads for real in
+   the image. Merge replay is NOT yet gated (follow-up).
 
 ## Gotchas
 

@@ -11,7 +11,6 @@
   the live image from it. Without `:dir` the session is ephemeral (tests,
   scratch)."
   (:require [clojure.java.io :as io]
-            [clojure.java.shell :as sh]
             [clojure.set :as set]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -25,7 +24,7 @@
             [slopp.normalize :as normalize]
             [slopp.build :as build]
             [slopp.deps :as deps]
-            [slopp.db :as db]))
+            [slopp.db :as db] [clojure.java.shell :as sh]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -53,6 +52,26 @@
         (do (repl/stop! img) (repl/start! {:deps deps}))
         img))
     (repl/start! {:deps deps})))
+
+(defn reap-idle-images!
+  "Stop parked branch images idle past the session TTL (the session's reaper
+  timer calls this periodically; callable directly). Returns {:reaped n}."
+  [session]
+  (let [ttl     (:branch-image-ttl-ms @session 600000)
+        now     (System/currentTimeMillis)
+        victims (volatile! #{})]
+    (swap! session update :lines
+           (fn [lines]
+             (into {}
+                   (map (fn [[nm line]]
+                          (if (and (:image line)
+                                   (> (- now (:last-used line 0)) ttl))
+                            (do (vswap! victims conj (:image line))
+                                [nm (dissoc line :image)])
+                            [nm line])))
+                   lines)))
+    (doseq [img @victims] (repl/stop! img))
+    {:reaped (count @victims)}))
 
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
@@ -233,8 +252,10 @@
                 (if (:error out)
                   out
                   (let [load-res (when (and load? (not loaded?))
-                                   (hot-load-all! session (:store out)
-                                                  [(:form-id (:delta out))]))]
+                                   (or (some->> (edit/cold-load-errors (:store out) [ns-sym])
+                                                (hash-map :err))
+                                       (hot-load-all! session (:store out)
+                                                      [(:form-id (:delta out))])))]
                     (if (:err load-res)
                       {:error (str "form failed to compile: " (:err load-res))}
                       (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -252,8 +273,10 @@
         (if (:error out0)
           out0
           (let [load-res (when load?
-                           (hot-load-all! session (:store out0)
-                                          [(:form-id (:delta out0))]))]
+                           (or (some->> (edit/cold-load-errors (:store out0) [ns-sym])
+                                        (hash-map :err))
+                               (hot-load-all! session (:store out0)
+                                              [(:form-id (:delta out0))])))]
             (if (:err load-res)
               {:error (str "form failed to compile: " (:err load-res))}
               (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -428,6 +451,28 @@
              (mapv #(cond-> (dissoc % :sources :changeset :result)
                       (ti (:id %)) (assoc :turn-intent (ti (:id %))))))))))
 
+(defn- status-after
+  "The verification outcome a delta PRODUCED: the first `:verify` at or after
+  `at-id` (a write is immediately followed by its verify) — :green / :red /
+  :unknown. This is 'did THIS version land green', vs `status-at`'s 'what
+  was the state standing AT this point'."
+  [store at-id]
+  (let [ds (drop-while #(not= at-id (:id %)) (store/deltas store))
+        v  (first (filter #(= :verify (:op %)) ds))]
+    (if-let [r (:result v)]
+      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
+      :unknown)))
+
+(defn- human-time
+  "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
+  a delta's `:at`; agents keep the raw ms in the store)."
+  [ms]
+  (when ms
+    (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
+             (java.time.LocalDateTime/ofInstant
+              (java.time.Instant/ofEpochMilli ms)
+              (java.time.ZoneId/systemDefault)))))
+
 (defn query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
   produced it, when, and the verification state it landed in:
@@ -451,6 +496,9 @@
         (if (= "text" (some-> format name))
           (render-form-history-text (symbol (str ns-sym) (str nm)) versions)
           versions)))))
+
+(defn- delta-fids [d]
+  (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
 
 (defn query-search-history
   "Delta-log search — the 'which prompts touched X' query. Case-insensitive
@@ -491,16 +539,6 @@
                      (:note d)        (assoc :note (:note d))
                      (ti (:id d))     (assoc :turn-intent (ti (:id d)))
                      (seq (delta-fids d)) (assoc :forms (touched d)))))))))
-
-(defn- human-time
-  "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
-  a delta's `:at`; agents keep the raw ms in the store)."
-  [ms]
-  (when ms
-    (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
-             (java.time.LocalDateTime/ofInstant
-              (java.time.Instant/ofEpochMilli ms)
-              (java.time.ZoneId/systemDefault)))))
 
 (defn query-history
   "The delta log as a story, newest first. Filters: `:ns`, `:contains`
@@ -716,6 +754,27 @@
       (render-text rows)
       rows)))
 
+(defn query-outline
+  "A namespace's shape at a glance (orientation, T2): every defined var with
+  arities, docstring first line, `!`-effect status, and test-ness — a fraction
+  of the tokens of reading the source."
+  [session ns-sym]
+  (let [st  (:store @session)
+        an  (index/analyze (render/render-ns st ns-sym))
+        eff (index/effectful-vars an)]
+    {:ns ns-sym
+     :forms
+     (vec (for [d (:var-definitions an)
+                :when (= ns-sym (:ns d))]
+            (cond-> {:name (:name d)}
+              (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
+              (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
+              (:doc d)                (assoc :doc (first (str/split-lines (:doc d))))
+              (index/test-definition? d) (assoc :test? true)
+              (and (not (index/test-definition? d))
+                   (contains? eff (symbol (str ns-sym) (str (:name d)))))
+              (assoc :effectful? true))))}))
+
 (defn query-project
   "The WHOLE store's shape in one call: every namespace with its outline
   (item 1 — orientation was ~90% of tool calls in successful runs; this
@@ -747,9 +806,6 @@
 
 (def ^:private content-ops
   #{:ingest :add :replace :delete :rename :normalize :move :merge})
-
-(defn- delta-fids [d]
-  (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
 
 (defn- episode-boundary
   "Where `agent-label`'s episode begins: its own last :checkpoint — or, for
@@ -1012,44 +1068,44 @@
         {:root root :calls calls}))))
 
 ^:reads (defn query-eval
-          "Observe-only eval against the live image (the oracle): call anything —
+  "Observe-only eval against the live image (the oracle): call anything —
   including effectful fns — but (re)defining code is rejected (T5); writes go
   through the edit tools so provenance stays airtight."
-          [session code]
-          (if-let [err (edit/observe-gate code)]
-            {:error err}
+  [session code]
+  (if-let [err (edit/observe-gate code)]
+    {:error err}
     ;; strip :reload in the owned image — no source files exist to reload, so it
     ;; would only throw FileNotFoundException (store ns) or waste a jar re-read
-            (let [r (repl/eval-checked! (:image @session) (edit/strip-image-reload code))]
-              (if (:err r)                                  ; F-3c2: never a silent []
-                {:error (:err r)}
-                (:values r)))))
+    (let [r (repl/eval-checked! (:image @session) (edit/strip-image-reload code))]
+      (if (:err r)                                  ; F-3c2: never a silent []
+        {:error (:err r)}
+        (:values r)))))
 
 ^:reads (defn query-observe
-          "Run `driver-code` (observe-gated) while capturing the args and return value
+  "Run `driver-code` (observe-gated) while capturing the args and return value
   of up to `:limit` calls to `ns-sym/nm` — the oracle's direct answer to 'what
   flows through this function?' (D2: observe, don't declare)."
-          [session ns-sym nm driver-code & {:keys [limit] :or {limit 10}}]
-          (if-let [err (edit/observe-gate driver-code)]
-            {:error err}
-            (first (repl/eval! (:image @session)
-                               (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
-                                       ns-sym nm driver-code limit)))))
+  [session ns-sym nm driver-code & {:keys [limit] :or {limit 10}}]
+  (if-let [err (edit/observe-gate driver-code)]
+    {:error err}
+    (first (repl/eval! (:image @session)
+                       (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
+                               ns-sym nm driver-code limit)))))
 
 ^:reads (defn query-macroexpand
-          "Expand a form (built-in macros are part of the dialect; expansion is how
+  "Expand a form (built-in macros are part of the dialect; expansion is how
   the oracle explains them). Returns {:expand-1 str :full str} or {:error}."
-          [session code]
-          (try
-            (let [{:keys [error]} (edit/parse-form code)]
+  [session code]
+  (try
+    (let [{:keys [error]} (edit/parse-form code)]
       ;; parse-form also dialect-checks; for expansion we only care that it READS
-              (if (and error (re-find #"unparseable" error))
-                {:error error}
-                {:expand-1 (first (repl/eval! (:image @session)
-                                              (format "(pr-str (macroexpand-1 '%s))" code)))
-                 :full     (first (repl/eval! (:image @session)
-                                              (format "(pr-str (macroexpand '%s))" code)))}))
-            (catch Exception e {:error (ex-message e)})))
+      (if (and error (re-find #"unparseable" error))
+        {:error error}
+        {:expand-1 (first (repl/eval! (:image @session)
+                                      (format "(pr-str (macroexpand-1 '%s))" code)))
+         :full     (first (repl/eval! (:image @session)
+                                      (format "(pr-str (macroexpand '%s))" code)))}))
+    (catch Exception e {:error (ex-message e)})))
 
 (defn query-namespaces
   "What exists? Every store namespace with its form count (orientation, T2)."
@@ -1057,27 +1113,6 @@
   (let [st (:store @session)]
     (vec (for [ns-sym (keys (:namespaces st))]
            {:ns ns-sym :forms (count (store/forms st ns-sym))}))))
-
-(defn query-outline
-  "A namespace's shape at a glance (orientation, T2): every defined var with
-  arities, docstring first line, `!`-effect status, and test-ness — a fraction
-  of the tokens of reading the source."
-  [session ns-sym]
-  (let [st  (:store @session)
-        an  (index/analyze (render/render-ns st ns-sym))
-        eff (index/effectful-vars an)]
-    {:ns ns-sym
-     :forms
-     (vec (for [d (:var-definitions an)
-                :when (= ns-sym (:ns d))]
-            (cond-> {:name (:name d)}
-              (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
-              (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
-              (:doc d)                (assoc :doc (first (str/split-lines (:doc d))))
-              (index/test-definition? d) (assoc :test? true)
-              (and (not (index/test-definition? d))
-                   (contains? eff (symbol (str ns-sym) (str (:name d)))))
-              (assoc :effectful? true))))}))
 
 ;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
 
@@ -1409,9 +1444,11 @@
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
-          (let [load-res (hot-load-all! session st
-                                        (keep (fn [[k a]] (when (= :load k) a))
-                                              hots))]
+          (let [load-res (or (some->> (edit/cold-load-errors st (distinct (map :ns steps)))
+                                         (hash-map :err))
+                                (hot-load-all! session st
+                                               (keep (fn [[k a]] (when (= :load k) a))
+                                                     hots)))]
             (cond
               (:err load-res)
               {:error (str "group failed to compile: " (:err load-res))}
@@ -1500,7 +1537,9 @@
 (defn move-form!
   "S2: reorder — move form `nm` to just before `:before` in its namespace (the
   fix for append-only forward references). Image vars are order-independent so
-  nothing re-evals; the next fresh load / restart uses the new order."
+  nothing re-evals; the next fresh load / restart uses the new order — which
+  is exactly why the move itself must pass the cold-load check (S1b): a move
+  can CREATE the forward reference a fresh load dies on."
   [session ns-sym nm & {:keys [before prompt agent]}]
   (cond
     (nil? (store/form-named (:store @session) ns-sym nm))
@@ -1513,41 +1552,25 @@
     (let [base0 (:store @session)]
       (if-let [[st' delta] (store/move-form base0 ns-sym nm before
                                             :prompt prompt :agent agent)]
-        (if-not (try-commit! session base0 st' [ns-sym])
-          {:conflict {:reason "store changed concurrently — retry"}}
-          {:delta delta :moved {:form nm :before before}})
+        (if-let [cold (edit/cold-load-errors st' [ns-sym])]
+          {:error cold}
+          (if-not (try-commit! session base0 st' [ns-sym])
+            {:conflict {:reason "store changed concurrently — retry"}}
+            {:delta delta :moved {:form nm :before before}}))
         {:error (str "cannot move " nm)}))))
 
-(defn parse-test-summary
-  "Parse a clojure.test runner's terminal summary into
-  {:ran :assertions :failures :errors :status}, or nil if none is present."
-  [output]
-  (when-let [[_ t a f e] (re-find
-                          #"Ran (\d+) tests containing (\d+) assertions\.\s+(\d+) failures?, (\d+) errors?"
-                          (str output))]
-    (let [f (parse-long f) e (parse-long e)]
-      {:ran (parse-long t) :assertions (parse-long a)
-       :failures f :errors e
-       :status (if (and (zero? f) (zero? e)) :green :red)})))
-
-(defn isolated-test-run!
-  "Run the project's file-based test suite in a FRESH EXTERNAL JVM (shells
-  `clojure -M<alias>` in the store's dir, default `:test`) — the out-of-process
-  counterpart to in-image `traced-run`, for tests the owned image can't host
-  (they spawn their OWN images/subprocesses, so running them in-image recurses;
-  a bare image also lacks the project's source on its classpath). Durable
-  sessions only. Returns {:isolated true :status :ran :assertions :failures
-  :errors :exit :output} (last output lines on failure)."
-  [session & {:keys [alias] :or {alias ":test"}}]
-  (if-let [dir (:dir @session)]
-    (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
-          out (str (:out r) "\n" (:err r))]
-      (merge {:isolated true :exit (:exit r)}
-             (or (parse-test-summary out)
-                 {:status :error
-                  :output (->> (str/split-lines out) (remove str/blank?)
-                               (take-last 8) (str/join "\n"))})))
-    {:error "isolated-test-run! needs a durable session (a store dir)"}))
+(defn- forms-changed-since
+  "Ids of forms touched by deltas after `since-id` (nil = since the beginning)
+  that still exist in the store."
+  [store since-id]
+  (let [ds   (store/deltas store)
+        tail (if since-id
+               (rest (drop-while #(not= since-id (:id %)) ds))
+               ds)]
+    (->> tail
+         (mapcat (fn [d] (if (:form-id d) [(:form-id d)] (:form-ids d))))
+         distinct
+         (filter #(store/ns-of-form-id store %)))))
 
 (defn test-run!
   "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
@@ -1574,18 +1597,92 @@
                       #(store/record-verification % ns-sym summary) [])
     (with-ms summary t0)))
 
-(defn- forms-changed-since
-  "Ids of forms touched by deltas after `since-id` (nil = since the beginning)
-  that still exist in the store."
-  [store since-id]
-  (let [ds   (store/deltas store)
-        tail (if since-id
-               (rest (drop-while #(not= since-id (:id %)) ds))
-               ds)]
-    (->> tail
-         (mapcat (fn [d] (if (:form-id d) [(:form-id d)] (:form-ids d))))
-         distinct
-         (filter #(store/ns-of-form-id store %)))))
+(defn fix-declares!
+  "clj-surgeon-inspired tidy: for each (declare ...) in `ns-sym`, move the
+  declared defns above their first caller when safe (the defn's own intra-ns
+  callees must already precede that point — otherwise SKIP with a reason,
+  e.g. mutual recursion), then delete declares whose every name was
+  satisfied. One atomic group, verified."
+  [session ns-sym & {:keys [prompt agent]}]
+  (let [st     (:store @session)
+        forms  (store/forms st ns-sym)
+        idx-of (into {} (map-indexed (fn [i f] [(:name f) i])
+                                     forms))
+        adj    (callee-adjacency st)
+        an     (index/analyze (render/render-ns st ns-sym))
+        decls  (filter (fn [f]
+                         (and (nil? (:name f))
+                              (= 'declare (try (first (n/sexpr (:node f)))
+                                               (catch Exception _ nil)))))
+                       forms)]
+    (if (empty? decls)
+      {:removed 0 :note "no declares"}
+      (let [[gid st0] (store/alloc-id st "g")
+            plan
+            (for [d decls
+                  nm (rest (n/sexpr (:node d)))]
+              (let [def-idx (get idx-of nm)
+                    callers (for [u (:var-usages an)
+                                  :when (and (= ns-sym (:to u))
+                                             (= nm (:name u))
+                                             (:from-var u)
+                                             (get idx-of (:from-var u)))]
+                              (get idx-of (:from-var u)))
+                    first-caller (when (seq callers) (apply min callers))
+                    my-deps (keep #(when (= (str ns-sym) (namespace %))
+                                     (get idx-of (symbol (name %))))
+                                  (get adj (symbol (str ns-sym) (str nm)) []))]
+                (cond
+                  (nil? def-idx)
+                  {:name nm :decl (:id d) :action :skip
+                   :reason "declared but never defined here"}
+
+                  (or (nil? first-caller) (< def-idx first-caller))
+                  {:name nm :decl (:id d) :action :ok}   ; already fine
+
+                  (every? #(or (= % def-idx) (< % first-caller)) my-deps)
+                  {:name nm :decl (:id d) :action :move
+                   :before (:name (nth forms first-caller))}
+
+                  :else
+                  {:name nm :decl (:id d) :action :skip
+                   :reason "its own callees sit below the caller (mutual recursion?)"})))
+            by-decl (group-by :decl plan)
+            removable (into #{}
+                            (keep (fn [[decl-id entries]]
+                                    (when (every? #(not= :skip (:action %)) entries)
+                                      decl-id)))
+                            by-decl)
+            st' (as-> st0 st*
+                  (reduce (fn [st* {:keys [action name before]}]
+                            (if (= :move action)
+                              (or (first (store/move-form st* ns-sym name before
+                                                          :prompt prompt :group gid
+                                                          :agent agent))
+                                  st*)
+                              st*))
+                          st* plan)
+                  (reduce (fn [st* decl-id]
+                            (or (first (store/remove-form st* ns-sym decl-id
+                                                          :prompt (or prompt "fix-declares")
+                                                          :group gid :agent agent))
+                                st*))
+                          st* removable))]
+        (if (and (empty? removable)
+                 (not-any? #(= :move (:action %)) plan))
+          {:removed 0 :skipped (vec (filter #(= :skip (:action %)) plan))}
+          (if-not (try-commit! session st st' [ns-sym])
+            {:conflict {:reason "store changed during fix-declares — retry"}}
+            (let [summary (run-verification! session ns-sym nil
+                                             :edited (set (map #(symbol (str ns-sym)
+                                                                        (str (:name %)))
+                                                               plan)))]
+              (commit-appended! session
+                                #(store/record-verification % ns-sym summary) [])
+              {:removed (count removable)
+               :moved   (vec (keep #(when (= :move (:action %)) (:name %)) plan))
+               :skipped (vec (filter #(= :skip (:action %)) plan))
+               :test    summary})))))))
 
 (defn checkpoint!
   "Mark a unit of work done: deterministically normalize every form changed
@@ -1680,18 +1777,6 @@
                          (if (= at-id (:id d)) (reduced acc) acc)))
                      [] (store/deltas store))
         v    (last (filter #(= :verify (:op %)) upto))]
-    (if-let [r (:result v)]
-      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
-      :unknown)))
-
-(defn- status-after
-  "The verification outcome a delta PRODUCED: the first `:verify` at or after
-  `at-id` (a write is immediately followed by its verify) — :green / :red /
-  :unknown. This is 'did THIS version land green', vs `status-at`'s 'what
-  was the state standing AT this point'."
-  [store at-id]
-  (let [ds (drop-while #(not= at-id (:id %)) (store/deltas store))
-        v  (first (filter #(= :verify (:op %)) ds))]
     (if-let [r (:result v)]
       (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
       :unknown)))
@@ -1837,29 +1922,29 @@
                    (seq (:deps st)) (assoc :deps (:deps st)))))))))
 
 ^:reads (defn query-commits
-          "Milestones, newest first:
+  "Milestones, newest first:
   [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
   ids plug straight into query-changes :from/:to for between-milestone
   diffs. `:sha` (P4-m8) is the milestone's git commit id — present once the
   git projection has minted it (imported markers carry theirs from birth)."
-          [session]
-          (let [{:keys [dir]} @session
-                shas (when dir
-                       (try (with-open [conn (db/open! dir)]
-                              (db/commit-shas conn))
-                            (catch Exception _ nil)))]
-            (->> (store/deltas (:store @session))
-                 (filter #(= :commit (:op %)))
-                 reverse
-                 (mapv (fn [d]
-                         (cond-> {:commit      (:id d)
-                                  :description (:description d)
-                                  :target      (:target d)
-                                  :status      (:status d)
-                                  :at          (human-time (:at d))}
-                           (:agent d) (assoc :agent (:agent d))
-                           (or (:git-sha d) (get shas (:id d)))
-                           (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
+  [session]
+  (let [{:keys [dir]} @session
+        shas (when dir
+               (try (with-open [conn (db/open! dir)]
+                      (db/commit-shas conn))
+                    (catch Exception _ nil)))]
+    (->> (store/deltas (:store @session))
+         (filter #(= :commit (:op %)))
+         reverse
+         (mapv (fn [d]
+                 (cond-> {:commit      (:id d)
+                          :description (:description d)
+                          :target      (:target d)
+                          :status      (:status d)
+                          :at          (human-time (:at d))}
+                   (:agent d) (assoc :agent (:agent d))
+                   (or (:git-sha d) (get shas (:id d)))
+                   (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; External dependencies (Tier 1) — the per-store manifest
@@ -2190,93 +2275,6 @@
                        :test     summary
                        :affected (or affected :all)}))))))))))
 
-(defn fix-declares!
-  "clj-surgeon-inspired tidy: for each (declare ...) in `ns-sym`, move the
-  declared defns above their first caller when safe (the defn's own intra-ns
-  callees must already precede that point — otherwise SKIP with a reason,
-  e.g. mutual recursion), then delete declares whose every name was
-  satisfied. One atomic group, verified."
-  [session ns-sym & {:keys [prompt agent]}]
-  (let [st     (:store @session)
-        forms  (store/forms st ns-sym)
-        idx-of (into {} (map-indexed (fn [i f] [(:name f) i])
-                                     forms))
-        adj    (callee-adjacency st)
-        an     (index/analyze (render/render-ns st ns-sym))
-        decls  (filter (fn [f]
-                         (and (nil? (:name f))
-                              (= 'declare (try (first (n/sexpr (:node f)))
-                                               (catch Exception _ nil)))))
-                       forms)]
-    (if (empty? decls)
-      {:removed 0 :note "no declares"}
-      (let [[gid st0] (store/alloc-id st "g")
-            plan
-            (for [d decls
-                  nm (rest (n/sexpr (:node d)))]
-              (let [def-idx (get idx-of nm)
-                    callers (for [u (:var-usages an)
-                                  :when (and (= ns-sym (:to u))
-                                             (= nm (:name u))
-                                             (:from-var u)
-                                             (get idx-of (:from-var u)))]
-                              (get idx-of (:from-var u)))
-                    first-caller (when (seq callers) (apply min callers))
-                    my-deps (keep #(when (= (str ns-sym) (namespace %))
-                                     (get idx-of (symbol (name %))))
-                                  (get adj (symbol (str ns-sym) (str nm)) []))]
-                (cond
-                  (nil? def-idx)
-                  {:name nm :decl (:id d) :action :skip
-                   :reason "declared but never defined here"}
-
-                  (or (nil? first-caller) (< def-idx first-caller))
-                  {:name nm :decl (:id d) :action :ok}   ; already fine
-
-                  (every? #(or (= % def-idx) (< % first-caller)) my-deps)
-                  {:name nm :decl (:id d) :action :move
-                   :before (:name (nth forms first-caller))}
-
-                  :else
-                  {:name nm :decl (:id d) :action :skip
-                   :reason "its own callees sit below the caller (mutual recursion?)"})))
-            by-decl (group-by :decl plan)
-            removable (into #{}
-                            (keep (fn [[decl-id entries]]
-                                    (when (every? #(not= :skip (:action %)) entries)
-                                      decl-id)))
-                            by-decl)
-            st' (as-> st0 st*
-                  (reduce (fn [st* {:keys [action name before]}]
-                            (if (= :move action)
-                              (or (first (store/move-form st* ns-sym name before
-                                                          :prompt prompt :group gid
-                                                          :agent agent))
-                                  st*)
-                              st*))
-                          st* plan)
-                  (reduce (fn [st* decl-id]
-                            (or (first (store/remove-form st* ns-sym decl-id
-                                                          :prompt (or prompt "fix-declares")
-                                                          :group gid :agent agent))
-                                st*))
-                          st* removable))]
-        (if (and (empty? removable)
-                 (not-any? #(= :move (:action %)) plan))
-          {:removed 0 :skipped (vec (filter #(= :skip (:action %)) plan))}
-          (if-not (try-commit! session st st' [ns-sym])
-            {:conflict {:reason "store changed during fix-declares — retry"}}
-            (let [summary (run-verification! session ns-sym nil
-                                             :edited (set (map #(symbol (str ns-sym)
-                                                                        (str (:name %)))
-                                                               plan)))]
-              (commit-appended! session
-                                #(store/record-verification % ns-sym summary) [])
-              {:removed (count removable)
-               :moved   (vec (keep #(when (= :move (:action %)) (:name %)) plan))
-               :skipped (vec (filter #(= :skip (:action %)) plan))
-               :test    summary})))))))
-
 (defn ns-rename!
   "Rename a WHOLE namespace: its ns decl, every require clause, and every
   fully-qualified reference across the store; the namespaces map rekeys; the
@@ -2573,14 +2571,14 @@
     (doseq [^java.io.File c (reverse (file-seq f))] (.delete c))))
 
 ^:reads (defn- load-line
-          "An inactive line's {:store :conn}: from memory, or lazily from its branch
+  "An inactive line's {:store :conn}: from memory, or lazily from its branch
   db in a durable session. nil if unknown."
-          [session nm]
-          (let [{:keys [lines dir]} @session]
-            (or (get lines nm)
-                (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
-                  (let [c (db/open! (line-dir dir nm))]
-                    {:store (db/load-store c) :conn c})))))
+  [session nm]
+  (let [{:keys [lines dir]} @session]
+    (or (get lines nm)
+        (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
+          (let [c (db/open! (line-dir dir nm))]
+            {:store (db/load-store c) :conn c})))))
 
 (defn branch!
   "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
@@ -2685,26 +2683,6 @@
                       adopted       (assoc :adopted true)
                       (not adopted) (assoc :booted true))))))
         {:error (str "no branch named " nm)}))))
-
-(defn reap-idle-images!
-  "Stop parked branch images idle past the session TTL (the session's reaper
-  timer calls this periodically; callable directly). Returns {:reaped n}."
-  [session]
-  (let [ttl     (:branch-image-ttl-ms @session 600000)
-        now     (System/currentTimeMillis)
-        victims (volatile! #{})]
-    (swap! session update :lines
-           (fn [lines]
-             (into {}
-                   (map (fn [[nm line]]
-                          (if (and (:image line)
-                                   (> (- now (:last-used line 0)) ttl))
-                            (do (vswap! victims conj (:image line))
-                                [nm (dissoc line :image)])
-                            [nm line])))
-                   lines)))
-    (doseq [img @victims] (repl/stop! img))
-    {:reaped (count @victims)}))
 
 (defn branch-merge!
   "Merge branch `nm` into the CURRENT line (switch to main first to merge
@@ -2864,3 +2842,32 @@
                                      (str/join ", " warns)
                                      " — the native build may need a tracing-agent run")
                                 :metadata-missing warns))))))))))
+(defn parse-test-summary
+  "Parse a clojure.test runner's terminal summary into
+  {:ran :assertions :failures :errors :status}, or nil if none is present."
+  [output]
+  (when-let [[_ t a f e] (re-find
+                          #"Ran (\d+) tests containing (\d+) assertions\.\s+(\d+) failures?, (\d+) errors?"
+                          (str output))]
+    (let [f (parse-long f) e (parse-long e)]
+      {:ran (parse-long t) :assertions (parse-long a)
+       :failures f :errors e
+       :status (if (and (zero? f) (zero? e)) :green :red)})))
+(defn isolated-test-run!
+  "Run the project's file-based test suite in a FRESH EXTERNAL JVM (shells
+  `clojure -M<alias>` in the store's dir, default `:test`) — the out-of-process
+  counterpart to in-image `traced-run`, for tests the owned image can't host
+  (they spawn their OWN images/subprocesses, so running them in-image recurses;
+  a bare image also lacks the project's source on its classpath). Durable
+  sessions only. Returns {:isolated true :status :ran :assertions :failures
+  :errors :exit :output} (last output lines on failure)."
+  [session & {:keys [alias] :or {alias ":test"}}]
+  (if-let [dir (:dir @session)]
+    (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
+          out (str (:out r) "\n" (:err r))]
+      (merge {:isolated true :exit (:exit r)}
+             (or (parse-test-summary out)
+                 {:status :error
+                  :output (->> (str/split-lines out) (remove str/blank?)
+                               (take-last 8) (str/join "\n"))})))
+    {:error "isolated-test-run! needs a durable session (a store dir)"}))

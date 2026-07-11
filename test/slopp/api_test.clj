@@ -41,9 +41,19 @@
         (is (false? (:effectful? (api/query-symbol sess 'demo 'add))))
         (is (true? (:effectful? (api/query-symbol sess 'demo 'tainted)))))
       (testing "query.references finds callers"
-        (api/edit-replace! sess 'demo 'add "(defn add [x y] (tainted (atom (+ x y))))"
-                           :prompt "call tainted")
-        (is (seq (api/query-references sess 'demo 'tainted))))
+        ;; tainted is defined AFTER add — the caller must be the later form,
+        ;; or the write is (correctly) refused by the cold-load gate (S1b)
+        (let [r (api/edit-replace! sess 'demo 'tainted
+                                   "(defn tainted [a] (add (swap! a inc) 1))"
+                                   :prompt "call add")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (seq (api/query-references sess 'demo 'add))))
+      (testing "the cold-load gate refuses the reverse (early form calling a later one)"
+        (is (re-find #"cold-load"
+                     (str (:error (api/edit-replace!
+                                   sess 'demo 'add
+                                   "(defn add [x y] (tainted (atom (+ x y))))"
+                                   :prompt "call tainted"))))))
       (testing "query.eval asks the live image (the oracle)"
         (is (= [7] (api/query-eval sess "(+ 3 4)"))))
       (testing "edit.replace-form updates store + hot-reloads image"

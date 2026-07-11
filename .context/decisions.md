@@ -695,6 +695,25 @@ verified bidirectionally (A→B→A round-trip, byte-exact convergence).
 Un-milestone'd local work rides through a pull untouched; unpushed local
 MILESTONES fold into the next post-pull milestone (documented squash).
 
+## S — the gate
+
+S1b ✅ **The compile gate proves COLD-load, not just hot-load.** Found while
+building git pull: an edit_group replaced `-main` (mid-file) to call `pull!`
+(appended at the tail) and committed GREEN — the gate hot-loads into the
+live image, where every var already exists and definition order is
+invisible; a fresh load (boot, restart, new image) threw "Unable to resolve
+symbol". The green gate's promise was violated in the cold-load sense, and
+the failure surfaces far from its cause (the next restart). Fix:
+`index/forward-refs` (same-ns var usage positioned before the var's first
+def/declare, (row, col) lexicographic, from the kondo analysis already run
+per write) + `edit/cold-load-errors`, enforced BEFORE the image is touched
+in `rebased-write!` (both branches), `edit-group!`, and `move-form!` — a
+move can CREATE the forward ref. Validated against the whole store: 0
+findings across 33 namespaces (boot cold-loads them all). Over-approximation
+accepted: syntax-quoted own-ns symbols count (declare satisfies); quoted
+symbols and cross-ns usages are correctly ignored. `ingest!` exempt (a
+brand-new ns cold-loads for real). Merge replay unedited — follow-up.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

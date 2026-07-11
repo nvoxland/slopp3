@@ -148,3 +148,29 @@
   (for [u (:var-usages analysis)
         :when (and (= to-ns (:to u)) (= to-name (:name u)))]
     {:from-ns (:from u) :from-var (:from-var u) :row (:row u) :col (:col u)}))
+(defn forward-refs
+  "Same-namespace var usages positioned BEFORE the var's first definition or
+  declare — code a LIVE image hot-loads happily (the var already exists) but
+  a FRESH namespace load cannot resolve (boot, restart, a new image). The
+  cold-load half of the compile gate. Position is (row, col) lexicographic —
+  forms can share a line. Returns [{:symbol :row :col :form :def-row}].
+  Known over-approximation: a syntax-quoted own-ns symbol counts as a usage
+  (kondo doesn't distinguish it) — a declare satisfies the gate there too."
+  [analysis ns-sym]
+  (let [before? (fn [[r1 c1] [r2 c2]]
+                  (or (< r1 r2) (and (= r1 r2) (< c1 c2))))
+        dpos    (reduce (fn [m d]
+                          (let [p [(:row d) (:col d)]]
+                            (update m (:name d)
+                                    #(if (and % (before? % p)) % p))))
+                        {}
+                        (filter #(= ns-sym (:ns %)) (:var-definitions analysis)))]
+    (vec (for [u (:var-usages analysis)
+               :when (and (= ns-sym (:to u)) (= ns-sym (:from u)))
+               :let [d (get dpos (:name u))]
+               :when (and d (before? [(:row u) (:col u)] d))]
+           {:symbol  (:name u)
+            :row     (:row u)
+            :col     (:col u)
+            :form    (:from-var u)
+            :def-row (first d)}))))
