@@ -257,8 +257,11 @@ Two transports share the SAME dispatch (`mcp/handle`):
   unblocks `git_push`.
 - `query_git` reports the local read-only listener URL AND `:external`
   (`git-remote`/`git-base-sha`) when set.
-- CLI: `clojure -M -m slopp.sync clone <url> <dir> | push <dir> [url] |
-  pull <dir>`.
+- CLI (fileless tree — everything enters through the boot trampoline):
+  `clojure -M -m slopp.boot <dir> --main slopp.sync/-main
+  clone <url> <dir> | push <dir> [url] | pull <dir>`. Auth:
+  `SLOPP_GIT_TOKEN=$(gh auth token)` env on the command. Proven against
+  real GitHub (nvoxland/slopp3): push → API edit → pull → FF push.
 
 ## Running from the store (`slopp.boot`)
 
