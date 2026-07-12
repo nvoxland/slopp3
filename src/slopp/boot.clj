@@ -140,12 +140,16 @@
 
   Load the store's program into THIS jvm and run its entry point (default
   slopp.mcp/-main <dir>). --live tracks the store and hot-reloads changed
-  namespaces. --main trampolines any store CLI — in a fileless tree this is
-  THE entry point: e.g.
+  namespaces (the watcher is a DAEMON thread — it never keeps the JVM alive
+  after the program exits). --main trampolines any store CLI — in a fileless
+  tree this is THE entry point: e.g.
     clojure -M -m slopp.boot . --main slopp.sync/-main push . <url>"
   [& args]
   (let [{:keys [dir live? main args]} (parse-args args)]
     (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
     (load-store! dir)
-    (when live? (future (watch-live! dir)))
+    (when live?
+      (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
+        (.setDaemon true)
+        (.start)))
     (apply (requiring-resolve main) args)))
