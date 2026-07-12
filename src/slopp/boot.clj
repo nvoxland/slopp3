@@ -25,19 +25,24 @@
 ;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
 
 ^:reads (defn- open-conn [dir]
-          (jdbc/get-connection
-           (jdbc/get-datasource {:dbtype "sqlite"
-                                 :dbname (str (io/file dir ".slopp" "store.db"))})))
+  (let [f (io/file dir ".slopp" "store.db")]
+    (io/make-parents f)
+    (jdbc/get-connection
+     (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))))
 
 ^:reads (defn store-sources
-          "{ns-sym source} for every namespace in the store db — byte-exact (each
+  "{ns-sym source} for every namespace in the store db — byte-exact (each
   `elements.source` is a form's canonical CST string; concatenated by pos it IS
-  render-ns output)."
-          [conn]
-          (reduce (fn [m row]
-                    (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
-                  {}
-                  (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"])))
+  render-ns output). A schema-less db (brand-new dir) is an EMPTY store — the
+  served program's own open creates the schema."
+  [conn]
+  (if (empty? (jdbc/execute! conn ["SELECT name FROM sqlite_master
+                                    WHERE type='table' AND name='elements'"]))
+    {}
+    (reduce (fn [m row]
+              (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
+            {}
+            (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"]))))
 
 ;; --- dependency order (internal requires only) ---
 

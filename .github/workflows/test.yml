@@ -54,7 +54,7 @@ jobs:
         env:
           SLOPP_CLOJURE: clojure
         run: |
-          git branch -f main HEAD
+          git rev-parse --verify main >/dev/null 2>&1 || git branch main HEAD
           clojure -M -m slopp.sync clone "$PWD" /tmp/store
       - name: Run the store's suite (isolated tier, built from the store)
         env:
