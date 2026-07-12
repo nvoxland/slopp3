@@ -346,3 +346,54 @@
           (api/close! sess)
           (rm-rf dir)
           (rm-rf work))))))
+(deftest ^:isolated import-into-a-main-checkout
+  ;; THE onboarding flow: git clone (main checked out, human files on disk) →
+  ;; slopp import . → the store comes from the slopp BRANCH of the same local
+  ;; repo; the working dir stays the human's main checkout
+  (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
+        seed-d (temp-dir)
+        sess   (api/open! {:dir seed-d})]
+    (try
+      ;; seed origin's slopp branch from a store, and main from a "human"
+      (api/ingest! sess 'im.core "(ns im.core)\n(defn f [] 41)\n")
+      (api/commit-point! sess "v1" :agent "a")
+      (is (nil? (:error (sync/push! seed-d :url origin))))
+      (human-commit! origin "main" "README.md" "# my project\n")
+      ;; a human's git clone: main checked out, slopp only remote-tracking
+      (let [work (str (temp-dir) "/work")]
+        (-> (org.eclipse.jgit.api.Git/cloneRepository)
+            (.setURI (str (io/file origin))) (.setDirectory (io/file work))
+            (.setBranch "main") (.call) (.close))
+        (is (.exists (io/file work "README.md")))
+        (testing "import builds the store from the local repo's slopp branch"
+          (let [r (sync/import! work)]
+            (is (nil? (:error r)) (pr-str r))
+            (is (= 1 (:namespaces r)))
+            (is (= "slopp" (:branch r)))
+            (is (.exists (io/file work ".slopp" "store.db")))
+            (testing "the human's checkout is untouched"
+              (is (.exists (io/file work "README.md")))
+              (is (empty? (->> (file-seq (io/file work "src"))
+                               (filter #(.isFile ^java.io.File %))))))))
+        (testing "the imported store syncs against the LOCAL repo's slopp branch"
+          (let [sw (api/open! {:dir work})]
+            (try
+              (is (= "." (db/get-meta (:db @sw) "git-remote")))
+              (api/edit-replace! sw 'im.core 'f "(defn f [] 42)"
+                                 :prompt "answer" :agent "b")
+              (api/commit-point! sw "v2" :agent "b")
+              (let [p (sync/push! work)]
+                (is (nil? (:error p)) (pr-str p))
+                ;; refs/heads/slopp advanced INSIDE the checkout's .git;
+                ;; origin untouched (the human pushes with regular git)
+                (let [local (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
+                                (.setGitDir (io/file work ".git")) (.build))]
+                  (try
+                    (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp"))))
+                    (finally (.close local)))))
+              (finally (api/close! sw)))))
+        (rm-rf work))
+      (finally
+        (api/close! sess)
+        (rm-rf seed-d)
+        (rm-rf (.getParentFile (io/file origin)))))))

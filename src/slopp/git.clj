@@ -549,10 +549,13 @@
                    (System/getenv "GIT_TOKEN"))]
     (UsernamePasswordCredentialsProvider. "x-access-token" ^String t)))
 (defn fetch-remote!
-  "Fetch `url`'s branches into `repo` under refs/remotes/origin/*. Returns
-  {:tip sha-or-nil} for `branch`. Used to seed a clone, and to bring a
-  remote's objects in before a grafted push. Scheme-less urls are local
-  paths — made absolute (an in-memory repo has no dir to resolve against)."
+  "Fetch `url`'s branches into `repo` under refs/remotes/origin/* (plus the
+  source's own remote-tracking refs under refs/remotes/tracking/*, so a
+  plain checkout works as a remote — its slopp branch may exist only as
+  origin/slopp). Returns {:tip sha-or-nil} for `branch`. Used to seed a
+  clone/import, and to bring a remote's objects in before a grafted push.
+  Scheme-less urls are local paths — made absolute (an in-memory repo has no
+  dir to resolve against)."
   [^Repository repo url & {:keys [token branch] :or {branch "main"}}]
   (let [s   (str url)
         uri (URIish. ^String (if (re-find #"^[a-z+]+://" s)
@@ -562,8 +565,10 @@
       (when-let [creds (remote-credentials token)]
         (.setCredentialsProvider tn creds))
       (.fetch tn NullProgressMonitor/INSTANCE
-              [(RefSpec. "+refs/heads/*:refs/remotes/origin/*")])
-      {:tip (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))})))
+              [(RefSpec. "+refs/heads/*:refs/remotes/origin/*")
+               (RefSpec. "+refs/remotes/origin/*:refs/remotes/tracking/*")])
+      {:tip (or (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))
+                (some-> (.resolve repo (str "refs/remotes/tracking/" branch)) (.name)))})))
 ^:reads (defn tree-at
   "{path text} for the whole tree of commit `sha` — UTF-8 blobs, sorted.
   Works on any repo handle (the in-memory projection or an on-disk remote)."

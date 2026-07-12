@@ -37,6 +37,16 @@
       (let [head (io/file s ".git" "HEAD")]
         (when (.exists head)
           (second (re-find #"ref: refs/heads/(\S+)" (slurp head))))))))
+(defn- resolve-remote
+  "A store's saved remote may be RELATIVE (import! saves \".\": the store's
+  own containing repo) — resolve it against the store dir, not the CWD."
+  [dir target]
+  (let [s (str target)]
+    (if (or (str/blank? s)
+            (re-find #"^[a-z+]+://" s)
+            (.isAbsolute (io/file s)))
+      target
+      (str (io/file (str dir) s)))))
 (defn push!
   "Push the store at `dir`'s projection to a git remote: `:url` the first
   time (saved as `git-remote` meta), the saved remote thereafter. The DEST
@@ -50,7 +60,7 @@
   (let [ctx (git/open-ctx! dir)]
     (try
       (let [conn    (:map-conn ctx)
-            target  (or url (db/get-meta conn "git-remote"))
+            target  (resolve-remote dir (or url (db/get-meta conn "git-remote")))
             rbranch (or branch (db/get-meta conn "git-branch") "slopp")
             q       (db/quarantine-list conn)]
         (cond
@@ -367,7 +377,7 @@
       (let [shared (get-in @session [:git-server :ctx])
             ctx    (or shared (git/open-ctx! dir))]
         (try
-          (let [url (db/get-meta (:map-conn ctx) "git-remote")]
+          (let [url (resolve-remote dir (db/get-meta (:map-conn ctx) "git-remote"))]
             (if (str/blank? (str url))
               {:error "no remote configured — git_push with :url (or clone) first"}
               (let [ours (get-in (git/ensure-projected! ctx) [:refs "main"])
@@ -402,19 +412,38 @@
   (with-open [conn (db/open! dir)]
     (db/quarantine-clear! conn path)
     {:conflicts (db/quarantine-list conn)}))
+(defn import!
+  "THE onboarding command: inside a git checkout (main checked out, the
+  human's files on disk), build `.slopp/store.db` from the repo's slopp
+  BRANCH — found on local heads or the checkout's remote-tracking refs — and
+  configure the store to sync against the LOCAL repo (`git-remote \".\"`,
+  resolved relative to the store dir). Only `.slopp/` is created; the
+  working dir stays the human's checkout, and origin interaction stays with
+  regular git. Returns {:dir :namespaces :base :branch :remote} | {:error}."
+  [dir & {:keys [token branch agent]}]
+  (if-not (.exists (io/file dir ".git"))
+    {:error (str dir " is not a git checkout — clone the repo first"
+                 " (or use clone <url> <dir> for a fresh fileless store)")}
+    (let [r (clone! (str dir) (str dir) :token token :branch branch :agent agent)]
+      (if (:error r)
+        r
+        (do (with-open [conn (db/open! dir)]
+              (db/set-meta! conn "git-remote" "."))
+            (assoc r :remote "."))))))
 (defn -main
-  "clojure -M -m slopp.sync clone <url> <dir> | push <dir> [url] | pull <dir>"
+  "clojure -M -m slopp.sync clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"
   [& [cmd a b]]
   (let [r (case cmd
-            "clone" (clone! a b)
-            "push"  (push! a :url b)
-            "pull"  (let [sess (api/open! {:dir a})]
-                      (try (pull! sess)
-                           (finally (api/close! sess))))
-            "test"  (let [sess (api/open! {:dir a})]
-                      (try (api/isolated-test-run! sess)
-                           (finally (api/close! sess))))
-            {:error "usage: clone <url> <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
+            "clone"  (clone! a b)
+            "import" (import! (or a "."))
+            "push"   (push! a :url b)
+            "pull"   (let [sess (api/open! {:dir a})]
+                       (try (pull! sess)
+                            (finally (api/close! sess))))
+            "test"   (let [sess (api/open! {:dir a})]
+                       (try (api/isolated-test-run! sess)
+                            (finally (api/close! sess))))
+            {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
     (println (pr-str r))
     (shutdown-agents)
     (when (or (:error r) (= :red (:status r))) (System/exit 1))))
