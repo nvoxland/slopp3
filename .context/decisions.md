@@ -720,6 +720,16 @@ multi-server), deftests auto-tagged `^:isolated`; two forms needed
 
 ## S — the gate
 
+S2 ✅ **Writes refuse NEW error-level lint** (`edit/lint-refusals`, wired
+beside the cold-load check in `rebased-write!`/`edit-group!`). Kondo `:error`
+findings are ~never false positives (two "invalid-arity" errors once
+dismissed as noise were real ArityExceptions in shipped handlers). Diffed
+candidate-vs-base per ns, keyed (type, message): pre-existing errors don't
+block (no legacy deadlock), warnings stay advisory. Live-fired: an
+arity-breaking add was refused by the very server that had hot-loaded the
+gate minutes earlier (live mode, T1 — the running host now serves its own
+just-edited code without restart, proven via the cheat-sheet edit).
+
 S1b ✅ **The compile gate proves COLD-load, not just hot-load.** Found while
 building git pull: an edit_group replaced `-main` (mid-file) to call `pull!`
 (appended at the tail) and committed GREEN — the gate hot-loads into the
