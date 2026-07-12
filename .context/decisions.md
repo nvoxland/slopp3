@@ -828,3 +828,14 @@ literals, riding the full gated replace pipeline. Live-fired: the stale
 "import: git push → slopp (M3)" banners in slopp.git (unremovable since
 b0511ea) are finally gone, and sync/-main's docstring caught up via text
 mode. The last friction-log design item is closed.
+
+## G7 — MANIFEST.MF is tracked jar config (generic file system completed)
+
+G7 ✅ `java -jar slopp.jar` needs NO args: the entry point is CONFIG on the
+files manifest — `META-INF/MANIFEST.MF` (tracked like any file: history via
+`file_history`, time travel via `file_get {at}`) carries `Main-Class` and
+`X-Slopp-Main`. build.clj GENERATES the named launcher class at build time
+(host scaffolding, gen-class never enters the store) delegating through
+requiring-resolve, so only that one class is AOT'd. `build!` materializes
+manifest files (the projection already did). Other config
+files/formats ride the same generic system — it's just tracked text.
