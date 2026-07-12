@@ -839,3 +839,29 @@ files manifest — `META-INF/MANIFEST.MF` (tracked like any file: history via
 requiring-resolve, so only that one class is AOT'd. `build!` materializes
 manifest files (the projection already did). Other config
 files/formats ride the same generic system — it's just tracked text.
+
+## G8/G9 — mixed ownership + structured config
+
+G8 ✅ **The branch is the ownership boundary.** slopp pushes/pulls exactly
+ONE remote branch — config `git-branch`, default **"slopp"** — and never
+touches anything else; humans own `main` (docs, README, hand-managed files)
+with regular git and merge across at will. `push-to-remote!` disentangles
+the local projection line (`:branch`, default main) from the remote dest
+(`:remote-branch`); clone finds `slopp` then falls back to legacy `main`
+and records `git-branch`; pull fetches the configured branch. Local-repo
+workflow: `git-remote "."` pushes into the checkout's own `.git` as the
+slopp branch (guarded: never onto a branch a working tree has checked out —
+JGit would move the ref under it). slopp3 migrated: slopp owns `slopp`,
+`main` is human-owned (README lives there now, committed via the GitHub
+API), CI triggers follow the slopp branch.
+
+G9 ✅ **Execution config is SEMANTIC, not raw text.** The store's `:config`
+({path {:format :values}}) holds key/values with per-key delta history
+(:config-put/:config-unset — the non-code analog of form edits); the
+projection serializes each entry into its format at tree-build time
+(`store/render-config`; :manifest = sorted `K: V` lines; new formats add a
+serializer case). `config_file` is the tool. META-INF/MANIFEST.MF migrated
+from a raw tracked file to two semantic keys — the rendered output is
+byte-identical, and `java -jar slopp.jar` still boots bare. The raw files
+manifest remains for things that genuinely are opaque files (CI workflows,
+until a YAML serializer exists); README and human docs belong on main.
