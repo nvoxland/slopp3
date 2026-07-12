@@ -281,3 +281,7 @@ Two transports share the SAME dispatch (`mcp/handle`):
   (reaper, git `HttpHandler`) keep old code until re-created. See D-series R.
 - `build!` MATERIALIZES the store to files (for tooling/native-image);
   `boot` RUNS it in place. Two exits from the store, same source of truth.
+- `config {key value?}` — store config: user.name/user.email, the git author
+  identity stamped ON the milestone marker at commit_point time (G5);
+  unset or "<git>" defers to `git config` in the project dir. Determinism:
+  identity lives on the marker, never read from config at projection time.
