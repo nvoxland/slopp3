@@ -37,3 +37,31 @@
       (is (= "v2\n" (store/file-at s3 wf (:id d2))))
       (is (nil? (store/file-at s3 wf (:id d3))))
       (is (nil? (store/file-at s3 wf "d0"))))))
+(deftest structured-config-is-semantic-with-per-key-history
+  (let [base (store/ingest (store/empty-store) 'cf.core "(ns cf.core)\n")
+        mf   "META-INF/MANIFEST.MF"
+        [s1 d1] (store/record-config-put base mf :manifest
+                                         "Main-Class" "slopp.launcher" :agent "a")
+        [s2 d2] (store/record-config-put s1 mf :manifest
+                                         "X-Slopp-Main" "slopp.boot/-main" :agent "a")]
+    (testing "the store holds semantics, not text"
+      (is (= {:format :manifest
+              :values {"Main-Class" "slopp.launcher"
+                       "X-Slopp-Main" "slopp.boot/-main"}}
+             (get-in s2 [:config mf]))))
+    (testing "rendering serializes to the format (sorted, deterministic)"
+      (is (= "Main-Class: slopp.launcher\nX-Slopp-Main: slopp.boot/-main\n"
+             (store/render-config (get-in s2 [:config mf])))))
+    (testing "per-key deltas replay on foreign stores"
+      (is (= (get-in s2 [:config mf])
+             (get-in (store/replay-delta (store/replay-delta base d1) d2)
+                     [:config mf]))))
+    (testing "unset drops a key; the last key drops the entry"
+      (let [[s3 d3] (store/record-config-unset s2 mf "X-Slopp-Main")]
+        (is (= {"Main-Class" "slopp.launcher"} (get-in s3 [:config mf :values])))
+        (is (= (get-in s3 [:config mf])
+               (get-in (store/replay-delta s2 d3) [:config mf])))
+        (let [[s4 _] (store/record-config-unset s3 mf "Main-Class")]
+          (is (nil? (get-in s4 [:config mf]))))))
+    (testing "unknown formats refuse to render"
+      (is (thrown? Exception (store/render-config {:format :yaml :values {"a" "b"}}))))))

@@ -83,7 +83,7 @@
                 (let [remote (-> (FileRepositoryBuilder.)
                                  (.setGitDir (io/file bare)) (.build))]
                   (try
-                    (let [tip (.name (.resolve remote "refs/heads/main"))]
+                    (let [tip (.name (.resolve remote "refs/heads/slopp"))]
                       (is (= (:pushed p2) tip))
                       (testing "the new tip's parent IS the pre-clone tip (graft worked)"
                         (with-open [rw (RevWalk. remote)]
@@ -252,3 +252,97 @@
       (try
         (is (:error (sync/push! dir)))
         (finally (rm-rf dir))))))
+(defn- human-commit!
+  "Plumbing-commit one file onto `branch` of the BARE repo at `dir` (the
+  'human owns this branch with regular git' side of mixed ownership).
+  Returns the new sha."
+  [dir branch path text]
+  (let [repo (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
+                 (.setGitDir (clojure.java.io/file (str dir)))
+                 (.build))]
+    (try
+      (with-open [ins (.newObjectInserter repo)]
+        (let [blob (.insert ins org.eclipse.jgit.lib.Constants/OBJ_BLOB
+                            (.getBytes ^String text "UTF-8"))
+              dc   (org.eclipse.jgit.dircache.DirCache/newInCore)
+              b    (.builder dc)]
+          (.add b (doto (org.eclipse.jgit.dircache.DirCacheEntry. ^String path)
+                    (.setFileMode org.eclipse.jgit.lib.FileMode/REGULAR_FILE)
+                    (.setObjectId blob)))
+          (.finish b)
+          (let [tree (.writeTree dc ins)
+                old  (.resolve repo (str "refs/heads/" branch))
+                pi   (org.eclipse.jgit.lib.PersonIdent. "human" "human@example.com")
+                cb   (doto (org.eclipse.jgit.lib.CommitBuilder.)
+                       (.setTreeId tree)
+                       (.setAuthor pi)
+                       (.setCommitter pi)
+                       (.setMessage "human commit"))]
+            (when old (.setParentId cb old))
+            (let [cid (.insert ins cb)]
+              (.flush ins)
+              (.update (doto (.updateRef repo (str "refs/heads/" branch))
+                         (.setNewObjectId cid)
+                         (.setForceUpdate true)))
+              (.name cid)))))
+      (finally (.close repo)))))
+(deftest ^:isolated slopp-owns-one-branch-humans-own-the-rest
+  ;; the ownership boundary IS the branch: slopp pushes only refs/heads/slopp
+  ;; (the git-branch default); a human manages main with regular git and
+  ;; slopp never touches it — mixed repos without everything living in slopp
+  (let [dir  (temp-dir)
+        bare (bare-repo! (str (temp-dir) "/remote.git"))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn f [] 1)\n")
+      (api/commit-point! sess "v1" :agent "a")
+      (testing "default push lands on the slopp branch; main is never created"
+        (let [p (sync/push! dir :url bare)]
+          (is (nil? (:error p)) (pr-str p))
+          (let [remote (-> (FileRepositoryBuilder.)
+                           (.setGitDir (io/file bare)) (.build))]
+            (try
+              (is (some? (.resolve remote "refs/heads/slopp")))
+              (is (nil? (.resolve remote "refs/heads/main")))
+              (finally (.close remote))))))
+      (testing "a human commit on main survives slopp pushes and stays out of pulls"
+        (let [human-sha (human-commit! bare "main" "NOTES.md" "mine, not slopp's\n")]
+          (api/edit-replace! sess 'mo.core 'f "(defn f [] 2)"
+                             :prompt "v2" :agent "a")
+          (api/commit-point! sess "v2" :agent "a")
+          (is (nil? (:error (sync/push! dir))))
+          (let [remote (-> (FileRepositoryBuilder.)
+                           (.setGitDir (io/file bare)) (.build))]
+            (try
+              (is (= human-sha (.name (.resolve remote "refs/heads/main"))))
+              (finally (.close remote))))
+          (testing "pull reads only the slopp branch — the human file never enters"
+            (is (:up-to-date (sync/pull! sess :agent "a")))
+            (is (nil? (get (:files (:store @sess)) "NOTES.md"))))))
+      (finally
+        (api/close! sess)
+        (rm-rf dir)
+        (rm-rf (.getParentFile (io/file bare)))))))
+(deftest ^:isolated local-repo-push-guards-the-checked-out-branch
+  ;; pushing INTO the working repo's own .git is the local mixed workflow —
+  ;; but never onto the branch a working tree has checked out (JGit would
+  ;; move the ref under it)
+  (let [work (temp-dir)
+        dir  (temp-dir)]
+    (-> (org.eclipse.jgit.api.Git/init) (.setInitialBranch "main")
+        (.setDirectory (io/file work)) (.call) (.close))
+    (let [sess (api/open! {:dir dir})]
+      (try
+        (api/ingest! sess 'lo.core "(ns lo.core)\n")
+        (api/commit-point! sess "v1" :agent "a")
+        (testing "the checked-out branch is refused"
+          (let [r (sync/push! dir :url work :branch "main")]
+            (is (:error r))
+            (is (re-find #"checked out" (str (:error r))))))
+        (testing "any other branch of the same working repo is fine"
+          (let [r (sync/push! dir :url work)]
+            (is (nil? (:error r)) (pr-str r))))
+        (finally
+          (api/close! sess)
+          (rm-rf dir)
+          (rm-rf work))))))

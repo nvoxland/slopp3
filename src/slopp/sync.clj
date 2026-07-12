@@ -27,17 +27,32 @@
   (when-let [[_ rel] (re-matches #"(?:src|test)/(.+)\.clj" (str path))]
     (symbol (-> rel (str/replace "/" ".") (str/replace "_" "-")))))
 
+(defn- checked-out-branch
+  "The branch checked out at local WORKING repo `url` (nil for bare repos,
+  real remotes, or no repo at all) — read from .git/HEAD. JGit will happily
+  move a checked-out ref under a live working tree; push must refuse it."
+  [url]
+  (let [s (str url)]
+    (when-not (re-find #"^[a-z+]+://" s)
+      (let [head (io/file s ".git" "HEAD")]
+        (when (.exists head)
+          (second (re-find #"ref: refs/heads/(\S+)" (slurp head))))))))
 (defn push!
   "Push the store at `dir`'s projection to a git remote: `:url` the first
-  time (saved as `git-remote` meta), the saved remote thereafter. Refused
-  while pull conflicts stand (a push would silently revert the remote work
-  they represent). Returns {:pushed sha :status s :remote url} | {:error msg}."
+  time (saved as `git-remote` meta), the saved remote thereafter. The DEST
+  branch is `:branch`, else the `git-branch` config, else \"slopp\" — the
+  ownership boundary: slopp owns that ONE branch; humans keep main (and
+  everything else) with regular git and merge across. Refused while pull
+  conflicts stand, and refused onto the checked-out branch of a local
+  working repo. Returns {:pushed sha :status s :remote url :remote-branch b}
+  | {:error msg}."
   [dir & {:keys [url token branch]}]
   (let [ctx (git/open-ctx! dir)]
     (try
-      (let [conn   (:map-conn ctx)
-            target (or url (db/get-meta conn "git-remote"))
-            q      (db/quarantine-list conn)]
+      (let [conn    (:map-conn ctx)
+            target  (or url (db/get-meta conn "git-remote"))
+            rbranch (or branch (db/get-meta conn "git-branch") "slopp")
+            q       (db/quarantine-list conn)]
         (cond
           (str/blank? (str target))
           {:error "no remote configured — pass :url once (it is saved as git-remote)"}
@@ -47,9 +62,15 @@
                        (str/join ", " (map :path q))
                        ") — inspect with git_conflicts, merge via edit tools, then git_resolve")}
 
+          (= rbranch (checked-out-branch target))
+          {:error (str "refs/heads/" rbranch " is checked out in the working repo at "
+                       target " — pushing would move the ref under a live working"
+                       " tree. Point git-branch at a branch you don't check out"
+                       " (the default \"slopp\"), and merge with regular git.")}
+
           :else
           (let [r (git/push-to-remote! ctx target
-                                       :token token :branch (or branch "main"))]
+                                       :token token :remote-branch rbranch)]
             (when-not (:error r)
               (db/set-meta! conn "git-remote" (str target)))
             (assoc r :remote (str target)))))
@@ -57,20 +78,30 @@
 
 (defn clone!
   "Clone git remote `url` into `dir` as a fileless slopp store: fetch the
-  tip, restore the deps manifest from the remote deps.edn, ingest every
-  namespace through the verified write path (dependency order — reuses
-  slopp.boot's require-graph sort), and record `git-remote`/`git-base-sha`
-  so the projection grafts onto the remote's history. Ingest is byte-exact,
-  so a fresh clone's live tree equals the remote tree (no phantom wip).
-  Returns {:dir :namespaces n :base sha} | {:error msg}."
-  [url dir & {:keys [token agent]}]
+  slopp-owned branch (`:branch`, else \"slopp\", else the legacy \"main\"),
+  restore the deps manifest from the remote deps.edn, ingest every namespace
+  through the verified write path (dependency order — reuses slopp.boot's
+  require-graph sort), and record `git-remote`/`git-branch`/`git-base-sha`
+  so the projection grafts onto the remote's history and later syncs use the
+  same branch. Ingest is byte-exact, so a fresh clone's live tree equals the
+  remote tree (no phantom wip).
+  Returns {:dir :namespaces n :base sha :branch b} | {:error msg}."
+  [url dir & {:keys [token agent branch]}]
   (if (.exists (io/file dir ".slopp" "store.db"))
     {:error (str dir " already has a store — clone into a fresh dir")}
     (let [repo (git/open-repo! nil)]
       (try
-        (let [{:keys [tip]} (git/fetch-remote! repo url :token token)]
+        (let [want (or branch "slopp")
+              {:keys [tip]} (git/fetch-remote! repo url :token token :branch want)
+              [tip used] (cond
+                           tip     [tip want]
+                           branch  [nil branch]
+                           :else   [(some-> (.resolve repo "refs/remotes/origin/main")
+                                            (.name))
+                                    "main"])]
           (if-not tip
-            {:error (str "remote has no main branch to clone: " url)}
+            {:error (str "remote has no " (or branch "slopp (or main)")
+                         " branch to clone: " url)}
             (let [tree    (git/tree-at repo tip)
                   sources (into {}
                                 (keep (fn [[path text]]
@@ -82,7 +113,7 @@
                               {})]
               (if (empty? sources)
                 {:error (str "nothing to ingest at " url
-                             " — no src/**.clj or test/**.clj on main")}
+                             " — no src/**.clj or test/**.clj on " used)}
                 (let [sess (api/open! {:dir dir})]
                   (try
                     (doseq [[lib coord] (sort-by (comp str key) deps)]
@@ -97,13 +128,15 @@
                           (throw (ex-info (str ns-sym ": " (:error r)) {})))))
                     (let [conn (:db @sess)]
                       (db/set-meta! conn "git-remote" (str url))
+                      (db/set-meta! conn "git-branch" used)
                       (doseq [[path text] tree
                               :when (and (nil? (path-ns path))
                                          (not= "deps.edn" path))]
                         (api/file-put! sess path text :agent agent
                                        :prompt (str "clone: file from " url)))
                       (db/set-meta! conn "git-base-sha" tip))
-                    {:dir (str dir) :namespaces (count sources) :base tip}
+                    {:dir (str dir) :namespaces (count sources)
+                     :base tip :branch used}
                     (catch clojure.lang.ExceptionInfo e
                       {:error (str "clone failed at " (ex-message e)
                                    " — partial store left at " dir
@@ -338,9 +371,13 @@
             (if (str/blank? (str url))
               {:error "no remote configured — git_push with :url (or clone) first"}
               (let [ours (get-in (git/ensure-projected! ctx) [:refs "main"])
-                    tip  (:tip (git/fetch-remote! (:repo ctx) url :token token))]
+                    tip  (:tip (git/fetch-remote! (:repo ctx) url :token token
+                                              :branch (or (db/get-meta (:map-conn ctx) "git-branch")
+                                                          "slopp")))]
                 (cond
-                  (nil? tip)   {:error (str "remote has no main branch: " url)}
+                  (nil? tip)   {:error (str "remote has no "
+                                        (or (db/get-meta (:map-conn ctx) "git-branch") "slopp")
+                                        " branch: " url)}
                   (nil? ours)  {:error "nothing to pull onto — no local milestones or clone base"}
                   (= tip ours) {:up-to-date true}
                   :else

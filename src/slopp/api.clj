@@ -1968,7 +1968,8 @@
           (mark! head status {:checkpoint (:checkpoint cp)}
                  (cond-> (merge {:tree tree} extra)
                    (seq (:deps st))  (assoc :deps (:deps st))
-                   (seq (:files st)) (assoc :files (:files st)))))))))
+                   (seq (:files st)) (assoc :files (:files st))
+                   (seq (:config st)) (assoc :config (:config st)))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -2879,6 +2880,10 @@
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file text)))
+  (doseq [[path entry] (:config st)]
+    (let [file (io/file target (str path))]
+      (io/make-parents file)
+      (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
             (spit de (build/deps-edn (boolean main) deps has-tests?)))
           (cond-> {:built (str target)}
@@ -2951,7 +2956,7 @@
   dir, resolved AT MILESTONE TIME. With no `v`: read —
   {:key :configured :effective}. Durable sessions only."
   [session k & [v]]
-  (let [allowed #{"user.name" "user.email"}]
+  (let [allowed #{"user.name" "user.email" "git-branch" "git-remote"}]
     (cond
       (not (contains? allowed (str k)))
       {:error (str "unknown config key " k " — allowed: "
@@ -3048,3 +3053,42 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
+(defn config-file!
+  "Structured config files: the store holds SEMANTIC key/values per path
+  (per-key delta history, like forms); the projection serializes them into
+  the file format (`:manifest` → sorted `K: V` lines). Set a key
+  (`:key`+`:value`, `:format` on first touch, default :manifest), remove one
+  (`:key`+`:unset true`), or read (path only: values + rendered preview)."
+  [session path & {:keys [key value unset format prompt agent]}]
+  (let [entry (get-in (:store @session) [:config (str path)])]
+    (cond
+      (and key unset)
+      (if-not (get-in entry [:values (str key)])
+        {:error (str key " is not set on " path)}
+        (do (commit-appended! session
+                              #(first (store/record-config-unset % path key
+                                                                 :prompt prompt
+                                                                 :agent agent))
+                              [])
+            {:path (str path) :unset (str key)}))
+
+      (and key (some? value))
+      (let [fmt (or (some-> format clojure.core/keyword)
+                    (:format entry) :manifest)]
+        (commit-appended! session
+                          #(first (store/record-config-put % path fmt key value
+                                                           :prompt prompt
+                                                           :agent agent))
+                          [])
+        {:path (str path) :key (str key) :value (str value) :format fmt})
+
+      key
+      (if-let [v (get-in entry [:values (str key)])]
+        {:path (str path) :key (str key) :value v}
+        {:error (str key " is not set on " path)})
+
+      :else
+      (if entry
+        {:path (str path) :format (:format entry) :values (:values entry)
+         :rendered (store/render-config entry)}
+        {:error (str path " has no structured config")}))))

@@ -97,7 +97,10 @@
                         (pr-str (:dep-pure store #{}))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:files store {}))]))
+                        (pr-str (:files store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:config store {}))]))
    nil))
 
 ^:reads (defn data-version
@@ -151,6 +154,9 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:files store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:config store {}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
@@ -265,6 +271,13 @@
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
+^:reads (defn config-files
+  "The store's structured-config entries ({path {:format :values}}), read
+  straight from meta — for the projection paths that need it session-free."
+  [conn]
+  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'config'"])
+              :meta/v edn/read-string)
+      {}))
 ^:reads (defn files
   "The store's non-code files manifest ({path → text}), read straight from
   meta — for the git projection paths that need it without a session."
@@ -290,6 +303,7 @@
                            conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
      :deps       (deps conn)
      :files      (files conn)
+     :config     (config-files conn)
      :dep-ns     (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-ns'"])
                              :meta/v edn/read-string) {})
