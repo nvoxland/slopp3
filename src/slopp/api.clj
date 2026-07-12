@@ -2872,9 +2872,13 @@
 
       :else
       (do (doseq [ns-sym (keys (:namespaces st))]
-            (let [file (io/file target (render/source-path ns-sym))]
-              (io/make-parents file)
-              (spit file (render/render-ns st ns-sym))))
+    (let [file (io/file target (render/source-path ns-sym))]
+      (io/make-parents file)
+      (spit file (render/render-ns st ns-sym))))
+  (doseq [[path text] (:files st)]
+    (let [file (io/file target (str path))]
+      (io/make-parents file)
+      (spit file text)))
           (when (or main (not (.exists de)))
             (spit de (build/deps-edn (boolean main) deps has-tests?)))
           (cond-> {:built (str target)}
@@ -3018,3 +3022,29 @@
         (if-not (try-commit! session base st' [ns-sym])
           {:conflict {:reason "store changed concurrently — retry"}}
           {:delta (:id d) :before (some-> anchor str) :ns (str ns-sym)})))))
+^:reads (defn file-get
+  "A manifest file's content — current, or as of a past delta via `:at`
+  (a delta id or commit-point id resolves through its :target like
+  query_form_at). Returns {:path :content} | {:error}."
+  [session path & {:keys [at]}]
+  (let [st (:store @session)]
+    (if at
+      (let [at-id (or (some (fn [d] (when (and (= :commit (:op d)) (= at (:id d)))
+                                      (:target d)))
+                            (store/deltas st))
+                      at)
+            c     (store/file-at st (str path) at-id)]
+        (if (some? c)
+          {:path (str path) :at at :content c}
+          {:error (str path " has no content at " at)}))
+      (if-let [c (get (:files st) (str path))]
+        {:path (str path) :content c}
+        {:error (str path " is not on the files manifest")}))))
+^:reads (defn file-history!
+  "Every tracked version of a manifest file, oldest first, with provenance —
+  the file counterpart of query_form_history."
+  [session path]
+  (let [h (store/file-history (:store @session) (str path))]
+    (if (seq h)
+      {:path (str path) :versions h}
+      {:error (str path " has never been tracked")})))

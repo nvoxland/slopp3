@@ -277,6 +277,16 @@
    {:name "file_list"
     :description "The files manifest: {path byte-count}."
     :inputSchema {:type "object" :properties {}}}
+   {:name "file_get"
+    :description "A manifest file's content — current, or as of a past delta/commit-point via at (time travel, like query_form_at)."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"} :at {:type "string"}}
+                  :required ["path"]}}
+   {:name "file_history"
+    :description "Every tracked version of a manifest file, oldest first, with provenance (delta, op, agent, prompt, time, bytes) — query_form_history for non-code files."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"}}
+                  :required ["path"]}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
@@ -700,6 +710,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "file_remove"        (text (api/file-remove! session (:path a)
                                                    :prompt (:prompt a) :agent (:agent a)))
       "file_list"          (text (api/files-list session))
+      "file_get"           (text (api/file-get session (:path a) :at (:at a)))
+      "file_history"       (text (api/file-history! session (:path a)))
       "test_run"          (text (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session

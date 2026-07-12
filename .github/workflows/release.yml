@@ -30,12 +30,13 @@ jobs:
         run: |
           clojure -Sdeps '{:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}} :paths ["."]}' \
             -M -e '((requiring-resolve (quote build/uber)) {:src "src"})'
-      - name: Smoke it (jar-only classpath serves a fresh store)
+      - name: Smoke it (ZERO args — Main-Class from the tracked MANIFEST.MF)
         env:
           SLOPP_CLOJURE: clojure
         run: |
+          mkdir -p /tmp/smoke && cd /tmp/smoke
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
-            | java -jar target/slopp.jar -m slopp.boot /tmp/smoke --snapshot | grep -q serverInfo
+            | java -jar "$GITHUB_WORKSPACE/target/slopp.jar" | grep -q serverInfo
       - name: Attach to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
