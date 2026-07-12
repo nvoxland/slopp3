@@ -253,6 +253,22 @@
                   :properties {:key {:type "string"}
                                :value {:type "string"}}
                   :required ["key"]}}
+   {:name "file_put"
+    :description "Track a NON-CODE file (README, .github workflows, LICENSE) on the store's files manifest — it rides every projected tree, so git_push never deletes it from the remote. Content is the full file text."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"}
+                               :content {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}}
+                  :required ["path" "content"]}}
+   {:name "file_remove"
+    :description "Drop a path from the files manifest (it disappears from the next pushed tree)."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}}
+                  :required ["path"]}}
+   {:name "file_list"
+    :description "The files manifest: {path byte-count}."
+    :inputSchema {:type "object" :properties {}}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
