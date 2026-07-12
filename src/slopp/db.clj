@@ -94,7 +94,10 @@
                         (pr-str (:dep-ns store {}))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:dep-pure store #{}))]))
+                        (pr-str (:dep-pure store #{}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:files store {}))]))
    nil))
 
 ^:reads (defn data-version
@@ -145,6 +148,9 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:dep-pure store #{}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:files store {}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
@@ -259,6 +265,13 @@
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
+^:reads (defn files
+  "The store's non-code files manifest ({path → text}), read straight from
+  meta — for the git projection paths that need it without a session."
+  [conn]
+  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'files'"])
+              :meta/v edn/read-string)
+      {}))
 ^:reads (defn load-store
   "Reconstruct the full in-memory store from the db, or nil if empty."
   [conn]
@@ -276,6 +289,7 @@
      :line-id    (:meta/v (jdbc/execute-one!
                            conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
      :deps       (deps conn)
+     :files      (files conn)
      :dep-ns     (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-ns'"])
                              :meta/v edn/read-string) {})

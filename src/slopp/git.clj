@@ -120,16 +120,19 @@
 
 (defn- commit-paths
   "{path content} for a milestone's tree: every namespace under src/ (test
-  namespaces under test/ — same layout as build!) plus the generated deps.edn
+  namespaces under test/ — same layout as build!), the generated deps.edn
   (carrying the store's Tier-1 manifest `deps` and, when the project has tests,
-  a :test alias, so a clone is runnable)."
-  [tree-map deps]
+  a :test alias, so a clone is runnable), plus every non-code file from the
+  `files` manifest (README, .github workflows, …) — they ride EVERY projected
+  tree, so a slopp push never deletes them from the remote."
+  [tree-map deps files]
   (into (sorted-map)
-        (cons ["deps.edn" (build/deps-edn false deps
-                                          (boolean (some render/test-ns? (keys tree-map))))]
-              (map (fn [[ns-sym src]]
-                     [(render/source-path ns-sym) src])
-                   tree-map))))
+        (concat [["deps.edn" (build/deps-edn false deps
+                                             (boolean (some render/test-ns? (keys tree-map))))]]
+                (map (fn [[ns-sym src]]
+                       [(render/source-path ns-sym) src])
+                     tree-map)
+                files)))
 
 (defn- backfill-tree
   "Best-effort {ns-sym source} at delta `target-id`, for markers that carry
@@ -224,11 +227,11 @@
 (defn- insert-commit!
   "Build blobs + tree + commit for marker `d` and return the sha. Pure
   function of (parent-sha, d, tree-map) — determinism is what makes the
-  projection rebuildable (which is why the author identity lives ON the
-  marker, never in ambient config)."
+  projection rebuildable (which is why the author identity and the files
+  manifest live ON the marker, never in ambient state)."
   [^Repository repo parent-sha d tree-map]
   (with-open [ins (.newObjectInserter repo)]
-    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d)))
+    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d) (:files d)))
           at      (Instant/ofEpochMilli (long (:at d)))
           who     (commit-author d)
             ;; reflection-free ctors matter: reflective JGit calls resolve
@@ -288,7 +291,8 @@
       (with-open [ins (.newObjectInserter repo)]
         (let [tree-id (insert-tree! ins (commit-paths
                                          (db/rendered-sources conn)
-                                         (db/deps conn)))
+                                         (db/deps conn)
+                                         (db/files conn)))
               tip     (ObjectId/fromString tip-sha)
               m-tree  (with-open [rw (RevWalk. repo)]
                         (.getId (.getTree (.parseCommit rw tip))))]

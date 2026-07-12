@@ -450,6 +450,8 @@
                                (update :dep-ns dissoc (:lib d))))
       :deps-pure   (with-d (update store :dep-pure
                                    (fnil (if (:pure d) conj disj) #{}) (:sym d)))
+      :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
+      :file-remove (with-d (update store :files dissoc (:path d)))
 
       (:replace :rename :normalize)
       (with-d
@@ -857,3 +859,45 @@
           {:store st :merged merged :conflicts conflicts :notes notes
            :changed-form-ids (vec (distinct changed)) :new-nses new-nses
            :applied applied :id-map idmap :fork-point fork-point})))))
+(defn replace-trivia
+  "Replace the ENTIRE trivia run (comments/whitespace `:sep` elements)
+  immediately before form `anchor` (a form name; nil = the run after the
+  LAST form) in `ns-sym` with `text`. Empty text = a single newline (the
+  minimal legal gap); non-empty text gains a trailing newline if missing (a
+  bare line comment would otherwise swallow the next form's first line).
+  Text containing any CODE form is refused. ONE `:trivia` delta carrying the
+  anchor's form-id, so foreign replay converges. Returns [store' delta] or
+  {:error msg}."
+  [store ns-sym anchor text & {:keys [prompt agent]}]
+  {:error "not implemented"})
+(defn record-file-put
+  "Track a NON-CODE file (README, .github workflows, …) on the store's
+  `:files` manifest ({path → text}) — these ride every projected tree, so
+  they survive slopp pushes. ONE state-carrying `:file-put` delta (replay
+  reconstructs the manifest incrementally, like :deps-add). Returns
+  [store' delta]."
+  [store path text & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :file-put :ns '*session* :at (now-ms)
+                       :path (str path) :content (str text)}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(-> store'
+         (assoc-in [:files (str path)] (str text))
+         (update :deltas conj delta))
+     delta]))
+(defn record-file-remove
+  "Drop `path` from the `:files` manifest. ONE `:file-remove` delta.
+  Returns [store' delta]."
+  [store path & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :file-remove :ns '*session* :at (now-ms)
+                       :path (str path)}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(-> store'
+         (update :files dissoc (str path))
+         (update :deltas conj delta))
+     delta]))

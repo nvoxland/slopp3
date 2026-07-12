@@ -97,6 +97,11 @@
                           (throw (ex-info (str ns-sym ": " (:error r)) {})))))
                     (let [conn (:db @sess)]
                       (db/set-meta! conn "git-remote" (str url))
+                      (doseq [[path text] tree
+                              :when (and (nil? (path-ns path))
+                                         (not= "deps.edn" path))]
+                        (api/file-put! sess path text :agent agent
+                                       :prompt (str "clone: file from " url)))
                       (db/set-meta! conn "git-base-sha" tip))
                     {:dir (str dir) :namespaces (count sources) :base tip}
                     (catch clojure.lang.ExceptionInfo e
@@ -249,6 +254,28 @@
                     (when (not= (api/query-source session ns-sym) new)
                       (note! (str path ": applied, but trivia differs from the remote")))
                     (applied! ns-sym))))))))))
+(defn- apply-files!
+  "Absorb remote changes to NON-CODE files (base→tip) into the files
+  manifest — the deps.edn-style 3-way: applied when OUR copy still equals
+  the base's; all-three-diverged is a conflict."
+  [session treeM treeT changed conflict! note! agent]
+  (doseq [path changed
+          :when (and (nil? (path-ns path)) (not= "deps.edn" path))
+          :let [mv (get treeM path)
+                tv (get treeT path)
+                cv (get-in @session [:store :files path])]]
+    (cond
+      (= cv tv) nil
+      (= cv mv) (let [r (if (some? tv)
+                          (api/file-put! session path tv :agent agent
+                                         :prompt (str "pull: " path))
+                          (api/file-remove! session path :agent agent
+                                            :prompt (str "pull: removed " path)))]
+                  (if (:error r)
+                    (conflict! path nil (str "file change failed: " (:error r)))
+                    (note! (str path ": file " (if (some? tv) "updated" "removed")))))
+      :else (conflict! path nil
+                       (str "file diverged: base/remote/ours all differ")))))
 (defn- apply-pull!
   "The pull body once fetch/merge-base decided there IS something to absorb:
   diff tree(merge-base)→tree(tip), deps first, then namespaces in the remote
@@ -275,6 +302,7 @@
         note!     (fn [s] (vswap! results update :notes conj s))]
     (when (not= (get treeM "deps.edn") (get treeT "deps.edn"))
       (apply-deps! session treeM treeT conflict! agent))
+    (apply-files! session treeM treeT changed conflict! note! agent)
     (let [by-ns (into {} (keep (fn [p] (when-let [n' (path-ns p)] [n' p]))) changed)
           srcs  (into {} (map (fn [[n' p]] [n' (or (get treeT p) (get treeM p) "")])) by-ns)]
       (doseq [ns-sym (boot/dependency-order srcs)

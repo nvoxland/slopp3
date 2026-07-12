@@ -1967,7 +1967,8 @@
            :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
           (mark! head status {:checkpoint (:checkpoint cp)}
                  (cond-> (merge {:tree tree} extra)
-                   (seq (:deps st)) (assoc :deps (:deps st)))))))))
+                   (seq (:deps st))  (assoc :deps (:deps st))
+                   (seq (:files st)) (assoc :files (:files st)))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -2961,3 +2962,38 @@
          :effective (if (or (nil? conf) (= conf "<git>"))
                       (git-config-value (:dir @session) (str k))
                       conf)}))))
+(defn file-put!
+  "Track a NON-CODE file on the store's files manifest (README, .github
+  workflows, …) — it rides every projected tree, so slopp pushes never
+  delete it from the remote. Returns {:path :bytes}."
+  [session path content & {:keys [prompt agent]}]
+  (cond
+    (str/blank? (str path))
+    {:error "file_put needs a :path"}
+
+    (nil? content)
+    {:error "file_put needs :content"}
+
+    :else
+    (do (commit-appended! session
+                          #(first (store/record-file-put % path content
+                                                         :prompt prompt :agent agent))
+                          [])
+        {:path (str path) :bytes (count (str content))})))
+(defn file-remove!
+  "Drop `path` from the files manifest. Returns {:removed path} | {:error}."
+  [session path & {:keys [prompt agent]}]
+  (if-not (contains? (:files (:store @session)) (str path))
+    {:error (str path " is not on the files manifest")}
+    (do (commit-appended! session
+                          #(first (store/record-file-remove % path
+                                                            :prompt prompt :agent agent))
+                          [])
+        {:removed (str path)})))
+^:reads (defn files-list
+  "The files manifest: {path byte-count} (content via the git projection or
+  a build)."
+  [session]
+  {:files (into (sorted-map)
+                (map (fn [[p t]] [p (count t)]))
+                (:files (:store @session)))})
