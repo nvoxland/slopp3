@@ -1,2 +1,0 @@
-Main-Class: slopp.launcher
-X-Slopp-Main: slopp.boot/-main
