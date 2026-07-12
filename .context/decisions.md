@@ -787,3 +787,16 @@ E3 note: the isolated suite caught a G5 regression (a projection test
 asserted the legacy agent author; the "<git>" fallback now resolves the
 machine's git identity) — fixed by pinning store config in the test. Lesson
 relearned: run the FULL suite after every feature, not targeted probes.
+
+## G6 — files manifest + slopp3 is the permanent repo (for now)
+
+G6 ✅ **Non-code files ride the store.** `:files` {path → text} manifest
+(state-carrying `:file-put`/`:file-remove` deltas, meta row, replay — the
+deps-manifest pattern), snapshotted onto milestone markers so the projection
+stays a pure fn of the marker. `commit-paths` merges them into EVERY
+projected tree — a slopp push never deletes the remote's README/workflows.
+clone captures remote extras; pull 3-ways them (remote wins where we're
+clean). Tools: `file_put`/`file_remove`/`file_list`. Motivation: CI —
+`.github/workflows/test.yml` now lives on the manifest and runs the full
+suite on every push to https://github.com/nvoxland/slopp3, which is the
+PERMANENT published repo for now (`git-remote` meta points there).
