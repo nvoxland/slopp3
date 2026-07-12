@@ -3092,3 +3092,27 @@
         {:path (str path) :format (:format entry) :values (:values entry)
          :rendered (store/render-config entry)}
         {:error (str path " has no structured config")}))))
+(defn change-signature!
+  "P2: change `ns-sym/fn-name`'s signature as ONE atomic intent — replace
+  the defn with `new-source` (keep the name; the lint gate is the oracle if
+  you don't) and mechanically rewrite every call site's argument list from
+  `args-template` ($1..$9 = the site's existing arg sources; the callee
+  stays as written, so aliases survive — see refactor/change-signature-plan).
+  Executes through edit-group! (one gate pass, one verification).
+  References that can't be rewritten come back under :manual."
+  [session ns-sym fn-name new-source args-template & {:keys [prompt agent]}]
+  (let [st (:store @session)]
+    (if (nil? (store/form-named st ns-sym fn-name))
+      {:error (str "no form named " fn-name " in " ns-sym)}
+      (let [plan (refactor/change-signature-plan st ns-sym fn-name args-template)]
+        (if (:error plan)
+          plan
+          (let [steps (into [{:action :replace :ns ns-sym :name fn-name
+                              :source new-source}]
+                            (:caller-steps plan))
+                r     (edit-group! session steps
+                                   :prompt (or prompt
+                                               (str "change signature: " fn-name))
+                                   :agent agent)]
+            (cond-> (assoc r :rewrote (count (:caller-steps plan)))
+              (seq (:manual plan)) (assoc :manual (:manual plan)))))))))

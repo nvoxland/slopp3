@@ -185,6 +185,14 @@
                                :new {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
+   {:name "change_signature"
+    :description "Change a fn's signature as ONE atomic intent: `source` replaces the defn (keep the name), and every CALL site's argument list is rebuilt from `calls` — a template where $1..$9 are the site's existing arg sources (the callee stays as written, so aliases survive). Example: adding a trailing arg = calls: \"$1 $2 nil\". Higher-order references are not rewritten (returned under :manual). One edit group, one verification."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :source {:type "string"} :calls {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "name" "source" "calls"]}}
    {:name "edit_extract"
     :description "Extract a unique subform of a function into a new function (free locals become params; placed before the caller; the subform becomes the call). One atomic, verified intent."
     :inputSchema {:type "object"
@@ -401,7 +409,8 @@
   (into single-write-tools
         ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
-         "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"]))
+         "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"
+         "change_signature"]))
 
 (defn- track-hint!
   "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
@@ -768,6 +777,15 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (summarize (:verbose a))))
       "merge_from"        (text (api/merge! session (:dir a)))
       "restart"           (do (api/restart! session) (text "restarted"))
+      "change_signature"  (text (-> (api/change-signature! session (sym :ns)
+                                                           (sym :name)
+                                                           (:source a) (:calls a)
+                                                           :prompt (:prompt a)
+                                                           :agent (:agent a))
+                                    (select-keys [:error :step :group :rewrote :manual
+                                                  :warnings :existing-warnings :changed-nses
+                                                  :image-healed :test :affected :deltas])
+                                    (summarize (:verbose a))))
       "build"             (text (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)
                                             :name (:name a)))

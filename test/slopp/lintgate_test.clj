@@ -21,3 +21,13 @@
 (deftest pre-existing-errors-do-not-block
   (testing "base already has the error — the write is not the one to blame"
     (is (nil? (edit/lint-refusals (st bad) (st bad) ['lg.core])))))
+(deftest arity-refusals-suggest-the-atomic-resolution
+  (testing "P2a: the discovered resolution is now IN the refusal"
+    (let [msg (edit/lint-refusals (st clean) (st bad) ['lg.core])]
+      (is (re-find #"edit_group" (str msg)))
+      (is (re-find #"change_signature" (str msg)))))
+  (testing "non-arity errors don't get the signature hint"
+    (let [unresolved "(ns lg.core)\n(defn f [x] x)\n(defn g [] (nope 1))\n"
+          msg (edit/lint-refusals (st clean) (st unresolved) ['lg.core])]
+      (is (some? msg))
+      (is (not (re-find #"edit_group" (str msg)))))))

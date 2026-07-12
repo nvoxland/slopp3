@@ -346,6 +346,131 @@
     (catch Exception ex
       {:error (str "extract failed: " (ex-message ex))})))
 
+(defn- rewrite-call-sites
+  "Fold one element's usage sites (element-local [r c]) into the plan `acc`:
+  head-position calls get their arg list rebuilt from `args-template`
+  (spans applied last-first over the form source); anything else routes to
+  :manual. `max-n` = the highest $n the template references."
+  [acc ns-sym e locs args-template max-n]
+  (let [form-src (n/string (:node e))
+        zlocs    (->> (iterate z/next (z/of-string form-src {:track-position? true}))
+                      (take-while (complement z/end?))
+                      vec)
+        at       (fn [rc] (first (filter #(= rc (z/position %)) zlocs)))
+        info
+        (reduce
+         (fn [m rc]
+           (if (:error m)
+             m
+             (let [zl (at rc)]
+               (cond
+                 (nil? zl)
+                 (update m :manual conj {:ns ns-sym :form (:name e)
+                                         :row (first rc) :col (second rc)
+                                         :reason "site not found in form"})
+
+                 (or (some? (z/left zl))
+                     (not= :list (some-> zl z/up z/tag)))
+                 (update m :manual conj {:ns ns-sym :form (:name e)
+                                         :row (first rc) :col (second rc)
+                                         :reason "not a call (higher-order reference)"})
+
+                 :else
+                 (let [args (->> (iterate z/right zl) (drop 1) (take-while some?)
+                                 (mapv #(n/string (z/node %))))]
+                   (if (< (count args) max-n)
+                     (assoc m :error
+                            (str "call site in " ns-sym "/" (:name e) " has "
+                                 (count args) " args but the template needs $"
+                                 max-n " — rewrite that one with edit_group"))
+                     (let [head    (n/string (z/node zl))
+                           subst   (str/trim
+                                    (str/replace args-template #"\$(\d)"
+                                                 (fn [[_ d]]
+                                                   (nth args (dec (parse-long d))))))
+                           parent  (z/up zl)
+                           [pr pc] (z/position parent)]
+                       (update m :spans conj
+                               {:start [pr pc]
+                                :end   (node-span [pr pc] (n/string (z/node parent)))
+                                :src   (if (str/blank? subst)
+                                         (str "(" head ")")
+                                         (str "(" head " " subst ")"))}))))))))
+         {:spans [] :manual (:manual acc) :error nil}
+         locs)]
+    (cond
+      (:error info)          (assoc acc :error (:error info))
+      (empty? (:spans info)) (assoc acc :manual (:manual info))
+
+      :else
+      (let [spans   (sort-by :start (:spans info))
+            nested? (some (fn [[a b]] (neg? (compare (:start b) (:end a))))
+                          (partition 2 1 spans))]
+        (if nested?
+          (assoc acc :error (str "nested call sites of the fn in " ns-sym "/"
+                                 (:name e) " — rewrite that form with edit_group"))
+          (-> acc
+              (assoc :manual (:manual info))
+              (update :caller-steps conj
+                      {:action :replace :ns ns-sym :name (:name e)
+                       :source (reduce (fn [s {:keys [start end src]}]
+                                         (replace-span s start end src))
+                                       form-src
+                                       (reverse spans))})))))))
+(defn change-signature-plan
+  "Plan a signature change for `def-ns/fn-name` (P2): every CALL site (the
+  fn in head position) gets its argument list rebuilt from `args-template`,
+  a source string where $1..$9 are the site's existing arg sources — the
+  callee stays exactly as written, so require aliases survive. The def form
+  itself is NOT planned here (the caller supplies its replacement source;
+  self-calls inside it are its business). Returns
+  {:caller-steps [{:action :replace :ns n :name f :source s}] :manual [...]}
+  or {:error msg}; :manual lists references that can't be template-rewritten
+  (higher-order uses, nameless forms)."
+  [store def-ns fn-name args-template]
+  (try
+    (if-let [def-e (store/form-named store def-ns fn-name)]
+      (let [max-n (reduce max 0 (map (comp parse-long second)
+                                     (re-seq #"\$(\d)" args-template)))]
+        (reduce
+         (fn [acc ns-sym]
+           (if (:error acc)
+             acc
+             (let [an      (index/analyze (render/render-ns store ns-sym))
+                   sites   (distinct
+                            (for [u (:var-usages an)
+                                  :when (and (= def-ns (:to u))
+                                             (= fn-name (:name u)))]
+                              [(or (:name-row u) (:row u))
+                               (or (:name-col u) (:col u))]))
+                   offsets (render/element-offsets store ns-sym)
+                   elems   (store/elements store ns-sym)]
+               (reduce
+                (fn [acc [idx ss]]
+                  (let [e (nth elems idx)]
+                    (cond
+                      (:error acc) acc
+
+                      (= (:id e) (:id def-e)) acc
+
+                      (nil? (:name e))
+                      (update acc :manual into
+                              (map (fn [[r c]] {:ns ns-sym :form nil
+                                                :row r :col c
+                                                :reason "nameless form"})
+                                   ss))
+
+                      :else
+                      (rewrite-call-sites acc ns-sym e
+                                          (map #(relative (nth offsets idx) %) ss)
+                                          args-template max-n))))
+                acc
+                (group-by #(owner-idx offsets %) sites)))))
+         {:caller-steps [] :manual []}
+         (keys (:namespaces store))))
+      {:error (str "no form named " fn-name " in " def-ns)})
+    (catch Exception ex
+      {:error (str "change-signature plan failed: " (ex-message ex))})))
 (defn rename-changeset
   "Compute {form-id new-node} renaming `def-ns/old-name` to `new-name` across
   every store namespace."
