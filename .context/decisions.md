@@ -800,3 +800,31 @@ clean). Tools: `file_put`/`file_remove`/`file_list`. Motivation: CI —
 `.github/workflows/test.yml` now lives on the manifest and runs the full
 suite on every push to https://github.com/nvoxland/slopp3, which is the
 PERMANENT published repo for now (`git-remote` meta points there).
+
+## R4/E4 — release pipeline + trivia/string addressability
+
+R4 ✅ **v0.1.0 shipped.** The release artifact is the UBERJAR
+(`java -jar slopp.jar -m slopp.boot <dir> …`, :main clojure.main — nothing
+AOT'd, the store loader keeps runtime load-string; needs Java + the Clojure
+CLI for owned images). Built by `build.clj` (kernel-side + on the files
+manifest so the tag-triggered release workflow can build from a checkout),
+smoke-tested on a FRESH dir in CI (which caught two boot bugs: missing
+make-parents and a schema-less-db crash), attached to the GitHub Release.
+CI green across the board: test-files, test-via-slopp (the pushed code
+imports itself into a store through every gate, then runs the store-built
+suite), native-proof (a sample app built through slopp → GraalVM binary →
+executed — O4's first real verification). Native remains apps-only; slopp
+itself is uberjar-only. boot's --live watcher is a daemon thread (a live
+server used to hang its JVM after stdin EOF).
+
+E4 ✅ **Trivia and string content are addressable.** `edit_trivia` replaces
+the ENTIRE comment/blank-line run before a named form (or the ns tail) —
+`:trivia` delta anchored on the form-id, foreign replay converges, forms
+untouched by construction (no image work, like move). Text is normalized to
+start/end with a newline; empty = delete; code forms refused. And
+`edit_subform {text: true}` does RAW-TEXT replace inside a form (unique
+occurrence, result must reparse to ONE form) — docstrings and string
+literals, riding the full gated replace pipeline. Live-fired: the stale
+"import: git push → slopp (M3)" banners in slopp.git (unremovable since
+b0511ea) are finally gone, and sync/-main's docstring caught up via text
+mode. The last friction-log design item is closed.

@@ -17,4 +17,10 @@
  ;; The suite runs via test_run {:isolated true} — build! to a temp dir whose
  ;; generated deps.edn carries its own runnable :test alias.
  :aliases
- {:nrepl {:main-opts ["-m" "nrepl.cmdline"]}}}
+ {:nrepl {:main-opts ["-m" "nrepl.cmdline"]}
+
+  ;; the release artifact: java -jar slopp.jar -m slopp.boot <dir> [...]
+  ;; (main = clojure.main; slopp's code stays runtime-loaded — no AOT)
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+          :ns-default build
+          :paths ["."]}}}
