@@ -180,48 +180,108 @@
             (do (when (and ws? (pos? (.length sb))) (.append sb \space))
                 (.append sb c)
                 (recur (inc i) (= c \") false false))))))))
+(def ^:private pair-binding-heads
+  "List heads whose FIRST vector argument pairs [name init ...] — a 2-form
+  match starting on an even slot of that vector is a well-formed pair.
+  Partly built from strings: naming binding/with-redefs as symbols would
+  trip the D3 denylist, and here they're lookup keys, not uses."
+  (into '#{let let* loop loop* doseq for if-let when-let if-some when-some
+           with-open}
+        (map symbol)
+        ["binding" "with-redefs" "with-local-vars"]))
+(defn- sexpr-index
+  "How many sexpr-able siblings precede `zl` in its container (the z API
+  skips whitespace, so plain z/left counts real forms)."
+  [zl]
+  (count (take-while some? (rest (iterate z/left zl)))))
+(defn- safe-sexpr [zl]
+  (try (z/sexpr zl) (catch Exception _ nil)))
+(defn- pair-slot?
+  "Does a two-form span starting at `zl` sit ON a pair boundary of a paired
+  container? Map literals and binding vectors pair from slot 0, case
+  clauses from 2, cond clauses from 1."
+  [zl]
+  (let [idx    (sexpr-index zl)
+        parent (z/up zl)]
+    (boolean
+     (when parent
+       (case (z/tag parent)
+         :map    (even? idx)
+         :vector (when-let [gp (z/up parent)]
+                   (and (= :list (z/tag gp))
+                        (contains? pair-binding-heads (some-> gp z/down safe-sexpr))
+                        (= 1 (sexpr-index parent))
+                        (even? idx)))
+         :list   (let [head (some-> parent z/down safe-sexpr)]
+                   (cond
+                     (= 'case head) (and (<= 2 idx) (even? idx))
+                     (= 'cond head) (odd? idx)
+                     :else false))
+         false)))))
 (defn- find-unique-subform
   "The unique position-tracked zloc in `form-src` matching `match-src`
   (shared by extract and subform edits). A node matches when its sexpr
   structurally equals the match's OR its whitespace-normalized text does —
   the text fallback covers fn literals (gensym'd args never sexpr-compare
-  equal) and regexes (Patterns don't =). `match-src` must parse to exactly
-  ONE form: matching a multi-form string's first form silently misaligns
-  paired structures like case. Returns {:zloc l} or {:error msg}."
+  equal) and regexes (Patterns don't =). `match-src` is ONE form — except
+  that a TWO-form match landing on a pair boundary of a paired container
+  (map literal, binding vector, case/cond clauses) addresses the pair as a
+  unit (P1); any other multi-form match is refused (silently matching a
+  multi-form string's first form misaligns paired structures like case).
+  Returns {:zloc l} — plus :end-zloc (the pair's second node) for pair
+  matches — or {:error msg}."
   [form-src match-src what]
-  (let [mnodes (filter n/sexpr-able?
-                       (n/children (p/parse-string-all match-src)))]
-    (if (not= 1 (count mnodes))
-      {:error (str "match parses to " (count mnodes) " forms — give exactly "
-                   "ONE subform as the match (the REPLACEMENT may be several "
-                   "forms; the match may not)")}
-      (let [mnode   (first mnodes)
-            msexpr  (try (n/sexpr mnode) (catch Exception _ ::none))
-            mnorm   (norm-src (n/string mnode))
-            match?  (fn [zl]
+  (let [mnodes  (filter n/sexpr-able?
+                        (n/children (p/parse-string-all match-src)))
+        pair?   (= 2 (count mnodes))
+        matcher (fn [mnode]
+                  (let [msexpr (try (n/sexpr mnode) (catch Exception _ ::none))
+                        mnorm  (norm-src (n/string mnode))]
+                    (fn [zl]
                       (or (and (not= ::none msexpr)
                                (try (= msexpr (z/sexpr zl))
                                     (catch Exception _ false)))
-                          (= mnorm (norm-src (n/string (z/node zl))))))
+                          (= mnorm (norm-src (n/string (z/node zl))))))))]
+    (if-not (or (= 1 (count mnodes)) pair?)
+      {:error (str "match parses to " (count mnodes) " forms — give exactly "
+                   "ONE subform as the match, or ONE key/value-style PAIR "
+                   "inside a map, binding vector, or case/cond (the "
+                   "REPLACEMENT may be several forms)")}
+      (let [match1? (matcher (first mnodes))
+            match2? (when pair? (matcher (second mnodes)))
+            hit?    (fn [zl]
+                      (and (match1? zl)
+                           (or (not pair?)
+                               (boolean (some-> (z/right zl) match2?)))))
             matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
                          (take-while (complement z/end?))
-                         (filter match?)
-                         vec)]
+                         (filter hit?)
+                         vec)
+            usable  (if pair? (filterv pair-slot? matches) matches)]
         (cond
-          (empty? matches)
+          (and pair? (empty? usable) (seq matches))
+          {:error (str "a two-form match must land on a pair boundary of a "
+                       "map, binding vector, or case/cond clause — this span "
+                       "crosses one in " what "; match the single value form "
+                       "instead")}
+
+          (empty? usable)
           {:error (str "subform not found in " what)}
 
-          (< 1 (count matches))
-          {:error (str "subform occurs " (count matches) " times in " what
+          (< 1 (count usable))
+          {:error (str "subform occurs " (count usable) " times in " what
                        " — ambiguous; give a larger enclosing subform")}
 
-          :else {:zloc (first matches)})))))
+          pair?
+          {:zloc (first usable) :end-zloc (z/right (first usable))}
+
+          :else {:zloc (first usable)})))))
 
 (defn subform-replace-plan
   "Plan replacing the unique occurrence of `match-src` inside `form-name` with
   `new-src` (item 5 — paredit's valid-tree→valid-tree invariant, content-
-  addressed: siblings are never re-transcribed). Returns {:new-form-src s}
-  or {:error msg}."
+  addressed: siblings are never re-transcribed). A pair match (P1) replaces
+  the WHOLE pair span. Returns {:new-form-src s} or {:error msg}."
   [store ns-sym form-name match-src new-src]
   (try
     (if-let [e (store/form-named store ns-sym form-name)]
@@ -230,8 +290,9 @@
         (if (:error found)
           found
           (let [m       (:zloc found)
+                e2      (or (:end-zloc found) m)
                 [r c]   (z/position m)
-                [er ec] (node-span [r c] (n/string (z/node m)))]
+                [er ec] (node-span (z/position e2) (n/string (z/node e2)))]
             {:new-form-src (replace-span form-src [r c] [er ec] new-src)})))
       {:error (str "no form named " form-name " in " ns-sym)})
     (catch Exception ex
@@ -240,15 +301,20 @@
 (defn extract-plan
   "Plan extracting the unique occurrence of `subform-src` inside `from-name`
   into a new fn `new-name`: params = the free locals (bound outside the
-  subform, used inside), in first-use order. Returns
+  subform, used inside), in first-use order. Pair matches (P1) are refused —
+  a pair is not an expression. Returns
   {:new-defn-src :new-from-src :params} or {:error msg}."
   [store ns-sym from-name subform-src new-name]
   (try
     (if-let [e (store/form-named store ns-sym from-name)]
       (let [form-src (n/string (:node e))
             found    (find-unique-subform form-src subform-src from-name)]
-        (if (:error found)
-          found
+        (cond
+          (:error found)    found
+          (:end-zloc found) {:error (str "cannot extract a pair — extract "
+                                         "needs ONE expression (usually the "
+                                         "pair's value form)")}
+          :else
           (let [m        (:zloc found)
                 [r c]    (z/position m)
                 sub-str  (n/string (z/node m))

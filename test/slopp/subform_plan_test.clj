@@ -32,11 +32,24 @@
     (is (nil? (:error plan)) (pr-str plan))))
 
 (deftest multi-form-match-is-a-hard-error
-  (let [plan (refactor/subform-replace-plan
-              (st "(ns sp.core)\n(defn f [x] (case x :a 1 :b 2))\n")
-              'sp.core 'f ":a 1" ":a 9")]
-    (is (:error plan))
-    (is (re-find #"ONE" (str (:error plan))))))
+  (testing "3+ forms are always refused"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn f [x] (case x :a 1 :b 2))\n")
+                'sp.core 'f ":a 1 :b" ":a 9 :b")]
+      (is (:error plan))
+      (is (re-find #"ONE" (str (:error plan))))))
+  (testing "two forms OUTSIDE a paired context are refused"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn g [x] (do (prn x) (inc x)))\n")
+                'sp.core 'g "(prn x) (inc x)" "(inc x)")]
+      (is (:error plan))
+      (is (re-find #"pair" (str (:error plan))))))
+  (testing "a two-form span CROSSING a pair boundary is refused"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(def m {:a 1 :b 2})\n")
+                'sp.core 'm "1 :b" "9 :c")]
+      (is (:error plan))
+      (is (re-find #"pair" (str (:error plan)))))))
 
 (deftest splice-still-replaces-one-with-several
   (let [plan (refactor/subform-replace-plan
@@ -70,3 +83,38 @@
     (testing "a replacement that breaks the form is refused"
       (is (:error (refactor/text-replace-plan st 'sp.core 'banner
                                               "welcome" "\")(oops"))))))
+(deftest pair-matches-address-paired-units
+  (testing "a case branch is addressable as DISPATCH RESULT (P1)"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn f [x] (case x :a 1 :b 2 :other))\n")
+                'sp.core 'f ":b 2" ":b 20")]
+      (is (nil? (:error plan)) (pr-str plan))
+      (is (= "(defn f [x] (case x :a 1 :b 20 :other))" (:new-form-src plan)))))
+  (testing "a let binding is addressable as NAME INIT"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [x] (let [a 1 b (inc a)] (+ a b)))\n")
+                'sp.core 'h "b (inc a)" "b (+ a 2)")]
+      (is (nil? (:error plan)) (pr-str plan))
+      (is (= "(defn h [x] (let [a 1 b (+ a 2)] (+ a b)))" (:new-form-src plan)))))
+  (testing "a map entry is addressable as KEY VALUE"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(def m {:a 1 :b 2})\n")
+                'sp.core 'm ":b 2" ":b 20")]
+      (is (nil? (:error plan)) (pr-str plan))
+      (is (= "(def m {:a 1 :b 20})" (:new-form-src plan)))))
+  (testing "cond clauses pair TEST RESULT"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn c [x] (cond (neg? x) :neg :else :pos))\n")
+                'sp.core 'c "(neg? x) :neg" "(neg? x) :negative")]
+      (is (nil? (:error plan)) (pr-str plan))))
+  (testing "pair replacement splices: one entry can become two"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(def m {:a 1 :b 2})\n")
+                'sp.core 'm ":b 2" ":b 20 :c 30")]
+      (is (= "(def m {:a 1 :b 20 :c 30})" (:new-form-src plan)))))
+  (testing "extract still refuses pairs (a pair is not an expression)"
+    (let [plan (refactor/extract-plan
+                (st "(ns sp.core)\n(def m {:a 1 :b (+ 1 1)})\n")
+                'sp.core 'm ":b (+ 1 1)" 'entry)]
+      (is (:error plan))
+      (is (re-find #"pair" (str (:error plan)))))))
