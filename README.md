@@ -17,12 +17,14 @@ commits) flow back into stores via `git_pull`'s form-granular 3-way merge.
 **From the release jar** (needs Java 21+ and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 
 ```sh
-# serve the store in the current directory over MCP stdio
-java -jar slopp.jar
+# the onboarding flow: clone normally (main = this branch, yours), then
+# IMPORT the slopp branch into a store — the working dir stays your checkout
+git clone https://github.com/nvoxland/slopp3.git proj && cd proj
+java -jar slopp.jar --main slopp.sync/-main import .
+java -jar slopp.jar          # serve the store over MCP stdio
 
-# clone this repo into a fileless store, then serve it
-java -jar slopp.jar --main slopp.sync/-main clone https://github.com/nvoxland/slopp3.git my-slopp
-cd my-slopp && java -jar slopp.jar
+# slopp then syncs against refs/heads/slopp of THIS repo (git-remote ".");
+# you push/pull origin — both branches — with regular git
 ```
 
 The jar's entry point is itself slopp-tracked config — `META-INF/MANIFEST.MF`
@@ -87,8 +89,13 @@ store into a temp dir and runs `clojure -M:test` there. CI runs both faces:
 - **native-proof** — a sample app built through slopp, compiled to a GraalVM
   native binary, executed. (slopp itself ships as an uberjar, not a native
   binary — the store loader compiles code at runtime by design.)
-- **release** — on `v*` tags: build the uberjar, smoke it with a zero-arg
-  boot, attach it to the GitHub Release.
+- **release** — manual dispatch with a version input: build the uberjar
+  from the slopp branch, smoke it bare, tag it, attach it to a Release.
+
+The workflows live on `main` (human-owned — external-system config never
+enters the store) and check out the `slopp` branch; since GitHub only runs
+push-triggered workflows from the pushed ref, they run on a daily schedule
+and on demand rather than per push.
 
 
 ## Mixed ownership: slopp owns ONE branch

@@ -1,0 +1,51 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'release tag (e.g. v0.1.2)'
+        required: true
+permissions:
+  contents: write
+jobs:
+  uberjar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2
+            ~/.gitlibs
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+      - name: Build the uberjar from the slopp branch
+        run: |
+          clojure -Sdeps '{:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}} :paths ["."]}' \
+            -M -e '((requiring-resolve (quote build/uber)) {:src "src"})'
+      - name: Smoke it (zero args — Main-Class from the store's config)
+        env:
+          SLOPP_CLOJURE: clojure
+        run: |
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            | java -jar "$GITHUB_WORKSPACE/target/slopp.jar" | grep -q serverInfo
+      - name: Tag + release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/${{ inputs.version }}" -f sha="$(git rev-parse HEAD)" || true
+          gh release create "${{ inputs.version }}" --repo "$GITHUB_REPOSITORY" --title "slopp ${{ inputs.version }}" --generate-notes || true
+          gh release upload "${{ inputs.version }}" target/slopp.jar --repo "$GITHUB_REPOSITORY" --clobber

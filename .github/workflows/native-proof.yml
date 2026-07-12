@@ -1,0 +1,51 @@
+name: native-proof
+on:
+  workflow_dispatch:
+jobs:
+  native-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: graalvm-community
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - name: Build a sample app through slopp and compile it native
+        env:
+          SLOPP_CLOJURE: clojure
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          reqs = [
+              {"name": "turn_begin", "arguments": {"agent": "ci", "intent": "native-image proof"}},
+              {"name": "ns_create", "arguments": {"agent": "ci", "ns": "app.core",
+                  "source": "(ns app.core)\n(defn greet [nm] (str \"hello, \" nm \"!\"))\n(defn -main [& args] (println (greet (or (first args) \"native\"))))"}},
+              {"name": "build", "arguments": {"dir": "/tmp/app", "main": "app.core/-main", "name": "app"}},
+              {"name": "turn_end", "arguments": {"agent": "ci"}},
+          ]
+          lines = [json.dumps({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}})]
+          for i, r in enumerate(reqs, 1):
+              lines.append(json.dumps({"jsonrpc":"2.0","id":i,"method":"tools/call","params":r}))
+          p = subprocess.run(["clojure","-M","-m","slopp.mcp","/tmp/appstore"],
+                             input="\n".join(lines)+"\n", capture_output=True, text=True, timeout=1200)
+          for line in p.stdout.splitlines():
+              line=line.strip()
+              if not line: continue
+              m=json.loads(line)
+              if m.get("id",0)>=1:
+                  r=m.get("result",{})
+                  txt=" ".join(c.get("text","") for c in r.get("content",[])) if r else json.dumps(m.get("error"))
+                  print(m["id"], txt[:120])
+                  assert ":error" not in txt[:12], txt
+          PY
+          cd /tmp/app && bash build-native.sh
+      - name: Run the binary
+        run: |
+          out=$(/tmp/app/app world)
+          echo "$out"
+          test "$out" = "hello, world!"

@@ -1,0 +1,70 @@
+# Human-owned CI (lives on main; slopp never touches it). GitHub only runs
+# push-triggered workflows from the pushed ref's tree, so slopp-branch pushes
+# can't trigger directly — this checks out the slopp branch on a schedule and
+# on demand instead.
+name: test
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
+jobs:
+  test-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2
+            ~/.gitlibs
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+      - name: Run the suite from the slopp branch
+        env:
+          SLOPP_CLOJURE: clojure
+        run: clojure -M:test
+  test-via-slopp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2
+            ~/.gitlibs
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+      - name: Import the slopp branch into a store (every write gated)
+        env:
+          SLOPP_CLOJURE: clojure
+        run: |
+          git branch slopp HEAD 2>/dev/null || true
+          clojure -M -m slopp.sync clone "$PWD" /tmp/store
+      - name: Run the store's suite (isolated tier, built from the store)
+        env:
+          SLOPP_CLOJURE: clojure
+        run: clojure -M -m slopp.sync test /tmp/store
