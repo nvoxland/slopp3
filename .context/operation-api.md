@@ -273,6 +273,14 @@ Two transports share the SAME dispatch (`mcp/handle`):
   `image/load-ns!`), then invokes `--main` (default `slopp.mcp/-main <dir>`).
   This is what `.mcp.json` runs. `slopp.boot` is self-contained (next.jdbc +
   core only) so it can bootstrap slopp itself; keep it that way.
+- `--call <tool> [args]` (P3) — ONE tool call with no MCP connection: sugar
+  for `--main slopp.mcp/call-main! <dir> <tool> [args]`. Args are JSON, EDN,
+  or `@file` (`mcp/parse-call-args`); result text on stdout, exit 1 on tool
+  error. `mcp/call!` is the engine: open durable session (turns enforced —
+  turn state is in the store, so `turn_begin` in one invocation covers the
+  next), one `call-tool` dispatch, close. For scripts, CI, and degraded
+  agent sessions; `slopp.boot` itself stays kernel-only (the sugar just
+  rewrites argv — `call-main!` resolves from the loaded store).
 - `--snapshot` (default) freezes a version at startup. `--live` runs
   `watch-live!`: poll `db data_version`, and on a foreign commit `load-string`
   the changed namespaces into the running host (the host tracks its own
