@@ -56,3 +56,17 @@
               (st "(ns sp.core)\n(defn f [x] (+ (inc x) (inc x)))\n")
               'sp.core 'f "(inc x)" "(dec x)")]
     (is (re-find #"2 times" (str (:error plan))))))
+(deftest text-mode-reaches-string-content
+  (let [st (st "(ns sp.core)\n(def banner \"welcome to the OLD thing\")\n")]
+    (testing "unique text inside a string literal is replaceable"
+      (let [plan (refactor/text-replace-plan st 'sp.core 'banner
+                                             "the OLD thing" "the NEW thing")]
+        (is (nil? (:error plan)) (pr-str plan))
+        (is (= "(def banner \"welcome to the NEW thing\")" (:new-form-src plan)))))
+    (testing "ambiguous text errors"
+      (is (:error (refactor/text-replace-plan st 'sp.core 'banner "e" "x"))))
+    (testing "absent text errors"
+      (is (:error (refactor/text-replace-plan st 'sp.core 'banner "zzz" "x"))))
+    (testing "a replacement that breaks the form is refused"
+      (is (:error (refactor/text-replace-plan st 'sp.core 'banner
+                                              "welcome" "\")(oops"))))))

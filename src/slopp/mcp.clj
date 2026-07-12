@@ -42,6 +42,13 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :before {:type "string"} :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "name" "before"]}}
+   {:name "edit_trivia"
+    :description "Replace the ENTIRE comment/blank-line run immediately before form `before` (omit before = the namespace tail) with `text` — how top-level comments and section banners are edited, added, or deleted (empty text = a bare newline). Text is trivia only (a code form is refused) and is normalized to start/end with a newline. Forms are untouched."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :before {:type "string"}
+                               :text {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}}
+                  :required ["ns" "text"]}}
    {:name "query_project"
     :description "THE orientation call: every namespace with its full outline (names, arities, doc lines, !-status, test-ness) in one response. Start here."
     :inputSchema {:type "object" :properties {}}}
@@ -142,10 +149,11 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match. SPLICE is guaranteed: the replacement may be SEVERAL forms (they land in the match's place — how you insert into a big vector or case). The match must parse to exactly ONE form (multi-form matches are refused). Matching is structural OR whitespace-insensitive-textual, so fn literals #(...) and regexes match; string CONTENT is not addressable (replace the whole enclosing form)."
+    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match. SPLICE is guaranteed: the replacement may be SEVERAL forms (they land in the match's place — how you insert into a big vector or case). The match must parse to exactly ONE form (multi-form matches are refused). Matching is structural OR whitespace-insensitive-textual, so fn literals #(...) and regexes match. text=true switches to RAW-TEXT matching (unique occurrence, result must stay one form) — the escape hatch for string literals and docstrings."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
+                               :text {:type "boolean"}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "form" "match" "source"]}}
@@ -603,6 +611,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                               (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
                             (text (-> (api/edit-subform! session (sym :ns) (sym :form)
                                                          match src
+                                                         :text (:text a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
                                       (select-keys [:error :conflict :warnings :existing-warnings
@@ -618,6 +627,11 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
+      "edit_trivia"       (text (api/edit-trivia! session (sym :ns)
+                                                  (some-> (:before a) symbol)
+                                                  (:text a)
+                                                  :prompt (:prompt a)
+                                                  :agent (:agent a)))
       "edit_extract"      (let [subform (or (:form a) (:source a) (:subform a))]
                             (when-not subform
                               (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))

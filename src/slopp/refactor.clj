@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index]))
+            [slopp.index :as index] [clojure.string :as str]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -297,3 +297,37 @@
                                      (map #(relative (nth offsets idx) %) ss)
                                      old-name new-name)]))))
         (keys (:namespaces store))))
+(defn text-replace-plan
+  "Plan a RAW-TEXT replace inside form `form-name`: `match-text` must occur
+  exactly ONCE in the form's source, and the spliced result must still parse
+  to ONE form. The escape hatch for content no structural match can address
+  — string literals, docstrings. Rides the same gated replace pipeline.
+  Returns {:new-form-src s} or {:error msg}."
+  [store ns-sym form-name match-text new-text]
+  (try
+    (if-let [e (store/form-named store ns-sym form-name)]
+      (let [src   ^String (n/string (:node e))
+            m     ^String (str match-text)
+            i     (.indexOf src m)]
+        (cond
+          (str/blank? m)
+          {:error "text mode needs a non-empty match"}
+
+          (neg? i)
+          {:error (str "text not found in " form-name)}
+
+          (>= (.indexOf src m (inc i)) 0)
+          {:error (str "text occurs more than once in " form-name
+                       " — give a longer unique snippet")}
+
+          :else
+          (let [out   (str (subs src 0 i) new-text (subs src (+ i (count m))))
+                nodes (filter n/sexpr-able?
+                              (n/children (p/parse-string-all out)))]
+            (if (= 1 (count nodes))
+              {:new-form-src out}
+              {:error (str "the replacement does not leave ONE valid form ("
+                           (count nodes) " forms parsed)")}))))
+      {:error (str "no form named " form-name " in " ns-sym)})
+    (catch Exception ex
+      {:error (str "text replace failed: " (ex-message ex))})))

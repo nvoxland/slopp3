@@ -453,6 +453,24 @@
       :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
       :file-remove (with-d (update store :files dissoc (:path d)))
 
+      :trivia
+      (with-d
+        (update-in store [:namespaces (:ns d) :elements]
+                   (fn [elems]
+                     (let [end   (or (when (:before d)
+                                       (first (keep-indexed
+                                               (fn [i e] (when (= (:before d) (:id e)) i))
+                                               elems)))
+                                     (count elems))
+                           start (loop [i end]
+                                   (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
+                                     (recur (dec i))
+                                     i))
+                           seps  (mapv (fn [nd] {:kind :sep :node nd})
+                                       (n/children (p/parse-string-all (:text d))))]
+                       (into (into (subvec elems 0 start) seps)
+                             (subvec elems end))))))
+
       (:replace :rename :normalize)
       (with-d
         (reduce-kv
@@ -862,14 +880,49 @@
 (defn replace-trivia
   "Replace the ENTIRE trivia run (comments/whitespace `:sep` elements)
   immediately before form `anchor` (a form name; nil = the run after the
-  LAST form) in `ns-sym` with `text`. Empty text = a single newline (the
-  minimal legal gap); non-empty text gains a trailing newline if missing (a
-  bare line comment would otherwise swallow the next form's first line).
-  Text containing any CODE form is refused. ONE `:trivia` delta carrying the
+  LAST form) in `ns-sym` with `text`. The text is normalized to start and
+  end with a newline (empty = a single newline, i.e. delete the gap); text
+  containing any CODE form is refused. ONE `:trivia` delta carrying the
   anchor's form-id, so foreign replay converges. Returns [store' delta] or
   {:error msg}."
   [store ns-sym anchor text & {:keys [prompt agent]}]
-  {:error "not implemented"})
+  (let [elems (get-in store [:namespaces ns-sym :elements])]
+    (if-not elems
+      {:error (str "no namespace " ns-sym)}
+      (let [aidx (when anchor
+                   (first (keep-indexed
+                           (fn [i e] (when (and (= :form (:kind e))
+                                                (= anchor (:name e))) i))
+                           elems)))]
+        (if (and anchor (nil? aidx))
+          {:error (str "no form named " anchor " in " ns-sym)}
+          (let [norm  (if (str/blank? (str text))
+                        "\n"
+                        (cond-> (str text)
+                          (not (str/starts-with? (str text) "\n")) (->> (str "\n"))
+                          (not (str/ends-with? (str text) "\n"))   (str "\n")))
+                nodes (n/children (p/parse-string-all norm))]
+            (if (some n/sexpr-able? nodes)
+              {:error "trivia only — the text contains a code form (use edit_add_form for forms)"}
+              (let [end   (or aidx (count elems))
+                    start (loop [i end]
+                            (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
+                              (recur (dec i))
+                              i))
+                    seps  (mapv (fn [nd] {:kind :sep :node nd}) nodes)
+                    [did store'] (gen-id store "d")
+                    delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                                   :op :trivia :ns ns-sym :at (now-ms)
+                                   :text norm}
+                            aidx   (assoc :before (:id (nth elems aidx)))
+                            prompt (assoc :prompt prompt)
+                            agent  (assoc :agent agent))]
+                [(-> store'
+                     (assoc-in [:namespaces ns-sym :elements]
+                               (into (into (subvec elems 0 start) seps)
+                                     (subvec elems end)))
+                     (update :deltas conj delta))
+                 delta]))))))))
 (defn record-file-put
   "Track a NON-CODE file (README, .github workflows, …) on the store's
   `:files` manifest ({path → text}) — these ride every projected tree, so

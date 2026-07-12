@@ -2120,12 +2120,17 @@
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
   occurrence of `match` inside form `form-name` with `new-src`
   (content-addressed; wrap/unwrap are just 'new subform containing/omitting
-  the old'). The payload scales with the CHANGE and sibling code is never
+  the old'). With `:text true` the match is RAW TEXT instead — the escape
+  hatch for string literals and docstrings, which no structural match can
+  address. The payload scales with the CHANGE and sibling code is never
   re-transcribed. Rides the full replace pipeline: dialect gate on the
   RESULTING form, rebase/conflict commit, verification, provenance."
-  [session ns-sym form-name match new-src & {:keys [prompt agent]}]
-  (let [plan (refactor/subform-replace-plan (:store @session) ns-sym form-name
-                                            match new-src)]
+  [session ns-sym form-name match new-src & {:keys [prompt agent text]}]
+  (let [plan (if text
+               (refactor/text-replace-plan (:store @session) ns-sym form-name
+                                           match new-src)
+               (refactor/subform-replace-plan (:store @session) ns-sym form-name
+                                              match new-src))]
     (if (:error plan)
       plan
       (edit-replace! session ns-sym form-name (:new-form-src plan)
@@ -2997,3 +3002,19 @@
   {:files (into (sorted-map)
                 (map (fn [[p t]] [p (count t)]))
                 (:files (:store @session)))})
+(defn edit-trivia!
+  "Replace the comment/blank-line run immediately before form `anchor`
+  (nil = the namespace tail) with `text` — the trivia counterpart of
+  edit_replace_form. Forms are untouched by construction, so there is no
+  image work and no verification; the `:trivia` delta anchors on the form-id
+  for foreign replay. Returns {:delta :before} | {:error} | {:conflict}."
+  [session ns-sym anchor text & {:keys [prompt agent]}]
+  (let [base (:store @session)
+        r    (store/replace-trivia base ns-sym anchor text
+                                   :prompt prompt :agent agent)]
+    (if (:error r)
+      r
+      (let [[st' d] r]
+        (if-not (try-commit! session base st' [ns-sym])
+          {:conflict {:reason "store changed concurrently — retry"}}
+          {:delta (:id d) :before (some-> anchor str) :ns (str ns-sym)})))))
