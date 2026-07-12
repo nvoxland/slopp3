@@ -764,3 +764,26 @@ instance. In THIS repo the on-disk kernel is `src/slopp/boot.clj` +
 `src/slopp/rt.clj` + `deps.edn`; the rest of `src/` is no longer needed to
 RUN (still needed to run the file-based system-test suite — separate concern).
 `--at <commit>` (boot a past milestone) is a noted future refinement.
+
+## E — edit-surface ergonomics (friction-log fixes)
+
+E1 ✅ **Anchored adds**: `edit_add_form` (and group add steps) take
+`before=<form-name>` — insert immediately before the anchor instead of the
+tail. The `:add` delta records the anchor's form-ID so foreign replay
+converges on the same position (merge replay falls back to append).
+`edit_group` gains a `move` action (batch reordering, one atomic commit).
+The append-at-tail class that warped three designs and caused the S1b
+incident is closed.
+
+E2 ✅ **Subform matcher correctness**: matching is structural OR
+whitespace-normalized-textual (fn literals gensym their args and regex
+Patterns never compare equal — sexpr-only matching could NEVER match them);
+a multi-form match string is a hard error (it used to silently match its
+FIRST form — corrupted a case dispatch once; the compile gate caught it);
+SPLICE (one match → several replacement forms) is a documented guarantee.
+String CONTENT and trivia remain non-addressable (open).
+
+E3 note: the isolated suite caught a G5 regression (a projection test
+asserted the legacy agent author; the "<git>" fallback now resolves the
+machine's git identity) — fixed by pinning store config in the test. Lesson
+relearned: run the FULL suite after every feature, not targeted probes.
