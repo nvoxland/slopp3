@@ -374,7 +374,10 @@
             "pull"  (let [sess (api/open! {:dir a})]
                       (try (pull! sess)
                            (finally (api/close! sess))))
-            {:error "usage: clone <url> <dir> | push <dir> [url] | pull <dir>"})]
+            "test"  (let [sess (api/open! {:dir a})]
+                      (try (api/isolated-test-run! sess)
+                           (finally (api/close! sess))))
+            {:error "usage: clone <url> <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
     (println (pr-str r))
     (shutdown-agents)
-    (when (:error r) (System/exit 1))))
+    (when (or (:error r) (= :red (:status r))) (System/exit 1))))
