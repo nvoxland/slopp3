@@ -122,18 +122,26 @@
 ;; --- entry ---
 
 (defn parse-args
-  "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...].
+  "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...]
+                           [--call tool [args]].
   Everything after the --main symbol passes through to it verbatim (:args);
-  with no explicit args the main receives [dir] (the server convention)."
+  with no explicit args the main receives [dir] (the server convention).
+  --call is sugar for --main slopp.mcp/call-main! <dir> <tool> [args] — one
+  tool call, result on stdout (args = JSON, EDN, or @file)."
   [args]
-  (let [[pre post] (split-with #(not= "--main" %) args)
+  (let [[pre post] (split-with #(not (#{"--main" "--call"} %)) args)
         dir  (or (first (remove #(str/starts-with? % "--") pre))
                  (System/getProperty "user.dir"))
         extra (vec (drop 2 post))]
-    {:dir   dir
-     :live? (boolean (some #{"--live"} pre))
-     :main  (symbol (or (second post) "slopp.mcp/-main"))
-     :args  (if (seq extra) extra [dir])}))
+    (if (= "--call" (first post))
+      {:dir   dir
+       :live? (boolean (some #{"--live"} pre))
+       :main  'slopp.mcp/call-main!
+       :args  (into [dir] (rest post))}
+      {:dir   dir
+       :live? (boolean (some #{"--live"} pre))
+       :main  (symbol (or (second post) "slopp.mcp/-main"))
+       :args  (if (seq extra) extra [dir])})))
 
 (defn -main
   "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn arg...]

@@ -129,3 +129,35 @@
                                         :source "(defn f [x] (inc x))"}))]
           (is (seq (get-in r [:test :failures])))))
       (finally (api/close! sess)))))
+(deftest parse-call-args-shapes
+  (testing "nil/blank → {}"
+    (is (= {} (mcp/parse-call-args nil)))
+    (is (= {} (mcp/parse-call-args "  "))))
+  (testing "JSON and EDN both parse, keys keywordized"
+    (is (= {:ns "demo" :limit 5} (mcp/parse-call-args "{\"ns\":\"demo\",\"limit\":5}")))
+    (is (= {:ns "demo" :limit 5} (mcp/parse-call-args "{:ns \"demo\" :limit 5}"))))
+  (testing "@file reads the file first"
+    (let [f (java.io.File/createTempFile "callargs" ".json")]
+      (spit f "{\"ns\":\"demo\"}")
+      (is (= {:ns "demo"} (mcp/parse-call-args (str "@" f))))))
+  (testing "non-map input is a clear error"
+    (is (thrown-with-msg? Exception #"JSON or EDN map"
+                          (mcp/parse-call-args "[1 2 3]")))))
+(deftest ^:isolated one-shot-call
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-call" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (testing "a query works with no MCP connection and returns the wire shape"
+      (let [r (mcp/call! dir "query_project" {})]
+        (is (not (:isError r)))
+        (is (string? (get-in r [:content 0 :text])))))
+    (testing "writes stay turn-gated: no open turn → tool error, not a write"
+      (let [r (mcp/call! dir "ns_create" {:ns "demo" :source "(ns demo)"
+                                          :agent "probe"})]
+        (is (:isError r))
+        (is (re-find #"turn" (get-in r [:content 0 :text])))))
+    (testing "turn_begin in one call!, the write in the NEXT (turns are durable)"
+      (mcp/call! dir "turn_begin" {:agent "probe" :intent "one-shot test"})
+      (let [r (mcp/call! dir "ns_create" {:ns "demo"
+                                          :source "(ns demo)\n(defn f [x] x)\n"
+                                          :agent "probe"})]
+        (is (not (:isError r)) (get-in r [:content 0 :text]))))))

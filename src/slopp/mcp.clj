@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.db :as db] [slopp.sync :as sync]))
+            [slopp.git :as git] [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -495,6 +495,21 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
         (:image-healed r) (assoc :image-healed true)
         (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
 
+(defn parse-call-args
+  "Tool arguments for the one-shot --call CLI: nil/blank → {}; \"@path\"
+  reads the file first; the text parses as JSON or EDN (agents emit both)
+  and must yield a map."
+  [s]
+  (let [s (if (and s (str/starts-with? s "@")) (slurp (subs s 1)) s)]
+    (if (str/blank? s)
+      {}
+      (let [v (or (try (json/parse-string s true) (catch Exception _ nil))
+                  (try (edn/read-string s) (catch Exception _ nil)))]
+        (if (map? v)
+          v
+          (throw (ex-info (str "--call args must be a JSON or EDN map (or @file): "
+                               s)
+                          {})))))))
 (defn- call-tool [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (when (and (:require-turns? @session)
@@ -760,6 +775,34 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                            (str/join ", " (map :name tools)))
                       {})))))
 
+(defn call!
+  "One-shot tool invocation against the store at `dir` — the --call CLI's
+  engine and the fallback when no MCP connection exists. Opens a durable
+  session, dispatches ONE tool call, closes. Returns the wire result map
+  ({:content [{:text …}]}; :isError true on tool errors), same as the
+  server would send."
+  [dir tool arguments]
+  (let [session (api/open! {:dir (str dir)})]
+    (swap! session assoc :require-turns? true)
+    (try
+      (try (call-tool session {:name tool :arguments arguments})
+           (catch Exception e
+             (assoc (text (str "error: " (ex-message e))) :isError true)))
+      (finally (api/close! session)))))
+^:unsafe
+(defn call-main!
+  "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main):
+  <dir> <tool> [args] — one tool call, result text on stdout, exit 1 on a
+  tool error. args is JSON, EDN, or @file (parse-call-args)."
+  [& [dir tool args-str]]
+  (when (str/blank? tool)
+    (binding [*out* *err*]
+      (println "usage: --call <tool> [<json/edn args or @file>]"))
+    (System/exit 2))
+  (let [r (call! (or dir ".") tool (parse-call-args args-str))]
+    (println (clojure.string/join "\n" (map :text (:content r))))
+    (flush)
+    (System/exit (if (:isError r) 1 0))))
 ^:unsafe (defn handle
   "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees

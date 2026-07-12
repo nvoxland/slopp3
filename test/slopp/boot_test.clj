@@ -36,4 +36,11 @@
     (is (= {:dir "." :live? false :main 'slopp.sync/-main
             :args ["push" "." "https://x/y.git"]}
            (boot/parse-args ["." "--main" "slopp.sync/-main"
-                             "push" "." "https://x/y.git"])))))
+                             "push" "." "https://x/y.git"]))))
+  (testing "--call is sugar for --main slopp.mcp/call-main! dir tool [args]"
+    (is (= {:dir "." :live? false :main 'slopp.mcp/call-main!
+            :args ["." "query_project"]}
+           (boot/parse-args ["." "--call" "query_project"])))
+    (is (= {:dir "/p" :live? false :main 'slopp.mcp/call-main!
+            :args ["/p" "edit_replace_form" "@/tmp/a.json"]}
+           (boot/parse-args ["/p" "--call" "edit_replace_form" "@/tmp/a.json"])))))
