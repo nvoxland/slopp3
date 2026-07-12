@@ -142,30 +142,46 @@
          delta]))))
 
 (defn append-form
-  "Append a new form to `ns-sym` (separated by a newline, followed by one) with
-  a fresh id; ONE `:add` delta. Returns [store' delta], or nil if the namespace
-  doesn't exist."
-  [store ns-sym node & {:keys [prompt group agent]}]
+  "Add a new form to `ns-sym` with a fresh id; ONE `:add` delta. Default:
+  appended at the tail (newline-separated). `:before <form-name>` anchors it
+  immediately before that form instead — the delta records the anchor's
+  form-ID so foreign replay converges on the same position. Returns
+  [store' delta]; nil when the namespace — or the named anchor — doesn't
+  exist."
+  [store ns-sym node & {:keys [prompt group agent before]}]
   (when-let [elems (get-in store [:namespaces ns-sym :elements])]
-    (let [needs-nl?    (and (seq elems)
-                            (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
-          [fid store]  (gen-id store "f")
-          [did store'] (gen-id store "d")
-          new-elems    (cond-> elems
-                         needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                         true      (conj {:id fid :kind :form
-                                          :name (form-symbol node) :node node}
-                                         {:kind :sep :node (n/newlines 1)}))
-          delta        (cond-> {:id did :parent (:id (last (:deltas store)))
-                                :op :add :ns ns-sym :form-id fid :prompt prompt
-                                :at (now-ms)
-                                :sources {fid (n/string node)}}
-                         group (assoc :group group)
-                         agent (assoc :agent agent))]
-      [(-> store'
-           (assoc-in [:namespaces ns-sym :elements] new-elems)
-           (update :deltas conj delta))
-       delta])))
+    (let [anchor-idx (when before
+                       (first (keep-indexed
+                               (fn [i e] (when (and (= :form (:kind e))
+                                                    (= before (:name e))) i))
+                               elems)))]
+      (when (or (nil? before) anchor-idx)
+        (let [needs-nl?    (and (nil? anchor-idx)
+                                (seq elems)
+                                (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
+              [fid store]  (gen-id store "f")
+              [did store'] (gen-id store "d")
+              form-elem    {:id fid :kind :form :name (form-symbol node) :node node}
+              new-elems    (if anchor-idx
+                             (into (conj (subvec elems 0 anchor-idx)
+                                         form-elem
+                                         {:kind :sep :node (n/newlines 1)})
+                                   (subvec elems anchor-idx))
+                             (cond-> elems
+                               needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                               true      (conj form-elem
+                                               {:kind :sep :node (n/newlines 1)})))
+              delta        (cond-> {:id did :parent (:id (last (:deltas store)))
+                                    :op :add :ns ns-sym :form-id fid :prompt prompt
+                                    :at (now-ms)
+                                    :sources {fid (n/string node)}}
+                             anchor-idx (assoc :before (:id (nth elems anchor-idx)))
+                             group (assoc :group group)
+                             agent (assoc :agent agent))]
+          [(-> store'
+               (assoc-in [:namespaces ns-sym :elements] new-elems)
+               (update :deltas conj delta))
+           delta])))))
 
 (defn remove-form
   "Remove the form named `nm` from `ns-sym` (plus its immediately following
@@ -462,18 +478,29 @@
           (with-d
             (update-in store [:namespaces ns-sym :elements]
                        (fn [elems]
-                         (let [node      (p/parse-string src)
-                               needs-nl? (and (seq elems)
-                                              (not (str/ends-with?
-                                                    (n/string (:node (peek elems)))
-                                                    "\n")))]
-                           (cond-> elems
-                             needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                             true      (conj {:id fid :kind :form
-                                              :name (form-symbol node)
-                                              :node node}
-                                             {:kind :sep
-                                              :node (n/newlines 1)}))))))))
+                         (let [node       (p/parse-string src)
+                               form-elem  {:id fid :kind :form
+                                           :name (form-symbol node) :node node}
+                               ;; anchored add (:before = anchor form-id):
+                               ;; same position as the writer; gone → append
+                               anchor-idx (when (:before d)
+                                            (first (keep-indexed
+                                                    (fn [i e] (when (= (:before d) (:id e)) i))
+                                                    elems)))]
+                           (if anchor-idx
+                             (into (conj (subvec elems 0 anchor-idx)
+                                         form-elem
+                                         {:kind :sep :node (n/newlines 1)})
+                                   (subvec elems anchor-idx))
+                             (let [needs-nl? (and (seq elems)
+                                                  (not (str/ends-with?
+                                                        (n/string (:node (peek elems)))
+                                                        "\n")))]
+                               (cond-> elems
+                                 needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                                 true      (conj form-elem
+                                                 {:kind :sep
+                                                  :node (n/newlines 1)}))))))))))
 
       :delete
       (let [ns-sym (:ns d)

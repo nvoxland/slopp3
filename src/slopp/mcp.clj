@@ -127,9 +127,10 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source"]}}
    {:name "edit_add_form"
-    :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify)."
+    :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify). Default position: the tail. Pass before=<form-name> to insert immediately before that form — define callees before their callers in one step."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}
+                               :before {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
@@ -141,7 +142,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match."
+    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match. SPLICE is guaranteed: the replacement may be SEVERAL forms (they land in the match's place — how you insert into a big vector or case). The match must parse to exactly ONE form (multi-form matches are refused). Matching is structural OR whitespace-insensitive-textual, so fn literals #(...) and regexes match; string CONTENT is not addressable (replace the whole enclosing form)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
@@ -156,14 +157,15 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
-    :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors."
+    :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors. Steps: replace/add/delete/move — add takes optional before=<form-name> (insert anchored, not at the tail); move needs name + before (batch reordering rides the same atomic commit)."
     :inputSchema {:type "object"
                   :properties {:steps {:type "array"
                                        :items {:type "object"
-                                               :properties {:action {:type "string" :enum ["replace" "add" "delete"]}
+                                               :properties {:action {:type "string" :enum ["replace" "add" "delete" "move"]}
                                                             :ns {:type "string"}
                                                             :name {:type "string"}
-                                                            :source {:type "string"}}
+                                                            :source {:type "string"}
+                                                            :before {:type "string"}}
                                                :required ["action" "ns"]}}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
@@ -537,7 +539,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
-                                                   :agent (:agent a))
+                                                   :agent (:agent a)
+                                                   :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
@@ -550,14 +553,15 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                      session
                                      (mapv (fn [s]
                                              (let [action (or (:action s) (:op s))] ; :op guessed in evals
-                                               (when-not (contains? #{"replace" "add" "delete"} action)
-                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete (got "
-                                                                      (pr-str action) "); keys: :action :ns :name :source")
+                                               (when-not (contains? #{"replace" "add" "delete" "move"} action)
+                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move (got "
+                                                                      (pr-str action) "); keys: :action :ns :name :source :before")
                                                                  {})))
                                                (cond-> {:action (keyword action)
                                                         :ns (symbol (:ns s))}
                                                  (:name s)   (assoc :name (symbol (:name s)))
-                                                 (:source s) (assoc :source (:source s)))))
+                                                 (:source s) (assoc :source (:source s))
+                                                 (:before s) (assoc :before (symbol (:before s))))))
                                            (:steps a))
                                      :prompt (:prompt a) :agent (:agent a))
                                     (select-keys [:error :step :group :warnings :existing-warnings :changed-nses

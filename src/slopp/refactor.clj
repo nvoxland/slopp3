@@ -144,26 +144,78 @@
                 :when (not= (n/string node') (n/string (:node e)))]
             [(:id e) node']))))
 
+(defn- norm-src
+  "Whitespace-insensitive comparison key for source text: outside string
+  literals, runs of whitespace/commas collapse to one space; string bytes
+  and char literals stay verbatim. The match fallback for nodes whose sexpr
+  can never compare equal (fn literals gensym their args; regex Patterns
+  don't =)."
+  [^String s]
+  (let [n  (.length s)
+        sb (StringBuilder.)]
+    (loop [i 0, in-str? false, esc? false, ws? false]
+      (if (>= i n)
+        (str sb)
+        (let [c (.charAt s i)]
+          (cond
+            in-str?
+            (do (.append sb c)
+                (cond
+                  esc?     (recur (inc i) true false false)
+                  (= c \\) (recur (inc i) true true false)
+                  (= c \") (recur (inc i) false false false)
+                  :else    (recur (inc i) true false false)))
+
+            ;; char literal in code: backslash + next char verbatim
+            (= c \\)
+            (do (when ws? (when (pos? (.length sb)) (.append sb \space)))
+                (.append sb c)
+                (when (< (inc i) n) (.append sb (.charAt s (inc i))))
+                (recur (+ i 2) false false false))
+
+            (or (Character/isWhitespace c) (= c \,))
+            (recur (inc i) false false true)
+
+            :else
+            (do (when (and ws? (pos? (.length sb))) (.append sb \space))
+                (.append sb c)
+                (recur (inc i) (= c \") false false))))))))
 (defn- find-unique-subform
-  "The unique position-tracked zloc in `form-src` whose sexpr structurally
-  equals `match-src`'s (shared by extract and subform edits). Returns
-  {:zloc l} or {:error msg} (absence/ambiguity with counts)."
+  "The unique position-tracked zloc in `form-src` matching `match-src`
+  (shared by extract and subform edits). A node matches when its sexpr
+  structurally equals the match's OR its whitespace-normalized text does —
+  the text fallback covers fn literals (gensym'd args never sexpr-compare
+  equal) and regexes (Patterns don't =). `match-src` must parse to exactly
+  ONE form: matching a multi-form string's first form silently misaligns
+  paired structures like case. Returns {:zloc l} or {:error msg}."
   [form-src match-src what]
-  (let [target  (n/sexpr (p/parse-string match-src))
-        matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
-                     (take-while (complement z/end?))
-                     (filter #(try (= target (z/sexpr %))
-                                   (catch Exception _ false)))
-                     vec)]
-    (cond
-      (empty? matches)
-      {:error (str "subform not found in " what)}
+  (let [mnodes (filter n/sexpr-able?
+                       (n/children (p/parse-string-all match-src)))]
+    (if (not= 1 (count mnodes))
+      {:error (str "match parses to " (count mnodes) " forms — give exactly "
+                   "ONE subform as the match (the REPLACEMENT may be several "
+                   "forms; the match may not)")}
+      (let [mnode   (first mnodes)
+            msexpr  (try (n/sexpr mnode) (catch Exception _ ::none))
+            mnorm   (norm-src (n/string mnode))
+            match?  (fn [zl]
+                      (or (and (not= ::none msexpr)
+                               (try (= msexpr (z/sexpr zl))
+                                    (catch Exception _ false)))
+                          (= mnorm (norm-src (n/string (z/node zl))))))
+            matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
+                         (take-while (complement z/end?))
+                         (filter match?)
+                         vec)]
+        (cond
+          (empty? matches)
+          {:error (str "subform not found in " what)}
 
-      (< 1 (count matches))
-      {:error (str "subform occurs " (count matches) " times in " what
-                   " — ambiguous; give a larger enclosing subform")}
+          (< 1 (count matches))
+          {:error (str "subform occurs " (count matches) " times in " what
+                       " — ambiguous; give a larger enclosing subform")}
 
-      :else {:zloc (first matches)})))
+          :else {:zloc (first matches)})))))
 
 (defn subform-replace-plan
   "Plan replacing the unique occurrence of `match-src` inside `form-name` with

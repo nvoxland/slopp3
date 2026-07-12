@@ -94,6 +94,10 @@
         sess (api/open! {:dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
+      ;; G5: milestones stamp a configured author; pin it so the assertions
+      ;; below don't depend on this machine's global git config
+      (api/config! sess "user.name" "alice")
+      (api/config! sess "user.email" "alice@slopp")
       (api/commit-point! sess "v1: f ships" :agent "alice")
       (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip arg order" :agent "alice")

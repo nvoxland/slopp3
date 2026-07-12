@@ -1312,9 +1312,11 @@
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
-  delta, hot-reload into the image, verification, provenance. Returns
-  {:delta :warnings :test :affected} or {:error msg}."
-  [session ns-sym source & {:keys [prompt agent]}]
+  delta, hot-reload into the image, verification, provenance. `:before
+  <form-name>` anchors the new form immediately before that one (default:
+  appended at the tail) — define-before-use without a follow-up move.
+  Returns {:delta :warnings :test :affected} or {:error msg}."
+  [session ns-sym source & {:keys [prompt agent before]}]
   (let [t0 (System/nanoTime)
         {:keys [node error]} (edit/parse-form source)
         nm (some-> node store/form-symbol)]
@@ -1332,9 +1334,15 @@
                  (cond
                    (and nm (store/form-named base ns-sym nm))
                    {:error (str nm " already exists in " ns-sym)}
+
+                   (and before (not (store/form-named base ns-sym before)))
+                   {:error (str "no anchor form named " before " in " ns-sym
+                                " — :before must name an existing form")}
+
                    :else
                    (if-let [[st' d] (store/append-form base ns-sym node
-                                                       :prompt prompt :agent agent)]
+                                                       :prompt prompt :agent agent
+                                                       :before before)]
                      {:store st' :delta d}
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
                (fn [base] (when nm (:node (store/form-named base ns-sym nm))))
@@ -1342,7 +1350,7 @@
                ns-sym)]
         (if (or (:error r) (:conflict r))
           r
-          (do (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
+          (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
                     affected (when nm (affected-tests session ns-sym nm))
                     summary  (run-verification! session ns-sym affected
                                                 :edited edited)
@@ -1359,7 +1367,7 @@
                            :affected (or affected :all)}
                     (:image-healed r) (assoc :image-healed true)
                     (pos? existing)   (assoc :existing-warnings existing))
-                  t0))))))))
+                  t0)))))))
 
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
@@ -1390,8 +1398,11 @@
 
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
-  or {:error msg}. `:hot` is the hot-reload action for the commit phase."
-  [st gid prompt agent {:keys [action ns name source]}]
+  or {:error msg}. `:hot` is the hot-reload action for the commit phase.
+  Actions: :replace, :add (optionally anchored via :before), :delete, and
+  :move (:name before :before — reordering inside the atomic group; image
+  vars are order-independent, so no hot action)."
+  [st gid prompt agent {:keys [action ns name source before]}]
   (case action
     :replace (let [{:keys [node error]} (edit/parse-form source)]
                (if error
@@ -1407,10 +1418,12 @@
                  error {:error error}
                  (and nm (store/form-named st ns nm))
                  {:error (str nm " already exists in " ns)}
+                 (and before (not (store/form-named st ns before)))
+                 {:error (str "no anchor form named " before " in " ns)}
                  :else
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
-                                                     :agent agent)]
+                                                     :agent agent :before before)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no namespace " ns " (ingest it first)")})))
     :delete  (if-let [[st' d] (store/remove-form st ns name
@@ -1418,6 +1431,11 @@
                                                  :agent agent)]
                {:store st' :delta d :hot [:unmap ns name]}
                {:error (str "no form named " name " in " ns)})
+    :move    (if-let [[st' d] (store/move-form st ns name before
+                                               :prompt prompt :agent agent)]
+               {:store st' :delta d :hot nil}
+               {:error (str "cannot move " name " before " before " in " ns
+                            " — both must be existing forms")})
     {:error (str "unknown action: " action)}))
 
 (defn edit-group!

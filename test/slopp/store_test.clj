@@ -27,3 +27,22 @@
   (let [s (store/ingest (store/empty-store) 'foo src)]
     (is (= 'add (:name (store/form-named s 'foo 'add))))
     (is (nil? (store/form-named s 'foo 'missing)))))
+(deftest anchored-add-inserts-before-the-anchor
+  (let [base (store/ingest (store/empty-store) 'an.core
+                           "(ns an.core)\n(defn early [] 1)\n(defn late [] 2)\n")
+        [st d] (store/append-form base 'an.core
+                                  (rewrite-clj.parser/parse-string "(defn mid [] 3)")
+                                  :prompt "anchored" :before 'late)]
+    (testing "renders between early and late"
+      (let [src ^String (slopp.render/render-ns st 'an.core)]
+        (is (< (.indexOf src "early") (.indexOf src "mid") (.indexOf src "late")))))
+    (testing "the delta records the anchor's form-id for replay"
+      (is (= (:id (store/form-named base 'an.core 'late)) (:before d))))
+    (testing "a foreign store replays the add into the SAME position"
+      (let [replayed (store/replay-delta base d)
+            src ^String (slopp.render/render-ns replayed 'an.core)]
+        (is (< (.indexOf src "early") (.indexOf src "mid") (.indexOf src "late")))))
+    (testing "a missing anchor name returns nil (caller errors)"
+      (is (nil? (store/append-form base 'an.core
+                                   (rewrite-clj.parser/parse-string "(defn x [] 4)")
+                                   :before 'nope))))))
