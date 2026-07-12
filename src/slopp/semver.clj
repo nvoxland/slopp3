@@ -15,3 +15,7 @@
   segments (so 1.10.0 > 1.2.0, unlike a lexical compare). (Edited directly on GitHub.)"
   [a b]
   (pos? (compare (parse a) (parse b))))
+(defn older?
+  "True if version string `a` is strictly older than `b` — newer? flipped."
+  [a b]
+  (newer? b a))

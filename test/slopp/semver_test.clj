@@ -18,3 +18,6 @@
     (is (semver/newer? "2.0.0" "1.9.9")))
   (testing "equal is not strictly newer"
     (is (not (semver/newer? "1.0.0" "1.0.0")))))
+(deftest older-is-newer-flipped
+  (is (true? (slopp.semver/older? "1.2.0" "1.10.0")))
+  (is (false? (slopp.semver/older? "1.10.0" "1.2.0"))))
