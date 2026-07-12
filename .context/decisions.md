@@ -865,3 +865,21 @@ from a raw tracked file to two semantic keys — the rendered output is
 byte-identical, and `java -jar slopp.jar` still boots bare. The raw files
 manifest remains for things that genuinely are opaque files (CI workflows,
 until a YAML serializer exists); README and human docs belong on main.
+
+## G10 — the onboarding flow: import into a main checkout
+
+G10 ✅ Working dir = the HUMAN's main checkout; the store = the slopp
+branch. `slopp.sync/import!` (CLI `import <dir>`, jar:
+`java -jar slopp.jar --main slopp.sync/-main import .`) builds
+`.slopp/store.db` inside a plain git clone from the repo's slopp branch —
+`fetch-remote!` now also maps the source's remote-tracking refs, so a fresh
+clone (slopp only as origin/slopp) imports directly. The store records
+`git-remote "."` (relative remotes resolve against the STORE dir, not the
+CWD): slopp pushes/pulls refs/heads/slopp of the SAME local repo; the human
+does all origin interaction with regular git, on both branches. No
+bootstrap files needed on main — the jar carries the kernel, and import
+runs from the jar's bundled code before any store exists. External-system
+config (CI workflows) lives on main and checks out the slopp branch on
+schedule/dispatch (GitHub only runs push-triggered workflows from the
+pushed ref — the honest trade for the boundary); the store keeps ONLY
+config slopp consumes (MANIFEST.MF semantics, deps).
