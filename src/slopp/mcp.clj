@@ -414,6 +414,10 @@ RULES:   every write must compile (define callees first; (declare x) for cycles)
 READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
          :diagnosis :genuine = real red, yours · :staleness-detected = healed
          :warnings = fix with edit_rename per :suggest · :untested = add a test
+SHARE:   git_push {url?} (milestones -> a normal git remote; url saved once)
+         git_pull (3-way absorb: remote wins where you're clean; both-touched =
+         conflict, yours stays live, push blocked until git_resolve {path})
+         config {key value?} (user.name/user.email = milestone author identity)
 FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
          commit_point {description} <- MILESTONE: green-gated, the grain a
          human diffs and reverts to; coarser than checkpoints and turns")

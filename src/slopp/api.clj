@@ -252,7 +252,8 @@
                 (if (:error out)
                   out
                   (let [load-res (when (and load? (not loaded?))
-                                   (or (some->> (edit/cold-load-errors (:store out) [ns-sym])
+                                   (or (some->> (or (edit/cold-load-errors (:store out) [ns-sym])
+                                       (edit/lint-refusals base (:store out) [ns-sym]))
                                                 (hash-map :err))
                                        (hot-load-all! session (:store out)
                                                       [(:form-id (:delta out))])))]
@@ -273,7 +274,8 @@
         (if (:error out0)
           out0
           (let [load-res (when load?
-                           (or (some->> (edit/cold-load-errors (:store out0) [ns-sym])
+                           (or (some->> (or (edit/cold-load-errors (:store out0) [ns-sym])
+                                        (edit/lint-refusals base0 (:store out0) [ns-sym]))
                                         (hash-map :err))
                                (hot-load-all! session (:store out0)
                                               [(:form-id (:delta out0))])))]
@@ -1444,7 +1446,8 @@
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
-          (let [load-res (or (some->> (edit/cold-load-errors st (distinct (map :ns steps)))
+          (let [load-res (or (some->> (or (edit/cold-load-errors st (distinct (map :ns steps)))
+                                          (edit/lint-refusals base0 st (distinct (map :ns steps))))
                                          (hash-map :err))
                                 (hot-load-all! session st
                                                (keep (fn [[k a]] (when (= :load k) a))

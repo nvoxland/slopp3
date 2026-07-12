@@ -288,3 +288,25 @@
                                  " defined later (line " def-row ")"))
                           findings))
            " — define it earlier, move it up with edit_move, or add (declare ...)"))))
+(defn lint-refusals
+  "NEW error-level kondo findings a candidate store would introduce over its
+  base — nil when clean, else one actionable message. Error-level lint is
+  ~never a false positive (two 'invalid-arity' errors once dismissed as noise
+  were real ArityExceptions in shipped handlers); a write may not ADD one.
+  Pre-existing errors don't block (no deadlock on legacy); warnings stay
+  advisory."
+  [base cand ns-syms]
+  (let [errs (fn [store ns-sym]
+               (when (get-in store [:namespaces ns-sym])
+                 (->> (index/lint (render/render-ns store ns-sym))
+                      (filter #(= :error (:level %)))
+                      (map (juxt :type :message)))))
+        news (mapcat (fn [ns-sym]
+                       (let [old (set (errs base ns-sym))]
+                         (->> (errs cand ns-sym)
+                              (remove old)
+                              (map (fn [[t m]] (str ns-sym ": " (name t) " — " m))))))
+                     (distinct ns-syms))]
+    (when (seq news)
+      (str "lint ERROR introduced: " (str/join "; " news)
+           " — error-level kondo findings are almost never false positives; fix before committing"))))
