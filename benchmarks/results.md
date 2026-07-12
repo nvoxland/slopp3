@@ -323,3 +323,6 @@ ABSORBING the new turn protocol (2+ extra required calls):
   workaround fanouts. Only signature-change shapes are the task's own
   make-order arity addition with 0 caller edits (multi-arity absorbed it).
   change_signature / inline stay deferred on evidence.
+| 2026-07-11 | 998aaa9 | calculator | 2 | 11 | 256 | 726 | 786 |
+| 2026-07-11 | 998aaa9 | inventory | 1 | 7 | 79 | 345 | 456 |
+| 2026-07-11 | 998aaa9 | wordstats | 1 | 8 | 155 | 427 | 580 |
