@@ -20,7 +20,11 @@ jobs:
           path: |
             ~/.m2
             ~/.gitlibs
-          key: deps-${{ hashFiles('deps.edn') }}
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
       - name: Run the suite from the pushed files
         env:
           SLOPP_CLOJURE: clojure
@@ -41,7 +45,11 @@ jobs:
           path: |
             ~/.m2
             ~/.gitlibs
-          key: deps-${{ hashFiles('deps.edn') }}
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
       - name: Import the pushed code into a slopp store (every write gated)
         env:
           SLOPP_CLOJURE: clojure
