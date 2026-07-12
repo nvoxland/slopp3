@@ -116,21 +116,31 @@
 
 ;; --- entry ---
 
-(defn- parse-args [args]
-  {:dir   (or (first (remove #(str/starts-with? % "--") args))
-              (System/getProperty "user.dir"))
-   :live? (boolean (some #{"--live"} args))
-   :main  (symbol (or (second (drop-while #(not= "--main" %) args))
-                      "slopp.mcp/-main"))})
+(defn parse-args
+  "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...].
+  Everything after the --main symbol passes through to it verbatim (:args);
+  with no explicit args the main receives [dir] (the server convention)."
+  [args]
+  (let [[pre post] (split-with #(not= "--main" %) args)
+        dir  (or (first (remove #(str/starts-with? % "--") pre))
+                 (System/getProperty "user.dir"))
+        extra (vec (drop 2 post))]
+    {:dir   dir
+     :live? (boolean (some #{"--live"} pre))
+     :main  (symbol (or (second post) "slopp.mcp/-main"))
+     :args  (if (seq extra) extra [dir])}))
 
 (defn -main
-  "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn]
+  "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn arg...]
 
   Load the store's program into THIS jvm and run its entry point (default
-  slopp.mcp/-main). --live tracks the store and hot-reloads changed namespaces."
+  slopp.mcp/-main <dir>). --live tracks the store and hot-reloads changed
+  namespaces. --main trampolines any store CLI — in a fileless tree this is
+  THE entry point: e.g.
+    clojure -M -m slopp.boot . --main slopp.sync/-main push . <url>"
   [& args]
-  (let [{:keys [dir live? main]} (parse-args args)]
+  (let [{:keys [dir live? main args]} (parse-args args)]
     (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
     (load-store! dir)
     (when live? (future (watch-live! dir)))
-    (apply (requiring-resolve main) [dir])))
+    (apply (requiring-resolve main) args)))

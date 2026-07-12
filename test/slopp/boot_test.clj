@@ -25,3 +25,15 @@
     (is (= #{'x 'y}
            (set (boot/dependency-order {'x "(ns x (:require [y :as y]))"
                                         'y "(ns y (:require [x :as x]))"}))))))
+(deftest parse-args-trampolines-main-args
+  (testing "default: mcp main, dir as the only arg"
+    (is (= {:dir "." :live? false :main 'slopp.mcp/-main :args ["."]}
+           (boot/parse-args ["." "--snapshot"]))))
+  (testing "--main with NO extra args keeps the dir-arg convention"
+    (is (= {:dir "/p" :live? true :main 'app.core/-main :args ["/p"]}
+           (boot/parse-args ["/p" "--live" "--main" "app.core/-main"]))))
+  (testing "--main passes everything after the symbol through verbatim"
+    (is (= {:dir "." :live? false :main 'slopp.sync/-main
+            :args ["push" "." "https://x/y.git"]}
+           (boot/parse-args ["." "--main" "slopp.sync/-main"
+                             "push" "." "https://x/y.git"])))))
