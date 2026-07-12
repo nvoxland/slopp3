@@ -2864,20 +2864,25 @@
        :failures f :errors e
        :status (if (and (zero? f) (zero? e)) :green :red)})))
 (defn isolated-test-run!
-  "Run the project's file-based test suite in a FRESH EXTERNAL JVM (shells
-  `clojure -M<alias>` in the store's dir, default `:test`) — the out-of-process
-  counterpart to in-image `traced-run`, for tests the owned image can't host
-  (they spawn their OWN images/subprocesses, so running them in-image recurses;
-  a bare image also lacks the project's source on its classpath). Durable
-  sessions only. Returns {:isolated true :status :ran :assertions :failures
-  :errors :exit :output} (last output lines on failure)."
+  "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
+  (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
+  out-of-process counterpart to in-image `traced-run`, and the ONLY tier that
+  executes ^:isolated tests (they spawn their own images/subprocesses, so
+  running them in-image would recurse). Needs no repo files — the store is
+  the source, which is what lets the working dir go fileless. Returns
+  {:isolated true :status :ran :assertions :failures :errors :exit :output}
+  (last output lines on failure)."
   [session & {:keys [alias] :or {alias ":test"}}]
-  (if-let [dir (:dir @session)]
-    (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
-          out (str (:out r) "\n" (:err r))]
-      (merge {:isolated true :exit (:exit r)}
-             (or (parse-test-summary out)
-                 {:status :error
-                  :output (->> (str/split-lines out) (remove str/blank?)
-                               (take-last 8) (str/join "\n"))})))
-    {:error "isolated-test-run! needs a durable session (a store dir)"}))
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-isolated"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+        b   (build! session dir)]
+    (if (:error b)
+      b
+      (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
+            out (str (:out r) "\n" (:err r))]
+        (merge {:isolated true :exit (:exit r)}
+               (or (parse-test-summary out)
+                   {:status :error
+                    :output (->> (str/split-lines out) (remove str/blank?)
+                                 (take-last 8) (str/join "\n"))}))))))

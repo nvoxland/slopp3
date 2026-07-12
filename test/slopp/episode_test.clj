@@ -1,0 +1,327 @@
+(ns slopp.episode-test
+  "Episodes: the automatic work-unit between an agent's checkpoints — derived
+  from the journal (no tagging), PER-AGENT so parallel sub-agents don't
+  collapse into one braid, with a shared-form guard on revert."
+  (:require [clojure.test :refer [deftest is testing]]
+            [clojure.java.shell]
+            [slopp.store :as store]
+            [slopp.turn]
+            [slopp.mcp]
+            [slopp.api :as api]))
+
+(def seed
+  (str "(ns ep.core (:require [clojure.test :refer [deftest is]]))\n"
+       "(defn f [x] (inc x))\n"
+       "(defn g [x] (dec x))\n"
+       "(defn h [x] x)\n"
+       "(deftest f-t (is (= 2 (f 1))))\n"))
+
+(deftest ^:isolated solo-episode-lifecycle
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/checkpoint! sess :label "baseline")
+      ;; a classic TDD arc: red test change, then the fix
+      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
+                         :prompt "want +10 behavior")
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
+                         :prompt "implement +10")
+      (testing "query-changes = my work since my last stable spot"
+        (let [c (api/query-changes sess)]
+          (is (= 2 (count (:steps c))))
+          (is (= #{'ep.core/f 'ep.core/f-t}
+                 (set (map :form (:forms c)))))
+          (let [f-chg (first (filter #(= 'ep.core/f (:form %)) (:forms c)))]
+            (is (= :modified (:status f-chg)))
+            (is (re-find #"inc x" (:was f-chg)))
+            (is (re-find #"\+ x 10" (:now f-chg))))
+          (testing "the red→green arc is visible"
+            (is (= [1 0] (mapv :fail (:verification-arc c)))))))
+      (testing "checkpoint closes the episode"
+        (api/checkpoint! sess :label "plus-ten")
+        (is (empty? (:forms (api/query-changes sess)))))
+      (testing "collapsed history reads at episode grain"
+        (let [rows (api/query-history sess :collapse true)]
+          (is (some #(= "plus-ten" (get-in % [:episode :label])) rows))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated parallel-agents-have-independent-episodes
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/checkpoint! sess :label "baseline")
+      ;; two "sub-agents" interleave on one session
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1 1))"
+                         :prompt "alice's work" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 2))"
+                         :prompt "bob's work" :agent "bob")
+      (testing "each agent sees only ITS episode"
+        (is (= #{'ep.core/f}
+               (set (map :form (:forms (api/query-changes sess :agent "alice"))))))
+        (is (= #{'ep.core/g}
+               (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
+      (testing "alice checkpointing does NOT close bob's episode"
+        (api/checkpoint! sess :label "alice done" :agent "alice")
+        (is (empty? (:forms (api/query-changes sess :agent "alice"))))
+        (is (= #{'ep.core/g}
+               (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated episode-revert-scraps-only-my-unshared-work
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/checkpoint! sess :label "baseline")
+      ;; alice: modifies f, adds a helper — and touches the SHARED form h
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 9))"
+                         :prompt "alice attempt" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 9 (f 1))))"
+                         :agent "alice")
+      (api/add-form! sess 'ep.core "(defn alice-helper [x] x)" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :alice-touched)"
+                         :agent "alice")
+      ;; bob also touches h (the shared-form hazard)
+      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :bob-touched)"
+                         :agent "bob")
+      (let [r (api/revert-episode! sess :agent "alice")]
+        (testing "alice's exclusive work is rolled back to the boundary"
+          (is (nil? (:error r)) (pr-str r))
+          (is (= [2] (api/query-eval sess "(ep.core/f 1)")))
+          (is (not (re-find #"alice-helper" (api/query-source sess 'ep.core)))))
+        (testing "the SHARED form is skipped and reported, not stomped"
+          (is (= ['ep.core/h] (:skipped-shared r)))
+          (is (re-find #":bob-touched" (api/query-source sess 'ep.core))))
+        (testing "the revert is itself provenance, and tests are green again"
+          (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated turn-trees-from-label-paths                    ; P4-m6.1
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/checkpoint! sess :label "baseline" :agent "alice")
+      ;; alice's turn: her own edit + two sub-agents she spawned
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
+                         :prompt "alice's own step" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 9))"
+                         :prompt "sub tests work" :agent "alice/tests")
+      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
+                         :prompt "sub impl work" :agent "alice/impl")
+      (api/checkpoint! sess :label "alice turn done" :agent "alice")
+      (testing "the collapsed history nests sub-agent episodes under the turn"
+        (let [rows   (api/query-history sess :collapse true)
+              alice  (first (filter #(= "alice turn done"
+                                        (get-in % [:episode :label]))
+                                    rows))
+              kids   (set (map :agent (get-in alice [:episode :children])))]
+          (is (some? alice))
+          (is (= #{"alice/tests" "alice/impl"} kids))
+          (testing "children don't ALSO appear as top-level rows"
+            (is (not-any? #(= "alice/tests" (get-in % [:episode :agent]))
+                          rows)))))
+      (testing "deltas carry wall-clock provenance"
+        (is (number? (:at (last (store/deltas (:store @sess))))))
+        (is (every? #(number? (:at %)) (store/deltas (:store @sess)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated turn-markers-bracket-the-history               ; P4-m6.2
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice"
+                       :intent "add rush-order support to checkout"
+                       :user "nathan")
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 7))"
+                         :prompt "step 1" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
+                         :prompt "sub step" :agent "alice/impl")
+      (api/checkpoint! sess :label "rush support" :agent "alice")
+      (let [r (api/turn-end! sess :agent "alice")]
+        (is (nil? (:error r))))
+      (testing "lineage + form-history resolve the enclosing turn's ask"
+        (let [lin (api/query-lineage sess 'ep.core 'f)
+              fh  (api/query-form-history sess 'ep.core 'f)]
+          (is (= "add rush-order support to checkout"
+                 (:turn-intent (last lin))))
+          (is (= "add rush-order support to checkout"
+                 (:turn-intent (last fh))))))
+      (testing "the collapsed history has a TURN bracket with the verbatim ask"
+        (let [rows (api/query-history sess :collapse true)
+              turn (first (keep :turn rows))]
+          (is (some? turn))
+          (is (= "add rush-order support to checkout" (:intent turn)))
+          (is (= "nathan" (:user turn)))
+          (testing "the turn contains its episode tree (sub-agents nested)"
+            (let [agents (set (concat (map :agent (:episodes turn))
+                                      (mapcat #(map :agent (:children %))
+                                              (:episodes turn))))]
+              (is (contains? agents "alice"))
+              (is (contains? agents "alice/impl"))))
+          (testing "turn contents don't ALSO appear as top-level rows"
+            (is (not-any? #(= "alice" (get-in % [:episode :agent])) rows)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated hook-driven-turn-markers-flow-through-the-journal
+  ;; the Claude Code hooks path: a one-shot CLI appends the turn delta
+  ;; OUT-OF-BAND; the agent's server absorbs it via journal sync (m5b)
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-turn-" (System/nanoTime))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      ;; simulate the UserPromptSubmit hook (separate process in production)
+      (slopp.turn/-main dir "begin" "alice" "fix" "the" "flaky" "test")
+      (api/sync-with-journal! sess)
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 2))"
+                         :prompt "the fix" :agent "alice")
+      (slopp.turn/-main dir "end" "alice")
+      (api/sync-with-journal! sess)
+      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+        (is (= "fix the flaky test" (:intent turn)))
+        (is (= 1 (count (:episodes turn)))))
+      (finally
+        (api/close! sess)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest ^:isolated turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
+  (let [sess (api/open!)]
+    (try
+      (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
+      (api/ingest! sess 'ep.core seed)          ; api-level stays ungated
+      (let [call (fn [tool args]
+                   (get-in (slopp.mcp/handle sess
+                                             {:id 1 :method "tools/call"
+                                              :params {:name tool :arguments args}})
+                           [:result :content 0 :text]))]
+        (testing "a write with no open turn is refused, with teaching"
+          (let [r (call "edit_replace_form"
+                        {:ns "ep.core" :name "f" :agent "alice"
+                         :source "(defn f [x] (* x 3))"})]
+            (is (re-find #"turn_begin" r))))
+        (testing "a write with no agent label is refused too"
+          (is (re-find #"agent" (call "edit_add_form"
+                                      {:ns "ep.core"
+                                       :source "(defn zz [x] x)"}))))
+        (testing "after turn_begin the same write lands"
+          (call "turn_begin" {:agent "alice" :intent "triple f"})
+          (let [r (call "edit_replace_form"
+                        {:ns "ep.core" :name "f" :agent "alice"
+                         :source "(defn f [x] (* x 3))"})]
+            (is (not (re-find #"turn_begin" r)))))
+        (testing "a sub-agent path rides the ROOT agent's open turn"
+          (let [r (call "edit_add_form"
+                        {:ns "ep.core" :agent "alice/impl"
+                         :source "(defn sub-added [x] x)"})]
+            (is (not (re-find #"turn_begin" r)))))
+        (testing "after turn_end the gate closes again"
+          (call "turn_end" {:agent "alice"})
+          (is (re-find #"turn_begin"
+                       (call "edit_delete_form"
+                             {:ns "ep.core" :name "sub-added"
+                              :agent "alice"})))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated hook-json-mode-records-the-exact-user-words    ; the real hook shape
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-hook-" (System/nanoTime))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
+      (with-in-str "{\"prompt\":\"please add rush orders — exactly these words\",\"session_id\":\"x\"}"
+        (slopp.turn/-main dir "hook-begin" "alice"))
+      (api/sync-with-journal! sess)
+      (is (api/turn-open? sess "alice"))
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 4))"
+                         :prompt "work" :agent "alice")
+      (with-in-str "{}"
+        (slopp.turn/-main dir "hook-end" "alice"))
+      (api/sync-with-journal! sess)
+      (is (not (api/turn-open? sess "alice")))
+      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+        (is (= "please add rush orders — exactly these words" (:intent turn))))
+      (finally
+        (api/close! sess)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest ^:isolated history-drill-down-and-text-rendering          ; granularity gaps
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice" :intent "make f add ten")
+      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
+                         :prompt "red first" :agent "alice")
+      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
+                         :prompt "green" :agent "alice")
+      (api/checkpoint! sess :label "plus-ten" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      ;; more work after, so the span is genuinely historical
+      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
+                         :prompt "later work" :agent "bob")
+      (testing "a PAST episode inspects like the current one: plug the
+                from/to ids from its collapsed row into query_changes"
+        (let [row  (first (keep :turn (api/query-history sess :collapse true)))
+              ep   (first (:episodes row))
+              c    (api/query-changes sess :agent "alice"
+                                      :from (:from ep) :to (:to ep))]
+          (is (= #{'ep.core/f 'ep.core/f-t}
+                 (set (map :form (:forms c)))))
+          (is (re-find #"inc x" (:was (first (filter #(= 'ep.core/f (:form %))
+                                                     (:forms c))))))
+          (is (= [1 0] (mapv :fail (:verification-arc c))))
+          (testing "bob's later work is NOT in the span"
+            (is (not-any? #(= 'ep.core/g (:form %)) (:forms c))))))
+      (testing "format text renders a human story"
+        (let [txt (api/query-history sess :collapse true :format "text")]
+          (is (string? txt))
+          (is (re-find #"make f add ten" txt))
+          (is (re-find #"plus-ten" txt))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated human-history-timestamps-diffs-and-intent-search
+  ;; the human-side gaps: WHEN did it happen, WHAT changed (as a diff, not
+  ;; two full sources), and finding a turn by what the user actually asked
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ep.core seed)
+      (api/turn-begin! sess :agent "alice" :intent "teach h to double, loudly")
+      (api/edit-replace! sess 'ep.core 'h
+                         "(defn h [x]\n  ;; loud on purpose\n  (* x 2))"
+                         :prompt "make h double" :agent "alice")
+      (api/checkpoint! sess :label "h doubles" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      ;; a later, still-open episode so was/now spans a real line-level change
+      (api/edit-replace! sess 'ep.core 'h
+                         "(defn h [x]\n  ;; loud on purpose\n  (* x 3))"
+                         :prompt "actually triple" :agent "alice")
+      (testing "collapsed rows carry human-readable timestamps"
+        (let [rows (api/query-history sess :collapse true)
+              turn (first (keep :turn rows))
+              ep   (first (:episodes turn))]
+          (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at turn))))
+          (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at ep))))))
+      (testing "raw rows and the text story show when, too"
+        (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+                        (str (:at (first (api/query-history sess))))))
+        (is (re-find #"@ \d{4}-\d{2}-\d{2} \d{2}:\d{2}"
+                     (api/query-history sess :collapse true :format "text"))))
+      (testing "contains searches TURN INTENTS in collapsed mode"
+        (let [rows (api/query-history sess :collapse true :contains "loudly")]
+          (is (= "teach h to double, loudly"
+                 (:intent (:turn (first rows))))))
+        (is (empty? (filter :turn (api/query-history sess :collapse true
+                                                     :contains "zz-no-match")))))
+      (testing "query-changes format=text renders line diffs with context"
+        (let [txt (api/query-changes sess :agent "alice" :format "text")]
+          (is (string? txt))
+          (is (re-find #"actually triple" txt))            ; the step's prompt
+          (is (re-find #"(?m)^\s+- .*\* x 2" txt))         ; removed line only
+          (is (re-find #"(?m)^\s+\+ .*\* x 3" txt))        ; added line only
+          ;; the unchanged line is CONTEXT, not re-emitted churn
+          (is (re-find #"(?m)^\s+;; loud on purpose" txt))
+          (is (not (re-find #"(?m)^\s*[-+] .*loud on purpose" txt)))))
+      (testing "the EDN shape is unchanged when no format is asked for"
+        (let [c (api/query-changes sess :agent "alice")]
+          (is (map? c))
+          (is (re-find #"\* x 2" (:was (first (:forms c)))))))
+      (finally (api/close! sess)))))

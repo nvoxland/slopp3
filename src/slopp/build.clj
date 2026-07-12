@@ -46,9 +46,10 @@
   manifest) becomes the `:deps` map so a built project is runnable; with
   `native?`, adds the :native alias (AOT output path, graal-build-time, direct
   linking) — manifest deps flow to the native classpath via `-Spath -A:native`;
-  with `test?`, adds a `:test` alias putting `test/` on an extra-path so the
-  project's test namespaces (materialized under `test/`, off the default
-  classpath) are runnable. With an EMPTY manifest and no test/native aliases the
+  with `test?`, adds a `:test` alias putting `test/` on an extra-path AND
+  carrying the cognitect test-runner, so `clojure -M:test` runs the project's
+  suite out of the box (the isolated runner builds+runs exactly this). With an
+  EMPTY manifest and no test/native aliases the
   output is byte-identical to the pre-manifest version (the build! `ours?`
   byte-identity guard relies on this)."
   ([native?] (deps-edn native? {}))
@@ -65,7 +66,11 @@
          ;; aliases-map `{` (matching the historical single-:native layout), the
          ;; rest are 2-space-indented — order is deterministic (test, native).
          aliases  (cond-> []
-                    test?   (conj (str ":test\n  {:extra-paths [\"test\"]}"))
+                    test?   (conj (str ":test\n"
+                                       "  {:extra-paths [\"test\"]\n"
+                                       "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
+                                       "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
+                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"]}"))
                     native? (conj (str ":native\n"
                                        "  {:extra-paths [\"classes\"]\n"
                                        "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"

@@ -99,6 +99,10 @@
                        ;; (external-system tests — a DB dep shouldn't fire on
                        ;; every edit); checkpoint/commit/test_run include them
                        skip-integration? (remove (comp :integration meta))
+                       ;; ^:isolated tests spawn their own images/JVMs — they
+                       ;; NEVER run in-image (recursion); only the external
+                       ;; isolated runner (fresh -M:test JVM) executes them
+                       true (remove (comp :isolated meta))
                        only (filter (comp (set only) :name meta)))
             counters (ref t/*initial-report-counters*)
             record   (fn [m]
