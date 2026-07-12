@@ -695,6 +695,29 @@ verified bidirectionally (A→B→A round-trip, byte-exact convergence).
 Un-milestone'd local work rides through a pull untouched; unpushed local
 MILESTONES fold into the next post-pull milestone (documented squash).
 
+## T — the fileless flip (this repo eats its own dogfood completely)
+
+T1 ✅ **The working tree holds NO project source.** Every namespace — the 33
+system nses AND all 51 test nses — lives in `.slopp/store.db`; on disk remain
+only the boot kernel (`src/slopp/boot.clj`, `src/slopp/rt.clj`),
+`deps.edn` (slopp-the-tool's coordinates), docs, and benchmarks. Development
+goes exclusively through slopp's MCP tools; the file↔store drift class is
+gone by construction. The server runs `slopp.boot --live` so committed edits
+hot-reload into the running host.
+
+T2 ✅ **Third test tier: `^:isolated` (tag on the deftest name).** Tests that
+spawn their own images/JVMs NEVER run in-image (recursion) — `traced-run`
+unconditionally removes them; only the isolated runner executes them.
+`isolated-test-run!` no longer shells `clojure -M:test` in the repo dir — it
+**build!s the store into a throwaway dir and runs there** (the generated
+deps.edn now carries a runnable `:test` alias with the cognitect runner, so
+ANY built project is `clojure -M:test`-able out of the box). The suite is
+store-sourced end to end: 207 tests / 1136 assertions green from a built
+tree, byte-identical numbers to the old file suite. Import mechanics: 42
+file-only test nses ingested through a second slopp server over HTTP (m5b
+multi-server), deftests auto-tagged `^:isolated`; two forms needed
+`^:unsafe` (`binding`/`read-string` boundary tests).
+
 ## S — the gate
 
 S1b ✅ **The compile gate proves COLD-load, not just hot-load.** Found while

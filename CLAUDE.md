@@ -17,11 +17,16 @@ for design decisions, system mechanics, gotchas, and conventions.
   the unit of editing, storage, hot-reload, verification, and provenance.
   Code lives in a store (SQLite-backed delta log), NOT in `.clj` files on
   disk; a VFS renders source on demand. Stance: `.context/architecture.md`.
+- **The working tree is FILELESS**: slopp's own code (system + tests) lives
+  in `.slopp/store.db`; only the boot kernel (`src/slopp/boot.clj`,
+  `src/slopp/rt.clj`) and `deps.edn` are files. ALL development goes through
+  slopp's MCP tools — there are no source files to hand-edit.
 - **Decisions are settled in `.context/decisions.md`** (D/C/O/H/F series).
   Don't re-litigate silently — revisit explicitly, and record the change.
-- **Red/green TDD, always.** Tests first, watch them fail, then implement.
-  Run via the clojure-eval nREPL workflow (see
-  `.context/working-in-this-repo.md`), full suite via `clojure -M:test`.
+- **Red/green TDD, always.** Tests first, watch them fail, then implement —
+  through the edit tools (per-write verification reports the red/green).
+  Full suite / merge gate: `test_run {:isolated true}` (builds the store to
+  a temp dir and runs `clojure -M:test` there).
 - **Never credit Claude/AI in commit messages or PRs.** No Co-Authored-By
   trailers, no "Generated with" footers.
 - **Dogfooding is a standing practice:** build real things through slopp

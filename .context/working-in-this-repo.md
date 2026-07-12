@@ -1,55 +1,63 @@
 # Working in this repo
 
-## Layout
+## Layout — the working tree is FILELESS (the T-flip)
 
-- `src/slopp/*.clj` — the system (see `.context/architecture.md` layer map).
-- `test/slopp/*_test.clj` — the suite; integration tests spawn real child
-  JVMs (owned images), so the full run takes a few minutes.
+- **The store IS the source**: every namespace (system + tests) lives in
+  `.slopp/store.db`. There are NO project `.clj` files to edit.
+- `src/slopp/boot.clj` + `src/slopp/rt.clj` — the boot KERNEL (slopp-the-tool,
+  not project source): `boot` loads the store into the JVM; `rt` is injected
+  into every owned image. `deps.edn` = the tool's dep coordinates.
 - `projects/` — untracked dogfooding grounds (`.context/dogfooding.md`).
 - `benchmarks/results.md` — committed benchmark history.
-- `.slopp/` — a store DB (gitignored) wherever a durable session ran.
-- `DESIGN.md` — the original design brief (historical; decisions have moved
-  on — `.context/decisions.md` is authoritative where they differ).
+- `.slopp/` — the store DB (gitignored; the git repo tracks kernel + docs;
+  the PUBLISHED file view of the code goes out via `git_push`).
 
 ## Dev workflow
 
-- **Red/green TDD always**: write the test, watch it fail, implement, watch
-  it pass. No exceptions for "obvious" code.
-- **REPL-first via clojure-eval** (global practice): a dev nREPL runs from
-  the repo root (`clojure -M:nrepl`, port in `.nrepl-port`). Evaluate with
-  `clj-nrepl-eval -p <port> "..."`; always `:reload` changed namespaces
-  before running tests. Prefer this over spawning `clojure -M:test` per
-  iteration (JVM startup).
-- **Full suite** (fresh JVM, the merge gate): `clojure -M:test`.
-- The dev nREPL's classpath is fixed at start — after adding deps or creating
-  a NEW source root, restart it (`kill`, re-launch, re-read `.nrepl-port`).
-- Structural Clojure surgery (moving forms, renames across files, outlines):
-  use `clj-surgeon` (`~/bin/clj-surgeon`, see its skill doc) rather than
-  hand-editing.
-- Integration tests that spawn images must `close!`/`stop!` in `finally` —
-  leaked child JVMs are a bug. `ps aux | grep nrepl.cmdline` to check.
+- **Everything goes through slopp's MCP tools** — query_* to read, edit_* to
+  write. There are no files to hand-edit and no file↔store drift by
+  construction. The server runs `clojure -M -m slopp.boot . --live`
+  (`.mcp.json`), so committed edits hot-reload into the running server.
+- **Red/green TDD always**: add the failing test (edit_add_form/ns_create in
+  a test ns), watch the write result report red, implement, watch the
+  affected tests re-run green. The trace map picks affected tests per edit.
+- **Two test tiers, by tag on the deftest name**:
+  - untagged / `^:integration` — run in-image (per-write verification /
+    checkpoint+commit_point respectively).
+  - `^:isolated` — tests that spawn their own images/JVMs; NEVER run
+    in-image. `test_run {:isolated true}` materializes the store (build!)
+    into a temp dir and runs `clojure -M:test` there — **this is the full
+    suite / merge gate** (was: `clojure -M:test` in the repo).
+- Scratch evals: `query_eval` (read-only oracle). A dev nREPL
+  (`clojure -M:nrepl`) only sees the KERNEL — it is not a route to slopp's
+  code anymore.
+- Structural surgery across forms: edit_group / edit_move / edit_subform
+  (subform replacements may SPLICE: one match → several forms).
 
 ## Commits
 
-- Commit at working milestones (suite green) with plain descriptive messages.
+- **Both ledgers, every milestone**: `commit_point` (green-gated store
+  milestone — what `git_push` publishes) AND a git commit of kernel/docs
+  changes, with plain descriptive messages.
 - **Never credit Claude/AI** — no Co-Authored-By, no "Generated with".
 - Update the relevant `.context/` doc in the same commit as the change it
   documents.
 
 ## Current dev state conventions
 
-- deps: rewrite-clj, clj-kondo, nrepl, cheshire, next.jdbc, sqlite-jdbc,
-  cognitect test-runner (`:test` alias).
-- Toolchain is pinned in `mise.toml` (Temurin 21 java, Clojure CLI 1.12.5,
-  babashka for `clj-nrepl-eval`) — `mise install` provisions it. Its `[env]`
-  sets `SLOPP_CLOJURE=clojure`, so owned images launch the mise-pinned CLI
-  via PATH instead of `slopp.repl`'s homebrew-path fallback.
+- deps (tool-level): rewrite-clj, clj-kondo, nrepl, cheshire, next.jdbc,
+  sqlite-jdbc, jgit, slf4j-nop. Project deps live in the STORE manifest
+  (`deps_add`/`deps_list`).
+- Toolchain pinned in `mise.toml` (Temurin 21, Clojure CLI 1.12.5, babashka);
+  `mise install` provisions it; its `[env]` sets `SLOPP_CLOJURE=clojure`.
 
-## Paren-repair gotcha (learned twice)
+## Gotchas
 
-The dev nREPL masks file syntax errors: an UNGUARDED `(require ... :reload)`
-that throws leaves the OLD namespace loaded, and subsequent tests pass
-against stale code. After ANY structural/python edit to a `.clj` file:
-wrap the reload in try/catch and CHECK it returned `:reloaded`, and treat a
-fresh-JVM `clojure -M:test` as the only honest reader. clj-nrepl-eval's
-auto-delimiter-repair applies to eval INPUT only, never to files.
+- The cold-load gate (S1b) refuses writes/moves/merges whose rendered ns
+  can't fresh-load (forward refs) — reorder with edit_move or add a declare.
+- Image-spawning tests MUST be `^:isolated` (in-image recursion) and must
+  `close!`/`stop!` in `finally` — leaked child JVMs are a bug
+  (`ps aux | grep nrepl.cmdline`).
+- `build!` materializes files on demand (tooling/native); `git_push`
+  publishes them; neither is needed to RUN (slopp.boot) or TEST
+  (`test_run {:isolated true}`).

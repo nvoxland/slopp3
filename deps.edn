@@ -1,5 +1,8 @@
-{:paths ["src" "resources"]
+{:paths ["src"]
 
+ ;; slopp-the-tool's deps: what the boot kernel needs to launch the store's
+ ;; program. Project code declares ITS deps in the store manifest (deps_add);
+ ;; build!/git_push generate a project deps.edn from it.
  :deps {org.clojure/clojure     {:mvn/version "1.12.5"}
         rewrite-clj/rewrite-clj {:mvn/version "1.1.48"}
         clj-kondo/clj-kondo     {:mvn/version "2024.11.14"}
@@ -10,14 +13,8 @@
         org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.3.0.202506031305-r"}
         org.slf4j/slf4j-nop     {:mvn/version "2.0.16"}}
 
+ ;; No :test alias: the working tree is FILELESS (the store is the source).
+ ;; The suite runs via test_run {:isolated true} — build! to a temp dir whose
+ ;; generated deps.edn carries its own runnable :test alias.
  :aliases
- {:dev  {:extra-paths ["test"]}
-
-  :nrepl {:extra-paths ["test"]
-          :main-opts   ["-m" "nrepl.cmdline"]}
-
-  :test {:extra-paths ["test"]
-         :extra-deps  {io.github.cognitect-labs/test-runner
-                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-         :main-opts   ["-m" "cognitect.test-runner"]
-         :exec-fn     cognitect.test-runner.api/test}}}
+ {:nrepl {:main-opts ["-m" "nrepl.cmdline"]}}}
