@@ -7,7 +7,7 @@
        "(defn pure [x] (inc x))\n"
        "(defn tainted [a] (swap! a inc))\n"   ; effectful, mis-named (no !)
        "(defn caller [a] (tainted a))\n"      ; effectful via tainted, mis-named
-       "(defn ok! [a] (reset! a 0))\n"))      ; effectful, correctly named
+       "(defn ok! [a] (reset! a 0))\n"))
 
 (deftest analyze-and-effects
   (let [an (index/analyze src)]

@@ -453,6 +453,18 @@
       :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
       :file-remove (with-d (update store :files dissoc (:path d)))
 
+      :config-put
+      (with-d (-> store
+                  (assoc-in [:config (:path d) :format] (:format d))
+                  (assoc-in [:config (:path d) :values (:key d)] (:value d))))
+
+      :config-unset
+      (with-d
+        (let [st (update-in store [:config (:path d) :values] dissoc (:key d))]
+          (if (empty? (get-in st [:config (:path d) :values]))
+            (update st :config dissoc (:path d))
+            st)))
+
       :trivia
       (with-d
         (update-in store [:namespaces (:ns d) :elements]
@@ -563,8 +575,6 @@
     (update store :deltas conj
             {:id did :parent parent :op :verify :ns ns-sym :at (now-ms)
              :result result})))
-
-;; --- Phase 4 m2: the CRDT merge -------------------------------------------
 
 (defn- suffix-touched
   "Form ids touched by content deltas in a delta seq."
@@ -877,6 +887,7 @@
           {:store st :merged merged :conflicts conflicts :notes notes
            :changed-form-ids (vec (distinct changed)) :new-nses new-nses
            :applied applied :id-map idmap :fork-point fork-point})))))
+
 (defn replace-trivia
   "Replace the ENTIRE trivia run (comments/whitespace `:sep` elements)
   immediately before form `anchor` (a form name; nil = the run after the
@@ -923,6 +934,7 @@
                                      (subvec elems end)))
                      (update :deltas conj delta))
                  delta]))))))))
+
 (defn record-file-put
   "Track a NON-CODE file (README, .github workflows, …) on the store's
   `:files` manifest ({path → text}) — these ride every projected tree, so
@@ -940,6 +952,7 @@
          (assoc-in [:files (str path)] (str text))
          (update :deltas conj delta))
      delta]))
+
 (defn record-file-remove
   "Drop `path` from the `:files` manifest. ONE `:file-remove` delta.
   Returns [store' delta]."
@@ -954,6 +967,7 @@
          (update :files dissoc (str path))
          (update :deltas conj delta))
      delta]))
+
 (defn file-history
   "Every tracked version of manifest file `path`, oldest first:
   [{:delta :op :at :agent :prompt :bytes}] (bytes absent on remove) — the
@@ -971,6 +985,7 @@
                                   :agent (:agent d) :prompt (:prompt d)})
                   nil)))
         (:deltas store)))
+
 (defn file-at
   "Manifest file `path`'s content as of delta `at-id` (inclusive), or nil
   (absent / removed / unknown delta) — the file counterpart of query_form_at."
@@ -990,3 +1005,52 @@
 
                   :else cur))
               nil upto))))
+
+(defn record-config-put
+  "Set one KEY of the structured config file at `path` (format `fmt`, e.g.
+  :manifest) — the non-code analog of a form edit: the store holds SEMANTIC
+  key/values with per-key history; the projection serializes them into the
+  file format. ONE state-carrying `:config-put` delta. Returns [store' delta]."
+  [store path fmt k v & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :config-put :ns '*session* :at (now-ms)
+                       :path (str path) :format fmt
+                       :key (str k) :value (str v)}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(-> store'
+         (assoc-in [:config (str path) :format] fmt)
+         (assoc-in [:config (str path) :values (str k)] (str v))
+         (update :deltas conj delta))
+     delta]))
+
+(defn record-config-unset
+  "Remove one key from the config file at `path` (the whole entry when the
+  last key goes). ONE `:config-unset` delta. Returns [store' delta]."
+  [store path k & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :config-unset :ns '*session* :at (now-ms)
+                       :path (str path) :key (str k)}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))
+        drop-key (fn [st]
+                   (let [st (update-in st [:config (str path) :values]
+                                       dissoc (str k))]
+                     (if (empty? (get-in st [:config (str path) :values]))
+                       (update st :config dissoc (str path))
+                       st)))]
+    [(-> store' drop-key (update :deltas conj delta))
+     delta]))
+
+(defn render-config
+  "Serialize a config entry {:format f :values {k v}} to its file text.
+  Formats: :manifest (sorted `K: V` lines). Unknown format → ex-info —
+  new formats add a case here (the serializer is the whole contract)."
+  [{:keys [format values] :as entry}]
+  (case format
+    :manifest (apply str (map (fn [[k v]] (str k ": " v "\n"))
+                              (sort-by key values)))
+    (throw (ex-info (str "no serializer for config format " format)
+                    {:entry entry}))))

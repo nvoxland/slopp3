@@ -148,6 +148,7 @@
   (for [u (:var-usages analysis)
         :when (and (= to-ns (:to u)) (= to-name (:name u)))]
     {:from-ns (:from u) :from-var (:from-var u) :row (:row u) :col (:col u)}))
+
 (defn forward-refs
   "Same-namespace var usages positioned BEFORE the var's first definition or
   declare — code a LIVE image hot-loads happily (the var already exists) but

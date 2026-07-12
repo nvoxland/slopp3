@@ -51,11 +51,13 @@
               (st "(ns sp.core)\n(defn f [xs] [(mapv #(inc %) xs) (filterv #(inc %) xs)])\n")
               'sp.core 'f "#(inc %)" "#(dec %)")]
     (is (re-find #"2 times" (str (:error plan))))))
+
 (deftest ambiguity-still-errors
   (let [plan (refactor/subform-replace-plan
               (st "(ns sp.core)\n(defn f [x] (+ (inc x) (inc x)))\n")
               'sp.core 'f "(inc x)" "(dec x)")]
     (is (re-find #"2 times" (str (:error plan))))))
+
 (deftest text-mode-reaches-string-content
   (let [st (st "(ns sp.core)\n(def banner \"welcome to the OLD thing\")\n")]
     (testing "unique text inside a string literal is replaceable"

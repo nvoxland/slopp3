@@ -25,6 +25,7 @@
     (is (= #{'x 'y}
            (set (boot/dependency-order {'x "(ns x (:require [y :as y]))"
                                         'y "(ns y (:require [x :as x]))"}))))))
+
 (deftest parse-args-trampolines-main-args
   (testing "default: mcp main, dir as the only arg"
     (is (= {:dir "." :live? false :main 'slopp.mcp/-main :args ["."]}

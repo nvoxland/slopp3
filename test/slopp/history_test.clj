@@ -41,9 +41,6 @@
        "(defn g [x] (* x 2))\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
-;; ---------------------------------------------------------------------------
-;; HM1: form-at-delta (time-travel)
-
 (deftest ^:isolated form-at-delta-travels-through-a-forms-versions
   (let [sess (api/open!)]
     (try
@@ -102,9 +99,6 @@
             (is (str/includes? (:source r) "doubler")))))
       (finally (api/close! sess)))))
 
-;; ---------------------------------------------------------------------------
-;; HM2: was-green-at
-
 (deftest ^:isolated was-green-at-reads-the-verification-arc
   (let [sess (api/open!)]
     (try
@@ -157,9 +151,6 @@
                            "(+ x 1)")))
       (finally (api/close! sess)))))
 
-;; ---------------------------------------------------------------------------
-;; HM3: delta-log search ("which prompts touched X")
-
 (deftest ^:isolated search-history-finds-prompts-intents-and-descriptions
   (let [sess (api/open!)]
     (try
@@ -208,9 +199,6 @@
                       [:result :content 0 :text])]
         (is (str/includes? r "harden auth path")))
       (finally (api/close! sess)))))
-
-;; ---------------------------------------------------------------------------
-;; HM4: form-history diffs — one form's life as a diff story
 
 (deftest ^:isolated form-history-renders-as-a-diff-timeline
   (let [sess (api/open!)]

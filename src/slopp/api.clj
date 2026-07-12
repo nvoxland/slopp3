@@ -378,8 +378,6 @@
                   ")\n")
              :agent agent)))
 
-;; --- query.* (read) ---
-
 (defn query-source
   "Render `ns-sym`'s current source from the store (the VFS read)."
   [session ns-sym]
@@ -1116,8 +1114,6 @@
     (vec (for [ns-sym (keys (:namespaces st))]
            {:ns ns-sym :forms (count (store/forms st ns-sym))}))))
 
-;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
-
 (defn- green? [summary]
   (zero? (+ (:fail summary 0) (:error summary 0))))
 
@@ -1267,8 +1263,6 @@
                                           :include-integration? include-integration?)))
             {}
             (group-by (comp symbol namespace) affected))))
-
-;; --- edit.* / runtime ---
 
 (defn edit-replace!
   "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace):
@@ -1890,6 +1884,7 @@
     (when (zero? (:exit r))
       (let [v (str/trim (:out r))]
         (when-not (str/blank? v) v)))))
+
 ^:reads (defn- author-identity
   "The author identity milestones are stamped with (G5): meta `user.name` /
   `user.email`; a key that is unset or \"<git>\" defers to `git config` in
@@ -1907,6 +1902,7 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
+
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
@@ -1968,7 +1964,8 @@
           (mark! head status {:checkpoint (:checkpoint cp)}
                  (cond-> (merge {:tree tree} extra)
                    (seq (:deps st))  (assoc :deps (:deps st))
-                   (seq (:files st)) (assoc :files (:files st)))))))))
+                   (seq (:files st)) (assoc :files (:files st))
+                   (seq (:config st)) (assoc :config (:config st)))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -1994,9 +1991,6 @@
                    (:agent d) (assoc :agent (:agent d))
                    (or (:git-sha d) (get shas (:id d)))
                    (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
-
-;; ---------------------------------------------------------------------------
-;; External dependencies (Tier 1) — the per-store manifest
 
 (defn- analyze-dep!
   "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —
@@ -2615,8 +2609,6 @@
                         (finally (.close ^java.sql.Connection conn)))]
         (merge-into-session! session theirs (str other-dir))))))
 
-;; --- Phase 4 m3: branches within one repo -------------------------------
-
 (defn- line-dir
   "Where a branch line persists in a durable session."
   [dir nm]
@@ -2879,6 +2871,10 @@
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file text)))
+  (doseq [[path entry] (:config st)]
+    (let [file (io/file target (str path))]
+      (io/make-parents file)
+      (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
             (spit de (build/deps-edn (boolean main) deps has-tests?)))
           (cond-> {:built (str target)}
@@ -2910,6 +2906,7 @@
                                      (str/join ", " warns)
                                      " — the native build may need a tracing-agent run")
                                 :metadata-missing warns))))))))))
+
 (defn parse-test-summary
   "Parse a clojure.test runner's terminal summary into
   {:ran :assertions :failures :errors :status}, or nil if none is present."
@@ -2921,6 +2918,7 @@
       {:ran (parse-long t) :assertions (parse-long a)
        :failures f :errors e
        :status (if (and (zero? f) (zero? e)) :green :red)})))
+
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -2944,6 +2942,7 @@
                    {:status :error
                     :output (->> (str/split-lines out) (remove str/blank?)
                                  (take-last 8) (str/join "\n"))}))))))
+
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
   `user.email` — the git author identity milestones are stamped with (G5).
@@ -2951,7 +2950,7 @@
   dir, resolved AT MILESTONE TIME. With no `v`: read —
   {:key :configured :effective}. Durable sessions only."
   [session k & [v]]
-  (let [allowed #{"user.name" "user.email"}]
+  (let [allowed #{"user.name" "user.email" "git-branch" "git-remote"}]
     (cond
       (not (contains? allowed (str k)))
       {:error (str "unknown config key " k " — allowed: "
@@ -2971,6 +2970,7 @@
          :effective (if (or (nil? conf) (= conf "<git>"))
                       (git-config-value (:dir @session) (str k))
                       conf)}))))
+
 (defn file-put!
   "Track a NON-CODE file on the store's files manifest (README, .github
   workflows, …) — it rides every projected tree, so slopp pushes never
@@ -2989,6 +2989,7 @@
                                                          :prompt prompt :agent agent))
                           [])
         {:path (str path) :bytes (count (str content))})))
+
 (defn file-remove!
   "Drop `path` from the files manifest. Returns {:removed path} | {:error}."
   [session path & {:keys [prompt agent]}]
@@ -2999,6 +3000,7 @@
                                                             :prompt prompt :agent agent))
                           [])
         {:removed (str path)})))
+
 ^:reads (defn files-list
   "The files manifest: {path byte-count} (content via the git projection or
   a build)."
@@ -3006,6 +3008,7 @@
   {:files (into (sorted-map)
                 (map (fn [[p t]] [p (count t)]))
                 (:files (:store @session)))})
+
 (defn edit-trivia!
   "Replace the comment/blank-line run immediately before form `anchor`
   (nil = the namespace tail) with `text` — the trivia counterpart of
@@ -3022,6 +3025,7 @@
         (if-not (try-commit! session base st' [ns-sym])
           {:conflict {:reason "store changed concurrently — retry"}}
           {:delta (:id d) :before (some-> anchor str) :ns (str ns-sym)})))))
+
 ^:reads (defn file-get
   "A manifest file's content — current, or as of a past delta via `:at`
   (a delta id or commit-point id resolves through its :target like
@@ -3040,6 +3044,7 @@
       (if-let [c (get (:files st) (str path))]
         {:path (str path) :content c}
         {:error (str path " is not on the files manifest")}))))
+
 ^:reads (defn file-history!
   "Every tracked version of a manifest file, oldest first, with provenance —
   the file counterpart of query_form_history."
@@ -3048,3 +3053,43 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
+
+(defn config-file!
+  "Structured config files: the store holds SEMANTIC key/values per path
+  (per-key delta history, like forms); the projection serializes them into
+  the file format (`:manifest` → sorted `K: V` lines). Set a key
+  (`:key`+`:value`, `:format` on first touch, default :manifest), remove one
+  (`:key`+`:unset true`), or read (path only: values + rendered preview)."
+  [session path & {:keys [key value unset format prompt agent]}]
+  (let [entry (get-in (:store @session) [:config (str path)])]
+    (cond
+      (and key unset)
+      (if-not (get-in entry [:values (str key)])
+        {:error (str key " is not set on " path)}
+        (do (commit-appended! session
+                              #(first (store/record-config-unset % path key
+                                                                 :prompt prompt
+                                                                 :agent agent))
+                              [])
+            {:path (str path) :unset (str key)}))
+
+      (and key (some? value))
+      (let [fmt (or (some-> format clojure.core/keyword)
+                    (:format entry) :manifest)]
+        (commit-appended! session
+                          #(first (store/record-config-put % path fmt key value
+                                                           :prompt prompt
+                                                           :agent agent))
+                          [])
+        {:path (str path) :key (str key) :value (str value) :format fmt})
+
+      key
+      (if-let [v (get-in entry [:values (str key)])]
+        {:path (str path) :key (str key) :value v}
+        {:error (str key " is not set on " path)})
+
+      :else
+      (if entry
+        {:path (str path) :format (:format entry) :values (:values entry)
+         :rendered (store/render-config entry)}
+        {:error (str path " has no structured config")}))))

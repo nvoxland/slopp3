@@ -75,8 +75,6 @@
     (assert (= 1 (count nodes)) "rename: form no longer parses to one node")
     (first nodes)))
 
-;; --- extract (Phase-3 op #2) ---
-
 (defn- node-span
   "Exclusive end position of a node printed as `s` starting at [row col]."
   [[row col] s]
@@ -180,6 +178,7 @@
             (do (when (and ws? (pos? (.length sb))) (.append sb \space))
                 (.append sb c)
                 (recur (inc i) (= c \") false false))))))))
+
 (defn- find-unique-subform
   "The unique position-tracked zloc in `form-src` matching `match-src`
   (shared by extract and subform edits). A node matches when its sexpr
@@ -297,6 +296,7 @@
                                      (map #(relative (nth offsets idx) %) ss)
                                      old-name new-name)]))))
         (keys (:namespaces store))))
+
 (defn text-replace-plan
   "Plan a RAW-TEXT replace inside form `form-name`: `match-text` must occur
   exactly ONCE in the form's source, and the spliced result must still parse

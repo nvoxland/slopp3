@@ -266,6 +266,7 @@
                       root)})))))
     (catch Exception e
       {:error (str "remove-require failed: " (ex-message e))})))
+
 (defn cold-load-errors
   "The cold-load half of the compile gate: nil when every ns in `ns-syms`
   renders to a namespace a FRESH load can resolve top-to-bottom; else one
@@ -288,6 +289,7 @@
                                  " defined later (line " def-row ")"))
                           findings))
            " — define it earlier, move it up with edit_move, or add (declare ...)"))))
+
 (defn lint-refusals
   "NEW error-level kondo findings a candidate store would introduce over its
   base — nil when clean, else one actionable message. Error-level lint is

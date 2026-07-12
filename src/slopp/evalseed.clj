@@ -81,8 +81,6 @@
       (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
-;; --- round 3: the SCALE seed (12 interconnected namespaces) ---
-
 (defn- padding
   "Deterministic filler fns + a trivial test — the 'rest of the codebase'
   noise real repos have; orientation means finding the relevant code among it."

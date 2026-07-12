@@ -22,8 +22,6 @@
 (defn- log! [& parts]
   (.println System/err ^String (apply str parts)))
 
-;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
-
 ^:reads (defn- open-conn [dir]
   (let [f (io/file dir ".slopp" "store.db")]
     (io/make-parents f)
@@ -43,8 +41,6 @@
               (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
             {}
             (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"]))))
-
-;; --- dependency order (internal requires only) ---
 
 (defn- internal-requires
   "The in-store namespaces `source`'s ns form requires (external libs dropped)."
@@ -73,8 +69,6 @@
           (recur (conj order ready) (vec (remove #{ready} remaining)) (conj done ready))
           (into order remaining))))))
 
-;; --- load into the CURRENT jvm ---
-
 (defn- stamp-loaded! [ns-sym]
   ;; mark the ns loaded so a later internal (require ...) is a no-op (there is
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
@@ -91,8 +85,6 @@
         (load-string (get sources ns-sym))
         (stamp-loaded! ns-sym))
       sources)))
-
-;; --- live mode: track the store, reload changed nses into this jvm ---
 
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
@@ -118,8 +110,6 @@
                      (log! "live-reload failed for " ns-sym ": " (.getMessage t)))))
             (when (seq changed) (log! "live-reloaded: " (str/join " " changed)))
             (recur dv2 now)))))))
-
-;; --- entry ---
 
 (defn parse-args
   "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...].

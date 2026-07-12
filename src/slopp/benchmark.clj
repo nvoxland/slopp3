@@ -19,8 +19,6 @@
            [java.nio.file.attribute FileAttribute]
            [java.time LocalDate]))
 
-;; --- the sample apps ---
-
 (def calculator
   ;; v2: the two-form fix rides ONE edit_group (F2) instead of two replaces
   {:name "calculator" :v 2 :test-ns "calc.core"
@@ -85,8 +83,6 @@
     {:tool "edit_rename" :args {:ns "ws.core" :old "words" :new "tokenize" :prompt "clearer name"}}]})
 
 (def apps [calculator inventory wordstats])
-
-;; --- runner ---
 
 (defn- call!
   "One tool call through the real wire shape; returns measured sizes + text."

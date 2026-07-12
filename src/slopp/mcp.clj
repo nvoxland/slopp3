@@ -287,6 +287,14 @@
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}}
                   :required ["path"]}}
+   {:name "config_file"
+    :description "STRUCTURED config files (the non-code analog of forms): the store holds semantic key/values per path with per-key history; the projection serializes them into the file format and they ride every pushed tree. Set: path+key+value (format on first touch, default manifest — 'K: V' lines, e.g. META-INF/MANIFEST.MF). Remove: path+key+unset=true. Read: path only (values + rendered preview). Prefer this over file_put for anything that IS key/value config."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"} :key {:type "string"}
+                               :value {:type "string"} :unset {:type "boolean"}
+                               :format {:type "string"}
+                               :prompt {:type "string"} :agent {:type "string"}}
+                  :required ["path"]}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
@@ -712,6 +720,10 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "file_list"          (text (api/files-list session))
       "file_get"           (text (api/file-get session (:path a) :at (:at a)))
       "file_history"       (text (api/file-history! session (:path a)))
+      "config_file"        (text (api/config-file! session (:path a)
+                                                   :key (:key a) :value (:value a)
+                                                   :unset (:unset a) :format (:format a)
+                                                   :prompt (:prompt a) :agent (:agent a)))
       "test_run"          (text (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session

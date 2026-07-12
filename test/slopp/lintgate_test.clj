@@ -8,6 +8,7 @@
 (defn- st [src] (store/ingest (store/empty-store) 'lg.core src))
 
 (def clean "(ns lg.core)\n(defn f [x] x)\n(defn g [] (f 1))\n")
+
 (def bad   "(ns lg.core)\n(defn f [x] x)\n(defn g [] (f 1 2))\n")
 
 (deftest introducing-an-arity-error-is-refused

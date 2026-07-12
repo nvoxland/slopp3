@@ -26,7 +26,7 @@
             [next.jdbc :as jdbc]
             [slopp.build :as build]
             [slopp.db :as db]
-            [slopp.render :as render])
+            [slopp.render :as render] [slopp.store :as store])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
@@ -44,9 +44,6 @@
             Transport UploadPack URIish UsernamePasswordCredentialsProvider]
            [org.eclipse.jgit.treewalk TreeWalk]
            [org.eclipse.jgit.util FS]))
-
-;; ---------------------------------------------------------------------------
-;; repo + mapping table
 
 (defn open-repo!
   "An in-memory bare repo (JGit DFS `InMemoryRepository`) — the projection is
@@ -115,24 +112,22 @@
                         VALUES (?,?,?,?)" delta-id fp sha line])
   (lookup-sha conn delta-id fp))
 
-;; ---------------------------------------------------------------------------
-;; trees
-
 (defn- commit-paths
   "{path content} for a milestone's tree: every namespace under src/ (test
   namespaces under test/ — same layout as build!), the generated deps.edn
   (carrying the store's Tier-1 manifest `deps` and, when the project has tests,
-  a :test alias, so a clone is runnable), plus every non-code file from the
-  `files` manifest (README, .github workflows, …) — they ride EVERY projected
-  tree, so a slopp push never deletes them from the remote."
-  [tree-map deps files]
+  a :test alias, so a clone is runnable), every non-code file from the
+  `files` manifest, and every structured CONFIG entry rendered to its format
+  (they all ride EVERY projected tree, so a slopp push never deletes them)."
+  [tree-map deps files configs]
   (into (sorted-map)
         (concat [["deps.edn" (build/deps-edn false deps
                                              (boolean (some render/test-ns? (keys tree-map))))]]
                 (map (fn [[ns-sym src]]
                        [(render/source-path ns-sym) src])
                      tree-map)
-                files)))
+                files
+                (map (fn [[p entry]] [p (store/render-config entry)]) configs))))
 
 (defn- backfill-tree
   "Best-effort {ns-sym source} at delta `target-id`, for markers that carry
@@ -186,9 +181,6 @@
                                               live))]))))
           (:order state))))
 
-;; ---------------------------------------------------------------------------
-;; commits + refs
-
 (defn- author-email ^String [agent]
   (let [s (str/replace (str agent) #"[^A-Za-z0-9._-]" ".")]
     (str (if (str/blank? s) "slopp" s) "@slopp")))
@@ -224,14 +216,16 @@
   (or (:author d)
       {:name  (str (or (:agent d) "slopp"))
        :email (author-email (:agent d))}))
+
 (defn- insert-commit!
   "Build blobs + tree + commit for marker `d` and return the sha. Pure
   function of (parent-sha, d, tree-map) — determinism is what makes the
-  projection rebuildable (which is why the author identity and the files
-  manifest live ON the marker, never in ambient state)."
+  projection rebuildable (which is why the author identity, the files
+  manifest, and the structured config live ON the marker, never in ambient
+  state)."
   [^Repository repo parent-sha d tree-map]
   (with-open [ins (.newObjectInserter repo)]
-    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d) (:files d)))
+    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d) (:files d) (:config d)))
           at      (Instant/ofEpochMilli (long (:at d)))
           who     (commit-author d)
             ;; reflection-free ctors matter: reflective JGit calls resolve
@@ -292,7 +286,8 @@
         (let [tree-id (insert-tree! ins (commit-paths
                                          (db/rendered-sources conn)
                                          (db/deps conn)
-                                         (db/files conn)))
+                                         (db/files conn)
+                                         (db/config-files conn)))
               tip     (ObjectId/fromString tip-sha)
               m-tree  (with-open [rw (RevWalk. repo)]
                         (.getId (.getTree (.parseCommit rw tip))))]
@@ -320,9 +315,6 @@
                   cid   (.insert ins cb)]
               (.flush ins)
               (set-branch-ref! repo (str "wip/" line-name) (.name cid)))))))))
-
-;; ---------------------------------------------------------------------------
-;; projection
 
 (defn project-journal!
   "Walk one journal's deltas in order, minting a git commit in the in-memory
@@ -402,25 +394,6 @@
         (doseq [[nm sha] refs :when sha]
           (set-branch-ref! repo nm sha))
         {:refs refs}))))
-
-;; ---------------------------------------------------------------------------
-;; import: git push → slopp (M3)
-;;
-;; The net content change lands as ingests (new files) + ONE verified edit
-;; group; each incoming commit is preserved as a :commit marker carrying its
-;; original sha. Conservative by design — git is a guest writer, and guests
-;; don't get the ambiguous cases (anonymous forms, ns-decl edits, deletions
-;; of whole files): those reject with the reason on the pusher's terminal.
-
-;; ---------------------------------------------------------------------------
-;; smart-HTTP server (M2: clone/fetch; M3 adds receive-pack)
-;;
-;; The protocol endpoints, verbatim from the smart-http spec:
-;;   GET  /slopp.git/info/refs?service=git-upload-pack   → refs advertisement
-;;   POST /slopp.git/git-upload-pack                     → pack negotiation
-;; JGit's UploadPack owns the wire format (setBiDirectionalPipe false =
-;; stateless RPC); we only route bytes. v0 protocol — the Git-Protocol:
-;; version=2 header is deliberately ignored (spec-legal fallback).
 
 (defn- status! [^HttpExchange ex code]
   (.sendResponseHeaders ex code -1)
@@ -536,6 +509,7 @@
         srv  (start-server! port {:dir dir})]
     (println (str "slopp git server: " (:url srv) "  (store: " dir ")"))
     @(promise)))
+
 ^:reads (defn remote-credentials
   "CredentialsProvider for token auth against an https remote (GitHub PAT /
   app token) — the `token` argument, else SLOPP_GIT_TOKEN / GIT_TOKEN env.
@@ -545,6 +519,7 @@
                    (System/getenv "SLOPP_GIT_TOKEN")
                    (System/getenv "GIT_TOKEN"))]
     (UsernamePasswordCredentialsProvider. "x-access-token" ^String t)))
+
 (defn fetch-remote!
   "Fetch `url`'s branches into `repo` under refs/remotes/origin/*. Returns
   {:tip sha-or-nil} for `branch`. Used to seed a clone, and to bring a
@@ -561,6 +536,7 @@
       (.fetch tn NullProgressMonitor/INSTANCE
               [(RefSpec. "+refs/heads/*:refs/remotes/origin/*")])
       {:tip (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))})))
+
 ^:reads (defn tree-at
   "{path text} for the whole tree of commit `sha` — UTF-8 blobs, sorted.
   Works on any repo handle (the in-memory projection or an on-disk remote)."
@@ -576,39 +552,46 @@
                           (String. (.getBytes (.open repo (.getObjectId tw 0)))
                                    StandardCharsets/UTF_8)))
             m))))))
+
 (defn push-to-remote!
-  "Push refs/heads/<branch> from the in-memory projection to an external git
-  remote `url` (filesystem path or http(s)). Projects first; a cloned store
-  fetches the remote's objects so its grafted chain is complete. Fast-forward
-  only — a diverged remote is an honest :error, never a force. Returns
-  {:pushed sha :status s} | {:error msg}."
+  "Push the projection to an external git remote `url` (filesystem path or
+  http(s)). `:branch` = the LOCAL projection line (default \"main\", the
+  store's main line); `:remote-branch` = the DEST ref name (default =
+  branch) — mixed-ownership repos point it at the slopp-owned branch while
+  humans keep main. Projects first; a cloned store fetches the remote's
+  objects so its grafted chain is complete. Fast-forward only — a diverged
+  remote is an honest :error, never a force. Returns
+  {:pushed sha :status s :remote-branch b} | {:error msg}."
   [{:keys [^Repository repo map-conn] :as ctx} url
-   & {:keys [token branch] :or {branch "main"}}]
+   & {:keys [token branch remote-branch] :or {branch "main"}}]
   (when-let [base (db/get-meta map-conn "git-base-sha")]
     (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
       (fetch-remote! repo url :token token)))
   (ensure-projected! ctx)
-  (let [ref-name (str "refs/heads/" branch)
-        s        (str url)
-        uri      (URIish. ^String (if (re-find #"^[a-z+]+://" s)
-                                    s
-                                    (.getAbsolutePath (io/file s))))]
-    (if-let [tip (.resolve repo ref-name)]
+  (let [rbranch (or remote-branch branch)
+        src     (str "refs/heads/" branch)
+        dst     (str "refs/heads/" rbranch)
+        s       (str url)
+        uri     (URIish. ^String (if (re-find #"^[a-z+]+://" s)
+                                   s
+                                   (.getAbsolutePath (io/file s))))]
+    (if-let [tip (.resolve repo src)]
       (with-open [tn (Transport/open repo uri)]
         (when-let [creds (remote-credentials token)]
           (.setCredentialsProvider tn creds))
-        (let [rru    (RemoteRefUpdate. repo ref-name ref-name false nil nil)
+        (let [rru    (RemoteRefUpdate. repo src dst false nil nil)
               ^PushResult res (.push tn NullProgressMonitor/INSTANCE [rru])
               ^RemoteRefUpdate upd (first (.getRemoteUpdates res))
               status (str (.getStatus upd))]
           (if (contains? #{"OK" "UP_TO_DATE"} status)
-            {:pushed (.name tip) :status status}
+            {:pushed (.name tip) :status status :remote-branch rbranch}
             {:error (str "push rejected (" status ")"
                          (when-let [m (.getMessage upd)] (str ": " m))
                          (when (= status "REJECTED_NONFASTFORWARD")
-                           " — the remote has history this store doesn't build on (pull first)"))})))
-      {:error (str "nothing to push — no " ref-name
+                           " — the remote branch has history this store doesn't build on (pull first)"))})))
+      {:error (str "nothing to push — no " src
                    " in the projection (no milestones yet?)")})))
+
 ^:reads (defn merge-base
   "The merge base of two commits in `repo`, or nil when the histories are
   unrelated — standard git ancestry (pull uses it to isolate remote-only

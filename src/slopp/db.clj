@@ -97,7 +97,10 @@
                         (pr-str (:dep-pure store #{}))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:files store {}))]))
+                        (pr-str (:files store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:config store {}))]))
    nil))
 
 ^:reads (defn data-version
@@ -151,10 +154,13 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:files store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:config store {}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
-    (catch java.sql.SQLException _ false)))   ; busy/locked = contention
+    (catch java.sql.SQLException _ false)))
 
 (defn- parse-node
   "Re-parse one element's canonical serialization (its source text) back to its
@@ -265,6 +271,14 @@
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
+^:reads (defn config-files
+  "The store's structured-config entries ({path {:format :values}}), read
+  straight from meta — for the projection paths that need it session-free."
+  [conn]
+  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'config'"])
+              :meta/v edn/read-string)
+      {}))
+
 ^:reads (defn files
   "The store's non-code files manifest ({path → text}), read straight from
   meta — for the git projection paths that need it without a session."
@@ -272,6 +286,7 @@
   (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'files'"])
               :meta/v edn/read-string)
       {}))
+
 ^:reads (defn load-store
   "Reconstruct the full in-memory store from the db, or nil if empty."
   [conn]
@@ -290,23 +305,27 @@
                            conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
      :deps       (deps conn)
      :files      (files conn)
+     :config     (config-files conn)
      :dep-ns     (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-ns'"])
                              :meta/v edn/read-string) {})
      :dep-pure   (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-pure'"])
                              :meta/v edn/read-string) #{})}))
+
 ^:reads (defn get-meta
   "Read a meta row's value (nil when absent) — the k/v side-table for
   config the journal doesn't track (e.g. `git-remote`, `git-base-sha`)."
   [conn k]
   (:meta/v (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = ?" k])))
+
 (defn set-meta!
   "Upsert a meta row — the write side of `get-meta`."
   [conn k v]
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES (?,?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" k (str v)])
   nil)
+
 (defn quarantine-put!
   "Record a git-pull conflict for `path` (upsert): the raw remote `source`
   (nil for deletions), the remote `sha` it came from, and the human `reason`.
@@ -321,6 +340,7 @@
                        path (some-> ns str) source sha reason
                        (System/currentTimeMillis)])
   nil)
+
 ^:reads (defn quarantine-list
   "Every unresolved git-pull conflict, oldest first:
   [{:path :ns :source :sha :reason :at}]."
@@ -333,6 +353,7 @@
            :reason (:quarantine/reason row)
            :at     (:quarantine/at row)})
         (jdbc/execute! conn ["SELECT * FROM quarantine ORDER BY at, path"])))
+
 (defn quarantine-clear!
   "Resolve one conflict (`path`) — or ALL of them when path is nil."
   [conn path]

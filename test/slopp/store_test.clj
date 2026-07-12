@@ -27,6 +27,7 @@
   (let [s (store/ingest (store/empty-store) 'foo src)]
     (is (= 'add (:name (store/form-named s 'foo 'add))))
     (is (nil? (store/form-named s 'foo 'missing)))))
+
 (deftest anchored-add-inserts-before-the-anchor
   (let [base (store/ingest (store/empty-store) 'an.core
                            "(ns an.core)\n(defn early [] 1)\n(defn late [] 2)\n")
