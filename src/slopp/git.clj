@@ -193,6 +193,10 @@
 (defn- commit-message [d]
   (str (:description d)
        "\n\nSlopp-Commit: " (:id d) "\n"
+       (when (and (:author d) (:agent d))
+         ;; G5: the author field is the configured human; keep the agent
+         ;; visible (new-style markers only — old messages must not change)
+         (str "Slopp-Agent: " (:agent d) "\n"))
        (when (= :red (:status d)) "Slopp-Status: red\n")))
 
 (defn- insert-tree!
@@ -209,20 +213,29 @@
     (.finish b)
     (.writeTree dc ins)))
 
+(defn commit-author
+  "The projected commit's author identity for marker `d`: the `:author`
+  captured at milestone time ({:name :email} — G5 config), else the legacy
+  agent-based identity, so pre-G5 markers re-mint byte-identically."
+  [d]
+  (or (:author d)
+      {:name  (str (or (:agent d) "slopp"))
+       :email (author-email (:agent d))}))
 (defn- insert-commit!
   "Build blobs + tree + commit for marker `d` and return the sha. Pure
   function of (parent-sha, d, tree-map) — determinism is what makes the
-  projection rebuildable."
+  projection rebuildable (which is why the author identity lives ON the
+  marker, never in ambient config)."
   [^Repository repo parent-sha d tree-map]
   (with-open [ins (.newObjectInserter repo)]
     (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d)))
           at      (Instant/ofEpochMilli (long (:at d)))
-          who     (str (or (:agent d) "slopp"))
+          who     (commit-author d)
             ;; reflection-free ctors matter: reflective JGit calls resolve
             ;; classes per-thread and break on server dispatch threads
           cb      (doto (CommitBuilder.)
                     (.setTreeId tree-id)
-                    (.setAuthor (PersonIdent. who (author-email (:agent d))
+                    (.setAuthor (PersonIdent. ^String (:name who) ^String (:email who)
                                               at ^java.time.ZoneId ZoneOffset/UTC))
                     (.setCommitter (PersonIdent. "slopp" "slopp@slopp"
                                                  at ^java.time.ZoneId ZoneOffset/UTC))

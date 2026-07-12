@@ -1861,6 +1861,31 @@
            :status (status-at st rid)}
           {:error (str nm " was not present in " ns-sym " at " rid)})))))
 
+^:reads (defn- git-config-value
+  "`git config <k>` as git would resolve it in `dir` (local then global), or
+  nil. The \"<git>\" fallback of the G5 author config."
+  [dir k]
+  (let [r (sh/sh "git" "-C" (str dir) "config" k)]
+    (when (zero? (:exit r))
+      (let [v (str/trim (:out r))]
+        (when-not (str/blank? v) v)))))
+^:reads (defn- author-identity
+  "The author identity milestones are stamped with (G5): meta `user.name` /
+  `user.email`; a key that is unset or \"<git>\" defers to `git config` in
+  the project dir. Nil when nothing resolves (the projection then falls back
+  to the legacy agent identity). Durable sessions only."
+  [session]
+  (when-let [conn (:db @session)]
+    (let [dir (:dir @session)
+          res (fn [k]
+                (let [v (db/get-meta conn k)]
+                  (if (or (nil? v) (= v "<git>"))
+                    (git-config-value dir k)
+                    v)))
+          nm  (res "user.name")
+          em  (res "user.email")]
+      (when (and nm em)
+        {:name nm :email em}))))
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
@@ -1883,7 +1908,9 @@
                                                         :agent agent
                                                         :target target
                                                         :status status
-                                                        :extra delta-extra)]
+                                                        :extra (if-let [au (author-identity session)]
+                                                                 (assoc delta-extra :author au)
+                                                                 delta-extra))]
                        (vreset! v d)
                        st2))
                    [])
@@ -2886,3 +2913,30 @@
                    {:status :error
                     :output (->> (str/split-lines out) (remove str/blank?)
                                  (take-last 8) (str/join "\n"))}))))))
+(defn config!
+  "Read or set store config (the meta k/v side-table): keys `user.name` /
+  `user.email` — the git author identity milestones are stamped with (G5).
+  A key unset or set to \"<git>\" defers to `git config <key>` in the project
+  dir, resolved AT MILESTONE TIME. With no `v`: read —
+  {:key :configured :effective}. Durable sessions only."
+  [session k & [v]]
+  (let [allowed #{"user.name" "user.email"}]
+    (cond
+      (not (contains? allowed (str k)))
+      {:error (str "unknown config key " k " — allowed: "
+                   (str/join ", " (sort allowed)))}
+
+      (not (:db @session))
+      {:error "config lives in the durable store (this session has no db)"}
+
+      (some? v)
+      (do (db/set-meta! (:db @session) (str k) (str v))
+          {:key (str k) :configured (str v)})
+
+      :else
+      (let [conf (db/get-meta (:db @session) (str k))]
+        {:key (str k)
+         :configured conf
+         :effective (if (or (nil? conf) (= conf "<git>"))
+                      (git-config-value (:dir @session) (str k))
+                      conf)}))))

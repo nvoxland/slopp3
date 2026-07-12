@@ -245,6 +245,12 @@
    {:name "git_resolve"
     :description "Mark a git-pull conflict resolved (after merging the remote content through the edit tools — or deciding against it). Omit path to clear ALL. Unblocks git_push."
     :inputSchema {:type "object" :properties {:path {:type "string"}}}}
+   {:name "config"
+    :description "Read or set store config: user.name / user.email — the git author identity milestone commits are stamped with (captured on the marker at commit_point time). Unset, or the value \"<git>\", defers to `git config <key>` in the project dir. Omit value to read (shows :configured and the :effective resolution)."
+    :inputSchema {:type "object"
+                  :properties {:key {:type "string"}
+                               :value {:type "string"}}
+                  :required ["key"]}}
    {:name "deps_add"
     :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
     :inputSchema {:type "object"
@@ -650,6 +656,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "git_resolve"        (text (if-let [dir (:dir @session)]
                                    (sync/resolve! dir (:path a))
                                    {:error "git_resolve needs a durable session"}))
+      "config"             (text (api/config! session (:key a) (:value a)))
       "test_run"          (text (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session
