@@ -32,7 +32,9 @@
   (`clojure -M:nrepl`) only sees the KERNEL — it is not a route to slopp's
   code anymore.
 - Structural surgery across forms: edit_group / edit_move / edit_subform
-  (subform replacements may SPLICE: one match → several forms).
+  (subform replacements may SPLICE: one match → several forms; the match is
+  ONE form — or ONE pair on a pair boundary: case branch, cond clause,
+  let binding, map entry).
 
 ## Commits
 

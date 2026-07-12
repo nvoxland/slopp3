@@ -889,13 +889,16 @@ config slopp consumes (MANIFEST.MF semantics, deps).
 Observed while building G8–G10 through slopp's own tools (MCP + stdin
 probes). Same instrument as the eval rounds — self-reports from real usage.
 
-P1 (open) **The E2 multi-form guard is pair-blind.** Matching one `case`
+P1 ✅ **The E2 multi-form guard is pair-blind.** Matching one `case`
 branch, one `let` binding, or one map entry trips the "match spans multiple
 forms" refusal — pairs ARE two forms, but they're one logical unit. Fired
 three separate times this round; workaround each time was matching only the
-value form (loses the key/binding as an anchor). Fix direction: when the
-matched forms are a well-formed pair inside a binding/case/map context,
-allow it.
+value form (loses the key/binding as an anchor). Fixed: a TWO-form match
+landing on a pair boundary of a paired container (map literal, binding
+vector, case/cond clauses) addresses the pair as a unit — the whole pair
+span is replaced (splice still applies, so one entry can become two);
+misaligned or non-pair multi-form matches keep the hard error, and extract
+still refuses pairs (a pair is not an expression).
 
 P2 (open) **Change-signature is a mined workaround now performed by the
 maintainer.** Changing `commit-paths` from 3 to 4 args form-by-form was
@@ -909,11 +912,12 @@ the demand instrument has now fired on the dev agent itself, which per the
 standing rule promotes a `change_signature` refactor op from deferred to
 build-worthy.
 
-P3 (open) **No one-shot CLI for tool calls.** When the session's MCP server
+P3 ✅ **No one-shot CLI for tool calls.** When the session's MCP server
 died, the fallback was hand-rolled JSON-RPC over `--snapshot` stdin with
-EDN payloads staged as files to survive shell quoting. A first-class
-`--call <tool> <edn-args-or-@file>` mode on `slopp.boot` would serve
-degraded agent sessions, scripts, and CI without a live MCP connection.
+EDN payloads staged as files to survive shell quoting. Built:
+`slopp.boot --call <tool> [args]` (args = JSON, EDN, or `@file`) — sugar
+for `--main slopp.mcp/call-main!`; `mcp/call!` opens a durable
+turn-enforced session for ONE dispatch. P1/P2 were built through it.
 
 Ideas parked (not demanded yet): per-push CI via pass-through grafting of
 main's workflows into the projected slopp tree at push time (source of
