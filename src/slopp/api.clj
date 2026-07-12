@@ -2482,7 +2482,17 @@
 
       :else
       (let [st'      (:store r)
-            load-err (or ;; new namespaces first, dependency order
+            load-err (or ;; cold-load first (S1b): two individually-legal lines can
+                      ;; interleave into a forward ref — refuse before the
+                      ;; image is touched
+                      (edit/cold-load-errors
+                       st'
+                       (filter #(contains? (:namespaces st') %)
+                               (distinct
+                                (concat (keep :ns (drop (count (store/deltas base))
+                                                        (store/deltas st')))
+                                        (:new-nses r)))))
+                      ;; new namespaces first, dependency order
                       (some (fn [ns-sym]
                               (when (contains? (set (:new-nses r)) ns-sym)
                                 (image/load-ns! (:image @session) st' ns-sym)))

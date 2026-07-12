@@ -64,7 +64,11 @@ The oracle must never return a false verdict. Everything here serves that.
    effectively free next to the ns-warnings pass. Known over-approximation:
    syntax-quoted own-ns symbols count as usages (a declare satisfies).
    `ingest!`/`ns_create` are exempt — a brand-new ns cold-loads for real in
-   the image. Merge replay is NOT yet gated (follow-up).
+   the image. Merge replay IS gated (`merge-into-session!`, so both
+   branch_merge and merge_from): two individually-legal lines can interleave
+   into a forward ref — e.g. ours deletes a now-satisfied `declare` while
+   theirs grows a new forward use of it — and the merge is refused before
+   the image is touched.
 
 ## Gotchas
 

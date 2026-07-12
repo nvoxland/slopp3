@@ -712,7 +712,15 @@ move can CREATE the forward ref. Validated against the whole store: 0
 findings across 33 namespaces (boot cold-loads them all). Over-approximation
 accepted: syntax-quoted own-ns symbols count (declare satisfies); quoted
 symbols and cross-ns usages are correctly ignored. `ingest!` exempt (a
-brand-new ns cold-loads for real). Merge replay unedited — follow-up.
+brand-new ns cold-loads for real). Merge replay gated too
+(`merge-into-session!` covers branch_merge + merge_from): replay interleaves
+two individually-legal lines and CAN mint a forward ref (proven: ours
+tidies away a satisfied declare, theirs adds a forward use — every per-line
+write passed the gate, the merge would not cold-load; refused before the
+image is touched). Wiring this surfaced that kondo's two "invalid-arity"
+lint ERRORS on mcp's branch_merge/merge_from handlers were REAL — both
+tools threw ArityException on every call (`:agent` kwarg their api fns
+never had); fixed, checkpoint lint now clean.
 
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in

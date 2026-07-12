@@ -52,6 +52,52 @@
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
 
+(deftest merge-replay-that-breaks-cold-load-is-refused
+  ;; Each line is individually gate-legal, but the MERGE interleaves into a
+  ;; forward ref: main deletes the (now-satisfied) declare while the branch
+  ;; grows a new forward use of the declared var. The merge door must hold
+  ;; the same invariant as every other write door.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-coldload-merge" (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'm.core
+                   (str "(ns m.core)\n"
+                        "(declare h)\n"
+                        "(defn f [] (h))\n"
+                        "(defn g [] 1)\n"
+                        "(defn h [] 2)\n"))
+      ;; branch: g starts calling h — legal, the declare is above
+      (let [r (api/branch! sess "side")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/edit-replace! sess 'm.core 'g "(defn g [] (h))"
+                                 :prompt "g uses h" :agent "t")]
+        (is (nil? (:error r)) (pr-str r)))
+      ;; main: f drops h, the satisfied declare is tidied away — also legal
+      (let [r (api/branch-switch! sess "main")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/edit-replace! sess 'm.core 'f "(defn f [] :indep)"
+                                 :prompt "f drops h" :agent "t")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/fix-declares! sess 'm.core :agent "t")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (not (re-find #"declare" (api/query-source sess 'm.core)))
+            "setup: the declare must be gone on main"))
+      ;; the merge would land g→(h) with no declare and h defined after g
+      (let [before (api/query-source sess 'm.core)
+            r      (api/branch-merge! sess "side")]
+        (is (:error r) (pr-str r))
+        (is (re-find #"cold-load" (str (:error r))))
+        (testing "nothing committed, image intact"
+          (is (= before (api/query-source sess 'm.core)))
+          (is (= [:indep] (api/query-eval sess "(m.core/f)")))))
+      (finally
+        (api/close! sess)
+        (letfn [(rm [f] (let [f (clojure.java.io/file f)]
+                          (when (.isDirectory f) (run! rm (.listFiles f)))
+                          (.delete f)))]
+          (rm dir))))))
+
 (deftest declare-satisfies-the-gate
   (let [sess (api/open!)]
     (try
