@@ -900,17 +900,20 @@ span is replaced (splice still applies, so one entry can become two);
 misaligned or non-pair multi-form matches keep the hard error, and extract
 still refuses pairs (a pair is not an expression).
 
-P2 (open) **Change-signature is a mined workaround now performed by the
+P2 ✅ **Change-signature is a mined workaround now performed by the
 maintainer.** Changing `commit-paths` from 3 to 4 args form-by-form was
 (correctly) refused by the lint gate — callers momentarily had invalid
 arity; the resolution (ONE atomic edit_group: defn + all callers, plus
 `ns_add_require` first for the new alias) had to be discovered, not
-suggested. Two-part idea: (a) when an arity refusal's offending caller is a
-store form, the error should say "include the callers in one edit_group";
-(b) this is exactly the change-signature shape `slopp.mine` watches for —
-the demand instrument has now fired on the dev agent itself, which per the
-standing rule promotes a `change_signature` refactor op from deferred to
-build-worthy.
+suggested. Built, both parts: (a) invalid-arity refusals now append the
+resolution hint (defn + callers in ONE edit_group, or change_signature);
+(b) `change_signature` op — `source` replaces the defn, every CALL site's
+arg list is rebuilt from a `calls` template ($1..$9 = the site's existing
+arg sources; the callee stays as written, so aliases survive), executed
+through edit-group! so every gate applies in one pass. Higher-order
+references aren't rewritten (returned under :manual); nested self-call
+sites and template/arity misses are hard errors pointing at edit_group.
+The demand rule worked as designed: instrument fired → deferred op built.
 
 P3 ✅ **No one-shot CLI for tool calls.** When the session's MCP server
 died, the fallback was hand-rolled JSON-RPC over `--snapshot` stdin with

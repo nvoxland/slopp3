@@ -92,6 +92,15 @@ is what catches a missing one.
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.
 - `add-form!` / `delete-form!` — grow/shrink a namespace (delete `ns-unmap`s).
 - `rename!` — coordinated multi-form rename; see `slopp.refactor` notes below.
+- `change-signature!` (P2, tool `change_signature`) — the defn + every CALL
+  site as ONE intent: `source` replaces the defn (same name), each call's
+  arg list is rebuilt from the `calls` template ($1..$9 = the site's
+  existing arg sources; the callee stays as written, so aliases survive).
+  Planned in `refactor/change-signature-plan`, executed via `edit-group!`
+  (all gates, one verification). Higher-order references return under
+  `:manual`; nested self-call sites / template-arity misses are hard errors
+  pointing at `edit_group`. Companion: invalid-arity lint refusals carry
+  the "defn + callers in ONE edit_group, or change_signature" hint.
 - `edit-group!` — several `:replace`/`:add`/`:delete` steps as ONE atomic
   intent (F2): all steps apply to a store VALUE first (any error → whole group
   rejected, nothing committed — store purity makes this free), then commit +
