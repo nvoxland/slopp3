@@ -434,3 +434,27 @@ projects/eval7-seeded/.
 | 2026-07-13 | c22f654 | calculator | 2 | 11 | 330 | 726 | 741 |
 | 2026-07-13 | c22f654 | inventory | 1 | 7 | 97 | 345 | 410 |
 | 2026-07-13 | c22f654 | wordstats | 1 | 8 | 127 | 427 | 512 |
+
+## Cost-cut round + eval-7 rerun (@ ef3e36a → this commit)
+
+The twin decomposition (eval 7) showed ~80% of slopp's premium was fixed
+context + turn count. Shipped: serve-time AUTO-IMPORT (a clone of a
+slopp-published repo onboards itself; the slopp branch is the marker;
+empty stores are valid import targets), hook-automated turns (the prompt
+hook drops the verbatim ask in .slopp/pending-intent; the turn gate opens
+the turn from it — mcp_tool hooks proved unable to reach plugin servers),
+tool-description diet (~65%), query_source batched targets, hints
+once-per-session, SKILL.md core halved (depth → reference.md).
+
+Measured (eval-7 plugin cohort rerun, plain frozen; full rows in
+projects/eval7-seeded/RUNS.md):
+- **opus: −33% tokens / −30% wall / −39% cost vs the pre-cut round; its
+  premium over the plain-files twin collapsed from +71% to +14%.**
+- sonnet: back to baseline after an r2 ceremony-variance spike; +37%
+  premium remains (its reads still under-batch).
+- haiku: adopted slopp in one round (auto-import removed its barrier),
+  files in the other — weak-model adoption remains marginal; its files
+  runs got cheaper too (smaller deferred-schema pulls).
+- Wire-cost meter: tok-out 786→741 / 456→410 / 580→512 (hint dedup).
+- 6/6 acceptance PASS across both rerun rounds; suite 248/1293 green;
+  store milestones d1930 + d1941.

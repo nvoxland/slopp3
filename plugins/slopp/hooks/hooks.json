@@ -17,31 +17,9 @@
       {
         "hooks": [
           {
-            "type": "mcp_tool",
-            "server": "plugin:slopp:slopp",
-            "tool": "turn_begin",
-            "input": {
-              "agent": "claude",
-              "intent": "${prompt}"
-            },
-            "timeout": 15,
-            "statusMessage": "Opening the slopp turn"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "mcp_tool",
-            "server": "plugin:slopp:slopp",
-            "tool": "turn_end",
-            "input": {
-              "agent": "claude"
-            },
-            "timeout": 15,
-            "statusMessage": "Closing the slopp turn"
+            "type": "command",
+            "command": "python3 -c 'import json,sys,os; d=json.load(sys.stdin); os.makedirs(\".slopp\",exist_ok=True); open(\".slopp/pending-intent\",\"w\").write(d.get(\"prompt\",\"\"))' 2>/dev/null || true",
+            "timeout": 10
           }
         ]
       }
