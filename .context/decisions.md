@@ -960,3 +960,40 @@ surprise mid-flight (normalize only at boundaries), never block on the
 automation failing (auto-import/hook failures degrade to the manual path),
 and prefer richer RESULTS over more instructions — results that carry the
 reasoning close the trust gap that skill exhortations can't.
+
+## Q — self-dogfood findings (rocks 1-2 build turn, 2026-07-13)
+
+Friction measured on the maintainer while building through the live
+plugin; staged in cost order.
+
+Q1 (open) **:untested defeats the terse result shape.** Any write to an
+untested form returns FULL verbose — including the delta's complete
+:sources, echoing multi-KB forms the agent just sent (the tools registry
+and call-tool came back whole six times in one turn). Fix: :untested is a
+flag ON the terse shape; delta :sources never ride write results;
+:untested doesn't fire for deftests or pure-data defs.
+
+Q2 (open) **Isolated-suite debugging is a five-minute blind loop.**
+test_run {:isolated true} returns counts only — finding WHICH test failed
+means rebuilding jar-src and running clojure -M:test by hand. Fix:
+isolated runs accept :ns/:only selectors and return failing test names +
+messages, like in-image runs.
+
+Q3 (open) **The trace map dies with the session** — every cross-process
+write reports {:ran 0, :affected :all}. Persist it in the store: fixes
+CLI/probe verification and is the prerequisite for lifetime warm
+narrowing (Rock 6's terrain).
+
+Q4 (open) **slopp.mcp's monoliths fight the form-is-the-unit thesis.**
+The tools registry and call-tool dispatch are the hottest-edited spots
+and the worst-shaped: decompose to per-tool defs + a handler map.
+
+Q5 (open) **edit_subform fragment errors teach nothing.** "Unexpected
+EOF" on a match that ends mid-expression cost three round trips this
+turn. Say where the fragment breaks and suggest the enclosing form/pair.
+
+Q6 (open) **Eval instrumentation gaps:** the transcript miner must be a
+checked-in script with run-window scoping (an ad-hoc version silently
+summed rounds sharing a path); a `slopp doctor` CLI self-check (jar
+cache, hooks, turn automation, serving) would have collapsed two
+hook-debugging detours.
