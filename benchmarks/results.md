@@ -519,3 +519,15 @@ both times; plain read a prior session's transcript once (undesigned,
 fragile) and declared the why unrecoverable at step 5 — it also never
 committed anything across five sessions. Full analysis + findings:
 projects/eval8-lifetime/RUNS.md.
+
+### eval8 round 2 (post-rocks jar, same protocol) + n=2 means
+
+Round 2: plugin 38,196 vs plain 41,180 (0.93× — plain's cheap round;
+plugin step 5 spiraled, see Q12). n=2 means: plugin 36,663 vs plain
+47,665 = **0.77× lifetime**, with step 2 (provenance) stable at 0.58×
+across both rounds and step 4 at 0.40× (variance-heavy). Acceptance
+15/15 in all four cohort-rounds. Q10 verified live: round 2's plugin run
+dir carries every milestone on its local slopp branch. New finding Q12:
+the "summarize for handoff" step makes agents re-verify rich provenance
+through side channels — results must PROVE store/git alignment, not
+assert it. Full tables: projects/eval8-lifetime/RUNS.md.

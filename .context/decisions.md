@@ -1075,3 +1075,15 @@ descriptors from a dump captured BEFORE a same-session edit and silently
 reverted it (test_run's Q2 description). Bulk rewrites from a dump must
 re-dump immediately before slicing, or diff the dump against the store
 first. Caught by re-reading the descriptor; re-applied.
+
+Q12 (open) **The handoff trust spiral** (eval8 r2, step 5): given a
+high-stakes "summarize everything for a teammate" ask, the agent got the
+full answer from the history views in 5 calls, then burned ~15 more
+re-verifying through side channels (raw sqlite over store.db, a git
+worktree re-running the suite, duplicate test_run) — against the skill's
+explicit instruction. Q10's git milestones gave it a THIRD source to
+cross-check. Direction: results that PROVE alignment instead of asserting
+it — query_commits/query_git rows carrying "slopp branch @<sha> == this
+milestone's projection" so one call answers the cross-check the agent
+will otherwise perform by hand. G12 corollary: richer results close trust
+gaps; instructions alone don't.
