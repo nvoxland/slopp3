@@ -401,3 +401,33 @@ Headlines (details in RUNS.md):
   the measured crossover lives at multi-namespace scale. Next protocol
   step: a neutral-spec MODIFY-AND-EXTEND on a seeded slopp-published repo.
 - Infrastructure: 12/12 sessions connected clean through the plugin.
+
+## Eval 7: neutral MODIFY-AND-EXTEND on a seeded slopp-published repo (@ 9e85f1d)
+
+Eval 6's scale companion: the eval3 orders domain (12 nses) published the
+G10 way (main = README; slopp branch = projection), cloned per run; the
+identical end-user prompt asks for rush-order support + the mul-rate rename;
+plugin installed vs not is the only variable. Protocol + rows:
+projects/eval7-seeded/.
+
+- **6/6 acceptance PASS** (9 mechanical checks each: behavior contract,
+  rename complete, all tests green). At this scale nobody fails.
+- **Adoption split confirmed a third time**: sonnet/opus import the store
+  and work through slopp; haiku works on files. Same split as eval 6.
+- **Cost premium narrows with scale but doesn't invert under NEUTRAL
+  conditions**: sonnet slopp +40% tok / +37% wall vs its plain twin
+  (toy-scale was several-fold); opus +71% / +88%. Freely-working agents
+  pay for import + turns + milestones without exploiting the accelerators
+  the guided rounds used (round-3b's sonnet win came from orient→group→
+  rename workflows the skill teaches but neutrality doesn't enforce).
+- **The premium's product is the ledger**: slopp runs ended in green,
+  described milestones on the repo's slopp branch (verified provenance,
+  pushable); every files run left correct code as UNCOMMITTED dirty edits
+  — zero commits, nothing recorded anywhere. Same code quality; entirely
+  different deliverable.
+- Building the protocol found and fixed a real onboarding bug (milestone
+  d1900): the plugin server auto-creates an empty store in a fresh clone,
+  and import refused it. Empty stores are now valid import targets;
+  unreachable remotes return {:error} instead of a stack trace. Needs the
+  next release (v0.1.3) to reach plugin users; evals ran the patched jar
+  via SLOPP_JAR.
