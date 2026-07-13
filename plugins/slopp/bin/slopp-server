@@ -11,4 +11,13 @@
 set -euo pipefail
 
 DIR="${1:-${CLAUDE_PROJECT_DIR:-$PWD}}"
-exec "$(cd "$(dirname "$0")" && pwd)/slopp" "$DIR"
+
+# Dev knob: SLOPP_LIVE=1 adds --live, hot-reloading the server's own
+# namespaces as the store changes — the self-host loop (set it in the repo's
+# .claude/settings.json env). Default stays snapshot: a fresh session always
+# boots the current store anyway.
+ARGS=("$DIR")
+if [ "${SLOPP_LIVE:-}" = "1" ]; then
+  ARGS+=("--live")
+fi
+exec "$(cd "$(dirname "$0")" && pwd)/slopp" "${ARGS[@]}"

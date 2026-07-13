@@ -19,6 +19,13 @@ if ! command -v java >/dev/null 2>&1; then
   exit 1
 fi
 
+# Dev override: run a locally built jar (clojure -T:build uber) instead of
+# the pinned release — no fetch, no checksum. For testing kernel/jar changes
+# exactly as the plugin would run them.
+if [ -n "${SLOPP_JAR:-}" ]; then
+  exec java -jar "$SLOPP_JAR" "$@"
+fi
+
 checksum() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | cut -d' ' -f1
