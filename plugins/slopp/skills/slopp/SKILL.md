@@ -46,10 +46,12 @@ context; the patterns below are where sessions measurably bleed tokens.
    double-check yourself.** When the user asks how to verify, GIVE them
    the commands (`slopp --call test_run`, `query_commits`) — don't
    execute a dry run.
-4. **Batch multi-form intent.** Several forms for one reason = ONE
-   `edit_group` (mixing add/replace/delete/move). Red-first TDD: stub +
-   test in one group (honest red), real implementation next (green) —
-   two writes total.
+4. **Batch multi-form intent.** Several changes for one reason = ONE
+   `edit_group` (mixing add/replace/delete/move/subform/require). Red-first
+   TDD: stub + test in one group (honest red), real implementation next
+   (green) — two writes total. An `:untested` flag? `draft_test {ns name
+   code}` drafts a deftest from OBSERVED calls — edit it in, don't compose
+   from nothing.
 5. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
    (green-gated) unless the user asks for more. Session pauses checkpoint
    automatically.
@@ -102,4 +104,4 @@ edit_revert episode_revert fix_declares · branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · file_put file_remove file_list file_get file_history · config
 config_file · git_push git_clone git_pull git_conflicts git_resolve ·
-test_run checkpoint commit_point restart build help
+test_run draft_test checkpoint commit_point restart build help

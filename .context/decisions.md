@@ -1062,3 +1062,16 @@ until false hits show up in demand); impact reuses kondo var-usages —
 :arity marks a call site, its absence marks a value/higher-order ref
 that no template rewrite reaches — plus trace-map coverage. Suite
 267/1363 green.
+
+Rock 5 (✅ 2026-07-13): draft_test shipped — deftest drafts from
+OBSERVED calls (rt/observe via the query_observe machinery; each capture
+becomes an assertion) or a signature skeleton with named TODO holes.
+Suggestions only (red-first dogma intact). Known v1 limit: observe's
+200-char arg truncation makes big-arg drafts need hand-editing — the
+:note says to read each assertion. Suite 268/1368 green.
+
+Stale-dump hazard (lesson, 2026-07-13): the Q4 bulk split sliced tool
+descriptors from a dump captured BEFORE a same-session edit and silently
+reverted it (test_run's Q2 description). Bulk rewrites from a dump must
+re-dump immediately before slicing, or diff the dump against the store
+first. Caught by re-reading the descriptor; re-applied.
