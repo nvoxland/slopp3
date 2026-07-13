@@ -3356,6 +3356,49 @@
           (assoc :hint (str "value/higher-order refs can't be template-rewritten"
                             " — change_signature handles :calls; edit the"
                             " :value-refs forms by hand")))))))
+^:reads (defn draft-test
+  "Rock 5: a ready-to-EDIT deftest draft for `ns-sym/nm`. With `:code` (a
+  driver expression) it OBSERVES real calls and turns each capture into an
+  assertion — tests grown from observed behavior, not invented values.
+  Without :code, a signature-shaped skeleton with TODO holes. The draft is
+  a SUGGESTION in the result — nothing is written; adopt it with
+  edit_add_form after reading each assertion (red-first still applies)."
+  [session ns-sym nm & {:keys [code limit] :or {limit 5}}]
+  (if-let [e (store/form-named (:store @session) ns-sym nm)]
+    (let [qname (str ns-sym "/" nm)
+          obs   (when code
+                  (if-let [err (edit/observe-gate code)]
+                    {:error err}
+                    (first (repl/eval! (:image @session)
+                                       (format "(slopp.rt/observe '%s (fn [] %s) %d)"
+                                               qname code limit)))))]
+      (cond
+        (:error obs) obs
+
+        (seq (:calls obs))
+        {:draft    (str "(deftest " nm "-t\n"
+                        (str/join "\n"
+                                  (map (fn [{:keys [args ret threw]}]
+                                         (if threw
+                                           (str "  (is (thrown? Exception ("
+                                                qname " " (str/join " " args) ")))")
+                                           (str "  (is (= " ret " ("
+                                                qname " " (str/join " " args) ")))")))
+                                       (:calls obs)))
+                        ")")
+         :observed (count (:calls obs))
+         :note     (str "grown from OBSERVED calls — read each assertion before"
+                        " adopting; edit_add_form lands it (the ns needs"
+                        " [clojure.test :refer [deftest is]])")}
+
+        :else
+        (let [params (or (some #(when (vector? %) %) (drop 2 (n/sexpr (:node e))))
+                         '[args])]
+          {:draft (str "(deftest " nm "-t\n  (is (= :TODO-expected (" qname " "
+                       (str/join " " (map #(str ":TODO-" %) params)) "))))")
+           :note  (str "no examples — pass :code (a driver expression) to observe"
+                       " real calls and get value-true assertions instead of holes")})))
+    (edit/missing-form-error (:store @session) ns-sym nm)))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

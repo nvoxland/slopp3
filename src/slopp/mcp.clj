@@ -294,12 +294,19 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "test_run"
-    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes). Writes already verify — rarely needed after edits."
+    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes) — :ns/:only narrow it, and red isolated runs return :failing details. Writes already verify — rarely needed after edits."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
                                :fresh {:type "boolean"}
                                :isolated {:type "boolean"}}}}
+   {:name "draft_test"
+    :description "A ready-to-edit deftest DRAFT for an :untested form. With :code (a driver expression) it observes real calls and turns each into an assertion; without, a signature skeleton with TODO holes. Nothing is written — adopt via edit_add_form, red-first."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :code {:type "string"}
+                               :limit {:type "integer"}}
+                  :required ["ns" "name"]}}
    {:name "help"
     :description "The workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
@@ -560,6 +567,7 @@ RULES:   every write must compile (define callees first; (declare x) for cycles)
 READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
          :diagnosis :genuine = real red, yours · :staleness-detected = healed
          :warnings = fix with edit_rename per :suggest · :untested = add a test
+         (draft_test {ns name code} drafts one from OBSERVED calls)
 SHARE:   git_push {url?} (milestones -> a normal git remote; url saved once)
          git_pull (3-way absorb: remote wins where you're clean; both-touched =
          conflict, yours stays live, push blocked until git_resolve {path})
@@ -840,6 +848,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                 spool-cap " trimmed responses")}))
       "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
       "query_flow"        (text! (api/query-flow session (:name a)))
+      "draft_test"        (text! (api/draft-test session (sym :ns) (sym :name)
+                                                :code (:code a)
+                                                :limit (or (:limit a) 5)))
       "query_impact"      (text! (api/query-impact session (sym :ns) (sym :name)))
       "query_references" (text! (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage" (text! (vec (api/query-lineage session (sym :ns) (sym :name))))

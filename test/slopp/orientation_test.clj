@@ -124,3 +124,19 @@
           (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated draft-test-scaffolds-from-observation
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dt.core
+                   "(ns dt.core)\n(defn scale [x r] (long (Math/round (* x r))))\n")
+      (testing "with a driver, observed calls become assertions (Rock 5)"
+        (let [r (api/draft-test sess 'dt.core 'scale
+                                :code "(do (dt.core/scale 100 0.5) (dt.core/scale 9 0.1))")]
+          (is (re-find #"deftest scale-t" (str (:draft r))) (pr-str r))
+          (is (re-find #"\(is \(= 50 \(dt.core/scale 100 0.5\)\)\)" (str (:draft r))) (pr-str r))
+          (is (= 2 (:observed r)) (pr-str r))))
+      (testing "without a driver, a signature skeleton with named holes"
+        (let [r (api/draft-test sess 'dt.core 'scale)]
+          (is (re-find #"deftest scale-t" (str (:draft r))) (pr-str r))
+          (is (re-find #":TODO-x :TODO-r" (str (:draft r))) (pr-str r))))
+      (finally (api/close! sess)))))
