@@ -406,7 +406,7 @@
 (def sync-tools
   "Git-sync tool descriptors: push/pull/clone/conflicts and remotes. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
   [{:name "query_commits"
-    :description "Milestones, newest first (targets plug into query_changes from/to)."
+    :description "Milestones, newest first (targets plug into query_changes from/to). With a git remote configured, :alignment PROVES whether the slopp branch head is the latest milestone's projection — trust it; no worktree/sqlite cross-checks."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_git"
     :description "This session's git view: the embedded read-only listener URL + the saved external remote."
@@ -780,7 +780,16 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                       " couldn't bind)")}))))
    "query_commits"
    (fn [session _a _sym]
-     (text! (api/query-commits session)))
+     (text! (let [rows (api/query-commits session)
+                  conn (:db @session)
+                  al   (when (and conn (:dir @session))
+                         (sync/alignment (:dir @session)
+                                         (db/get-meta conn "git-remote")
+                                         (db/get-meta conn "git-branch")
+                                         rows))]
+              (if al
+                {:commits rows :alignment al}
+                rows))))
    "merge_from"
    (fn [session a _sym]
      (text! (api/merge! session (:dir a))))})

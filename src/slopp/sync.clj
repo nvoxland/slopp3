@@ -426,6 +426,41 @@
   (with-open [conn (db/open! dir)]
     (db/quarantine-clear! conn path)
     {:conflicts (db/quarantine-list conn)}))
+^:reads (defn alignment
+  "Q12: PROOF that the published slopp branch is the store's latest
+  milestone — {:branch :branch-head :latest-milestone :milestone-sha
+  :aligned :note} — or nil when there is no resolvable LOCAL remote,
+  branch, or minted milestone. One call answers the cross-check agents
+  otherwise perform by hand (throwaway worktrees, raw sqlite, duplicate
+  test runs). `commits` = query-commits rows, newest first."
+  [dir remote branch commits]
+  (try
+    (when-let [target (and remote (resolve-remote dir remote))]
+      (let [f    (io/file (str target))
+            gitd (if (.exists (io/file f ".git")) (io/file f ".git") f)]
+        (when (.exists (io/file gitd "HEAD"))
+          (let [repo (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
+                         (.setGitDir gitd)
+                         (.build))
+                b    (or branch "slopp")]
+            (try
+              (when-let [head (.resolve repo (str "refs/heads/" b))]
+                (when-let [latest (first (filter :sha commits))]
+                  (let [head-sha (.name head)
+                        aligned  (= head-sha (:sha latest))]
+                    {:branch b :branch-head head-sha
+                     :latest-milestone (:commit latest)
+                     :milestone-sha (:sha latest)
+                     :aligned aligned
+                     :note (if aligned
+                             (str "the " b " branch head IS milestone "
+                                  (:commit latest) "'s projection — identical"
+                                  " by construction; no worktree/sqlite"
+                                  " cross-check needed")
+                             (str "the " b " branch head is NOT the latest"
+                                  " milestone — git_push publishes it"))})))
+              (finally (.close repo)))))))
+    (catch Exception _ nil)))
 (defn import!
   "THE onboarding command: inside a git checkout (main checked out, the
   human's files on disk), build `.slopp/store.db` from the repo's slopp

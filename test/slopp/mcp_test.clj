@@ -333,3 +333,20 @@
         (let [r (call sess "query_eval" {:code "[(gs.core/calc 8) (gs.core/label 1)]"})]
           (is (re-find #"\[16 \"TIER 1\"\]" r) r)))
       (finally (api/close! sess)))))
+(deftest ^:isolated commits-prove-git-alignment
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-align" (make-array java.nio.file.attribute.FileAttribute 0)))
+        bare (str (java.nio.file.Files/createTempDirectory
+                   "slopp-align-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
+        _    (sh/sh "git" "init" "--bare" bare)
+        sess (api/open! {:dir dir})]
+    (try
+      (db/set-meta! (:db @sess) "git-remote" bare)
+      (call sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn f [x] x)\n"})
+      (call sess "commit_point" {:description "first"})
+      (testing "query_commits carries the alignment PROOF (Q12)"
+        (let [r (call sess "query_commits" {})]
+          (is (re-find #":aligned true" r) r)
+          (is (re-find #":branch-head" r) r)
+          (is (re-find #"no worktree" r) r)))
+      (finally (api/close! sess)))))
