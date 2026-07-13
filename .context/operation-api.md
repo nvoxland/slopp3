@@ -245,8 +245,25 @@ Two transports share the SAME dispatch (`mcp/handle`):
 - Tool names use underscores (MCP name charset). Tool results = `pr-str`'d
   tidy maps in one text content block; tool exceptions → `isError` result,
   protocol errors → JSON-RPC errors.
-- When adding an api op, add: tool schema + `call-tool` case + (usually) a
-  `select-keys` whitelist of the result.
+- When adding an api op, add: tool schema (in the matching per-group
+  registry def — `orientation-tools` / `history-tools` / `edit-tools` /
+  `flow-tools` / `env-tools` / `sync-tools`; `tools` just concatenates
+  them, Q4) + a dispatch entry (hot query/edit ops: `call-tool`'s case;
+  stable env/file/sync ops: the matching `*-handlers!` map of
+  `(fn [session a sym])`) + (usually) a `select-keys` whitelist of the
+  result.
+- **Result diet (Q1/Q8, `summarize`):** green-and-quiet writes return the
+  terse `{:ok true …}` shape; `:untested` is a terse FLAG (never a reason
+  to go verbose); a delta's `:source`/`:sources` are stripped from EVERY
+  write result (the agent just sent that text); a zero-test verification
+  carries `:coverage :none`. Anything over the size gate is trimmed and
+  spooled — `query_detail {id}` returns the full version.
+- **Errors teach (Q5/Q9):** refusals name the next action in tool
+  vocabulary — the cold-load gate is the bar. Shared pieces:
+  `edit/missing-form-error` (near-miss names or the outline pointer, used
+  by every no-such-form site) and the subform matcher's fragment refusal
+  (match COMPLETE forms / the enclosing form). Keep new errors to that
+  standard.
 
 ## Git bridge tools (`git_push` / `git_clone` / `query_git`)
 

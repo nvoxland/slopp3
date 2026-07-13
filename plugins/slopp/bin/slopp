@@ -4,6 +4,7 @@
 #   slopp --call <tool> [json|edn|@file]       one-shot tool call, no session
 #   slopp --main slopp.sync/-main import .     build the store from the repo's slopp branch
 #   slopp --main slopp.sync/-main test .       isolated suite from a store build
+#   slopp --doctor                             self-check the plugin wiring end-to-end
 # Fetches and caches the versioned jar on first run; java 21+ required.
 set -euo pipefail
 
@@ -17,6 +18,49 @@ JAR="$CACHE/slopp-${VERSION}.jar"
 if ! command -v java >/dev/null 2>&1; then
   echo "slopp: no 'java' on PATH — install a JDK (Temurin 21+ recommended)" >&2
   exit 1
+fi
+
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# --doctor: check the whole wiring in one command (Q6) — java, jar cache,
+# hook/skill files, python3 (the hooks need it), and a live store probe.
+# Exit 0 = everything an agent session needs is in place.
+if [ "${1:-}" = "--doctor" ]; then
+  rc=0
+  say() { printf '%s %s\n' "$1" "$2"; }
+  say "ok " "java: $(java -version 2>&1 | head -1)"
+  ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  for f in hooks/hooks.json skills/slopp/SKILL.md skills/slopp-setup/SKILL.md .mcp.json; do
+    if [ -f "$ROOT/$f" ]; then say "ok " "plugin file: $f"; else say "FAIL" "plugin file missing: $f"; rc=1; fi
+  done
+  if command -v python3 >/dev/null 2>&1; then say "ok " "python3 (prompt/checkpoint hooks)"; else say "FAIL" "no python3 — the intent + checkpoint hooks will not fire"; rc=1; fi
+  if [ -n "${SLOPP_JAR:-}" ]; then
+    if [ -f "$SLOPP_JAR" ]; then say "ok " "SLOPP_JAR override: $SLOPP_JAR"; else say "FAIL" "SLOPP_JAR set but missing: $SLOPP_JAR"; rc=1; fi
+  elif [ -f "$JAR" ]; then
+    if [ "$(checksum "$JAR")" = "$SHA256" ]; then say "ok " "jar cached + checksum: $JAR"; else say "FAIL" "cached jar fails checksum: $JAR (delete it; the launcher refetches)"; rc=1; fi
+  else
+    say "warn" "jar not cached yet — first launch fetches ${VERSION} (~27MB); run 'slopp --warm'"
+  fi
+  [ -n "${SLOPP_LIVE:-}" ] && say "ok " "SLOPP_LIVE set — server tracks the store live"
+  if [ -f ".slopp/store.db" ]; then
+    if [ -n "${SLOPP_JAR:-}" ] || [ -f "$JAR" ]; then
+      probe_jar="${SLOPP_JAR:-$JAR}"
+      if out=$(java -jar "$probe_jar" --call query_namespaces 2>/dev/null | tail -1); then
+        say "ok " "store probe: query_namespaces -> ${out:0:60}…"
+      else
+        say "FAIL" "store at .slopp/store.db but the probe call failed"; rc=1
+      fi
+    fi
+  else
+    say "warn" "no .slopp/store.db in $(pwd) — serving here starts empty (or auto-imports a slopp branch)"
+  fi
+  exit $rc
 fi
 
 # --warm: ensure the jar is cached, run nothing (the SessionStart hook uses
@@ -34,14 +78,6 @@ if [ -n "${SLOPP_JAR:-}" ]; then
   [ "$WARM" = "1" ] && exit 0
   exec java -jar "$SLOPP_JAR" "$@"
 fi
-
-checksum() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
-  else
-    shasum -a 256 "$1" | cut -d' ' -f1
-  fi
-}
 
 # Single-flight download: the SessionStart warm hook and the MCP server
 # launch can both arrive on a cold cache — exactly one fetches (mkdir lock),

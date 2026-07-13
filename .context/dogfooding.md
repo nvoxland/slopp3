@@ -132,6 +132,15 @@ Deferred ops become built ops when either instrument fires — never before
    Self-reports UNDERSTATE friction — the 3d round's reports said "no
    friction" while the transcripts showed a misfired tool lookup, ignored
    hints, impl-first TDD, and a silently weakened test assertion.
+   **Token/usage decomposition goes through `benchmarks/mine_transcripts.py`**
+   (Q6) — it dedupes by message id and REFUSES an unscoped directory sweep
+   (`--dir` requires `--since`): eval rounds sharing a run path once summed
+   into each other and corrupted a round-3 comparison. Never hand-roll this.
+
+Wiring self-check: `slopp --doctor` (launcher) verifies java, the jar
+cache/checksum, hook + skill files, python3, and probes the store with a
+read call — run it FIRST when a session's tools misbehave, instead of
+re-deriving the wiring by hand (two hook-debugging detours predate it).
 
 ## Curl-bridge harness notes (NOT product guidance — native MCP has none of this)
 

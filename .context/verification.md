@@ -24,6 +24,14 @@ The oracle must never return a false verdict. Everything here serves that.
    selection**: edit form F → run only tests whose set contains F (or F
    itself if F is a test). No trace info → conservative full-ns run
    (`:affected :all`).
+   **Persisted across sessions (Q3):** every traced run writes the map to
+   store meta (`persist-trace!`); `open!` loads it back pruned to
+   still-existing tests/forms (`load-trace`), so a fresh session — or a CLI
+   one-shot — starts with narrowing warm instead of `{:ran 0 :affected
+   :all}`. Last writer wins; staleness is safe because pruning drops moved
+   names and `sync-with-journal!` re-prunes (and re-persists) on foreign
+   commits. A zero-test verification result says `:coverage :none` (Q8) —
+   green must never be inferable from an empty run.
 3. **Smart red diagnosis (`diagnosed-run!`, D5.1).** Reds cross-check on a
    fresh image ONLY when staleness is plausible: reload-signature failures,
    an unexplained flip (failing test's traced set disjoint from the
@@ -69,6 +77,21 @@ The oracle must never return a false verdict. Everything here serves that.
    into a forward ref — e.g. ours deletes a now-satisfied `declare` while
    theirs grows a new forward use of it — and the merge is refused before
    the image is touched.
+
+7. **Isolated tier (`isolated-test-run!`).** Builds the store to a temp dir
+   and shells `clojure -M:test` (cognitect runner) — the ONLY tier that
+   executes `^:isolated` tests, because they spawn images/subprocesses and
+   would recurse in-image. `:ns`/`:only` narrow the run (cognitect `-n`/`-v`)
+   and a red run returns `:failing [{:test :detail}]` blocks parsed from the
+   output (`parse-test-failures`) — targeted red/green loops without
+   rebuilding by hand (Q2).
+8. **The isolation gate (Q7, `edit/isolation-refusal`).** Every replace/add
+   path refuses an UNTAGGED deftest that calls a spawning var
+   (`edit/spawning-vars`, resolved through the ns's require aliases via
+   `edit/require-aliases`) — the refusal names the fix (`^:isolated`).
+   Without the gate such a test hangs in-image verification with nothing
+   pointing at why. `ns_create`/import stay exempt (whole-ns ingestion is
+   the tolerant path).
 
 ## Gotchas
 

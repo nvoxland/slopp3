@@ -966,39 +966,39 @@ reasoning close the trust gap that skill exhortations can't.
 Friction measured on the maintainer while building through the live
 plugin; staged in cost order.
 
-Q1 (open) **:untested defeats the terse result shape.** Any write to an
+Q1 (✅ 2026-07-13) **:untested defeats the terse result shape.** Any write to an
 untested form returns FULL verbose — including the delta's complete
 :sources, echoing multi-KB forms the agent just sent (the tools registry
 and call-tool came back whole six times in one turn). Fix: :untested is a
 flag ON the terse shape; delta :sources never ride write results;
 :untested doesn't fire for deftests or pure-data defs.
 
-Q2 (open) **Isolated-suite debugging is a five-minute blind loop.**
+Q2 (✅ 2026-07-13) **Isolated-suite debugging is a five-minute blind loop.**
 test_run {:isolated true} returns counts only — finding WHICH test failed
 means rebuilding jar-src and running clojure -M:test by hand. Fix:
 isolated runs accept :ns/:only selectors and return failing test names +
 messages, like in-image runs.
 
-Q3 (open) **The trace map dies with the session** — every cross-process
+Q3 (✅ 2026-07-13) **The trace map dies with the session** — every cross-process
 write reports {:ran 0, :affected :all}. Persist it in the store: fixes
 CLI/probe verification and is the prerequisite for lifetime warm
 narrowing (Rock 6's terrain).
 
-Q4 (open) **slopp.mcp's monoliths fight the form-is-the-unit thesis.**
+Q4 (✅ 2026-07-13, first pass) **slopp.mcp's monoliths fight the form-is-the-unit thesis.**
 The tools registry and call-tool dispatch are the hottest-edited spots
 and the worst-shaped: decompose to per-tool defs + a handler map.
 
-Q5 (open) **edit_subform fragment errors teach nothing.** "Unexpected
+Q5 (✅ 2026-07-13) **edit_subform fragment errors teach nothing.** "Unexpected
 EOF" on a match that ends mid-expression cost three round trips this
 turn. Say where the fragment breaks and suggest the enclosing form/pair.
 
-Q6 (open) **Eval instrumentation gaps:** the transcript miner must be a
+Q6 (✅ 2026-07-13) **Eval instrumentation gaps:** the transcript miner must be a
 checked-in script with run-window scoping (an ad-hoc version silently
 summed rounds sharing a path); a `slopp doctor` CLI self-check (jar
 cache, hooks, turn automation, serving) would have collapsed two
 hook-debugging detours.
 
-Q7 (open) **Image-spawning tests are a silent trap for fresh agents.** A
+Q7 (✅ 2026-07-13) **Image-spawning tests are a silent trap for fresh agents.** A
 deftest that opens sessions/spawns JVMs (api/open!, repl/start!,
 http/start-server!) without ^:isolated would be run IN-IMAGE by per-write
 verification — recursion/hang the author can't diagnose. The maintainer
@@ -1006,17 +1006,27 @@ avoids it by knowing the rule; nothing enforces it. Gate it at write
 time: detect the pattern, refuse with the fix named ("tag it ^:isolated —
 it runs in the external suite").
 
-Q8 (open) **A no-trace verification looks like success.** {:ran 0
+Q8 (✅ 2026-07-13) **A no-trace verification looks like success.** {:ran 0
 :status :green} reads as "verified" when it means "nothing ran" — an
 agent in a fresh/CLI session could ship unverified work believing it
 green. Until the trace map persists (Q3), such results must say
 :coverage :none plus the one-line fix (run test_run once); green must
 never be inferable from a zero-test run.
 
-Q9 (open) **Every {:error} should meet the cold-load bar.** The
+Q9 (✅ 2026-07-13, shared missing-form-error + fragment refusal; audit continues opportunistically) **Every {:error} should meet the cold-load bar.** The
 cold-load refusal names its three resolutions inline ("define earlier,
 edit_move, or (declare ...)") and cost zero follow-up; the edit_subform
 fragment errors taught nothing and cost three round trips. Audit every
 error string in api/mcp/sync/edit: each names the next ACTION, in tool
 vocabulary. Errors are the only teaching that arrives exactly when the
 agent needs it (G12 corollary: richer results beat more instructions).
+
+Q-series resolution notes (same day): Q1/Q8 in `summarize` (strip
+:source/:sources everywhere; :untested terse; :coverage :none) + deftest
+never :untested; Q2 `isolated-test-run!` :ns/:only + :failing via
+`parse-test-failures`; Q3 `persist-trace!`/`load-trace` on store meta;
+Q4 tools registry → 6 per-group defs + concat, call-tool tail → 3
+handler maps (hot clauses stay in the case); Q5 fragment refusal in
+`find-unique-subform`; Q7 `edit/isolation-refusal` on every replace/add
+path; Q6 `benchmarks/mine_transcripts.py` + `slopp --doctor`. Suite
+263/1351 green.
