@@ -15,7 +15,7 @@
 
 (def tools
   [{:name "ns_create"
-    :description "Bring a BRAND-NEW namespace into being (cannot overwrite an existing one — edit its forms instead). TWO modes: pass `requires` (clause strings like \"[clojure.string :as str]\") to scaffold an empty namespace you then grow form-by-form with red-first TDD — the default for new behavior; OR pass `source` (the whole namespace text, including its own (ns …) form) to land the entire namespace in one verified call (forward refs resolve as a unit, like a real .clj load) — for ported/reference/data code not subject to red→green. `requires` and `source` are mutually exclusive."
+    :description "Create a BRAND-NEW namespace (never overwrites). Either `requires` (clause strings) scaffolds an empty ns to grow with red-first TDD, or `source` lands whole namespace text in one verified call (ported/reference code). Mutually exclusive."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :requires {:type "array" :items {:type "string"}}
@@ -23,52 +23,58 @@
                                :agent {:type "string"}}
                   :required ["ns"]}}
    {:name "ns_add_require"
-    :description "Add one require clause (e.g. \"[clojure.string :as str]\") to a namespace's ns form (tracked, hot-reloaded)."
+    :description "Add one require clause (e.g. \"[clojure.string :as str]\") to the ns form."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :require {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "require"]}}
    {:name "ns_remove_require"
-    :description "Remove a library's require spec from a namespace's ns form (tracked, hot-reloaded)."
+    :description "Remove a library's require spec from the ns form."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :lib {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "lib"]}}
    {:name "edit_move"
-    :description "Move a form to just before another form in its namespace — use when a definition must precede its (already-added) caller."
+    :description "Move a form to just before another (definitions precede callers)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :before {:type "string"} :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "name" "before"]}}
    {:name "edit_trivia"
-    :description "Replace the ENTIRE comment/blank-line run immediately before form `before` (omit before = the namespace tail) with `text` — how top-level comments and section banners are edited, added, or deleted (empty text = a bare newline). Text is trivia only (a code form is refused) and is normalized to start/end with a newline. Forms are untouched."
+    :description "Replace the comment/blank-line run before form `before` (omit = namespace tail) with `text`. Trivia only; forms untouched."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :before {:type "string"}
                                :text {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "text"]}}
    {:name "query_project"
-    :description "THE orientation call: every namespace with its full outline (names, arities, doc lines, !-status, test-ness) in one response. Start here."
+    :description "THE orientation call: every namespace's full outline (names, arities, docs, !-status, test-ness) in one response. Start here."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_search"
-    :description "Regex search across all store source; form-addressed hits [{:ns :form :line}]. Search before reading source."
+    :description "Regex search across all store source; hits are {:ns :form :line}. Search before reading."
     :inputSchema {:type "object"
                   :properties {:pattern {:type "string"}
                                :limit {:type "integer"}}
                   :required ["pattern"]}}
    {:name "query_namespaces"
-    :description "List every namespace in the store with its form count (orient here first)."
+    :description "Namespaces with form counts."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_outline"
-    :description "A namespace's shape at a glance: vars with arities, doc line, !-effect status, test-ness. Far cheaper than query_source."
+    :description "One namespace's outline (vars, arities, doc, !, test-ness) — far cheaper than source."
     :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
    {:name "query_source"
-    :description "Render a namespace's current source from the store (VFS read)."
-    :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
+    :description "Source from the store. `ns` alone = one whole namespace; OR `targets` [{ns, name?}…] reads SEVERAL forms/namespaces in ONE call — batch your orientation reads."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :targets {:type "array"
+                                         :items {:type "object"
+                                                 :properties {:ns {:type "string"}
+                                                              :name {:type "string"}}
+                                                 :required ["ns"]}}}}}
    {:name "query_symbol"
-    :description "Describe a form: id, name, effectfulness (!), source."
+    :description "One form: id, name, !-status, source."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
@@ -78,63 +84,63 @@
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "query_lineage"
-    :description "Provenance chain (deltas: op + prompt) for a form."
+    :description "A form's provenance chain (deltas: op + prompt)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "query_history"
-    :description "The change history, newest first. Default: raw deltas (op, prompt, label; filters ns/contains/limit). Pass collapse=true for EPISODE rows — one per agent-work-unit between checkpoints, the readable long-term view."
+    :description "Change history, newest first. collapse=true = episode rows (the readable long view); format=text for humans."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
                                :collapse {:type "boolean"}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_form_history"
-    :description "Every content version of a form, oldest first, with the prompt that produced it, when, and the verification state it landed in (:status). format=\"text\" renders the form's LIFE as a per-version line-diff story."
+    :description "Every version of a form with prompt/time/verification; format=text renders its life as diffs."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :format {:type "string" :enum ["text"]}}
                   :required ["ns" "name"]}}
    {:name "query_form_at"
-    :description "TIME-TRAVEL: a form's source exactly as it stood at a past point. :at is a delta id OR a commit-point id (resolves to that milestone's state). Names resolve as of that delta (a later-renamed form still answers to its old name). Returns {:source :status (was-green-at) :at} or {:error}."
+    :description "TIME-TRAVEL: a form's source at a past delta/milestone id (old names still resolve)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :at {:type "string"}}
                   :required ["ns" "name" "at"]}}
    {:name "query_status_at"
-    :description "WAS-GREEN-AT: the project's verification state (:green/:red/:unknown) that governed a past point — the last verify at or before :at (a delta id OR a commit-point id). Returns {:at :status :verify <delta>} or {:error}."
+    :description "Was-green-at: the verification state governing a past delta/milestone id."
     :inputSchema {:type "object"
                   :properties {:at {:type "string"}}
                   :required ["at"]}}
    {:name "query_search_history"
-    :description "DELTA-LOG SEARCH ('which prompts touched auth?'): case-insensitive substring match of :contains against every delta's prompt, checkpoint label, commit/turn description, and enclosing turn intent, newest-first. Each hit carries the forms it touched (ns/name) + human time — drill in with query_form_at / query_lineage."
+    :description "Search prompts/labels/intents across the delta log ('which prompts touched auth?'); hits carry the touched forms."
     :inputSchema {:type "object"
                   :properties {:contains {:type "string"}
                                :limit {:type "integer"}}
                   :required ["contains"]}}
    {:name "query_eval"
-    :description "Read-only eval against the live image (the oracle); never edits code. Namespaces are already loaded in the image (no source files) — just call fns; a bare `require` is a no-op and `:reload`/`:reload-all` are ignored."
+    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
    {:name "query_observe"
-    :description "Run driver code while capturing the args and return value of calls to ns/name — 'what actually flows through this function?'"
+    :description "Capture args/returns of ns/name while running driver `code` — what actually flows through it."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :code {:type "string"}
                                :limit {:type "integer"}}
                   :required ["ns" "name" "code"]}}
    {:name "query_macroexpand"
-    :description "Show a form's macroexpansion (expand-1 and full)."
+    :description "Macroexpansion (expand-1 + full)."
     :inputSchema {:type "object" :properties {:code {:type "string"}}
                   :required ["code"]}}
    {:name "edit_replace_form"
-    :description "Replace a whole top-level form (tracked delta, hot-reload, verify)."
+    :description "Replace a whole top-level form (verified write)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :source {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source"]}}
    {:name "edit_add_form"
-    :description "Add a new top-level form to a namespace (tracked delta, hot-reload, verify). Default position: the tail. Pass before=<form-name> to insert immediately before that form — define callees before their callers in one step."
+    :description "Add a top-level form (verified write); `before` anchors placement, default tail."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}
                                :before {:type "string"}
@@ -142,14 +148,14 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
-    :description "Delete a top-level form from a namespace (tracked delta, ns-unmap, verify)."
+    :description "Delete a top-level form (ns-unmap, verified)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Replace ONE subexpression inside a form (give the exact subform source as `match` and its replacement as `source`) — for small changes inside big forms; never re-transcribe the rest. Wrap = a replacement containing the match. SPLICE is guaranteed: the replacement may be SEVERAL forms (they land in the match's place — how you insert into a big vector or case). The match is ONE subform — or ONE key/value-style PAIR on a pair boundary (case branch, cond clause, let binding, map entry), which addresses the pair as a unit. Matching is structural OR whitespace-insensitive-textual, so fn literals #(...) and regexes match. text=true switches to RAW-TEXT matching (unique occurrence, result must stay one form) — the escape hatch for string literals and docstrings."
+    :description "Replace ONE subexpression inside a big form: `match` = its exact source (structural or whitespace-insensitive — fn literals/regexes match), `source` = replacement (may be SEVERAL forms: splice). Match may also be ONE pair on a pair boundary (case/cond clause, let binding, map entry). text=true = raw-text mode for strings/docstrings. Never re-transcribe the rest."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
@@ -158,14 +164,14 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "form" "match" "source"]}}
    {:name "edit_revert"
-    :description "Revert a form to an earlier version of itself (default: previous; or a specific delta id from query_form_history). Verified and recorded like any write."
+    :description "Revert a form to an earlier version (default previous, or a delta id)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :to {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
-    :description "Apply several form writes as ONE atomic intent: all-or-nothing commit, one verification at the end. Use for multi-form refactors. Steps: replace/add/delete/move — add takes optional before=<form-name> (insert anchored, not at the tail); move needs name + before (batch reordering rides the same atomic commit)."
+    :description "Several form writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move; add takes optional `before`."
     :inputSchema {:type "object"
                   :properties {:steps {:type "array"
                                        :items {:type "object"
@@ -179,14 +185,14 @@
                                :verbose {:type "boolean"}}
                   :required ["steps"]}}
    {:name "edit_rename"
-    :description "Rename a form and every reference to it, across namespaces (one coordinated delta; shadow-safe)."
+    :description "Rename a form + every reference across namespaces (shadow-safe). Never rename by hand."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
                                :new {:type "string"} :prompt {:type "string"} :agent {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
    {:name "change_signature"
-    :description "Change a fn's signature as ONE atomic intent: `source` replaces the defn (keep the name), and every CALL site's argument list is rebuilt from `calls` — a template where $1..$9 are the site's existing arg sources (the callee stays as written, so aliases survive). Example: adding a trailing arg = calls: \"$1 $2 nil\". Higher-order references are not rewritten (returned under :manual). One edit group, one verification."
+    :description "Change a fn's signature atomically: `source` = the new defn (same name); `calls` = arg-list template rebuilding every call site ($1..$9 = the site's existing args; adding a trailing arg = \"$1 $2 nil\"). Higher-order refs return under :manual."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :source {:type "string"} :calls {:type "string"}
@@ -194,39 +200,39 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source" "calls"]}}
    {:name "edit_extract"
-    :description "Extract a unique subform of a function into a new function (free locals become params; placed before the caller; the subform becomes the call). One atomic, verified intent."
+    :description "Extract a unique subform into a new fn (params computed, call site rewritten, verified)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :from {:type "string"}
                                :form {:type "string"} :name {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
    {:name "turn_begin"
-    :description "Open your TURN: record the user's VERBATIM ask as the root intent of everything you do until turn_end. Required before any write when the server enforces turns. Pass your agent label."
+    :description "Open your turn (records the verbatim user ask). Usually AUTOMATED by the plugin's hooks — call manually only if a write is refused for a missing turn."
     :inputSchema {:type "object"
                   :properties {:agent {:type "string"} :intent {:type "string"}
                                :user {:type "string"}}
                   :required ["agent" "intent"]}}
    {:name "turn_end"
-    :description "Close your turn (stable or not — a red turn is still history). Sub-agents don't call this; they ride your turn."
+    :description "Close your turn (usually automated by the plugin's hooks)."
     :inputSchema {:type "object"
                   :properties {:agent {:type "string"} :note {:type "string"}}
                   :required ["agent"]}}
    {:name "query_changes"
-    :description "Net per-form diffs (:was/:now), steps, and the red/green verification arc — for YOUR open episode (pass :agent), or for ANY PAST span: pass :from/:to delta ids straight from a collapsed history row (drill-down). format=text renders line diffs for humans."
+    :description "Net per-form diffs + red/green arc: your open episode (:agent) or any past span (:from/:to delta ids); format=text for humans."
     :inputSchema {:type "object"
                   :properties {:agent {:type "string"}
                                :from {:type "string"} :to {:type "string"}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "episode_revert"
-    :description "Scrap your episode: roll every form you changed since your last checkpoint back to that stable spot, as ONE atomic verified group. Forms other agents also touched are skipped and reported in :skipped-shared, never stomped."
+    :description "Roll back everything you changed since your last checkpoint (other agents' forms skipped, reported)."
     :inputSchema {:type "object"
                   :properties {:agent {:type "string"} :prompt {:type "string"}}}}
    {:name "checkpoint"
-    :description "Mark a unit of work done and CLOSE your episode: deterministically normalize the forms YOU changed since your last checkpoint (tracked :normalize delta, re-verified), record a labeled boundary. Pass your :agent label so parallel agents' checkpoints stay independent."
+    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary."
     :inputSchema {:type "object" :properties {:label {:type "string"}
                                               :agent {:type "string"}}}}
    {:name "commit_point"
-    :description "Record a MILESTONE: runs the full checkpoint pipeline, then marks this spot in the branch's history with a human description (the important-checkpoint grain above turns). GREEN-GATED: refused while tests are red unless force=true (which records status :red honestly). Pass target=<past delta id> to retroactively mark an earlier spot."
+    :description "Record a MILESTONE (green-gated; force=true records red honestly). The git-projection grain; target=<delta id> marks an earlier spot."
     :inputSchema {:type "object"
                   :properties {:description {:type "string"}
                                :agent {:type "string"}
@@ -234,69 +240,69 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "query_commits"
-    :description "Milestones, newest first: description, status, human time, and target delta id (plug targets into query_changes from/to for a between-milestones diff). Rows carry :sha — the milestone's git commit id — once the git projection has minted it."
+    :description "Milestones, newest first (targets plug into query_changes from/to)."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_git"
-    :description "The LOCAL git view of this session's store: the embedded read-only listener's URL (durable sessions only) — `git remote add slopp <url>`, then clone/fetch: milestones (commit_point) are the commits, wip/<branch> mirrors un-milestone'd live state. Plus the saved external remote (git-remote/git-base-sha meta) when this store pushes to or was cloned from one. Edits arrive through slopp's write tools; publishing goes OUT via git_push."
+    :description "This session's git view: the embedded read-only listener URL + the saved external remote."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_push"
-    :description "Push this store's projection — the milestone history as real .clj files + a generated deps.edn — to a normal git remote (GitHub or any bare repo). Pass url once (saved as git-remote; later calls reuse it). Fast-forward only: a diverged remote is an honest error, never a force. A cloned store grafts onto the remote's history, so its pushes fast-forward too. Auth for https: token param, else SLOPP_GIT_TOKEN/GIT_TOKEN env."
+    :description "Push the milestone projection to a git remote (fast-forward only). url saved on first use; https auth via token or SLOPP_GIT_TOKEN."
     :inputSchema {:type "object"
                   :properties {:url {:type "string"}
                                :token {:type "string"}
                                :branch {:type "string"}}}}
    {:name "git_clone"
-    :description "Clone a git remote into dir as a FILELESS slopp store: every src/test namespace is ingested (verified) into <dir>/.slopp/store.db — NO .clj files are materialized locally. Records git-remote + git-base-sha so a later git_push from that store fast-forwards onto the remote's history. dir must not already hold a store. Non-source files on the remote are ignored; a .clj that fails slopp's gates fails the clone with the reason."
+    :description "Clone a remote into dir as a FILELESS store (every ns ingested + verified; no .clj files materialized)."
     :inputSchema {:type "object"
                   :properties {:url {:type "string"}
                                :dir {:type "string"}
                                :token {:type "string"}}
                   :required ["url" "dir"]}}
    {:name "git_pull"
-    :description "Absorb the remote's changes since the last common point: a 3-way merge at FORM granularity — the remote wins wherever this store is clean; anything both sides touched becomes a CONFLICT (our version stays live; the remote file is quarantined off-log; git_push is blocked until resolved). Whole-file deletions and comment-only changes are surfaced, never silently applied. Records the remote tip as the new chain point so later pushes fast-forward. Needs a durable session with a saved git-remote (from git_push or a clone)."
+    :description "Absorb remote changes: form-granular 3-way merge; both-sides-touched = conflicts (quarantined; push blocked until resolved)."
     :inputSchema {:type "object"
                   :properties {:token {:type "string"}
                                :agent {:type "string"}}}}
    {:name "git_conflicts"
-    :description "Unresolved git-pull conflicts: path, namespace, reason, and the RAW remote file content to merge from. Resolve by applying/adapting that content through the edit tools, then git_resolve the path."
+    :description "Unresolved pull conflicts, with the raw remote content to merge from."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_resolve"
-    :description "Mark a git-pull conflict resolved (after merging the remote content through the edit tools — or deciding against it). Omit path to clear ALL. Unblocks git_push."
+    :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
     :inputSchema {:type "object" :properties {:path {:type "string"}}}}
    {:name "config"
-    :description "Read or set store config: user.name / user.email — the git author identity milestone commits are stamped with (captured on the marker at commit_point time). Unset, or the value \"<git>\", defers to `git config <key>` in the project dir. Omit value to read (shows :configured and the :effective resolution)."
+    :description "Read/set store config (user.name / user.email — the milestone author; \"<git>\" defers to git config). Omit value to read."
     :inputSchema {:type "object"
                   :properties {:key {:type "string"}
                                :value {:type "string"}}
                   :required ["key"]}}
    {:name "file_put"
-    :description "Track a NON-CODE file (README, .github workflows, LICENSE) on the store's files manifest — it rides every projected tree, so git_push never deletes it from the remote. Content is the full file text."
+    :description "Track a non-code file on the files manifest (rides every projected tree)."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
                                :content {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["path" "content"]}}
    {:name "file_remove"
-    :description "Drop a path from the files manifest (it disappears from the next pushed tree)."
+    :description "Drop a path from the files manifest."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["path"]}}
    {:name "file_list"
-    :description "The files manifest: {path byte-count}."
+    :description "The files manifest: {path bytes}."
     :inputSchema {:type "object" :properties {}}}
    {:name "file_get"
-    :description "A manifest file's content — current, or as of a past delta/commit-point via at (time travel, like query_form_at)."
+    :description "A manifest file's content (optionally at a past delta/milestone via `at`)."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"} :at {:type "string"}}
                   :required ["path"]}}
    {:name "file_history"
-    :description "Every tracked version of a manifest file, oldest first, with provenance (delta, op, agent, prompt, time, bytes) — query_form_history for non-code files."
+    :description "A manifest file's tracked versions with provenance."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}}
                   :required ["path"]}}
    {:name "config_file"
-    :description "STRUCTURED config files (the non-code analog of forms): the store holds semantic key/values per path with per-key history; the projection serializes them into the file format and they ride every pushed tree. Set: path+key+value (format on first touch, default manifest — 'K: V' lines, e.g. META-INF/MANIFEST.MF). Remove: path+key+unset=true. Read: path only (values + rendered preview). Prefer this over file_put for anything that IS key/value config."
+    :description "STRUCTURED config file: semantic key/values with per-key history, serialized into the projection (e.g. META-INF/MANIFEST.MF). Set path+key+value; unset=true removes; path alone reads. Prefer over file_put for key/value config."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"} :key {:type "string"}
                                :value {:type "string"} :unset {:type "boolean"}
@@ -304,7 +310,7 @@
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["path"]}}
    {:name "deps_add"
-    :description "Declare an external library dependency for THIS store (Tier 1). It reaches the live image's classpath immediately (hot add-libs, no restart) and the generated deps.edn, so store code can require it. lib is a symbol like \"org.clojure/data.json\"; give version (\"2.5.0\" → {:mvn/version ...}) OR a full coord map. Records a tracked :deps-add delta."
+    :description "Add an external dependency (hot to the live classpath, no restart). lib like \"org.clojure/data.json\"; version string or full coord map."
     :inputSchema {:type "object"
                   :properties {:lib {:type "string"}
                                :version {:type "string"}
@@ -312,40 +318,40 @@
                                :agent {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_remove"
-    :description "Drop an external dependency from this store's manifest (restarts the image — a jar can't be unloaded)."
+    :description "Remove a dependency (restarts the image)."
     :inputSchema {:type "object"
                   :properties {:lib {:type "string"} :agent {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_list"
-    :description "This store's external dependency manifest: {lib coord}."
+    :description "The dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
    {:name "deps_pure"
-    :description "Assert a dependency is PURE (no effect slopp should track), narrowing the effectful-by-default boundary so callers aren't flagged. `target` lands at three granularities: a fully-qualified var (\"clojure.data.json/write-str\"), a whole namespace (\"clojure.data.json\", every var in it), or a manifest lib (\"org.clojure/data.json\", which expands to every namespace the dep provides — best for a wholesale-pure library like rewrite-clj). Pass pure=false to undo."
+    :description "Assert a dep target is PURE so callers aren't !-flagged: a var (\"ns/f\"), a namespace, or a whole lib. pure=false undoes."
     :inputSchema {:type "object"
                   :properties {:target {:type "string"}
                                :pure {:type "boolean"}
                                :agent {:type "string"}}
                   :required ["target"]}}
    {:name "test_run"
-    :description "Run tests in the live image and record the result. No :ns = EVERY namespace's tests in one call (the full-project sweep). :only restricts to named tests; :fresh true restarts first for a guaranteed-faithful run. :isolated true instead runs the project's file-based suite in a FRESH EXTERNAL JVM (clojure -M:test) — for tests that spawn their own images/subprocesses and so can't run in the owned image; returns a parsed summary, not the trace map."
+    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes). Writes already verify — rarely needed after edits."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
                                :fresh {:type "boolean"}
                                :isolated {:type "boolean"}}}}
    {:name "help"
-    :description "The slopp workflow cheat-sheet: which tool for what, how to read results."
+    :description "The workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
    {:name "branch_create"
-    :description "Create a branch from the current line's state and switch to it (O(1); the image is already correct)."
+    :description "Create a branch from the current state and switch to it (O(1))."
     :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
    {:name "branch_switch"
-    :description "Checkout another branch (or main): swaps the store and brings the live image in step. The test trace map resets."
+    :description "Checkout another branch (or main); the live image follows. Trace narrowing resets."
     :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
    {:name "branch_merge"
-    :description "Merge a branch into the CURRENT line (switch to main first to merge down). Different-form work lands; same-form divergence returns :conflicts (current line kept, branch surfaced — that payload IS current source, no re-read needed). The branch survives. Pass your :agent."
+    :description "Merge a branch into the CURRENT line. Same-form divergence returns :conflicts (current kept; payload IS current source). The branch survives."
     :inputSchema {:type "object" :properties {:name {:type "string"}
                                               :agent {:type "string"}}
                   :required ["name"]}}
@@ -354,27 +360,27 @@
     :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
    {:name "query_branches"
-    :description "List every branch with its head delta, and which one is current."
+    :description "Branches with head deltas; marks the current one."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_deps"
-    :description "The transitive CALLEE tree of ns/name: what does this form reach (store-internal)? Plan extractions and blast radius with it."
+    :description "Transitive callee tree of ns/name (plan extractions / blast radius)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "fix_declares"
-    :description "Tidy a namespace's (declare ...) forms: move declared defns above their first caller when safe, delete satisfied declares; unsafe cases (mutual recursion) are skipped and reported. Atomic, verified."
+    :description "Tidy (declare …): reorder defns above callers when safe, delete satisfied declares. Atomic, verified."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :prompt {:type "string"}
                                :agent {:type "string"}}
                   :required ["ns"]}}
    {:name "ns_rename"
-    :description "Rename a WHOLE namespace: its ns decl, every require clause, and every fully-qualified reference across the store. Verified end-to-end; the old name is gone."
+    :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
     :inputSchema {:type "object"
                   :properties {:old {:type "string"} :new {:type "string"}
                                :prompt {:type "string"} :agent {:type "string"}}
                   :required ["old" "new"]}}
    {:name "edit_extract_ns"
-    :description "Move forms into a BRAND-NEW namespace: new ns created (requires copied), remaining callers rewritten to alias-qualified calls, require added, moved forms removed — one atomic verified group. Guards: the moved set may not call what stays; nothing outside the source ns may reference it. Use query_deps to plan the set."
+    :description "Move forms into a BRAND-NEW namespace (callers rewritten to alias-qualified calls; one atomic group). The moved set may not call what stays; plan with query_deps."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :forms {:type "array" :items {:type "string"}}
@@ -382,15 +388,15 @@
                                :agent {:type "string"}}
                   :required ["ns" "forms" "to"]}}
    {:name "merge_from"
-    :description "Merge a diverged COPY of this project (a fork = a copied project dir, edited by its own slopp server) back into this session. Different-form work lands; same-form divergence returns :conflicts (ours kept, theirs surfaced). Absolute dir path."
+    :description "Merge a diverged COPY of this project (absolute dir). Same-form divergence = :conflicts, ours kept."
     :inputSchema {:type "object"
                   :properties {:dir {:type "string"}}
                   :required ["dir"]}}
    {:name "restart"
-    :description "Restart the live image (D5 backstop); reload all forms."
+    :description "Restart the live image; reload all forms."
     :inputSchema {:type "object" :properties {}}}
    {:name "build"
-    :description "Materialize every namespace to real .clj files under dir (absolute path). Optional main (qualified entry fn, e.g. \"calc.core/run-cli\") also emits a GraalVM native-image recipe: a generated launcher plus an executable build-native.sh that compiles a self-contained native binary (optional name overrides the binary name)."
+    :description "Materialize every namespace to .clj files under dir (absolute). Optional main (qualified entry fn) adds a GraalVM native-image recipe."
     :inputSchema {:type "object"
                   :properties {:dir {:type "string"} :main {:type "string"}
                                :name {:type "string"}}
@@ -414,36 +420,44 @@
 
 (defn- track-hint!
   "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
-  66-vs-19 call gap was redundant test_runs + scattered single writes)."
+  66-vs-19 call gap was redundant test_runs + scattered single writes).
+  Each hint fires ONCE per session — repetition measurably pads outputs
+  (+9–20% tok-out on streaky scripts) without changing behavior."
   [session tool args]
   (let [s (::stats (swap! session update ::stats
-                          (fn [{:keys [test-runs singles last-ns]
-                                :or {test-runs 0 singles 0}}]
+                          (fn [{:keys [test-runs singles last-ns fired]
+                                :or {test-runs 0 singles 0 fired #{}}}]
                             (cond
                               (= tool "test_run")
                               {:test-runs (inc test-runs)
-                               :singles singles :last-ns last-ns}
+                               :singles singles :last-ns last-ns :fired fired}
 
                               (single-write-tools tool)
                               {:test-runs 0
                                :singles (if (= (:ns args) last-ns) (inc singles) 1)
-                               :last-ns (:ns args)}
+                               :last-ns (:ns args) :fired fired}
 
                               (#{"edit_group" "checkpoint" "commit_point"} tool)
-                              {:test-runs 0 :singles 0 :last-ns nil}
+                              {:test-runs 0 :singles 0 :last-ns nil :fired fired}
 
                               (write-tools tool)  ; other writes keep the streak
-                              {:test-runs 0 :singles singles :last-ns last-ns}
+                              {:test-runs 0 :singles singles :last-ns last-ns :fired fired}
 
                               :else
                               {:test-runs test-runs
-                               :singles singles :last-ns last-ns}))))]
+                               :singles singles :last-ns last-ns :fired fired}))))
+        fire! (fn [k msg]
+                (when-not (contains? (:fired s) k)
+                  (swap! session update-in [::stats :fired] (fnil conj #{}) k)
+                  msg))]
     (cond
       (>= (:test-runs s) 3)
-      "every write already verifies (its result includes :test) — test_run is rarely needed"
+      (fire! :test-runs
+             "every write already verifies (its result includes :test) — test_run is rarely needed")
 
       (>= (:singles s) 4)
-      "several single-form writes in a row — batch related changes into ONE edit_group"
+      (fire! :singles
+             "several single-form writes in a row — batch related changes into ONE edit_group")
 
       :else nil)))
 
@@ -560,7 +574,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                   :limit (or (:limit a) 30)))
       "query_namespaces"  (text (api/query-namespaces session))
       "query_outline"     (text (api/query-outline session (sym :ns)))
-      "query_source"      (text (api/query-source session (sym :ns)))
+      "query_source"      (text (if-let [ts (:targets a)]
+                            (api/query-sources
+                             session
+                             (mapv (fn [t]
+                                     (cond-> {:ns (symbol (:ns t))}
+                                       (:name t) (assoc :name (symbol (:name t)))))
+                                   ts))
+                            (api/query-source session (sym :ns))))
       "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
       "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
@@ -859,13 +880,20 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
 (defn -main
   "Start the stdio MCP server. An optional `dir` argument makes the session
   durable (store at <dir>/.slopp/store.db); without it the session is
-  ephemeral. A durable session ALSO opens an in-process git smart-HTTP
-  listener on a dir-derived port (localhost) — a READ-ONLY remote (clone/fetch
-  of milestones) any git client can point at with no external daemon;
+  ephemeral. Serving a git checkout that carries a slopp BRANCH with an
+  absent/empty store AUTO-IMPORTS it first (zero-ceremony onboarding).
+  A durable session ALSO opens an in-process git smart-HTTP listener on a
+  dir-derived port (localhost) — a READ-ONLY remote (clone/fetch of
+  milestones) any git client can point at with no external daemon;
   `query_git` reports the URL. Publishing to a NORMAL external remote
   (GitHub etc.) goes through `git_push`; `git_clone` rebuilds a fileless
   store from one (slopp.sync)."
   [& [dir]]
+  (when dir
+    (when-let [r (sync/maybe-auto-import! dir)]
+      (binding [*out* *err*]
+        (println (str "slopp: auto-imported " (:namespaces r)
+                      " namespaces from the repo's slopp branch")))))
   (let [session (api/open! (cond-> {:warm-spare? true}
                              dir (assoc :dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns

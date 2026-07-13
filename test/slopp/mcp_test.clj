@@ -63,11 +63,16 @@
           (is (re-find #"rarely needed" r3)))
         (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] (identity x))"})
         (is (not (re-find #"rarely needed" (call sess "test_run" {:ns "hint"})))))
-      (testing "streaks of single-form writes suggest edit_group"
-        (dotimes [i 3]
-          (call sess "edit_add_form" {:ns "hint" :source (str "(defn g" i " [x] x)")}))
-        (let [r4 (call sess "edit_add_form" {:ns "hint" :source "(defn g3 [x] x)"})]
-          (is (re-find #"edit_group" r4))))
+      (testing "a hint fires ONCE per session — a fresh streak stays quiet"
+        (call sess "test_run" {:ns "hint"})
+        (call sess "test_run" {:ns "hint"})
+        (let [r6 (call sess "test_run" {:ns "hint"})]
+          (is (not (re-find #"rarely needed" r6)))))
+      (testing "a streak of single-form writes suggests edit_group exactly ONCE"
+        (let [rs (mapv (fn [i] (call sess "edit_add_form"
+                                     {:ns "hint" :source (str "(defn g" i " [x] x)")}))
+                       (range 4))]
+          (is (= 1 (count (filter #(re-find #"edit_group" %) rs))))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated rename-arg-forgiveness                        ; from the symmetric eval

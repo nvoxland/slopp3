@@ -429,3 +429,35 @@
         (api/close! sess)
         (rm-rf seed-d)
         (rm-rf (.getParentFile (io/file origin)))))))
+(deftest ^:isolated auto-import-on-serve
+  ;; the server auto-imports a fresh clone of a slopp-published repo: the
+  ;; slopp BRANCH is the marker; plain git repos are never auto-ingested
+  (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
+        seed-d (temp-dir)
+        sess   (api/open! {:dir seed-d})]
+    (try
+      (api/ingest! sess 'ai.core "(ns ai.core)\n(defn f [] 41)\n")
+      (api/commit-point! sess "v1" :agent "a")
+      (is (nil? (:error (sync/push! seed-d :url origin))))
+      (human-commit! origin "main" "README.md" "# p\n")
+      (let [work (str (temp-dir) "/work")]
+        (-> (org.eclipse.jgit.api.Git/cloneRepository)
+            (.setURI (str (io/file origin))) (.setDirectory (io/file work))
+            (.setBranch "main") (.call) (.close))
+        (.close (db/open! work))
+        (testing "a slopp-published clone auto-imports over the empty store"
+          (let [r (sync/maybe-auto-import! work)]
+            (is (= 1 (:namespaces r)) (pr-str r))))
+        (testing "a second serve is a no-op (store no longer empty)"
+          (is (nil? (sync/maybe-auto-import! work))))
+        (rm-rf work))
+      (testing "a git repo WITHOUT a slopp branch is never auto-ingested"
+        (let [plain (str (temp-dir) "/plain")]
+          (-> (org.eclipse.jgit.api.Git/init)
+              (.setDirectory (io/file plain)) (.call) (.close))
+          (is (nil? (sync/maybe-auto-import! plain)))
+          (rm-rf plain)))
+      (finally
+        (api/close! sess)
+        (rm-rf seed-d)
+        (rm-rf (.getParentFile (io/file origin)))))))

@@ -380,6 +380,26 @@
 
 ;; --- query.* (read) ---
 
+(defn query-sources
+  "Batched read (ONE call, several targets): `targets` is a vector of
+  {:ns sym} (whole namespace) or {:ns sym :name sym} (one form). Returns
+  a vector of {:ns :name? :source} in target order; unknown targets get
+  {:error} entries instead of failing the batch."
+  [session targets]
+  (let [st (:store @session)]
+    (mapv (fn [{:keys [ns name]}]
+            (cond
+              (nil? (get-in st [:namespaces ns]))
+              {:ns ns :error "no such namespace"}
+
+              (nil? name)
+              {:ns ns :source (render/render-ns st ns)}
+
+              :else
+              (if-let [e (store/form-named st ns name)]
+                {:ns ns :name name :source (n/string (:node e))}
+                {:ns ns :name name :error "no such form"})))
+          targets)))
 (defn query-source
   "Render `ns-sym`'s current source from the store (the VFS read)."
   [session ns-sym]

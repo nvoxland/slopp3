@@ -444,6 +444,34 @@
         (do (with-open [conn (db/open! dir)]
               (db/set-meta! conn "git-remote" "."))
             (assoc r :remote "."))))))
+^:reads
+(defn- slopp-branch?
+  "Does the git checkout at `dir` carry a slopp branch (local or
+  origin-tracking)? The marker of a slopp-published repo — auto-import
+  keys on it so plain git repos are never touched."
+  [dir]
+  (let [repo (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
+                 (.setGitDir (io/file dir ".git"))
+                 (.build))]
+    (try
+      (boolean (or (.resolve repo "refs/heads/slopp")
+                   (.resolve repo "refs/remotes/origin/slopp")))
+      (finally (.close repo)))))
+(defn maybe-auto-import!
+  "Serve-time onboarding: when `dir` is a git checkout carrying a slopp
+  branch and its store is absent or EMPTY, import the branch into the
+  store — the zero-ceremony path for `git clone` then serve. Anything
+  else (plain repos, stores with content, import failures) is a nil
+  no-op; serving must never be blocked by this."
+  [dir]
+  (try
+    (when (and (.exists (io/file dir ".git"))
+               (or (not (.exists (io/file dir ".slopp" "store.db")))
+                   (empty-store? dir))
+               (slopp-branch? dir))
+      (let [r (import! dir)]
+        (when-not (:error r) r)))
+    (catch Exception _ nil)))
 (defn -main
   "clojure -M -m slopp.sync clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"
   [& [cmd a b]]

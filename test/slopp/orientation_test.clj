@@ -40,3 +40,17 @@
         (testing "bad regex is a clean error"
           (is (:error (api/query-search sess "([")))))
       (finally (api/close! sess)))))
+(deftest ^:isolated batched-source-reads
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
+      (api/create-ns! sess 'bq.b :source "(ns bq.b)\n(defn h [] 3)\n")
+      (let [r (api/query-sources sess [{:ns 'bq.a :name 'f}
+                                       {:ns 'bq.b}
+                                       {:ns 'bq.a :name 'nope}
+                                       {:ns 'bq.zz}])]
+        (is (= "(defn f [] 1)" (:source (nth r 0))))
+        (is (re-find #"defn h" (:source (nth r 1))))
+        (is (:error (nth r 2)))
+        (is (:error (nth r 3))))
+      (finally (api/close! sess)))))
