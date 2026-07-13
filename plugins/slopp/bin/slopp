@@ -43,17 +43,68 @@ checksum() {
   fi
 }
 
+# Single-flight download: the SessionStart warm hook and the MCP server
+# launch can both arrive on a cold cache — exactly one fetches (mkdir lock),
+# everyone else waits for the jar to appear. A fetcher killed mid-download
+# (the MCP client's 30s connect timeout does this) leaves a stale lock and a
+# partial file: the next comer takes the lock over and curl RESUMES (-C -),
+# so interrupted progress is never wasted. Checksum validates the whole
+# file at the end regardless.
 if [ ! -f "$JAR" ]; then
   mkdir -p "$CACHE"
-  echo "slopp: fetching ${VERSION} from GitHub Releases (one-time, ~27MB)…" >&2
-  curl -fsSL -o "$JAR.part" "$JAR_URL"
-  got="$(checksum "$JAR.part")"
-  if [ "$got" != "$SHA256" ]; then
-    rm -f "$JAR.part"
-    echo "slopp: checksum mismatch for ${VERSION} (got $got) — refusing to run it" >&2
-    exit 1
-  fi
-  mv "$JAR.part" "$JAR"
+  LOCK="$CACHE/fetch-${VERSION}.lock"
+  PART="$JAR.part"
+  attempts=0
+  waiting_said=0
+  while [ ! -f "$JAR" ]; do
+    if mkdir "$LOCK" 2>/dev/null; then
+      echo "$$" >"$LOCK/pid"
+      attempts=$((attempts + 1))
+      if [ "$attempts" -gt 3 ]; then
+        rm -rf "$LOCK"
+        echo "slopp: giving up fetching ${VERSION} after 3 attempts" >&2
+        exit 1
+      fi
+      echo "slopp: fetching ${VERSION} from GitHub Releases (one-time, ~27MB)…" >&2
+      curl -fsSL --retry 3 --retry-delay 1 -C - -o "$PART" "$JAR_URL" &
+      cpid=$!
+      echo "$cpid" >"$LOCK/curl"
+      trap 'kill "$cpid" 2>/dev/null; rm -rf "$LOCK"' EXIT INT TERM
+      if wait "$cpid"; then
+        got="$(checksum "$PART")"
+        if [ "$got" = "$SHA256" ]; then
+          mv "$PART" "$JAR"
+        else
+          rm -f "$PART"
+          echo "slopp: checksum mismatch for ${VERSION} (got $got) — refetching" >&2
+        fi
+      else
+        rm -f "$PART"
+        echo "slopp: download failed — retrying" >&2
+      fi
+      rm -rf "$LOCK"
+      trap - EXIT INT TERM
+    else
+      owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
+      if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+        # The fetcher died (e.g. SIGKILLed by the MCP connect timeout). Its
+        # curl may have been orphaned and still be writing — take that out
+        # too before stealing the lock, or we'd have two writers.
+        ocurl="$(cat "$LOCK/curl" 2>/dev/null || true)"
+        if [ -n "$ocurl" ]; then
+          kill "$ocurl" 2>/dev/null || true
+          sleep 1
+        fi
+        rm -rf "$LOCK"
+        continue
+      fi
+      if [ "$waiting_said" = "0" ]; then
+        echo "slopp: waiting for another slopp process to finish fetching ${VERSION}…" >&2
+        waiting_said=1
+      fi
+      sleep 1
+    fi
+  done
 fi
 
 [ "$WARM" = "1" ] && exit 0
