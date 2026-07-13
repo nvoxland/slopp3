@@ -282,6 +282,17 @@ Two transports share the SAME dispatch (`mcp/handle`):
   `image/load-ns!`), then invokes `--main` (default `slopp.mcp/-main <dir>`).
   This is what `.mcp.json` runs. `slopp.boot` is self-contained (next.jdbc +
   core only) so it can bootstrap slopp itself; keep it that way.
+- **Serve-time auto-import** (cost-cut round, 2026-07-13): `mcp/-main` calls
+  `sync/maybe-auto-import!` first — a git checkout carrying a `slopp` branch
+  whose store is absent or EMPTY imports itself before the session opens
+  (the slopp BRANCH is the marker; plain git repos are never touched;
+  failures are non-blocking). Empty stores (the server's own footprint) are
+  valid clone/import targets. Session-cost economics (same round):
+  `query_source {targets [{ns name?}…]}` batches orientation reads; tool
+  descriptions dieted ~65% (schemas defer to the skill + `help`); workflow
+  hints fire once per session; turns are normally opened/closed by the
+  PLUGIN's hooks (`mcp_tool` hooks → turn_begin with the verbatim prompt /
+  turn_end on Stop) — the turn gate stays as the manual fallback.
 - `--call <tool> [args]` (P3) — ONE tool call with no MCP connection: sugar
   for `--main slopp.mcp/call-main! <dir> <tool> [args]`. Args are JSON, EDN,
   or `@file` (`mcp/parse-call-args`); result text on stdout, exit 1 on tool

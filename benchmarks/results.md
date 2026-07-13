@@ -431,3 +431,6 @@ projects/eval7-seeded/.
   unreachable remotes return {:error} instead of a stack trace. Needs the
   next release (v0.1.3) to reach plugin users; evals ran the patched jar
   via SLOPP_JAR.
+| 2026-07-13 | c22f654 | calculator | 2 | 11 | 330 | 726 | 741 |
+| 2026-07-13 | c22f654 | inventory | 1 | 7 | 97 | 345 | 410 |
+| 2026-07-13 | c22f654 | wordstats | 1 | 8 | 127 | 427 | 512 |
