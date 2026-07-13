@@ -258,6 +258,13 @@ Two transports share the SAME dispatch (`mcp/handle`):
   write result (the agent just sent that text); a zero-test verification
   carries `:coverage :none`. Anything over the size gate is trimmed and
   spooled — `query_detail {id}` returns the full version.
+- **The series runs itself (Q10/Q11):** `commit_point` on a store with
+  `git-remote` meta pushes the projection and reports `:published`
+  (errors ride along; the milestone never fails on publish trouble).
+  `edit_rename` results carry `:mentions` — prose/string occurrences of
+  the old name the structural rename can't rewrite — and `edit_group`
+  steps now include `:subform` (+`:text`) and `:require`, so the
+  follow-up fixes are one atomic call.
 - **Errors teach (Q5/Q9):** refusals name the next action in tool
   vocabulary — the cold-load gate is the bar. Shared pieces:
   `edit/missing-form-error` (near-miss names or the outline pointer, used

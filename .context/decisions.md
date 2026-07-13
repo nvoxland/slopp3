@@ -1031,7 +1031,7 @@ handler maps (hot clauses stay in the case); Q5 fragment refusal in
 path; Q6 `benchmarks/mine_transcripts.py` + `slopp --doctor`. Suite
 263/1351 green.
 
-Q10 (open) **Milestone publish gap** (eval8 P5): five plugin sessions
+Q10 (✅ 2026-07-13) **Milestone publish gap** (eval8 P5): five plugin sessions
 produced four milestones that never reached the repo's slopp branch —
 nothing at commit_point prompts a git_push or syncs the LOCAL slopp
 branch, so a files-path teammate gets the seed. The eval agent caught it
@@ -1039,7 +1039,19 @@ by luck of a thorough P5. Fix direction: commit_point on a git-cloned
 store offers/performs the local slopp-branch sync (G12: just do the
 series), or at minimum the result names the unpublished delta.
 
-Q11 (open) **Bulk rename UX** (eval8 step 3): the one slopp loss (1.49×
+Q11 (✅ 2026-07-13) **Bulk rename UX** (eval8 step 3): the one slopp loss (1.49×
 controllable vs files) — a global rename is one sed sweep for files but
 edit_rename-per-form for us. A pattern/set-accepting rename (or
 edit_plan step) closes it.
+
+Q10/Q11 resolution (same day): commit_point at the MCP layer publishes
+the projection when git-remote meta is set (green milestones only;
+publish trouble rides as :published {:error} without failing the
+milestone); rename! results carry :mentions (word-boundary hits of the
+old name that the structural rename could not rewrite — docstrings,
+strings, comments) + a hint. Rock 3 scoping: edit_group grew :subform
+(structural or :text) and :require steps — rename + prose fixes +
+threshold change is now ONE call (eval8 step 3's measured overhead).
+Full edit_plan (interleaved reads, :when-green barriers) stays deferred
+until demand observation shows sequences groups can't express. Suite
+266/1359 green.
