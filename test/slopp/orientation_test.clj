@@ -15,7 +15,7 @@
         (is (= [{:ns 'o.core :forms 4} {:ns 'o.util :forms 2}]
                (api/query-namespaces sess))))
       (testing "query-outline: names + arities + !-status + test-ness + doc line"
-        (let [o       (api/query-outline sess 'o.core)
+        (let [o       (api/query-outline sess 'o.core :detail true)
               by-name (into {} (map (juxt :name identity)) (:forms o))]
           (is (= [1] (:arities (by-name 'pure-f))))
           (is (= "Adds one." (:doc (by-name 'pure-f))))
@@ -68,4 +68,18 @@
           (let [r (api/query-project sess :since head)]
             (is (nil? (:unchanged-since r)))
             (is (seq (:namespaces r))))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated outline-is-compact-by-default
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'oc.core
+                      :source "(ns oc.core)\n(defn f\n  \"Adds one.\"\n  [x] (inc x))\n")
+      (testing "no doc lines unless asked"
+        (is (nil? (-> (api/query-outline sess 'oc.core) :forms first :doc)))
+        (is (= "Adds one."
+               (-> (api/query-outline sess 'oc.core :detail true) :forms first :doc))))
+      (testing "query-project passes detail through"
+        (is (nil? (-> (api/query-project sess) :namespaces first :forms first :doc)))
+        (is (some? (-> (api/query-project sess :detail true)
+                       :namespaces first :forms first :doc))))
       (finally (api/close! sess)))))

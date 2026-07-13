@@ -793,9 +793,10 @@
 
 (defn query-outline
   "A namespace's shape at a glance (orientation, T2): every defined var with
-  arities, docstring first line, `!`-effect status, and test-ness — a fraction
-  of the tokens of reading the source."
-  [session ns-sym]
+  arities, `!`-effect status, and test-ness — a fraction of the tokens of
+  reading the source. COMPACT by default; `:detail true` adds each var's
+  docstring first line (the outline's token bulk)."
+  [session ns-sym & {:keys [detail]}]
   (let [st  (:store @session)
         an  (index/analyze (render/render-ns st ns-sym))
         eff (index/effectful-vars an)]
@@ -806,7 +807,7 @@
             (cond-> {:name (:name d)}
               (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
               (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
-              (:doc d)                (assoc :doc (first (str/split-lines (:doc d))))
+              (and detail (:doc d))   (assoc :doc (first (str/split-lines (:doc d))))
               (index/test-definition? d) (assoc :test? true)
               (and (not (index/test-definition? d))
                    (contains? eff (symbol (str ns-sym) (str (:name d)))))
@@ -815,11 +816,12 @@
 (defn query-project
   "The WHOLE store's shape in one call: every namespace with its outline
   (item 1 — orientation was ~90% of tool calls in successful runs; this
-  replaces the namespaces→outline×N chain). Pass `:since <delta id>` on a
-  re-check: when nothing STRUCTURAL changed after that delta the response
-  is a one-liner instead of the full outline (verify/turn/milestone
-  markers don't count as change)."
-  [session & {:keys [since]}]
+  replaces the namespaces→outline×N chain). COMPACT by default (names,
+  arities, flags); `:detail true` adds doc lines. Pass `:since <delta id>`
+  on a re-check: when nothing STRUCTURAL changed after that delta the
+  response is a one-liner instead of the full outline (verify/turn/
+  milestone markers don't count as change)."
+  [session & {:keys [since detail]}]
   (let [st   (:store @session)
         ds   (store/deltas st)
         head (:id (last ds))
@@ -833,7 +835,7 @@
     (if unchanged?
       {:unchanged-since since :head head}
       {:head       head
-       :namespaces (mapv (fn [ns-sym] (query-outline session ns-sym))
+       :namespaces (mapv (fn [ns-sym] (query-outline session ns-sym :detail detail))
                          (sort (keys (:namespaces st))))})))
 
 (defn query-search

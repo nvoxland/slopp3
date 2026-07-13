@@ -49,8 +49,9 @@
                                :prompt {:type "string"}}
                   :required ["ns" "text"]}}
    {:name "query_project"
-    :description "THE orientation call: every namespace's full outline (names, arities, docs, !-status, test-ness) in one response. Call ONCE; pass since=<your last delta id> on a re-check — unchanged structure returns a one-liner."
-    :inputSchema {:type "object" :properties {:since {:type "string"}}}}
+    :description "THE orientation call: every namespace's outline (names, arities, !-status, test-ness) in one response. Call ONCE; detail=true adds doc lines; pass since=<your last delta id> on a re-check — unchanged structure returns a one-liner."
+    :inputSchema {:type "object" :properties {:since {:type "string"}
+                                              :detail {:type "boolean"}}}}
    {:name "query_search"
     :description "Regex search across all store source; hits are {:ns :form :line}. Search before reading."
     :inputSchema {:type "object"
@@ -61,8 +62,10 @@
     :description "Namespaces with form counts."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_outline"
-    :description "One namespace's outline (vars, arities, doc, !, test-ness) — far cheaper than source."
-    :inputSchema {:type "object" :properties {:ns {:type "string"}} :required ["ns"]}}
+    :description "One namespace's outline (vars, arities, !, test-ness; detail=true adds doc lines) — far cheaper than source."
+    :inputSchema {:type "object" :properties {:ns {:type "string"}
+                                              :detail {:type "boolean"}}
+                  :required ["ns"]}}
    {:name "query_source"
     :description "Source from the store. `ns` alone = one whole namespace; OR `targets` [{ns, name?}…] reads SEVERAL forms/namespaces in ONE call — batch your orientation reads."
     :inputSchema {:type "object"
@@ -581,11 +584,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
-      "query_project"     (text (api/query-project session :since (:since a)))
+      "query_project"     (text (api/query-project session :since (:since a)
+                                              :detail (:detail a)))
       "query_search"      (text (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
       "query_namespaces"  (text (api/query-namespaces session))
-      "query_outline"     (text (api/query-outline session (sym :ns)))
+      "query_outline"     (text (api/query-outline session (sym :ns)
+                                              :detail (:detail a)))
       "query_source"      (text (if-let [ts (:targets a)]
                             (api/query-sources
                              session
