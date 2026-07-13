@@ -997,3 +997,26 @@ checked-in script with run-window scoping (an ad-hoc version silently
 summed rounds sharing a path); a `slopp doctor` CLI self-check (jar
 cache, hooks, turn automation, serving) would have collapsed two
 hook-debugging detours.
+
+Q7 (open) **Image-spawning tests are a silent trap for fresh agents.** A
+deftest that opens sessions/spawns JVMs (api/open!, repl/start!,
+http/start-server!) without ^:isolated would be run IN-IMAGE by per-write
+verification — recursion/hang the author can't diagnose. The maintainer
+avoids it by knowing the rule; nothing enforces it. Gate it at write
+time: detect the pattern, refuse with the fix named ("tag it ^:isolated —
+it runs in the external suite").
+
+Q8 (open) **A no-trace verification looks like success.** {:ran 0
+:status :green} reads as "verified" when it means "nothing ran" — an
+agent in a fresh/CLI session could ship unverified work believing it
+green. Until the trace map persists (Q3), such results must say
+:coverage :none plus the one-line fix (run test_run once); green must
+never be inferable from a zero-test run.
+
+Q9 (open) **Every {:error} should meet the cold-load bar.** The
+cold-load refusal names its three resolutions inline ("define earlier,
+edit_move, or (declare ...)") and cost zero follow-up; the edit_subform
+fragment errors taught nothing and cost three round trips. Audit every
+error string in api/mcp/sync/edit: each names the next ACTION, in tool
+vocabulary. Errors are the only teaching that arrives exactly when the
+agent needs it (G12 corollary: richer results beat more instructions).
