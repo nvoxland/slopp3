@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh]))
 
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
@@ -273,4 +273,63 @@
         (let [r (call sess "edit_replace_form" {:ns "ut.core-test" :name "g-t"
                                                 :source "(deftest g-t (is (= 3 (c/g 3))))"})]
           (is (not (re-find #":untested" r)) r)))
+      (finally (api/close! sess)))))
+(deftest ^:isolated rename-names-leftover-prose-mentions
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "pm.core"
+             :source (str "(ns pm.core)\n"
+                          "(defn bulk-rate [n] (if (>= n 10) 0.1 0.0))\n"
+                          "(defn describe\n  \"Applies the bulk-rate tier.\"\n  [n]\n"
+                          "  (str \"bulk-rate applies: \" (bulk-rate n)))\n")})
+      (testing "the rename result points at docstring/string mentions of the old name (Q11)"
+        (let [r (call sess "edit_rename" {:ns "pm.core" :old "bulk-rate" :new "volume-rate"})]
+          (is (re-find #":mentions" r) r)
+          (is (re-find #":ns pm.core, :form describe" r) r)))
+      (testing "a clean rename carries no :mentions"
+        (call sess "edit_replace_form"
+              {:ns "pm.core" :name "describe"
+               :source "(defn describe [n] (str \"tier: \" (volume-rate n)))"})
+        (let [r (call sess "edit_rename" {:ns "pm.core" :old "volume-rate" :new "tier-rate"})]
+          (is (not (re-find #":mentions" r)) r)))
+      (finally (api/close! sess)))))
+(deftest ^:isolated milestones-publish-themselves
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-pub" (make-array java.nio.file.attribute.FileAttribute 0)))
+        bare (str (java.nio.file.Files/createTempDirectory
+                   "slopp-pub-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
+        _    (sh/sh "git" "init" "--bare" bare)
+        sess (api/open! {:dir dir})]
+    (try
+      (db/set-meta! (:db @sess) "git-remote" bare)
+      (call sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn f [x] x)\n"})
+      (testing "commit_point pushes the projection to the configured remote (Q10)"
+        (let [r (call sess "commit_point" {:description "first"})]
+          (is (re-find #":published" r) r)
+          (is (re-find #":pushed" r) r)))
+      (finally (api/close! sess)))))
+(deftest ^:isolated groups-take-subform-and-require-steps
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "gs.core"
+             :source "(ns gs.core)\n(defn calc\n  \"Applies the bulk tier.\"\n  [n]\n  (if (>= n 10) (* n 2) n))\n"})
+      (testing "one group mixes subform + text subform + require + add (Rock 3 core)"
+        (let [r (call sess "edit_group"
+                      {:steps [{:action "subform" :ns "gs.core" :name "calc"
+                                :match "(>= n 10)" :source "(>= n 8)"}
+                               {:action "subform" :ns "gs.core" :name "calc"
+                                :match "Applies the bulk tier."
+                                :source "Applies the volume tier." :text true}
+                               {:action "require" :ns "gs.core"
+                                :require "[clojure.string :as str]"}
+                               {:action "add" :ns "gs.core"
+                                :source "(defn label [n] (str/upper-case (str \"tier \" n)))"}]
+                       :prompt "volume tier + labels"})]
+          (is (re-find #":ok true" r) r)
+          (is (re-find #":deltas 4" r) r)))
+      (testing "the result verifies against the final state"
+        (let [r (call sess "query_eval" {:code "[(gs.core/calc 8) (gs.core/label 1)]"})]
+          (is (re-find #"\[16 \"TIER 1\"\]" r) r)))
       (finally (api/close! sess)))))

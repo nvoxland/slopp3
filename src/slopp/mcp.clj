@@ -201,15 +201,18 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
-    :description "Several form writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move; add takes optional `before`."
+    :description "Several writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move/subform/require. add takes optional `before`; subform takes name+match+source (`text` true for docstrings/strings); require takes a clause string."
     :inputSchema {:type "object"
                   :properties {:steps {:type "array"
                                        :items {:type "object"
-                                               :properties {:action {:type "string" :enum ["replace" "add" "delete" "move"]}
+                                               :properties {:action {:type "string" :enum ["replace" "add" "delete" "move" "subform" "require"]}
                                                             :ns {:type "string"}
                                                             :name {:type "string"}
                                                             :source {:type "string"}
-                                                            :before {:type "string"}}
+                                                            :before {:type "string"}
+                                                            :match {:type "string"}
+                                                            :text {:type "boolean"}
+                                                            :require {:type "string"}}
                                                :required ["action" "ns"]}}
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
@@ -579,6 +582,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
           (:group r)    (assoc :group (:group r))
           (:deltas r)   (assoc :deltas (count (:deltas r)))
           (:renamed r)  (assoc :renamed (:renamed r))
+          (:mentions r) (assoc :mentions (:mentions r))
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
@@ -883,15 +887,18 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                      session
                                      (mapv (fn [s]
                                              (let [action (or (:action s) (:op s))] ; :op guessed in evals
-                                               (when-not (contains? #{"replace" "add" "delete" "move"} action)
-                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move (got "
-                                                                      (pr-str action) "); keys: :action :ns :name :source :before")
+                                               (when-not (contains? #{"replace" "add" "delete" "move" "subform" "require"} action)
+                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move|subform|require (got "
+                                                                      (pr-str action) "); keys: :action :ns :name :source :before :match :text :require")
                                                                  {})))
                                                (cond-> {:action (keyword action)
                                                         :ns (symbol (:ns s))}
-                                                 (:name s)   (assoc :name (symbol (:name s)))
-                                                 (:source s) (assoc :source (:source s))
-                                                 (:before s) (assoc :before (symbol (:before s))))))
+                                                 (:name s)    (assoc :name (symbol (:name s)))
+                                                 (:source s)  (assoc :source (:source s))
+                                                 (:before s)  (assoc :before (symbol (:before s)))
+                                                 (:match s)   (assoc :match (:match s))
+                                                 (:text s)    (assoc :text true)
+                                                 (:require s) (assoc :require (:require s)))))
                                            (:steps a))
                                      :prompt (:prompt a) :agent (:agent a))
                                     (assoc :forms (into []
@@ -909,7 +916,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                             (text! (-> (api/rename! session (sym :ns) (symbol old)
                                                    (symbol new) :prompt (:prompt a)
                                                    :agent (:agent a))
-                                      (select-keys [:error :renamed :test :affected :delta])
+                                      (select-keys [:error :renamed :test :affected :delta
+                                                    :mentions :hint])
                                       (summarize (:verbose a)))))
       "ns_remove_require" (text! (-> (api/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a))
@@ -952,10 +960,25 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                       (summarize (:verbose a)))))
       "checkpoint" (text! (api/checkpoint! session :label (:label a)
                                                   :agent (:agent a)))
-      "commit_point" (text! (api/commit-point! session (:description a)
-                                                    :agent (:agent a)
-                                                    :force (:force a)
-                                                    :target (:target a)))
+      "commit_point" (text! (let [r (api/commit-point! session (:description a)
+                                                       :agent (:agent a)
+                                                       :force (:force a)
+                                                       :target (:target a))]
+                                    ;; Q10: the mechanical series is the system's job —
+                                    ;; a green milestone on a git-configured store
+                                    ;; publishes itself; publish trouble rides along
+                                    ;; without failing the milestone
+                                    (if (and (:commit r) (not= :red (:status r))
+                                             (:dir @session)
+                                             (some-> (:db @session)
+                                                     (db/get-meta "git-remote")))
+                                      (let [p (try (sync/push! (:dir @session))
+                                                   (catch Exception e
+                                                     {:error (ex-message e)}))]
+                                        (assoc r :published
+                                               (select-keys p [:pushed :remote-branch
+                                                               :remote :error :status])))
+                                      r)))
       "test_run" (text! (if (:isolated a)
                                    (api/isolated-test-run! session
                                                            :ns (some-> (:ns a) symbol)

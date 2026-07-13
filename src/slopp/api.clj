@@ -1504,11 +1504,14 @@
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
   or {:error msg}. `:hot` is the hot-reload action for the commit phase.
-  Actions: :replace, :add (optionally anchored via :before), :delete, and
+  Actions: :replace, :add (optionally anchored via :before), :delete,
   :move (:name before :before — reordering inside the atomic group; image
-  vars are order-independent, so no hot action). Replace/add run the Q7
-  isolation gate — an untagged spawning deftest is refused with the fix."
-  [st gid prompt agent {:keys [action ns name source before]}]
+  vars are order-independent, so no hot action), :subform (:match + :source,
+  `:text true` for raw-text matches — a small change INSIDE a big form
+  without re-transcribing it), and :require (one require clause into the ns
+  form). Subform/require compute the new source and reduce to :replace, so
+  every gate (dialect, Q7 isolation, Q9 teaching errors) rides along."
+  [st gid prompt agent {:keys [action ns name source before match text] :as step}]
   (case action
     :replace (let [{:keys [node error]} (edit/parse-form source)
                    iso (when node
@@ -1539,6 +1542,22 @@
                                                      :agent agent :before before)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no namespace " ns " (ingest it first)")})))
+    :subform (let [plan (if text
+                          (refactor/text-replace-plan st ns name match source)
+                          (refactor/subform-replace-plan st ns name match source))]
+               (if (:error plan)
+                 plan
+                 (apply-group-step st gid prompt agent
+                                   {:action :replace :ns ns :name name
+                                    :source (:new-form-src plan)})))
+    :require (if-let [f (store/form-named st ns ns)]
+               (let [r (edit/add-require-source (n/string (:node f)) (:require step))]
+                 (if (:error r)
+                   r
+                   (apply-group-step st gid prompt agent
+                                     {:action :replace :ns ns :name ns
+                                      :source (:src r)})))
+               {:error (str "no namespace " ns " (ingest it first)")})
     :delete  (if-let [[st' d] (store/remove-form st ns name
                                                  :prompt prompt :group gid
                                                  :agent agent)]
@@ -2403,10 +2422,23 @@
                 (commit-appended! session
                                   #(store/record-verification % ns-sym summary)
                                   [])
-                {:delta    delta
-                 :renamed  {:old qold :new qnew :forms (count changeset)}
-                 :test     summary
-                 :affected (or affected :all)}))))))))
+                (let [pat      (re-pattern (str "\\b" (java.util.regex.Pattern/quote (str old-name)) "\\b"))
+                      mentions (->> (for [nsx (sort (keys (:namespaces st')))
+                                          e   (store/forms st' nsx)
+                                          :when (some #(re-find pat %)
+                                                      (str/split-lines (n/string (:node e))))]
+                                      {:ns nsx :form (or (:name e) (:id e))})
+                                    (take 10) vec)]
+                  (cond-> {:delta    delta
+                           :renamed  {:old qold :new qnew :forms (count changeset)}
+                           :test     summary
+                           :affected (or affected :all)}
+                    (seq mentions)
+                    (assoc :mentions mentions
+                           :hint (str "prose/string mentions of " old-name
+                                      " remain in these forms — edit_subform"
+                                      " {text: true} rewrites them if the docs"
+                                      " should follow"))))))))))))
 
 (defn extract!
   "Phase-3 structural op: extract a UNIQUE subform of `from` into a new fn
