@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "slopp": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/slopp-server"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+#!/bin/bash
+# slopp MCP server launcher (the plugin's .mcp.json entry point).
+#
+# The plugin repo carries only this recipe; the server itself is the release
+# uberjar, fetched once by bin/slopp and cached under the plugin's persistent
+# data dir. Bumping VERSION+SHA256 in bin/slopp (with the plugin version) is
+# the whole upgrade story. Prerequisite: java 21+ on PATH.
+#
+# The store dir: explicit arg > Claude's project dir > cwd (stdio MCP servers
+# are launched in the project dir). A dir with no store gets an empty one.
+set -euo pipefail
+
+DIR="${1:-${CLAUDE_PROJECT_DIR:-$PWD}}"
+exec "$(cd "$(dirname "$0")" && pwd)/slopp" "$DIR"

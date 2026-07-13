@@ -14,6 +14,20 @@ commits) flow back into stores via `git_pull`'s form-granular 3-way merge.
 
 ## Quick start
 
+**As a Claude Code plugin** (easiest — needs Java 21+ only):
+
+```
+/plugin marketplace add nvoxland/slopp3
+/plugin install slopp@slopp
+```
+
+The plugin bundles the MCP server (the versioned release jar, fetched and
+checksum-verified on first launch), the workflow skills (`slopp`,
+`slopp-setup`), and a `slopp` CLI on the session PATH. It serves whatever
+project you're in. Offline/no-marketplace install: unpack a checkout of
+`plugins/slopp/` into `~/.claude/skills/slopp/` — it loads as a plugin from
+there.
+
 **From the release jar** (needs Java 21+ and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 
 ```sh

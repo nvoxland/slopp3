@@ -927,3 +927,20 @@ main's workflows into the projected slopp tree at push time (source of
 truth stays main — revisits the G10 trade-off, user call); more
 `render-config` formats (`:properties`, `:edn`) when a consumer exists;
 `import!` also wiring `.mcp.json` for zero-config onboarding.
+
+## G11 — plugin packaging (Claude Code first)
+
+G11 ✅ slopp ships as a Claude Code plugin: `.claude-plugin/marketplace.json`
+(the repo IS the marketplace — `/plugin marketplace add nvoxland/slopp3`) +
+`plugins/slopp/` bundling the MCP server entry, two skills (`slopp` = the
+working loop, updated for change_signature/pair-matching/trivia;
+`slopp-setup` = onboarding/sync/config/one-shot CLI), and `bin/`
+(`slopp`, `slopp-server`) on the session PATH. The binary question is
+solved Homebrew-style: git carries only the recipe; the launcher fetches
+the VERSIONED release jar on first run (sha256-pinned, cached under
+`${CLAUDE_PLUGIN_DATA}`), so bumping VERSION+SHA alongside the plugin
+version is the whole upgrade story. The canonical skill home is the plugin
+dir (installs are cache-copied and must be self-contained); `.agents/skills/*`
+symlinks expose the cross-agent Agent Skills standard location. Parked:
+Codex plugin / Gemini extension wrappers around the same jar + skills,
+Clojars publication (would enable a package-manager launch path).

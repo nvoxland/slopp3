@@ -1,0 +1,12 @@
+{
+  "name": "slopp",
+  "version": "0.1.1",
+  "description": "Agent-native Clojure codebase system: code lives in a verified, provenance-tracked store — edit through form-addressed tools, not files",
+  "author": {
+    "name": "Nathan Voxland"
+  },
+  "homepage": "https://github.com/nvoxland/slopp3",
+  "repository": "https://github.com/nvoxland/slopp3",
+  "license": "MIT",
+  "keywords": ["clojure", "mcp", "tdd", "codebase", "repl"]
+}

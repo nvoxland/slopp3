@@ -11,7 +11,9 @@ your code continuously. Every write is verified immediately and recorded with
 your stated intent. There are no files, paths, or line numbers — you address
 code as `namespace` + `form name`.
 
-Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
+The plugin starts the server in your project directory automatically; a
+directory without a store gets an empty one on first write. To adopt slopp in
+an existing repo (or sync/ship one), see the `slopp-setup` skill.
 
 ## The workflow loop
 
@@ -61,15 +63,9 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
    with your description. It is green-gated (red tests refuse it; `force:
    true` records a red milestone honestly). `query_commits` lists
    milestones, and their targets plug into `query_changes {from, to}` for
-   a between-milestones diff. Milestones are also the GIT grain: a
-   standalone server (`clojure -M -m slopp.git <port> <dir>`) serves them
-   to any git client at `http://127.0.0.1:<port>/slopp.git` — clone, fetch,
-   and push all work (pushes import through the verified pipeline); each
-   milestone's `:sha` in query_commits is its git commit id, and
-   `wip/<branch>` refs mirror un-milestone'd live state (read-only). Your
-   OWN MCP server already serves this — `query_git` gives the remote URL
-   (no external daemon), so "push/pull between git and slopp" is just
-   `git remote add slopp <url>` then normal git.
+   a between-milestones diff. Milestones are also the GIT grain — see the
+   `slopp-setup` skill for publishing them to a real remote (`git_push`)
+   and the branch-ownership model.
 
 ## Choosing the right write tool
 
@@ -78,11 +74,14 @@ Server: `clojure -M -m slopp.mcp` (stdio) from the slopp repo.
 | New namespace, build it up with TDD | `ns_create {ns, requires}` — scaffolds an empty ns; grow it form-by-form (create dependency nses FIRST — a require of a not-yet-created ns fails). The default for new *behavior* |
 | New namespace, whole source ready | `ns_create {ns, source}` — lands the entire namespace in ONE verified call (ported/reference/data code not subject to red→green; new namespaces only, never overwrites). Gated like an edit: any host form (`binding`/`alter-var-root`/…) must be `^:unsafe` in the source or the whole import is rejected |
 | New/removed require | `ns_add_require` / `ns_remove_require` (never hand-edit the ns form) |
-| New function/test | `edit_add_form` (one form per call) |
+| New function/test | `edit_add_form` (one form per call; `before: <name>` anchors placement) |
 | Change a function | `edit_replace_form` (submit the whole new form) |
-| Small change INSIDE a big form | `edit_subform {ns form match source}` — give the exact subexpression and its replacement; never re-transcribe the rest (wrap = a replacement containing the match) |
+| Small change INSIDE a big form | `edit_subform {ns form match source}` — give the exact subexpression and its replacement; never re-transcribe the rest (wrap = a replacement containing the match). The match is ONE form — or ONE **pair** on a pair boundary (case branch, cond clause, let binding, map entry), replaced as a unit; the replacement may be several forms (splice) |
+| Text inside a string or docstring | `edit_subform {…, text: true}` — raw-text replace of a unique occurrence |
+| Comments/whitespace BETWEEN forms | `edit_trivia {ns, before, text}` — replaces the gap just before form `before` (omit for the tail) |
+| Change a fn's SIGNATURE | `change_signature {ns, name, source, calls}` — `source` is the new defn (keep the name), `calls` is the new argument list as a template where `$1..$9` are each call site's existing args (the callee stays as written, aliases survive; e.g. adding a trailing arg = `"$1 $2 nil"`). One atomic group, one verification; higher-order references come back under `:manual` for you to handle. Never change a signature form-by-form — the intermediate arity break is refused |
 | Undo a change | `edit_revert {ns name}` (previous version) or `{:to delta-id}` from `query_form_history` |
-| Change SEVERAL forms for one reason | `edit_group {steps: [{action: "replace"\|"add"\|"delete", ns, name, source}], prompt}` — atomic, verified once; sequencing single edits burns a false red between them |
+| Change SEVERAL forms for one reason | `edit_group {steps: [{action: "replace"\|"add"\|"delete"\|"move", ns, name, source, before}], prompt}` — atomic, verified once; sequencing single edits burns a false red between them |
 | Rename anything | `edit_rename` — rewrites the def + every reference across namespaces, shadow-safe; NEVER rename by editing call sites yourself |
 | Reorder forms | `edit_move` (form X to just before form Y) |
 | Extract a helper | `edit_extract` — args `{ns, from, form, name}` where `form` is the exact subform source; params (the free locals) are computed for you, placement and the call-site rewrite are handled, behavior is re-verified |
@@ -145,6 +144,8 @@ single writes; the per-write verification makes every red free to observe.
   `test_run` once to build the map and narrowing kicks in).
 - `:changed-nses` (groups/merges) — the namespaces the operation touched;
   everything else is untouched, don't re-read it.
+- `:manual` (change_signature) — references it could NOT rewrite
+  (higher-order uses); handle them yourself, e.g. with `edit_subform`.
 - A merge conflict's `:ours`/`:theirs` IS the current live source — resolve
   straight from the payload; re-reading the namespace returns the same text.
 - `:hint` — a one-line workflow nudge (e.g. red-first, batching). Take it.
@@ -173,7 +174,7 @@ rebuilds a faithful image from the store).
   is the expensive path.
 - One logical change per write, with a real prompt — the history is only as
   good as your intents.
-- Multi-form intent = `edit_group`, always.
+- Multi-form intent = `edit_group`, always; signature change = `change_signature`.
 - Add the test in the same breath as the function; narrowing and `:untested`
   only work when tests exist.
 - `test_run {:only [name]}` re-runs a single test while iterating on it.
@@ -189,11 +190,13 @@ query_lineage query_history query_form_history query_form_at query_status_at
 query_search_history query_changes query_eval
 query_observe query_macroexpand query_branches · ns_create
 ns_add_require ns_remove_require · edit_add_form edit_replace_form
-edit_delete_form edit_subform edit_group edit_rename edit_extract
-edit_extract_ns edit_move edit_revert episode_revert ns_rename
-fix_declares · branch_create branch_switch branch_merge branch_delete
-merge_from · deps_add deps_remove deps_list deps_pure · test_run checkpoint
-commit_point query_commits query_git
+edit_delete_form edit_subform edit_trivia edit_group edit_rename
+change_signature edit_extract edit_extract_ns edit_move edit_revert
+episode_revert ns_rename fix_declares · branch_create branch_switch
+branch_merge branch_delete merge_from · deps_add deps_remove deps_list
+deps_pure · file_put file_remove file_list file_get file_history ·
+config config_file · git_push git_clone git_pull git_conflicts git_resolve
+query_git · test_run checkpoint commit_point query_commits
 restart build help
 
 ## Shipping
@@ -205,3 +208,4 @@ running the emitted `./build-native.sh` (needs GraalVM 21+ on PATH) compiles
 a self-contained executable — instant startup, no JVM required to run. Your
 entry fn either takes the CLI args as one vector (single arity-1 fn) or as
 varargs; the generated launcher adapts to whichever you wrote.
+For repo sync, uberjars, config files, and CI, see the `slopp-setup` skill.

@@ -1,0 +1,13 @@
+{
+  "name": "slopp",
+  "owner": {
+    "name": "Nathan Voxland"
+  },
+  "plugins": [
+    {
+      "name": "slopp",
+      "source": "./plugins/slopp",
+      "description": "Agent-native Clojure codebase: form-addressed edits with built-in verification, provenance, and a live REPL oracle — the MCP server plus the workflow skills"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+#!/bin/bash
+# slopp CLI — the same release jar the MCP server runs, for direct use:
+#   slopp <dir>                                serve MCP on a store (stdio)
+#   slopp --call <tool> [json|edn|@file]       one-shot tool call, no session
+#   slopp --main slopp.sync/-main import .     build the store from the repo's slopp branch
+#   slopp --main slopp.sync/-main test .       isolated suite from a store build
+# Fetches and caches the versioned jar on first run; java 21+ required.
+set -euo pipefail
+
+VERSION="v0.1.1"
+SHA256="7ff452d83cd763b065a49d8b2187a8d9c8280f2c0f4a52c66d1a6fb04d082565"
+JAR_URL="https://github.com/nvoxland/slopp3/releases/download/${VERSION}/slopp.jar"
+
+CACHE="${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/slopp}"
+JAR="$CACHE/slopp-${VERSION}.jar"
+
+if ! command -v java >/dev/null 2>&1; then
+  echo "slopp: no 'java' on PATH — install a JDK (Temurin 21+ recommended)" >&2
+  exit 1
+fi
+
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+if [ ! -f "$JAR" ]; then
+  mkdir -p "$CACHE"
+  echo "slopp: fetching ${VERSION} from GitHub Releases (one-time, ~27MB)…" >&2
+  curl -fsSL -o "$JAR.part" "$JAR_URL"
+  got="$(checksum "$JAR.part")"
+  if [ "$got" != "$SHA256" ]; then
+    rm -f "$JAR.part"
+    echo "slopp: checksum mismatch for ${VERSION} (got $got) — refusing to run it" >&2
+    exit 1
+  fi
+  mv "$JAR.part" "$JAR"
+fi
+
+exec java -jar "$JAR" "$@"
