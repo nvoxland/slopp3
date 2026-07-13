@@ -483,3 +483,12 @@ opus +10% tok / +6% cost. The ≤½ target's remaining mass is identified:
 query_project's full outline, ToolSearch pulls. Wire meter: +15-20
 tok-out/write from :forms (the trade that kills confirm-reads).
 Full rows + a transcript-accounting correction: projects/eval7-seeded/RUNS.md.
+
+## Compact orientation (@ 3d43541 → this commit)
+
+query_project/query_outline default to names/arities/flags; doc lines are
+detail=true (measured −45% on the 12-ns seed: 2,621→1,447 tok). Confirm
+run (opus): PASS via slopp, controllable layer 8,375 vs plain 9,394 —
+below plain again, but single-run variance (±2k of Bash/test_run whims)
+now exceeds the mechanical cuts; the half-target needs batched runs to
+measure honestly. Suite 254/1315 green.
