@@ -270,6 +270,10 @@ Two transports share the SAME dispatch (`mcp/handle`):
   `:arity` present = call site, absent = value/higher-order ref; plus
   trace-map coverage). Impact is change_signature's discovery as a read —
   plan the edit before paying for it.
+- **Alignment is proven, not asserted (Q12):** `query_commits` carries
+  `:alignment` (local-remote branch head vs the latest milestone's minted
+  sha) so handoff audits are one trusted read — the eval8 trust spiral
+  (worktrees, raw sqlite, duplicate runs) was the demand signal.
 - **Errors teach (Q5/Q9):** refusals name the next action in tool
   vocabulary — the cold-load gate is the bar. Shared pieces:
   `edit/missing-form-error` (near-miss names or the outline pointer, used

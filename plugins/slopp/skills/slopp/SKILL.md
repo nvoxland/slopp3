@@ -36,7 +36,10 @@ context; the patterns below are where sessions measurably bleed tokens.
    `query_brief {ns, name}` is the dossier — source + callers + covering
    tests + why it's like this — in a single call. Never read namespaces
    one by one; never re-read something you just wrote — the write result
-   already told you it landed (`:forms`) and whether it's green.
+   already told you it landed (`:forms`) and whether it's green. For
+   handoffs/audits: `query_commits` `:alignment` PROVES the published
+   branch matches the latest milestone — never re-verify via worktrees,
+   raw store.db reads, or duplicate suite runs.
 3. **Write with intent; trust the verification.** Every write takes a
    one-line `prompt`. The response carries the affected tests' result —
    `test_run` after an edit is redundant. Red results carry `:failures`

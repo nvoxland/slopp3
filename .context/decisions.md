@@ -1076,7 +1076,7 @@ reverted it (test_run's Q2 description). Bulk rewrites from a dump must
 re-dump immediately before slicing, or diff the dump against the store
 first. Caught by re-reading the descriptor; re-applied.
 
-Q12 (open) **The handoff trust spiral** (eval8 r2, step 5): given a
+Q12 (✅ 2026-07-13) **The handoff trust spiral** (eval8 r2, step 5): given a
 high-stakes "summarize everything for a teammate" ask, the agent got the
 full answer from the history views in 5 calls, then burned ~15 more
 re-verifying through side channels (raw sqlite over store.db, a git
@@ -1087,3 +1087,11 @@ it — query_commits/query_git rows carrying "slopp branch @<sha> == this
 milestone's projection" so one call answers the cross-check the agent
 will otherwise perform by hand. G12 corollary: richer results close trust
 gaps; instructions alone don't.
+
+Q12 resolution (same day): sync/alignment resolves the configured local
+remote's slopp-branch head and compares it to the latest milestone's
+minted sha (m8) — query_commits returns {:commits rows :alignment
+{:aligned bool :note}} whenever a git remote is configured; the note
+says explicitly that no worktree/sqlite cross-check is needed (or that
+git_push publishes). http remotes stay rows-only (no network in a
+query). Suite 269/1371 green.
