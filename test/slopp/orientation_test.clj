@@ -83,3 +83,21 @@
         (is (some? (-> (api/query-project sess :detail true)
                        :namespaces first :forms first :doc))))
       (finally (api/close! sess)))))
+(deftest ^:isolated query-brief-is-the-one-call-dossier
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
+      (api/create-ns! sess 'qb.b :source "(ns qb.b (:require [qb.a :as a]))\n(defn g [x] (a/f x))\n")
+      (api/edit-replace! sess 'qb.a 'f "(defn f\n  \"Core fn.\"\n  [x] (+ x 1))" :prompt "prefer + for clarity" :agent "t")
+      (api/test-run! sess nil)
+      (let [b (api/query-brief sess 'qb.a 'f)]
+        (is (re-find #"\+ x 1" (:source b)))
+        (testing "cross-ns callers included"
+          (is (some #(= 'qb.b (:from-ns %)) (:callers b))))
+        (testing "covering tests from the trace map"
+          (is (= ['qb.a/f-t] (:covered-by b))))
+        (testing "the recorded why is in the dossier"
+          (is (= "prefer + for clarity" (get-in b [:why :prompt])))))
+      (testing "unknown form is an honest error"
+        (is (:error (api/query-brief sess 'qb.a 'nope))))
+      (finally (api/close! sess)))))

@@ -231,3 +231,25 @@
                            {:steps [{:action "replace" :ns "tf.core" :name "f"
                                      :source "(defn f [x] x)"}]}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated trimmed-responses-spool-the-full-version
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "sp.core" :source "(ns sp.core)\n(defn f [] 1)\n"})
+      (testing "a response over the size gate is trimmed and retrievable"
+        (let [r  (call sess "query_eval" {:code "(apply str (repeat 9000 \"x\"))"})
+              id (second (re-find #"query_detail \{:id \"(r\d+)\"\}" r))]
+          (is (some? id) r)
+          (let [full (call sess "query_detail" {:id id})]
+            (is (>= (count full) 8000))
+            (is (not (re-find #"query_detail \{:id" full))))))
+      (testing "giant failure strings never reach the agent whole
+                (upstream capture truncates actuals; the text! heuristic
+                covers the other fields)"
+        (let [r (call sess "ns_create"
+                      {:ns "sp.red"
+                       :source "(ns sp.red (:require [clojure.test :refer [deftest is]]))\n(deftest big-t (is (= \"a\" (apply str (repeat 3000 \"z\")))))\n"})]
+          (is (re-find #"fail 1" r))
+          (is (not (re-find #"z{1000}" r)))))
+      (testing "an unknown id is an honest error"
+        (is (re-find #"no spooled response" (call sess "query_detail" {:id "r999"}))))
+      (finally (api/close! sess)))))

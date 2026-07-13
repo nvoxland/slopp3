@@ -118,3 +118,19 @@
               (is (re-find #"\(= 5 \(add 2 3\)\)" (:expected f)))
               (is (= "(not (= 5 -1))" (:actual f)))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated red-results-name-the-implicated-forms
+  ;; Rock 2: the system holds the trace map AND the delta — a red write
+  ;; result says WHICH changed form each failing test exercises
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'im.core :source "(ns im.core (:require [clojure.test :refer [deftest is]]))\n(defn f [x] (inc x))\n(defn g [x] (dec x))\n(deftest f-t (is (= 2 (f 1))))\n(deftest g-t (is (= 0 (g 1))))\n")
+      (api/test-run! sess nil)
+      (let [r     (api/edit-replace! sess 'im.core 'f "(defn f [x] (+ x 2))"
+                                     :prompt "break it" :agent "t")
+            fails (get-in r [:test :failures])]
+        (is (seq fails))
+        (testing "the failing test names the changed form it exercises"
+          (is (= ['im.core/f] (:implicated (first fails)))))
+        (testing "narrowing kept the untouched test out of the run"
+          (is (= 1 (count fails)))))
+      (finally (api/close! sess)))))

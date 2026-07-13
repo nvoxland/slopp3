@@ -1299,25 +1299,45 @@
                       sort vec)]
         (when (seq hits) hits)))))
 
+(defn- implicate
+  "Rock 2: annotate each failure with the just-changed forms that failing
+  test actually exercises (trace map ∩ edited) — the correlation agents
+  otherwise re-derive from raw expected/actual on every red."
+  [summary tmap edited]
+  (if-not (and (seq (:failures summary)) (seq edited) (seq tmap))
+    summary
+    (update summary :failures
+            (fn [fs]
+              (mapv (fn [f]
+                      (let [hits (some->> (get tmap (:test f))
+                                          set
+                                          (set/intersection (set edited))
+                                          seq sort vec)]
+                        (cond-> f hits (assoc :implicated hits))))
+                    fs)))))
 (defn- run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
   `default-ns`'s tests when there's no trace information. `:edited` (the
-  just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call."
+  just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
+  red-result :implicated correlation (Rock 2)."
   [session default-ns affected & {:keys [edited fresh include-integration?]}]
-  (if (nil? affected)
-    (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                    :include-integration? include-integration?)
-    (reduce (fn [acc [tns tsyms]]
-              (merge-with (fn [a b]
-                            (cond (number? a) (+ a b)
-                                  (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                  :else (or b a)))
-                          acc
-                          (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                          :edited edited :fresh fresh
-                                          :include-integration? include-integration?)))
-            {}
-            (group-by (comp symbol namespace) affected))))
+  (implicate
+   (if (nil? affected)
+     (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                     :include-integration? include-integration?)
+     (reduce (fn [acc [tns tsyms]]
+               (merge-with (fn [a b]
+                             (cond (number? a) (+ a b)
+                                   (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                   :else (or b a)))
+                           acc
+                           (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                           :edited edited :fresh fresh
+                                           :include-integration? include-integration?)))
+             {}
+             (group-by (comp symbol namespace) affected)))
+   (:test-map @session)
+   edited))
 
 ;; --- edit.* / runtime ---
 
@@ -3179,3 +3199,33 @@
                                    :agent agent)]
             (cond-> (assoc r :rewrote (count (:caller-steps plan)))
               (seq (:manual plan)) (assoc :manual (:manual plan)))))))))
+(defn query-brief
+  "The one-call dossier: everything the store knows about `ns-sym/nm` —
+  source, effect flags, cross-ns callers, the tests that exercise it
+  (trace map; `:coverage :unknown` until a test_run builds one), and the
+  recorded WHY (the last change's prompt + its enclosing turn intent).
+  Collapses the source→references→lineage read chain into one response."
+  [session ns-sym nm]
+  (if (nil? (store/form-named (:store @session) ns-sym nm))
+    {:error (str "no form named " nm " in " ns-sym)}
+    (let [qsym    (symbol (str ns-sym) (str nm))
+          sym     (query-symbol session ns-sym nm)
+          callers (vec (query-references session ns-sym nm))
+          tmap    (:test-map @session)
+          tests   (->> tmap
+                       (keep (fn [[t forms]] (when (contains? forms qsym) t)))
+                       sort vec)
+          why     (last (query-lineage session ns-sym nm))]
+      (cond-> {:ns ns-sym :name nm :source (:source sym)}
+        (:effectful? sym) (assoc :effectful? true)
+        (:reads? sym)     (assoc :reads? true)
+        (:unsafe? sym)    (assoc :unsafe? true)
+        (seq callers)     (assoc :callers callers)
+        (seq tests)       (assoc :covered-by tests)
+        (and (seq tmap) (empty? tests) (not (:test? sym)))
+        (assoc :untested true)
+        (empty? tmap)     (assoc :coverage :unknown)
+        why               (assoc :why (cond-> {:op     (:op why)
+                                               :prompt (:prompt why)}
+                                        (:agent why)       (assoc :agent (:agent why))
+                                        (:turn-intent why) (assoc :intent (:turn-intent why))))))))

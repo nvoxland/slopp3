@@ -80,6 +80,16 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "query_brief"
+    :description "THE form dossier, one call: source + effect flags + cross-ns callers + the tests covering it + the recorded WHY (last prompt/intent). Prefer this over separate source/references/lineage reads when you're about to change a form."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :required ["ns" "name"]}}
+   {:name "query_detail"
+    :description "The FULL version of a trimmed response (responses over the size gate carry a query_detail id). The spool keeps the last 20."
+    :inputSchema {:type "object"
+                  :properties {:id {:type "string"}}
+                  :required ["id"]}}
    {:name "query_references"
     :description "Who references ns/name."
     :inputSchema {:type "object"
@@ -397,9 +407,59 @@
 (def ^:private ^:dynamic *hint*
   "Optional one-line workflow hint, attached to map results (item 3)." nil)
 
-(defn- text [x]
-  (let [x (if (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*) x)]
-    {:content [{:type "text" :text (if (string? x) x (pr-str x))}]}))
+(def ^:private ^:dynamic *spool-session*
+  "Bound to the session during tools/call so `text` can spool full
+  payloads it trims (the headroom pattern: agents get the gist, the full
+  version stays retrievable via query_detail for a short while)." nil)
+(def ^:private spool-cap 20)
+(defn- spool!
+  "Keep `full` retrievable for a while; returns its id. Session-scoped,
+  FIFO-capped — short-term memory, not history (that's the store)."
+  [session full]
+  (swap! session update-in [::spool :n] (fnil inc 0))
+  (let [n  (get-in @session [::spool :n])
+        id (str "r" n)]
+    (swap! session update-in [::spool :entries]
+           (fn [es]
+             (let [es (assoc (or es {}) id full)]
+               (if (> (count es) spool-cap)
+                 (dissoc es (str "r" (- n spool-cap)))
+                 es))))
+    id))
+(defn- trim-failure-strings
+  "Tool-specific heuristic: test-failure :expected/:actual/:message beyond
+  700 chars carry their head + a size marker — the diagnosis-relevant part
+  is virtually always at the front."
+  [x]
+  (if-not (and (map? x) (seq (get-in x [:test :failures])))
+    x
+    (update-in x [:test :failures]
+               (fn [fs]
+                 (mapv (fn [f]
+                         (reduce (fn [f k]
+                                   (let [v (get f k)]
+                                     (if (and (string? v) (> (count v) 700))
+                                       (assoc f k (str (subs v 0 700)
+                                                       " …[+" (- (count v) 700) " chars]"))
+                                       f)))
+                                 f [:expected :actual :message]))
+                       fs)))))
+(defn- text! [x]
+  (let [x       (if (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*) x)
+        full    (if (string? x) x (pr-str x))
+        slimmed (let [t (trim-failure-strings x)]
+                  (if (string? t) t (pr-str t)))
+        out     (if (and (= full slimmed) (<= (count full) 8000))
+                  full
+                  (if-let [sess *spool-session*]
+                    (let [id   (spool! sess full)
+                          body (if (<= (count slimmed) 8000)
+                                 slimmed
+                                 (subs slimmed 0 8000))]
+                      (str body "\n[trimmed — query_detail {:id \"" id
+                           "\"} returns the full response]"))
+                    (if (<= (count slimmed) 8000) slimmed full)))]
+    {:content [{:type "text" :text out}]}))
 
 (def ^:private single-write-tools #{"edit_replace_form" "edit_add_form"})
 
@@ -575,23 +635,23 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                      (clojure.core/name k) " for " name)
                                 {}))))]
     (case name
-      "ns_create"         (text (api/create-ns! session (sym :ns)
+      "ns_create"         (text! (api/create-ns! session (sym :ns)
                                                 :requires (:requires a)
                                                 :source (:source a)
                                                 :agent (:agent a)))
-      "ns_add_require"    (text (-> (api/add-require! session (sym :ns) (:require a)
+      "ns_add_require"    (text! (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
-      "query_project"     (text (api/query-project session :since (:since a)
+      "query_project"     (text! (api/query-project session :since (:since a)
                                               :detail (:detail a)))
-      "query_search"      (text (api/query-search session (:pattern a)
+      "query_search"      (text! (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
-      "query_namespaces"  (text (api/query-namespaces session))
-      "query_outline"     (text (api/query-outline session (sym :ns)
+      "query_namespaces"  (text! (api/query-namespaces session))
+      "query_outline"     (text! (api/query-outline session (sym :ns)
                                               :detail (:detail a)))
-      "query_source"      (text (if-let [ts (:targets a)]
+      "query_source"      (text! (if-let [ts (:targets a)]
                             (api/query-sources
                              session
                              (mapv (fn [t]
@@ -599,62 +659,69 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                        (:name t) (assoc :name (symbol (:name t)))))
                                    ts))
                             (api/query-source session (sym :ns))))
-      "query_symbol"      (text (api/query-symbol session (sym :ns) (sym :name)))
-      "query_references"  (text (vec (api/query-references session (sym :ns) (sym :name))))
-      "query_lineage"     (text (vec (api/query-lineage session (sym :ns) (sym :name))))
-      "turn_begin"        (text (api/turn-begin! session :agent (:agent a)
+      "query_symbol"      (text! (api/query-symbol session (sym :ns) (sym :name)))
+      "query_detail"      (if-let [full (get-in @session [::spool :entries (:id a)])]
+                            ;; the retrieval path must NOT re-trim its own payload
+                            {:content [{:type "text" :text full}]}
+                            (text! {:error (str "no spooled response " (:id a)
+                                                " — the spool keeps the last "
+                                                spool-cap " trimmed responses")}))
+      "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
+      "query_references"  (text! (vec (api/query-references session (sym :ns) (sym :name))))
+      "query_lineage"     (text! (vec (api/query-lineage session (sym :ns) (sym :name))))
+      "turn_begin"        (text! (api/turn-begin! session :agent (:agent a)
                                                  :intent (:intent a)
                                                  :user (:user a)))
-      "turn_end"          (text (api/turn-end! session :agent (:agent a)
+      "turn_end"          (text! (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
-      "query_changes"     (text (api/query-changes session :agent (:agent a)
+      "query_changes"     (text! (api/query-changes session :agent (:agent a)
                                                    :from (:from a) :to (:to a)
                                                    :format (:format a)))
-      "episode_revert"    (text (-> (api/revert-episode! session
+      "episode_revert"    (text! (-> (api/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :conflict :reverted
                                                   :skipped-shared :note :test
                                                   :group :affected])
                                     (summarize (:verbose a))))
-      "query_history"     (text (api/query-history session
+      "query_history"     (text! (api/query-history session
                                                    :ns (some-> (:ns a) symbol)
                                                    :contains (:contains a)
                                                    :collapse (:collapse a)
                                                    :format (:format a)
                                                    :limit (or (:limit a) 20)))
-      "query_form_history" (text (api/query-form-history session (sym :ns) (sym :name)
+      "query_form_history" (text! (api/query-form-history session (sym :ns) (sym :name)
                                                          :format (:format a)))
-      "query_form_at"     (text (api/query-form-at session (sym :ns) (sym :name)
+      "query_form_at"     (text! (api/query-form-at session (sym :ns) (sym :name)
                                                    :at (:at a)))
-      "query_status_at"   (text (api/query-status-at session :at (:at a)))
-      "query_search_history" (text (api/query-search-history session (:contains a)
+      "query_status_at"   (text! (api/query-status-at session :at (:at a)))
+      "query_search_history" (text! (api/query-search-history session (:contains a)
                                                              :limit (:limit a)))
-      "query_eval"        (text (api/query-eval session (:code a)))
-      "query_observe"     (text (api/query-observe session (sym :ns) (sym :name)
+      "query_eval"        (text! (api/query-eval session (:code a)))
+      "query_observe"     (text! (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)
                                                    :limit (or (:limit a) 10)))
-      "query_macroexpand" (text (api/query-macroexpand session (:code a)))
-      "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
+      "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
+      "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a)
                                                        :agent (:agent a))
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
+      "edit_add_form"     (text! (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_delete_form"  (text (-> (api/delete-form! session (sym :ns) (sym :name)
+      "edit_delete_form"  (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_group"        (text (-> (api/edit-group!
+      "edit_group"        (text! (-> (api/edit-group!
                                      session
                                      (mapv (fn [s]
                                              (let [action (or (:action s) (:op s))] ; :op guessed in evals
@@ -682,12 +749,12 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                 new (or (:new a) (:to a))]
                             (when-not (and old new)
                               (throw (ex-info "edit_rename needs :old and :new (aliases: :name/:from, :to)" {})))
-                            (text (-> (api/rename! session (sym :ns) (symbol old)
+                            (text! (-> (api/rename! session (sym :ns) (symbol old)
                                                    (symbol new) :prompt (:prompt a)
                                                    :agent (:agent a))
                                       (select-keys [:error :renamed :test :affected :delta])
                                       (summarize (:verbose a)))))
-      "ns_remove_require" (text (-> (api/remove-require! session (sym :ns) (sym :lib)
+      "ns_remove_require" (text! (-> (api/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
@@ -695,7 +762,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                 src   (or (:source a) (:to a))]
                             (when-not (and match src)
                               (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
-                            (text (-> (api/edit-subform! session (sym :ns) (sym :form)
+                            (text! (-> (api/edit-subform! session (sym :ns) (sym :form)
                                                          match src
                                                          :text (:text a)
                                                          :prompt (:prompt a)
@@ -703,17 +770,17 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                       (select-keys [:error :conflict :warnings :existing-warnings
                                                     :untested :image-healed :test :affected :delta :ms])
                                       (summarize (:verbose a)))))
-      "edit_revert"       (text (-> (api/revert-form! session (sym :ns) (sym :name)
+      "edit_revert"       (text! (-> (api/revert-form! session (sym :ns) (sym :name)
                                                       :to (:to a) :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys [:error :conflict :warnings :test
                                                   :affected :delta :ms])
                                     (summarize (:verbose a))))
-      "edit_move"         (text (api/move-form! session (sym :ns) (sym :name)
+      "edit_move"         (text! (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_trivia"       (text (api/edit-trivia! session (sym :ns)
+      "edit_trivia"       (text! (api/edit-trivia! session (sym :ns)
                                                   (some-> (:before a) symbol)
                                                   (:text a)
                                                   :prompt (:prompt a)
@@ -721,30 +788,30 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "edit_extract"      (let [subform (or (:form a) (:source a) (:subform a))]
                             (when-not subform
                               (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))
-                            (text (-> (api/extract! session (sym :ns) (sym :from)
+                            (text! (-> (api/extract! session (sym :ns) (sym :from)
                                                     (sym :name) subform
                                                     :prompt (:prompt a))
                                       (select-keys [:error :extracted :group :test :affected])
                                       (summarize (:verbose a)))))
-      "checkpoint"         (text (api/checkpoint! session :label (:label a)
+      "checkpoint"         (text! (api/checkpoint! session :label (:label a)
                                                   :agent (:agent a)))
-      "commit_point"       (text (api/commit-point! session (:description a)
+      "commit_point"       (text! (api/commit-point! session (:description a)
                                                     :agent (:agent a)
                                                     :force (:force a)
                                                     :target (:target a)))
-      "query_commits"      (text (api/query-commits session))
-      "deps_add"           (text (api/deps-add! session (sym :lib)
+      "query_commits"      (text! (api/query-commits session))
+      "deps_add"           (text! (api/deps-add! session (sym :lib)
                                                 (or (:coord a)
                                                     (when (:version a)
                                                       {:mvn/version (:version a)}))
                                                 :agent (:agent a)))
-      "deps_remove"        (text (api/deps-remove! session (sym :lib)
+      "deps_remove"        (text! (api/deps-remove! session (sym :lib)
                                                    :agent (:agent a)))
-      "deps_list"          (text (api/deps-list session))
-      "deps_pure"          (text (if (false? (:pure a))
+      "deps_list"          (text! (api/deps-list session))
+      "deps_pure"          (text! (if (false? (:pure a))
                                    (api/deps-unpure! session (sym :target) :agent (:agent a))
                                    (api/deps-pure! session (sym :target) :agent (:agent a))))
-      "query_git"          (text (let [ext (when-let [conn (:db @session)]
+      "query_git"          (text! (let [ext (when-let [conn (:db @session)]
                                    (when-let [r (db/get-meta conn "git-remote")]
                                      {:git-remote   r
                                       :git-base-sha (db/get-meta conn "git-base-sha")}))]
@@ -766,52 +833,52 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                  {:error (str "no git listener on this session"
                                               " (ephemeral session, or the port"
                                               " couldn't bind)")})))
-      "git_push"           (text (if-let [dir (:dir @session)]
+      "git_push"           (text! (if-let [dir (:dir @session)]
                                    (sync/push! dir :url (:url a) :token (:token a)
                                                :branch (:branch a))
                                    {:error "git_push needs a durable session (a store dir)"}))
-      "git_clone"          (text (sync/clone! (:url a) (:dir a)
+      "git_clone"          (text! (sync/clone! (:url a) (:dir a)
                                               :token (:token a) :agent (:agent a)))
-      "git_pull"           (text (sync/pull! session
+      "git_pull"           (text! (sync/pull! session
                                              :token (:token a) :agent (:agent a)))
-      "git_conflicts"      (text (if-let [dir (:dir @session)]
+      "git_conflicts"      (text! (if-let [dir (:dir @session)]
                                    {:conflicts (sync/conflicts dir)}
                                    {:error "git_conflicts needs a durable session"}))
-      "git_resolve"        (text (if-let [dir (:dir @session)]
+      "git_resolve"        (text! (if-let [dir (:dir @session)]
                                    (sync/resolve! dir (:path a))
                                    {:error "git_resolve needs a durable session"}))
-      "config"             (text (api/config! session (:key a) (:value a)))
-      "file_put"           (text (api/file-put! session (:path a) (:content a)
+      "config"             (text! (api/config! session (:key a) (:value a)))
+      "file_put"           (text! (api/file-put! session (:path a) (:content a)
                                                 :prompt (:prompt a) :agent (:agent a)))
-      "file_remove"        (text (api/file-remove! session (:path a)
+      "file_remove"        (text! (api/file-remove! session (:path a)
                                                    :prompt (:prompt a) :agent (:agent a)))
-      "file_list"          (text (api/files-list session))
-      "file_get"           (text (api/file-get session (:path a) :at (:at a)))
-      "file_history"       (text (api/file-history! session (:path a)))
-      "config_file"        (text (api/config-file! session (:path a)
+      "file_list"          (text! (api/files-list session))
+      "file_get"           (text! (api/file-get session (:path a) :at (:at a)))
+      "file_history"       (text! (api/file-history! session (:path a)))
+      "config_file"        (text! (api/config-file! session (:path a)
                                                    :key (:key a) :value (:value a)
                                                    :unset (:unset a) :format (:format a)
                                                    :prompt (:prompt a) :agent (:agent a)))
-      "test_run"          (text (if (:isolated a)
+      "test_run"          (text! (if (:isolated a)
                                    (api/isolated-test-run! session)
                                    (api/test-run! session
                                                   (when (:ns a) (sym :ns))
                                                   :only (some->> (:only a) (mapv symbol))
                                                   :fresh (:fresh a))))
-      "help"              (text cheat-sheet)
-      "branch_create"     (text (api/branch! session (:name a)))
-      "branch_switch"     (text (api/branch-switch! session (:name a)))
-      "branch_merge"      (text (api/branch-merge! session (:name a)))
-      "branch_delete"     (text (api/branch-delete! session (:name a)))
-      "query_branches"    (text (api/query-branches session))
-      "query_deps"        (text (api/query-deps session (sym :ns) (sym :name)))
-      "fix_declares"      (text (api/fix-declares! session (sym :ns)
+      "help"              (text! cheat-sheet)
+      "branch_create"     (text! (api/branch! session (:name a)))
+      "branch_switch"     (text! (api/branch-switch! session (:name a)))
+      "branch_merge"      (text! (api/branch-merge! session (:name a)))
+      "branch_delete"     (text! (api/branch-delete! session (:name a)))
+      "query_branches"    (text! (api/query-branches session))
+      "query_deps"        (text! (api/query-deps session (sym :ns) (sym :name)))
+      "fix_declares"      (text! (api/fix-declares! session (sym :ns)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)))
-      "ns_rename"         (text (api/ns-rename! session (:old a) (:new a)
+      "ns_rename"         (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_extract_ns"   (text (-> (api/extract-ns! session (sym :ns)
+      "edit_extract_ns"   (text! (-> (api/extract-ns! session (sym :ns)
                                                      (mapv symbol (:forms a))
                                                      (symbol (:to a))
                                                      :prompt (:prompt a)
@@ -819,9 +886,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :conflict :extracted-to
                                                   :moved :rewrote :test :group])
                                     (summarize (:verbose a))))
-      "merge_from"        (text (api/merge! session (:dir a)))
-      "restart"           (do (api/restart! session) (text "restarted"))
-      "change_signature"  (text (-> (api/change-signature! session (sym :ns)
+      "merge_from"        (text! (api/merge! session (:dir a)))
+      "restart"           (do (api/restart! session) (text! "restarted"))
+      "change_signature"  (text! (-> (api/change-signature! session (sym :ns)
                                                            (sym :name)
                                                            (:source a) (:calls a)
                                                            :prompt (:prompt a)
@@ -830,7 +897,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                   :warnings :existing-warnings :changed-nses
                                                   :image-healed :test :affected :deltas])
                                     (summarize (:verbose a))))
-      "build"             (text (api/build! session (:dir a)
+      "build"             (text! (api/build! session (:dir a)
                                             :main (some-> (:main a) symbol)
                                             :name (:name a)))
       (throw (ex-info (str "unknown tool: " name ". Available: "
@@ -849,7 +916,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
     (try
       (try (call-tool session {:name tool :arguments arguments})
            (catch Exception e
-             (assoc (text (str "error: " (ex-message e))) :isError true)))
+             (assoc (text! (str "error: " (ex-message e))) :isError true)))
       (finally (api/close! session)))))
 ^:unsafe
 (defn call-main!
@@ -880,10 +947,11 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
     "tools/call" {:jsonrpc "2.0" :id id
                   :result (binding [*hint* (track-hint! session
                                                         (:name params)
-                                                        (:arguments params))]
+                                                        (:arguments params))
+                                    *spool-session* session]
                             (try (call-tool session params)
                                  (catch Exception e
-                                   (assoc (text (str "error: " (ex-message e)))
+                                   (assoc (text! (str "error: " (ex-message e)))
                                           :isError true))))}
     "ping" {:jsonrpc "2.0" :id id :result {}}
     (when id
