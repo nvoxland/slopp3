@@ -16,7 +16,25 @@ this is user testing in the literal sense.
   trustworthy rename, story-like lineage, seamless persistence. Friction:
   F1–F8 (F1 fixed).
 
-## Benchmark suite (`slopp.benchmark`)
+## THE benchmark: neutral-spec cohort evals (user decision, 2026-07-12)
+
+A list of MCP calls is not a benchmark. What differentiates slopp from a
+conventional agent is measured ONLY by: the SAME end-user spec (observable
+behavior + an I/O contract; zero implementation details — no namespaces, no
+fn names, no tool mentions, no workflow commands), the SAME neutral prompt,
+and the ENVIRONMENT as the sole variable (slopp plugin installed vs not).
+The agent chooses everything — including whether to use slopp at all; an
+agent in the plugin cohort ignoring slopp is a discoverability finding, not
+a protocol error. Acceptance follows the agent's own run instructions
+(mechanical I/O checks against the spec's contract). Protocols live in
+projects/eval*/SPEC.md with verbatim prompts.
+
+The scripted suite below is demoted to an edit-path wire-cost REGRESSION
+METER (catches payload/latency creep per write op); its rows are not
+evidence about agent-level value. Wave-5-style guided evals measure "does
+the taught workflow function", not "does the product win".
+
+## Wire-cost regression meter (`slopp.benchmark`)
 
 Purpose: track whether the product is getting better to use — **wall time**
 and **token cost** (chars/4 of the JSON actually sent/received through

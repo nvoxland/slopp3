@@ -374,3 +374,30 @@ vs the old lean sub-agent harness; model ids also drifted):
   (the cold-start single-flight + warm-hook work); skills discovered via
   the plugin; the `slopp` CLI on PATH went unused by agents (MCP sufficed)
   except as the orchestrator's acceptance probe.
+
+## Eval 6: NEUTRAL SPEC, environment as the only variable (@ 6cdc971)
+
+The benchmark philosophy shift (user decision, recorded in dogfooding.md):
+identical end-user spec (expense-ledger CLI with an exact I/O contract),
+identical prompt, agent free to build however it wants; the ONLY variable is
+whether the slopp plugin is installed. Two rounds × 2 cohorts × 3 models;
+protocol + full rows in projects/eval6-neutral/ (round 1 ran in-repo and
+inherited slopp2's CLAUDE.md — discovered post-hoc, reframed as the
+"slopp-adopted repo" condition; round 2 is clean bare-dir discoverability).
+
+Headlines (details in RUNS.md):
+- 11/12 contract PASS; the single FAIL is a 720s timeout of a slopp run
+  whose store WAS green (20 tests/69 assertions) — packaging, not
+  correctness, missed the budget.
+- Discoverability splits by model, identically in both rounds: opus and
+  sonnet discover and CHOOSE slopp from the plugin alone; haiku never
+  touches it — even when round-1's CLAUDE.md explicitly mandates it
+  (it switched language to Clojure but kept plain files).
+- Toy-scale economics: when strong models choose slopp they pay ~3.5–5×
+  wall / ~5× cost vs their plain twins (opus $3.17/547s vs $0.61/132s) and
+  spend it on visibly deeper verification (101 assertions, subprocess
+  contract replay, edge-case date rejection). Correct-but-lighter Python
+  ships either way — consistent with rounds 2/3: files win tiny greenfield;
+  the measured crossover lives at multi-namespace scale. Next protocol
+  step: a neutral-spec MODIFY-AND-EXTEND on a seeded slopp-published repo.
+- Infrastructure: 12/12 sessions connected clean through the plugin.
