@@ -19,39 +19,38 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :requires {:type "array" :items {:type "string"}}
-                               :source {:type "string"}
-                               :agent {:type "string"}}
+                               :source {:type "string"}}
                   :required ["ns"]}}
    {:name "ns_add_require"
     :description "Add one require clause (e.g. \"[clojure.string :as str]\") to the ns form."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :require {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "require"]}}
    {:name "ns_remove_require"
     :description "Remove a library's require spec from the ns form."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :lib {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "lib"]}}
    {:name "edit_move"
     :description "Move a form to just before another (definitions precede callers)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :before {:type "string"} :prompt {:type "string"} :agent {:type "string"}}
+                               :before {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "name" "before"]}}
    {:name "edit_trivia"
     :description "Replace the comment/blank-line run before form `before` (omit = namespace tail) with `text`. Trivia only; forms untouched."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :before {:type "string"}
                                :text {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["ns" "text"]}}
    {:name "query_project"
-    :description "THE orientation call: every namespace's full outline (names, arities, docs, !-status, test-ness) in one response. Start here."
-    :inputSchema {:type "object" :properties {}}}
+    :description "THE orientation call: every namespace's full outline (names, arities, docs, !-status, test-ness) in one response. Call ONCE; pass since=<your last delta id> on a re-check — unchanged structure returns a one-liner."
+    :inputSchema {:type "object" :properties {:since {:type "string"}}}}
    {:name "query_search"
     :description "Regex search across all store source; hits are {:ns :form :line}. Search before reading."
     :inputSchema {:type "object"
@@ -136,7 +135,7 @@
     :description "Replace a whole top-level form (verified write)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :source {:type "string"} :prompt {:type "string"} :agent {:type "string"}
+                               :source {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source"]}}
    {:name "edit_add_form"
@@ -144,14 +143,14 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :source {:type "string"}
                                :before {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
     :description "Delete a top-level form (ns-unmap, verified)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
@@ -160,14 +159,14 @@
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
                                :text {:type "boolean"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "form" "match" "source"]}}
    {:name "edit_revert"
     :description "Revert a form to an earlier version (default previous, or a delta id)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :to {:type "string"} :prompt {:type "string"} :agent {:type "string"}
+                               :to {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
@@ -181,14 +180,14 @@
                                                             :source {:type "string"}
                                                             :before {:type "string"}}
                                                :required ["action" "ns"]}}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["steps"]}}
    {:name "edit_rename"
     :description "Rename a form + every reference across namespaces (shadow-safe). Never rename by hand."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
-                               :new {:type "string"} :prompt {:type "string"} :agent {:type "string"}
+                               :new {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "old" "new"]}}
    {:name "change_signature"
@@ -196,7 +195,7 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :source {:type "string"} :calls {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}
+                               :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source" "calls"]}}
    {:name "edit_extract"
@@ -204,38 +203,34 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :from {:type "string"}
                                :form {:type "string"} :name {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
    {:name "turn_begin"
-    :description "Open your turn (records the verbatim user ask). Usually AUTOMATED by the plugin's hooks — call manually only if a write is refused for a missing turn."
+    :description "Open a turn manually (records the verbatim user ask as intent). Turns are normally opened FOR you by the plugin's hooks — only needed if a write is refused."
     :inputSchema {:type "object"
-                  :properties {:agent {:type "string"} :intent {:type "string"}
+                  :properties {:intent {:type "string"}
                                :user {:type "string"}}
-                  :required ["agent" "intent"]}}
+                  :required ["intent"]}}
    {:name "turn_end"
-    :description "Close your turn (usually automated by the plugin's hooks)."
+    :description "Close the turn (usually automatic)."
     :inputSchema {:type "object"
-                  :properties {:agent {:type "string"} :note {:type "string"}}
-                  :required ["agent"]}}
+                  :properties {:note {:type "string"}}}}
    {:name "query_changes"
-    :description "Net per-form diffs + red/green arc: your open episode (:agent) or any past span (:from/:to delta ids); format=text for humans."
+    :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
     :inputSchema {:type "object"
-                  :properties {:agent {:type "string"}
-                               :from {:type "string"} :to {:type "string"}
+                  :properties {:from {:type "string"} :to {:type "string"}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "episode_revert"
-    :description "Roll back everything you changed since your last checkpoint (other agents' forms skipped, reported)."
+    :description "Roll back everything YOU changed since your last checkpoint (other sessions' forms skipped, reported)."
     :inputSchema {:type "object"
-                  :properties {:agent {:type "string"} :prompt {:type "string"}}}}
+                  :properties {:prompt {:type "string"}}}}
    {:name "checkpoint"
     :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary."
-    :inputSchema {:type "object" :properties {:label {:type "string"}
-                                              :agent {:type "string"}}}}
+    :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "commit_point"
     :description "Record a MILESTONE (green-gated; force=true records red honestly). The git-projection grain; target=<delta id> marks an earlier spot."
     :inputSchema {:type "object"
                   :properties {:description {:type "string"}
-                               :agent {:type "string"}
                                :force {:type "boolean"}
                                :target {:type "string"}}
                   :required ["description"]}}
@@ -261,8 +256,7 @@
    {:name "git_pull"
     :description "Absorb remote changes: form-granular 3-way merge; both-sides-touched = conflicts (quarantined; push blocked until resolved)."
     :inputSchema {:type "object"
-                  :properties {:token {:type "string"}
-                               :agent {:type "string"}}}}
+                  :properties {:token {:type "string"}}}}
    {:name "git_conflicts"
     :description "Unresolved pull conflicts, with the raw remote content to merge from."
     :inputSchema {:type "object" :properties {}}}
@@ -280,13 +274,13 @@
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
                                :content {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["path" "content"]}}
    {:name "file_remove"
     :description "Drop a path from the files manifest."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["path"]}}
    {:name "file_list"
     :description "The files manifest: {path bytes}."
@@ -307,20 +301,19 @@
                   :properties {:path {:type "string"} :key {:type "string"}
                                :value {:type "string"} :unset {:type "boolean"}
                                :format {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["path"]}}
    {:name "deps_add"
     :description "Add an external dependency (hot to the live classpath, no restart). lib like \"org.clojure/data.json\"; version string or full coord map."
     :inputSchema {:type "object"
                   :properties {:lib {:type "string"}
                                :version {:type "string"}
-                               :coord {:type "object"}
-                               :agent {:type "string"}}
+                               :coord {:type "object"}}
                   :required ["lib"]}}
    {:name "deps_remove"
     :description "Remove a dependency (restarts the image)."
     :inputSchema {:type "object"
-                  :properties {:lib {:type "string"} :agent {:type "string"}}
+                  :properties {:lib {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_list"
     :description "The dependency manifest: {lib coord}."
@@ -329,8 +322,7 @@
     :description "Assert a dep target is PURE so callers aren't !-flagged: a var (\"ns/f\"), a namespace, or a whole lib. pure=false undoes."
     :inputSchema {:type "object"
                   :properties {:target {:type "string"}
-                               :pure {:type "boolean"}
-                               :agent {:type "string"}}
+                               :pure {:type "boolean"}}
                   :required ["target"]}}
    {:name "test_run"
     :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes). Writes already verify — rarely needed after edits."
@@ -352,8 +344,7 @@
                   :required ["name"]}}
    {:name "branch_merge"
     :description "Merge a branch into the CURRENT line. Same-form divergence returns :conflicts (current kept; payload IS current source). The branch survives."
-    :inputSchema {:type "object" :properties {:name {:type "string"}
-                                              :agent {:type "string"}}
+    :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
    {:name "branch_delete"
     :description "Delete a branch (never the one you are on)."
@@ -370,22 +361,20 @@
    {:name "fix_declares"
     :description "Tidy (declare …): reorder defns above callers when safe, delete satisfied declares. Atomic, verified."
     :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :prompt {:type "string"}
-                               :agent {:type "string"}}
+                  :properties {:ns {:type "string"} :prompt {:type "string"}}
                   :required ["ns"]}}
    {:name "ns_rename"
     :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
     :inputSchema {:type "object"
                   :properties {:old {:type "string"} :new {:type "string"}
-                               :prompt {:type "string"} :agent {:type "string"}}
+                               :prompt {:type "string"}}
                   :required ["old" "new"]}}
    {:name "edit_extract_ns"
     :description "Move forms into a BRAND-NEW namespace (callers rewritten to alias-qualified calls; one atomic group). The moved set may not call what stays; plan with query_deps."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :forms {:type "array" :items {:type "string"}}
-                               :to {:type "string"} :prompt {:type "string"}
-                               :agent {:type "string"}}
+                               :to {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}
    {:name "merge_from"
     :description "Merge a diverged COPY of this project (absolute dir). Same-form divergence = :conflicts, ours kept."
@@ -507,6 +496,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
         (:group r)   (assoc :group (:group r))
         (:deltas r)  (assoc :deltas (count (:deltas r)))
         (:renamed r) (assoc :renamed (:renamed r))
+        (:forms r)   (assoc :forms (:forms r))
         t            (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
                                            :status (:status t :green)
                                            :scope (:scope t)}
@@ -533,37 +523,48 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
           (throw (ex-info (str "--call args must be a JSON or EDN map (or @file): "
                                s)
                           {})))))))
+(defn- absorb-pending-intent!
+  "Consume <dir>/.slopp/pending-intent when present. The plugin's prompt
+  hook writes {\"session-id\": …, \"prompt\": …} (a bare string is
+  accepted as prompt-only). The session ADOPTS the harness session id as
+  its identity — unless SLOPP_AGENT pinned one — so every delta of one
+  Claude session shares a key and concurrent sessions never merge
+  episodes; the prompt is stashed as the next auto-turn's intent."
+  [session]
+  (when-let [dir (:dir @session)]
+    (let [f (io/file dir ".slopp" "pending-intent")]
+      (when (.exists f)
+        (let [raw (slurp f)]
+          (.delete f)
+          (let [{:keys [sid prompt]}
+                (or (try (let [m (json/parse-string raw true)]
+                           (when (map? m)
+                             {:sid (:session-id m) :prompt (:prompt m)}))
+                         (catch Exception _ nil))
+                    {:prompt raw})]
+            (when (and sid (not (:env-agent? @session)))
+              (swap! session assoc :agent-id sid))
+            (when-not (str/blank? (or prompt ""))
+              (swap! session assoc :pending-intent prompt))))))))
 (defn- call-tool [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
+  (absorb-pending-intent! session)
   (when (and (:require-turns? @session)
              (contains? write-tools name)
              ;; checkpoint/commit_point CLOSE work; always allowed
              (not (#{"checkpoint" "commit_point"} name)))
-    (let [agent (:agent arguments)]
-      (cond
-        (nil? agent)
-        (throw (ex-info (str name " needs an :agent label (turns are enforced "
-                             "here — every write must trace to who did it and "
-                             "why)")
-                        {}))
-        (not (api/turn-open? session agent))
-        ;; the plugin's prompt hook drops the user's VERBATIM ask in
-        ;; .slopp/pending-intent — open the turn from it (zero-ceremony
-        ;; turns); no file → the manual turn_begin guidance stands
-        (let [f      (when-let [dir (:dir @session)]
-                       (io/file dir ".slopp" "pending-intent"))
-              intent (when (and f (.exists f))
-                       (let [s (slurp f)]
-                         (.delete f)
-                         (when-not (str/blank? s) s)))]
-          (if intent
-            (api/turn-begin! session :agent agent :intent intent)
-            (throw (ex-info (str "no open turn for \"" agent "\" — call "
-                                 "turn_begin {agent, intent: <the user's verbatim "
-                                 "ask>} first; sub-agents ride their root agent's "
-                                 "turn")
-                            {})))))))
-  (let [a   arguments
+    (let [ag (or (:agent arguments) (:agent-id @session))]
+      (when-not (api/turn-open? session ag)
+        (if-let [intent (:pending-intent @session)]
+          ;; the plugin's prompt hook captured the user's verbatim ask —
+          ;; the turn opens itself (zero-ceremony turns)
+          (do (swap! session dissoc :pending-intent)
+              (api/turn-begin! session :agent ag :intent intent))
+          (throw (ex-info (str "no open turn — call turn_begin {intent: "
+                               "<the user's verbatim ask>} first")
+                          {}))))))
+  (let [a   (assoc arguments :agent (or (:agent arguments)
+                                        (:agent-id @session)))
         sym (fn [k]
               (if-let [v (get a k)]
                 (symbol v)
@@ -580,7 +581,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
-      "query_project"     (text (api/query-project session))
+      "query_project"     (text (api/query-project session :since (:since a)))
       "query_search"      (text (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
       "query_namespaces"  (text (api/query-namespaces session))
@@ -632,7 +633,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "edit_replace_form" (text (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (:source a) :prompt (:prompt a)
                                                        :agent (:agent a))
-                                    (select-keys [:error :warnings :existing-warnings :hint
+                                    (assoc :forms [(str (sym :ns) "/" (sym :name))])
+                                    (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
       "edit_add_form"     (text (-> (api/add-form! session (sym :ns) (:source a)
@@ -662,8 +664,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                  (:before s) (assoc :before (symbol (:before s))))))
                                            (:steps a))
                                      :prompt (:prompt a) :agent (:agent a))
+                                    (assoc :forms (into []
+                                                        (keep (fn [s]
+                                                                (when (:name s)
+                                                                  (str (:ns s) "/" (:name s)))))
+                                                        (:steps a)))
                                     (select-keys [:error :step :group :warnings :existing-warnings :changed-nses
-                                                  :image-healed :test :affected :deltas])
+                                                  :image-healed :test :affected :deltas :forms])
                                     (summarize (:verbose a))))
       ;; arg forgiveness: every eval run guessed name/to before finding old/new
       "edit_rename"       (let [old (or (:old a) (:name a) (:from a))

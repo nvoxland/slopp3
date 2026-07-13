@@ -69,3 +69,13 @@
         (is (= :rename (:op (last (filter #(= :rename (:op %))
                                           (store/deltas (:store @sess2)))))))
         (finally (api/close! sess2))))))
+(deftest ^:isolated already-renamed-is-state-not-error
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'ar.core :source "(ns ar.core)\n(defn old-name [] 1)\n")
+      (is (nil? (:error (api/rename! sess 'ar.core 'old-name 'new-name :agent "t"))))
+      (testing "the retried rename reports state instead of refusing"
+        (let [r (api/rename! sess 'ar.core 'old-name 'new-name :agent "t")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (:already (:renamed r)))))
+      (finally (api/close! sess)))))

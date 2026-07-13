@@ -121,3 +121,15 @@
         (testing "query_commits answers over MCP"
           (is (re-find #"m1" (call "query_commits" {})))))
       (finally (api/close! sess)))))
+(deftest ^:isolated repeat-milestone-on-unchanged-store-returns-it
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn f [] 1)\n")
+      (let [m1 (api/commit-point! sess "v1" :agent "t")
+            m2 (api/commit-point! sess "anything" :agent "t")]
+        (is (nil? (:error m1)))
+        (testing "no new marker minted; the existing one comes back"
+          (is (= (:commit m1) (:commit m2)))
+          (is (= "v1" (:description m2)))
+          (is (re-find #"nothing changed" (str (:note m2))))))
+      (finally (api/close! sess)))))

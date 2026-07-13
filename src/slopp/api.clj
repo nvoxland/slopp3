@@ -73,12 +73,25 @@
     (doseq [img @victims] (repl/stop! img))
     {:reaped (count @victims)}))
 
+^:reads
+(defn session-identity
+  "The identity a fresh session starts with: explicit SLOPP_AGENT env (how
+  orchestrators name agents and CLI scripts keep cross-invocation
+  continuity), else a generated unique id. The plugin's prompt hook can
+  supersede the generated id with the harness session id (adopt-identity!
+  in slopp.mcp) so every delta of one Claude session shares a key — and
+  two concurrent sessions on one store never merge episodes."
+  []
+  (or (not-empty (System/getenv "SLOPP_AGENT"))
+      (str "s-" (subs (str (java.util.UUID/randomUUID)) 0 8))))
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
-  keeps a spare image warming in the background so restarts are near-instant."
+  keeps a spare image warming in the background so restarts are near-instant.
+  `:agent-id` (default: session-identity) keys every delta/turn/episode this
+  session writes."
   ([] (open! {}))
-  ([{:keys [dir warm-spare? branch-image-ttl-ms]}]
+  ([{:keys [dir warm-spare? branch-image-ttl-ms agent-id]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
          image   (repl/start! {:deps (:deps store)})
@@ -86,6 +99,8 @@
          session (atom {:store store :image image :db conn
                         :data-version (some-> conn db/data-version)
                         :dir dir :branch "main" :lines {}
+                        :agent-id (or agent-id (session-identity))
+                        :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                         :branch-image-ttl-ms ttl
                         :warm-spare? (boolean warm-spare?)})]
      (start-spare! session)
@@ -800,12 +815,26 @@
 (defn query-project
   "The WHOLE store's shape in one call: every namespace with its outline
   (item 1 — orientation was ~90% of tool calls in successful runs; this
-  replaces the namespaces→outline×N chain)."
-  [session]
-  (let [st (:store @session)]
-    {:head       (:id (last (store/deltas st)))
-     :namespaces (mapv (fn [ns-sym] (query-outline session ns-sym))
-                       (sort (keys (:namespaces st))))}))
+  replaces the namespaces→outline×N chain). Pass `:since <delta id>` on a
+  re-check: when nothing STRUCTURAL changed after that delta the response
+  is a one-liner instead of the full outline (verify/turn/milestone
+  markers don't count as change)."
+  [session & {:keys [since]}]
+  (let [st   (:store @session)
+        ds   (store/deltas st)
+        head (:id (last ds))
+        quiet-ops #{:verify :checkpoint :commit :turn-begin :turn-end}
+        unchanged? (and since
+                       (some #(= since (:id %)) ds)
+                       (->> ds
+                            (drop-while #(not= since (:id %)))
+                            rest
+                            (every? #(contains? quiet-ops (:op %)))))]
+    (if unchanged?
+      {:unchanged-since since :head head}
+      {:head       head
+       :namespaces (mapv (fn [ns-sym] (query-outline session ns-sym))
+                         (sort (keys (:namespaces st))))})))
 
 (defn query-search
   "The missing grep: regex over all store source, form-addressed results
@@ -1933,12 +1962,13 @@
   pointing at the resulting state with a human `description`. GREEN-GATED:
   a red verification refuses the milestone (the checkpoint still stands —
   fix and retry) unless `:force true`, which records `:status :red`
-  honestly. With `:target` (a past delta id) it is a pure retroactive
-  marker: no checkpoint runs, status is derived from the log at that spot —
-  and no `:tree` snapshot is captured (the live store is past the target by
-  definition; projection backfills, lossily).
-  `:extra` merges op-specific payload into the marker delta (P4-m8 uses it
-  for `:git-sha` on imported commits)."
+  honestly. Re-requesting a milestone on an UNCHANGED store returns the
+  existing marker instead of minting an empty one. With `:target` (a past
+  delta id) it is a pure retroactive marker: no checkpoint runs, status is
+  derived from the log at that spot — and no `:tree` snapshot is captured
+  (the live store is past the target by definition; projection backfills,
+  lossily). `:extra` merges op-specific payload into the marker delta
+  (P4-m8 uses it for `:git-sha` on imported commits)."
   [session description & {:keys [agent force target extra]}]
   (let [mark! (fn [target status result-extra delta-extra]
                 (let [v (volatile! nil)]
@@ -1968,28 +1998,34 @@
         {:error (str "no delta " target " in this branch's history")})
 
       :else
-      (let [cp     (checkpoint! session :label description :agent agent)
-            st     (:store @session)
-            head   (:id (last (store/deltas st)))
-            status (if-let [t (:test cp)]
-                     (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
-                     (status-at st head))
-            status (if (= :unknown status) :green status) ; nothing ever ran red
-            ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
-            ;; so the git projection is a pure function of this marker delta
-            tree   (into (sorted-map)
-                         (map (fn [n] [n (render/render-ns st n)]))
-                         (keys (:namespaces st)))]
-        (if (and (= :red status) (not force))
-          {:error (str "verification is RED — milestone refused (your work is "
-                       "checkpointed; fix and retry, or :force true to record "
-                       "a red milestone honestly)")
-           :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
-          (mark! head status {:checkpoint (:checkpoint cp)}
-                 (cond-> (merge {:tree tree} extra)
-                   (seq (:deps st))  (assoc :deps (:deps st))
-                   (seq (:files st)) (assoc :files (:files st))
-                   (seq (:config st)) (assoc :config (:config st)))))))))
+      (let [last-d (last (store/deltas (:store @session)))]
+        (if (= :commit (:op last-d))
+          (merge {:commit (:id last-d) :target (:target last-d)
+                  :status (:status last-d)
+                  :description (:description last-d)
+                  :note "nothing changed since this milestone — returning it"})
+          (let [cp     (checkpoint! session :label description :agent agent)
+                st     (:store @session)
+                head   (:id (last (store/deltas st)))
+                status (if-let [t (:test cp)]
+                         (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
+                         (status-at st head))
+                status (if (= :unknown status) :green status) ; nothing ever ran red
+                ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
+                ;; so the git projection is a pure function of this marker delta
+                tree   (into (sorted-map)
+                             (map (fn [n] [n (render/render-ns st n)]))
+                             (keys (:namespaces st)))]
+            (if (and (= :red status) (not force))
+              {:error (str "verification is RED — milestone refused (your work is "
+                           "checkpointed; fix and retry, or :force true to record "
+                           "a red milestone honestly)")
+               :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
+              (mark! head status {:checkpoint (:checkpoint cp)}
+                     (cond-> (merge {:tree tree} extra)
+                       (seq (:deps st))  (assoc :deps (:deps st))
+                       (seq (:files st)) (assoc :files (:files st))
+                       (seq (:config st)) (assoc :config (:config st)))))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -2251,6 +2287,11 @@
         qold (symbol (str ns-sym) (str old-name))
         qnew (symbol (str ns-sym) (str new-name))]
     (cond
+      (and (nil? (store/form-named st ns-sym old-name))
+           (store/form-named st ns-sym new-name))
+      ;; already renamed (a retried/duplicated intent) — state, not refusal
+      {:renamed {:old old-name :new new-name :forms 0 :already true}}
+
       (nil? (store/form-named st ns-sym old-name))
       {:error (str "no form named " old-name " in " ns-sym)}
 

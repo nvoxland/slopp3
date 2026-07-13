@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store]))
 
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
@@ -167,28 +167,67 @@
                                           :agent "probe"})]
         (is (not (:isError r)) (get-in r [:content 0 :text]))))))
 (deftest ^:isolated pending-intent-opens-the-turn
-  ;; the plugin's UserPromptSubmit hook drops the user's verbatim prompt in
-  ;; .slopp/pending-intent; the turn gate opens the turn from it instead of
-  ;; refusing the first write
+  ;; the plugin's UserPromptSubmit hook drops {session-id, prompt} JSON in
+  ;; .slopp/pending-intent; the turn gate opens the turn from it and the
+  ;; session ADOPTS the harness session id as its identity — no agent
+  ;; field anywhere on the wire
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-turnhook"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (api/open! {:dir dir})]
     (try
       (swap! sess assoc :require-turns? true)
-      (spit (io/file dir ".slopp" "pending-intent") "add a widget feature")
+      (spit (io/file dir ".slopp" "pending-intent")
+            "{\"session-id\":\"sess-abc123\",\"prompt\":\"add a widget feature\"}")
       (let [r (edn/read-string
                (call sess "ns_create" {:ns "pi.core"
-                                       :source "(ns pi.core)\n(defn f [] 1)\n"
-                                       :agent "claude"}))]
+                                       :source "(ns pi.core)\n(defn f [] 1)\n"}))]
         (is (nil? (:error r)) (pr-str r)))
       (is (false? (.exists (io/file dir ".slopp" "pending-intent"))))
+      (testing "the session adopted the harness id; the write is stamped with it"
+        (is (= "sess-abc123" (:agent-id @sess)))
+        (is (= "sess-abc123"
+               (->> (store/deltas (:store @sess))
+                    (filter #(= :ingest (:op %)))
+                    first :agent))))
       (testing "the turn carries the verbatim prompt"
         (is (seq (api/query-search-history sess "add a widget feature"))))
       (testing "with no pending intent and no turn, the gate still refuses"
-        (call sess "turn_end" {:agent "claude"})
+        (call sess "turn_end" {})
         (let [r (call sess "edit_add_form" {:ns "pi.core"
-                                            :source "(defn g [] 2)"
-                                            :agent "claude"})]
+                                            :source "(defn g [] 2)"})]
           (is (re-find #"no open turn" r))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated two-sessions-never-merge-episodes
+  ;; the P4 invariant, now free of wire labels: two sessions on ONE store
+  ;; get DISTINCT generated identities, so episode_revert scopes to the
+  ;; session that calls it (under a constant label these episodes MERGED)
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-iso"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+        sa  (api/open! {:dir dir})
+        sb  (api/open! {:dir dir})]
+    (try
+      (is (not= (:agent-id @sa) (:agent-id @sb)))
+      (call sa "ns_create" {:ns "iso.a" :source "(ns iso.a)\n(defn fa [] 1)\n"})
+      (call sb "ns_create" {:ns "iso.b" :source "(ns iso.b)\n(defn fb [] 2)\n"})
+      (let [r (edn/read-string (call sb "episode_revert" {}))]
+        (is (nil? (:error r)) (pr-str r)))
+      (testing "B's work is gone, A's survives"
+        (is (not (re-find #"defn fb" (call sb "query_symbol" {:ns "iso.b" :name "fb"}))))
+        (is (re-find #"defn fa" (call sa "query_symbol" {:ns "iso.a" :name "fa"}))))
+      (finally (api/close! sa) (api/close! sb)))))
+(deftest ^:isolated terse-results-carry-forms
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "tf.core" :source "(ns tf.core)\n(defn f [x] x)\n"})
+      (testing "replace names its form"
+        (is (re-find #":forms \[\"tf.core/f\"\]"
+                     (call sess "edit_replace_form" {:ns "tf.core" :name "f"
+                                                     :source "(defn f [x] (identity x))"}))))
+      (testing "groups list their named steps"
+        (is (re-find #"tf.core/f"
+                     (call sess "edit_group"
+                           {:steps [{:action "replace" :ns "tf.core" :name "f"
+                                     :source "(defn f [x] x)"}]}))))
       (finally (api/close! sess)))))

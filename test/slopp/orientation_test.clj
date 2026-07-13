@@ -54,3 +54,18 @@
         (is (:error (nth r 2)))
         (is (:error (nth r 3))))
       (finally (api/close! sess)))))
+(deftest ^:isolated query-project-since
+  (let [sess (api/open!)]
+    (try
+      (api/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
+      (let [head (:head (api/query-project sess))]
+        (testing "unchanged structure is a one-liner"
+          (is (= {:unchanged-since head :head head}
+                 (select-keys (api/query-project sess :since head)
+                              [:unchanged-since :head]))))
+        (testing "a write invalidates it"
+          (api/add-form! sess 'qs.core "(defn g [] 2)" :agent "t")
+          (let [r (api/query-project sess :since head)]
+            (is (nil? (:unchanged-since r)))
+            (is (seq (:namespaces r))))))
+      (finally (api/close! sess)))))
