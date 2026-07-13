@@ -19,10 +19,19 @@ if ! command -v java >/dev/null 2>&1; then
   exit 1
 fi
 
+# --warm: ensure the jar is cached, run nothing (the SessionStart hook uses
+# this so the one-time download never races the MCP connection timeout).
+WARM=0
+if [ "${1:-}" = "--warm" ]; then
+  WARM=1
+  shift
+fi
+
 # Dev override: run a locally built jar (clojure -T:build uber) instead of
 # the pinned release — no fetch, no checksum. For testing kernel/jar changes
 # exactly as the plugin would run them.
 if [ -n "${SLOPP_JAR:-}" ]; then
+  [ "$WARM" = "1" ] && exit 0
   exec java -jar "$SLOPP_JAR" "$@"
 fi
 
@@ -46,5 +55,7 @@ if [ ! -f "$JAR" ]; then
   fi
   mv "$JAR.part" "$JAR"
 fi
+
+[ "$WARM" = "1" ] && exit 0
 
 exec java -jar "$JAR" "$@"

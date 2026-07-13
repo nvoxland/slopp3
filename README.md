@@ -26,7 +26,12 @@ checksum-verified on first launch), the workflow skills (`slopp`,
 `slopp-setup`), and a `slopp` CLI on the session PATH. It serves whatever
 project you're in. Offline/no-marketplace install: unpack a checkout of
 `plugins/slopp/` into `~/.claude/skills/slopp/` — it loads as a plugin from
-there.
+there (add `"slopp@skills-dir": true` under `enabledPlugins` in
+`~/.claude/settings.json` if the server doesn't come up).
+
+First launch downloads the ~27MB jar; a SessionStart hook pre-warms the
+cache, but if the very first session's MCP connection times out mid-download,
+reconnect with `/mcp` once the fetch finishes — every later start is instant.
 
 **From the release jar** (needs Java 21+ and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/slopp\" --warm",
+            "async": true,
+            "timeout": 300,
+            "statusMessage": "Warming the slopp jar cache"
+          }
+        ]
+      }
+    ]
+  }
+}
