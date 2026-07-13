@@ -329,3 +329,48 @@ ABSORBING the new turn protocol (2+ extra required calls):
 | 2026-07-12 | e194fa4 | calculator | 2 | 11 | 334 | 726 | 786 |
 | 2026-07-12 | e194fa4 | inventory | 1 | 7 | 97 | 345 | 456 |
 | 2026-07-12 | e194fa4 | wordstats | 1 | 8 | 119 | 427 | 580 |
+
+## Symmetric eval, wave 5: the PLUGIN setup (3 apps × 3 models, @ 06a15e0)
+
+The first wave through the artifact users actually install: headless Claude
+Code instances in fresh dirs, slopp served by the plugin (release jar
+v0.1.2), skills discovered as plugin skills (`slopp:slopp`) instead of a
+pasted SKILL.md, native MCP instead of the curl bridge. Protocol + rows:
+projects/eval5-plugin/ (SPEC.md carries the verbatim wrapper).
+
+**9/9 orchestrator acceptance PASS — the first zero-failure, zero-flail
+wave.** All renames via edit_rename (no manual call-site edits, all models);
+sonnet batched both TDD phases as edit_groups; no restarts, no invented
+tools, no schema retries; the only self-reported multi-step intent was
+opus renaming a test VAR after the real rename (correct: a naming echo is
+not a reference).
+
+Clean cross-wave signals (wall / slopp calls; true tokens are NOT
+comparable — full Claude Code sessions carry the user's whole tool surface,
+vs the old lean sub-agent harness; model ids also drifted):
+
+| model | app | waves 2–4 (bridge) | wave 5 (plugin) |
+|---|---|---|---|
+| haiku  | calculator | 241s / 29 | 172s / 36 |
+| haiku  | inventory  | 56s / 10  | 179s / 13 |
+| haiku  | wordstats  | 381s / 62 | 318s / delegated to 8 sub-agents (PASS) |
+| sonnet | calculator | 175s / 24 | 163s / 16 |
+| sonnet | inventory  | 145s / 20 | **66s / 10** |
+| sonnet | wordstats  | 179s / 26 | **124s / 21** |
+| opus   | calculator | 264s / 25 | **164s / 12** |
+| opus   | inventory  | 97s / 16  | 127s / 14 |
+| opus   | wordstats  | 128s / 17 | **91s / 14** |
+
+- Wall fell in 7 of 9 cells; tool calls fell in 7 of 9 (opus calculator
+  halved, 25→12). The strong models' workflows converged on the design:
+  orient → group writes → rename → milestone, linear.
+- haiku-inventory regressed vs its all-time-best wave-2 run (56s/10 was the
+  single cleanest run ever recorded; n=1 variance) and haiku-wordstats
+  spontaneously fanned out sub-agents — emergent full-harness behavior the
+  bridge never allowed; acceptance still passed.
+- Payload asymmetry persists by design (in < out): e.g. sonnet inventory
+  471 in / 874 out — form-writes stay cheap, verification pays the freight.
+- Infrastructure result: zero MCP connect failures across 9 fresh sessions
+  (the cold-start single-flight + warm-hook work); skills discovered via
+  the plugin; the `slopp` CLI on PATH went unused by agents (MCP sufficed)
+  except as the orchestrator's acceptance probe.
