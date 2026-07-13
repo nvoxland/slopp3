@@ -12,32 +12,47 @@ tests that exercise the touched forms, and records your stated intent.
 Address code as `namespace` + `form name` — no files, paths, or line
 numbers.
 
-The plugin serves your project directory automatically: a fresh clone of a
-slopp-published repo imports itself (the `slopp` branch); an empty dir gets
-an empty store. Your TURN is opened/closed automatically by the plugin's
-hooks — if a write is ever refused for a missing turn, call
-`turn_begin {agent, intent}` yourself. Setup/sync/shipping: the
-`slopp-setup` skill. Full result-shape and oracle reference: `reference.md`
-next to this file.
+The system runs the mechanical series FOR you: a fresh clone of a
+slopp-published repo imports itself; turns and identity are automatic (the
+hooks handle them — never call `turn_begin` unless a write is refused);
+every write is formatted, linted, compile-gated, and test-verified before
+it lands; when your session pauses, a checkpoint pipeline tidies and
+re-verifies what you touched. Setup/sync/shipping: the `slopp-setup`
+skill. Full result-shape and oracle reference: `reference.md` next to this
+file.
 
-## The loop
+## The loop — and the budget
 
-1. **Orient in ~2 calls.** `query_project` → every namespace outlined.
-   `query_search {pattern}` to find things. Then read ONLY what you'll
-   edit, batched: `query_source {targets: [{ns, name}, {ns}, …]}` — one
-   call, several forms/namespaces. Never read namespaces one by one.
-2. **Write with intent.** Every write takes a one-line `prompt` (why) —
-   it's permanent provenance.
-3. **Trust the verification in the response.** Writes return the test
-   result for exactly the affected tests — you do NOT need `test_run`
-   after an edit. Red responses carry `:failures` inline; diagnose from
-   them. `:untested true` means add a test.
+A whole task should be ~10–20 tool calls: orient (1) → read (1) → write
+(a few groups) → ONE milestone. Each extra call re-reads your entire
+context; the patterns below are where sessions measurably bleed tokens.
+
+1. **Orient ONCE.** `query_project` → every namespace outlined. Never
+   call it again — outlines only change when YOU change them; if you must
+   re-check, pass `since: <your last delta id>` and an unchanged store
+   answers in one line. `query_search {pattern}` to find things.
+2. **Read ONCE, batched.** ONE `query_source {targets: [{ns, name}, {ns},
+   …]}` covering every form you plan to touch. About to change ONE form?
+   `query_brief {ns, name}` is the dossier — source + callers + covering
+   tests + why it's like this — in a single call. Never read namespaces
+   one by one; never re-read something you just wrote — the write result
+   already told you it landed (`:forms`) and whether it's green.
+3. **Write with intent; trust the verification.** Every write takes a
+   one-line `prompt`. The response carries the affected tests' result —
+   `test_run` after an edit is redundant. Red results carry `:failures`
+   inline plus `:implicated` (which of YOUR changes each failing test
+   exercises) — start debugging there. **Your work is already verified —
+   never re-run the suite externally, never clone/worktree the repo to
+   double-check yourself.** When the user asks how to verify, GIVE them
+   the commands (`slopp --call test_run`, `query_commits`) — don't
+   execute a dry run.
 4. **Batch multi-form intent.** Several forms for one reason = ONE
-   `edit_group` (mixing add/replace/delete/move). Sequencing single writes
-   burns a false red between them. Red-first TDD: stub + test in one
-   group (honest red), real implementation next (green) — two writes.
-5. **Close units of work.** `checkpoint {label}` when a piece is done;
-   `commit_point {description}` at milestones (green-gated).
+   `edit_group` (mixing add/replace/delete/move). Red-first TDD: stub +
+   test in one group (honest red), real implementation next (green) —
+   two writes total.
+5. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
+   (green-gated) unless the user asks for more. Session pauses checkpoint
+   automatically.
 
 ## Choosing the write tool
 
@@ -65,16 +80,17 @@ recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 
 Run code instead of reading callers: `query_eval "(my.ns/f X)"` (read-only
 REPL, image pre-loaded) · `query_observe` (capture args/returns at runtime)
-· `query_references` / `query_deps` (who calls / what it reaches) ·
-`query_macroexpand`. History IS queryable: `query_history {collapse: true}`,
-`query_changes`, `query_form_at` (time-travel) — see reference.md.
+· `query_brief` / `query_references` / `query_deps` (dossier / who calls /
+what it reaches) · `query_macroexpand`. History IS queryable:
+`query_history {collapse: true}`, `query_changes`, `query_form_at`
+(time-travel) — see reference.md.
 
 ## Tool index
 
 turn_begin turn_end · query_project query_search query_namespaces
-query_outline query_source query_symbol query_references query_deps
-query_lineage query_history query_form_history query_form_at query_status_at
-query_search_history query_changes query_eval query_observe
+query_outline query_source query_symbol query_brief query_references
+query_deps query_lineage query_history query_form_history query_form_at
+query_status_at query_search_history query_changes query_eval query_observe
 query_macroexpand query_branches query_commits query_git · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia edit_group

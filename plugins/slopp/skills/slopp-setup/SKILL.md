@@ -66,12 +66,13 @@ slopp owns exactly ONE branch — store config `git-branch`, default `"slopp"`.
 
 `slopp --call <tool> [args]` runs ONE tool call against the store in the
 current directory and prints the result — args as JSON, EDN, or `@file`.
-Turn state lives in the store, so `turn_begin` in one invocation covers the
-next. Useful shapes:
+Set `SLOPP_AGENT=<name>` to give a script one identity across invocations
+(turn state lives in the store, so a `turn_begin` then covers later
+calls; without it each invocation is its own session). Useful shapes:
 
 ```sh
 slopp --call query_project
-slopp --call commit_point '{"agent":"ci","description":"release 1.2"}'
+SLOPP_AGENT=ci slopp --call commit_point '{"description":"release 1.2"}'
 slopp --main slopp.sync/-main test .    # isolated suite from a store build
 ```
 

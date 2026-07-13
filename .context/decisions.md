@@ -944,3 +944,19 @@ dir (installs are cache-copied and must be self-contained); `.agents/skills/*`
 symlinks expose the cross-agent Agent Skills standard location. Parked:
 Codex plugin / Gemini extension wrappers around the same jar + skills,
 Clojars publication (would enable a package-manager launch path).
+
+## G12 — the automation principle (user decision, 2026-07-13)
+
+**Anything the system can *just do* from a high-level agent signal, it
+should — but only at natural workflow boundaries, never fighting the
+agent.** The pattern every automation must follow: fire on a signal the
+agent already emits (serving a dir → auto-import; the first write of a
+prompt → auto-turn with the verbatim ask; session pause → auto-checkpoint
+pipeline: normalize, declare hygiene, re-verify, boundary), keep a manual
+fallback that still works (import CLI, turn_begin, checkpoint), return to
+the agent only what it must care about (terse greens, :implicated reds,
+:forms confirmations, state-not-error responses). Corollaries: never
+surprise mid-flight (normalize only at boundaries), never block on the
+automation failing (auto-import/hook failures degrade to the manual path),
+and prefer richer RESULTS over more instructions — results that carry the
+reasoning close the trust gap that skill exhortations can't.
