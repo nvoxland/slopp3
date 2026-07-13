@@ -198,10 +198,11 @@
                         {:ns "ep.core" :name "f" :agent "alice"
                          :source "(defn f [x] (* x 3))"})]
             (is (re-find #"turn_begin" r))))
-        (testing "a write with no agent label is refused too"
-          (is (re-find #"agent" (call "edit_add_form"
-                                      {:ns "ep.core"
-                                       :source "(defn zz [x] x)"}))))
+        (testing "a write with no agent label still gates on the TURN (identity
+                  is the session's now — labels are never demanded)"
+          (is (re-find #"no open turn" (call "edit_add_form"
+                                             {:ns "ep.core"
+                                              :source "(defn zz [x] x)"}))))
         (testing "after turn_begin the same write lands"
           (call "turn_begin" {:agent "alice" :intent "triple f"})
           (let [r (call "edit_replace_form"
