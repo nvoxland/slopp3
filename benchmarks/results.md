@@ -458,3 +458,28 @@ projects/eval7-seeded/RUNS.md):
 - Wire-cost meter: tok-out 786→741 / 456→410 / 580→512 (hint dedup).
 - 6/6 acceptance PASS across both rerun rounds; suite 248/1293 green;
   store milestones d1930 + d1941.
+| 2026-07-13 | 2942ba2 | calculator | 2 | 11 | 360 | 726 | 761 |
+| 2026-07-13 | 2942ba2 | inventory | 1 | 7 | 109 | 345 | 416 |
+| 2026-07-13 | 2942ba2 | wordstats | 1 | 8 | 134 | 427 | 526 |
+
+## Cost-cut round 2: identity off the wire + stateful results (@ 2942ba2 → this commit)
+
+Transcript mining answered "what drives the premium": an :agent-label
+error cascade, external verification theater, and re-orientation. Shipped:
+SESSION identity keyed by a unique id (SLOPP_AGENT → harness session_id
+delivered by the prompt hook → generated; the constant-label design would
+have MERGED concurrent sessions' episodes — latent P4 bug, now tested),
+agent removed from every tool schema, already-renamed/repeat-milestone
+return state instead of errors, query_project :since, :forms in write
+results, and skill budgets (orient once, read once batched, never
+re-verify externally, one milestone).
+
+Eval-7 round 4 (plain frozen): 3/3 PASS, all three models CHOSE slopp.
+On the committed controllable-layer metric (tool inputs+results):
+**opus 7,520 vs plain 9,394 — slopp WINS by 20%**, at 16 vs 17 API calls
+and cheaper tool-inputs (form writes vs file rewrites). sonnet 1.29×,
+haiku 1.10× (behavioral variance; both green). Total-session premium:
+opus +10% tok / +6% cost. The ≤½ target's remaining mass is identified:
+query_project's full outline, ToolSearch pulls. Wire meter: +15-20
+tok-out/write from :forms (the trade that kills confirm-reads).
+Full rows + a transcript-accounting correction: projects/eval7-seeded/RUNS.md.
