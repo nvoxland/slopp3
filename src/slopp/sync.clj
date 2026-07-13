@@ -86,6 +86,17 @@
             (assoc r :remote (str target)))))
       (finally (git/close-ctx! ctx)))))
 
+^:reads
+(defn- empty-store?
+  "True when `dir`'s existing store.db holds NOTHING — no namespaces, no
+  deltas, no files. The MCP server auto-creates exactly this when it serves
+  a fresh dir; clone/import must treat it as fresh, not refuse it."
+  [dir]
+  (with-open [conn (db/open! dir)]
+    (let [st (db/load-store conn)]
+      (and (empty? (:namespaces st))
+           (empty? (:deltas st))
+           (empty? (:files st))))))
 (defn clone!
   "Clone git remote `url` into `dir` as a fileless slopp store: fetch the
   slopp-owned branch (`:branch`, else \"slopp\", else the legacy \"main\"),
@@ -97,7 +108,8 @@
   remote tree (no phantom wip).
   Returns {:dir :namespaces n :base sha :branch b} | {:error msg}."
   [url dir & {:keys [token agent branch]}]
-  (if (.exists (io/file dir ".slopp" "store.db"))
+  (if (and (.exists (io/file dir ".slopp" "store.db"))
+       (not (empty-store? dir)))
     {:error (str dir " already has a store — clone into a fresh dir")}
     (let [repo (git/open-repo! nil)]
       (try
@@ -152,6 +164,8 @@
                                    " — partial store left at " dir
                                    "; delete it to retry")})
                     (finally (api/close! sess))))))))
+        (catch Exception e
+          {:error (str "clone failed: " (ex-message e))})
         (finally (.close repo))))))
 
 (defn form-entries

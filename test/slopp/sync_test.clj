@@ -240,11 +240,17 @@
         (finally
           (rm-rf (.getParentFile (io/file bare)))
           (rm-rf (.getParentFile (io/file dir)))))))
-  (testing "an existing store refuses to be clobbered"
-    (let [dir (temp-dir)]
+  (testing "an unreachable remote is an honest error, not a stack trace"
+    (let [dir (str (temp-dir) "/x")]
       (try
-        (io/make-parents (io/file dir ".slopp" "store.db"))
-        (spit (io/file dir ".slopp" "store.db") "")
+        (is (:error (sync/clone! "/nowhere/does-not-exist.git" dir)))
+        (finally (rm-rf (.getParentFile (io/file dir)))))))
+  (testing "an existing NON-EMPTY store refuses to be clobbered"
+    (let [dir  (temp-dir)
+          sess (api/open! {:dir dir})]
+      (try
+        (api/ingest! sess 'cg.core "(ns cg.core)\n(defn f [] 1)\n")
+        (api/close! sess)
         (is (:error (sync/clone! "ignored" dir)))
         (finally (rm-rf dir)))))
   (testing "push with no url and no saved remote is an honest error"
@@ -392,6 +398,32 @@
                     (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp"))))
                     (finally (.close local)))))
               (finally (api/close! sw)))))
+        (rm-rf work))
+      (finally
+        (api/close! sess)
+        (rm-rf seed-d)
+        (rm-rf (.getParentFile (io/file origin)))))))
+(deftest ^:isolated import-tolerates-the-servers-empty-store
+  ;; the plugin's MCP server auto-creates an EMPTY store when it serves a
+  ;; fresh clone; import must treat that as a fresh dir, not refuse it
+  (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
+        seed-d (temp-dir)
+        sess   (api/open! {:dir seed-d})]
+    (try
+      (api/ingest! sess 'im2.core "(ns im2.core)\n(defn f [] 41)\n")
+      (api/commit-point! sess "v1" :agent "a")
+      (is (nil? (:error (sync/push! seed-d :url origin))))
+      (human-commit! origin "main" "README.md" "# my project\n")
+      (let [work (str (temp-dir) "/work")]
+        (-> (org.eclipse.jgit.api.Git/cloneRepository)
+            (.setURI (str (io/file origin))) (.setDirectory (io/file work))
+            (.setBranch "main") (.call) (.close))
+        ;; the server's footprint: an empty store.db already in place
+        (.close (db/open! work))
+        (is (.exists (io/file work ".slopp" "store.db")))
+        (let [r (sync/import! work)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 1 (:namespaces r))))
         (rm-rf work))
       (finally
         (api/close! sess)
