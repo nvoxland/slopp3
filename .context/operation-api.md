@@ -265,6 +265,11 @@ Two transports share the SAME dispatch (`mcp/handle`):
   the old name the structural rename can't rewrite — and `edit_group`
   steps now include `:subform` (+`:text`) and `:require`, so the
   follow-up fixes are one atomic call.
+- **Rock 4 reads:** `query-flow` (boundary-guarded keyword scan — every
+  form a field touches, with lines) and `query-impact` (kondo var-usages:
+  `:arity` present = call site, absent = value/higher-order ref; plus
+  trace-map coverage). Impact is change_signature's discovery as a read —
+  plan the edit before paying for it.
 - **Errors teach (Q5/Q9):** refusals name the next action in tool
   vocabulary — the cold-load gate is the bar. Shared pieces:
   `edit/missing-form-error` (near-miss names or the outline pointer, used

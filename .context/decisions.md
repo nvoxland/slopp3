@@ -1055,3 +1055,10 @@ threshold change is now ONE call (eval8 step 3's measured overhead).
 Full edit_plan (interleaved reads, :when-green barriers) stays deferred
 until demand observation shows sequences groups can't express. Suite
 266/1359 green.
+
+Rock 4 (✅ 2026-07-13): query_flow + query_impact shipped. Flow is a
+boundary-guarded textual keyword scan (kondo keyword analysis deferred
+until false hits show up in demand); impact reuses kondo var-usages —
+:arity marks a call site, its absence marks a value/higher-order ref
+that no template rewrite reaches — plus trace-map coverage. Suite
+267/1363 green.

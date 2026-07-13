@@ -81,14 +81,17 @@ recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 Run code instead of reading callers: `query_eval "(my.ns/f X)"` (read-only
 REPL, image pre-loaded) · `query_observe` (capture args/returns at runtime)
 · `query_brief` / `query_references` / `query_deps` (dossier / who calls /
-what it reaches) · `query_macroexpand`. History IS queryable:
+what it reaches) · `query_flow {name ":kw"}` (every form a FIELD touches —
+trace a data thread without reading layers) · `query_impact {ns name}`
+(call sites + higher-order refs + affected tests BEFORE you reshape a fn)
+· `query_macroexpand`. History IS queryable:
 `query_history {collapse: true}`, `query_changes`, `query_form_at`
 (time-travel) — see reference.md.
 
 ## Tool index
 
 turn_begin turn_end · query_project query_search query_namespaces
-query_outline query_source query_symbol query_brief query_references
+query_outline query_source query_symbol query_brief query_flow query_impact query_references
 query_deps query_lineage query_history query_form_history query_form_at
 query_status_at query_search_history query_changes query_eval query_observe
 query_macroexpand query_branches query_commits query_git · ns_create
