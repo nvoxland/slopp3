@@ -1,119 +1,125 @@
 # slopp
 
-An **agent-native codebase**: code lives in a store (SQLite-backed delta log),
-not files; the top-level form is the unit of editing, storage, hot-reload,
-verification, and provenance; a live JVM image runs the code continuously and
-verifies every write the moment it lands. Agents address code as
-`namespace/form` — no files, paths, or line numbers.
+An **agent-native codebase system**: the unit of editing, storage, hot-reload,
+verification, and history is the **top-level form** — not the file. Code lives
+in a SQLite-backed delta journal (`.slopp/store.db`); a working directory
+using slopp holds **no source files at all**. Agents (and people) edit through
+a tool surface where every write is compile-gated, test-verified, and
+provenance-tracked before it lands.
 
-- Design + decisions: `.context/` (start with `architecture.md`, `decisions.md`)
-- Agent workflow guide: `skills/slopp/SKILL.md`
-- Benchmarks & baselines: `benchmarks/results.md`
+**This repository is a projection.** Every commit here was generated and
+pushed by slopp itself from its own store — slopp is written *in* slopp. The
+files are real and browsable, CI runs them, and edits made here (PRs, direct
+commits) flow back into stores via `git_pull`'s form-granular 3-way merge.
 
-## Requirements
+## Quick start
 
-Clojure CLI + Java 21+. (`SLOPP_CLOJURE` env var overrides the `clojure`
-launcher path if it's somewhere unusual.)
+**From the release jar** (needs Java 21+ and the [Clojure CLI](https://clojure.org/guides/install_clojure)):
 
-## Connect from Claude Code
+```sh
+# the onboarding flow: clone normally (main = this branch, yours), then
+# IMPORT the slopp branch into a store — the working dir stays your checkout
+git clone https://github.com/nvoxland/slopp3.git proj && cd proj
+java -jar slopp.jar --main slopp.sync/-main import .
+java -jar slopp.jar          # serve the store over MCP stdio
 
-Project-scope config ships in this repo (`.mcp.json`); Claude Code picks it
-up automatically and the tools appear as `mcp__slopp__*`. For another
-project, register manually:
-
-```bash
-claude mcp add slopp -- clojure -M -m slopp.mcp /path/to/project-store
+# slopp then syncs against refs/heads/slopp of THIS repo (git-remote ".");
+# you push/pull origin — both branches — with regular git
 ```
 
-The optional last argument is the store directory (durable session at
-`<dir>/.slopp/store.db`); omit for an ephemeral session.
+The jar's entry point is itself slopp-tracked config — `META-INF/MANIFEST.MF`
+on the store's files manifest names the launcher and the fn it delegates to.
 
-## Connect from Codex
-
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.slopp]
-command = "clojure"
-args = ["-M", "-m", "slopp.mcp", "/path/to/project-store"]
-```
-
-Repo-level agent instructions live in `AGENTS.md` (Codex reads it
-automatically); point the agent at `skills/slopp/SKILL.md` before its first
-tool call.
-
-## CLI / scripting (HTTP transport)
-
-The same tool dispatch over localhost HTTP — for shell scripts, debugging,
-and harness evals:
-
-```bash
-clojure -M -m slopp.http 7357 /path/to/project-store &
-curl -s -X POST localhost:7357/call \
-  -d '{"name":"query_namespaces","arguments":{}}'
-curl -s localhost:7357/metrics    # per-call payload sizes
-```
-
-## Multi-agent: a server per agent, ONE shared store (recommended)
-
-Every Claude Code / Codex instance spawns its OWN slopp server against the
-same project dir — zero shared infrastructure, and it's just the normal
-`.mcp.json`:
+**As an MCP server** for Claude Code or any MCP client (`.mcp.json`):
 
 ```json
-{"mcpServers": {"slopp": {"command": "clojure",
-                          "args": ["-M", "-m", "slopp.mcp", "/abs/path/to/project"]}}}
+{"mcpServers": {"slopp": {"command": "java", "args": ["-jar", "slopp.jar", ".", "--live"]}}}
 ```
 
-The SQLite journal is the record: commits are conditional appends (losers
-rebase; same-form races surface `{:conflict ...}`), and every server absorbs
-the others' work before each tool call — cache, live image, and all. Each
-agent gets a PRIVATE checkout: branch_create / branch_switch are per-server
-state, so one agent lives on `feature` while another keeps `main` green,
-sharing branch storage under `.slopp/branches/`.
+`--live` hot-reloads the *running server's own namespaces* as its store
+changes; `--snapshot` freezes at startup. From a checkout of this repo,
+`clojure -M -m slopp.boot . --live` does the same.
 
-### Automatic turn provenance (recommended hooks)
+## The model
 
-Real servers refuse writes without an open turn (the journal must know the
-user's ask). Wire it so the model never has to relay its own instructions —
-per agent workspace, `.claude/settings.json`:
+- **The store is the source.** Namespaces are ordered forms in a delta
+  journal; a VFS renders `.clj` text on demand. `build` materializes files
+  only when tooling needs them.
+- **Every write is gated.** Dialect check (no `eval`/`read-string`/user
+  macros), compile into a live subprocess image, a **cold-load check** (a
+  form may not reference a later-defined one — hot-loading can't see that,
+  a fresh boot dies on it), **error-level lint refusal**, then the affected
+  tests run automatically (a trace map knows which tests exercise which
+  forms). A failed gate commits nothing.
+- **Every write is provenance.** Deltas carry the agent, the prompt, and the
+  enclosing *turn* (the user's verbatim ask). `query_form_history` replays
+  any form's life; `query_form_at` time-travels; `file_history`/`file_get`
+  do the same for tracked non-code files (the CI workflow rides the files
+  manifest; the jar manifest is structured config).
+- **Milestones are git commits.** `commit_point` (green-gated) snapshots a
+  byte-exact tree onto the marker; the git projection deterministically
+  mints these as the commits you see here, authored per the store's
+  `user.name`/`user.email` config (`"<git>"` defers to your git config).
 
-```json
-{"hooks": {
-  "UserPromptSubmit": [{"hooks": [{"type": "command",
-    "command": "cd /abs/slopp-repo && clojure -M -m slopp.turn /abs/project hook-begin alice"}]}],
-  "Stop": [{"hooks": [{"type": "command",
-    "command": "cd /abs/slopp-repo && clojure -M -m slopp.turn /abs/project hook-end alice"}]}]}}
-```
+## Working with git (this repo)
 
-The hook reads Claude Code's JSON from stdin and appends the turn marker
-(with the VERBATIM prompt) straight to the journal; the agent's server
-absorbs it before its next tool call.
+- `git_push` — publish the milestone history to a normal remote
+  (fast-forward only, never force).
+- `git_clone` — rebuild a **fileless** store from a remote; the clone grafts
+  onto the remote's history so its pushes fast-forward.
+- `git_pull` — absorb remote changes by a 3-way merge **at form
+  granularity**: the remote wins where your store is clean; anything both
+  sides touched becomes a conflict (your version stays live, the remote file
+  is quarantined, push blocks until you resolve with the edit tools and
+  `git_resolve`). Exactly git's model, one file coarser.
 
-## Multi-agent: many clients, ONE server (alternative)
+Two stores collaborating through this repo — including edits made directly
+on GitHub — is the tested workflow.
 
-The HTTP server also speaks native MCP at `/mcp` (streamable HTTP). Point
-any number of Claude Code / Codex instances at the SAME server and they
-share one store and one live image — concurrent edits to different forms
-all land (no locks); a same-form race surfaces `{:conflict ...}` to the
-loser ("re-read and retry"):
+## Tests
 
-```bash
-clojure -M -m slopp.http 7357 /path/to/project-store &
-```
+Two tiers, by tag on the test name: plain/`^:integration` tests run
+**in-image** on every affected write; `^:isolated` tests (they spawn their
+own JVMs) run only via `test_run {:isolated true}`, which materializes the
+store into a temp dir and runs `clojure -M:test` there. CI runs both faces:
 
-```json
-// each agent's .mcp.json
-{"mcpServers": {"slopp": {"type": "http", "url": "http://localhost:7357/mcp"}}}
-```
+- **test-files** — the suite straight from this repo's files.
+- **test-via-slopp** — the pushed code imports *itself* into a fresh store
+  (every namespace through every gate) and runs the store-built suite.
+- **native-proof** — a sample app built through slopp, compiled to a GraalVM
+  native binary, executed. (slopp itself ships as an uberjar, not a native
+  binary — the store loader compiles code at runtime by design.)
+- **release** — manual dispatch with a version input: build the uberjar
+  from the slopp branch, smoke it bare, tag it, attach it to a Release.
 
-Give each agent an identity by passing `agent` on write calls (e.g.
-`{"agent": "alice"}`) — every delta records who did what, and
-`query_history` shows it.
+The workflows live on `main` (human-owned — external-system config never
+enters the store) and check out the `slopp` branch; since GitHub only runs
+push-triggered workflows from the pushed ref, they run on a daily schedule
+and on demand rather than per push.
 
-## Development
 
-```bash
-clojure -M:test        # full suite (spawns real child JVM images; minutes)
-clojure -M -m slopp.benchmark   # sample-app benchmark (see .context/dogfooding.md)
-```
+## Mixed ownership: slopp owns ONE branch
+
+slopp pushes and pulls exactly one branch — the store config `git-branch`,
+**default `slopp`** — and never touches anything else. `main` (this branch)
+is *human-owned*: this README, docs, and anything you manage with regular
+git live here; merge `slopp` into `main` (or cherry-pick) whenever you want
+the code side updated, and merge `main` edits back for slopp to absorb via
+`git_pull`'s form-granular 3-way.
+
+The local variant: set `config git-remote "."` and slopp pushes into your
+checkout's own `.git` as the `slopp` branch — you do all origin interaction
+with regular git. Pushing onto a branch your working tree has checked out is
+refused (the ref would move under you).
+
+Execution config (like the jar's `META-INF/MANIFEST.MF`) isn't a tracked
+text file either: the store holds semantic key/values per config path
+(`config_file` — per-key history, like forms) and the projection serializes
+them into the right format on every push.
+
+## Status
+
+Experimental and self-hosted — slopp has been developed through slopp since
+the store flip, and this repo is its published face. Design decisions and
+their reasoning live in `.context/decisions.md` in the development repo;
+the tool cheat-sheet is one `help` call away on any running server.
