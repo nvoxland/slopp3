@@ -547,11 +547,22 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                              "why)")
                         {}))
         (not (api/turn-open? session agent))
-        (throw (ex-info (str "no open turn for \"" agent "\" — call "
-                             "turn_begin {agent, intent: <the user's verbatim "
-                             "ask>} first; sub-agents ride their root agent's "
-                             "turn")
-                        {})))))
+        ;; the plugin's prompt hook drops the user's VERBATIM ask in
+        ;; .slopp/pending-intent — open the turn from it (zero-ceremony
+        ;; turns); no file → the manual turn_begin guidance stands
+        (let [f      (when-let [dir (:dir @session)]
+                       (io/file dir ".slopp" "pending-intent"))
+              intent (when (and f (.exists f))
+                       (let [s (slurp f)]
+                         (.delete f)
+                         (when-not (str/blank? s) s)))]
+          (if intent
+            (api/turn-begin! session :agent agent :intent intent)
+            (throw (ex-info (str "no open turn for \"" agent "\" — call "
+                                 "turn_begin {agent, intent: <the user's verbatim "
+                                 "ask>} first; sub-agents ride their root agent's "
+                                 "turn")
+                            {})))))))
   (let [a   arguments
         sym (fn [k]
               (if-let [v (get a k)]

@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io]))
 
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
@@ -166,3 +166,29 @@
                                           :source "(ns demo)\n(defn f [x] x)\n"
                                           :agent "probe"})]
         (is (not (:isError r)) (get-in r [:content 0 :text]))))))
+(deftest ^:isolated pending-intent-opens-the-turn
+  ;; the plugin's UserPromptSubmit hook drops the user's verbatim prompt in
+  ;; .slopp/pending-intent; the turn gate opens the turn from it instead of
+  ;; refusing the first write
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-turnhook"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      (swap! sess assoc :require-turns? true)
+      (spit (io/file dir ".slopp" "pending-intent") "add a widget feature")
+      (let [r (edn/read-string
+               (call sess "ns_create" {:ns "pi.core"
+                                       :source "(ns pi.core)\n(defn f [] 1)\n"
+                                       :agent "claude"}))]
+        (is (nil? (:error r)) (pr-str r)))
+      (is (false? (.exists (io/file dir ".slopp" "pending-intent"))))
+      (testing "the turn carries the verbatim prompt"
+        (is (seq (api/query-search-history sess "add a widget feature"))))
+      (testing "with no pending intent and no turn, the gate still refuses"
+        (call sess "turn_end" {:agent "claude"})
+        (let [r (call sess "edit_add_form" {:ns "pi.core"
+                                            :source "(defn g [] 2)"
+                                            :agent "claude"})]
+          (is (re-find #"no open turn" r))))
+      (finally (api/close! sess)))))
