@@ -492,3 +492,30 @@ run (opus): PASS via slopp, controllable layer 8,375 vs plain 9,394 —
 below plain again, but single-run variance (±2k of Bash/test_run whims)
 now exceeds the mechanical cuts; the half-target needs batched runs to
 measure honestly. Suite 254/1315 green.
+
+## eval8 — the lifetime eval (2026-07-13, opus, n=1/cohort, post-d2198 system)
+
+One seeded repo, FIVE sequential neutral requests, fresh session each, same
+dir per cohort (protocol: projects/eval8-lifetime/SPEC.md). Acceptance
+15/15 PASS both cohorts — parity on behavior; the measure is the curve.
+
+Controllable layer (tool in+out, chars/4), per step, plugin vs plain:
+
+| step | plugin | plain | ratio |
+|---|---|---|---|
+| 1 rush (fresh orient) | 7,157 | 7,941 | 0.90× |
+| 2 provenance + economy | 7,473 | 12,517 | 0.60× |
+| 3 mechanical rename | 6,164 | 4,127 | 1.49× |
+| 4 cancellation (deep context) | 5,300 | 20,187 | 0.26× |
+| 5 lifetime summary | 9,035 | 9,377 | 0.96× |
+| lifetime total | 35,129 | 54,149 | **0.65×** |
+
+Cohort totals: plugin $3.87 / 689s, plain $4.06 / 843s — cheaper and 18%
+faster at equal acceptance. The compounding shows exactly where the thesis
+claims: history-dependent steps run 0.26–0.60×; step-1 parity and the
+rename loss (files' sed terrain) keep it honest. Provenance quality is
+categorical, not marginal: plugin answered "why" from recorded intents
+both times; plain read a prior session's transcript once (undesigned,
+fragile) and declared the why unrecoverable at step 5 — it also never
+committed anything across five sessions. Full analysis + findings:
+projects/eval8-lifetime/RUNS.md.

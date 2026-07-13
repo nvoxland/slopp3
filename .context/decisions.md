@@ -1030,3 +1030,16 @@ handler maps (hot clauses stay in the case); Q5 fragment refusal in
 `find-unique-subform`; Q7 `edit/isolation-refusal` on every replace/add
 path; Q6 `benchmarks/mine_transcripts.py` + `slopp --doctor`. Suite
 263/1351 green.
+
+Q10 (open) **Milestone publish gap** (eval8 P5): five plugin sessions
+produced four milestones that never reached the repo's slopp branch —
+nothing at commit_point prompts a git_push or syncs the LOCAL slopp
+branch, so a files-path teammate gets the seed. The eval agent caught it
+by luck of a thorough P5. Fix direction: commit_point on a git-cloned
+store offers/performs the local slopp-branch sync (G12: just do the
+series), or at minimum the result names the unpublished delta.
+
+Q11 (open) **Bulk rename UX** (eval8 step 3): the one slopp loss (1.49×
+controllable vs files) — a global rename is one sed sweep for files but
+edit_rename-per-form for us. A pattern/set-accepting rename (or
+edit_plan step) closes it.

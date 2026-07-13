@@ -152,3 +152,7 @@ For eval prompts that drive slopp over the HTTP bridge:
   20 Bash invocations).
 - State that slopp tools are NOT in the client's local tool registry —
   curl is the only path (sonnet burned a ToolSearch discovering this).
+
+Sequential same-dir sessions (lifetime evals): decompose per transcript
+FILE (one file per `claude -p` session, mtime-ordered), not per time
+window — windowed sweeps double-count boundary files (found in eval8).
