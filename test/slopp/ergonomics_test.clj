@@ -117,3 +117,25 @@
         (is (= [3] (api/query-eval sess "(g.core/f 3)")))
         (is (= [1] (api/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
       (finally (api/close! sess)))))
+(deftest spawning-tests-must-be-isolated
+  (let [store (store/ingest (store/empty-store) 'iso.demo-test
+                            (str "(ns iso.demo-test (:require [clojure.test :refer [deftest is]] [slopp.api :as api]))\n"
+                                 "(defn setup [] 1)\n"))]
+    (testing "an untagged deftest calling api/open! is refused, fix named (Q7)"
+      (let [r (edit/replace-form store 'iso.demo-test 'setup
+                                 "(deftest t (is (some? (api/open!))))")]
+        (is (:error r) (pr-str r))
+        (is (re-find #"\^:isolated" (str (:error r))) (pr-str r))))
+    (testing "the ^:isolated tag admits it"
+      (let [r (edit/replace-form store 'iso.demo-test 'setup
+                                 "(deftest ^:isolated t (is (some? (api/open!))))")]
+        (is (nil? (:error r)) (pr-str r))))))
+(deftest missing-form-errors-teach
+  (let [store (store/ingest (store/empty-store) 'mf.core
+                            "(ns mf.core)\n(defn compute-total [x] x)\n(defn compute-tax [x] x)\n")]
+    (testing "a near-miss names the candidates (Q9)"
+      (is (re-find #"compute-total"
+                   (:error (edit/missing-form-error store 'mf.core 'compute)))))
+    (testing "a cold miss points at the outline"
+      (is (re-find #"query_outline"
+                   (:error (edit/missing-form-error store 'mf.core 'zzz)))))))

@@ -13,42 +13,9 @@
 
 (def ^:private protocol-version "2024-11-05")
 
-(def tools
-  [{:name "ns_create"
-    :description "Create a BRAND-NEW namespace (never overwrites). Either `requires` (clause strings) scaffolds an empty ns to grow with red-first TDD, or `source` lands whole namespace text in one verified call (ported/reference code). Mutually exclusive."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"}
-                               :requires {:type "array" :items {:type "string"}}
-                               :source {:type "string"}}
-                  :required ["ns"]}}
-   {:name "ns_add_require"
-    :description "Add one require clause (e.g. \"[clojure.string :as str]\") to the ns form."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :require {:type "string"}
-                               :prompt {:type "string"}
-                               :verbose {:type "boolean"}}
-                  :required ["ns" "require"]}}
-   {:name "ns_remove_require"
-    :description "Remove a library's require spec from the ns form."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :lib {:type "string"}
-                               :prompt {:type "string"}
-                               :verbose {:type "boolean"}}
-                  :required ["ns" "lib"]}}
-   {:name "edit_move"
-    :description "Move a form to just before another (definitions precede callers)."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}
-                               :before {:type "string"} :prompt {:type "string"}}
-                  :required ["ns" "name" "before"]}}
-   {:name "edit_trivia"
-    :description "Replace the comment/blank-line run before form `before` (omit = namespace tail) with `text`. Trivia only; forms untouched."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :before {:type "string"}
-                               :text {:type "string"}
-                               :prompt {:type "string"}}
-                  :required ["ns" "text"]}}
-   {:name "query_project"
+(def orientation-tools
+  "Read/orient tool descriptors: project, search, source, dossiers, the oracle. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "query_project"
     :description "THE orientation call: every namespace's outline (names, arities, !-status, test-ness) in one response. Call ONCE; detail=true adds doc lines; pass since=<your last delta id> on a re-check — unchanged structure returns a one-liner."
     :inputSchema {:type "object" :properties {:since {:type "string"}
                                               :detail {:type "boolean"}}}}
@@ -95,7 +62,31 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
-   {:name "query_lineage"
+   {:name "query_eval"
+    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops."
+    :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
+   {:name "query_observe"
+    :description "Capture args/returns of ns/name while running driver `code` — what actually flows through it."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :code {:type "string"}
+                               :limit {:type "integer"}}
+                  :required ["ns" "name" "code"]}}
+   {:name "query_macroexpand"
+    :description "Macroexpansion (expand-1 + full)."
+    :inputSchema {:type "object" :properties {:code {:type "string"}}
+                  :required ["code"]}}
+   {:name "query_branches"
+    :description "Branches with head deltas; marks the current one."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_deps"
+    :description "Transitive callee tree of ns/name (plan extractions / blast radius)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :required ["ns" "name"]}}])
+(def history-tools
+  "Provenance tool descriptors: history, time-travel, change queries. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "query_lineage"
     :description "A form's provenance chain (deltas: op + prompt)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
@@ -130,20 +121,47 @@
                   :properties {:contains {:type "string"}
                                :limit {:type "integer"}}
                   :required ["contains"]}}
-   {:name "query_eval"
-    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops."
-    :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
-   {:name "query_observe"
-    :description "Capture args/returns of ns/name while running driver `code` — what actually flows through it."
+   {:name "query_changes"
+    :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
+    :inputSchema {:type "object"
+                  :properties {:from {:type "string"} :to {:type "string"}
+                               :format {:type "string" :enum ["edn" "text"]}}}}])
+(def edit-tools
+  "Write tool descriptors: forms, groups, renames, refactors. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "ns_create"
+    :description "Create a BRAND-NEW namespace (never overwrites). Either `requires` (clause strings) scaffolds an empty ns to grow with red-first TDD, or `source` lands whole namespace text in one verified call (ported/reference code). Mutually exclusive."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :requires {:type "array" :items {:type "string"}}
+                               :source {:type "string"}}
+                  :required ["ns"]}}
+   {:name "ns_add_require"
+    :description "Add one require clause (e.g. \"[clojure.string :as str]\") to the ns form."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :require {:type "string"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "require"]}}
+   {:name "ns_remove_require"
+    :description "Remove a library's require spec from the ns form."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :lib {:type "string"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "lib"]}}
+   {:name "edit_move"
+    :description "Move a form to just before another (definitions precede callers)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :code {:type "string"}
-                               :limit {:type "integer"}}
-                  :required ["ns" "name" "code"]}}
-   {:name "query_macroexpand"
-    :description "Macroexpansion (expand-1 + full)."
-    :inputSchema {:type "object" :properties {:code {:type "string"}}
-                  :required ["code"]}}
+                               :before {:type "string"} :prompt {:type "string"}}
+                  :required ["ns" "name" "before"]}}
+   {:name "edit_trivia"
+    :description "Replace the comment/blank-line run before form `before` (omit = namespace tail) with `text`. Trivia only; forms untouched."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :before {:type "string"}
+                               :text {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns" "text"]}}
    {:name "edit_replace_form"
     :description "Replace a whole top-level form (verified write)."
     :inputSchema {:type "object"
@@ -218,7 +236,31 @@
                                :form {:type "string"} :name {:type "string"}
                                :prompt {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
-   {:name "turn_begin"
+   {:name "episode_revert"
+    :description "Roll back everything YOU changed since your last checkpoint (other sessions' forms skipped, reported)."
+    :inputSchema {:type "object"
+                  :properties {:prompt {:type "string"}}}}
+   {:name "fix_declares"
+    :description "Tidy (declare …): reorder defns above callers when safe, delete satisfied declares. Atomic, verified."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :prompt {:type "string"}}
+                  :required ["ns"]}}
+   {:name "ns_rename"
+    :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
+    :inputSchema {:type "object"
+                  :properties {:old {:type "string"} :new {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["old" "new"]}}
+   {:name "edit_extract_ns"
+    :description "Move forms into a BRAND-NEW namespace (callers rewritten to alias-qualified calls; one atomic group). The moved set may not call what stays; plan with query_deps."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :forms {:type "array" :items {:type "string"}}
+                               :to {:type "string"} :prompt {:type "string"}}
+                  :required ["ns" "forms" "to"]}}])
+(def flow-tools
+  "Session-flow tool descriptors: turns, tests, checkpoints, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "turn_begin"
     :description "Open a turn manually (records the verbatim user ask as intent). Turns are normally opened FOR you by the plugin's hooks — only needed if a write is refused."
     :inputSchema {:type "object"
                   :properties {:intent {:type "string"}
@@ -228,15 +270,6 @@
     :description "Close the turn (usually automatic)."
     :inputSchema {:type "object"
                   :properties {:note {:type "string"}}}}
-   {:name "query_changes"
-    :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
-    :inputSchema {:type "object"
-                  :properties {:from {:type "string"} :to {:type "string"}
-                               :format {:type "string" :enum ["edn" "text"]}}}}
-   {:name "episode_revert"
-    :description "Roll back everything YOU changed since your last checkpoint (other sessions' forms skipped, reported)."
-    :inputSchema {:type "object"
-                  :properties {:prompt {:type "string"}}}}
    {:name "checkpoint"
     :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary."
     :inputSchema {:type "object" :properties {:label {:type "string"}}}}
@@ -247,36 +280,28 @@
                                :force {:type "boolean"}
                                :target {:type "string"}}
                   :required ["description"]}}
-   {:name "query_commits"
-    :description "Milestones, newest first (targets plug into query_changes from/to)."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "query_git"
-    :description "This session's git view: the embedded read-only listener URL + the saved external remote."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "git_push"
-    :description "Push the milestone projection to a git remote (fast-forward only). url saved on first use; https auth via token or SLOPP_GIT_TOKEN."
+   {:name "test_run"
+    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes). Writes already verify — rarely needed after edits."
     :inputSchema {:type "object"
-                  :properties {:url {:type "string"}
-                               :token {:type "string"}
-                               :branch {:type "string"}}}}
-   {:name "git_clone"
-    :description "Clone a remote into dir as a FILELESS store (every ns ingested + verified; no .clj files materialized)."
-    :inputSchema {:type "object"
-                  :properties {:url {:type "string"}
-                               :dir {:type "string"}
-                               :token {:type "string"}}
-                  :required ["url" "dir"]}}
-   {:name "git_pull"
-    :description "Absorb remote changes: form-granular 3-way merge; both-sides-touched = conflicts (quarantined; push blocked until resolved)."
-    :inputSchema {:type "object"
-                  :properties {:token {:type "string"}}}}
-   {:name "git_conflicts"
-    :description "Unresolved pull conflicts, with the raw remote content to merge from."
+                  :properties {:ns {:type "string"}
+                               :only {:type "array" :items {:type "string"}}
+                               :fresh {:type "boolean"}
+                               :isolated {:type "boolean"}}}}
+   {:name "help"
+    :description "The workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
-   {:name "git_resolve"
-    :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
-    :inputSchema {:type "object" :properties {:path {:type "string"}}}}
-   {:name "config"
+   {:name "restart"
+    :description "Restart the live image; reload all forms."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "build"
+    :description "Materialize every namespace to .clj files under dir (absolute). Optional main (qualified entry fn) adds a GraalVM native-image recipe."
+    :inputSchema {:type "object"
+                  :properties {:dir {:type "string"} :main {:type "string"}
+                               :name {:type "string"}}
+                  :required ["dir"]}}])
+(def env-tools
+  "Environment tool descriptors: deps, files, config, branches. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "config"
     :description "Read/set store config (user.name / user.email — the milestone author; \"<git>\" defers to git config). Omit value to read."
     :inputSchema {:type "object"
                   :properties {:key {:type "string"}
@@ -337,16 +362,6 @@
                   :properties {:target {:type "string"}
                                :pure {:type "boolean"}}
                   :required ["target"]}}
-   {:name "test_run"
-    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes). Writes already verify — rarely needed after edits."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"}
-                               :only {:type "array" :items {:type "string"}}
-                               :fresh {:type "boolean"}
-                               :isolated {:type "boolean"}}}}
-   {:name "help"
-    :description "The workflow cheat-sheet: which tool for what, how to read results."
-    :inputSchema {:type "object" :properties {}}}
    {:name "branch_create"
     :description "Create a branch from the current state and switch to it (O(1))."
     :inputSchema {:type "object" :properties {:name {:type "string"}}
@@ -363,46 +378,45 @@
     :description "Delete a branch (never the one you are on)."
     :inputSchema {:type "object" :properties {:name {:type "string"}}
                   :required ["name"]}}
-   {:name "query_branches"
-    :description "Branches with head deltas; marks the current one."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "query_deps"
-    :description "Transitive callee tree of ns/name (plan extractions / blast radius)."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}
-   {:name "fix_declares"
-    :description "Tidy (declare …): reorder defns above callers when safe, delete satisfied declares. Atomic, verified."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :prompt {:type "string"}}
-                  :required ["ns"]}}
-   {:name "ns_rename"
-    :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
-    :inputSchema {:type "object"
-                  :properties {:old {:type "string"} :new {:type "string"}
-                               :prompt {:type "string"}}
-                  :required ["old" "new"]}}
-   {:name "edit_extract_ns"
-    :description "Move forms into a BRAND-NEW namespace (callers rewritten to alias-qualified calls; one atomic group). The moved set may not call what stays; plan with query_deps."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"}
-                               :forms {:type "array" :items {:type "string"}}
-                               :to {:type "string"} :prompt {:type "string"}}
-                  :required ["ns" "forms" "to"]}}
    {:name "merge_from"
     :description "Merge a diverged COPY of this project (absolute dir). Same-form divergence = :conflicts, ours kept."
     :inputSchema {:type "object"
                   :properties {:dir {:type "string"}}
-                  :required ["dir"]}}
-   {:name "restart"
-    :description "Restart the live image; reload all forms."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "build"
-    :description "Materialize every namespace to .clj files under dir (absolute). Optional main (qualified entry fn) adds a GraalVM native-image recipe."
-    :inputSchema {:type "object"
-                  :properties {:dir {:type "string"} :main {:type "string"}
-                               :name {:type "string"}}
                   :required ["dir"]}}])
+(def sync-tools
+  "Git-sync tool descriptors: push/pull/clone/conflicts and remotes. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  [{:name "query_commits"
+    :description "Milestones, newest first (targets plug into query_changes from/to)."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_git"
+    :description "This session's git view: the embedded read-only listener URL + the saved external remote."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "git_push"
+    :description "Push the milestone projection to a git remote (fast-forward only). url saved on first use; https auth via token or SLOPP_GIT_TOKEN."
+    :inputSchema {:type "object"
+                  :properties {:url {:type "string"}
+                               :token {:type "string"}
+                               :branch {:type "string"}}}}
+   {:name "git_clone"
+    :description "Clone a remote into dir as a FILELESS store (every ns ingested + verified; no .clj files materialized)."
+    :inputSchema {:type "object"
+                  :properties {:url {:type "string"}
+                               :dir {:type "string"}
+                               :token {:type "string"}}
+                  :required ["url" "dir"]}}
+   {:name "git_pull"
+    :description "Absorb remote changes: form-granular 3-way merge; both-sides-touched = conflicts (quarantined; push blocked until resolved)."
+    :inputSchema {:type "object"
+                  :properties {:token {:type "string"}}}}
+   {:name "git_conflicts"
+    :description "Unresolved pull conflicts, with the raw remote content to merge from."
+    :inputSchema {:type "object" :properties {}}}
+   {:name "git_resolve"
+    :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
+    :inputSchema {:type "object" :properties {:path {:type "string"}}}}])
+(def tools
+  "Every tool descriptor the server advertises \u2014 concatenated from the per-group registries (Q4)."
+  (into [] cat [orientation-tools history-tools edit-tools flow-tools env-tools sync-tools]))
 
 (def ^:private ^:dynamic *hint*
   "Optional one-line workflow hint, attached to map results (item 3)." nil)
@@ -547,29 +561,37 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
 (defn- summarize
   "B1: a green-and-quiet edit result compresses to a terse shape (the Go
   baseline showed slopp's verbose green responses were the token loser).
-  Anything noteworthy — :error, red tests, NEW warnings, :untested — or an
-  explicit :verbose returns the full map."
+  :error, red tests, or NEW warnings return the full map — but source echoes
+  are stripped EVERYWHERE first: a delta's :source/:sources never ride a
+  write result; the agent just sent that text (Q1). :untested is a terse
+  FLAG, not a reason to go verbose. A verification that ran ZERO tests says
+  :coverage :none — green must never be inferable from an empty run (Q8)."
   [r verbose?]
-  (if (or verbose? (:error r) (:untested r)
-          (seq (:warnings r)) (red? (:test r)))
-    r
-    (let [t (:test r)]
-      (cond-> {:ok true}
-        (:delta r)   (assoc :delta (get-in r [:delta :id]))
-        (:group r)   (assoc :group (:group r))
-        (:deltas r)  (assoc :deltas (count (:deltas r)))
-        (:renamed r) (assoc :renamed (:renamed r))
-        (:forms r)   (assoc :forms (:forms r))
-        t            (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
-                                           :status (:status t :green)
-                                           :scope (:scope t)}
-                                    (:staleness-detected t) (assoc :staleness-healed true)))
-        (:affected r) (assoc :affected (let [a (:affected r)]
-                                         (if (= :all a) :all (count a))))
-        (:hint r) (assoc :hint (:hint r))
-        (:changed-nses r) (assoc :changed-nses (:changed-nses r))
-        (:image-healed r) (assoc :image-healed true)
-        (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r))))))
+  (let [strip (fn [d] (if (map? d) (dissoc d :source :sources :node) d))
+        r     (cond-> r
+                (:delta r)        (update :delta strip)
+                (seq (:deltas r)) (update :deltas (partial mapv strip)))]
+    (if (or verbose? (:error r) (seq (:warnings r)) (red? (:test r)))
+      r
+      (let [t (:test r)]
+        (cond-> {:ok true}
+          (:delta r)    (assoc :delta (get-in r [:delta :id]))
+          (:group r)    (assoc :group (:group r))
+          (:deltas r)   (assoc :deltas (count (:deltas r)))
+          (:renamed r)  (assoc :renamed (:renamed r))
+          (:forms r)    (assoc :forms (:forms r))
+          (:untested r) (assoc :untested true)
+          t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
+                                              :status (:status t :green)
+                                              :scope (:scope t)}
+                                       (:staleness-detected t) (assoc :staleness-healed true)
+                                       (zero? (:test t 0))     (assoc :coverage :none)))
+          (:affected r) (assoc :affected (let [a (:affected r)]
+                                           (if (= :all a) :all (count a))))
+          (:hint r) (assoc :hint (:hint r))
+          (:changed-nses r) (assoc :changed-nses (:changed-nses r))
+          (:image-healed r) (assoc :image-healed true)
+          (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r)))))))
 
 (defn parse-call-args
   "Tool arguments for the one-shot --call CLI: nil/blank → {}; \"@path\"
@@ -609,6 +631,140 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
               (swap! session assoc :agent-id sid))
             (when-not (str/blank? (or prompt ""))
               (swap! session assoc :pending-intent prompt))))))))
+(def ^:private env-handlers!
+  "call-tool dispatch \u2014 deps/branches/build/help (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
+  {"deps_add"
+   (fn [session a sym]
+     (text! (api/deps-add! session (sym :lib)
+                                        (or (:coord a)
+                                            (when (:version a)
+                                              {:mvn/version (:version a)}))
+                                        :agent (:agent a))))
+   "deps_remove"
+   (fn [session a sym]
+     (text! (api/deps-remove! session (sym :lib)
+                                           :agent (:agent a))))
+   "deps_list"
+   (fn [session _a _sym]
+     (text! (api/deps-list session)))
+   "deps_pure"
+   (fn [session a sym]
+     (text! (if (false? (:pure a))
+                           (api/deps-unpure! session (sym :target) :agent (:agent a))
+                           (api/deps-pure! session (sym :target) :agent (:agent a)))))
+   "branch_create"
+   (fn [session a _sym]
+     (text! (api/branch! session (:name a))))
+   "branch_switch"
+   (fn [session a _sym]
+     (text! (api/branch-switch! session (:name a))))
+   "branch_merge"
+   (fn [session a _sym]
+     (text! (api/branch-merge! session (:name a))))
+   "branch_delete"
+   (fn [session a _sym]
+     (text! (api/branch-delete! session (:name a))))
+   "query_branches"
+   (fn [session _a _sym]
+     (text! (api/query-branches session)))
+   "restart"
+   (fn [session _a _sym]
+     (do (api/restart! session) (text! "restarted")))
+   "build"
+   (fn [session a _sym]
+     (text! (api/build! session (:dir a)
+                                    :main (some-> (:main a) symbol)
+                                    :name (:name a))))
+   "help"
+   (fn [_session _a _sym]
+     (text! cheat-sheet))})
+(def ^:private file-handlers!
+  "call-tool dispatch \u2014 tracked files + config (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
+  {"config"
+   (fn [session a _sym]
+     (text! (api/config! session (:key a) (:value a))))
+   "file_put"
+   (fn [session a _sym]
+     (text! (api/file-put! session (:path a) (:content a)
+                                        :prompt (:prompt a) :agent (:agent a))))
+   "file_remove"
+   (fn [session a _sym]
+     (text! (api/file-remove! session (:path a)
+                                           :prompt (:prompt a) :agent (:agent a))))
+   "file_list"
+   (fn [session _a _sym]
+     (text! (api/files-list session)))
+   "file_get"
+   (fn [session a _sym]
+     (text! (api/file-get session (:path a) :at (:at a))))
+   "file_history"
+   (fn [session a _sym]
+     (text! (api/file-history! session (:path a))))
+   "config_file"
+   (fn [session a _sym]
+     (text! (api/config-file! session (:path a)
+                                           :key (:key a) :value (:value a)
+                                           :unset (:unset a) :format (:format a)
+                                           :prompt (:prompt a) :agent (:agent a))))})
+(def ^:private sync-handlers!
+  "call-tool dispatch \u2014 git publish/absorb + remotes (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
+  {"git_push"
+   (fn [session a _sym]
+     (text! (if-let [dir (:dir @session)]
+                           (sync/push! dir :url (:url a) :token (:token a)
+                                       :branch (:branch a))
+                           {:error "git_push needs a durable session (a store dir)"})))
+   "git_clone"
+   (fn [_session a _sym]
+     (text! (sync/clone! (:url a) (:dir a)
+                                      :token (:token a) :agent (:agent a))))
+   "git_pull"
+   (fn [session a _sym]
+     (text! (sync/pull! session
+                                     :token (:token a) :agent (:agent a))))
+   "git_conflicts"
+   (fn [session a _sym]
+     (text! (if-let [dir (:dir @session)]
+                           {:conflicts (sync/conflicts dir)}
+                           {:error "git_conflicts needs a durable session"})))
+   "git_resolve"
+   (fn [session a _sym]
+     (text! (if-let [dir (:dir @session)]
+                           (sync/resolve! dir (:path a))
+                           {:error "git_resolve needs a durable session"})))
+   "query_git"
+   (fn [session _a _sym]
+     (text! (let [ext (when-let [conn (:db @session)]
+                           (when-let [r (db/get-meta conn "git-remote")]
+                             {:git-remote   r
+                              :git-base-sha (db/get-meta conn "git-base-sha")}))]
+                       (cond
+                         (:git-url @session)
+                         (cond-> {:url (:git-url @session)
+                                  :remote (str "git remote add slopp " (:git-url @session))
+                                  :note (str "milestones (commit_point) are the commits; "
+                                             "the local listener is read-only clone/fetch; "
+                                             "publish OUT with git_push; "
+                                             "wip/<branch> = live un-milestone'd state")}
+                           ext (assoc :external ext))
+
+                         ext
+                         {:external ext
+                          :note "no local listener; git_push publishes to :external"}
+
+                         :else
+                         {:error (str "no git listener on this session"
+                                      " (ephemeral session, or the port"
+                                      " couldn't bind)")}))))
+   "query_commits"
+   (fn [session _a _sym]
+     (text! (api/query-commits session)))
+   "merge_from"
+   (fn [session a _sym]
+     (text! (api/merge! session (:dir a))))})
+(def ^:private tail-handlers!
+  "Every handler-map entry (Q4) \u2014 call-tool checks here first."
+  (merge env-handlers! file-handlers! sync-handlers!))
 (defn- call-tool [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
@@ -634,24 +790,26 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                 (throw (ex-info (str "missing required argument :"
                                      (clojure.core/name k) " for " name)
                                 {}))))]
-    (case name
-      "ns_create"         (text! (api/create-ns! session (sym :ns)
+    (if-let [h (tail-handlers! name)]
+      (h session a sym)
+      (case name
+      "ns_create" (text! (api/create-ns! session (sym :ns)
                                                 :requires (:requires a)
                                                 :source (:source a)
                                                 :agent (:agent a)))
-      "ns_add_require"    (text! (-> (api/add-require! session (sym :ns) (:require a)
+      "ns_add_require" (text! (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a))
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
-      "query_project"     (text! (api/query-project session :since (:since a)
+      "query_project" (text! (api/query-project session :since (:since a)
                                               :detail (:detail a)))
-      "query_search"      (text! (api/query-search session (:pattern a)
+      "query_search" (text! (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
-      "query_namespaces"  (text! (api/query-namespaces session))
-      "query_outline"     (text! (api/query-outline session (sym :ns)
+      "query_namespaces" (text! (api/query-namespaces session))
+      "query_outline" (text! (api/query-outline session (sym :ns)
                                               :detail (:detail a)))
-      "query_source"      (text! (if-let [ts (:targets a)]
+      "query_source" (text! (if-let [ts (:targets a)]
                             (api/query-sources
                              session
                              (mapv (fn [t]
@@ -659,32 +817,32 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                        (:name t) (assoc :name (symbol (:name t)))))
                                    ts))
                             (api/query-source session (sym :ns))))
-      "query_symbol"      (text! (api/query-symbol session (sym :ns) (sym :name)))
-      "query_detail"      (if-let [full (get-in @session [::spool :entries (:id a)])]
+      "query_symbol" (text! (api/query-symbol session (sym :ns) (sym :name)))
+      "query_detail" (if-let [full (get-in @session [::spool :entries (:id a)])]
                             ;; the retrieval path must NOT re-trim its own payload
                             {:content [{:type "text" :text full}]}
                             (text! {:error (str "no spooled response " (:id a)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
-      "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
-      "query_references"  (text! (vec (api/query-references session (sym :ns) (sym :name))))
-      "query_lineage"     (text! (vec (api/query-lineage session (sym :ns) (sym :name))))
-      "turn_begin"        (text! (api/turn-begin! session :agent (:agent a)
+      "query_brief" (text! (api/query-brief session (sym :ns) (sym :name)))
+      "query_references" (text! (vec (api/query-references session (sym :ns) (sym :name))))
+      "query_lineage" (text! (vec (api/query-lineage session (sym :ns) (sym :name))))
+      "turn_begin" (text! (api/turn-begin! session :agent (:agent a)
                                                  :intent (:intent a)
                                                  :user (:user a)))
-      "turn_end"          (text! (api/turn-end! session :agent (:agent a)
+      "turn_end" (text! (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
-      "query_changes"     (text! (api/query-changes session :agent (:agent a)
+      "query_changes" (text! (api/query-changes session :agent (:agent a)
                                                    :from (:from a) :to (:to a)
                                                    :format (:format a)))
-      "episode_revert"    (text! (-> (api/revert-episode! session
+      "episode_revert" (text! (-> (api/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :conflict :reverted
                                                   :skipped-shared :note :test
                                                   :group :affected])
                                     (summarize (:verbose a))))
-      "query_history"     (text! (api/query-history session
+      "query_history" (text! (api/query-history session
                                                    :ns (some-> (:ns a) symbol)
                                                    :contains (:contains a)
                                                    :collapse (:collapse a)
@@ -692,13 +850,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                    :limit (or (:limit a) 20)))
       "query_form_history" (text! (api/query-form-history session (sym :ns) (sym :name)
                                                          :format (:format a)))
-      "query_form_at"     (text! (api/query-form-at session (sym :ns) (sym :name)
+      "query_form_at" (text! (api/query-form-at session (sym :ns) (sym :name)
                                                    :at (:at a)))
-      "query_status_at"   (text! (api/query-status-at session :at (:at a)))
+      "query_status_at" (text! (api/query-status-at session :at (:at a)))
       "query_search_history" (text! (api/query-search-history session (:contains a)
                                                              :limit (:limit a)))
-      "query_eval"        (text! (api/query-eval session (:code a)))
-      "query_observe"     (text! (api/query-observe session (sym :ns) (sym :name)
+      "query_eval" (text! (api/query-eval session (:code a)))
+      "query_observe" (text! (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)
                                                    :limit (or (:limit a) 10)))
       "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
@@ -709,19 +867,19 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_add_form"     (text! (-> (api/add-form! session (sym :ns) (:source a)
+      "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_delete_form"  (text! (-> (api/delete-form! session (sym :ns) (sym :name)
+      "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_group"        (text! (-> (api/edit-group!
+      "edit_group" (text! (-> (api/edit-group!
                                      session
                                      (mapv (fn [s]
                                              (let [action (or (:action s) (:op s))] ; :op guessed in evals
@@ -744,8 +902,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :step :group :warnings :existing-warnings :changed-nses
                                                   :image-healed :test :affected :deltas :forms])
                                     (summarize (:verbose a))))
-      ;; arg forgiveness: every eval run guessed name/to before finding old/new
-      "edit_rename"       (let [old (or (:old a) (:name a) (:from a))
+      "edit_rename" (let [old (or (:old a) (:name a) (:from a))
                                 new (or (:new a) (:to a))]
                             (when-not (and old new)
                               (throw (ex-info "edit_rename needs :old and :new (aliases: :name/:from, :to)" {})))
@@ -758,7 +915,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_subform"      (let [match (or (:match a) (:from a))
+      "edit_subform" (let [match (or (:match a) (:from a))
                                 src   (or (:source a) (:to a))]
                             (when-not (and match src)
                               (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
@@ -770,22 +927,22 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                       (select-keys [:error :conflict :warnings :existing-warnings
                                                     :untested :image-healed :test :affected :delta :ms])
                                       (summarize (:verbose a)))))
-      "edit_revert"       (text! (-> (api/revert-form! session (sym :ns) (sym :name)
+      "edit_revert" (text! (-> (api/revert-form! session (sym :ns) (sym :name)
                                                       :to (:to a) :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys [:error :conflict :warnings :test
                                                   :affected :delta :ms])
                                     (summarize (:verbose a))))
-      "edit_move"         (text! (api/move-form! session (sym :ns) (sym :name)
+      "edit_move" (text! (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_trivia"       (text! (api/edit-trivia! session (sym :ns)
+      "edit_trivia" (text! (api/edit-trivia! session (sym :ns)
                                                   (some-> (:before a) symbol)
                                                   (:text a)
                                                   :prompt (:prompt a)
                                                   :agent (:agent a)))
-      "edit_extract"      (let [subform (or (:form a) (:source a) (:subform a))]
+      "edit_extract" (let [subform (or (:form a) (:source a) (:subform a))]
                             (when-not subform
                               (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))
                             (text! (-> (api/extract! session (sym :ns) (sym :from)
@@ -793,92 +950,28 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                     :prompt (:prompt a))
                                       (select-keys [:error :extracted :group :test :affected])
                                       (summarize (:verbose a)))))
-      "checkpoint"         (text! (api/checkpoint! session :label (:label a)
+      "checkpoint" (text! (api/checkpoint! session :label (:label a)
                                                   :agent (:agent a)))
-      "commit_point"       (text! (api/commit-point! session (:description a)
+      "commit_point" (text! (api/commit-point! session (:description a)
                                                     :agent (:agent a)
                                                     :force (:force a)
                                                     :target (:target a)))
-      "query_commits"      (text! (api/query-commits session))
-      "deps_add"           (text! (api/deps-add! session (sym :lib)
-                                                (or (:coord a)
-                                                    (when (:version a)
-                                                      {:mvn/version (:version a)}))
-                                                :agent (:agent a)))
-      "deps_remove"        (text! (api/deps-remove! session (sym :lib)
-                                                   :agent (:agent a)))
-      "deps_list"          (text! (api/deps-list session))
-      "deps_pure"          (text! (if (false? (:pure a))
-                                   (api/deps-unpure! session (sym :target) :agent (:agent a))
-                                   (api/deps-pure! session (sym :target) :agent (:agent a))))
-      "query_git"          (text! (let [ext (when-let [conn (:db @session)]
-                                   (when-let [r (db/get-meta conn "git-remote")]
-                                     {:git-remote   r
-                                      :git-base-sha (db/get-meta conn "git-base-sha")}))]
-                               (cond
-                                 (:git-url @session)
-                                 (cond-> {:url (:git-url @session)
-                                          :remote (str "git remote add slopp " (:git-url @session))
-                                          :note (str "milestones (commit_point) are the commits; "
-                                                     "the local listener is read-only clone/fetch; "
-                                                     "publish OUT with git_push; "
-                                                     "wip/<branch> = live un-milestone'd state")}
-                                   ext (assoc :external ext))
-
-                                 ext
-                                 {:external ext
-                                  :note "no local listener; git_push publishes to :external"}
-
-                                 :else
-                                 {:error (str "no git listener on this session"
-                                              " (ephemeral session, or the port"
-                                              " couldn't bind)")})))
-      "git_push"           (text! (if-let [dir (:dir @session)]
-                                   (sync/push! dir :url (:url a) :token (:token a)
-                                               :branch (:branch a))
-                                   {:error "git_push needs a durable session (a store dir)"}))
-      "git_clone"          (text! (sync/clone! (:url a) (:dir a)
-                                              :token (:token a) :agent (:agent a)))
-      "git_pull"           (text! (sync/pull! session
-                                             :token (:token a) :agent (:agent a)))
-      "git_conflicts"      (text! (if-let [dir (:dir @session)]
-                                   {:conflicts (sync/conflicts dir)}
-                                   {:error "git_conflicts needs a durable session"}))
-      "git_resolve"        (text! (if-let [dir (:dir @session)]
-                                   (sync/resolve! dir (:path a))
-                                   {:error "git_resolve needs a durable session"}))
-      "config"             (text! (api/config! session (:key a) (:value a)))
-      "file_put"           (text! (api/file-put! session (:path a) (:content a)
-                                                :prompt (:prompt a) :agent (:agent a)))
-      "file_remove"        (text! (api/file-remove! session (:path a)
-                                                   :prompt (:prompt a) :agent (:agent a)))
-      "file_list"          (text! (api/files-list session))
-      "file_get"           (text! (api/file-get session (:path a) :at (:at a)))
-      "file_history"       (text! (api/file-history! session (:path a)))
-      "config_file"        (text! (api/config-file! session (:path a)
-                                                   :key (:key a) :value (:value a)
-                                                   :unset (:unset a) :format (:format a)
-                                                   :prompt (:prompt a) :agent (:agent a)))
-      "test_run"          (text! (if (:isolated a)
-                                   (api/isolated-test-run! session)
+      "test_run" (text! (if (:isolated a)
+                                   (api/isolated-test-run! session
+                                                           :ns (some-> (:ns a) symbol)
+                                                           :only (some->> (:only a) (mapv symbol)))
                                    (api/test-run! session
                                                   (when (:ns a) (sym :ns))
                                                   :only (some->> (:only a) (mapv symbol))
                                                   :fresh (:fresh a))))
-      "help"              (text! cheat-sheet)
-      "branch_create"     (text! (api/branch! session (:name a)))
-      "branch_switch"     (text! (api/branch-switch! session (:name a)))
-      "branch_merge"      (text! (api/branch-merge! session (:name a)))
-      "branch_delete"     (text! (api/branch-delete! session (:name a)))
-      "query_branches"    (text! (api/query-branches session))
-      "query_deps"        (text! (api/query-deps session (sym :ns) (sym :name)))
-      "fix_declares"      (text! (api/fix-declares! session (sym :ns)
+      "query_deps" (text! (api/query-deps session (sym :ns) (sym :name)))
+      "fix_declares" (text! (api/fix-declares! session (sym :ns)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)))
-      "ns_rename"         (text! (api/ns-rename! session (:old a) (:new a)
+      "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_extract_ns"   (text! (-> (api/extract-ns! session (sym :ns)
+      "edit_extract_ns" (text! (-> (api/extract-ns! session (sym :ns)
                                                      (mapv symbol (:forms a))
                                                      (symbol (:to a))
                                                      :prompt (:prompt a)
@@ -886,9 +979,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :conflict :extracted-to
                                                   :moved :rewrote :test :group])
                                     (summarize (:verbose a))))
-      "merge_from"        (text! (api/merge! session (:dir a)))
-      "restart"           (do (api/restart! session) (text! "restarted"))
-      "change_signature"  (text! (-> (api/change-signature! session (sym :ns)
+      "change_signature" (text! (-> (api/change-signature! session (sym :ns)
                                                            (sym :name)
                                                            (:source a) (:calls a)
                                                            :prompt (:prompt a)
@@ -897,12 +988,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                   :warnings :existing-warnings :changed-nses
                                                   :image-healed :test :affected :deltas])
                                     (summarize (:verbose a))))
-      "build"             (text! (api/build! session (:dir a)
-                                            :main (some-> (:main a) symbol)
-                                            :name (:name a)))
       (throw (ex-info (str "unknown tool: " name ". Available: "
                            (str/join ", " (map :name tools)))
-                      {})))))
+                      {}))))))
 
 (defn call!
   "One-shot tool invocation against the store at `dir` — the --call CLI's

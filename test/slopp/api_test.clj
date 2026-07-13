@@ -117,3 +117,22 @@
             (is (= ["src"] (:paths m)))
             (is (= ["test"] (get-in m [:aliases :test :extra-paths]))))))
       (finally (api/close! sess)))))
+(deftest parse-test-failures-extracts-blocks
+  (let [out (str "\nRunning tests in #{\"test\"}\n\nTesting foo.bar-test\n\n"
+                 "FAIL in (my-test) (foo/bar_test.clj:12)\n"
+                 "rush orders double\n"
+                 "expected: (= 1 2)\n"
+                 "  actual: (not (= 1 2))\n\n"
+                 "ERROR in (other-test) (foo/bar_test.clj:20)\n"
+                 "expected: nil\n"
+                 "  actual: java.lang.ArithmeticException: boom\n"
+                 " at foo (bar.clj:1)\n\n"
+                 "Ran 5 tests containing 9 assertions.\n2 failures, 1 errors.\n")
+        fs  (api/parse-test-failures out)]
+    (testing "each FAIL/ERROR block becomes {:test :detail}"
+      (is (= ["my-test" "other-test"] (mapv :test fs)))
+      (is (re-find #"expected: \(= 1 2\)" (:detail (first fs))))
+      (is (re-find #"boom" (:detail (second fs)))))
+    (testing "blocks are capped and limited"
+      (is (every? #(<= (count (:detail %)) 520) fs))
+      (is (= 1 (count (api/parse-test-failures out :limit 1)))))))

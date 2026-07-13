@@ -118,3 +118,17 @@
                 'sp.core 'm ":b (+ 1 1)" 'entry)]
       (is (:error plan))
       (is (re-find #"pair" (str (:error plan)))))))
+(deftest fragment-matches-teach-the-fix
+  (testing "a match that ends mid-expression names the rule and the way out"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn f [x] (let [y 1] (+ x y)))\n")
+                'sp.core 'f "(let [y 1" "(let [y 2")]
+      (is (:error plan))
+      (is (re-find #"COMPLETE forms" (str (:error plan))) (pr-str plan))))
+  (testing "an unmatched delimiter gets the same teaching, not a parser trace"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn g [x] (case x :a 1 :b 2))\n")
+                'sp.core 'g ":a 1 :b" ":a 9 :b")]
+      (is (:error plan))
+      (is (re-find #"ONE subform|COMPLETE forms|PAIR" (str (:error plan)))
+          (pr-str plan)))))

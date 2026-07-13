@@ -184,6 +184,74 @@
            " if the boundary code is intentional:\n"
            (str/join "\n" violations)))))
 
+(def spawning-vars
+  "Vars whose call spawns slopp images/sessions/JVMs. A deftest that touches
+  one CANNOT run in-image — per-write verification runs tests in the image,
+  and these vars spawn images: the run would recurse (Q7). Resolution is
+  alias-based (see require-aliases); fully-qualified calls hit directly."
+  '#{slopp.api/open! slopp.api/restart! slopp.api/isolated-test-run!
+     slopp.repl/start! slopp.git/start-server!
+     slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
+     slopp.sync/maybe-auto-import!
+     slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
+     slopp.boot/-main slopp.benchmark/-main})
+(defn require-aliases
+  "{alias full-ns} (plus identity entries for the full names) from `ns-sym`'s
+  ns-form :require clauses — the resolution context for gates that need to
+  know WHAT a form calls (isolation-refusal). :refer'd bare names are not
+  resolved — alias-style requires are the store convention."
+  [store ns-sym]
+  (let [ns-form (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
+                         (when (and (seq? s) (= 'ns (first s))) s))
+                      (store/elements store ns-sym))]
+    (into {}
+          (for [clause (drop 2 (or ns-form ()))
+                :when  (and (seq? clause) (= :require (first clause)))
+                spec   (rest clause)
+                :let   [[lib alias] (cond
+                                      (vector? spec) [(first spec)
+                                                      (second (drop-while #(not= :as %) spec))]
+                                      (symbol? spec) [spec nil])]
+                :when  lib
+                entry  (cond-> [[lib lib]] alias (conj [alias lib]))]
+            entry))))
+(defn isolation-refusal
+  "Q7 gate — nil when `node` may run in-image; the refusal string (naming the
+  fix) when it's an untagged deftest that calls a spawning var and would
+  recurse under in-image verification. `aliases` = require-aliases of the
+  target ns; fully-qualified calls resolve through the identity entries."
+  [aliases node]
+  (let [s (try (n/sexpr node) (catch Exception _ nil))]
+    (when (and (seq? s)
+               (contains? '#{deftest clojure.test/deftest} (first s))
+               (symbol? (second s))
+               (not (:isolated (meta (second s)))))
+      (when-let [hit (some (fn [sym]
+                             (let [q (when-let [a (some-> (namespace sym) symbol)]
+                                       (when-let [full (aliases a)]
+                                         (symbol (str full) (name sym))))]
+                               (when (contains? spawning-vars (or q sym)) sym)))
+                           (all-symbols node))]
+        (str "this test calls " hit " — it spawns slopp images/sessions, and"
+             " running it in-image would recurse. Tag it ^:isolated:"
+             " (deftest ^:isolated " (second s) " …) — isolated tests run in"
+             " the external suite (test_run {:isolated true})")))))
+(defn missing-form-error
+  "Q9: a 'no form named X' that TEACHES — names near-miss forms in the ns (or
+  points at query_outline) so the next call succeeds instead of guessing.
+  Returns the whole {:error msg} map; every no-such-form site shares it."
+  [store ns-sym nm]
+  (let [names (keep :name (store/forms store ns-sym))
+        q     (str/lower-case (str nm))
+        near  (->> names
+                   (filter #(let [s (str/lower-case (str %))]
+                              (or (str/includes? s q) (str/includes? q s))))
+                   (take 5)
+                   seq)]
+    {:error (str "no form named " nm " in " ns-sym
+                 (if near
+                   (str " — nearest: " (str/join ", " near))
+                   (str " — query_outline {ns " ns-sym "} lists what exists")))}))
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
@@ -191,14 +259,19 @@
   resulting namespace) or {:error msg}."
   [store ns-sym form-name new-source & {:keys [prompt agent]}]
   (let [{:keys [node error]} (parse-form new-source)]
-    (if error
-      {:error error}
+    (cond
+      error {:error error}
+
+      (isolation-refusal (require-aliases store ns-sym) node)
+      {:error (isolation-refusal (require-aliases store ns-sym) node)}
+
+      :else
       (if-let [[store' delta] (store/replace-node store ns-sym form-name node
                                                   :prompt prompt :agent agent)]
         {:store    store'
          :delta    delta
          :warnings (ns-warnings store' ns-sym)}
-        {:error (str "no form named " form-name " in " ns-sym)}))))
+        (missing-form-error store ns-sym form-name)))))
 
 (defn hot-load-form!
   "Hot-reload one form (from a store VALUE — commit only on success, S1) into

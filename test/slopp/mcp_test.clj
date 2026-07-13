@@ -253,3 +253,24 @@
       (testing "an unknown id is an honest error"
         (is (re-find #"no spooled response" (call sess "query_detail" {:id "r999"}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated untested-writes-stay-terse-and-honest
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "ut.core" :source "(ns ut.core)\n(defn f [x] x)\n(defn g [x] x)\n"})
+      (call sess "ns_create" {:ns "ut.core-test" :source "(ns ut.core-test (:require [clojure.test :refer [deftest is]] [ut.core :as c]))\n(deftest f-t (is (= 1 (c/f 1))))\n"})
+      (call sess "test_run" {:ns "ut.core-test"})
+      (testing "an untested green write is terse — flagged, no source echo"
+        (let [r (call sess "edit_replace_form" {:ns "ut.core" :name "g"
+                                                :source "(defn g [x] (identity x))"})]
+          (is (re-find #":ok true" r) r)
+          (is (re-find #":untested true" r) r)
+          (is (not (re-find #"identity" r)) r)
+          (testing "…and a zero-test verification names its emptiness (Q8)"
+            (is (re-find #":coverage :none" r) r))))
+      (testing "a new deftest is not 'untested' — it IS a test"
+        (call sess "edit_add_form" {:ns "ut.core-test"
+                                    :source "(deftest g-t (is (= 2 (c/g 2))))"})
+        (let [r (call sess "edit_replace_form" {:ns "ut.core-test" :name "g-t"
+                                                :source "(deftest g-t (is (= 3 (c/g 3))))"})]
+          (is (not (re-find #":untested" r)) r)))
+      (finally (api/close! sess)))))

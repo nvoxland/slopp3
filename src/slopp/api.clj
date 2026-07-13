@@ -24,7 +24,7 @@
             [slopp.normalize :as normalize]
             [slopp.build :as build]
             [slopp.deps :as deps]
-            [slopp.db :as db] [clojure.java.shell :as sh]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -84,6 +84,23 @@
   []
   (or (not-empty (System/getenv "SLOPP_AGENT"))
       (str "s-" (subs (str (java.util.UUID/randomUUID)) 0 8))))
+(defn- load-trace
+  "The persisted trace map, pruned to tests/forms that still exist in `store`
+  (names move between sessions — including renames that never re-persisted —
+  so stale entries drop out and narrowing stays conservative)."
+  [conn store]
+  (when conn
+    (let [raw   (try (some-> (db/get-meta conn "trace-map") edn/read-string)
+                     (catch Exception _ nil))
+          live? (fn [qsym]
+                  (let [n (some-> (namespace qsym) symbol)]
+                    (boolean (and n (store/form-named store n (symbol (name qsym)))))))]
+      (into {}
+            (keep (fn [[t forms]]
+                    (when (live? t)
+                      (let [fs (into #{} (filter live?) forms)]
+                        (when (seq fs) [t fs])))))
+            raw))))
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
@@ -99,6 +116,7 @@
          session (atom {:store store :image image :db conn
                         :data-version (some-> conn db/data-version)
                         :dir dir :branch "main" :lines {}
+                        :test-map (or (load-trace conn store) {})
                         :agent-id (or agent-id (session-identity))
                         :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                         :branch-image-ttl-ms ttl
@@ -190,6 +208,13 @@
                    (assoc s :store fresh)
                    s)))))))
 
+(defn- persist-trace!
+  "Q3: the trace map survives the session — written to store meta so the NEXT
+  session (or a CLI one-shot) starts with narrowing warm instead of
+  {:ran 0 :affected :all}. Last writer wins; load-trace prunes stale names."
+  [session]
+  (when-let [conn (:db @session)]
+    (db/set-meta! conn "trace-map" (pr-str (:test-map @session)))))
 (defn sync-with-journal!
   "m5b: absorb commits made by OTHER servers sharing this store dir. Cheap
   when nothing changed (one PRAGMA read). On foreign commits: refresh the
@@ -226,7 +251,8 @@
                                          (or (contains? stale t)
                                              (seq (set/intersection forms stale)))))
                                tm)))
-                {:synced (count changed)}))))))))
+                (do (persist-trace! session)
+                    {:synced (count changed)})))))))))
 
 (defn- commit-appended!
   "Commit a pure APPEND `f` (store → store', deltas only unless `nses`),
@@ -1213,7 +1239,7 @@
 
 (defn- traced-run!
   "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
-  observed test→form map into the session; return the summary.
+  observed test→form map into the session (persisted — Q3); return the summary.
   `skip-integration?` drops `^:integration` tests (M5, the fast-path default)."
   [session test-ns only & [skip-integration?]]
   (let [{:keys [image store]} @session
@@ -1221,6 +1247,7 @@
                                  image store test-ns :only only
                                  :skip-integration? skip-integration?)]
     (swap! session update :test-map merge trace)
+    (persist-trace! session)
     summary))
 
 (def ^:private reload-signature-res
@@ -1364,7 +1391,9 @@
             edited   (into #{qform}
                            (when new-nm [(symbol (str ns-sym) (str new-nm))]))
             affected (affected-tests session ns-sym nm)
-            untested (and (nil? affected) (seq (:test-map @session)))
+            untested (and (nil? affected) (seq (:test-map @session))
+                           (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
+                                         (str/triml new-source))))
             summary  (run-verification! session ns-sym affected
                                         :edited edited)
             existing (count (filter (comp pre-warned :var) (:warnings r)))]
@@ -1390,9 +1419,14 @@
   [session ns-sym source & {:keys [prompt agent before]}]
   (let [t0 (System/nanoTime)
         {:keys [node error]} (edit/parse-form source)
-        nm (some-> node store/form-symbol)]
+        nm (some-> node store/form-symbol)
+        iso (when node
+              (edit/isolation-refusal
+               (edit/require-aliases (:store @session) ns-sym) node))]
     (cond
       error {:error error}
+
+      iso {:error iso}
 
       (and nm (store/form-named (:store @session) ns-sym nm))
       {:error (str nm " already exists in " ns-sym)}
@@ -1451,42 +1485,50 @@
              (if-let [[st' d] (store/remove-form base ns-sym nm
                                                  :prompt prompt :agent agent)]
                {:store st' :delta d}
-               {:error (str "no form named " nm " in " ns-sym)}))
+               (edit/missing-form-error base ns-sym nm)))
            (fn [base] (:node (store/form-named base ns-sym nm)))
            (symbol (str ns-sym) (str nm))
            ns-sym
            :load? false)]
     (if (or (:error r) (:conflict r))
       r
-      (do (let [affected (affected-tests session ns-sym nm)]
+      (let [affected (affected-tests session ns-sym nm)]
             (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
             (let [summary (run-verification! session ns-sym affected
                                              :edited #{(symbol (str ns-sym) (str nm))})]
               (commit-appended! session
                                 #(store/record-verification % ns-sym summary)
                                 [])
-              {:delta (:delta r) :test summary :affected (or affected :all)}))))))
+              {:delta (:delta r) :test summary :affected (or affected :all)})))))
 
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
   or {:error msg}. `:hot` is the hot-reload action for the commit phase.
   Actions: :replace, :add (optionally anchored via :before), :delete, and
   :move (:name before :before — reordering inside the atomic group; image
-  vars are order-independent, so no hot action)."
+  vars are order-independent, so no hot action). Replace/add run the Q7
+  isolation gate — an untagged spawning deftest is refused with the fix."
   [st gid prompt agent {:keys [action ns name source before]}]
   (case action
-    :replace (let [{:keys [node error]} (edit/parse-form source)]
-               (if error
-                 {:error error}
+    :replace (let [{:keys [node error]} (edit/parse-form source)
+                   iso (when node
+                         (edit/isolation-refusal (edit/require-aliases st ns) node))]
+               (cond
+                 error {:error error}
+                 iso   {:error iso}
+                 :else
                  (if-let [[st' d] (store/replace-node st ns name node
                                                       :prompt prompt :group gid
                                                       :agent agent)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
-                   {:error (str "no form named " name " in " ns)})))
+                   (edit/missing-form-error st ns name))))
     :add     (let [{:keys [node error]} (edit/parse-form source)
-                   nm (some-> node store/form-symbol)]
+                   nm (some-> node store/form-symbol)
+                   iso (when node
+                         (edit/isolation-refusal (edit/require-aliases st ns) node))]
                (cond
                  error {:error error}
+                 iso   {:error iso}
                  (and nm (store/form-named st ns nm))
                  {:error (str nm " already exists in " ns)}
                  (and before (not (store/form-named st ns before)))
@@ -1501,7 +1543,7 @@
                                                  :prompt prompt :group gid
                                                  :agent agent)]
                {:store st' :delta d :hot [:unmap ns name]}
-               {:error (str "no form named " name " in " ns)})
+               (edit/missing-form-error st ns name))
     :move    (if-let [[st' d] (store/move-form st ns name before
                                                :prompt prompt :agent agent)]
                {:store st' :delta d :hot nil}
@@ -1635,10 +1677,10 @@
   [session ns-sym nm & {:keys [before prompt agent]}]
   (cond
     (nil? (store/form-named (:store @session) ns-sym nm))
-    {:error (str "no form named " nm " in " ns-sym)}
+    (edit/missing-form-error (:store @session) ns-sym nm)
 
     (nil? (store/form-named (:store @session) ns-sym before))
-    {:error (str "no form named " before " in " ns-sym)}
+    (edit/missing-form-error (:store @session) ns-sym before)
 
     :else
     (let [base0 (:store @session)]
@@ -2225,7 +2267,7 @@
   (let [hist (query-form-history session ns-sym nm)]
     (cond
       (nil? hist)
-      {:error (str "no form named " nm " in " ns-sym)}
+      (edit/missing-form-error (:store @session) ns-sym nm)
 
       (< (count hist) 2)
       {:error (str nm " has no earlier version to revert to")}
@@ -2315,7 +2357,7 @@
       {:renamed {:old old-name :new new-name :forms 0 :already true}}
 
       (nil? (store/form-named st ns-sym old-name))
-      {:error (str "no form named " old-name " in " ns-sym)}
+      (edit/missing-form-error st ns-sym old-name)
 
       (store/form-named st ns-sym new-name)
       {:error (str new-name " already exists in " ns-sym)}
@@ -2352,7 +2394,8 @@
           (if-not (try-commit! session st st' (vec touched-nses))
             {:conflict {:reason "store changed during rename — retry"}}
             (do
-              (swap! session update :test-map rename-in-trace qold qnew)
+              (do (swap! session update :test-map rename-in-trace qold qnew)
+                     (persist-trace! session))
               (repl/eval! (:image @session)
                           (format "(ns-unmap '%s '%s)" ns-sym old-name))
               (let [summary (run-verification! session ns-sym affected
@@ -2939,7 +2982,7 @@
       {:error (str ":main must be a qualified entry fn (ns/name), got " main)}
 
       (and main (nil? (store/form-named st entry-ns (symbol (name main)))))
-      {:error (str "no form named " (name main) " in " entry-ns)}
+      (edit/missing-form-error st entry-ns (symbol (name main)))
 
       (and main (get-in st [:namespaces 'native.main]))
       {:error "a store namespace named native.main collides with the generated launcher"}
@@ -3009,29 +3052,57 @@
       {:ran (parse-long t) :assertions (parse-long a)
        :failures f :errors e
        :status (if (and (zero? f) (zero? e)) :green :red)})))
+(defn parse-test-failures
+  "The FAIL/ERROR blocks from a clojure.test runner's output:
+  [{:test name :detail block}] (up to `limit` blocks, each capped ~500 chars)
+  — so an isolated run NAMES its failures instead of making the caller
+  rebuild the project and rerun the suite just to see them (Q2)."
+  [output & {:keys [limit] :or {limit 5}}]
+  (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
+       (keep (fn [b]
+               (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
+                 (let [block (->> (str/split-lines b)
+                                  (take-while (complement str/blank?))
+                                  (str/join "\n"))]
+                   {:test nm
+                    :detail (if (< 500 (count block))
+                              (str (subs block 0 500) " …")
+                              block)}))))
+       (take limit)
+       vec))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
   out-of-process counterpart to in-image `traced-run`, and the ONLY tier that
   executes ^:isolated tests (they spawn their own images/subprocesses, so
   running them in-image would recurse). Needs no repo files — the store is
-  the source, which is what lets the working dir go fileless. Returns
-  {:isolated true :status :ran :assertions :failures :errors :exit :output}
-  (last output lines on failure)."
-  [session & {:keys [alias] :or {alias ":test"}}]
+  the source, which is what lets the working dir go fileless. `:ns` narrows
+  to one test namespace, `:only` to specific ns-qualified test vars (Q2 —
+  targeted red/green loops without paying for the whole suite). Returns
+  {:isolated true :status :ran :assertions :failures :errors :exit} plus
+  :failing [{:test :detail}] when red (:output = last lines when the run
+  didn't even produce a summary)."
+  [session & {:keys [alias ns only] :or {alias ":test"}}]
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-isolated"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
         b   (build! session dir)]
     (if (:error b)
       b
-      (let [r   (sh/sh repl/clojure-bin (str "-M" alias) :dir dir)
-            out (str (:out r) "\n" (:err r))]
+      (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
+                   ns         (conj "-n" (str ns))
+                   (seq only) (into (mapcat #(vector "-v" (str %)) only)))
+            r    (apply sh/sh (concat args [:dir dir]))
+            out  (str (:out r) "\n" (:err r))
+            s    (parse-test-summary out)]
         (merge {:isolated true :exit (:exit r)}
-               (or (parse-test-summary out)
-                   {:status :error
-                    :output (->> (str/split-lines out) (remove str/blank?)
-                                 (take-last 8) (str/join "\n"))}))))))
+               (cond
+                 (nil? s)           {:status :error
+                                     :output (->> (str/split-lines out)
+                                                  (remove str/blank?)
+                                                  (take-last 8) (str/join "\n"))}
+                 (= :red (:status s)) (assoc s :failing (parse-test-failures out))
+                 :else s))))))
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
   `user.email` — the git author identity milestones are stamped with (G5).
@@ -3186,7 +3257,7 @@
   [session ns-sym fn-name new-source args-template & {:keys [prompt agent]}]
   (let [st (:store @session)]
     (if (nil? (store/form-named st ns-sym fn-name))
-      {:error (str "no form named " fn-name " in " ns-sym)}
+      (edit/missing-form-error st ns-sym fn-name)
       (let [plan (refactor/change-signature-plan st ns-sym fn-name args-template)]
         (if (:error plan)
           plan
@@ -3207,7 +3278,7 @@
   Collapses the source→references→lineage read chain into one response."
   [session ns-sym nm]
   (if (nil? (store/form-named (:store @session) ns-sym nm))
-    {:error (str "no form named " nm " in " ns-sym)}
+    (edit/missing-form-error (:store @session) ns-sym nm)
     (let [qsym    (symbol (str ns-sym) (str nm))
           sym     (query-symbol session ns-sym nm)
           callers (vec (query-references session ns-sym nm))

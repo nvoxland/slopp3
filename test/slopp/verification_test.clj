@@ -134,3 +134,23 @@
         (testing "narrowing kept the untouched test out of the run"
           (is (= 1 (count fails)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated trace-map-survives-sessions
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-trace"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+        s1  (api/open! {:dir dir})]
+    (try
+      (api/ingest! s1 'vdemo target)
+      (api/test-run! s1 'vdemo)
+      (is (seq (:test-map @s1)))
+      (finally (api/close! s1)))
+    (let [s2 (api/open! {:dir dir})]
+      (try
+        (testing "a fresh session on the same store starts with the trace warm (Q3)"
+          (is (= #{'vdemo/add} (get (:test-map @s2) 'vdemo/add-t))
+              (pr-str (:test-map @s2))))
+        (testing "…so its first edit narrows instead of running everything"
+          (let [r (api/edit-replace! s2 'vdemo 'mul "(defn mul [x y] (* y x))"
+                                     :prompt "commute")]
+            (is (= ['vdemo/mul-t] (:affected r)) (pr-str (select-keys r [:affected :test])))))
+        (finally (api/close! s2))))))

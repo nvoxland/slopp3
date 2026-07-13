@@ -228,54 +228,65 @@
   (map literal, binding vector, case/cond clauses) addresses the pair as a
   unit (P1); any other multi-form match is refused (silently matching a
   multi-form string's first form misaligns paired structures like case).
+  A match that doesn't parse on its own (mid-expression fragment) is refused
+  with the rule named — the error is the only teaching that arrives at the
+  moment it's needed (Q5).
   Returns {:zloc l} — plus :end-zloc (the pair's second node) for pair
   matches — or {:error msg}."
   [form-src match-src what]
-  (let [mnodes  (filter n/sexpr-able?
-                        (n/children (p/parse-string-all match-src)))
-        pair?   (= 2 (count mnodes))
-        matcher (fn [mnode]
-                  (let [msexpr (try (n/sexpr mnode) (catch Exception _ ::none))
-                        mnorm  (norm-src (n/string mnode))]
-                    (fn [zl]
-                      (or (and (not= ::none msexpr)
-                               (try (= msexpr (z/sexpr zl))
-                                    (catch Exception _ false)))
-                          (= mnorm (norm-src (n/string (z/node zl))))))))]
-    (if-not (or (= 1 (count mnodes)) pair?)
-      {:error (str "match parses to " (count mnodes) " forms — give exactly "
-                   "ONE subform as the match, or ONE key/value-style PAIR "
-                   "inside a map, binding vector, or case/cond (the "
-                   "REPLACEMENT may be several forms)")}
-      (let [match1? (matcher (first mnodes))
-            match2? (when pair? (matcher (second mnodes)))
-            hit?    (fn [zl]
-                      (and (match1? zl)
-                           (or (not pair?)
-                               (boolean (some-> (z/right zl) match2?)))))
-            matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
-                         (take-while (complement z/end?))
-                         (filter hit?)
-                         vec)
-            usable  (if pair? (filterv pair-slot? matches) matches)]
-        (cond
-          (and pair? (empty? usable) (seq matches))
-          {:error (str "a two-form match must land on a pair boundary of a "
-                       "map, binding vector, or case/cond clause — this span "
-                       "crosses one in " what "; match the single value form "
-                       "instead")}
+  (let [parsed (try {:nodes (filter n/sexpr-able?
+                                    (n/children (p/parse-string-all match-src)))}
+                    (catch Exception e {:parse-error (ex-message e)}))]
+    (if-let [pe (:parse-error parsed)]
+      {:error (str "the match isn't well-formed Clojure on its own (" pe
+                   ") — match COMPLETE forms: a whole expression, clause, or "
+                   "binding pair, never a fragment that opens a delimiter it "
+                   "doesn't close. Often the fix is matching the ENCLOSING "
+                   "form and restating it in the replacement")}
+      (let [mnodes  (:nodes parsed)
+            pair?   (= 2 (count mnodes))
+            matcher (fn [mnode]
+                      (let [msexpr (try (n/sexpr mnode) (catch Exception _ ::none))
+                            mnorm  (norm-src (n/string mnode))]
+                        (fn [zl]
+                          (or (and (not= ::none msexpr)
+                                   (try (= msexpr (z/sexpr zl))
+                                        (catch Exception _ false)))
+                              (= mnorm (norm-src (n/string (z/node zl))))))))]
+        (if-not (or (= 1 (count mnodes)) pair?)
+          {:error (str "match parses to " (count mnodes) " forms — give exactly "
+                       "ONE subform as the match, or ONE key/value-style PAIR "
+                       "inside a map, binding vector, or case/cond (the "
+                       "REPLACEMENT may be several forms)")}
+          (let [match1? (matcher (first mnodes))
+                match2? (when pair? (matcher (second mnodes)))
+                hit?    (fn [zl]
+                          (and (match1? zl)
+                               (or (not pair?)
+                                   (boolean (some-> (z/right zl) match2?)))))
+                matches (->> (iterate z/next (z/of-string form-src {:track-position? true}))
+                             (take-while (complement z/end?))
+                             (filter hit?)
+                             vec)
+                usable  (if pair? (filterv pair-slot? matches) matches)]
+            (cond
+              (and pair? (empty? usable) (seq matches))
+              {:error (str "a two-form match must land on a pair boundary of a "
+                           "map, binding vector, or case/cond clause — this span "
+                           "crosses one in " what "; match the single value form "
+                           "instead")}
 
-          (empty? usable)
-          {:error (str "subform not found in " what)}
+              (empty? usable)
+              {:error (str "subform not found in " what)}
 
-          (< 1 (count usable))
-          {:error (str "subform occurs " (count usable) " times in " what
-                       " — ambiguous; give a larger enclosing subform")}
+              (< 1 (count usable))
+              {:error (str "subform occurs " (count usable) " times in " what
+                           " — ambiguous; give a larger enclosing subform")}
 
-          pair?
-          {:zloc (first usable) :end-zloc (z/right (first usable))}
+              pair?
+              {:zloc (first usable) :end-zloc (z/right (first usable))}
 
-          :else {:zloc (first usable)})))))
+              :else {:zloc (first usable)})))))))
 
 (defn subform-replace-plan
   "Plan replacing the unique occurrence of `match-src` inside `form-name` with
