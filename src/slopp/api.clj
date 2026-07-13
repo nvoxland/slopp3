@@ -3302,6 +3302,60 @@
                                    :agent agent)]
             (cond-> (assoc r :rewrote (count (:caller-steps plan)))
               (seq (:manual plan)) (assoc :manual (:manual plan)))))))))
+(defn query-flow
+  "Rock 4: where a FIELD flows — every form using keyword `kw` (\":rush?\"),
+  with the using lines. The cross-namespace thread an agent otherwise
+  re-derives by reading each layer. Boundary-guarded textual scan over
+  rendered forms — keyword-precise enough in practice; revisit with kondo
+  keyword analysis if demand shows false hits."
+  [session kw]
+  (let [k   (str/replace (str kw) #"^:" "")
+        pat (re-pattern (str "(?<![\\w.:-]):" (java.util.regex.Pattern/quote k)
+                             "(?![\\w?!*+<>=-])"))
+        st  (:store @session)]
+    (->> (for [nsx (sort (keys (:namespaces st)))
+               e   (store/forms st nsx)
+               :let [lines (filterv #(re-find pat %)
+                                    (str/split-lines (n/string (:node e))))]
+               :when (seq lines)]
+           {:ns nsx :form (or (:name e) (:id e))
+            :lines (mapv str/trim (take 3 lines))})
+         vec)))
+(defn query-impact
+  "Rock 4: the blast radius of reshaping `ns-sym/nm` — call sites grouped
+  per caller form (:calls), value/higher-order references (:value-refs — a
+  template rewrite can't reach those), and the tests the trace map will
+  run. change_signature's discovery as a READ: plan the edit before paying
+  for it. Self-references inside the target form are excluded — replacing
+  the defn covers them."
+  [session ns-sym nm]
+  (let [st (:store @session)]
+    (if-not (store/form-named st ns-sym nm)
+      (edit/missing-form-error st ns-sym nm)
+      (let [rows    (for [nsx (keys (:namespaces st))
+                          :let [an (index/analyze (render/render-ns st nsx))]
+                          u   (:var-usages an)
+                          :when (and (= ns-sym (:to u)) (= nm (:name u))
+                                     (not (and (= nsx ns-sym)
+                                               (= nm (:from-var u)))))]
+                      {:ns nsx :from (:from-var u) :arity (:arity u)})
+            callers (->> rows
+                         (group-by (juxt :ns :from))
+                         (mapv (fn [[[nsx from] us]]
+                                 {:ns nsx :form from
+                                  :calls (count (keep :arity us))
+                                  :value-refs (count (remove :arity us))}))
+                         (sort-by (juxt (comp str :ns) (comp str :form)))
+                         vec)
+            qsym    (symbol (str ns-sym) (str nm))
+            tests   (->> (:test-map @session)
+                         (keep (fn [[t fs]] (when (contains? fs qsym) t)))
+                         sort vec)]
+        (cond-> {:target qsym :callers callers :covered-by tests}
+          (some (comp pos? :value-refs) callers)
+          (assoc :hint (str "value/higher-order refs can't be template-rewritten"
+                            " — change_signature handles :calls; edit the"
+                            " :value-refs forms by hand")))))))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

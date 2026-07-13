@@ -52,6 +52,16 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "query_flow"
+    :description "Where a FIELD flows: every form using keyword :k across all namespaces, with the using lines — trace a data thread without reading each layer."
+    :inputSchema {:type "object"
+                  :properties {:name {:type "string"}}
+                  :required ["name"]}}
+   {:name "query_impact"
+    :description "Blast radius of reshaping a fn BEFORE editing: call sites per caller form (:calls), higher-order/value refs (:value-refs — not template-rewritable), and the tests that will run. Plan change_signature/edit_group from this."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}}
+                  :required ["ns" "name"]}}
    {:name "query_detail"
     :description "The FULL version of a trimmed response (responses over the size gate carry a query_detail id). The spool keeps the last 20."
     :inputSchema {:type "object"
@@ -828,7 +838,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                             (text! {:error (str "no spooled response " (:id a)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
-      "query_brief" (text! (api/query-brief session (sym :ns) (sym :name)))
+      "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
+      "query_flow"        (text! (api/query-flow session (:name a)))
+      "query_impact"      (text! (api/query-impact session (sym :ns) (sym :name)))
       "query_references" (text! (vec (api/query-references session (sym :ns) (sym :name))))
       "query_lineage" (text! (vec (api/query-lineage session (sym :ns) (sym :name))))
       "turn_begin" (text! (api/turn-begin! session :agent (:agent a)

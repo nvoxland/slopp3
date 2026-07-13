@@ -101,3 +101,26 @@
       (testing "unknown form is an honest error"
         (is (:error (api/query-brief sess 'qb.a 'nope))))
       (finally (api/close! sess)))))
+(deftest ^:isolated flow-and-impact-answer-the-thread
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
+      (api/ingest! sess 'fl.b
+                   (str "(ns fl.b (:require [fl.a :as a] [clojure.test :refer [deftest is]]))\n"
+                        "(defn ship [o] (if (:rush? o) 2 1))\n"
+                        "(defn total [o] (* (ship o) 10))\n"
+                        "(defn pick [f o] (f o))\n"
+                        "(defn use-ho [o] (pick ship o))\n"
+                        "(deftest ship-t (is (= 2 (ship (a/mk true)))))\n"))
+      (api/test-run! sess 'fl.b)
+      (testing "query-flow threads a keyword across namespaces"
+        (let [r (api/query-flow sess ":rush?")]
+          (is (= #{['fl.a 'mk] ['fl.b 'ship]}
+                 (into #{} (map (juxt :ns :form)) r))
+              (pr-str r))))
+      (testing "query-impact reads the blast radius"
+        (let [r (api/query-impact sess 'fl.b 'ship)]
+          (is (= ['fl.b/ship-t] (:covered-by r)) (pr-str r))
+          (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
+          (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
+      (finally (api/close! sess)))))
