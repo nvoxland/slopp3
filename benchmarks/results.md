@@ -326,3 +326,6 @@ ABSORBING the new turn protocol (2+ extra required calls):
 | 2026-07-11 | 998aaa9 | calculator | 2 | 11 | 256 | 726 | 786 |
 | 2026-07-11 | 998aaa9 | inventory | 1 | 7 | 79 | 345 | 456 |
 | 2026-07-11 | 998aaa9 | wordstats | 1 | 8 | 155 | 427 | 580 |
+| 2026-07-12 | e194fa4 | calculator | 2 | 11 | 334 | 726 | 786 |
+| 2026-07-12 | e194fa4 | inventory | 1 | 7 | 97 | 345 | 456 |
+| 2026-07-12 | e194fa4 | wordstats | 1 | 8 | 119 | 427 | 580 |
