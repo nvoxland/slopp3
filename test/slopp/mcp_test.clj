@@ -389,3 +389,25 @@
         (is (re-find #"600" (call sess "query_eval" {:code "(sw.core/total 1)"})))
         (is (re-find #"500" (call sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated repeated-reads-are-free
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "tk.core"
+             :source (apply str "(ns tk.core)\n"
+                            (for [i (range 1 6)]
+                              (str "(defn f" i " [x] (+ x " i "))\n")))})
+      (testing "an identical re-read returns an :unchanged stub, not the payload (told-tracking)"
+        (let [a (call sess "query_outline" {:ns "tk.core"})
+              b (call sess "query_outline" {:ns "tk.core"})]
+          (is (re-find #":forms" a) a)
+          (is (re-find #":unchanged true" b) b)
+          (is (< (count b) (count a)))))
+      (testing "a body edit leaves the OUTLINE honestly unchanged"
+        (call sess "edit_replace_form" {:ns "tk.core" :name "f1"
+                                        :source "(defn f1 [x] (* x 9))"})
+        (is (re-find #":unchanged true" (call sess "query_outline" {:ns "tk.core"}))))
+      (testing "a change the view can SEE invalidates it"
+        (call sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
+        (is (re-find #":forms" (call sess "query_outline" {:ns "tk.core"}))))
+      (finally (api/close! sess)))))

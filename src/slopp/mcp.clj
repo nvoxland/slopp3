@@ -61,6 +61,11 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :depth {:type "integer"} :limit {:type "integer"}}
                   :required ["ns" "name"]}}
+   {:name "query_depends"
+    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). Ask this first; query_impact/query_flow/query_references give depth."
+    :inputSchema {:type "object"
+                  :properties {:on {:type "string"}}
+                  :required ["on"]}}
    {:name "query_flow"
     :description "Where a FIELD flows: every form using keyword :k across all namespaces, with the using lines — trace a data thread without reading each layer."
     :inputSchema {:type "object"
@@ -687,7 +692,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
             (when (and sid (not (:env-agent? @session)))
               (swap! session assoc :agent-id sid))
             (when-not (str/blank? (or prompt ""))
-              (swap! session assoc :pending-intent prompt))))))))
+              (swap! session assoc :pending-intent prompt :last-intent prompt))))))))
 (def ^:private env-handlers!
   "call-tool dispatch \u2014 deps/branches/build/help (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
   {"deps_add"
@@ -831,6 +836,25 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
 (def ^:private tail-handlers!
   "Every handler-map entry (Q4) \u2014 call-tool checks here first."
   (merge env-handlers! file-handlers! sync-handlers!))
+(defn- told!
+  "Knowledge-differential reads: the session keeps a hash of every
+  cacheable VIEW it has sent; an identical re-read returns a tiny
+  :unchanged stub instead of the payload. Re-fetching becomes FREE, so
+  agents never carry views in context 'just in case' — the whole
+  don't-hoard stance depends on cheap re-asks. Any store change alters
+  the payload, so staleness is impossible by construction."
+  [session tool a payload]
+  (let [k [tool (select-keys a [:ns :name :targets :since :detail
+                                :depth :limit :contains :full])]
+        h (hash payload)]
+    (if (and (= h (get-in @session [::told k]))
+             (< 130 (count (pr-str payload))))
+      {:unchanged true
+       :view (str tool (when (:ns a) (str " " (:ns a)))
+                  (when (:name a) (str "/" (:name a))))
+       :note "identical to what this session already received"}
+      (do (swap! session assoc-in [::told k] h)
+          payload))))
 (defn- call-tool [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
@@ -868,13 +892,15 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
-      "query_project" (text! (api/query-project session :since (:since a)
-                                              :detail (:detail a)))
+      "query_project" (text! (told! session name a
+                                        (api/query-project session :since (:since a)
+                                                          :detail (:detail a))))
       "query_search" (text! (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
       "query_namespaces" (text! (api/query-namespaces session))
-      "query_outline" (text! (api/query-outline session (sym :ns)
-                                              :detail (:detail a)))
+      "query_outline" (text! (told! session name a
+                                        (api/query-outline session (sym :ns)
+                                                          :detail (:detail a))))
       "query_source"      (text! (let [full?   (:full a)
                                        gate    (fn [n]
                                                  {:ns n
@@ -895,18 +921,21 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                      (if full?
                                        (api/query-source session (sym :ns))
                                        (gate (sym :ns))))))
-      "query_symbol" (text! (api/query-symbol session (sym :ns) (sym :name)))
+      "query_symbol" (text! (told! session name a (api/query-symbol session (sym :ns) (sym :name))))
       "query_detail" (if-let [full (get-in @session [::spool :entries (:id a)])]
                             ;; the retrieval path must NOT re-trim its own payload
                             {:content [{:type "text" :text full}]}
                             (text! {:error (str "no spooled response " (:id a)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
-      "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
-      "query_slice"       (text! (api/query-slice session (sym :ns) (sym :name)
-                                                 :depth (or (:depth a) 2)
-                                                 :limit (or (:limit a) 8)))
+      "query_brief"       (text! (told! session name a (api/query-brief session (sym :ns) (sym :name))))
+      "query_slice"       (text! (told! session name a
+                                        (api/query-slice session (sym :ns) (sym :name)
+                                                        :depth (or (:depth a) 2)
+                                                        :limit (or (:limit a) 8))))
       "query_flow"        (text! (api/query-flow session (:name a)))
+      "query_depends"     (text! (told! session name a
+                                        (api/query-depends session (:on a))))
       "session_brief"     (text! (let [b    (api/session-brief session)
                                        conn (:db @session)
                                        al   (when (and conn (:dir @session))
@@ -915,7 +944,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                (db/get-meta conn "git-remote")
                                                (db/get-meta conn "git-branch")
                                                (api/query-commits session)))]
-                                   (cond-> b al (assoc :alignment al))))
+                                   (told! session name a (cond-> b al (assoc :alignment al)))))
       "report"            (text! (let [r    (api/report session
                                                        :since (:since a)
                                                        :contains (:contains a)

@@ -917,8 +917,11 @@
 
 (defn turn-begin!
   "Open `agent`'s turn, recording the VERBATIM user ask as the root intent of
-  everything until turn-end. A new begin supersedes an unclosed one."
+  everything until turn-end. A new begin supersedes an unclosed one. The
+  intent also stays on the session (:last-intent) — orientation mines it so
+  the brief arrives task-shaped."
   [session & {:keys [agent intent user]}]
+  (when intent (swap! session assoc :last-intent intent))
   (commit-appended! session
                     #(first (store/record-turn % :turn-begin
                                                :agent agent :intent intent
@@ -3423,39 +3426,105 @@
   [s n]
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+^:reads (defn form-card
+  "The INTERFACE view of a form (opacity with a warranty): signature,
+  doc line, effect marker, the recorded WHY (last ask), and the warranty
+  (covering tests from the trace map) — what a CALLER needs, at ~10x less
+  than source. Trusting it is mechanical, not hopeful: every edit re-runs
+  the covering tests, so a violated contract turns red with :implicated."
+  [session ns-sym nm]
+  (when-let [e (store/form-named (:store @session) ns-sym nm)]
+    (let [q       (symbol (str ns-sym) (str nm))
+          s       (try (n/sexpr (:node e)) (catch Exception _ nil))
+          body    (when (seq? s) s)
+          doc     (some #(when (string? %) %) (take 3 (drop 2 (or body ()))))
+          sig     (or (some #(when (vector? %) %) (drop 1 (or body ())))
+                      (let [arities (keep #(when (and (seq? %) (vector? (first %)))
+                                             (first %))
+                                          (drop 2 (or body ())))]
+                        (when (seq arities) (vec arities))))
+          why     (->> (store/deltas (:store @session))
+                       reverse
+                       (some #(when (and (:prompt %)
+                                         (or (= (:id e) (:form-id %))
+                                             (some #{(:id e)} (or (:form-ids %) []))))
+                                (:prompt %))))
+          covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
+                               (:test-map @session)))]
+      (cond-> {:form q :warranty {:covered covered}}
+        sig  (assoc :sig sig)
+        doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
+        (str/ends-with? (str nm) "!") (assoc :effectful true)
+        why  (assoc :why (snip why 90))))))
 ^:reads (defn session-brief
-  "THE one-call orientation (ratio push): namespaces with form NAMES only
-  (counts only when the store is large), recent milestones with their
-  descriptions, and the working loop — what a fresh session needs to start
-  WORKING, at ~600 tokens instead of outline + history + README
-  archaeology. Depth on demand: query_outline {ns}, query_brief {ns name},
-  report {since}."
+  "THE one-call orientation, task-shaped (knowledge-differential stance):
+  breadth stays CHEAP — namespace FAMILIES (≥5 same-prefix siblings) roll
+  up to one row, form names ride only for solo nses on small stores — and
+  depth arrives WHERE THE ASK POINTS: the session's :last-intent (the
+  user's verbatim words, via the prompt hook or turn_begin) is mined
+  against form names, deterministically, and the top matches ride as
+  interface CARDS under :relevant. The agent starts working instead of
+  orienting."
   [session]
-  (let [st      (:store @session)
-        nss     (sort (keys (:namespaces st)))
-        names   (into {} (map (fn [n] [n (vec (remove #{n} (keep :name (store/forms st n))))])) nss)
-        total   (reduce + 0 (map (comp count val) names))
-        project (if (< 200 total)
-                  (mapv (fn [n] {:ns n :forms (count (names n))}) nss)
-                  (mapv (fn [n] {:ns n :forms (names n)}) nss))
-        ms      (->> (query-commits session)
-                     (take 5)
-                     (mapv #(-> (select-keys % [:commit :description :at :status])
-                                (update :description snip 110))))]
+  (let [st       (:store @session)
+        nss      (sort (keys (:namespaces st)))
+        names    (into {} (map (fn [n] [n (vec (remove #{n} (keep :name (store/forms st n))))])) nss)
+        total    (reduce + 0 (map (comp count val) names))
+        fams     (group-by #(first (str/split (str %) #"\.")) nss)
+        project  (vec (mapcat (fn [[seg members]]
+                                (if (<= 5 (count members))
+                                  [{:family (str seg ".*") :nses (count members)
+                                    :forms (reduce + 0 (map (comp count names) members))}]
+                                  (for [n members]
+                                    (if (< 200 total)
+                                      {:ns n :forms (count (names n))}
+                                      {:ns n :forms (names n)}))))
+                              (sort-by key fams)))
+        ms       (->> (query-commits session)
+                      (take 5)
+                      (mapv #(-> (select-keys % [:commit :description :at :status])
+                                 (update :description snip 110))))
+        intent   (:last-intent @session)
+        stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
+                   "tell" "every" "should" "their" "them" "than" "then" "they"
+                   "what" "where" "which" "been" "back" "also" "only" "into"}
+        tokens   (when intent
+                   (into #{}
+                         (comp (map str/lower-case)
+                               (filter #(<= 4 (count %)))
+                               (remove stop))
+                         (re-seq #"[A-Za-z][A-Za-z0-9-]+" intent)))
+        score    (fn [nm]
+                   (let [words (str/split (str/lower-case (str nm)) #"-")]
+                     (count (filter tokens words))))
+        relevant (when (seq tokens)
+                   (->> (for [n nss, f (names n)
+                              :let [s (score f)]
+                              :when (pos? s)]
+                          [s (symbol (str n) (str f))])
+                        (sort-by (comp - first))
+                        (map second)
+                        (take 5)
+                        (keep #(form-card session (symbol (namespace %))
+                                          (symbol (name %))))
+                        vec
+                        not-empty))]
     (cond-> {:project project
-             :loop (str "read: query_brief {ns name} / query_source {targets}; "
+             :loop (str "read: query_slice {ns name} (source + cards); "
                         "write: edit_group steps (optimistic — a missed :match "
-                        "returns the form's current source; correct and resend); "
-                        "every write self-verifies; history: report {since}; "
-                        "close: ONE commit_point {description}. Suite: "
-                        "test_run {:isolated true}.")}
-      (seq ms) (assoc :milestones ms))))
+                        "returns :source-now; correct and resend); every write "
+                        "self-verifies; history: report {since}; close: ONE "
+                        "commit_point {description}. Suite: test_run {:isolated true}.")}
+      (seq ms)  (assoc :milestones ms)
+      relevant  (assoc :relevant relevant))))
 (defn- fit-report
-  "G13 at the gate boundary: a report must fit UNDER the trim gate or
-  agents re-fetch the spooled full version and pay twice (measured in the
-  capped batch: report at ~8.1k chars tripped the 8k gate in 2 of 3
-  rounds). Progressive slimming: 1 ask per row, then the change list
-  truncates with an honest count."
+  "G13 at the gate boundary — by AGGREGATION, never amputation: an
+  over-budget report first trims asks to 1/row, then ROLLS CHANGES UP by
+  namespace ({:ns :forms :ops :asks}) — the information survives at a
+  coarser grain and report {contains} expands any group. Amputation
+  (take 20 of the rollup) is the last resort for pathological stores.
+  (eval9: the take-20 amputation CAUSED the handoff fan-out — agents went
+  hunting for what the report dropped.)"
   [r]
   (let [fits? #(<= (count (pr-str %)) 6500)]
     (if (fits? r)
@@ -3464,10 +3533,21 @@
                          (fn [cs] (mapv #(update % :asks (comp vec (partial take 1))) cs)))]
         (if (fits? slim)
           (assoc slim :note "asks trimmed to 1/row — report {contains} narrows")
-          (let [n (count (:changes slim))]
-            (-> slim
-                (update :changes #(vec (take 20 %)))
-                (assoc :note (str "showing 20 of " n " changes — {since}/{contains} narrows")))))))))
+          (let [rolled (->> (:changes slim)
+                            (group-by :ns)
+                            (mapv (fn [[nsx rows]]
+                                    {:ns nsx :forms (count rows)
+                                     :ops (vec (distinct (mapcat :ops rows)))
+                                     :asks (vec (take 1 (distinct (mapcat :asks rows))))}))
+                            (sort-by (comp str :ns)))
+                slim2  (assoc slim :changes (vec rolled)
+                              :note "changes rolled up by namespace — report {contains <ns or word>} expands a group")]
+            (if (fits? slim2)
+              slim2
+              (-> slim2
+                  (update :changes #(vec (take 20 %)))
+                  (assoc :note (str "rolled up by namespace, showing 20 of "
+                                    (count rolled) " — {contains} narrows"))))))))))
 ^:reads (defn report
   "The handoff/summary composite (ratio push): milestones, net form-level
   changes with their recorded ASKS, and the last verification state — the
@@ -3521,36 +3601,6 @@
                             (:status verify*) :unknown)})
       :verify (str "writes self-verify; test_run {} re-runs in-image; "
                    "test_run {:isolated true} = the full external suite")})))
-^:reads (defn form-card
-  "The INTERFACE view of a form (opacity with a warranty): signature,
-  doc line, effect marker, the recorded WHY (last ask), and the warranty
-  (covering tests from the trace map) — what a CALLER needs, at ~10x less
-  than source. Trusting it is mechanical, not hopeful: every edit re-runs
-  the covering tests, so a violated contract turns red with :implicated."
-  [session ns-sym nm]
-  (when-let [e (store/form-named (:store @session) ns-sym nm)]
-    (let [q       (symbol (str ns-sym) (str nm))
-          s       (try (n/sexpr (:node e)) (catch Exception _ nil))
-          body    (when (seq? s) s)
-          doc     (some #(when (string? %) %) (take 3 (drop 2 (or body ()))))
-          sig     (or (some #(when (vector? %) %) (drop 1 (or body ())))
-                      (let [arities (keep #(when (and (seq? %) (vector? (first %)))
-                                             (first %))
-                                          (drop 2 (or body ())))]
-                        (when (seq arities) (vec arities))))
-          why     (->> (store/deltas (:store @session))
-                       reverse
-                       (some #(when (and (:prompt %)
-                                         (or (= (:id e) (:form-id %))
-                                             (some #{(:id e)} (or (:form-ids %) []))))
-                                (:prompt %))))
-          covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
-                               (:test-map @session)))]
-      (cond-> {:form q :warranty {:covered covered}}
-        sig  (assoc :sig sig)
-        doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
-        (str/ends-with? (str nm) "!") (assoc :effectful true)
-        why  (assoc :why (snip why 90))))))
 ^:reads (defn query-slice
   "The focused read (driver, not doer): FULL source for the form you're
   about to edit + interface CARDS for what it reaches (same-ns private
@@ -3582,6 +3632,47 @@
                :cards cards}
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
+^:reads (defn query-depends
+  "The generic dependency front door: what depends on `on`, where `on` is a
+  NAMESPACE (\"logi.zone\" → who requires it, what it requires, qualified
+  refs), a VAR (\"logi.zone/zone-fee\" → the blast radius, via
+  query-impact), or a KEYWORD (\":dest-zone\" → the field's flow, via
+  query-flow). One tool to ask; the precise tools stay for depth."
+  [session on]
+  (let [on (str/trim (str on))
+        st (:store @session)]
+    (cond
+      (str/starts-with? on ":")
+      {:kind :keyword :on on :rows (query-flow session on)}
+
+      (str/includes? on "/")
+      (let [[nsx nm] (str/split on #"/" 2)
+            r (query-impact session (symbol nsx) (symbol nm))]
+        (if (:error r) r (assoc r :kind :var :on on)))
+
+      (contains? (:namespaces st) (symbol on))
+      (let [target      (symbol on)
+            req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
+            required-by (vec (sort (filter #(and (not= % target)
+                                                 (contains? (req-set %) target))
+                                           (keys (:namespaces st)))))
+            requires    (vec (sort (distinct (vals (edit/require-aliases st target)))))
+            pat         (re-pattern (str "(?<![\\w.-])"
+                                         (java.util.regex.Pattern/quote on) "/"))
+            refs        (vec (for [nsx (sort (keys (:namespaces st)))
+                                   :when (not= nsx target)
+                                   e (store/forms st nsx)
+                                   :when (and (:name e)
+                                              (re-find pat (n/string (:node e))))]
+                               {:ns nsx :form (:name e)}))]
+        {:kind :namespace :on target
+         :required-by required-by
+         :requires requires
+         :qualified-refs (vec (take 20 refs))})
+
+      :else
+      {:error (str "nothing named " on
+                   " — `on` is a namespace, var (ns/name), or :keyword")})))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

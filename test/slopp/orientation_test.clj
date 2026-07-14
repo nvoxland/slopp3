@@ -239,3 +239,67 @@
           (is (= #{'sl.core/tax 'sl.util/fmt}
                  (set (map :form (:cards r)))) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated briefs-arrive-task-shaped
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'bw.core
+                   (str "(ns bw.core)\n"
+                        "(defn billable-weight-g \"Greater of actual and volumetric.\" [p] (max (:w p) (:v p)))\n"
+                        "(defn unrelated-thing [x] x)\n"
+                        "(defn quote-breakdown \"Quote parts.\" [p] {:w (billable-weight-g p)})\n"))
+      (api/turn-begin! sess :agent "t"
+                       :intent "oversize parcels should use the billable weight in the quote breakdown")
+      (testing "the brief mines the ask and arrives with the relevant cards (intent-scoped orientation)"
+        (let [b (api/session-brief sess)]
+          (is (some #(= 'bw.core/billable-weight-g (:form %)) (:relevant b))
+              (pr-str (:relevant b)))
+          (is (not-any? #(= 'bw.core/unrelated-thing (:form %)) (:relevant b)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated briefs-roll-up-namespace-families
+  (let [sess (api/open!)]
+    (try
+      (doseq [i (range 1 7)]
+        (api/ingest! sess (symbol (str "fam.r0" i))
+                     (str "(ns fam.r0" i ")\n(defn probe [] " i ")\n")))
+      (api/ingest! sess 'solo.core "(ns solo.core)\n(defn f [x] x)\n")
+      (testing "sibling families collapse to one row; solos keep their names (breadth stays cheap)"
+        (let [b (api/session-brief sess)]
+          (is (some #(and (:family %) (= 6 (:nses %))) (:project b))
+              (pr-str (:project b)))
+          (is (some #(= 'solo.core (:ns %)) (:project b)))
+          (is (not-any? #(= 'fam.r01 (:ns %)) (:project b)))))
+      (finally (api/close! sess)))))
+(deftest fit-report-aggregates-instead-of-amputating
+  (let [fat {:milestones [{:commit "d9" :description "m"}]
+             :changes (vec (for [i (range 80)]
+                             {:ns (symbol (str "big.ns" (mod i 8))) :form (symbol (str "fn" i))
+                              :ops [:replace]
+                              :asks [(apply str (repeat 130 "x")) (apply str (repeat 130 "y"))]}))
+             :suite {:status :green} :verify "test_run"}
+        r  (#'api/fit-report fat)]
+    (is (<= (count (pr-str r)) 6500) (str (count (pr-str r))))
+    (testing "over-budget changes ROLL UP by namespace — information aggregates, never amputates"
+      (is (some #(and (:ns %) (number? (:forms %))) (:changes r)) (pr-str (take 3 (:changes r))))
+      (is (re-find #"rolled up" (str (:note r))) (pr-str (:note r))))))
+(deftest ^:isolated query-depends-is-the-generic-front-door
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
+      (api/ingest! sess 'dp.app
+                   (str "(ns dp.app (:require [dp.base :as base]))\n"
+                        "(defn total [o] (+ 100 (base/fee (:dest-zone o))))\n"))
+      (testing "a NAMESPACE answer: who requires it + what it requires"
+        (let [r (api/query-depends sess "dp.base")]
+          (is (= :namespace (:kind r)) (pr-str r))
+          (is (= '[dp.app] (:required-by r)) (pr-str r))))
+      (testing "a VAR answer delegates to the blast radius"
+        (let [r (api/query-depends sess "dp.base/fee")]
+          (is (= :var (:kind r)) (pr-str r))
+          (is (some #(= 'total (:form %)) (:callers r)) (pr-str r))))
+      (testing "a KEYWORD answer delegates to the flow"
+        (let [r (api/query-depends sess ":dest-zone")]
+          (is (= :keyword (:kind r)) (pr-str r))
+          (is (some #(= 'dp.app (:ns %)) (:rows r)) (pr-str r))))
+      (testing "an unknown thing teaches the kinds"
+        (is (re-find #"namespace, var" (str (:error (api/query-depends sess "nope.zip"))))))
+      (finally (api/close! sess)))))
