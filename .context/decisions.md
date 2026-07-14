@@ -1240,3 +1240,16 @@ smells observed in dogfooding (mine or eval transcripts) get an entry
 the same day. Two bugs fixed en route: hints now ride STRING results
 (source dumps dropped them), and some-over-registry replaced a cond
 whose first fired smell shadowed all later ones forever.
+
+Bash-smell hook + card examples (2026-07-14): the smell system reaches
+the channel the server can't see — a PostToolUse(Bash) hook injects
+one-line redirections via hookSpecificOutput.additionalContext (the ONLY
+PostToolUse output that reaches the agent — verified empirically; plain
+stdout does not). Smells: raw store.db reads, git log/diff/show/blame in
+store dirs, grep/cat of .clj files, clojure -e shell evals; 30-min
+per-smell per-store cooldown (.slopp/bash-hint-cooldowns.json), silent
+on any failure, active only where .slopp/store.db exists. And interface
+cards now carry :examples — query_observe captures persist to store meta
+(remember-observation!, called at the MCP layer to keep the api fn's
+read-only contract clean) and cards surface up to two real
+input->output pairs. Suite 289/1452 green.
