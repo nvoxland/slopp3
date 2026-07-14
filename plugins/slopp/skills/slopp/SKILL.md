@@ -38,8 +38,9 @@ context; the patterns below are where sessions measurably bleed tokens.
    form's CURRENT source in `:source-now` — correct the step from the
    error and resend. That round trip is cheaper than pre-reading. When you
    genuinely need context first: `query_brief {ns, name}` (the dossier) or
-   ONE batched `query_source {targets: […]}`. Never re-read what you just
-   wrote. For summaries/handoffs/audits: `report {since}` composes
+   ONE batched `query_source {targets: [{ns name}…]}` of NAMED forms —
+   whole-namespace reads return the outline by default (`full: true` is
+   the rare explicit dump). Never re-read what you just wrote. For summaries/handoffs/audits: `report {since}` composes
    milestones + changes + asks + verification + alignment in one read —
    never stitch history calls or re-verify via worktrees/raw store.db.
 3. **Write with intent; trust the verification.** Every write takes a

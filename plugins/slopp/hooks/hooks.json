@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c 'import json,sys,os; d=json.load(sys.stdin); os.makedirs(\".slopp\",exist_ok=True); json.dump({\"session-id\": d.get(\"session_id\",\"\"), \"prompt\": d.get(\"prompt\",\"\")}, open(\".slopp/pending-intent\",\"w\"))' 2>/dev/null || true",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-hook.py\" 2>/dev/null || true",
             "timeout": 10
           }
         ]

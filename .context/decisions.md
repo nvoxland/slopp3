@@ -1118,3 +1118,21 @@ report ~2.1k/call). Caps: brief = 5 milestones x 110 chars; report asks
 = 3 x 140 chars; full text stays one query away. Any future composite
 (dossier, plan result, hint) ships with a size budget and a spec
 asserting it.
+
+G14 (standing, 2026-07-14): **adoption is not a strategy — defaults
+are.** Every measured win came from changing what happens WITHOUT the
+agent's cooperation (auto-import, auto-turns, auto-publish, trims, caps,
+outline-by-default reads, the hook micro-brief); every disappointment
+came from offering a better tool and hoping (optimistic edits: 0 uses;
+query_brief: 487 lifetime tokens). New capability ships as the DEFAULT
+path or with the default path routing into it — never as an optional
+improvement beside the expensive one.
+
+Defaults wave (same day): query_source {ns} returns the OUTLINE unless
+full:true (the wire default; api/query-source stays the raw VFS read for
+internals); report self-fits under the trim gate via fit-report
+(progressive: 1 ask/row, then take-20 with an honest count — the capped
+batch double-paid ~2k twice re-fetching 8.1k-char reports); the
+UserPromptSubmit hook (now hooks/prompt-hook.py) injects a ~40-token
+micro-brief (store present, ns count, last milestone) so the ls/git/
+README scouting ritual has nothing left to discover. Suite 274/1392.
