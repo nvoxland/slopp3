@@ -531,3 +531,14 @@ dir carries every milestone on its local slopp branch. New finding Q12:
 the "summarize for handoff" step makes agents re-verify rich provenance
 through side channels — results must PROVE store/git alignment, not
 assert it. Full tables: projects/eval8-lifetime/RUNS.md.
+
+### eval8 n=3 (rounds 1-3; plugin jars d2198/d2263/d2276, plain constant)
+
+Lifetime means: plugin 36,536 vs plain 47,123 = **0.78×**, acceptance
+30/30 across all cohort-rounds, avg cost $4.15 vs $4.28. Durable signals:
+provenance 0.64×, deep-feature 0.48×, rename penalty erased (1.49×→0.72×
+across the Q11/Rock-3 fixes), handoff spiral closed by Q12 (step-5 arc
+0.96×→1.94×→0.82×), and plugin cost variance ±4% vs plain ±14% — the
+constrained environment buys PREDICTABILITY as well as reduction. Plain
+never committed in any round. Tables + caveats:
+projects/eval8-lifetime/RUNS.md.
