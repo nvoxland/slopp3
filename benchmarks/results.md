@@ -585,3 +585,13 @@ history/verification/compound-edits, not read volume. Acceptance: plain
 Q13 (isolated runner REPLs out on inline-test projects) and Q14
 (rename_sweep — the intent-level bulk rename). Protocol + tables:
 projects/eval9-lifetime/.
+
+### eval9 sweep2 (Q14 + integrity jar, n=2): rename loss erased
+
+Step-3 rename: 1.66× → **0.98×** (5.7k ≈ sed's 5.8k) with 11/11
+acceptance both cells — Q14 adopted on first exposure. Feature steps
+0.56-0.74×. Lifetime steady at 0.82× because the handoff step grew to
+1.24× at this scale (report is called but not terminal — the remaining
+fan is the next named target). The poisoned first sweep batch paid for
+itself: it exposed ns-resurrection + ghost-var store bugs (fixed,
+close-and-reopen specs added).
