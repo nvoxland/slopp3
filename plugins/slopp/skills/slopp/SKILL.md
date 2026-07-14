@@ -94,17 +94,19 @@ recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 
 Run code instead of reading callers: `query_eval "(my.ns/f X)"` (read-only
 REPL, image pre-loaded) · `query_observe` (capture args/returns at runtime)
-· `query_brief` / `query_references` / `query_deps` (dossier / who calls /
-what it reaches) · `query_flow {name ":kw"}` (every form a FIELD touches —
-trace a data thread without reading layers) · `query_impact {ns name}`
-(call sites + higher-order refs + affected tests BEFORE you reshape a fn)
-· `query_macroexpand`. History IS queryable:
+· `query_depends {on X}` — THE generic "what depends on X": a namespace,
+a var (`ns/name`), or a `:keyword`; depth via `query_impact` (call sites
++ higher-order refs + affected tests before reshaping a fn),
+`query_flow` (a field's every touchpoint), `query_brief` /
+`query_references` / `query_deps` · `query_macroexpand`. Re-reads are
+FREE: an unchanged view returns a tiny `:unchanged` stub — re-fetch
+instead of carrying source in context. History IS queryable:
 `query_history {collapse: true}`, `query_changes`, `query_form_at`
 (time-travel) — see reference.md.
 
 ## Tool index
 
-session_brief report query_slice · turn_begin turn_end · query_project query_search query_namespaces
+session_brief report query_slice query_depends · turn_begin turn_end · query_project query_search query_namespaces
 query_outline query_source query_symbol query_brief query_flow query_impact query_references
 query_deps query_lineage query_history query_form_history query_form_at
 query_status_at query_search_history query_changes query_eval query_observe

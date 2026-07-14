@@ -1198,3 +1198,17 @@ spec replicates):
 Lesson recorded: durable-session specs must include a CLOSE + REOPEN leg
 when they mutate namespace identity; single-session green is not
 persistence green. Suite 281/1418.
+
+G15 (standing, 2026-07-14): **the knowledge-differential stance.** The
+server models what the session has been told (told-tracking: cacheable
+views hash-keyed per session; identical re-reads return an :unchanged
+stub, so re-fetching is FREE and agents need not hoard context) and what
+the task needs (the verbatim ask, kept as :last-intent, is mined
+deterministically against form names; the brief arrives with :relevant
+interface cards). Composites scale by AGGREGATION, never amputation
+(fit-report rolls changes up by namespace; briefs roll up >=5-sibling
+namespace FAMILIES) — eval9 proved take-N amputation CAUSES fan-out:
+agents hunt for what was dropped. New front door: query_depends {on X}
+answers what-depends-on for a namespace / var / :keyword by
+classification + delegation (user-requested; ns-level had no tool at
+all). Suite 286/1438 green.
