@@ -3633,12 +3633,14 @@
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
 ^:reads (defn query-depends
-  "The generic dependency front door: what depends on `on`, where `on` is a
-  NAMESPACE (\"logi.zone\" → who requires it, what it requires, qualified
-  refs), a VAR (\"logi.zone/zone-fee\" → the blast radius, via
-  query-impact), or a KEYWORD (\":dest-zone\" → the field's flow, via
-  query-flow). One tool to ask; the precise tools stay for depth."
-  [session on]
+  "The generic dependency front door: what depends on `on` (`:direction
+  :dependents`, the default) or what `on` depends on (`:direction
+  :dependencies`), where `on` is a NAMESPACE, a VAR (\"ns/name\"), or a
+  KEYWORD (\":dest-zone\"). Dependents: ns → who requires it + qualified
+  refs; var → blast radius (callers, value refs, covering tests); keyword
+  → the field's flow. Dependencies: var → the transitive callee tree; ns
+  → its requires. One tool to ask — results carry :kind."
+  [session on & {:keys [direction] :or {direction :dependents}}]
   (let [on (str/trim (str on))
         st (:store @session)]
     (cond
@@ -3646,29 +3648,35 @@
       {:kind :keyword :on on :rows (query-flow session on)}
 
       (str/includes? on "/")
-      (let [[nsx nm] (str/split on #"/" 2)
-            r (query-impact session (symbol nsx) (symbol nm))]
-        (if (:error r) r (assoc r :kind :var :on on)))
+      (let [[nsx nm] (str/split on #"/" 2)]
+        (if (= :dependencies direction)
+          (let [r (query-deps session (symbol nsx) (symbol nm))]
+            (assoc r :kind :var :on on :direction :dependencies))
+          (let [r (query-impact session (symbol nsx) (symbol nm))]
+            (if (:error r) r (assoc r :kind :var :on on)))))
 
       (contains? (:namespaces st) (symbol on))
-      (let [target      (symbol on)
-            req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
-            required-by (vec (sort (filter #(and (not= % target)
-                                                 (contains? (req-set %) target))
-                                           (keys (:namespaces st)))))
-            requires    (vec (sort (distinct (vals (edit/require-aliases st target)))))
-            pat         (re-pattern (str "(?<![\\w.-])"
-                                         (java.util.regex.Pattern/quote on) "/"))
-            refs        (vec (for [nsx (sort (keys (:namespaces st)))
-                                   :when (not= nsx target)
-                                   e (store/forms st nsx)
-                                   :when (and (:name e)
-                                              (re-find pat (n/string (:node e))))]
-                               {:ns nsx :form (:name e)}))]
-        {:kind :namespace :on target
-         :required-by required-by
-         :requires requires
-         :qualified-refs (vec (take 20 refs))})
+      (let [target   (symbol on)
+            requires (vec (sort (distinct (vals (edit/require-aliases st target)))))]
+        (if (= :dependencies direction)
+          {:kind :namespace :on target :direction :dependencies
+           :requires requires}
+          (let [req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
+                required-by (vec (sort (filter #(and (not= % target)
+                                                     (contains? (req-set %) target))
+                                               (keys (:namespaces st)))))
+                pat         (re-pattern (str "(?<![\\w.-])"
+                                             (java.util.regex.Pattern/quote on) "/"))
+                refs        (vec (for [nsx (sort (keys (:namespaces st)))
+                                       :when (not= nsx target)
+                                       e (store/forms st nsx)
+                                       :when (and (:name e)
+                                                  (re-find pat (n/string (:node e))))]
+                                   {:ns nsx :form (:name e)}))]
+            {:kind :namespace :on target
+             :required-by required-by
+             :requires requires
+             :qualified-refs (vec (take 20 refs))})))
 
       :else
       {:error (str "nothing named " on

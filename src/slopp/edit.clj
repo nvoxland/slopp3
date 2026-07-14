@@ -251,7 +251,7 @@
     {:error (str "no form named " nm " in " ns-sym
                  (if near
                    (str " — nearest: " (str/join ", " near))
-                   (str " — query_outline {ns " ns-sym "} lists what exists")))}))
+                   (str " — query_source {ns " ns-sym "} lists what exists")))}))
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.

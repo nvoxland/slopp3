@@ -151,7 +151,7 @@
             call (fn [args]
                    (get-in (slopp.mcp/handle
                             sess {:id 1 :method "tools/call"
-                                  :params {:name "query_form_at" :arguments args}})
+                                  :params {:name "query_history" :arguments args}})
                            [:result :content 0 :text]))]
         (is (str/includes? (call {:ns "hi.core" :name "f" :at (:commit v1)})
                            "(+ x 1)")))
@@ -203,7 +203,7 @@
                          :prompt "harden auth path" :agent "a")
       (let [r (get-in (slopp.mcp/handle
                        sess {:id 1 :method "tools/call"
-                             :params {:name "query_search_history"
+                             :params {:name "query_history"
                                       :arguments {:contains "auth"}}})
                       [:result :content 0 :text])]
         (is (str/includes? r "harden auth path")))
@@ -233,7 +233,7 @@
       (testing "the same story rides the MCP surface via :format"
         (let [r (get-in (slopp.mcp/handle
                          sess {:id 1 :method "tools/call"
-                               :params {:name "query_form_history"
+                               :params {:name "query_history"
                                         :arguments {:ns "hi.core" :name "f"
                                                     :format "text"}}})
                         [:result :content 0 :text])]

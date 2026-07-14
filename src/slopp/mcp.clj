@@ -25,14 +25,6 @@
                   :properties {:pattern {:type "string"}
                                :limit {:type "integer"}}
                   :required ["pattern"]}}
-   {:name "query_namespaces"
-    :description "Namespaces with form counts."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "query_outline"
-    :description "One namespace's outline (vars, arities, !, test-ness; detail=true adds doc lines) — far cheaper than source."
-    :inputSchema {:type "object" :properties {:ns {:type "string"}
-                                              :detail {:type "boolean"}}
-                  :required ["ns"]}}
    {:name "query_source"
     :description "Form source from the store. targets [{ns name}…] reads SEVERAL named forms in ONE call — the normal read. ns alone returns the OUTLINE (name forms, or pass full: true for a whole-namespace dump — rarely needed; compose edits from the outline and let :source-now correct misses)."
     :inputSchema {:type "object"
@@ -42,18 +34,13 @@
                                                  :properties {:ns {:type "string"}
                                                               :name {:type "string"}}
                                                  :required ["ns"]}}}}}
-   {:name "query_symbol"
-    :description "One form: id, name, !-status, source."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}
    {:name "query_brief"
     :description "THE form dossier, one call: source + effect flags + cross-ns callers + the tests covering it + the recorded WHY (last prompt/intent). Prefer this over separate source/references/lineage reads when you're about to change a form."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "session_brief"
-    :description "START HERE, once: namespaces with form names, recent milestones, git alignment, and the working loop — orientation in one small call. Depth on demand: query_outline/query_brief/report."
+    :description "START HERE, once: namespaces with form names, recent milestones, git alignment, and the working loop — orientation in one small call. Depth on demand: query_source {ns}/query_brief/report."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_slice"
     :description "THE focused read: full source of ONE entry-point form + interface CARDS (sig, doc, why, test warranty) for everything it reaches — same-ns private helpers and cross-ns callees, breadth-first to depth (default 2, capped). Trust the cards: edits re-run covering tests, a violated contract turns red with :implicated. Prefer over fetching several forms."
@@ -64,28 +51,14 @@
    {:name "query_depends"
     :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). Ask this first; query_impact/query_flow/query_references give depth."
     :inputSchema {:type "object"
-                  :properties {:on {:type "string"}}
+                  :properties {:on {:type "string"}
+                               :direction {:type "string" :enum ["dependents" "dependencies"]}}
                   :required ["on"]}}
-   {:name "query_flow"
-    :description "Where a FIELD flows: every form using keyword :k across all namespaces, with the using lines — trace a data thread without reading each layer."
-    :inputSchema {:type "object"
-                  :properties {:name {:type "string"}}
-                  :required ["name"]}}
-   {:name "query_impact"
-    :description "Blast radius of reshaping a fn BEFORE editing: call sites per caller form (:calls), higher-order/value refs (:value-refs — not template-rewritable), and the tests that will run. Plan change_signature/edit_group from this."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}
    {:name "query_detail"
     :description "The FULL version of a trimmed response (responses over the size gate carry a query_detail id). The spool keeps the last 20."
     :inputSchema {:type "object"
                   :properties {:id {:type "string"}}
                   :required ["id"]}}
-   {:name "query_references"
-    :description "Who references ns/name."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}
    {:name "query_eval"
     :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops."
     :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
@@ -102,12 +75,7 @@
                   :required ["code"]}}
    {:name "query_branches"
     :description "Branches with head deltas; marks the current one."
-    :inputSchema {:type "object" :properties {}}}
-   {:name "query_deps"
-    :description "Transitive callee tree of ns/name (plan extractions / blast radius)."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}])
+    :inputSchema {:type "object" :properties {}}}])
 (def history-tools
   "Provenance tool descriptors: history, time-travel, change queries. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
   [{:name "report"
@@ -116,41 +84,14 @@
                   :properties {:since {:type "string"}
                                :contains {:type "string"}
                                :limit {:type "integer"}}}}
-   {:name "query_lineage"
-    :description "A form's provenance chain (deltas: op + prompt)."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}}
-                  :required ["ns" "name"]}}
    {:name "query_history"
-    :description "Change history, newest first. collapse=true = episode rows (the readable long view); format=text for humans. For summaries/handoffs use report instead — one composite read."
+    :description "EVERYTHING that happened, one tool: no args = change history (collapse=true for episode rows); {ns name} = one form's life; {ns name at} = TIME-TRAVEL to a past delta/milestone; {at} = was-green-at; {contains} = which asks/prompts touched X. format=text for humans. For summaries/handoffs use report."
     :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :contains {:type "string"}
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :at {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
                                :collapse {:type "boolean"}
                                :format {:type "string" :enum ["edn" "text"]}}}}
-   {:name "query_form_history"
-    :description "Every version of a form with prompt/time/verification; format=text renders its life as diffs."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}
-                               :format {:type "string" :enum ["text"]}}
-                  :required ["ns" "name"]}}
-   {:name "query_form_at"
-    :description "TIME-TRAVEL: a form's source at a past delta/milestone id (old names still resolve)."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :name {:type "string"}
-                               :at {:type "string"}}
-                  :required ["ns" "name" "at"]}}
-   {:name "query_status_at"
-    :description "Was-green-at: the verification state governing a past delta/milestone id."
-    :inputSchema {:type "object"
-                  :properties {:at {:type "string"}}
-                  :required ["at"]}}
-   {:name "query_search_history"
-    :description "Search prompts/labels/intents across the delta log ('which prompts touched auth?'); hits carry the touched forms. For whole-story summaries use report {contains}."
-    :inputSchema {:type "object"
-                  :properties {:contains {:type "string"}
-                               :limit {:type "integer"}}
-                  :required ["contains"]}}
    {:name "query_changes"
     :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
     :inputSchema {:type "object"
@@ -844,8 +785,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   don't-hoard stance depends on cheap re-asks. Any store change alters
   the payload, so staleness is impossible by construction."
   [session tool a payload]
-  (let [k [tool (select-keys a [:ns :name :targets :since :detail
-                                :depth :limit :contains :full])]
+  (let [k [tool (select-keys a [:ns :name :targets :since :detail :depth
+                                :limit :contains :full :at :collapse :format
+                                :on :direction])]
         h (hash payload)]
     (if (and (= h (get-in @session [::told k]))
              (< 130 (count (pr-str payload))))
@@ -897,46 +839,43 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                           :detail (:detail a))))
       "query_search" (text! (api/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
-      "query_namespaces" (text! (api/query-namespaces session))
-      "query_outline" (text! (told! session name a
-                                        (api/query-outline session (sym :ns)
-                                                          :detail (:detail a))))
-      "query_source"      (text! (let [full?   (:full a)
-                                       gate    (fn [n]
-                                                 {:ns n
-                                                  :outline (:forms (api/query-outline session n))
-                                                  :note (str "outline by default — name the"
-                                                             " forms you need (targets"
-                                                             " [{ns name}]) or pass full:"
-                                                             " true for the whole namespace")})]
-                                   (if-let [ts (:targets a)]
-                                     (mapv (fn [t]
-                                             (if (or full? (:name t))
-                                               (first (api/query-sources
-                                                       session
-                                                       [(cond-> {:ns (symbol (:ns t))}
-                                                          (:name t) (assoc :name (symbol (:name t))))]))
-                                               (gate (symbol (:ns t)))))
-                                           ts)
-                                     (if full?
-                                       (api/query-source session (sym :ns))
-                                       (gate (sym :ns))))))
-      "query_symbol" (text! (told! session name a (api/query-symbol session (sym :ns) (sym :name))))
+      "query_source" (text! (told! session name a
+                                        (let [full?   (:full a)
+                                              gate    (fn [n]
+                                                        {:ns n
+                                                         :outline (:forms (api/query-outline session n))
+                                                         :note (str "outline by default — name the"
+                                                                    " forms you need (targets"
+                                                                    " [{ns name}]) or pass full:"
+                                                                    " true for the whole namespace")})]
+                                          (if-let [ts (:targets a)]
+                                            (mapv (fn [t]
+                                                    (if (or full? (:name t))
+                                                      (first (api/query-sources
+                                                              session
+                                                              [(cond-> {:ns (symbol (:ns t))}
+                                                                 (:name t) (assoc :name (symbol (:name t))))]))
+                                                      (gate (symbol (:ns t)))))
+                                                  ts)
+                                            (if full?
+                                              (api/query-source session (sym :ns))
+                                              (gate (sym :ns)))))))
       "query_detail" (if-let [full (get-in @session [::spool :entries (:id a)])]
                             ;; the retrieval path must NOT re-trim its own payload
                             {:content [{:type "text" :text full}]}
                             (text! {:error (str "no spooled response " (:id a)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
-      "query_brief"       (text! (told! session name a (api/query-brief session (sym :ns) (sym :name))))
-      "query_slice"       (text! (told! session name a
+      "query_brief" (text! (told! session name a (api/query-brief session (sym :ns) (sym :name))))
+      "query_slice" (text! (told! session name a
                                         (api/query-slice session (sym :ns) (sym :name)
                                                         :depth (or (:depth a) 2)
                                                         :limit (or (:limit a) 8))))
-      "query_flow"        (text! (api/query-flow session (:name a)))
-      "query_depends"     (text! (told! session name a
-                                        (api/query-depends session (:on a))))
-      "session_brief"     (text! (let [b    (api/session-brief session)
+      "query_depends" (text! (told! session name a
+                                        (api/query-depends session (:on a)
+                                                          :direction (if (= "dependencies" (:direction a))
+                                                                       :dependencies :dependents))))
+      "session_brief" (text! (let [b    (api/session-brief session)
                                        conn (:db @session)
                                        al   (when (and conn (:dir @session))
                                               (sync/alignment
@@ -945,7 +884,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                (db/get-meta conn "git-branch")
                                                (api/query-commits session)))]
                                    (told! session name a (cond-> b al (assoc :alignment al)))))
-      "report"            (text! (let [r    (api/report session
+      "report" (text! (let [r    (api/report session
                                                        :since (:since a)
                                                        :contains (:contains a)
                                                        :limit (or (:limit a) 50))
@@ -957,12 +896,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                (db/get-meta conn "git-branch")
                                                (api/query-commits session)))]
                                    (cond-> r al (assoc :alignment al))))
-      "draft_test"        (text! (api/draft-test session (sym :ns) (sym :name)
+      "draft_test" (text! (api/draft-test session (sym :ns) (sym :name)
                                                 :code (:code a)
                                                 :limit (or (:limit a) 5)))
-      "query_impact"      (text! (api/query-impact session (sym :ns) (sym :name)))
-      "query_references" (text! (vec (api/query-references session (sym :ns) (sym :name))))
-      "query_lineage" (text! (vec (api/query-lineage session (sym :ns) (sym :name))))
       "turn_begin" (text! (api/turn-begin! session :agent (:agent a)
                                                  :intent (:intent a)
                                                  :user (:user a)))
@@ -978,19 +914,34 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                   :skipped-shared :note :test
                                                   :group :affected])
                                     (summarize (:verbose a))))
-      "query_history" (text! (api/query-history session
-                                                   :ns (some-> (:ns a) symbol)
-                                                   :contains (:contains a)
-                                                   :collapse (:collapse a)
-                                                   :format (:format a)
-                                                   :limit (or (:limit a) 20)))
-      "query_form_history" (text! (api/query-form-history session (sym :ns) (sym :name)
-                                                         :format (:format a)))
-      "query_form_at" (text! (api/query-form-at session (sym :ns) (sym :name)
-                                                   :at (:at a)))
-      "query_status_at" (text! (api/query-status-at session :at (:at a)))
-      "query_search_history" (text! (api/query-search-history session (:contains a)
-                                                             :limit (:limit a)))
+      "query_history" (text! (told! session name a
+                                        (let [nm (:name a)]
+                                          (cond
+                                            (and nm (:at a))
+                                            (assoc (api/query-form-at session (sym :ns) (sym :name)
+                                                                     :at (:at a))
+                                                   :kind :form-at)
+
+                                            nm
+                                            {:kind :form-history
+                                             :versions (api/query-form-history session (sym :ns) (sym :name)
+                                                                              :format (:format a))}
+
+                                            (:at a)
+                                            (assoc (api/query-status-at session :at (:at a))
+                                                   :kind :status-at)
+
+                                            (:contains a)
+                                            {:kind :prompts
+                                             :hits (api/query-search-history session (:contains a)
+                                                                            :limit (:limit a))}
+
+                                            :else
+                                            (api/query-history session
+                                                              :ns (some-> (:ns a) symbol)
+                                                              :collapse (:collapse a)
+                                                              :format (:format a)
+                                                              :limit (or (:limit a) 20))))))
       "query_eval" (text! (api/query-eval session (:code a)))
       "query_observe" (text! (api/query-observe session (sym :ns) (sym :name)
                                                    (:code a)
@@ -1055,7 +1006,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "rename_sweep"      (let [{:keys [from to]} a]
+      "rename_sweep" (let [{:keys [from to]} a]
                             (when-not (and from to)
                               (throw (ex-info "rename_sweep needs :from and :to (plain words/segments)" {})))
                             (text! (-> (api/rename-sweep! session from to
@@ -1129,7 +1080,6 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                   (when (:ns a) (sym :ns))
                                                   :only (some->> (:only a) (mapv symbol))
                                                   :fresh (:fresh a))))
-      "query_deps" (text! (api/query-deps session (sym :ns) (sym :name)))
       "fix_declares" (text! (api/fix-declares! session (sym :ns)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)))

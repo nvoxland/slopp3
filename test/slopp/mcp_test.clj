@@ -87,7 +87,7 @@
         (is (re-find #"needs :old and :new"
                      (call sess "edit_rename" {:ns "ra"})))
         (is (re-find #"missing required argument :ns"
-                     (call sess "query_outline" {}))))
+                     (call sess "query_source" {}))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated write-op-arg-forgiveness                      ; eval round 2
@@ -214,8 +214,8 @@
       (let [r (edn/read-string (call sb "episode_revert" {}))]
         (is (nil? (:error r)) (pr-str r)))
       (testing "B's work is gone, A's survives"
-        (is (not (re-find #"defn fb" (call sb "query_symbol" {:ns "iso.b" :name "fb"}))))
-        (is (re-find #"defn fa" (call sa "query_symbol" {:ns "iso.a" :name "fa"}))))
+        (is (not (re-find #"defn fb" (call sb "query_source" {:targets [{:ns "iso.b" :name "fb"}]}))))
+        (is (re-find #"defn fa" (call sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
       (finally (api/close! sa) (api/close! sb)))))
 (deftest ^:isolated terse-results-carry-forms
   (let [sess (api/open!)]
@@ -398,16 +398,16 @@
                             (for [i (range 1 6)]
                               (str "(defn f" i " [x] (+ x " i "))\n")))})
       (testing "an identical re-read returns an :unchanged stub, not the payload (told-tracking)"
-        (let [a (call sess "query_outline" {:ns "tk.core"})
-              b (call sess "query_outline" {:ns "tk.core"})]
-          (is (re-find #":forms" a) a)
+        (let [a (call sess "query_source" {:ns "tk.core"})
+              b (call sess "query_source" {:ns "tk.core"})]
+          (is (re-find #":outline" a) a)
           (is (re-find #":unchanged true" b) b)
           (is (< (count b) (count a)))))
       (testing "a body edit leaves the OUTLINE honestly unchanged"
         (call sess "edit_replace_form" {:ns "tk.core" :name "f1"
                                         :source "(defn f1 [x] (* x 9))"})
-        (is (re-find #":unchanged true" (call sess "query_outline" {:ns "tk.core"}))))
+        (is (re-find #":unchanged true" (call sess "query_source" {:ns "tk.core"}))))
       (testing "a change the view can SEE invalidates it"
         (call sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
-        (is (re-find #":forms" (call sess "query_outline" {:ns "tk.core"}))))
+        (is (re-find #":outline" (call sess "query_source" {:ns "tk.core"}))))
       (finally (api/close! sess)))))

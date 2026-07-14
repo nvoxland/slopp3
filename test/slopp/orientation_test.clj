@@ -302,4 +302,11 @@
           (is (some #(= 'dp.app (:ns %)) (:rows r)) (pr-str r))))
       (testing "an unknown thing teaches the kinds"
         (is (re-find #"namespace, var" (str (:error (api/query-depends sess "nope.zip"))))))
+      (testing "direction :dependencies gives the callee tree (absorbs query_deps)"
+        (let [r (api/query-depends sess "dp.app/total" :direction :dependencies)]
+          (is (= :var (:kind r)) (pr-str r))
+          (is (contains? (:calls r) 'dp.base/fee) (pr-str r))))
+      (testing "a namespace's :dependencies are its requires"
+        (let [r (api/query-depends sess "dp.app" :direction :dependencies)]
+          (is (some #{'dp.base} (:requires r)) (pr-str r))))
       (finally (api/close! sess)))))

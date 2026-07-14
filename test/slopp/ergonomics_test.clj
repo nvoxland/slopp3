@@ -137,5 +137,5 @@
       (is (re-find #"compute-total"
                    (:error (edit/missing-form-error store 'mf.core 'compute)))))
     (testing "a cold miss points at the outline"
-      (is (re-find #"query_outline"
+      (is (re-find #"query_source"
                    (:error (edit/missing-form-error store 'mf.core 'zzz)))))))
