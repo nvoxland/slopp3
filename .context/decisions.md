@@ -1276,3 +1276,17 @@ repo's old flat branch was deleted (identical to origin/slopp) and the
 local listener remote renamed slopp -> slopp-store to clear ref
 ambiguity. Remote publication branches (e.g. slopp3's `slopp`) are
 unchanged. Suite 290/1459.
+
+Mirror sync verbs (user design, 2026-07-14): git_push/git_pull have ONE
+meaning each — push = send local slopp/<branch> mirrors to the remote
+(sync/mirror-push!: ff-only, collision with a legacy FLAT `slopp` branch
+refused with the migration taught, {:migrate true} performs it — same
+minted lineage); pull = fetch remote mirrors into local slopp/* (ff-only)
+AND absorb remote store history (existing 3-way pull!). Direction lives
+in the verb, not a mode flag (the user's call: familiar git vocabulary
+beats a unified modal tool). No-git dirs never fail: milestones stay
+store-durable with no :published leg, and the verbs teach `git init`.
+Ecosystem: slopp-branch? marker + clone!'s default resolution accept
+slopp/main alongside legacy flat `slopp`; slopp3's branch is migrated to
+slopp/main (the old flat sync/push! remains api/CLI-level for legacy
+flat remotes). Suite 291/1471.
