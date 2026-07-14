@@ -561,3 +561,15 @@ targets (zero dumps attempted), the hook micro-brief cut Bash to 4%, one
 trim double-pay left. Campaign: 0.78× → 0.75× → 0.66× with absolute
 plugin cost 36.5k → 33.4k → 29.5k. Remaining fat: step 5 only (9.3k,
 history-stitching alongside report). Tables: projects/eval8-lifetime/RUNS.md.
+
+### eval8 cards batch (n=3 on d2379): 0.68× — the eval8 resolution floor
+
+Flat vs defaults (0.66×): at 12-namespace scale, neighborhoods are 2-4
+tiny fns and cards/slices can't beat already-cheap reads; query_slice was
+adopted but additively. Campaign close: 0.78× → 0.75× → 0.66× → plateau.
+eval8's remaining measurable margin: a leaner session_brief (→~0.62×).
+The card/slice/reader claims are scale-relative — eval9 (larger seed)
+is the terrain that can test them. First-person signal disagrees with
+the benchmark here (slice is immediately valuable on the 80-ns slopp
+store) — per the standing directive, that disagreement itself is the
+finding.
