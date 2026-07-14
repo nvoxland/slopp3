@@ -1253,3 +1253,13 @@ cards now carry :examples — query_observe captures persist to store meta
 (remember-observation!, called at the MCP layer to keep the api fn's
 read-only contract clean) and cards surface up to two real
 input->output pairs. Suite 289/1452 green.
+
+Push-default regression (2026-07-14, bit the USER): git_push {url} saved
+the url unconditionally, so a one-off push to "." silently repointed the
+store's default remote away from slopp3 and broke the normal push flow.
+Fixed: first-save only — an existing default is never rewritten by a
+one-off push; results carry :default-remote so the standing default is
+always visible. Also verified and worth knowing: local and remote slopp
+branches are the SAME minted lineage (deterministic projection commits
+via git_map), so a local push is never a divergent copy; the local
+branch now tracks origin/slopp. Suite 290/1457.
