@@ -1290,3 +1290,19 @@ Ecosystem: slopp-branch? marker + clone!'s default resolution accept
 slopp/main alongside legacy flat `slopp`; slopp3's branch is migrated to
 slopp/main (the old flat sync/push! remains api/CLI-level for legacy
 flat remotes). Suite 291/1471.
+
+No-compat rule (user directive, 2026-07-14): **there is no slopp but
+this slopp** — never write backwards-compatibility code; when a design
+changes, migrate everything (code, specs, seeds, remotes) in the same
+wave and delete the old path. Applied immediately: flat `slopp` branch
+support removed everywhere (marker/clone/pull/push all speak
+slopp/<branch>; clone's legacy-main fallback gone; git-branch config
+key retired from config!/push!/clone!), mirror-push!'s flat-collision
+migrate machinery deleted (flat is extinct: slopp3 + both eval seeds
+migrated to slopp/main, READMEs and accept scripts updated), and the
+stale-schema :where string-coercion removed (the restart protocol owns
+schema staleness). Kept deliberately, NOT compat: agent arg-forgiveness
+aliases (:old/:from etc. — they serve live agents guessing, not old
+versions) and push! itself (fileless stores publish projections — a
+capability, not a legacy path; git_push routes checkouts to mirrors and
+fileless stores to projection publishing). Suite 291/1470.

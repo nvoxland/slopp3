@@ -18,12 +18,11 @@ In a git checkout, every `commit_point` mirrors the store's history into
 LOCAL git as `slopp/<store-branch>` (e.g. `slopp/main`) — the repo
 durably carries the slopp history with zero ceremony; inspect it with
 normal git. Publishing to a REMOTE stays explicit: `git_push` sends your
-`slopp/<branch>` mirrors up (first `url` becomes the saved default;
-one-off urls never rewrite it; a legacy flat `slopp` branch on the
-remote is refused with the migration taught — `migrate: true` performs
-it). `git_pull` fetches the remote's mirrors down (fast-forward only)
-and absorbs remote store history. No `.git` locally? Milestones stay
-durable in the store; `git init` enables the mirror.
+`slopp/<branch>` mirrors up from a checkout (first `url` becomes the
+saved default; one-off urls never rewrite it); a FILELESS store (no
+`.git`) publishes its projection directly. `git_pull` fetches the
+remote's mirrors down (fast-forward only) and absorbs remote store
+history.
 
 ## Starting fresh
 
