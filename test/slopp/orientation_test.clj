@@ -145,7 +145,10 @@
     (try
       (api/ingest! sess 'br.a "(ns br.a)\n(defn f [x] x)\n(defn g [x] x)\n")
       (api/ingest! sess 'br.b "(ns br.b)\n(defn h [x] x)\n")
-      (api/commit-point! sess "seeded the br domain" :agent "t")
+      (api/commit-point! sess
+                         (str "seeded the br domain "
+                              (apply str (repeat 40 "with a very long story ")))
+                         :agent "t")
       (let [r (api/session-brief sess)]
         (testing "names-only project map"
           (is (= '[f g] (:forms (first (filter #(= 'br.a (:ns %)) (:project r)))))
@@ -164,7 +167,9 @@
       (api/ingest! sess 'rp.core "(ns rp.core)\n(defn f [x] x)\n")
       (api/commit-point! sess "seed rp" :agent "t")
       (api/edit-replace! sess 'rp.core 'f "(defn f [x] (inc x))"
-                         :prompt "make f increment" :agent "t")
+                         :prompt (str "make f increment "
+                                      (apply str (repeat 40 "because reasons ")))
+                         :agent "t")
       (api/commit-point! sess "f increments now" :agent "t")
       (let [r (api/report sess)]
         (testing "milestones + changes with their recorded asks"
@@ -175,5 +180,9 @@
               (pr-str r)))
         (testing "last verification state + the verify command ride along"
           (is (:suite r) (pr-str r))
-          (is (re-find #"test_run" (str (:verify r))) (pr-str r))))
+          (is (re-find #"test_run" (str (:verify r))) (pr-str r)))
+        (testing "asks are SNIPPED — composites must not give back their savings"
+          (is (every? #(<= (count %) 150)
+                      (mapcat :asks (:changes r)))
+              (pr-str (mapv :asks (:changes r))))))
       (finally (api/close! sess)))))

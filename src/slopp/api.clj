@@ -3400,6 +3400,13 @@
            :note  (str "no examples — pass :code (a driver expression) to observe"
                        " real calls and get value-true assertions instead of holes")})))
     (edit/missing-form-error (:store @session) ns-sym nm)))
+(defn- snip
+  "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
+  MANY prose fields and must never give back the tokens they save; the
+  full text stays one query away (report {contains}, query_history)."
+  [s n]
+  (let [s (str s)]
+    (if (<= (count s) n) s (str (subs s 0 n) "…"))))
 ^:reads (defn session-brief
   "THE one-call orientation (ratio push): namespaces with form NAMES only
   (counts only when the store is large), recent milestones with their
@@ -3416,8 +3423,9 @@
                   (mapv (fn [n] {:ns n :forms (count (names n))}) nss)
                   (mapv (fn [n] {:ns n :forms (names n)}) nss))
         ms      (->> (query-commits session)
-                     (take 8)
-                     (mapv #(select-keys % [:commit :description :at :status])))]
+                     (take 5)
+                     (mapv #(-> (select-keys % [:commit :description :at :status])
+                                (update :description snip 110))))]
     (cond-> {:project project
              :loop (str "read: query_brief {ns name} / query_source {targets}; "
                         "write: edit_group steps (optimistic — a missed :match "
@@ -3453,7 +3461,7 @@
                                :form (let [e (store/form-by-id st fid)]
                                        (or (:name e) fid))
                                :ops (vec (distinct (map :op es)))
-                               :asks (vec (distinct (keep :ask es)))}))
+                               :asks (vec (take 3 (distinct (map #(snip % 140) (keep :ask es)))))}))
                        (filter (fn [row]
                                  (or (nil? contains)
                                      (some #(str/includes? (str %) (str contains))
@@ -3467,7 +3475,8 @@
                                          (str/includes? (str (:description %))
                                                         (str contains)))))
                        (take 20)
-                       (mapv #(select-keys % [:commit :description :at :status])))
+                       (mapv #(-> (select-keys % [:commit :description :at :status])
+                                  (update :description snip 110))))
         verify*   (->> deltas (filter #(= :verify (:op %))) last)]
     {:milestones ms
      :changes changes

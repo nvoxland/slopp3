@@ -111,7 +111,7 @@
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
    {:name "query_history"
-    :description "Change history, newest first. collapse=true = episode rows (the readable long view); format=text for humans."
+    :description "Change history, newest first. collapse=true = episode rows (the readable long view); format=text for humans. For summaries/handoffs use report instead — one composite read."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
@@ -135,7 +135,7 @@
                   :properties {:at {:type "string"}}
                   :required ["at"]}}
    {:name "query_search_history"
-    :description "Search prompts/labels/intents across the delta log ('which prompts touched auth?'); hits carry the touched forms."
+    :description "Search prompts/labels/intents across the delta log ('which prompts touched auth?'); hits carry the touched forms. For whole-story summaries use report {contains}."
     :inputSchema {:type "object"
                   :properties {:contains {:type "string"}
                                :limit {:type "integer"}}
