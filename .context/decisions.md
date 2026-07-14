@@ -1152,7 +1152,7 @@ for the scaling terrain). Card gap noted: no observed input->output
 examples yet (needs persisted observe captures) — the strongest possible
 behavior line; revisit when demand fires. Suite 276/1404.
 
-Q13 (open) **The isolated runner REPLs out on inline-test projects**
+Q13 (✅ 2026-07-14) **The isolated runner REPLs out on inline-test projects**
 (eval9): build!'s generated deps.edn only mints the :test alias for
 suffix-convention/test-dir tests, so `clojure -M:test` on an inline-test
 project starts a REPL and isolated-test-run! reports {:status :error}
@@ -1160,7 +1160,7 @@ with a Clojure banner. Fix: has-tests? should count inline deftests (the
 index knows), and the alias's runner should require+run ALL namespaces'
 tests; failing that, refuse with the fix named (Q9 bar).
 
-Q14 (open) **Bulk rename at scale is the measured loss** (eval9 step 3:
+Q14 (✅ 2026-07-14) **Bulk rename at scale is the measured loss** (eval9 step 3:
 13.6k tokens / 37 calls / ~7 errors / one restart vs sed's one pass at
 5.8k; the run left an empty ns shell). ns_rename + edit_rename + key
 subform edits compose per-form; a docs-team-style rename (ns + fns +
@@ -1169,3 +1169,16 @@ rename_sweep {from "zone" to "region" :kinds [ns fn key prose]} planned
 store-wide, executed as one group, one verification. Q11's :mentions and
 group subform steps were the small-scale versions; this is the at-scale
 completion.
+
+Q13/Q14 resolution (same day): generated :test alias runs `-d test -d src
+-r .*` (inline deftests count via a source scan; build! mkdirs test/ so
+the runner never REPLs out); rename_sweep {from to} = ns-renames first
+(requires rewritten along), then every still-matching form rewritten in
+ONE dependency-ordered group (definitions hot-load before callers), one
+verification — boundary-guarded segment match, prose and keywords
+included by design. Root-cause bonus: rewrite-symbols returned z/root's
+:forms wrapper, so EVERY changeset-rewritten form (var-rename callers,
+ns-rename decls) silently lost its :name — dependency ordering broke on
+the next image rebuild; latent since the changeset machinery landed,
+surfaced only when the sweep renamed an alphabetically-early consumer.
+Suite 279/1413 green.

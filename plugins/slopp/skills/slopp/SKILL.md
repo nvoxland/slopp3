@@ -79,7 +79,8 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair (case/cond clause, let binding, map entry); replacement may splice several forms; `text: true` for strings/docstrings |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | `edit_group {steps, prompt}` — atomic, verified once; steps mix add/replace/delete/move/subform/require, so a rename's leftover `:mentions`, a threshold tweak, and a new require are ONE call |
-| Rename | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` — fix those in one `edit_group` of text subform steps; whole namespace: `ns_rename` |
+| Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
+| Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
 | Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_deps`) |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
