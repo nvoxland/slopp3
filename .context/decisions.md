@@ -1151,3 +1151,21 @@ carry answer for large codebases; unmeasurable at eval8 scale, ship it
 for the scaling terrain). Card gap noted: no observed input->output
 examples yet (needs persisted observe captures) — the strongest possible
 behavior line; revisit when demand fires. Suite 276/1404.
+
+Q13 (open) **The isolated runner REPLs out on inline-test projects**
+(eval9): build!'s generated deps.edn only mints the :test alias for
+suffix-convention/test-dir tests, so `clojure -M:test` on an inline-test
+project starts a REPL and isolated-test-run! reports {:status :error}
+with a Clojure banner. Fix: has-tests? should count inline deftests (the
+index knows), and the alias's runner should require+run ALL namespaces'
+tests; failing that, refuse with the fix named (Q9 bar).
+
+Q14 (open) **Bulk rename at scale is the measured loss** (eval9 step 3:
+13.6k tokens / 37 calls / ~7 errors / one restart vs sed's one pass at
+5.8k; the run left an empty ns shell). ns_rename + edit_rename + key
+subform edits compose per-form; a docs-team-style rename (ns + fns +
+keys + prose, 40+ dependent nses) needs ONE intent-level op:
+rename_sweep {from "zone" to "region" :kinds [ns fn key prose]} planned
+store-wide, executed as one group, one verification. Q11's :mentions and
+group subform steps were the small-scale versions; this is the at-scale
+completion.

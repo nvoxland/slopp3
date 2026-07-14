@@ -573,3 +573,15 @@ is the terrain that can test them. First-person signal disagrees with
 the benchmark here (slice is immediately valuable on the 80-ns slopp
 store) — per the standing directive, that disagreement itself is the
 finding.
+
+### eval9 baseline (41-ns logi seed, n=2/cohort, jar d2379)
+
+Lifetime 0.82× (plugin 37,566 vs plain 45,725) — dominated by one rename
+blowout (step 3: 1.66×, Q14); feature steps run 0.60-0.69× and handoff
+0.82×. Key honest finding: plain does NOT pay a scale penalty (45.7k at
+41 ns ≈ 44.8k at 12 ns) — competent grep scales; slopp's edge is
+history/verification/compound-edits, not read volume. Acceptance: plain
+22/22, plugin 21/22 (an empty ns shell after r1's rename). New findings
+Q13 (isolated runner REPLs out on inline-test projects) and Q14
+(rename_sweep — the intent-level bulk rename). Protocol + tables:
+projects/eval9-lifetime/.
