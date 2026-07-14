@@ -132,3 +132,16 @@
       (is (:error plan))
       (is (re-find #"ONE subform|COMPLETE forms|PAIR" (str (:error plan)))
           (pr-str plan)))))
+(deftest missed-matches-return-the-current-source
+  (testing "a not-found match carries the form's CURRENT source (edit optimistically, correct from the error)"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [x] (+ x 1))\n")
+                'sp.core 'h "(+ x 2)" "(+ x 3)")]
+      (is (:error plan))
+      (is (re-find #"\(defn h \[x\] \(\+ x 1\)\)" (str (:source-now plan))) (pr-str plan))))
+  (testing "an ambiguous match carries it too"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [x] (+ (inc x) (inc x)))\n")
+                'sp.core 'h "(inc x)" "(dec x)")]
+      (is (:error plan))
+      (is (re-find #"defn h" (str (:source-now plan))) (pr-str plan)))))

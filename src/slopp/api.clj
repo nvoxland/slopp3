@@ -1592,7 +1592,8 @@
         (if-let [step (first remaining)]
           (let [r (apply-group-step st gid prompt agent step)]
             (if (:error r)
-              {:error (str "step " i ": " (:error r)) :step i}
+              (cond-> {:error (str "step " i ": " (:error r)) :step i}
+                (:source-now r) (assoc :source-now (:source-now r)))
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
@@ -3399,6 +3400,83 @@
            :note  (str "no examples — pass :code (a driver expression) to observe"
                        " real calls and get value-true assertions instead of holes")})))
     (edit/missing-form-error (:store @session) ns-sym nm)))
+^:reads (defn session-brief
+  "THE one-call orientation (ratio push): namespaces with form NAMES only
+  (counts only when the store is large), recent milestones with their
+  descriptions, and the working loop — what a fresh session needs to start
+  WORKING, at ~600 tokens instead of outline + history + README
+  archaeology. Depth on demand: query_outline {ns}, query_brief {ns name},
+  report {since}."
+  [session]
+  (let [st      (:store @session)
+        nss     (sort (keys (:namespaces st)))
+        names   (into {} (map (fn [n] [n (vec (remove #{n} (keep :name (store/forms st n))))])) nss)
+        total   (reduce + 0 (map (comp count val) names))
+        project (if (< 200 total)
+                  (mapv (fn [n] {:ns n :forms (count (names n))}) nss)
+                  (mapv (fn [n] {:ns n :forms (names n)}) nss))
+        ms      (->> (query-commits session)
+                     (take 8)
+                     (mapv #(select-keys % [:commit :description :at :status])))]
+    (cond-> {:project project
+             :loop (str "read: query_brief {ns name} / query_source {targets}; "
+                        "write: edit_group steps (optimistic — a missed :match "
+                        "returns the form's current source; correct and resend); "
+                        "every write self-verifies; history: report {since}; "
+                        "close: ONE commit_point {description}. Suite: "
+                        "test_run {:isolated true}.")}
+      (seq ms) (assoc :milestones ms))))
+^:reads (defn report
+  "The handoff/summary composite (ratio push): milestones, net form-level
+  changes with their recorded ASKS, and the last verification state — the
+  history fan-out (query_history + query_search_history + query_changes +
+  query_commits + git diffs) as ONE deterministic read. `:since` = a
+  delta/milestone id; `:contains` filters asks/descriptions."
+  [session & {:keys [since contains limit] :or {limit 50}}]
+  (let [st        (:store @session)
+        deltas    (store/deltas st)
+        after     (if since
+                    (->> deltas (drop-while #(not= since (:id %))) rest vec)
+                    (vec deltas))
+        after-ids (into #{} (map :id) after)
+        content   #{:add :replace :delete :rename :move}
+        changes   (->> after
+                       (filter (comp content :op))
+                       (mapcat (fn [d]
+                                 (for [fid (or (:form-ids d)
+                                               (some-> (:form-id d) vector))]
+                                   {:ns (:ns d) :fid fid :op (:op d)
+                                    :ask (:prompt d)})))
+                       (group-by (juxt :ns :fid))
+                       (map (fn [[[nsx fid] es]]
+                              {:ns nsx
+                               :form (let [e (store/form-by-id st fid)]
+                                       (or (:name e) fid))
+                               :ops (vec (distinct (map :op es)))
+                               :asks (vec (distinct (keep :ask es)))}))
+                       (filter (fn [row]
+                                 (or (nil? contains)
+                                     (some #(str/includes? (str %) (str contains))
+                                           (cons (str (:form row)) (:asks row))))))
+                       (sort-by (juxt (comp str :ns) (comp str :form)))
+                       (take limit)
+                       vec)
+        ms        (->> (query-commits session)
+                       (filter #(and (or (nil? since) (after-ids (:commit %)))
+                                     (or (nil? contains)
+                                         (str/includes? (str (:description %))
+                                                        (str contains)))))
+                       (take 20)
+                       (mapv #(select-keys % [:commit :description :at :status])))
+        verify*   (->> deltas (filter #(= :verify (:op %))) last)]
+    {:milestones ms
+     :changes changes
+     :suite (when verify*
+              {:as-of (:id verify*)
+               :status (or (get-in verify* [:summary :status])
+                           (:status verify*) :unknown)})
+     :verify (str "writes self-verify; test_run {} re-runs in-image; "
+                  "test_run {:isolated true} = the full external suite")}))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

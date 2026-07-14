@@ -140,3 +140,40 @@
           (is (re-find #"deftest scale-t" (str (:draft r))) (pr-str r))
           (is (re-find #":TODO-x :TODO-r" (str (:draft r))) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated session-brief-is-the-one-call-orientation
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'br.a "(ns br.a)\n(defn f [x] x)\n(defn g [x] x)\n")
+      (api/ingest! sess 'br.b "(ns br.b)\n(defn h [x] x)\n")
+      (api/commit-point! sess "seeded the br domain" :agent "t")
+      (let [r (api/session-brief sess)]
+        (testing "names-only project map"
+          (is (= '[f g] (:forms (first (filter #(= 'br.a (:ns %)) (:project r)))))
+              (pr-str r)))
+        (testing "milestones ride along"
+          (is (some #(re-find #"seeded the br domain" (str (:description %)))
+                    (:milestones r))
+              (pr-str r)))
+        (testing "the loop is stated and the whole thing is SMALL"
+          (is (re-find #"commit_point" (str (:loop r))) (pr-str r))
+          (is (< (count (pr-str r)) 1500) (str (count (pr-str r))))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated report-composes-the-handoff
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rp.core "(ns rp.core)\n(defn f [x] x)\n")
+      (api/commit-point! sess "seed rp" :agent "t")
+      (api/edit-replace! sess 'rp.core 'f "(defn f [x] (inc x))"
+                         :prompt "make f increment" :agent "t")
+      (api/commit-point! sess "f increments now" :agent "t")
+      (let [r (api/report sess)]
+        (testing "milestones + changes with their recorded asks"
+          (is (some #(re-find #"f increments" (str (:description %))) (:milestones r)) (pr-str r))
+          (is (some #(and (= 'rp.core (:ns %)) (= 'f (:form %))
+                          (some (fn [a] (re-find #"make f increment" (str a))) (:asks %)))
+                    (:changes r))
+              (pr-str r)))
+        (testing "last verification state + the verify command ride along"
+          (is (:suite r) (pr-str r))
+          (is (re-find #"test_run" (str (:verify r))) (pr-str r))))
+      (finally (api/close! sess)))))

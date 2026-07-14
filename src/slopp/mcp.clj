@@ -52,6 +52,9 @@
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
                   :required ["ns" "name"]}}
+   {:name "session_brief"
+    :description "START HERE, once: namespaces with form names, recent milestones, git alignment, and the working loop — orientation in one small call. Depth on demand: query_outline/query_brief/report."
+    :inputSchema {:type "object" :properties {}}}
    {:name "query_flow"
     :description "Where a FIELD flows: every form using keyword :k across all namespaces, with the using lines — trace a data thread without reading each layer."
     :inputSchema {:type "object"
@@ -96,7 +99,13 @@
                   :required ["ns" "name"]}}])
 (def history-tools
   "Provenance tool descriptors: history, time-travel, change queries. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
-  [{:name "query_lineage"
+  [{:name "report"
+    :description "THE summary/handoff composite: milestones + net form changes with their recorded asks + last verification + alignment, in one read. since=<delta/milestone id>, contains=<filter>. Prefer over stitching query_history/query_changes/query_commits."
+    :inputSchema {:type "object"
+                  :properties {:since {:type "string"}
+                               :contains {:type "string"}
+                               :limit {:type "integer"}}}}
+   {:name "query_lineage"
     :description "A form's provenance chain (deltas: op + prompt)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}}
@@ -857,6 +866,27 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                 spool-cap " trimmed responses")}))
       "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
       "query_flow"        (text! (api/query-flow session (:name a)))
+      "session_brief"     (text! (let [b    (api/session-brief session)
+                                       conn (:db @session)
+                                       al   (when (and conn (:dir @session))
+                                              (sync/alignment
+                                               (:dir @session)
+                                               (db/get-meta conn "git-remote")
+                                               (db/get-meta conn "git-branch")
+                                               (api/query-commits session)))]
+                                   (cond-> b al (assoc :alignment al))))
+      "report"            (text! (let [r    (api/report session
+                                                       :since (:since a)
+                                                       :contains (:contains a)
+                                                       :limit (or (:limit a) 50))
+                                       conn (:db @session)
+                                       al   (when (and conn (:dir @session))
+                                              (sync/alignment
+                                               (:dir @session)
+                                               (db/get-meta conn "git-remote")
+                                               (db/get-meta conn "git-branch")
+                                               (api/query-commits session)))]
+                                   (cond-> r al (assoc :alignment al))))
       "draft_test"        (text! (api/draft-test session (sym :ns) (sym :name)
                                                 :code (:code a)
                                                 :limit (or (:limit a) 5)))
@@ -938,7 +968,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                                 (when (:name s)
                                                                   (str (:ns s) "/" (:name s)))))
                                                         (:steps a)))
-                                    (select-keys [:error :step :group :warnings :existing-warnings :changed-nses
+                                    (select-keys [:error :source-now :step :group :warnings :existing-warnings :changed-nses
                                                   :image-healed :test :affected :deltas :forms])
                                     (summarize (:verbose a))))
       "edit_rename" (let [old (or (:old a) (:name a) (:from a))
@@ -964,7 +994,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                          :text (:text a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
-                                      (select-keys [:error :conflict :warnings :existing-warnings
+                                      (select-keys [:error :source-now :conflict :warnings :existing-warnings
                                                     :untested :image-healed :test :affected :delta :ms])
                                       (summarize (:verbose a)))))
       "edit_revert" (text! (-> (api/revert-form! session (sym :ns) (sym :name)

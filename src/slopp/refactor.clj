@@ -277,11 +277,16 @@
                            "instead")}
 
               (empty? usable)
-              {:error (str "subform not found in " what)}
+              {:error (str "subform not found in " what
+                           " — :source-now is its CURRENT text; correct the"
+                           " match against it and resend, no read needed")
+               :source-now form-src}
 
               (< 1 (count usable))
               {:error (str "subform occurs " (count usable) " times in " what
-                           " — ambiguous; give a larger enclosing subform")}
+                           " — ambiguous; give a larger enclosing subform"
+                           " (its current text is in :source-now)")
+               :source-now form-src}
 
               pair?
               {:zloc (first usable) :end-zloc (z/right (first usable))}
