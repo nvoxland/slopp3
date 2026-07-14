@@ -156,14 +156,15 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Replace ONE subexpression inside a big form: `match` = its exact source (structural or whitespace-insensitive — fn literals/regexes match), `source` = replacement (may be SEVERAL forms: splice). Match may also be ONE pair on a pair boundary (case/cond clause, let binding, map entry). text=true = raw-text mode for strings/docstrings. Never re-transcribe the rest."
+    :description "Small change INSIDE a big form. match = ONE exact subform or pair (a missed/ambiguous match returns :source-now — correct and resend, no read needed); text: true matches raw text (strings/docstrings); OR where: {key value} addresses the unique MAP containing those entries (registry rows by :name — no exact text needed). The replacement may splice several forms."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
                                :text {:type "boolean"}
+                               :where {:type "object"}
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
-                  :required ["ns" "form" "match" "source"]}}
+                  :required ["ns" "form" "source"]}}
    {:name "edit_revert"
     :description "Revert a form to an earlier version (default previous, or a delta id)."
     :inputSchema {:type "object"
@@ -478,10 +479,13 @@
 (defn- bump-smell-counts
   "Fold one tool call into the smell counters (pure)."
   [c tool args]
-  (let [c (merge {:test-runs 0 :singles 0 :history 0 :dumps 0 :renames 0} c)]
+  (let [c (merge {:test-runs 0 :singles 0 :history 0 :dumps 0 :renames 0 :searches 0} c)]
     (cond
+      (= tool "query_search")
+      (update c :searches inc)
+
       (= tool "test_run")
-      (update c :test-runs inc)
+      (-> c (update :test-runs inc) (assoc :searches 0))
 
       (#{"query_history" "query_search_history" "query_changes"} tool)
       (update c :history inc)
@@ -503,7 +507,7 @@
       (write-tools tool)
       (assoc c :test-runs 0)
 
-      :else c)))
+      :else (assoc c :searches 0))))
 (def ^:private smell-registry
   "Deterministic bad-usage smells → one-line redirections naming the better
   tool. EXPAND HERE as new smells surface (dogfooding is the source): each
@@ -519,7 +523,9 @@
    [:dumps #(>= (:dumps %) 2)
     "repeated whole-namespace dumps — query_slice {ns name} gives one form's source + cards for what it reaches; targets [{ns name}] reads named forms"]
    [:renames #(>= (:renames %) 2)
-    "several renames — if this is one CONCEPT changing name, rename_sweep {from to} does namespaces + vars + keys + prose in ONE call"]])
+    "several renames — if this is one CONCEPT changing name, rename_sweep {from to} does namespaces + vars + keys + prose in ONE call"]
+   [:searches #(>= (:searches %) 3)
+    "a search streak — asking a QUESTION instead may be one call: query_depends {on X} (who uses/what reaches), query_slice {ns name} (a neighborhood), report {contains} (history)"]])
 (defn- track-hint!
   "Run the smell registry over this call: bump counters, then let the FIRST
   fireable smell speak — `some` skips already-fired ones, so one smell never
@@ -1040,11 +1046,18 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                       (summarize (:verbose a)))))
       "edit_subform" (let [match (or (:match a) (:from a))
                                 src   (or (:source a) (:to a))]
-                            (when-not (and match src)
-                              (throw (ex-info "edit_subform needs :match (exact subform source) and :source (its replacement)" {})))
+                            (when-not (and (or match (:where a)) src)
+                              (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it), plus :source" {})))
                             (text! (-> (api/edit-subform! session (sym :ns) (sym :form)
                                                          match src
                                                          :text (:text a)
+                                                         :where (let [w (:where a)]
+                                                                  (if (string? w)
+                                                                    (or (try (json/parse-string w true)
+                                                                             (catch Exception _ nil))
+                                                                        (try (edn/read-string w)
+                                                                             (catch Exception _ nil)))
+                                                                    w))
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
                                       (select-keys [:error :source-now :conflict :warnings :existing-warnings

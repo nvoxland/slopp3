@@ -358,9 +358,11 @@
                      (map (fn [{:keys [ns form symbol row def-row]}]
                             (str ns "/" (or form "<top-level>") " (line " row
                                  ") references " symbol
-                                 " defined later (line " def-row ")"))
+                                 " defined later (line " def-row ") — fix: edit_move {ns "
+                                 ns " name " (name symbol) " before "
+                                 (or form "<the referencing form>") "}"))
                           findings))
-           " — define it earlier, move it up with edit_move, or add (declare ...)"))))
+           " — or add (declare ...)"))))
 (defn lint-refusals
   "NEW error-level kondo findings a candidate store would introduce over its
   base — nil when clean, else one actionable message. Error-level lint is

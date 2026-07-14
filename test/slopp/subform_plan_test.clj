@@ -153,3 +153,25 @@
     (is (seq cs))
     (is (every? #(some? (store/form-symbol %)) (vals cs))
         (pr-str (map store/form-symbol (vals cs))))))
+(deftest keyed-matches-address-maps-by-content
+  (let [reg (st (str "(ns sp.core)\n"
+                     "(def tools\n"
+                     "  [{:name \"alpha\" :description \"a\"}\n"
+                     "   {:name \"beta\" :description \"b\"}\n"
+                     "   {:name \"gamma\" :description \"g\"}])\n"))]
+    (testing "a where-map addresses the one map containing it"
+      (let [plan (refactor/keyed-replace-plan reg 'sp.core 'tools
+                                              {:name "beta"}
+                                              "{:name \"beta\" :description \"B2\"}")]
+        (is (nil? (:error plan)) (pr-str plan))
+        (is (re-find #"B2" (str (:new-form-src plan))))
+        (is (re-find #"\"alpha\"" (str (:new-form-src plan))))))
+    (testing "no hit teaches"
+      (is (re-find #"no map containing"
+                   (str (:error (refactor/keyed-replace-plan reg 'sp.core 'tools
+                                                             {:name "zeta"} "{}"))))))
+    (testing "ambiguity teaches"
+      (let [dup (st "(ns sp.core)\n(def xs [{:k 1 :v 2} {:k 1 :v 3}])\n")]
+        (is (re-find #"2 maps"
+                     (str (:error (refactor/keyed-replace-plan dup 'sp.core 'xs
+                                                               {:k 1} "{}")))))))))

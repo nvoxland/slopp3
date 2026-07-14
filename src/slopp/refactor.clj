@@ -300,6 +300,41 @@
 
               :else {:zloc (first usable)})))))))
 
+(defn keyed-replace-plan
+  "Plan replacing the UNIQUE map inside `form-name` that contains every
+  entry of `where` (e.g. {:name \"query_history\"} addresses one tool
+  descriptor in a registry vector) with `new-src` — first-person friction:
+  registry-style edits shouldn't need the exact current text, just a key.
+  Returns {:new-form-src s} or {:error msg}."
+  [store ns-sym form-name where new-src]
+  (try
+    (if-let [e (store/form-named store ns-sym form-name)]
+      (let [form-src (n/string (:node e))
+            matches  (->> (iterate z/next (z/of-string form-src
+                                                       {:track-position? true}))
+                          (take-while (complement z/end?))
+                          (filter #(= :map (z/tag %)))
+                          (filter #(let [s (try (z/sexpr %) (catch Exception _ nil))]
+                                     (and (map? s)
+                                          (every? (fn [[k v]] (= v (get s k)))
+                                                  where))))
+                          vec)]
+        (cond
+          (empty? matches)
+          {:error (str "no map containing " (pr-str where) " in " form-name)}
+
+          (< 1 (count matches))
+          {:error (str (count matches) " maps contain " (pr-str where) " in "
+                       form-name " — add entries to `where` until unique")}
+
+          :else
+          (let [m       (first matches)
+                [r c]   (z/position m)
+                [er ec] (node-span (z/position m) (n/string (z/node m)))]
+            {:new-form-src (replace-span form-src [r c] [er ec] new-src)})))
+      {:error (str "no form named " form-name " in " ns-sym)})
+    (catch Exception ex
+      {:error (str "keyed edit failed: " (ex-message ex))})))
 (defn subform-replace-plan
   "Plan replacing the unique occurrence of `match-src` inside `form-name` with
   `new-src` (item 5 — paredit's valid-tree→valid-tree invariant, content-

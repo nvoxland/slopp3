@@ -1552,9 +1552,11 @@
                                                      :agent agent :before before)]
                    {:store st' :delta d :hot [:load (:form-id d)]}
                    {:error (str "no namespace " ns " (ingest it first)")})))
-    :subform (let [plan (if text
-                          (refactor/text-replace-plan st ns name match source)
-                          (refactor/subform-replace-plan st ns name match source))]
+    :subform (let [plan (cond
+                          (seq (:where step))
+                          (refactor/keyed-replace-plan st ns name (:where step) source)
+                          text (refactor/text-replace-plan st ns name match source)
+                          :else (refactor/subform-replace-plan st ns name match source))]
                (if (:error plan)
                  plan
                  (apply-group-step st gid prompt agent
@@ -2275,16 +2277,19 @@
   occurrence of `match` inside form `form-name` with `new-src`
   (content-addressed; wrap/unwrap are just 'new subform containing/omitting
   the old'). With `:text true` the match is RAW TEXT instead — the escape
-  hatch for string literals and docstrings, which no structural match can
-  address. The payload scales with the CHANGE and sibling code is never
-  re-transcribed. Rides the full replace pipeline: dialect gate on the
-  RESULTING form, rebase/conflict commit, verification, provenance."
-  [session ns-sym form-name match new-src & {:keys [prompt agent text]}]
-  (let [plan (if text
-               (refactor/text-replace-plan (:store @session) ns-sym form-name
-                                           match new-src)
-               (refactor/subform-replace-plan (:store @session) ns-sym form-name
-                                              match new-src))]
+  hatch for string literals and docstrings. With `:where {k v ...}` the
+  target is the unique MAP containing those entries (registry-style edits
+  by key, no exact text needed) and `match` is ignored. Rides the full
+  replace pipeline: dialect gate on the RESULTING form, rebase/conflict
+  commit, verification, provenance."
+  [session ns-sym form-name match new-src & {:keys [prompt agent text where]}]
+  (let [plan (cond
+               (seq where) (refactor/keyed-replace-plan (:store @session) ns-sym
+                                                        form-name where new-src)
+               text        (refactor/text-replace-plan (:store @session) ns-sym
+                                                       form-name match new-src)
+               :else       (refactor/subform-replace-plan (:store @session) ns-sym
+                                                          form-name match new-src))]
     (if (:error plan)
       plan
       (edit-replace! session ns-sym form-name (:new-form-src plan)
