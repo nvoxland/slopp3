@@ -1136,3 +1136,18 @@ batch double-paid ~2k twice re-fetching 8.1k-char reports); the
 UserPromptSubmit hook (now hooks/prompt-hook.py) injects a ~40-token
 micro-brief (store present, ns count, last milestone) so the ls/git/
 README scouting ritual has nothing left to discover. Suite 274/1392.
+
+Cards wave (2026-07-14): **opacity with a warranty.** form-card = the
+interface view of a form (sig, doc line, effect marker, the recorded WHY,
+covering-test warranty) at ~10x under source; query_slice = full source
+for ONE entry point + cards for its reachable neighborhood (BFS over
+query-deps, depth 2 default, capped 8 + :omitted). The warranty is
+mechanical, not rhetorical: edits re-run covering tests, violated
+assumptions turn red with :implicated — that's why trusting cards is safe
+here and hopeful in files. history-stitch hint (2 history calls -> report,
+once/session, track-hint! machinery). Plugin ships agents/slopp-reader.md
+(read-only comprehension subagent returning CONCLUSIONS — the context-
+carry answer for large codebases; unmeasurable at eval8 scale, ship it
+for the scaling terrain). Card gap noted: no observed input->output
+examples yet (needs persisted observe captures) — the strongest possible
+behavior line; revisit when demand fires. Suite 276/1404.

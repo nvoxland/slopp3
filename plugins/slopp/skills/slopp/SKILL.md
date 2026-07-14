@@ -33,14 +33,19 @@ context; the patterns below are where sessions measurably bleed tokens.
    need arities/flags for a specific ns (`query_outline {ns}`).
    `query_search {pattern}` to find things.
 2. **Read only what the brief can't tell you — and prefer NOT reading.**
+   About to edit a function? `query_slice {ns name}` is THE read: full
+   source of that one form + interface CARDS (sig, doc, why, test
+   warranty) for everything it reaches. TRUST the cards — you don't need
+   a callee's body to call it; if an assumption is wrong, the write turns
+   red with `:implicated` (the covering tests re-run on every edit).
    Writes are OPTIMISTIC: compose `edit_subform`/`edit_group` matches from
-   the brief and what you know; a missed or ambiguous match returns the
-   form's CURRENT source in `:source-now` — correct the step from the
-   error and resend. That round trip is cheaper than pre-reading. When you
-   genuinely need context first: `query_brief {ns, name}` (the dossier) or
-   ONE batched `query_source {targets: [{ns name}…]}` of NAMED forms —
-   whole-namespace reads return the outline by default (`full: true` is
-   the rare explicit dump). Never re-read what you just wrote. For summaries/handoffs/audits: `report {since}` composes
+   the brief/slice; a missed or ambiguous match returns the form's CURRENT
+   source in `:source-now` — correct from the error and resend. Batched
+   named reads: `query_source {targets: [{ns name}…]}`; whole-namespace
+   dumps are outline-by-default (`full: true` = the rare escape). Never
+   re-read what you just wrote. In a LARGE codebase, delegate broad
+   comprehension questions to the `slopp-reader` subagent — it returns
+   conclusions; your context should hold decisions, not source. For summaries/handoffs/audits: `report {since}` composes
    milestones + changes + asks + verification + alignment in one read —
    never stitch history calls or re-verify via worktrees/raw store.db.
 3. **Write with intent; trust the verification.** Every write takes a
@@ -98,7 +103,7 @@ trace a data thread without reading layers) · `query_impact {ns name}`
 
 ## Tool index
 
-session_brief report · turn_begin turn_end · query_project query_search query_namespaces
+session_brief report query_slice · turn_begin turn_end · query_project query_search query_namespaces
 query_outline query_source query_symbol query_brief query_flow query_impact query_references
 query_deps query_lineage query_history query_form_history query_form_at
 query_status_at query_search_history query_changes query_eval query_observe
