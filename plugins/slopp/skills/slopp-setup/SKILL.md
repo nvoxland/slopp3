@@ -12,6 +12,15 @@ commit. Day-to-day editing happens through the MCP tools (see the `slopp`
 skill); this skill covers everything around that — onboarding, sync, config,
 and CI.
 
+## Local mirror (automatic)
+
+In a git checkout, every `commit_point` mirrors the store's history into
+LOCAL git as `slopp/<store-branch>` (e.g. `slopp/main`) — the repo
+durably carries the slopp history with zero ceremony; inspect it with
+normal git. Publishing to a REMOTE stays explicit: `git_push {url}` (the
+first URL becomes the saved default; one-off pushes elsewhere never
+rewrite it).
+
 ## Starting fresh
 
 Nothing to do: the plugin's server runs in your project directory and creates

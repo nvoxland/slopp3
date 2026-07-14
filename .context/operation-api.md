@@ -258,9 +258,12 @@ Two transports share the SAME dispatch (`mcp/handle`):
   write result (the agent just sent that text); a zero-test verification
   carries `:coverage :none`. Anything over the size gate is trimmed and
   spooled — `query_detail {id}` returns the full version.
-- **The series runs itself (Q10/Q11):** `commit_point` on a store with
-  `git-remote` meta pushes the projection and reports `:published`
-  (errors ride along; the milestone never fails on publish trouble).
+- **The series runs itself (Q10/Q11, revised 2026-07-14):** `commit_point`
+  in a git checkout MIRRORS the projection into local git as
+  `slopp/<store-branch>` and reports `:published {:branch ...}` (errors
+  ride along; the milestone never fails on mirror trouble). Remote
+  publishing is explicit (`git_push`; first URL saved as default, never
+  rewritten by one-off pushes).
   `edit_rename` results carry `:mentions` — prose/string occurrences of
   the old name the structural rename can't rewrite — and `edit_group`
   steps now include `:subform` (+`:text`) and `:require`, so the

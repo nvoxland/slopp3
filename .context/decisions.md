@@ -1263,3 +1263,16 @@ always visible. Also verified and worth knowing: local and remote slopp
 branches are the SAME minted lineage (deterministic projection commits
 via git_map), so a local push is never a divergent copy; the local
 branch now tracks origin/slopp. Suite 290/1457.
+
+D-local-mirror (user decision, 2026-07-14): **every milestone mirrors
+into local git automatically** as refs/heads/slopp/<store-branch>
+(slopp/main, slopp/my-branch) — local git durably carries the slopp
+history with zero ceremony; REMOTE publishing stays explicit (git_push,
+which never rewrites the saved default). sync/publish-local! never
+touches git-remote meta; alignment (Q12) now proves against the local
+mirror, so it works with no remote configured at all. Naming note: a
+flat local branch named `slopp` blocks the slopp/* namespace — the dev
+repo's old flat branch was deleted (identical to origin/slopp) and the
+local listener remote renamed slopp -> slopp-store to clear ref
+ambiguity. Remote publication branches (e.g. slopp3's `slopp`) are
+unchanged. Suite 290/1459.
