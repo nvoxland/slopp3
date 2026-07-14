@@ -76,7 +76,7 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Require add/remove | `ns_add_require` / `ns_remove_require` |
 | New form | `edit_add_form` (`before` anchors placement) |
 | Change a whole form | `edit_replace_form` |
-| Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair (case/cond clause, let binding, map entry); replacement may splice several forms; `text: true` for strings/docstrings |
+| Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | `edit_group {steps, prompt}` — atomic, verified once; steps mix add/replace/delete/move/subform/require, so a rename's leftover `:mentions`, a threshold tweak, and a new require are ONE call |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |

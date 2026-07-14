@@ -178,17 +178,20 @@ clobber; a safe "render to files for reading" flow may be worth having;
 (3) targeted isolated runs (Q2) are the single highest-leverage fix this
 week by lived experience — protect that path.
 
-First-person friction (2026-07-14, cards/differential wave): every edit
-to a tool DESCRIPTOR or dispatch clause starts with a sqlite grep for
-exact match text — subform matching wants a KEYED mode ("the unique map
-whose :name is X") for registry-style vectors; would collapse the
-grep→copy→match loop into one addressed call. Second (mild): cold-load
-ordering hit again (form-card before session-brief) — the teaching error
-+ edit_move is fine, but the pattern "add composite, forget dep order"
-recurs; a :before hint in the refusal naming the EXACT anchor would
-close it fully.
+First-person friction (2026-07-14, cards/differential wave) — BOTH
+RESOLVED same day: edit_subform `where: {key value}` addresses the
+unique map containing those entries (registry rows by :name; its first
+live use was editing its OWN descriptor, which caught a stale-schema
+string-coercion bug); cold-load refusals now name the exact edit_move
+call (both names were already in the finding).
 
 Benchmark cadence (user directive, 2026-07-14): the lifetime evals run
 ONLY on explicit request or a genuine decision need — never routinely
 per change wave. Self-dogfooding is the continuous gauge; the benches
 are for claims.
+
+Planning-scale reads (sanctioned bulk path): `build {dir <scratchpad>}`
+materializes the whole store as files for grep/read-at-leisure — a
+read-only SNAPSHOT (edits still go through the tools; re-build after
+writes; never slice stale dumps into edits — the Q4 clobber lesson).
+Prefer it over raw sqlite queries against store.db.
