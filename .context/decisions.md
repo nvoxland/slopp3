@@ -1182,3 +1182,19 @@ ns-rename decls) silently lost its :name — dependency ordering broke on
 the next image rebuild; latent since the changeset machinery landed,
 surfaced only when the sweep renamed an alphabetically-early consumer.
 Suite 279/1413 green.
+
+Store-integrity pair (2026-07-14, found BY eval9's sweep cells — the
+fresh-session-per-step protocol is a persistence fuzzer no single-session
+spec replicates):
+1. **Resurrection**: try-commit! filtered touched nses to those present
+   in the new store, so a renamed-away ns never reached append!'s
+   delete — its rows lingered and the NEXT session loaded both old and
+   new namespaces. db/persist! had the same skip. Any durable store that
+   ever ns_renamed and reopened was affected.
+2. **Ghost vars**: a replace that renames (single edit_replace or group
+   step) loaded the new var but never ns-unmapped the old one — stale
+   vars then failed as noise in later verifications (the sweep's own red
+   came from a ghost zone-t, not from the sweep).
+Lesson recorded: durable-session specs must include a CLOSE + REOPEN leg
+when they mutate namespace identity; single-session green is not
+persistence green. Suite 281/1418.
