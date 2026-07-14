@@ -274,6 +274,11 @@ Two transports share the SAME dispatch (`mcp/handle`):
   `:alignment` (local-remote branch head vs the latest milestone's minted
   sha) so handoff audits are one trusted read — the eval8 trust spiral
   (worktrees, raw sqlite, duplicate runs) was the demand signal.
+- **One door per question (consolidation, 2026-07-14):** dependency
+  questions enter through `query_depends {on direction}`; history
+  questions through arg-routed `query_history`; twelve specialized wire
+  tools retired (api fns remain for internal composition). When adding a
+  read capability, extend a door's routing before minting a tool.
 - **Errors teach (Q5/Q9):** refusals name the next action in tool
   vocabulary — the cold-load gate is the bar. Shared pieces:
   `edit/missing-form-error` (near-miss names or the outline pointer, used

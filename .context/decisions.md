@@ -1212,3 +1212,18 @@ agents hunt for what was dropped. New front door: query_depends {on X}
 answers what-depends-on for a namespace / var / :keyword by
 classification + delegation (user-requested; ns-level had no tool at
 all). Suite 286/1438 green.
+
+Consolidation wave 2 (2026-07-14, user decision): ONE dependency door —
+query_depends {on, direction} (dependents: ns -> required-by + refs,
+var -> blast radius, :kw -> flow; dependencies: var -> callee tree,
+ns -> requires) — and ONE history door — query_history routed by args
+({} episodes, {ns name} form life, {ns name at} time-travel, {at}
+was-green-at, {contains} ask search). Twelve wire tools retired
+(references/deps/flow/impact/outline/symbol/namespaces/form_history/
+form_at/status_at/search_history/lineage); every api fn stays; the wire
+surface is 58 tools. Evidence: the specialized quartet had ~5 calls
+TOTAL across the whole eval campaign — taxonomy-choice was the barrier,
+not capability; the outline gate had already shown removal converts
+where offering never does. Deferred deliberately: modal write clusters
+(files/branches/deps/git) — distinct verbs are safety-relevant and the
+traffic is negligible. Suite 286/1441 green.

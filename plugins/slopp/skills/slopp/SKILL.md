@@ -30,7 +30,7 @@ context; the patterns below are where sessions measurably bleed tokens.
 1. **Orient with ONE small call: `session_brief`.** Form names, recent
    milestones with their asks, git alignment, the loop — everything a
    fresh session needs to start working. Skip `query_project` unless you
-   need arities/flags for a specific ns (`query_outline {ns}`).
+   need arities/flags for a specific ns (`query_source {ns}` = the outline).
    `query_search {pattern}` to find things.
 2. **Read only what the brief can't tell you — and prefer NOT reading.**
    About to edit a function? `query_slice {ns name}` is THE read: full
@@ -81,7 +81,7 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Several changes, one reason | `edit_group {steps, prompt}` — atomic, verified once; steps mix add/replace/delete/move/subform/require, so a rename's leftover `:mentions`, a threshold tweak, and a new require are ONE call |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
-| Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_deps`) |
+| Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_depends {on ns/name, direction :dependencies}`) |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
@@ -94,22 +94,22 @@ recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 
 Run code instead of reading callers: `query_eval "(my.ns/f X)"` (read-only
 REPL, image pre-loaded) · `query_observe` (capture args/returns at runtime)
-· `query_depends {on X}` — THE generic "what depends on X": a namespace,
-a var (`ns/name`), or a `:keyword`; depth via `query_impact` (call sites
-+ higher-order refs + affected tests before reshaping a fn),
-`query_flow` (a field's every touchpoint), `query_brief` /
-`query_references` / `query_deps` · `query_macroexpand`. Re-reads are
-FREE: an unchanged view returns a tiny `:unchanged` stub — re-fetch
-instead of carrying source in context. History IS queryable:
-`query_history {collapse: true}`, `query_changes`, `query_form_at`
-(time-travel) — see reference.md.
+· `query_depends {on X, direction?}` — THE dependency question, any
+kind: a namespace, a var (`ns/name`), or a `:keyword`; `:dependents`
+(default) = who uses X (callers, refs, field flow, affected tests);
+`:dependencies` = what X reaches · `query_brief` (the edit dossier) ·
+`query_macroexpand`. Re-reads are FREE: an unchanged view returns a tiny
+`:unchanged` stub — re-fetch instead of carrying source in context.
+History is ONE door:
+`query_history` routes by args ({} episodes · {ns name} a form's life ·
+{ns name at} time-travel · {at} was-green-at · {contains} which asks
+touched X); `report {since}` for summaries — see reference.md.
 
 ## Tool index
 
-session_brief report query_slice query_depends · turn_begin turn_end · query_project query_search query_namespaces
-query_outline query_source query_symbol query_brief query_flow query_impact query_references
-query_deps query_lineage query_history query_form_history query_form_at
-query_status_at query_search_history query_changes query_eval query_observe
+session_brief report query_slice query_depends · turn_begin turn_end ·
+query_project query_search query_source query_brief query_history
+query_changes query_eval query_observe
 query_macroexpand query_branches query_commits query_git · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia edit_group
