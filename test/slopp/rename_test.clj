@@ -79,3 +79,37 @@
           (is (nil? (:error r)) (pr-str r))
           (is (:already (:renamed r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated ns-rename-survives-reopen
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-nsren"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+        s1  (api/open! {:dir dir})]
+    (try
+      (api/ingest! s1 'nr.old "(ns nr.old)\n(defn f [x] x)\n")
+      (let [r (api/ns-rename! s1 "nr.old" "nr.new")]
+        (is (nil? (:error r)) (pr-str r)))
+      (finally (api/close! s1)))
+    (let [s2 (api/open! {:dir dir})]
+      (try
+        (testing "the rename PERSISTED — the old ns does not resurrect (eval9 sweep found both alive)"
+          (is (nil? (get-in (:store @s2) [:namespaces 'nr.old]))
+              (pr-str (keys (:namespaces (:store @s2)))))
+          (is (some? (get-in (:store @s2) [:namespaces 'nr.new]))))
+        (finally (api/close! s2))))))
+(deftest ^:isolated renaming-replaces-unmap-the-old-var
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'gv.core "(ns gv.core)\n(defn alpha [x] x)\n(defn beta [x] x)\n")
+      (testing "single replace-that-renames unmaps (eval9: ghost zone-t failed mid-sweep)"
+        (api/edit-replace! sess 'gv.core 'alpha "(defn alpha2 [x] x)" :prompt "rn")
+        (is (re-find #"nil"
+                     (str (api/query-eval sess "(resolve 'gv.core/alpha)")))
+            (pr-str (api/query-eval sess "(resolve 'gv.core/alpha)"))))
+      (testing "group replace-that-renames unmaps too"
+        (api/edit-group! sess [{:action :replace :ns 'gv.core :name 'beta
+                                :source "(defn beta2 [x] x)"}]
+                         :prompt "rn2")
+        (is (re-find #"nil"
+                     (str (api/query-eval sess "(resolve 'gv.core/beta)")))
+            (pr-str (api/query-eval sess "(resolve 'gv.core/beta)"))))
+      (finally (api/close! sess)))))
