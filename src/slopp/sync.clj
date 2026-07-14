@@ -123,9 +123,13 @@
               [tip used] (cond
                            tip     [tip want]
                            branch  [nil branch]
-                           :else   [(some-> (.resolve repo "refs/remotes/origin/main")
-                                            (.name))
-                                    "main"])]
+                           :else   (let [{t2 :tip} (git/fetch-remote! repo url :token token
+                                                                      :branch "slopp/main")]
+                                     (if t2
+                                       [t2 "slopp/main"]
+                                       [(some-> (.resolve repo "refs/remotes/origin/main")
+                                                (.name))
+                                        "main"])))]
           (if-not tip
             {:error (str "remote has no " (or branch "slopp (or main)")
                          " branch to clone: " url)}
@@ -485,6 +489,114 @@
           (assoc (git/push-to-remote! ctx (str dir) :remote-branch mirror)
                  :branch mirror))
         (finally (git/close-ctx! ctx))))))
+(defn- working-repo
+  "The CHECKOUT's own git repo at `dir` (mirror ops act on refs/heads/slopp/*
+  there, not on the store's projection repo). nil when not a checkout."
+  [dir]
+  (let [gd (io/file dir ".git")]
+    (when (.exists gd)
+      (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
+          (.setGitDir gd)
+          (.build)))))
+(defn mirror-push!
+  "Push local MIRROR branches (refs/heads/slopp/<b>) to a git remote — the
+  'publish my slopp history' op that knows the namespace rules: a FLAT
+  remote `slopp` branch blocks slopp/*; the refusal teaches, and
+  `:migrate true` performs the replacement (deletes the flat ref — same
+  minted lineage — then pushes). `branches` = STORE branch names (default
+  [\"main\"]). Fast-forward only; never touches the saved default remote."
+  [dir & {:keys [url token branches migrate] :or {branches ["main"]}}]
+  (if-let [repo (working-repo dir)]
+    (try
+      (let [target (with-open [conn (db/open! dir)]
+                     (resolve-remote dir (or url (db/get-meta conn "git-remote"))))]
+        (if (str/blank? (str target))
+          {:error "no remote — pass :url (or configure one via git_push {url})"}
+          (let [uri     (org.eclipse.jgit.transport.URIish.
+                         ^String (if (re-find #"^[a-z+]+://" (str target))
+                                   (str target)
+                                   (.getAbsolutePath (io/file (str target)))))
+                push1   (fn [refspecs]
+                          (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
+                            (when-let [creds (git/remote-credentials token)]
+                              (.setCredentialsProvider tn creds))
+                            (.push tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE refspecs)))
+                updates (fn []
+                          (vec (for [b branches
+                                     :let [r (str "refs/heads/slopp/" b)]]
+                                 (org.eclipse.jgit.transport.RemoteRefUpdate. repo r r false nil nil))))
+                rows    (fn [res]
+                          (vec (for [^org.eclipse.jgit.transport.RemoteRefUpdate u
+                                     (.getRemoteUpdates ^org.eclipse.jgit.transport.PushResult res)]
+                                 {:ref (.getRemoteName u) :status (str (.getStatus u))
+                                  :message (.getMessage u)})))
+                ok?     (fn [rs] (every? #(contains? #{"OK" "UP_TO_DATE"} (:status %)) rs))
+                missing (vec (remove #(.resolve repo (str "refs/heads/slopp/" %)) branches))]
+            (if (seq missing)
+              {:error (str "no local mirror branch for "
+                           (str/join ", " (map #(str "slopp/" %) missing))
+                           " — a commit_point creates it")}
+              (let [rs (rows (push1 (updates)))
+                    blocked? (some #(re-find #"'refs/heads/slopp' exists|cannot lock|failed to lock"
+                                             (str (:message %)))
+                                   rs)]
+                (cond
+                  (ok? rs) {:mirrored rs :remote (str target)}
+
+                  (and blocked? migrate)
+                  (do (push1 [(org.eclipse.jgit.transport.RemoteRefUpdate.
+                               repo nil "refs/heads/slopp" true nil nil)])
+                      (let [rs2 (rows (push1 (updates)))]
+                        (if (ok? rs2)
+                          {:mirrored rs2 :remote (str target)
+                           :migrated "replaced the flat refs/heads/slopp (same lineage)"}
+                          {:error (str "migrate retry rejected: " (pr-str rs2))})))
+
+                  blocked?
+                  {:error (str "the remote's FLAT `slopp` branch blocks the slopp/*"
+                               " namespace — it is the same minted lineage; retry with"
+                               " {:migrate true} to replace it (deletes refs/heads/slopp,"
+                               " then pushes slopp/*)")}
+
+                  :else
+                  {:error (str "mirror push rejected: " (pr-str rs))}))))))
+      (finally (.close repo)))
+    {:error (str dir " has no .git — the store IS durable without one (milestones"
+                 " live in .slopp/store.db); to ALSO mirror history into git,"
+                 " run `git init` there and the next commit_point creates"
+                 " slopp/<branch> automatically")}))
+(defn mirror-pull!
+  "Fetch the remote's slopp/<b> mirror branches into local
+  refs/heads/slopp/<b> (fast-forward only — divergence is an honest
+  per-branch :status, never a force). Store absorption of remote history
+  stays git_pull's plain form. `branches` = STORE branch names."
+  [dir & {:keys [url token branches] :or {branches ["main"]}}]
+  (if-let [repo (working-repo dir)]
+    (try
+      (let [target (with-open [conn (db/open! dir)]
+                     (resolve-remote dir (or url (db/get-meta conn "git-remote"))))]
+        (if (str/blank? (str target))
+          {:error "no remote — pass :url (or configure one via git_push {url})"}
+          (let [uri   (org.eclipse.jgit.transport.URIish.
+                       ^String (if (re-find #"^[a-z+]+://" (str target))
+                                 (str target)
+                                 (.getAbsolutePath (io/file (str target)))))
+                specs (mapv #(org.eclipse.jgit.transport.RefSpec.
+                              (str "refs/heads/slopp/" % ":refs/heads/slopp/" %))
+                            branches)]
+            (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
+              (when-let [creds (git/remote-credentials token)]
+                (.setCredentialsProvider tn creds))
+              (.fetch tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE specs)
+              {:pulled (vec (for [b branches]
+                              {:branch (str "slopp/" b)
+                               :head (some-> (.resolve repo (str "refs/heads/slopp/" b))
+                                             (.name))}))
+               :remote (str target)}))))
+      (finally (.close repo)))
+    {:error (str dir " has no .git — nothing to fetch mirrors into; `git init`"
+                 " (or clone the published repo) first, then git_pull brings"
+                 " slopp/<branch> down")}))
 (defn import!
   "THE onboarding command: inside a git checkout (main checked out, the
   human's files on disk), build `.slopp/store.db` from the repo's slopp
@@ -514,7 +626,9 @@
                  (.build))]
     (try
       (boolean (or (.resolve repo "refs/heads/slopp")
-                   (.resolve repo "refs/remotes/origin/slopp")))
+                   (.resolve repo "refs/remotes/origin/slopp")
+                   (.resolve repo "refs/heads/slopp/main")
+                   (.resolve repo "refs/remotes/origin/slopp/main")))
       (finally (.close repo)))))
 (defn maybe-auto-import!
   "Serve-time onboarding: when `dir` is a git checkout carrying a slopp

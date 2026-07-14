@@ -381,11 +381,11 @@
     :description "This session's git view: the embedded read-only listener URL + the saved external remote."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_push"
-    :description "Push the milestone projection to a git remote (fast-forward only). url saved on first use; https auth via token or SLOPP_GIT_TOKEN."
+    :description "Push your slopp/<branch> mirror branches to the git remote (current store branch by default; branches: [\"main\" ...] for more). First url is saved as the default; one-off urls never rewrite it. A remote with a legacy FLAT `slopp` branch is refused with the fix; migrate: true replaces it (same lineage). Fast-forward only."
     :inputSchema {:type "object"
-                  :properties {:url {:type "string"}
-                               :token {:type "string"}
-                               :branch {:type "string"}}}}
+                  :properties {:url {:type "string"} :token {:type "string"}
+                               :branches {:type "array" :items {:type "string"}}
+                               :migrate {:type "boolean"}}}}
    {:name "git_clone"
     :description "Clone a remote into dir as a FILELESS store (every ns ingested + verified; no .clj files materialized)."
     :inputSchema {:type "object"
@@ -394,9 +394,10 @@
                                :token {:type "string"}}
                   :required ["url" "dir"]}}
    {:name "git_pull"
-    :description "Absorb remote changes: form-granular 3-way merge; both-sides-touched = conflicts (quarantined; push blocked until resolved)."
+    :description "Fetch the remote's slopp/<branch> mirrors into local git (fast-forward only) AND absorb remote store history (3-way: remote wins where you're clean; both-touched = conflict, yours stays live, push blocked until git_resolve)."
     :inputSchema {:type "object"
-                  :properties {:token {:type "string"}}}}
+                  :properties {:url {:type "string"} :token {:type "string"}
+                               :branches {:type "array" :items {:type "string"}}}}}
    {:name "git_conflicts"
     :description "Unresolved pull conflicts, with the raw remote content to merge from."
     :inputSchema {:type "object" :properties {}}}
@@ -742,17 +743,28 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   {"git_push"
    (fn [session a _sym]
      (text! (if-let [dir (:dir @session)]
-                           (sync/push! dir :url (:url a) :token (:token a)
-                                       :branch (:branch a))
-                           {:error "git_push needs a durable session (a store dir)"})))
+              (sync/mirror-push! dir :url (:url a) :token (:token a)
+                                 :branches (or (:branches a)
+                                               (some-> (:branch a) vector)
+                                               [(:branch @session "main")])
+                                 :migrate (:migrate a))
+              {:error "git_push needs a durable session (a store dir)"})))
    "git_clone"
    (fn [_session a _sym]
      (text! (sync/clone! (:url a) (:dir a)
                                       :token (:token a) :agent (:agent a))))
    "git_pull"
    (fn [session a _sym]
-     (text! (sync/pull! session
-                                     :token (:token a) :agent (:agent a))))
+     (text! (if-let [dir (:dir @session)]
+              (let [m (sync/mirror-pull! dir :url (:url a) :token (:token a)
+                                         :branches (or (:branches a)
+                                                       [(:branch @session "main")]))
+                    p (when-not (:error m)
+                        (try (sync/pull! session :token (:token a)
+                                         :agent (:agent a))
+                             (catch Exception e {:error (ex-message e)})))]
+                (cond-> m p (assoc :absorbed p)))
+              {:error "git_pull needs a durable session (a store dir)"})))
    "git_conflicts"
    (fn [session a _sym]
      (text! (if-let [dir (:dir @session)]
@@ -1008,6 +1020,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                  (:before s)  (assoc :before (symbol (:before s)))
                                                  (:match s)   (assoc :match (:match s))
                                                  (:text s)    (assoc :text true)
+                                                 (:where s)   (assoc :where (:where s))
                                                  (:require s) (assoc :require (:require s)))))
                                            (:steps a))
                                      :prompt (:prompt a) :agent (:agent a))
