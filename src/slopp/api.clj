@@ -3434,6 +3434,24 @@
                         "close: ONE commit_point {description}. Suite: "
                         "test_run {:isolated true}.")}
       (seq ms) (assoc :milestones ms))))
+(defn- fit-report
+  "G13 at the gate boundary: a report must fit UNDER the trim gate or
+  agents re-fetch the spooled full version and pay twice (measured in the
+  capped batch: report at ~8.1k chars tripped the 8k gate in 2 of 3
+  rounds). Progressive slimming: 1 ask per row, then the change list
+  truncates with an honest count."
+  [r]
+  (let [fits? #(<= (count (pr-str %)) 6500)]
+    (if (fits? r)
+      r
+      (let [slim (update r :changes
+                         (fn [cs] (mapv #(update % :asks (comp vec (partial take 1))) cs)))]
+        (if (fits? slim)
+          (assoc slim :note "asks trimmed to 1/row — report {contains} narrows")
+          (let [n (count (:changes slim))]
+            (-> slim
+                (update :changes #(vec (take 20 %)))
+                (assoc :note (str "showing 20 of " n " changes — {since}/{contains} narrows")))))))))
 ^:reads (defn report
   "The handoff/summary composite (ratio push): milestones, net form-level
   changes with their recorded ASKS, and the last verification state — the
@@ -3478,14 +3496,15 @@
                        (mapv #(-> (select-keys % [:commit :description :at :status])
                                   (update :description snip 110))))
         verify*   (->> deltas (filter #(= :verify (:op %))) last)]
-    {:milestones ms
-     :changes changes
-     :suite (when verify*
-              {:as-of (:id verify*)
-               :status (or (get-in verify* [:summary :status])
-                           (:status verify*) :unknown)})
-     :verify (str "writes self-verify; test_run {} re-runs in-image; "
-                  "test_run {:isolated true} = the full external suite")}))
+    (fit-report
+     {:milestones ms
+      :changes changes
+      :suite (when verify*
+               {:as-of (:id verify*)
+                :status (or (get-in verify* [:summary :status])
+                            (:status verify*) :unknown)})
+      :verify (str "writes self-verify; test_run {} re-runs in-image; "
+                   "test_run {:isolated true} = the full external suite")})))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

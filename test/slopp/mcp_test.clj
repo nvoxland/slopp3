@@ -32,7 +32,7 @@
     (try
       (call sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
       (testing "query_source (VFS read)"
-        (is (re-find #"defn add" (call sess "query_source" {:ns "demo"}))))
+        (is (re-find #"defn add" (call sess "query_source" {:ns "demo" :full true}))))
       (testing "query_eval hits the oracle"
         (is (re-find #"\b5\b" (call sess "query_eval" {:code "(demo/add 2 3)"}))))
       (testing "edit_replace_form over the wire (JSON round-trip) hot-reloads"
@@ -349,4 +349,19 @@
           (is (re-find #":aligned true" r) r)
           (is (re-find #":branch-head" r) r)
           (is (re-find #"no worktree" r) r)))
+      (finally (api/close! sess)))))
+(deftest ^:isolated whole-ns-source-is-outline-by-default
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "gt.core" :source "(ns gt.core)\n(defn f [x] (* x 2))\n(defn g [x] (+ x 1))\n"})
+      (testing "a bare {ns} read returns the outline + the way in, NOT the dump"
+        (let [r (call sess "query_source" {:ns "gt.core"})]
+          (is (not (re-find #"\(\* x 2\)" r)) r)
+          (is (re-find #"f" r) r)
+          (is (re-find #"full" r) r)))
+      (testing "named targets stay a cheap direct read"
+        (is (re-find #"\(\* x 2\)"
+                     (call sess "query_source" {:targets [{:ns "gt.core" :name "f"}]}))))
+      (testing "full: true is the explicit whole-namespace dump"
+        (is (re-find #"\(\* x 2\)" (call sess "query_source" {:ns "gt.core" :full true}))))
       (finally (api/close! sess)))))

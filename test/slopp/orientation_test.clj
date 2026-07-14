@@ -186,3 +186,14 @@
                       (mapcat :asks (:changes r)))
               (pr-str (mapv :asks (:changes r))))))
       (finally (api/close! sess)))))
+(deftest fit-report-keeps-reports-under-the-gate
+  (let [fat {:milestones [{:commit "d9" :description "m"}]
+             :changes (vec (for [i (range 80)]
+                             {:ns (symbol (str "big.ns" i)) :form (symbol (str "fn" i))
+                              :ops [:replace]
+                              :asks [(apply str (repeat 130 "x")) (apply str (repeat 130 "y"))]}))
+             :suite {:status :green} :verify "test_run"}
+        r  (#'api/fit-report fat)]
+    (is (<= (count (pr-str r)) 6500) (str (count (pr-str r))))
+    (is (seq (:milestones r)))
+    (is (re-find #"narrows" (str (:note r))) (pr-str (keys r)))))

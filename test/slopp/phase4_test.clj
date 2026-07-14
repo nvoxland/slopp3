@@ -64,7 +64,7 @@
                              [["alice" "a" "(defn a [x] (+ x 1))"]
                               ["bob"   "b" "(defn b [x] (+ x 2))"]]))]
           (is (every? #(not (re-find #":error|:conflict" %)) results))
-          (let [src (tool! port "carol" "query_source" {:ns "team.core"})]
+          (let [src (tool! port "carol" "query_source" {:ns "team.core" :full true})]
             (is (re-find #"\(\+ x 1\)" src))
             (is (re-find #"\(\+ x 2\)" src)))))
       (testing "history tells WHO did WHAT (per-agent provenance)"

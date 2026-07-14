@@ -29,8 +29,7 @@
                                       :arguments {:ns "h.core"
                                                   :source "(ns h.core)\n(defn f [x] (* 2 x))\n"}}))))
         (is (re-find #"defn f" (:result (post! port "/call"
-                                               {:name "query_source"
-                                                :arguments {:ns "h.core"}}))))
+                                               {:name "query_source", :arguments {:ns "h.core" :full true}}))))
         (is (re-find #"\b10\b" (:result (post! port "/call"
                                                {:name "query_eval"
                                                 :arguments {:code "(h.core/f 5)"}})))))

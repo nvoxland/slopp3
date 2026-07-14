@@ -34,7 +34,7 @@
                                               :detail {:type "boolean"}}
                   :required ["ns"]}}
    {:name "query_source"
-    :description "Source from the store. `ns` alone = one whole namespace; OR `targets` [{ns, name?}…] reads SEVERAL forms/namespaces in ONE call — batch your orientation reads."
+    :description "Form source from the store. targets [{ns name}…] reads SEVERAL named forms in ONE call — the normal read. ns alone returns the OUTLINE (name forms, or pass full: true for a whole-namespace dump — rarely needed; compose edits from the outline and let :source-now correct misses)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :targets {:type "array"
@@ -849,14 +849,26 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "query_namespaces" (text! (api/query-namespaces session))
       "query_outline" (text! (api/query-outline session (sym :ns)
                                               :detail (:detail a)))
-      "query_source" (text! (if-let [ts (:targets a)]
-                            (api/query-sources
-                             session
-                             (mapv (fn [t]
-                                     (cond-> {:ns (symbol (:ns t))}
-                                       (:name t) (assoc :name (symbol (:name t)))))
-                                   ts))
-                            (api/query-source session (sym :ns))))
+      "query_source"      (text! (let [full?   (:full a)
+                                       gate    (fn [n]
+                                                 {:ns n
+                                                  :outline (:forms (api/query-outline session n))
+                                                  :note (str "outline by default — name the"
+                                                             " forms you need (targets"
+                                                             " [{ns name}]) or pass full:"
+                                                             " true for the whole namespace")})]
+                                   (if-let [ts (:targets a)]
+                                     (mapv (fn [t]
+                                             (if (or full? (:name t))
+                                               (first (api/query-sources
+                                                       session
+                                                       [(cond-> {:ns (symbol (:ns t))}
+                                                          (:name t) (assoc :name (symbol (:name t))))]))
+                                               (gate (symbol (:ns t)))))
+                                           ts)
+                                     (if full?
+                                       (api/query-source session (sym :ns))
+                                       (gate (sym :ns))))))
       "query_symbol" (text! (api/query-symbol session (sym :ns) (sym :name)))
       "query_detail" (if-let [full (get-in @session [::spool :entries (:id a)])]
                             ;; the retrieval path must NOT re-trim its own payload
