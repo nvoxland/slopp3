@@ -1095,3 +1095,18 @@ minted sha (m8) — query_commits returns {:commits rows :alignment
 says explicitly that no worktree/sqlite cross-check is needed (or that
 git_push publishes). http remotes stay rows-only (no network in a
 query). Suite 269/1371 green.
+
+Ratio push (2026-07-13, from the eval8 n=3 decomposition — orientation
+18%, reads 19%, history views 18%, Bash escapes 14%, actual code 15%):
+session_brief = one-call orientation (names-only project, counts when
+large; milestones; alignment; the loop) targeting ~600 tok/session;
+report {since contains} = the handoff composite (milestones + changes
+with recorded asks + last verification + alignment) replacing the
+history fan-out; OPTIMISTIC EDITS = missed/ambiguous subform matches
+return :source-now (the form's current text) so agents compose writes
+from the brief and correct from the error instead of pre-reading.
+Skill loop rewritten around brief -> optimistic writes -> one report.
+Deliberately skipped: tool-description diet (2.1k tok total exposure,
+~100 tok/session — teaching value beats the saving); rename-in-group
+(multi-ns group surgery, not a measured cost — step 3 already 0.72x).
+Suite 272/1383 green. Target: eval8 r4 lifetime ratio ~0.5x.

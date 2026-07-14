@@ -27,19 +27,21 @@ A whole task should be ~10–20 tool calls: orient (1) → read (1) → write
 (a few groups) → ONE milestone. Each extra call re-reads your entire
 context; the patterns below are where sessions measurably bleed tokens.
 
-1. **Orient ONCE.** `query_project` → every namespace outlined. Never
-   call it again — outlines only change when YOU change them; if you must
-   re-check, pass `since: <your last delta id>` and an unchanged store
-   answers in one line. `query_search {pattern}` to find things.
-2. **Read ONCE, batched.** ONE `query_source {targets: [{ns, name}, {ns},
-   …]}` covering every form you plan to touch. About to change ONE form?
-   `query_brief {ns, name}` is the dossier — source + callers + covering
-   tests + why it's like this — in a single call. Never read namespaces
-   one by one; never re-read something you just wrote — the write result
-   already told you it landed (`:forms`) and whether it's green. For
-   handoffs/audits: `query_commits` `:alignment` PROVES the published
-   branch matches the latest milestone — never re-verify via worktrees,
-   raw store.db reads, or duplicate suite runs.
+1. **Orient with ONE small call: `session_brief`.** Form names, recent
+   milestones with their asks, git alignment, the loop — everything a
+   fresh session needs to start working. Skip `query_project` unless you
+   need arities/flags for a specific ns (`query_outline {ns}`).
+   `query_search {pattern}` to find things.
+2. **Read only what the brief can't tell you — and prefer NOT reading.**
+   Writes are OPTIMISTIC: compose `edit_subform`/`edit_group` matches from
+   the brief and what you know; a missed or ambiguous match returns the
+   form's CURRENT source in `:source-now` — correct the step from the
+   error and resend. That round trip is cheaper than pre-reading. When you
+   genuinely need context first: `query_brief {ns, name}` (the dossier) or
+   ONE batched `query_source {targets: […]}`. Never re-read what you just
+   wrote. For summaries/handoffs/audits: `report {since}` composes
+   milestones + changes + asks + verification + alignment in one read —
+   never stitch history calls or re-verify via worktrees/raw store.db.
 3. **Write with intent; trust the verification.** Every write takes a
    one-line `prompt`. The response carries the affected tests' result —
    `test_run` after an edit is redundant. Red results carry `:failures`
@@ -95,7 +97,7 @@ trace a data thread without reading layers) · `query_impact {ns name}`
 
 ## Tool index
 
-turn_begin turn_end · query_project query_search query_namespaces
+session_brief report · turn_begin turn_end · query_project query_search query_namespaces
 query_outline query_source query_symbol query_brief query_flow query_impact query_references
 query_deps query_lineage query_history query_form_history query_form_at
 query_status_at query_search_history query_changes query_eval query_observe
