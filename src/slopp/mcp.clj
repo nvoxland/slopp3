@@ -792,9 +792,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
      (text! (let [rows (api/query-commits session)
                   conn (:db @session)
                   al   (when (and conn (:dir @session))
-                         (sync/alignment (:dir @session)
-                                         (db/get-meta conn "git-remote")
-                                         (db/get-meta conn "git-branch")
+                         (sync/alignment (:dir @session) "."
+                                         (str "slopp/" (:branch @session))
                                          rows))]
               (if al
                 {:commits rows :alignment al}
@@ -907,9 +906,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                        conn (:db @session)
                                        al   (when (and conn (:dir @session))
                                               (sync/alignment
-                                               (:dir @session)
-                                               (db/get-meta conn "git-remote")
-                                               (db/get-meta conn "git-branch")
+                                               (:dir @session) "."
+                                               (str "slopp/" (:branch @session))
                                                (api/query-commits session)))]
                                    (told! session name a (cond-> b al (assoc :alignment al)))))
       "report" (text! (let [r    (api/report session
@@ -919,9 +917,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                        conn (:db @session)
                                        al   (when (and conn (:dir @session))
                                               (sync/alignment
-                                               (:dir @session)
-                                               (db/get-meta conn "git-remote")
-                                               (db/get-meta conn "git-branch")
+                                               (:dir @session) "."
+                                               (str "slopp/" (:branch @session))
                                                (api/query-commits session)))]
                                    (cond-> r al (assoc :alignment al))))
       "draft_test" (text! (api/draft-test session (sym :ns) (sym :name)
@@ -1099,15 +1096,16 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     ;; publishes itself; publish trouble rides along
                                     ;; without failing the milestone
                                     (if (and (:commit r) (not= :red (:status r))
-                                             (:dir @session)
-                                             (some-> (:db @session)
-                                                     (db/get-meta "git-remote")))
-                                      (let [p (try (sync/push! (:dir @session))
-                                                   (catch Exception e
-                                                     {:error (ex-message e)}))]
+                                             (:dir @session))
+                                      (if-let [p (try (sync/publish-local!
+                                                       (:dir @session)
+                                                       (:branch @session))
+                                                      (catch Exception e
+                                                        {:error (ex-message e)}))]
                                         (assoc r :published
-                                               (select-keys p [:pushed :remote-branch
-                                                               :remote :error :status])))
+                                               (select-keys p [:pushed :branch
+                                                               :error :status]))
+                                        r)
                                       r)))
       "test_run" (text! (if (:isolated a)
                                    (api/isolated-test-run! session

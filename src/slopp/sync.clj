@@ -466,6 +466,25 @@
                                   " milestone — git_push publishes it"))})))
               (finally (.close repo)))))))
     (catch Exception _ nil)))
+(defn publish-local!
+  "Mirror the store's milestone history into THIS checkout's local git as
+  refs/heads/slopp/<store-branch> (user decision 2026-07-14): every
+  commit_point lands in local git automatically, so the repo durably
+  carries the slopp history; REMOTE publishing stays explicit (git_push).
+  Never reads or writes the git-remote default. nil when `dir` isn't a
+  git checkout; push refusals surface as {:error} (e.g. the mirror branch
+  is checked out)."
+  [dir store-branch]
+  (when (.exists (io/file dir ".git"))
+    (let [ctx     (git/open-ctx! dir)
+          mirror  (str "slopp/" (or store-branch "main"))]
+      (try
+        (if (= mirror (checked-out-branch (str dir)))
+          {:error (str "refs/heads/" mirror " is checked out — cannot mirror onto"
+                       " a live working tree")}
+          (assoc (git/push-to-remote! ctx (str dir) :remote-branch mirror)
+                 :branch mirror))
+        (finally (git/close-ctx! ctx))))))
 (defn import!
   "THE onboarding command: inside a git checkout (main checked out, the
   human's files on disk), build `.slopp/store.db` from the repo's slopp

@@ -297,17 +297,20 @@
 (deftest ^:isolated milestones-publish-themselves
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-pub" (make-array java.nio.file.attribute.FileAttribute 0)))
-        bare (str (java.nio.file.Files/createTempDirectory
-                   "slopp-pub-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
-        _    (sh/sh "git" "init" "--bare" bare)
+        _    (sh/sh "git" "init" dir)
+        _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
+                    "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (db/set-meta! (:db @sess) "git-remote" bare)
       (call sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn f [x] x)\n"})
-      (testing "commit_point pushes the projection to the configured remote (Q10)"
+      (testing "a milestone mirrors into LOCAL git as slopp/<store-branch> (user decision 2026-07-14)"
         (let [r (call sess "commit_point" {:description "first"})]
           (is (re-find #":published" r) r)
-          (is (re-find #":pushed" r) r)))
+          (is (re-find #"slopp/main" r) r))
+        (let [head (:out (sh/sh "git" "-C" dir "rev-parse" "refs/heads/slopp/main"))]
+          (is (= 40 (count (clojure.string/trim head))) head)))
+      (testing "no REMOTE is touched or saved — remote publishing stays explicit"
+        (is (nil? (db/get-meta (:db @sess) "git-remote"))))
       (finally (api/close! sess)))))
 (deftest ^:isolated groups-take-subform-and-require-steps
   (let [sess (api/open!)]
@@ -336,15 +339,14 @@
 (deftest ^:isolated commits-prove-git-alignment
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-align" (make-array java.nio.file.attribute.FileAttribute 0)))
-        bare (str (java.nio.file.Files/createTempDirectory
-                   "slopp-align-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
-        _    (sh/sh "git" "init" "--bare" bare)
+        _    (sh/sh "git" "init" dir)
+        _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
+                    "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (db/set-meta! (:db @sess) "git-remote" bare)
       (call sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn f [x] x)\n"})
       (call sess "commit_point" {:description "first"})
-      (testing "query_commits carries the alignment PROOF (Q12)"
+      (testing "query_commits carries the alignment PROOF against the local mirror (Q12)"
         (let [r (call sess "query_commits" {})]
           (is (re-find #":aligned true" r) r)
           (is (re-find #":branch-head" r) r)
