@@ -102,7 +102,11 @@
 
 (defn rewrite-symbols
   "Zipper-walk `node`, replacing symbol tokens via `f` (sym → sym|nil).
-  Returns the (possibly identical) node."
+  Returns the (possibly identical) node. z/root wraps its result in a
+  :forms node — unwrapped here, or every changeset-rewritten form would
+  lose its :name downstream (apply-changeset recomputes names via
+  form-symbol, which rightly refuses :forms wrappers; found via Q14's
+  sweep when a consumer's rewritten ns decl broke image load order)."
   [node f]
   (loop [zl (z/of-node node)]
     (let [zl (if (and (= :token (z/tag zl))
@@ -113,7 +117,10 @@
                zl)
           nxt (z/next zl)]
       (if (z/end? nxt)
-        (z/root zl)
+        (let [root (z/root zl)]
+          (if (= :forms (n/tag root))
+            (or (first (filter n/sexpr-able? (n/children root))) root)
+            root))
         (recur nxt)))))
 
 (defn ns-sym-mapper
