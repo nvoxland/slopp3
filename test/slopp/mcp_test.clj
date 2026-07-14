@@ -365,3 +365,27 @@
       (testing "full: true is the explicit whole-namespace dump"
         (is (re-find #"\(\* x 2\)" (call sess "query_source" {:ns "gt.core" :full true}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated rename-sweep-is-one-intent
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "sw.zone"
+             :source (str "(ns sw.zone (:require [clojure.test :refer [deftest is]]))\n"
+                          "(def zone-fees {1 500, 2 900})\n"
+                          "(defn zone-fee \"The zone fee table lookup.\" [z] (get zone-fees z 0))\n"
+                          "(deftest zone-t (is (= 500 (zone-fee 1))))\n")})
+      (call sess "ns_create"
+            {:ns "sw.core"
+             :source (str "(ns sw.core (:require [clojure.test :refer [deftest is]] [sw.zone :as zone]))\n"
+                          "(defn total \"Base plus the zone fee.\" [z] (+ 100 (zone/zone-fee z)))\n"
+                          "(deftest total-t (is (= 600 (total 1))))\n")})
+      (testing "one call sweeps namespaces, vars, keys, and prose (Q14)"
+        (let [r (call sess "rename_sweep" {:from "zone" :to "region"})]
+          (is (re-find #":renamed-namespaces" r) r)
+          (is (not (re-find #":error" r)) r)))
+      (testing "the sweep is total"
+        (is (= "[]" (call sess "query_search" {:pattern "zone"}))))
+      (testing "behavior survives under the new names"
+        (is (re-find #"600" (call sess "query_eval" {:code "(sw.core/total 1)"})))
+        (is (re-find #"500" (call sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
+      (finally (api/close! sess)))))

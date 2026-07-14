@@ -242,8 +242,15 @@
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["steps"]}}
+   {:name "rename_sweep"
+    :description "A concept rename as ONE intent: every namespace, var, keyword, and prose occurrence of `from` (whole word/segment) becomes `to`, store-wide — ns renames + one atomic group, one verification. THE tool for docs-team renames ('zone is now region'); never do those form-by-form."
+    :inputSchema {:type "object"
+                  :properties {:from {:type "string"} :to {:type "string"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["from" "to"]}}
    {:name "edit_rename"
-    :description "Rename a form + every reference across namespaces (shadow-safe). Never rename by hand."
+    :description "Rename ONE form + every reference across namespaces (shadow-safe). For concept-wide renames (ns + keys + prose) use rename_sweep."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
                                :new {:type "string"} :prompt {:type "string"}
@@ -628,6 +635,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
           (:deltas r)   (assoc :deltas (count (:deltas r)))
           (:renamed r)  (assoc :renamed (:renamed r))
           (:mentions r) (assoc :mentions (:mentions r))
+          (:renamed-namespaces r) (assoc :renamed-namespaces (:renamed-namespaces r))
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
@@ -1018,6 +1026,16 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                          :prompt (:prompt a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
+      "rename_sweep"      (let [{:keys [from to]} a]
+                            (when-not (and from to)
+                              (throw (ex-info "rename_sweep needs :from and :to (plain words/segments)" {})))
+                            (text! (-> (api/rename-sweep! session from to
+                                                         :prompt (:prompt a)
+                                                         :agent (:agent a))
+                                      (select-keys [:error :source-now :renamed-namespaces :forms
+                                                    :group :warnings :existing-warnings
+                                                    :changed-nses :test :affected :deltas])
+                                      (summarize (:verbose a)))))
       "edit_subform" (let [match (or (:match a) (:from a))
                                 src   (or (:source a) (:to a))]
                             (when-not (and match src)

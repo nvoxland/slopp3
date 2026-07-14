@@ -145,3 +145,11 @@
                 'sp.core 'h "(inc x)" "(dec x)")]
       (is (:error plan))
       (is (re-find #"defn h" (str (:source-now plan))) (pr-str plan)))))
+(deftest changeset-nodes-keep-their-names
+  (let [st2 (-> (store/empty-store)
+                (store/ingest 'cs.a "(ns cs.a)\n(defn f [x] x)\n")
+                (store/ingest 'cs.b "(ns cs.b (:require [cs.a :as a]))\n(defn g [x] (a/f x))\n"))
+        cs  (refactor/ns-rename-changeset st2 'cs.a 'cs.x)]
+    (is (seq cs))
+    (is (every? #(some? (store/form-symbol %)) (vals cs))
+        (pr-str (map store/form-symbol (vals cs))))))

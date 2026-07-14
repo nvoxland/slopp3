@@ -136,3 +136,14 @@
     (testing "blocks are capped and limited"
       (is (every? #(<= (count (:detail %)) 520) fs))
       (is (= 1 (count (api/parse-test-failures out :limit 1)))))))
+(deftest ^:isolated inline-test-stores-build-a-runnable-suite
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'il.core
+                   (str "(ns il.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      (let [r (api/isolated-test-run! sess)]
+        (is (= :green (:status r)) (pr-str r))
+        (is (= 1 (:ran r)) (pr-str r)))
+      (finally (api/close! sess)))))

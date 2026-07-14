@@ -70,7 +70,8 @@
                                        "  {:extra-paths [\"test\"]\n"
                                        "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
                                        "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
-                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"]}"))
+                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"\n"
+                                       "                 \"-d\" \"test\" \"-d\" \"src\" \"-r\" \".*\"]}"))
                     native? (conj (str ":native\n"
                                        "  {:extra-paths [\"classes\"]\n"
                                        "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"

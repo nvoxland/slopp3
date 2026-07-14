@@ -2995,7 +2995,12 @@
         st       (:store @session)
         de       (io/file target "deps.edn")
         deps     (:deps st)
-        has-tests? (boolean (some render/test-ns? (keys (:namespaces st))))
+        has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
+                                (some (fn [nsx]
+                                        (some #(re-find #"^\(deftest\b"
+                                                        (n/string (:node %)))
+                                              (store/forms st nsx)))
+                                      (keys (:namespaces st)))))
         incompat (when main (seq (filter native-incompatible-deps (keys deps))))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
@@ -3044,7 +3049,8 @@
       (io/make-parents file)
       (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
-            (spit de (build/deps-edn (boolean main) deps has-tests?)))
+            (do (when has-tests? (.mkdirs (io/file target "test")))
+                (spit de (build/deps-edn (boolean main) deps has-tests?))))
           (cond-> {:built (str target)}
             main
             (assoc :native
@@ -3596,3 +3602,64 @@
                                                :prompt (:prompt why)}
                                         (:agent why)       (assoc :agent (:agent why))
                                         (:turn-intent why) (assoc :intent (:turn-intent why))))))))
+(defn rename-sweep!
+  "Q14: the docs-team rename as ONE intent — every namespace, var, keyword,
+  and prose occurrence of `from` (as a whole word/segment, boundary-guarded)
+  becomes `to`, store-wide: matching namespaces rename first (requires
+  rewrite along), then every still-matching form rewrites in ONE atomic
+  group with ONE verification. The textual segment match is deliberate: a
+  sweep means 'everything named that', locals and prose included; the
+  dialect/isolation gates and the test run judge the result. eval9's
+  measured loss (13.6k tokens / 37 calls / one restart for zone->region
+  across 41 nses vs sed's one pass) is this op's demand signal."
+  [session from to & {:keys [prompt agent]}]
+  (let [from (str from)
+        to   (str to)
+        pat  (re-pattern (str "(?<![A-Za-z])"
+                              (java.util.regex.Pattern/quote from)
+                              "(?![A-Za-z])"))
+        why  (or prompt (str "sweep " from " -> " to))]
+    (cond
+      (or (str/blank? from) (str/blank? to))
+      {:error "rename_sweep needs :from and :to"}
+
+      (= from to)
+      {:error ":from and :to are identical"}
+
+      :else
+      (let [nses (filterv #(re-find pat (str %))
+                          (keys (:namespaces (:store @session))))
+            nsr  (reduce (fn [acc nsx]
+                           (if (:error acc)
+                             acc
+                             (let [new-ns (str/replace (str nsx) pat to)
+                                   r (ns-rename! session (str nsx) new-ns
+                                                 :prompt why :agent agent)]
+                               (if (:error r)
+                                 {:error (str "renaming " nsx ": " (:error r))}
+                                 (update acc :renamed-namespaces conj
+                                         [nsx (symbol new-ns)])))))
+                         {:renamed-namespaces []}
+                         (sort nses))]
+        (if (:error nsr)
+          nsr
+          (let [st    (:store @session)
+                steps (vec (for [nsx (store/ns-dependency-order st)
+                                 e   (store/forms st nsx)
+                                 :let [src (n/string (:node e))]
+                                 :when (and (:name e) (re-find pat src))]
+                             {:action :replace :ns nsx :name (:name e)
+                              :source (str/replace src pat to)}))]
+            (cond
+              (and (empty? steps) (empty? (:renamed-namespaces nsr)))
+              {:error (str "nothing named " from
+                           " in the store — query_search shows what exists")}
+
+              (empty? steps)
+              (assoc nsr :forms 0)
+
+              :else
+              (let [r (edit-group! session steps :prompt why :agent agent)]
+                (if (:error r)
+                  r
+                  (merge r (assoc nsr :forms (count steps))))))))))))
