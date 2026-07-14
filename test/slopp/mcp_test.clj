@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync]))
 
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
@@ -427,4 +427,26 @@
         (call sess "edit_rename" {:ns "sm.a" :old "f" :new "f2"})
         (let [r (call sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
           (is (re-find #"rename_sweep" r) r)))
+      (finally (api/close! sess)))))
+(deftest ^:isolated one-off-pushes-keep-the-default-remote
+  (let [dir   (str (java.nio.file.Files/createTempDirectory
+                    "slopp-oop" (make-array java.nio.file.attribute.FileAttribute 0)))
+        barea (str (java.nio.file.Files/createTempDirectory
+                    "slopp-oop-a" (make-array java.nio.file.attribute.FileAttribute 0)))
+        bareb (str (java.nio.file.Files/createTempDirectory
+                    "slopp-oop-b" (make-array java.nio.file.attribute.FileAttribute 0)))
+        _     (sh/sh "git" "init" "--bare" barea)
+        _     (sh/sh "git" "init" "--bare" bareb)
+        sess  (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'pr.core "(ns pr.core)\n(defn f [x] x)\n")
+      (api/commit-point! sess "seed" :agent "t")
+      (testing "the FIRST url is saved as the default"
+        (is (nil? (:error (sync/push! dir :url barea))))
+        (is (= barea (db/get-meta (:db @sess) "git-remote"))))
+      (testing "a one-off push elsewhere succeeds but the default STAYS (user regression)"
+        (let [r (sync/push! dir :url bareb)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= barea (db/get-meta (:db @sess) "git-remote")))
+          (is (= barea (str (:default-remote r))) (pr-str r))))
       (finally (api/close! sess)))))

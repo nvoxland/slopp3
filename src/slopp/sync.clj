@@ -79,11 +79,16 @@
                        " (the default \"slopp\"), and merge with regular git.")}
 
           :else
-          (let [r (git/push-to-remote! ctx target
-                                       :token token :remote-branch rbranch)]
-            (when-not (:error r)
+          (let [r     (git/push-to-remote! ctx target
+                                           :token token :remote-branch rbranch)
+                saved (db/get-meta conn "git-remote")]
+            ;; save the FIRST url as the default; a one-off push elsewhere
+            ;; must never silently rewrite it (it broke the user's normal
+            ;; push flow, 2026-07-14)
+            (when (and (not (:error r)) (nil? saved))
               (db/set-meta! conn "git-remote" (str target)))
-            (assoc r :remote (str target)))))
+            (assoc r :remote (str target)
+                   :default-remote (or saved (str target))))))
       (finally (git/close-ctx! ctx)))))
 
 ^:reads
