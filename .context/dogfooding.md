@@ -156,3 +156,24 @@ For eval prompts that drive slopp over the HTTP bridge:
 Sequential same-dir sessions (lifetime evals): decompose per transcript
 FILE (one file per `claude -p` session, mtime-ordered), not per time
 window — windowed sweeps double-count boundary files (found in eval8).
+
+## Self-dogfooding outranks benchmarks (standing, user directive 2026-07-14)
+
+The agent building slopp THROUGH slopp is a better (though unrepeatable)
+signal than the eval numbers: benchmarks tell you WHERE cost sits;
+first-person friction tells you WHY and what the fix should feel like.
+Standing practice: while working, notice every workaround, hesitation,
+external escape (Bash/sqlite instead of a tool), and re-read — and turn
+them into findings the same day (the Q-series pattern). When a benchmark
+result and first-person experience disagree, trust the experience and
+re-examine what the benchmark actually measures.
+
+Current first-person backlog (2026-07-14): (1) tools added to a LIVE
+server are invisible to the already-connected client until reconnect —
+this session fell back to raw sqlite when query_detail wasn't in its
+cached tool list: our own Q12-style spelunking, caused by tool-list
+staleness; (2) bulk source reads for planning still route around the
+wire (sqlite dumps to a scratchpad) — efficient but caused the stale-dump
+clobber; a safe "render to files for reading" flow may be worth having;
+(3) targeted isolated runs (Q2) are the single highest-leverage fix this
+week by lived experience — protect that path.
