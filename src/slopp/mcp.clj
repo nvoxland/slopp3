@@ -381,11 +381,10 @@
     :description "This session's git view: the embedded read-only listener URL + the saved external remote."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_push"
-    :description "Push your slopp/<branch> mirror branches to the git remote (current store branch by default; branches: [\"main\" ...] for more). First url is saved as the default; one-off urls never rewrite it. A remote with a legacy FLAT `slopp` branch is refused with the fix; migrate: true replaces it (same lineage). Fast-forward only."
+    :description "Publish slopp history to the git remote: from a checkout, pushes your slopp/<branch> mirror branches (current store branch by default; branches: [...] for more); a fileless store publishes its projection. First url becomes the saved default; one-off urls never rewrite it. Fast-forward only."
     :inputSchema {:type "object"
                   :properties {:url {:type "string"} :token {:type "string"}
-                               :branches {:type "array" :items {:type "string"}}
-                               :migrate {:type "boolean"}}}}
+                               :branches {:type "array" :items {:type "string"}}}}}
    {:name "git_clone"
     :description "Clone a remote into dir as a FILELESS store (every ns ingested + verified; no .clj files materialized)."
     :inputSchema {:type "object"
@@ -743,11 +742,14 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   {"git_push"
    (fn [session a _sym]
      (text! (if-let [dir (:dir @session)]
-              (sync/mirror-push! dir :url (:url a) :token (:token a)
-                                 :branches (or (:branches a)
-                                               (some-> (:branch a) vector)
-                                               [(:branch @session "main")])
-                                 :migrate (:migrate a))
+              (if (.exists (io/file dir ".git"))
+                (sync/mirror-push! dir :url (:url a) :token (:token a)
+                                   :branches (or (:branches a)
+                                                 (some-> (:branch a) vector)
+                                                 [(:branch @session "main")]))
+                ;; fileless store: publish the projection directly
+                (sync/push! dir :url (:url a) :token (:token a)
+                            :branch (:branch @session "main")))
               {:error "git_push needs a durable session (a store dir)"})))
    "git_clone"
    (fn [_session a _sym]
@@ -1063,13 +1065,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                             (text! (-> (api/edit-subform! session (sym :ns) (sym :form)
                                                          match src
                                                          :text (:text a)
-                                                         :where (let [w (:where a)]
-                                                                  (if (string? w)
-                                                                    (or (try (json/parse-string w true)
-                                                                             (catch Exception _ nil))
-                                                                        (try (edn/read-string w)
-                                                                             (catch Exception _ nil)))
-                                                                    w))
+                                                         :where (:where a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
                                       (select-keys [:error :source-now :conflict :warnings :existing-warnings

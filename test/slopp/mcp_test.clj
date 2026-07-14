@@ -465,24 +465,13 @@
     (try
       (call sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn f [x] x)\n"})
       (call sess "commit_point" {:description "first"})
-      (testing "git_push {branches} mirrors local slopp/* to the remote"
+      (testing "git_push mirrors local slopp/* to the remote (and saves the first url)"
         (let [r (call sess "git_push" {:branches ["main"] :url bare})]
           (is (re-find #":mirrored" r) r))
         (is (re-find #"refs/heads/slopp/main"
-                     (:out (sh/sh "git" "ls-remote" "--heads" bare)))))
-      (testing "a FLAT remote slopp branch blocks the namespace and the error teaches migrate"
-        (let [sha (clojure.string/trim
-                   (:out (sh/sh "git" "-C" bare "rev-parse" "slopp/main")))]
-          (sh/sh "git" "-C" bare "update-ref" "-d" "refs/heads/slopp/main")
-          (sh/sh "git" "-C" bare "update-ref" "refs/heads/slopp" sha))
-        (let [r (call sess "git_push" {:branches ["main"] :url bare})]
-          (is (re-find #"migrate" r) r))
-        (let [r (call sess "git_push" {:branches ["main"] :url bare :migrate true})]
-          (is (re-find #":mirrored" r) r))
-        (let [heads (:out (sh/sh "git" "ls-remote" "--heads" bare))]
-          (is (re-find #"refs/heads/slopp/main" heads))
-          (is (not (re-find #"refs/heads/slopp\n" heads)))))
-      (testing "git_pull {branches} brings the mirror into another clone (and auto-import saw slopp/main)"
+                     (:out (sh/sh "git" "ls-remote" "--heads" bare))))
+        (is (= bare (db/get-meta (:db @sess) "git-remote"))))
+      (testing "git_pull brings the mirror into another clone (auto-import keys on slopp/*)"
         (let [dir2 (str (java.nio.file.Files/createTempDirectory
                          "slopp-mir2" (make-array java.nio.file.attribute.FileAttribute 0)))]
           (sh/sh "git" "clone" bare dir2)
@@ -496,14 +485,21 @@
                 (is (re-find #"slopp/main" r) r))
               (finally (api/close! s2))))))
       (finally (api/close! sess)))
-    (testing "a dir with NO .git: milestones stay durable in the store; git_push teaches"
-      (let [d2 (str (java.nio.file.Files/createTempDirectory
-                     "slopp-nogit" (make-array java.nio.file.attribute.FileAttribute 0)))
-            s3 (api/open! {:dir d2})]
+    (testing "a FILELESS store (no .git) still publishes — the projection goes directly"
+      (let [d2   (str (java.nio.file.Files/createTempDirectory
+                       "slopp-nogit" (make-array java.nio.file.attribute.FileAttribute 0)))
+            bare2 (str (java.nio.file.Files/createTempDirectory
+                        "slopp-nogit-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
+            _    (sh/sh "git" "init" "--bare" bare2)
+            s3   (api/open! {:dir d2})]
         (try
           (call s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn f [x] x)\n"})
           (let [r (call s3 "commit_point" {:description "no git here"})]
             (is (re-find #":commit" r) r)
             (is (not (re-find #":published" r)) r))
-          (is (re-find #"git init" (call s3 "git_push" {})))
+          (is (re-find #"url" (call s3 "git_push" {})) "no remote: helpful error names :url")
+          (let [r (call s3 "git_push" {:url bare2})]
+            (is (re-find #":pushed" r) r))
+          (is (re-find #"refs/heads/slopp/main"
+                       (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
           (finally (api/close! s3)))))))

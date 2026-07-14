@@ -83,7 +83,7 @@
                 (let [remote (-> (FileRepositoryBuilder.)
                                  (.setGitDir (io/file bare)) (.build))]
                   (try
-                    (let [tip (.name (.resolve remote "refs/heads/slopp"))]
+                    (let [tip (.name (.resolve remote "refs/heads/slopp/main"))]
                       (is (= (:pushed p2) tip))
                       (testing "the new tip's parent IS the pre-clone tip (graft worked)"
                         (with-open [rw (RevWalk. remote)]
@@ -293,8 +293,8 @@
               (.name cid)))))
       (finally (.close repo)))))
 (deftest ^:isolated slopp-owns-one-branch-humans-own-the-rest
-  ;; the ownership boundary IS the branch: slopp pushes only refs/heads/slopp
-  ;; (the git-branch default); a human manages main with regular git and
+  ;; the ownership boundary IS the branch: slopp pushes only refs/heads/slopp/*
+  ;; mirrors; a human manages main with regular git and
   ;; slopp never touches it — mixed repos without everything living in slopp
   (let [dir  (temp-dir)
         bare (bare-repo! (str (temp-dir) "/remote.git"))
@@ -308,7 +308,7 @@
           (let [remote (-> (FileRepositoryBuilder.)
                            (.setGitDir (io/file bare)) (.build))]
             (try
-              (is (some? (.resolve remote "refs/heads/slopp")))
+              (is (some? (.resolve remote "refs/heads/slopp/main")))
               (is (nil? (.resolve remote "refs/heads/main")))
               (finally (.close remote))))))
       (testing "a human commit on main survives slopp pushes and stays out of pulls"
@@ -335,7 +335,7 @@
   ;; move the ref under it)
   (let [work (temp-dir)
         dir  (temp-dir)]
-    (-> (org.eclipse.jgit.api.Git/init) (.setInitialBranch "main")
+    (-> (org.eclipse.jgit.api.Git/init) (.setInitialBranch "slopp/main")
         (.setDirectory (io/file work)) (.call) (.close))
     (let [sess (api/open! {:dir dir})]
       (try
@@ -346,7 +346,7 @@
             (is (:error r))
             (is (re-find #"checked out" (str (:error r))))))
         (testing "any other branch of the same working repo is fine"
-          (let [r (sync/push! dir :url work)]
+          (let [r (sync/push! dir :url work :branch "other")]
             (is (nil? (:error r)) (pr-str r))))
         (finally
           (api/close! sess)
@@ -375,7 +375,7 @@
           (let [r (sync/import! work)]
             (is (nil? (:error r)) (pr-str r))
             (is (= 1 (:namespaces r)))
-            (is (= "slopp" (:branch r)))
+            (is (= "slopp/main" (:branch r)))
             (is (.exists (io/file work ".slopp" "store.db")))
             (testing "the human's checkout is untouched"
               (is (.exists (io/file work "README.md")))
@@ -395,7 +395,7 @@
                 (let [local (-> (org.eclipse.jgit.storage.file.FileRepositoryBuilder.)
                                 (.setGitDir (io/file work ".git")) (.build))]
                   (try
-                    (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp"))))
+                    (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp/main"))))
                     (finally (.close local)))))
               (finally (api/close! sw)))))
         (rm-rf work))
