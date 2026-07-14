@@ -552,3 +552,12 @@ work-shaped (edit_group 21% = the largest block). Residuals to ~0.58×:
 agents still pre-read (17%, zero :source-now corrections — optimistic
 editing unadopted), one 8k-gate double-pay, Bash ritual tail. Plain is
 now a pooled control (SPEC.md) — future batches re-run plugin cells only.
+
+### eval8 defaults batch (n=3 on d2357 vs plain pool n=7)
+
+**0.66× lifetime** (mean 29,506; best 27,131 = 0.61×), acceptance 15/15
+×3. G14 verified: the outline gate converted 100% of reads to named-form
+targets (zero dumps attempted), the hook micro-brief cut Bash to 4%, one
+trim double-pay left. Campaign: 0.78× → 0.75× → 0.66× with absolute
+plugin cost 36.5k → 33.4k → 29.5k. Remaining fat: step 5 only (9.3k,
+history-stitching alongside report). Tables: projects/eval8-lifetime/RUNS.md.
