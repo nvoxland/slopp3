@@ -168,7 +168,7 @@
   (if-let [conn (:db @session)]
     (if (db/append! conn st'
                     (drop (count (store/deltas base)) (store/deltas st'))
-                    (filterv #(get-in st' [:namespaces %]) nses)
+                    (vec nses)
                     (:id (last (store/deltas base))))
       (do (swap! session
                  (fn [s]
@@ -1393,6 +1393,9 @@
             untested (and (nil? affected) (seq (:test-map @session))
                            (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
                                          (str/triml new-source))))
+            _        (when (and new-nm (not= new-nm nm))
+                       (repl/eval! (:image @session)
+                                   (format "(ns-unmap '%s '%s)" ns-sym nm)))
             summary  (run-verification! session ns-sym affected
                                         :edited edited)
             existing (count (filter (comp pre-warned :var) (:warnings r)))]
@@ -1522,7 +1525,11 @@
                  (if-let [[st' d] (store/replace-node st ns name node
                                                       :prompt prompt :group gid
                                                       :agent agent)]
-                   {:store st' :delta d :hot [:load (:form-id d)]}
+                   (let [nm' (store/form-symbol node)]
+                     {:store st' :delta d
+                      :hot (if (and nm' (not= nm' name))
+                             [:load-unmap (:form-id d) ns name]
+                             [:load (:form-id d)])})
                    (edit/missing-form-error st ns name))))
     :add     (let [{:keys [node error]} (edit/parse-form source)
                    nm (some-> node store/form-symbol)
@@ -1600,7 +1607,7 @@
                                           (edit/lint-refusals base0 st (distinct (map :ns steps))))
                                          (hash-map :err))
                                 (hot-load-all! session st
-                                               (keep (fn [[k a]] (when (= :load k) a))
+                                               (keep (fn [[k a]] (when (#{:load :load-unmap} k) a))
                                                      hots)))]
             (cond
               (:err load-res)
@@ -1612,9 +1619,12 @@
 
               :else
               (let [image    (:image @session)
-                    _        (doseq [[kind a b] hots]
-                               (when (= :unmap kind)
-                                 (repl/eval! image (format "(ns-unmap '%s '%s)" a b))))
+                    _        (doseq [[kind a b c] hots]
+                               (cond
+                                 (= :unmap kind)
+                                 (repl/eval! image (format "(ns-unmap '%s '%s)" a b))
+                                 (= :load-unmap kind)
+                                 (repl/eval! image (format "(ns-unmap '%s '%s)" b c))))
                     ;; per-step names double as the D5.1 edited set
                     step-nms (map (fn [{:keys [action ns name source]}]
                                     (let [nm (case action

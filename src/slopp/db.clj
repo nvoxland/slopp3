@@ -74,11 +74,12 @@
      (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
                         (:id delta) (name (:op delta)) (str (:ns delta))
                         (pr-str (dissoc delta :id :op :ns))])
-     (doseq [ns-sym nses
-             :let [elems (get-in store [:namespaces ns-sym :elements])]
-             :when elems]
+     (doseq [ns-sym nses]
+       ;; delete ALWAYS: a ns absent from the store (renamed away) must have
+       ;; its rows purged, not linger for the next reopen
        (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
-       (doseq [[pos e] (map-indexed vector elems)]
+       (doseq [[pos e] (map-indexed vector
+                                    (get-in store [:namespaces ns-sym :elements]))]
          (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
                              VALUES (?,?,?,?,?,?)"
                             (str ns-sym) pos (name (:kind e)) (:id e)
