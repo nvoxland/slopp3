@@ -3167,7 +3167,7 @@
   dir, resolved AT MILESTONE TIME. With no `v`: read —
   {:key :configured :effective}. Durable sessions only."
   [session k & [v]]
-  (let [allowed #{"user.name" "user.email" "git-branch" "git-remote"}]
+  (let [allowed #{"user.name" "user.email" "git-remote"}]
     (cond
       (not (contains? allowed (str k)))
       {:error (str "unknown config key " k " — allowed: "
