@@ -168,11 +168,11 @@ them into findings the same day (the Q-series pattern). When a benchmark
 result and first-person experience disagree, trust the experience and
 re-examine what the benchmark actually measures.
 
-Current first-person backlog (2026-07-14): (1) tools added to a LIVE
-server are invisible to the already-connected client until reconnect —
-this session fell back to raw sqlite when query_detail wasn't in its
-cached tool list: our own Q12-style spelunking, caused by tool-list
-staleness; (2) bulk source reads for planning still route around the
+Current first-person backlog (2026-07-14): (1) RESOLVED by protocol:
+tool-list staleness on live servers is dev-only (fresh sessions get
+fresh servers) — the agent ASKS the user to restart after adding or
+retiring wire tools (user decision, 2026-07-14); the tools/list_changed
+notification is a someday-nicety, not a need; (2) bulk source reads for planning still route around the
 wire (sqlite dumps to a scratchpad) — efficient but caused the stale-dump
 clobber; a safe "render to files for reading" flow may be worth having;
 (3) targeted isolated runs (Q2) are the single highest-leverage fix this
