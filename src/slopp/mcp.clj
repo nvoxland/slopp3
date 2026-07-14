@@ -447,7 +447,10 @@
                                  f [:expected :actual :message]))
                        fs)))))
 (defn- text! [x]
-  (let [x       (if (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*) x)
+  (let [x       (cond
+                  (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*)
+                  (and *hint* (string? x)) (str x "\n\n[hint] " *hint*)
+                  :else x)
         full    (if (string? x) x (pr-str x))
         slimmed (let [t (trim-failure-strings x)]
                   (if (string? t) t (pr-str t)))
@@ -472,60 +475,79 @@
          "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"
          "change_signature"]))
 
+(defn- bump-smell-counts
+  "Fold one tool call into the smell counters (pure)."
+  [c tool args]
+  (let [c (merge {:test-runs 0 :singles 0 :history 0 :dumps 0 :renames 0} c)]
+    (cond
+      (= tool "test_run")
+      (update c :test-runs inc)
+
+      (#{"query_history" "query_search_history" "query_changes"} tool)
+      (update c :history inc)
+
+      (and (= tool "query_source") (:full args))
+      (update c :dumps inc)
+
+      (= tool "edit_rename")
+      (-> c (update :renames inc) (assoc :test-runs 0))
+
+      (single-write-tools tool)
+      (-> c (assoc :test-runs 0)
+          (assoc :singles (if (= (:ns args) (:last-ns c)) (inc (:singles c)) 1))
+          (assoc :last-ns (:ns args)))
+
+      (#{"edit_group" "checkpoint" "commit_point"} tool)
+      (assoc c :test-runs 0 :singles 0 :last-ns nil)
+
+      (write-tools tool)
+      (assoc c :test-runs 0)
+
+      :else c)))
+(def ^:private smell-registry
+  "Deterministic bad-usage smells → one-line redirections naming the better
+  tool. EXPAND HERE as new smells surface (dogfooding is the source): each
+  entry is [key fires?-pred msg] over the bump-smell-counts map — one
+  entry, no plumbing. Fire policy (once per session + 30-min per-store
+  cooldown) lives in track-hint!; messages are suggestions, never refusals."
+  [[:test-runs #(>= (:test-runs %) 3)
+    "every write already verifies (its result includes :test) — test_run is rarely needed"]
+   [:singles #(>= (:singles %) 4)
+    "several single-form writes in a row — batch related changes into ONE edit_group"]
+   [:history #(>= (:history %) 2)
+    "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read"]
+   [:dumps #(>= (:dumps %) 2)
+    "repeated whole-namespace dumps — query_slice {ns name} gives one form's source + cards for what it reaches; targets [{ns name}] reads named forms"]
+   [:renames #(>= (:renames %) 2)
+    "several renames — if this is one CONCEPT changing name, rename_sweep {from to} does namespaces + vars + keys + prose in ONE call"]])
 (defn- track-hint!
-  "Session-scoped usage counters → an optional one-line hint (item 3: haiku's
-  66-vs-19 call gap was redundant test_runs + scattered single writes).
-  Each hint fires ONCE per session — repetition measurably pads outputs
-  (+9–20% tok-out on streaky scripts) without changing behavior."
+  "Run the smell registry over this call: bump counters, then let the FIRST
+  fireable smell speak — `some` skips already-fired ones, so one smell never
+  shadows another (the old cond did). Anti-spam by construction: each smell
+  fires ONCE per session AND at most once per 30 minutes per STORE (db-meta
+  cooldown survives sessions)."
   [session tool args]
   (let [s (::stats (swap! session update ::stats
-                          (fn [{:keys [test-runs singles last-ns history fired]
-                                :or {test-runs 0 singles 0 history 0 fired #{}}}]
-                            (cond
-                              (= tool "test_run")
-                              {:test-runs (inc test-runs)
-                               :singles singles :last-ns last-ns
-                               :history history :fired fired}
-
-                              (#{"query_history" "query_search_history" "query_changes"} tool)
-                              {:test-runs test-runs :singles singles :last-ns last-ns
-                               :history (inc history) :fired fired}
-
-                              (single-write-tools tool)
-                              {:test-runs 0
-                               :singles (if (= (:ns args) last-ns) (inc singles) 1)
-                               :last-ns (:ns args) :history history :fired fired}
-
-                              (#{"edit_group" "checkpoint" "commit_point"} tool)
-                              {:test-runs 0 :singles 0 :last-ns nil
-                               :history history :fired fired}
-
-                              (write-tools tool)  ; other writes keep the streak
-                              {:test-runs 0 :singles singles :last-ns last-ns
-                               :history history :fired fired}
-
-                              :else
-                              {:test-runs test-runs
-                               :singles singles :last-ns last-ns
-                               :history history :fired fired}))))
+                          #(bump-smell-counts % tool args)))
         fire! (fn [k msg]
                 (when-not (contains? (:fired s) k)
-                  (swap! session update-in [::stats :fired] (fnil conj #{}) k)
-                  msg))]
-    (cond
-      (>= (:test-runs s) 3)
-      (fire! :test-runs
-             "every write already verifies (its result includes :test) — test_run is rarely needed")
-
-      (>= (:singles s) 4)
-      (fire! :singles
-             "several single-form writes in a row — batch related changes into ONE edit_group")
-
-      (>= (:history s) 2)
-      (fire! :history
-             "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read")
-
-      :else nil)))
+                  (let [conn (:db @session)
+                        now  (System/currentTimeMillis)
+                        hist (or (when conn
+                                   (try (some-> (db/get-meta conn "hint-cooldowns")
+                                                edn/read-string)
+                                        (catch Exception _ nil)))
+                                 {})]
+                    (when (or (nil? conn)
+                              (< (* 30 60 1000) (- now (get hist k 0))))
+                      (swap! session update-in [::stats :fired] (fnil conj #{}) k)
+                      (when conn
+                        (try (db/set-meta! conn "hint-cooldowns"
+                                           (pr-str (assoc hist k now)))
+                             (catch Exception _ nil)))
+                      msg))))]
+    (some (fn [[k pred msg]] (when (pred s) (fire! k msg)))
+          smell-registry)))
 
 (def ^:private cheat-sheet
   "slopp cheat-sheet

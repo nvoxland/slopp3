@@ -411,3 +411,20 @@
         (call sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
         (is (re-find #":outline" (call sess "query_source" {:ns "tk.core"}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated usage-smells-hint-once
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "sm.a" :source "(ns sm.a)\n(defn f [x] x)\n(defn g [x] x)\n"})
+      (call sess "ns_create" {:ns "sm.b" :source "(ns sm.b)\n(defn h [x] x)\n"})
+      (testing "a second whole-namespace dump earns the slice hint, ONCE"
+        (call sess "query_source" {:ns "sm.a" :full true})
+        (let [r2 (call sess "query_source" {:ns "sm.b" :full true})]
+          (is (re-find #"query_slice" r2) r2))
+        (call sess "ns_create" {:ns "sm.c" :source "(ns sm.c)\n(defn i [x] x)\n"})
+        (let [r3 (call sess "query_source" {:ns "sm.c" :full true})]
+          (is (not (re-find #"query_slice" r3)) r3)))
+      (testing "a rename streak earns the sweep hint"
+        (call sess "edit_rename" {:ns "sm.a" :old "f" :new "f2"})
+        (let [r (call sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
+          (is (re-find #"rename_sweep" r) r)))
+      (finally (api/close! sess)))))
