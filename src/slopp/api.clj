@@ -3505,6 +3505,67 @@
                             (:status verify*) :unknown)})
       :verify (str "writes self-verify; test_run {} re-runs in-image; "
                    "test_run {:isolated true} = the full external suite")})))
+^:reads (defn form-card
+  "The INTERFACE view of a form (opacity with a warranty): signature,
+  doc line, effect marker, the recorded WHY (last ask), and the warranty
+  (covering tests from the trace map) — what a CALLER needs, at ~10x less
+  than source. Trusting it is mechanical, not hopeful: every edit re-runs
+  the covering tests, so a violated contract turns red with :implicated."
+  [session ns-sym nm]
+  (when-let [e (store/form-named (:store @session) ns-sym nm)]
+    (let [q       (symbol (str ns-sym) (str nm))
+          s       (try (n/sexpr (:node e)) (catch Exception _ nil))
+          body    (when (seq? s) s)
+          doc     (some #(when (string? %) %) (take 3 (drop 2 (or body ()))))
+          sig     (or (some #(when (vector? %) %) (drop 1 (or body ())))
+                      (let [arities (keep #(when (and (seq? %) (vector? (first %)))
+                                             (first %))
+                                          (drop 2 (or body ())))]
+                        (when (seq arities) (vec arities))))
+          why     (->> (store/deltas (:store @session))
+                       reverse
+                       (some #(when (and (:prompt %)
+                                         (or (= (:id e) (:form-id %))
+                                             (some #{(:id e)} (or (:form-ids %) []))))
+                                (:prompt %))))
+          covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
+                               (:test-map @session)))]
+      (cond-> {:form q :warranty {:covered covered}}
+        sig  (assoc :sig sig)
+        doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
+        (str/ends-with? (str nm) "!") (assoc :effectful true)
+        why  (assoc :why (snip why 90))))))
+^:reads (defn query-slice
+  "The focused read (driver, not doer): FULL source for the form you're
+  about to edit + interface CARDS for what it reaches (same-ns private
+  helpers and cross-ns callees, breadth-first to `:depth`, capped at
+  `:limit` with an honest :omitted). Replaces outline→guess→fetch loops:
+  name ONE entry point, receive the neighborhood."
+  [session ns-sym nm & {:keys [depth limit] :or {depth 2 limit 8}}]
+  (if-let [e (store/form-named (:store @session) ns-sym nm)]
+    (let [root    (symbol (str ns-sym) (str nm))
+          adj     (:calls (query-deps session ns-sym nm))
+          reached (loop [level [root] seen #{root} acc [] d 0]
+                    (if (>= d depth)
+                      acc
+                      (let [nxt (into []
+                                      (comp (mapcat #(get adj % []))
+                                            (remove seen)
+                                            (distinct))
+                                      level)]
+                        (if (empty? nxt)
+                          acc
+                          (recur nxt (into seen nxt) (into acc nxt) (inc d))))))
+          shown   (vec (take limit reached))
+          cards   (into []
+                        (keep (fn [q] (form-card session
+                                                 (symbol (namespace q))
+                                                 (symbol (name q)))))
+                        shown)]
+      (cond-> {:target {:form root :source (n/string (:node e))}
+               :cards cards}
+        (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
+    (edit/missing-form-error (:store @session) ns-sym nm)))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

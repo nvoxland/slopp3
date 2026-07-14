@@ -55,6 +55,12 @@
    {:name "session_brief"
     :description "START HERE, once: namespaces with form names, recent milestones, git alignment, and the working loop — orientation in one small call. Depth on demand: query_outline/query_brief/report."
     :inputSchema {:type "object" :properties {}}}
+   {:name "query_slice"
+    :description "THE focused read: full source of ONE entry-point form + interface CARDS (sig, doc, why, test warranty) for everything it reaches — same-ns private helpers and cross-ns callees, breadth-first to depth (default 2, capped). Trust the cards: edits re-run covering tests, a violated contract turns red with :implicated. Prefer over fetching several forms."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :depth {:type "integer"} :limit {:type "integer"}}
+                  :required ["ns" "name"]}}
    {:name "query_flow"
     :description "Where a FIELD flows: every form using keyword :k across all namespaces, with the using lines — trace a data thread without reading each layer."
     :inputSchema {:type "object"
@@ -520,27 +526,35 @@
   (+9–20% tok-out on streaky scripts) without changing behavior."
   [session tool args]
   (let [s (::stats (swap! session update ::stats
-                          (fn [{:keys [test-runs singles last-ns fired]
-                                :or {test-runs 0 singles 0 fired #{}}}]
+                          (fn [{:keys [test-runs singles last-ns history fired]
+                                :or {test-runs 0 singles 0 history 0 fired #{}}}]
                             (cond
                               (= tool "test_run")
                               {:test-runs (inc test-runs)
-                               :singles singles :last-ns last-ns :fired fired}
+                               :singles singles :last-ns last-ns
+                               :history history :fired fired}
+
+                              (#{"query_history" "query_search_history" "query_changes"} tool)
+                              {:test-runs test-runs :singles singles :last-ns last-ns
+                               :history (inc history) :fired fired}
 
                               (single-write-tools tool)
                               {:test-runs 0
                                :singles (if (= (:ns args) last-ns) (inc singles) 1)
-                               :last-ns (:ns args) :fired fired}
+                               :last-ns (:ns args) :history history :fired fired}
 
                               (#{"edit_group" "checkpoint" "commit_point"} tool)
-                              {:test-runs 0 :singles 0 :last-ns nil :fired fired}
+                              {:test-runs 0 :singles 0 :last-ns nil
+                               :history history :fired fired}
 
                               (write-tools tool)  ; other writes keep the streak
-                              {:test-runs 0 :singles singles :last-ns last-ns :fired fired}
+                              {:test-runs 0 :singles singles :last-ns last-ns
+                               :history history :fired fired}
 
                               :else
                               {:test-runs test-runs
-                               :singles singles :last-ns last-ns :fired fired}))))
+                               :singles singles :last-ns last-ns
+                               :history history :fired fired}))))
         fire! (fn [k msg]
                 (when-not (contains? (:fired s) k)
                   (swap! session update-in [::stats :fired] (fnil conj #{}) k)
@@ -553,6 +567,10 @@
       (>= (:singles s) 4)
       (fire! :singles
              "several single-form writes in a row — batch related changes into ONE edit_group")
+
+      (>= (:history s) 2)
+      (fire! :history
+             "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read")
 
       :else nil)))
 
@@ -877,6 +895,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
       "query_brief"       (text! (api/query-brief session (sym :ns) (sym :name)))
+      "query_slice"       (text! (api/query-slice session (sym :ns) (sym :name)
+                                                 :depth (or (:depth a) 2)
+                                                 :limit (or (:limit a) 8)))
       "query_flow"        (text! (api/query-flow session (:name a)))
       "session_brief"     (text! (let [b    (api/session-brief session)
                                        conn (:db @session)

@@ -197,3 +197,45 @@
     (is (<= (count (pr-str r)) 6500) (str (count (pr-str r))))
     (is (seq (:milestones r)))
     (is (re-find #"narrows" (str (:note r))) (pr-str (keys r)))))
+(deftest ^:isolated form-cards-are-the-interface-view
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'cd.core
+                   (str "(ns cd.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn scale\n  \"Rounds to the nearest cent.\"\n  [cents rate]\n"
+                        "  (long (Math/round (double (* cents rate)))))\n"
+                        "(deftest scale-t (is (= 50 (scale 100 0.5))))\n"))
+      (api/test-run! sess 'cd.core)
+      (api/edit-replace! sess 'cd.core 'scale
+                         "(defn scale\n  \"Rounds to the nearest cent.\"\n  [cents rate]\n  (long (Math/round (* (double cents) rate))))"
+                         :prompt "avoid double-coercion of the product" :agent "t")
+      (let [c (api/form-card sess 'cd.core 'scale)]
+        (is (= 'cd.core/scale (:form c)) (pr-str c))
+        (is (= '[cents rate] (:sig c)) (pr-str c))
+        (is (re-find #"nearest" (str (:doc c))) (pr-str c))
+        (is (re-find #"double-coercion" (str (:why c))) (pr-str c))
+        (is (= 1 (get-in c [:warranty :covered])) (pr-str c))
+        (is (nil? (:source c)) (pr-str c))
+        (is (< (count (pr-str c)) 400) (str (count (pr-str c)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated slices-are-source-plus-cards
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sl.util
+                   "(ns sl.util)\n(defn pad \"Pads.\" [s] (str \" \" s))\n(defn fmt \"Formats cents.\" [c] (pad (str \"$\" c)))\n")
+      (api/ingest! sess 'sl.core
+                   (str "(ns sl.core (:require [sl.util :as u]))\n"
+                        "(defn- tax \"Ten percent.\" [c] (long (* c 0.1)))\n"
+                        "(defn total \"Subtotal plus tax.\" [c] (u/fmt (+ c (tax c))))\n"))
+      (testing "target rides as full source; the neighborhood rides as cards"
+        (let [r (api/query-slice sess 'sl.core 'total)]
+          (is (re-find #"u/fmt" (str (get-in r [:target :source]))) (pr-str r))
+          (is (= #{'sl.core/tax 'sl.util/fmt 'sl.util/pad}
+                 (set (map :form (:cards r)))) (pr-str r))
+          (is (every? #(nil? (:source %)) (:cards r)))
+          (is (< (count (pr-str r)) 1400) (str (count (pr-str r))))))
+      (testing "depth 1 = direct callees only"
+        (let [r (api/query-slice sess 'sl.core 'total :depth 1)]
+          (is (= #{'sl.core/tax 'sl.util/fmt}
+                 (set (map :form (:cards r)))) (pr-str r))))
+      (finally (api/close! sess)))))
