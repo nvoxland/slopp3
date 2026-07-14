@@ -542,3 +542,13 @@ across the Q11/Rock-3 fixes), handoff spiral closed by Q12 (step-5 arc
 constrained environment buys PREDICTABILITY as well as reduction. Plain
 never committed in any round. Tables + caveats:
 projects/eval8-lifetime/RUNS.md.
+
+### eval8 capped batch (n=3 plugin on d2333 vs plain pool n=7, CC 2.1.208)
+
+**Lifetime 0.75×** (plugin mean 33,440, best round 29,814; plain pool
+44,810 ± 4,644). Steps: 0.73 / 0.76 / 0.81 / 0.56 / 0.91. Acceptance
+30/30. G13 caps verified (briefs flat at ~1k/session); the spend is now
+work-shaped (edit_group 21% = the largest block). Residuals to ~0.58×:
+agents still pre-read (17%, zero :source-now corrections — optimistic
+editing unadopted), one 8k-gate double-pay, Bash ritual tail. Plain is
+now a pooled control (SPEC.md) — future batches re-run plugin cells only.
