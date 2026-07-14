@@ -3431,6 +3431,20 @@
   [s n]
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+(defn remember-observation!
+  "Persist what an observation SAW (up to two {:args :ret} captures) under
+  store meta observed/<ns>/<name> — interface cards surface them as
+  :examples, the strongest behavior line a card can carry (examples don't
+  lie; prose can). Called by the MCP layer after query_observe; a no-op
+  for ephemeral sessions or empty captures."
+  [session ns-sym nm observe-result]
+  (when-let [conn (:db @session)]
+    (when-let [calls (seq (:calls observe-result))]
+      (try
+        (db/set-meta! conn (str "observed/" ns-sym "/" nm)
+                      (pr-str (vec (take 2 calls))))
+        (catch Exception _ nil))))
+  nil)
 ^:reads (defn form-card
   "The INTERFACE view of a form (opacity with a warranty): signature,
   doc line, effect marker, the recorded WHY (last ask), and the warranty
@@ -3455,12 +3469,24 @@
                                              (some #{(:id e)} (or (:form-ids %) []))))
                                 (:prompt %))))
           covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
-                               (:test-map @session)))]
+                               (:test-map @session)))
+          examples (when-let [conn (:db @session)]
+                     (try
+                       (when-let [raw (db/get-meta conn (str "observed/" ns-sym "/" nm))]
+                         (->> (edn/read-string raw)
+                              (take 2)
+                              (mapv (fn [{:keys [args ret threw]}]
+                                      (snip (str "(" nm " " (str/join " " args)
+                                                 ") → " (or ret threw))
+                                            90)))
+                              not-empty))
+                       (catch Exception _ nil)))]
       (cond-> {:form q :warranty {:covered covered}}
         sig  (assoc :sig sig)
         doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
         (str/ends-with? (str nm) "!") (assoc :effectful true)
-        why  (assoc :why (snip why 90))))))
+        why  (assoc :why (snip why 90))
+        examples (assoc :examples examples)))))
 ^:reads (defn session-brief
   "THE one-call orientation, task-shaped (knowledge-differential stance):
   breadth stays CHEAP — namespace FAMILIES (≥5 same-prefix siblings) roll

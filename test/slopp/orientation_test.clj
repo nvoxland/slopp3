@@ -310,3 +310,19 @@
         (let [r (api/query-depends sess "dp.app" :direction :dependencies)]
           (is (some #{'dp.base} (:requires r)) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated cards-carry-observed-examples
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-obs" (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ob.core
+                   "(ns ob.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")
+      (api/remember-observation! sess 'ob.core 'scale
+                                 (api/query-observe sess 'ob.core 'scale
+                                                    "(ob.core/scale 100 0.5)"))
+      (testing "the card carries observed input→output pairs (Q: examples don't lie)"
+        (let [c (api/form-card sess 'ob.core 'scale)]
+          (is (vector? (:examples c)) (pr-str c))
+          (is (some #(re-find #"100" %) (:examples c)) (pr-str c))
+          (is (some #(re-find #"50" %) (:examples c)) (pr-str c))))
+      (finally (api/close! sess)))))
