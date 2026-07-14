@@ -177,3 +177,13 @@ wire (sqlite dumps to a scratchpad) — efficient but caused the stale-dump
 clobber; a safe "render to files for reading" flow may be worth having;
 (3) targeted isolated runs (Q2) are the single highest-leverage fix this
 week by lived experience — protect that path.
+
+First-person friction (2026-07-14, cards/differential wave): every edit
+to a tool DESCRIPTOR or dispatch clause starts with a sqlite grep for
+exact match text — subform matching wants a KEYED mode ("the unique map
+whose :name is X") for registry-style vectors; would collapse the
+grep→copy→match loop into one addressed call. Second (mild): cold-load
+ordering hit again (form-card before session-brief) — the teaching error
++ edit_move is fine, but the pattern "add composite, forget dep order"
+recurs; a :before hint in the refusal naming the EXACT anchor would
+close it fully.
