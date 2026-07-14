@@ -187,3 +187,8 @@ ordering hit again (form-card before session-brief) — the teaching error
 + edit_move is fine, but the pattern "add composite, forget dep order"
 recurs; a :before hint in the refusal naming the EXACT anchor would
 close it fully.
+
+Benchmark cadence (user directive, 2026-07-14): the lifetime evals run
+ONLY on explicit request or a genuine decision need — never routinely
+per change wave. Self-dogfooding is the continuous gauge; the benches
+are for claims.
