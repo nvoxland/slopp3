@@ -1110,3 +1110,11 @@ Deliberately skipped: tool-description diet (2.1k tok total exposure,
 ~100 tok/session — teaching value beats the saving); rename-in-group
 (multi-ns group surgery, not a measured cost — step 3 already 0.72x).
 Suite 272/1383 green. Target: eval8 r4 lifetime ratio ~0.5x.
+
+G13 (standing, from eval8 r4): **composites must snip their prose.** A
+composite that carries verbatim descriptions/asks GROWS with history and
+gives back every token it saved (session_brief 751->1,773/session;
+report ~2.1k/call). Caps: brief = 5 milestones x 110 chars; report asks
+= 3 x 140 chars; full text stays one query away. Any future composite
+(dossier, plan result, hint) ships with a size budget and a spec
+asserting it.
