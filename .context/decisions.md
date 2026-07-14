@@ -1227,3 +1227,16 @@ not capability; the outline gate had already shown removal converts
 where offering never does. Deferred deliberately: modal write clusters
 (files/branches/deps/git) — distinct verbs are safety-relevant and the
 traffic is negligible. Suite 286/1441 green.
+
+G16 (standing, 2026-07-14): **smells are data.** Deterministic bad-usage
+detection lives in slopp.mcp/smell-registry — one [key fires?-pred msg]
+entry per smell over bump-smell-counts; adding a smell is one entry, no
+plumbing. Fire policy is anti-spam BY CONSTRUCTION: once per session +
+once per 30 minutes per store (db-meta cooldown), suggestions never
+refusals, one line naming the better tool. Current catalog: test_run
+streaks, scattered singles, history stitching, whole-ns dump streaks
+(-> query_slice), rename streaks (-> rename_sweep). Standing practice:
+smells observed in dogfooding (mine or eval transcripts) get an entry
+the same day. Two bugs fixed en route: hints now ride STRING results
+(source dumps dropped them), and some-over-registry replaced a cond
+whose first fired smell shadowed all later ones forever.
