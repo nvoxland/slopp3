@@ -122,7 +122,11 @@
   (cycles condensed via SCC so they share a layer instead of poisoning
   the picture), the `:cycles` themselves, and `:unused-edges` (declared
   but no call uses them — the retire-direction drift the debt view can't
-  see). One kondo pass feeds debt and drift both.
+  see). One kondo pass feeds debt and drift both. **`:layers`/`:cycles`
+  compute over PRODUCTION edges only** (`api/production-manifest`): a
+  `-test` namespace folds into its subject module, so its fixture deps
+  would manufacture cycles that don't exist in production; `:manifest`
+  (declared/enforced) still carries them.
 - **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
   it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
   declarations union; `merge-logs` folds them without conflict and NOTES a
