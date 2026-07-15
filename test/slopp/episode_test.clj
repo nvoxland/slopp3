@@ -391,3 +391,46 @@
             (str "the done-point must reach dr.core-test: " (pr-str r)))
         (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated episode-reds-compress-to-direction
+  ;; response diet for the REPL flow: full failure detail rides ONCE (when a
+  ;; test newly goes red); re-running the same red mid-episode compresses to
+  ;; :still-red names; recovery reports :went-green. Direction, not repetition.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'er.core
+                   (str "(ns er.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      (api/test-run! sess 'er.core)
+      (testing "the FIRST red carries full failure detail"
+        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 9))"
+                                   :prompt "break f-t")]
+          (is (seq (get-in r [:test :failures])) (pr-str (:test r)))))
+      (testing "the SAME red on the next write compresses to :still-red"
+        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 8))"
+                                   :prompt "still broken, differently")]
+          (is (= '[er.core/f-t] (get-in r [:test :still-red])) (pr-str (:test r)))
+          (is (empty? (get-in r [:test :failures]))
+              "no re-printed expected/actual blocks")))
+      (testing "recovery reports :went-green"
+        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (inc x))"
+                                   :prompt "fixed")]
+          (is (= '[er.core/f-t] (get-in r [:test :went-green])) (pr-str (:test r)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated missing-doc-waits-for-the-done-point
+  ;; advisories are episode-level concerns: writes stay quiet, the boundary
+  ;; names the undocumented public surface once
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'md.core "(ns md.core)\n(defn seeded \"S.\" [x] x)\n")
+      (api/done! sess :label "baseline")
+      (testing "the write itself stays quiet"
+        (let [r (api/add-form! sess 'md.core "(defn bare [x] x)"
+                               :prompt "no docstring yet")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (not-any? :missing-doc (:warnings r)) (pr-str (:warnings r)))))
+      (testing "the done-point names the undocumented surface"
+        (let [r (api/done! sess :label "review")]
+          (is (= '[md.core/bare] (get-in r [:findings :missing-doc]))
+              (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

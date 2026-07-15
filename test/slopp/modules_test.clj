@@ -284,10 +284,13 @@
                                 :source (str "(ns mc.rogue (:require [ma.core :as core]))\n"
                                              "(defn steal \"Rogue.\" [x] (core/shared x))\n"))]
           (is (re-find #"does not declare" (str (:error r))) (pr-str r))))
-      (testing "a public defn without a docstring WARNS (never blocks)"
+      (testing "a public defn without a docstring surfaces at the DONE-POINT (never blocks)"
         (let [r (api/edit-replace! sess 'mb.app 'use-it
                                    "(defn use-it [x] (impl/hoisted x))"
                                    :prompt "drop the doc")]
           (is (nil? (:error r)) (pr-str r))
-          (is (some :missing-doc (:warnings r)) (pr-str (:warnings r)))))
+          (is (not-any? :missing-doc (:warnings r)) "the write stays quiet"))
+        (let [r (api/done! sess :label "docs review")]
+          (is (some #{'mb.app/use-it} (get-in r [:findings :missing-doc]))
+              (pr-str (:findings r)))))
       (finally (api/close! sess)))))

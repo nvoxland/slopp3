@@ -481,11 +481,7 @@
                                     [])
                   (cond-> {:ns ns-sym
                            :forms (count (store/forms candidate ns-sym))
-                           :warnings (vec (concat
-                                           (edit/ns-warnings candidate ns-sym)
-                                           (keep #(edit/missing-doc-warning
-                                                   candidate ns-sym (:name %))
-                                                 (store/forms candidate ns-sym))))
+                           :warnings (vec (edit/ns-warnings candidate ns-sym))
                            :test summary}
                     stubbed (assoc :red-first stubbed
                                    :note (str "these vars don't exist yet — stubbed"
@@ -1457,29 +1453,62 @@
                                           seq sort vec)]
                         (cond-> f hits (assoc :implicated hits))))
                     fs)))))
+(defn- shape-episode-reds!
+  "Mid-episode response diet (direction over repetition): full failure
+  detail rides ONLY for tests newly red on THIS write; tests already
+  reported red this episode compress to :still-red names; previously-red
+  tests that ran clean report :went-green. The ledger lives on the
+  session (:episode-reds) and the done-point (`boundary?` true) bypasses
+  compression — the boundary always reports every standing red in full —
+  and resets the ledger. Explicit test_run bypasses this shaping too
+  (spot-checks get everything)."
+  [session summary affected scope boundary?]
+  (let [prev     (or (:episode-reds @session) #{})
+        blocks   (vec (:failures summary))
+        now-red  (into #{} (keep :test) blocks)
+        scope-ns (into #{} (map str) (if (sequential? scope) scope [scope]))
+        ran      (if (seq affected)
+                   (set affected)
+                   (into #{} (filter #(contains? scope-ns (namespace %))) prev))
+        greens   (vec (sort (remove now-red (filter ran prev))))
+        ledger   (-> prev (set/difference (set greens)) (into now-red))]
+    (swap! session assoc :episode-reds (if boundary? now-red ledger))
+    (if boundary?
+      summary
+      (let [new-blocks (vec (remove #(contains? prev (:test %)) blocks))
+            stills     (vec (sort (filter prev now-red)))]
+        (cond-> (assoc summary :failures new-blocks)
+          (empty? new-blocks) (dissoc :failures)
+          (seq stills)        (assoc :still-red stills)
+          (seq greens)        (assoc :went-green greens))))))
 (defn- run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
   `default-ns`'s tests when there's no trace information. `:edited` (the
   just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
-  red-result :implicated correlation (Rock 2)."
-  [session default-ns affected & {:keys [edited fresh include-integration?]}]
-  (implicate
-   (if (nil? affected)
-     (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                     :include-integration? include-integration?)
-     (reduce (fn [acc [tns tsyms]]
-               (merge-with (fn [a b]
-                             (cond (number? a) (+ a b)
-                                   (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                   :else (or b a)))
-                           acc
-                           (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                           :edited edited :fresh fresh
-                                           :include-integration? include-integration?)))
-             {}
-             (group-by (comp symbol namespace) affected)))
-   (:test-map @session)
-   edited))
+  red-result :implicated correlation (Rock 2). Results pass through the
+  episode-red shaper (direction over repetition); `:boundary? true` (the
+  done-point) bypasses compression and resets the ledger."
+  [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
+  (shape-episode-reds!
+   session
+   (implicate
+    (if (nil? affected)
+      (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                      :include-integration? include-integration?)
+      (reduce (fn [acc [tns tsyms]]
+                (merge-with (fn [a b]
+                              (cond (number? a) (+ a b)
+                                    (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                    :else (or b a)))
+                            acc
+                            (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                            :edited edited :fresh fresh
+                                            :include-integration? include-integration?)))
+              {}
+              (group-by (comp symbol namespace) affected)))
+    (:test-map @session)
+    edited)
+   affected default-ns boundary?))
 
 ;; --- edit.* / runtime ---
 
@@ -1592,11 +1621,7 @@
                 (with-ms
                   (cond-> {:delta    (:delta r)
                            ;; T3: only NEW violations; pre-existing as a count
-                           :warnings (vec (concat
-                                           (remove (comp pre-warned :var) all-w)
-                                           (some-> (edit/missing-doc-warning
-                                                    (:store @session) ns-sym nm)
-                                                   vector)))
+                           :warnings (vec (remove (comp pre-warned :var) all-w))
                            :test     summary
                            :affected (or affected :all)}
                     (:image-healed r) (assoc :image-healed true)
@@ -1803,22 +1828,12 @@
                                   [])
                 (let [all-w    (->> (map :ns steps) distinct
                                     (mapcat #(edit/ns-warnings (:store @session) %)))
-                      doc-w    (keep identity
-                                     (map (fn [step x]
-                                            (when-let [[action nsx nm] x]
-                                              (when (or (= :add action)
-                                                        (nil? (edit/missing-doc-warning
-                                                               base0 nsx (:name step))))
-                                                (edit/missing-doc-warning
-                                                 (:store @session) nsx nm))))
-                                          steps step-nms))
                       existing (count (filter (comp pre-warned :var) all-w))]
                   (with-ms
                     (cond-> {:group    gid
                              :deltas   deltas
                              :changed-nses (vec (distinct (map :ns steps)))
-                             :warnings (vec (concat (remove (comp pre-warned :var) all-w)
-                                                    (distinct doc-w)))
+                             :warnings (vec (remove (comp pre-warned :var) all-w))
                              :test     summary
                              :affected (or (not-empty affected) :all)}
                       (:healed load-res) (assoc :image-healed true)
@@ -2123,17 +2138,28 @@
                 s        (run-verification! session main-ns
                                             (when (seq affected) affected)
                                             :edited qsyms
-                                            :include-integration? true)]  ; M5
+                                            :include-integration? true
+                                            :boundary? true)]  ; M5
             (commit-appended! session
                               #(store/record-verification % main-ns s) [])
             s))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
-                       failures    (+ (:fail summary 0) (:error summary 0))]
-                   {:test-status (cond (nil? summary)  :none
-                                       (pos? failures) :red
-                                       :else           :green)
-                    :failures    failures
-                    :lint-errors lint-errors})
+                       failures    (+ (:fail summary 0) (:error summary 0))
+                       st*         (:store @session)
+                       missing-doc (vec (sort (distinct
+                                               (keep (fn [fid]
+                                                       (when-let [e (store/form-by-id st* fid)]
+                                                         (:var (edit/missing-doc-warning
+                                                                st*
+                                                                (store/ns-of-form-id st* fid)
+                                                                (:name e)))))
+                                                     changed))))]
+                   (cond-> {:test-status (cond (nil? summary)  :none
+                                               (pos? failures) :red
+                                               :else           :green)
+                            :failures    failures
+                            :lint-errors lint-errors}
+                     (seq missing-doc) (assoc :missing-doc missing-doc)))
         cid (let [v (volatile! nil)]
               (commit-appended! session
                                 (fn [base]

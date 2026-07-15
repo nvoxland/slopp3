@@ -605,18 +605,19 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
 (defn- summarize
   "B1: a green-and-quiet edit result compresses to a terse shape (the Go
   baseline showed slopp's verbose green responses were the token loser).
-  :error, red tests, or NEW warnings return the full map — but source echoes
-  are stripped EVERYWHERE first: a delta's :source/:sources never ride a
-  write result; the agent just sent that text (Q1). :untested is a terse
-  FLAG, not a reason to go verbose. A verification that ran ZERO tests says
-  :coverage :none — green must never be inferable from an empty run (Q8)."
+  :error, NEW red failure detail, or NEW warnings return the full map — a
+  red that carries only :still-red names (episode compression) stays
+  TERSE. Source echoes are stripped EVERYWHERE (Q1); :untested is a terse
+  FLAG; a zero-test verification says :coverage :none (Q8); the :type
+  :summary tag is internal and never rides the wire."
   [r verbose?]
   (let [strip (fn [d] (if (map? d) (dissoc d :source :sources :node) d))
         r     (cond-> r
                 (:delta r)        (update :delta strip)
                 (seq (:deltas r)) (update :deltas (partial mapv strip)))]
-    (if (or verbose? (:error r) (seq (:warnings r)) (red? (:test r)))
-      r
+    (if (or verbose? (:error r) (seq (:warnings r))
+            (and (red? (:test r)) (seq (:failures (:test r)))))
+      (update r :test #(if (map? %) (dissoc % :type) %))
       (let [t (:test r)]
         (cond-> {:ok true}
           (:delta r)    (assoc :delta (get-in r [:delta :id]))
@@ -628,13 +629,18 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
-                                              :status (:status t :green)
+                                              :status (if (red? t) :red (:status t :green))
                                               :scope (:scope t)}
-                                       (:staleness-detected t) (assoc :staleness-healed true)
-                                       (zero? (:test t 0))     (assoc :coverage :none)))
+                                       (:staleness-detected t)  (assoc :staleness-healed true)
+                                       (zero? (:test t 0))      (assoc :coverage :none)
+                                       (red? t)                 (assoc :fail (+ (:fail t 0) (:error t 0)))
+                                       (seq (:still-red t))     (assoc :still-red (:still-red t))
+                                       (seq (:went-green t))    (assoc :went-green (:went-green t))))
           (:affected r) (assoc :affected (let [a (:affected r)]
                                            (if (= :all a) :all (count a))))
           (:hint r) (assoc :hint (:hint r))
+          (:red-first r) (assoc :red-first (:red-first r))
+          (:carried-errors r) (assoc :carried-errors (:carried-errors r))
           (:changed-nses r) (assoc :changed-nses (:changed-nses r))
           (:image-healed r) (assoc :image-healed true)
           (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r)))))))

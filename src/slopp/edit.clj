@@ -464,14 +464,7 @@
           {:error merr}
           {:store    store'
            :delta    delta
-           :warnings (concat (ns-warnings store' ns-sym)
-                             ;; only the has-doc→no-doc TRANSITION warns — a
-                             ;; chronically undocumented form doesn't nag every touch
-                             (when (nil? (missing-doc-warning store ns-sym form-name))
-                               (some-> (missing-doc-warning
-                                        store' ns-sym
-                                        (or (store/form-symbol node) form-name))
-                                       vector)))})
+           :warnings (ns-warnings store' ns-sym)})
         (missing-form-error store ns-sym form-name)))))
 
 (defn hot-load-form!
