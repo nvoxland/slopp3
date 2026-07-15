@@ -309,6 +309,23 @@
           (is (some #{'mb.app/use-it} (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+(deftest fully-qualified-unrequired-calls-hit-the-gate
+  ;; kondo emits NO var-usage row for a qualified call into a namespace the
+  ;; caller never requires — `(deep.ns/var x)` compiles in the image (the ns
+  ;; is loaded globally) and slipped the module gate entirely (found by a
+  ;; live boundary probe). The gates must synthesize rows for these.
+  (let [base (-> (store/empty-store)
+                 (store/ingest 'a.b.impl "(ns a.b.impl)\n\n(defn hidden \"H.\" [x] x)\n"))]
+    (testing "an un-required qualified call into a deep ns is refused"
+      (let [cand (store/ingest base 'x.y
+                               "(ns x.y)\n\n(defn f \"F.\" [v] (a.b.impl/hidden v))\n")]
+        (is (re-find #"package-private"
+                     (str (edit/module-refusal cand 'x.y 'f))))
+        (is (re-find #"package-private" (str (edit/module-scan cand 'x.y))))))
+    (testing "quoted symbols are data, not calls"
+      (let [cand (store/ingest base 'x.z
+                               "(ns x.z)\n\n(defn g \"G.\" [] 'a.b.impl/hidden)\n")]
+        (is (nil? (edit/module-refusal cand 'x.z 'g)))))))
 (deftest ^:isolated module-graph-views-use-production-edges
   ;; -test namespaces fold into the subject module, so their fixture deps
   ;; pollute the graph and manufacture cycles that don't exist in

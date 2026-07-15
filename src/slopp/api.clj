@@ -24,7 +24,7 @@
             [slopp.normalize :as normalize]
             [slopp.build :as build]
             [slopp.deps :as deps]
-            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -611,28 +611,6 @@
              (mapv #(cond-> (dissoc % :sources :changeset :result)
                       (ti (:id %)) (assoc :turn-intent (ti (:id %))))))))))
 
-(defn- status-after
-  "The verification outcome a delta PRODUCED: the first `:verify` at or after
-  `at-id` (a write is immediately followed by its verify) — :green / :red /
-  :unknown. This is 'did THIS version land green', vs `status-at`'s 'what
-  was the state standing AT this point'."
-  [store at-id]
-  (let [ds (drop-while #(not= at-id (:id %)) (store/deltas store))
-        v  (first (filter #(= :verify (:op %)) ds))]
-    (if-let [r (:result v)]
-      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
-      :unknown)))
-
-(defn- human-time
-  "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
-  a delta's `:at`; agents keep the raw ms in the store)."
-  [ms]
-  (when ms
-    (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
-             (java.time.LocalDateTime/ofInstant
-              (java.time.Instant/ofEpochMilli ms)
-              (java.time.ZoneId/systemDefault)))))
-
 (defn query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
   produced it, when, and the verification state it landed in:
@@ -650,11 +628,11 @@
                                 :when src]
                             (cond-> {:delta (:id d) :op (:op d)
                                      :prompt (:prompt d) :source src
-                                     :status (status-after st (:id d))
-                                     :at (human-time (:at d))}
+                                     :status (history/status-after st (:id d))
+                                     :at (history/human-time (:at d))}
                               (ti (:id d)) (assoc :turn-intent (ti (:id d))))))]
         (if (= "text" (some-> format name))
-          (render-form-history-text (symbol (str ns-sym) (str nm)) versions)
+          (history/render-form-history-text (symbol (str ns-sym) (str nm)) versions)
           versions)))))
 
 (defn- delta-fids [d]
@@ -692,7 +670,7 @@
            (filter hit?)
            (take (or limit 25))
            (mapv (fn [d]
-                   (cond-> {:delta (:id d) :op (:op d) :at (human-time (:at d))}
+                   (cond-> {:delta (:id d) :op (:op d) :at (history/human-time (:at d))}
                      (:prompt d)      (assoc :prompt (:prompt d))
                      (:label d)       (assoc :label (:label d))
                      (:description d) (assoc :description (:description d))
@@ -769,7 +747,7 @@
                                            (conj out {:episode
                                                       (cond-> {:agent agent
                                                                :label (:label d)
-                                                               :at    (human-time (:at d))
+                                                               :at    (history/human-time (:at d))
                                                                :from  (:id (first cur))
                                                                :to    (:id d)
                                                                :ops   (count cur)
@@ -781,7 +759,7 @@
                                   (conj out {:episode
                                              (cond-> {:agent agent
                                                       :open? true
-                                                      :at    (human-time (:at (last cur)))
+                                                      :at    (history/human-time (:at (last cur)))
                                                       :from  (:id (first cur))
                                                       :ops   (count cur)
                                                       :forms (count (distinct (mapcat delta-fids cur)))}
@@ -800,7 +778,7 @@
                                               (conj out {:agent agent
                                                          :intent (:intent open)
                                                          :user (:user open)
-                                                         :at (human-time (:at open))
+                                                         :at (history/human-time (:at open))
                                                          :from (:id open)
                                                          :to (:id m)}))
                                        :else (recur (rest ms) open out))
@@ -808,7 +786,7 @@
                                        (conj out {:agent agent :open? true
                                                   :intent (:intent open)
                                                   :user (:user open)
-                                                  :at (human-time (:at open))
+                                                  :at (history/human-time (:at open))
                                                   :from (:id open)})
                                        out))))
                                (group-by :agent
@@ -867,7 +845,7 @@
                                   (cond-> {:id          (:id d)
                                            :description (:description d)
                                            :target      (:target d)
-                                           :at          (human-time (:at d))}
+                                           :at          (history/human-time (:at d))}
                                     (:agent d)  (assoc :agent (:agent d))
                                     (:status d) (assoc :status (:status d)))}))]
               (->> (concat turns eps commits)
@@ -909,7 +887,7 @@
                        (cond-> (select-keys d [:id :op :ns :prompt :label :group
                                                :agent :form-id :form-ids :old
                                                :new :before])
-                         (:at d) (assoc :at (human-time (:at d))))))))]
+                         (:at d) (assoc :at (history/human-time (:at d))))))))]
     (if (= "text" (some-> format name))
       (render-text rows)
       rows)))
@@ -1052,99 +1030,6 @@
                        (range (count parts)))))]
     (boolean (some open? (or roots [agent-label])))))
 
-(defn- diff-lines
-  "Minimal LCS line diff turning `was` into `now` (either may be nil):
-  [[:same|:del|:add line] ...]. Forms are small — clarity over speed."
-  [was now]
-  (let [a   (if was (vec (str/split-lines was)) [])
-        b   (if now (vec (str/split-lines now)) [])
-        n   (count a)
-        m   (count b)
-        tbl (reduce (fn [tbl [i j]]
-                      (assoc tbl [i j]
-                             (if (= (a i) (b j))
-                               (inc (get tbl [(inc i) (inc j)] 0))
-                               (max (get tbl [(inc i) j] 0)
-                                    (get tbl [i (inc j)] 0)))))
-                    {}
-                    (for [i (range (dec n) -1 -1)
-                          j (range (dec m) -1 -1)]
-                      [i j]))]
-    (loop [i 0, j 0, out []]
-      (cond
-        (and (< i n) (< j m) (= (a i) (b j)))
-        (recur (inc i) (inc j) (conj out [:same (a i)]))
-
-        (and (< i n) (or (= j m) (>= (get tbl [(inc i) j] 0)
-                                     (get tbl [i (inc j)] 0))))
-        (recur (inc i) j (conj out [:del (a i)]))
-
-        (< j m)
-        (recur i (inc j) (conj out [:add (b j)]))
-
-        :else out))))
-
-(defn- render-changes-text
-  "query-changes as a human story: steps with prompts, per-form LINE diffs
-  (context/-/+ — unchanged lines are never re-emitted as churn), and the
-  red→green verification arc."
-  [c]
-  (str/join
-   "\n"
-   (concat
-    [(str "changes" (when (:agent c) (str " [" (:agent c) "]"))
-          " since " (:since c))]
-    (when (seq (:steps c))
-      (cons "steps:"
-            (map #(str "  " (:id %) " " (name (:op %))
-                       (when (:ns %) (str " " (:ns %)))
-                       (when (:prompt %) (str " — " (:prompt %))))
-                 (:steps c))))
-    (when (seq (:forms c))
-      (cons "forms:"
-            (mapcat (fn [f]
-                      (cons (str "  " (case (:status f)
-                                        :added "+" :deleted "-" "~")
-                                 " " (:form f))
-                            (map (fn [[tag line]]
-                                   (str "    " (case tag
-                                                 :same "  "
-                                                 :del  "- "
-                                                 :add  "+ ")
-                                        line))
-                                 (diff-lines (:was f) (:now f)))))
-                    (:forms c))))
-    (when (seq (:verification-arc c))
-      [(str "verification: "
-            (str/join " → " (map #(if (zero? (:fail %))
-                                    "green"
-                                    (str "red(" (:fail %) ")"))
-                                 (:verification-arc c))))]))))
-
-(defn- render-form-history-text
-  "One form's LIFE as a story (HM4): each version's header (delta, op, the
-  prompt/intent that produced it, its green/red, when) followed by the LINE
-  diff FROM the previous version (the first version shows as all-added).
-  Reuses `diff-lines` — unchanged lines are context, not churn."
-  [qsym versions]
-  (str/join
-   "\n"
-   (into [(str "form " qsym " — " (count versions) " version"
-               (when (not= 1 (count versions)) "s"))]
-         (mapcat
-          (fn [prev v]
-            (cons (str "  " (:delta v) " " (name (:op v))
-                       (when-let [why (or (:prompt v) (:turn-intent v))]
-                         (str " — " why))
-                       "  [" (name (:status v)) "]"
-                       (when (:at v) (str "  @ " (:at v))))
-                  (map (fn [[tag line]]
-                         (str "    " (case tag :same "  " :del "- " :add "+ ")
-                              line))
-                       (diff-lines (:source prev) (:source v)))))
-          (cons nil versions)
-          versions))))
-
 (defn query-changes
   "The agent's EPISODE — everything since `:agent`'s last done: net
   per-form diffs (:was/:now), the step list, and the verification arc. The
@@ -1209,7 +1094,7 @@
                   :forms forms
                   :verification-arc arc}]
       (if (= "text" (some-> format name))
-        (render-changes-text result)
+        (history/render-changes-text result)
         result))))
 
 (defn- callee-adjacency
@@ -2192,42 +2077,6 @@
       (seq declare-fixes) (assoc :declares-fixed declare-fixes)
       summary             (assoc :test summary))))
 
-(defn- status-at
-  "Verification status as of delta `at-id`: the last `:verify` delta at or
-  before it — :green / :red / :unknown (no verification on record)."
-  [store at-id]
-  (let [upto (reduce (fn [acc d]
-                       (let [acc (conj acc d)]
-                         (if (= at-id (:id d)) (reduced acc) acc)))
-                     [] (store/deltas store))
-        v    (last (filter #(= :verify (:op %)) upto))]
-    (if-let [r (:result v)]
-      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
-      :unknown)))
-
-(defn- resolve-at
-  "Normalize an `at` argument to a plain delta id: a `:commit` marker id
-  becomes its `:target` (time-travel to a milestone points at the
-  milestone's state); any other existing delta id passes through; an unknown
-  id → nil (the caller reports it)."
-  [store at]
-  (when at
-    (let [d (first (filter #(= at (:id %)) (store/deltas store)))]
-      (cond
-        (nil? d)            nil
-        (= :commit (:op d)) (:target d)
-        :else               at))))
-
-(defn- verify-at
-  "The last `:verify` delta at or before `at-id` (the one governing that
-  point), or nil."
-  [store at-id]
-  (let [upto (reduce (fn [acc d]
-                       (let [acc (conj acc d)]
-                         (if (= at-id (:id d)) (reduced acc) acc)))
-                     [] (store/deltas store))]
-    (last (filter #(= :verify (:op %)) upto))))
-
 (defn query-status-at
   "was-green-at: the project's verification state that GOVERNED delta `at`
   (a delta id, or a commit-point id → its target) — the last `:verify` at or
@@ -2237,11 +2086,11 @@
   (let [st (:store @session)]
     (cond
       (nil? at)              {:error "query-status-at needs :at"}
-      (nil? (resolve-at st at)) {:error (str "no delta " at
+      (nil? (history/resolve-at st at)) {:error (str "no delta " at
                                              " in this branch's history")}
-      :else (let [rid (resolve-at st at)]
-              (cond-> {:at rid :status (status-at st rid)}
-                (verify-at st rid) (assoc :verify (:id (verify-at st rid))))))))
+      :else (let [rid (history/resolve-at st at)]
+              (cond-> {:at rid :status (history/status-at st rid)}
+                (history/verify-at st rid) (assoc :verify (:id (history/verify-at st rid))))))))
 
 (defn- fid-ns-at
   "form-id → owning namespace as of delta `at-id`, folded from the log (each
@@ -2268,11 +2117,11 @@
       (nil? at)
       {:error "query-form-at needs :at (a delta id or a commit-point id)"}
 
-      (nil? (resolve-at st at))
+      (nil? (history/resolve-at st at))
       {:error (str "no delta " at " in this branch's history")}
 
       :else
-      (let [rid   (resolve-at st at)
+      (let [rid   (history/resolve-at st at)
             srcs  (store/sources-at st rid)
             ns-of (fid-ns-at st rid)
             fid   (some (fn [[fid src]]
@@ -2282,7 +2131,7 @@
                         srcs)]
         (if fid
           {:ns ns-sym :name nm :at rid :source (get srcs fid)
-           :status (status-at st rid)}
+           :status (history/status-at st rid)}
           {:error (str nm " was not present in " ns-sym " at " rid)})))))
 
 ^:reads (defn- git-config-value
@@ -2358,7 +2207,7 @@
 
       target
       (if (some #(= target (:id %)) (store/deltas (:store @session)))
-        (mark! target (status-at (:store @session) target) {} extra)
+        (mark! target (history/status-at (:store @session) target) {} extra)
         {:error (str "no delta " target " in this branch's history")})
 
       :else
@@ -2373,7 +2222,7 @@
                 head   (:id (last (store/deltas st)))
                 status (if-let [t (:test cp)]
                          (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
-                         (status-at st head))
+                         (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
@@ -2414,7 +2263,7 @@
                           :description (:description d)
                           :target      (:target d)
                           :status      (:status d)
-                          :at          (human-time (:at d))}
+                          :at          (history/human-time (:at d))}
                    (:agent d) (assoc :agent (:agent d))
                    (or (:git-sha d) (get shas (:id d)))
                    (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
@@ -3501,6 +3350,13 @@
   beats the gain), then n/8 shards, capped at 4 and at half the cores."
   [n cores]
   (max 1 (min 4 (quot cores 2) (quot n 8))))
+(defn- run-shard!
+  "Shell one test shard: a fresh `clojure -M<alias>` over `grp`'s namespaces
+  in the materialized `dir`. The seam the shard-death retry rides."
+  [alias dir grp]
+  (apply sh/sh (concat [repl/clojure-bin (str "-M" alias)]
+                       (mapcat #(vector "-n" (str %)) grp)
+                       [:dir dir])))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3551,22 +3407,28 @@
                               (group-by #(mod (first %) par))
                               vals
                               (mapv #(mapv second %)))
-                  runs   (mapv (fn [grp]
-                                 (future
-                                   (apply sh/sh
-                                          (concat [repl/clojure-bin (str "-M" alias)]
-                                                  (mapcat #(vector "-n" (str %)) grp)
-                                                  [:dir dir]))))
+                  runs   (mapv (fn [grp] (future (run-shard! alias dir grp)))
                                shards)
-                  outs   (mapv deref runs)
+                  outs0  (mapv deref runs)
+                  ;; a shard with NO parseable summary is a JVM-level death
+                  ;; (fork pressure, OOM) — test failures PARSE. Retry those
+                  ;; shards once, SERIALLY, off the concurrent storm.
+                  dead?  (fn [o] (nil? (parse-test-summary
+                                        (str (:out o) "\n" (:err o)))))
+                  outs   (mapv (fn [grp o]
+                                 (if (dead? o) (run-shard! alias dir grp) o))
+                               shards outs0)
+                  retries (count (filter dead? outs0))
                   out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
                   sums   (mapv #(parse-test-summary (str (:out %) "\n" (:err %))) outs)]
               (if (some nil? sums)
-                {:isolated true :exit (apply max (map :exit outs)) :status :error
-                 :shards (count shards)
-                 :output (->> (str/split-lines out)
-                              (remove str/blank?)
-                              (take-last 12) (str/join "\n"))}
+                (cond-> {:isolated true :exit (apply max (map :exit outs))
+                         :status :error
+                         :shards (count shards)
+                         :output (->> (str/split-lines out)
+                                      (remove str/blank?)
+                                      (take-last 12) (str/join "\n"))}
+                  (pos? retries) (assoc :shard-retries retries))
                 (let [merged {:ran        (reduce + (map :ran sums))
                               :assertions (reduce + (map :assertions sums))
                               :failures   (reduce + (map :failures sums))
@@ -3577,7 +3439,8 @@
                                   :shards (count shards)
                                   :status (if red? :red :green)}
                                  merged
-                                 (when aff {:affected aff}))
+                                 (when aff {:affected aff})
+                                 (when (pos? retries) {:shard-retries retries}))
                     red? (assoc :failing (parse-test-failures out)
                                 :all-failing (failing-test-rollup out))
                     (and red? (seq (failure-themes out)))

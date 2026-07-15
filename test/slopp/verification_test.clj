@@ -240,3 +240,32 @@
       (is (= 4 (ap 50 8)))
       (is (= 1 (ap 50 2)) "a 2-core box never over-parallelizes")
       (is (<= (ap 999 64) 4) "hard cap at 4"))))
+(deftest ^:isolated dead-shards-retry-once
+  ;; a shard whose JVM dies with NO parseable summary (fork pressure, OOM —
+  ;; seen when the sharded suite nests JVM-spawning tests) is an
+  ;; environment failure, not a test failure: test failures PARSE. Retry
+  ;; exactly those shards once, serially, and merge honestly.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ds.one-test
+                   (str "(ns ds.one-test (:require [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest a-t (is (= 1 1)))\n"))
+      (api/ingest! sess 'ds.two-test
+                   (str "(ns ds.two-test (:require [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest b-t (is (= 2 2)))\n"))
+      (let [tries (atom {})
+            fake  (fn [_alias _dir grp]
+                    (let [n (get (swap! tries update (vec grp) (fnil inc 0))
+                                 (vec grp))]
+                      (if (= 1 n)
+                        {:exit 137 :out "" :err "Killed"}  ; JVM death, no summary
+                        {:exit 0 :err ""
+                         :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."})))]
+        (with-redefs-fn {#'api/run-shard! fake}
+          #(let [r (api/isolated-test-run! sess :parallel 2)]
+             (is (= :green (:status r)) (pr-str r))
+             (is (= 2 (:ran r)))
+             (is (= 2 (:shard-retries r)))
+             (is (every? (fn [[_ n]] (= 2 n)) @tries)
+                 "each dead shard retried exactly once"))))
+      (finally (api/close! sess)))))

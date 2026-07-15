@@ -386,6 +386,35 @@
 
                      :else nil))))
          seq)))
+(defn- quote-pruned-qualified-syms
+  "Every namespace-qualified symbol in sexpr `x`, skipping quoted subtrees —
+  a quoted symbol is data and never resolves, so it isn't a call."
+  [x]
+  (cond
+    (and (seq? x) (= 'quote (first x))) nil
+    (symbol? x) (when (namespace x) [x])
+    (map-entry? x) (concat (quote-pruned-qualified-syms (key x))
+                           (quote-pruned-qualified-syms (val x)))
+    (coll? x) (mapcat quote-pruned-qualified-syms x)
+    :else nil))
+(defn qualified-usage-rows
+  "Usage rows kondo CANNOT produce: namespace-qualified symbols that name a
+  store namespace the form never requires. Such a call compiles in the image
+  (every store ns is loaded there), and kondo emits NO var-usage row for an
+  unresolved namespace — so a bare `deep.ns/var` call would slip the module
+  gate entirely. Quote-pruned. Same row shape the gates feed to
+  module-violations."
+  [candidate ns-sym form-names]
+  (let [nses (set (keys (:namespaces candidate)))]
+    (vec (for [fname form-names
+               :let [e (store/form-named candidate ns-sym fname)]
+               :when e
+               s (distinct (quote-pruned-qualified-syms
+                            (try (n/sexpr (:node e)) (catch Exception _ nil))))
+               :let [to (symbol (namespace s))]
+               :when (and (contains? nses to) (not= to ns-sym))]
+           {:from-ns ns-sym :from-var fname :to to
+            :to-export (export-level candidate to (symbol (name s)))}))))
 (defn module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):
   kondo-analyzes the namespace (memoized on source — the lint gate pays
@@ -395,11 +424,14 @@
   [candidate ns-sym form-name]
   (when-let [manifest (modules-manifest candidate)]
     (let [nses (set (keys (:namespaces candidate)))
-          rows (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
-                     :when (and (= form-name (:from-var u))
-                                (contains? nses (:to u)))]
-                 {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                  :to-export (export-level candidate (:to u) (:name u))})]
+          rows (concat
+                (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
+                      :when (and (= form-name (:from-var u))
+                                 (contains? nses (:to u)))]
+                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
+                   :to-export (export-level candidate (:to u) (:name u))})
+                ;; kondo misses un-required qualified calls — synthesize
+                (qualified-usage-rows candidate ns-sym [form-name]))]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn module-scan
@@ -409,10 +441,14 @@
   [candidate ns-sym]
   (when-let [manifest (modules-manifest candidate)]
     (let [nses (set (keys (:namespaces candidate)))
-          rows (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
-                     :when (contains? nses (:to u))]
-                 {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                  :to-export (export-level candidate (:to u) (:name u))})]
+          rows (concat
+                (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
+                      :when (contains? nses (:to u))]
+                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
+                   :to-export (export-level candidate (:to u) (:name u))})
+                ;; kondo misses un-required qualified calls — synthesize
+                (qualified-usage-rows candidate ns-sym
+                                      (keep :name (store/forms candidate ns-sym))))]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn modules-cycle
