@@ -1328,23 +1328,35 @@
   make the load succeed (D5.1); {:stubbed [qsyms]} when red-first stubs made
   a -test namespace compile (the generic red-first seam — the spec runs and
   fails honestly); {:err msg} when the forms genuinely don't compile (image
-  restored either way). Keys compose."
+  restored either way; :first-err carries the pre-heal error when it
+  differs). Keys compose.
+  The heal boots from the COMMITTED store, so the candidate's touched nses
+  are replayed from the CANDIDATE (dependency order, full load-ns! so new
+  namespaces exist and are *loaded-libs*-stamped) before the retry —
+  without that, a candidate that CREATES a namespace (extract_ns) dies
+  with FileNotFound when a survivor requires it."
   [session candidate form-ids]
-  (let [nses  (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
-        stub! #(stub-missing-test-vars! (:image @session) candidate nses)]
+  (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
+        stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
+        replay! #(doseq [ns-sym (filter (set nses)
+                                        (store/ns-dependency-order candidate))]
+                   (image/load-ns! (:image @session) candidate ns-sym))]
     (letfn [(load-all []
               (loop [ids (seq form-ids)]
                 (when ids
                   (or (edit/hot-load-form! (:image @session) candidate (first ids))
                       (recur (next ids))))))]
-      (when-let [_err (load-all)]
+      (when-let [err1 (load-all)]
         (let [stubbed (stub!)]
           (if (and (seq stubbed) (nil? (load-all)))
             {:stubbed stubbed}
             (do (fresh-image! session)             ; maybe the image was stale
+                (replay!)                          ; candidate truth over the committed boot
                 (let [stubbed (stub!)]             ; a fresh image loses stubs
                   (if-let [err2 (load-all)]
-                    (do (fresh-image! session) {:err err2})
+                    (do (fresh-image! session)
+                        (cond-> {:err err2}
+                          (not= err1 err2) (assoc :first-err err1)))
                     (cond-> {:healed true}
                       (seq stubbed) (assoc :stubbed stubbed)))))))))))
 
@@ -2922,7 +2934,8 @@
 "
                                                    (for [f (store/forms st from-ns)
                                                          :when (moved (:name f))]
-                                                     (n/string (:node f))))
+                                                     ;; cross-ns callers need PUBLIC vars
+                                                     (n/string (refactor/publicize (:node f)))))
                               "
 ")
                 [gid st0] (store/alloc-id st "g")
@@ -2963,10 +2976,13 @@
                                                             :group gid :agent agent))
                                   st*))
                             st3 moved)
-                load-err (or (image/load-ns! (:image @session) st4 new-ns)
-                             (:err (hot-load-all!
-                                    session st4
-                                    (concat [(:id ns-decl)] (keys rewrites)))))]
+                ;; new-ns forms FIRST (its ns form stamps *loaded-libs* before any
+                ;; survivor requires it); including them also puts the new ns in
+                ;; hot-load-all!'s replay set, so the heal path survives
+                load-err (:err (hot-load-all!
+                                session st4
+                                (concat (map :id (store/forms st4 new-ns))
+                                        [(:id ns-decl)] (keys rewrites))))]
             (if load-err
               (do (fresh-image! session)
                   {:error (str "extract-ns failed to compile: " load-err)})

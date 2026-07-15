@@ -104,3 +104,32 @@
         (testing "behavior intact in the live image"
           (is (= [8] (api/query-eval sess "(sg.core/top 2)")))))
       (finally (api/close! sess)))))
+(deftest ^:isolated extract-into-a-deep-child-namespace
+  ;; the slopp.api split shape: internal helpers move into a PACKAGE-PRIVATE
+  ;; deep child ns, and the parent requires its own child back. Regression
+  ;; for the live FileNotFound (the new store-only ns must be loadable when
+  ;; the parent's ns form re-evaluates).
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'xr.core
+                   (str "(ns xr.core)\n\n"
+                        "(def ^:private factor \"F.\" 2)\n\n"
+                        "(defn- helper-a \"A.\" [x] (inc x))\n\n"
+                        "(defn- helper-b \"B.\" [x] (* factor (helper-a x)))\n\n"
+                        "(defn entry \"E.\" [x] (+ factor (helper-b x)))\n"))
+      (let [r (api/extract-ns! sess 'xr.core '[factor helper-a helper-b] 'xr.core.impl
+                               :prompt "package-private helpers" :agent "alice")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the parent requires the deep child; callers rewritten"
+          (let [src (api/query-source sess 'xr.core)]
+            (is (re-find #"\[xr\.core\.impl :as impl\]" src))
+            (is (re-find #"impl/helper-b" src))))
+        (testing "behavior intact in the live image"
+          (is (= [8] (api/query-eval sess "(xr.core/entry 2)"))))
+        (testing "the deep boundary holds: a foreign module can't reach impl"
+          (let [w (api/ingest! sess 'zz.probe
+                               (str "(ns zz.probe (:require [xr.core.impl :as i]))\n\n"
+                                    "(defn steal \"S.\" [x] (i/helper-a x))\n"))]
+            (is (:error w) (pr-str w))
+            (is (re-find #"package-private" (str (:error w)))))))
+      (finally (api/close! sess)))))

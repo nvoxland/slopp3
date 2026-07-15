@@ -102,6 +102,28 @@
              [(str (subs (ls (dec sr)) 0 (dec sc)) repl (subs (ls (dec er)) (dec ec)))]
              (subvec ls er)))))
 
+(defn publicize
+  "The form node with its top-level privacy stripped: the `defn-` operator
+  becomes `defn`, and a `^:private` marker on the def symbol is removed.
+  A form moved to another namespace must be PUBLIC for its old neighbors'
+  rewritten calls to compile — when the new home is a deep ns, the module
+  system still keeps it package-private at the module grain (the right
+  boundary). Only the form's immediate children are touched; a map-meta
+  `^{:private true}` is left alone (rare; the load fails honestly)."
+  [node]
+  (n/replace-children
+   node
+   (map (fn [k]
+          (case (n/tag k)
+            :token (if (= 'defn- (n/sexpr k)) (n/token-node 'defn) k)
+            :meta  (let [kids (remove #(#{:whitespace :comment} (n/tag %))
+                                      (n/children k))]
+                     (if (and (= 2 (count kids))
+                              (= :private (n/sexpr (first kids))))
+                       (second kids)
+                       k))
+            k))
+        (n/children node))))
 (defn rewrite-symbols
   "Zipper-walk `node`, replacing symbol tokens via `f` (sym → sym|nil).
   Returns the (possibly identical) node. z/root wraps its result in a
