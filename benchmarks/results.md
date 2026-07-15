@@ -615,3 +615,22 @@ live in a separate -test ns — a done-point could report green having
 run nothing; the fallback is now closure-bounded (test nses whose
 requires reach the change). Candidate next diet: consecutive writes
 re-printing an IDENTICAL failure set could summarize as :still-red.
+| 2026-07-15 | f046d54 | calculator | 3 | 12 | 375 | 755 | 750 |
+| 2026-07-15 | f046d54 | inventory | 1 | 7 | 102 | 345 | 427 |
+| 2026-07-15 | f046d54 | wordstats | 1 | 8 | 121 | 427 | 511 |
+
+### Episode diet lands the target (2026-07-15, same day)
+
+Three cuts, all riding the new design rather than fighting it:
+(1) episode-red DIFFING — full failure detail only for tests NEWLY red
+this write; repeats compress to :still-red names, recoveries report
+:went-green (the ledger lives on the session, resets at done, and
+test_run spot-checks bypass it); (2) missing-doc advisories moved to
+the done-point findings (writes are quiet; the boundary names the
+undocumented surface once); (3) the internal :type :summary tag no
+longer rides the wire, and still-red-only responses take the TERSE
+path. Result vs the OLD atomic-group flow: calculator 750 vs 741
+(parity, +1 step, two honest reds shown instead of none), inventory
+427 vs 573 (−25%), wordstats 511 vs 678 (−25%). The REPL flow is now
+cheaper than batching except under mid-refactor red, where it is at
+parity while reporting strictly more state.

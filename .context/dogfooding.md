@@ -286,3 +286,12 @@ benchmark runs via the boot kernel (`clojure -M -m slopp.boot .
 Improvement candidates parked: :still-red compression for repeated
 identical failure sets; per-write :all fallback stays ns-scoped by
 design (fast) now that the done-point is the reaching safety net.
+
+Episode diet (2026-07-15, user directive "more efficient than before"):
+the interim-red cost was engineered away the same day — episode-red
+diffing (:still-red/:went-green, detail rides once), advisories at the
+boundary, :type off the wire. Benchmarks: inventory/wordstats −25% vs
+the OLD flow; calculator at parity with two honest reds shown. The
+diet lesson generalizes: mid-episode responses should report DIRECTION
+(what changed state), not restate standing state — the boundary owns
+the full picture.
