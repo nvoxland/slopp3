@@ -40,6 +40,20 @@
             r          (store/merge-logs ours theirs :from "fork")]
         (is (empty? (:conflicts r)))
         (is (some :modules-cycle (:notes r)) (pr-str (:notes r)))))))
+(deftest test-namespaces-see-package-private-deep-vars
+  ;; a -test ns folds into the package it tests — for visibility, not just
+  ;; module edges — so package-private deep helpers stay unit-testable.
+  ;; (found dogfooding the deep-module split: without this, moving a
+  ;; test-referenced helper into a deep ns forces a spurious ^:export.)
+  (let [viol (fn [rows] (seq (edit/module-violations {} rows)))
+        row  (fn [from to] {:from-ns from :from-var 'f :to to})]
+    (testing "a -test ns reaches its subject's package-private deep var"
+      (is (nil? (viol [(row 'a.b-test 'a.b.impl)]))
+          "a.b-test folds to a.b, which shares a.b.impl's parent prefix")
+      (is (nil? (viol [(row 'a.b.c-test 'a.b.c.deep)]))
+          "deeper test folds too"))
+    (testing "a genuine foreign module still can't reach it"
+      (is (some #(= :visibility (:rule %)) (viol [(row 'x.y 'a.b.impl)]))))))
 (deftest module-rules-are-recursive-and-declared
   (let [viol (fn [manifest rows] (seq (edit/module-violations manifest rows)))
         row  (fn [from to] {:from-ns from :from-var 'f :to to})]

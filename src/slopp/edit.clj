@@ -315,6 +315,16 @@
                 (if (seq tmods) (merge-with into acc {cmod tmods}) acc)))
             {}
             (sort nses))))
+(defn fold-test-ns
+  "The namespace with a trailing `-test` stripped from EACH segment. A test
+  namespace folds into the package it tests — for recursive VISIBILITY as
+  well as module membership (module-of) — so a spec can reach the
+  package-private deep helpers it exists to test (x.y.z-test is part of
+  x.y.z.*)."
+  [ns-sym]
+  (->> (clojure.string/split (str ns-sym) #"\.")
+       (map #(clojure.string/replace % #"-test$" ""))
+       (clojure.string/join ".")))
 (defn module-violations
   "The module system's pure RULES over resolved usage rows (kondo
   var-usages shape: {:from-ns :from-var :to :to-export}) — nil `manifest`
@@ -331,7 +341,9 @@
     (->> (distinct rows)
          (keep (fn [{:keys [from-ns from-var to to-export]}]
                  (let [caller-mod (module-of from-ns)
-                       caller-str (str from-ns)
+                       ;; fold -test so a spec shares its subject package's prefix (deep helpers
+                       ;; stay testable); edges already fold via module-of
+                       caller-str (fold-test-ns from-ns)
                        tsegs      (str/split (str to) #"\.")
                        tmod       (module-of to)
                        parent     (str/join "." (butlast tsegs))
