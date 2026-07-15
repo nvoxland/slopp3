@@ -295,3 +295,12 @@ the OLD flow; calculator at parity with two honest reds shown. The
 diet lesson generalizes: mid-episode responses should report DIRECTION
 (what changed state), not restate standing state — the boundary owns
 the full picture.
+
+eval9 episodes run (2026-07-15): lifetime 0.63× (best recorded; was
+0.82×), handoff flipped 1.24×→0.24×, acceptance 11/11 both cohorts,
+full adoption of done/module_dep/rename_sweep with zero hints and zero
+removed-tool confusion — details in projects/eval9-lifetime/RUNS.md.
+The honest wrinkle: raw model-output tokens now favor plain (1.24×) —
+tool traffic is won; the next frontier is the agent's own narration
+around results. Friction fixed in-run: report :verify hands over the
+one-shot CLI forms (handoff agents were grepping skill files for them).
