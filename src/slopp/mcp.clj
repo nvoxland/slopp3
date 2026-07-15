@@ -413,9 +413,28 @@
    {:name "git_resolve"
     :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
     :inputSchema {:type "object" :properties {:path {:type "string"}}}}])
+(def ^:private read-only-tools
+  "Tool names that never modify the STORE — advertised with the MCP
+  readOnlyHint annotation so clients (Claude Code plan mode, permission
+  systems) can auto-permit them instead of prompting. query_eval and
+  query_observe qualify because the observe gate blocks redefinition —
+  the code they run cannot change the codebase (observation captures are
+  a metadata cache)."
+  #{"query_search" "query_source" "query_detail" "query_project"
+    "query_brief" "query_slice" "query_depends" "query_eval"
+    "query_observe" "query_macroexpand" "query_branches" "query_history"
+    "query_changes" "query_commits" "query_git" "session_brief" "report"
+    "help" "deps_list" "file_list" "file_get" "file_history"})
 (def tools
-  "Every tool descriptor the server advertises \u2014 concatenated from the per-group registries (Q4)."
-  (into [] cat [orientation-tools history-tools edit-tools flow-tools env-tools sync-tools]))
+  "Every tool descriptor the server advertises — concatenated from the
+  per-group registries (Q4); read-only tools carry the MCP readOnlyHint
+  annotation so plan-mode clients auto-permit them."
+  (into []
+        (comp cat
+              (map #(cond-> %
+                      (read-only-tools (:name %))
+                      (assoc :annotations {:readOnlyHint true}))))
+        [orientation-tools history-tools edit-tools flow-tools env-tools sync-tools]))
 
 (def ^:private ^:dynamic *hint*
   "Optional one-line workflow hint, attached to map results (item 3)." nil)

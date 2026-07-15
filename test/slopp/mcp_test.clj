@@ -558,3 +558,19 @@
         (is (re-find #":red-first \[rw\.core/dbl\]" r) r)
         (is (re-find #"stubbed in-image" r) r))
       (finally (api/close! sess)))))
+(deftest ^:isolated read-tools-declare-readonly-on-the-wire
+  ;; MCP readOnlyHint: without it, plan-mode clients must treat every tool
+  ;; as potentially mutating and prompt — even for query_source
+  (let [sess (api/open!)]
+    (try
+      (let [tools   (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                            [:result :tools])
+            by-name (into {} (map (juxt :name identity)) tools)]
+        (is (true? (get-in by-name ["query_source" :annotations :readOnlyHint])))
+        (is (true? (get-in by-name ["query_eval" :annotations :readOnlyHint]))
+            "the oracle is observe-only by gate — clients may trust it")
+        (is (true? (get-in by-name ["session_brief" :annotations :readOnlyHint])))
+        (is (nil? (get-in by-name ["edit_replace_form" :annotations]))
+            "writes carry NO read-only claim")
+        (is (nil? (get-in by-name ["module_dep" :annotations]))))
+      (finally (api/close! sess)))))
