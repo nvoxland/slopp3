@@ -155,7 +155,11 @@ is what catches a missing one.
   resulting graph; results carry the module's folded dep set plus any
   standing `:violations` debt. `config_file "modules"` is refused and
   teaches this verb; the manifest reads via `query_depends {modules
-  true}` and projects into commits/builds as a `modules` file. The
+  true}` (add `on <module>` for that module's SURFACE — public fns +
+  exported deep vars with sig/doc/level, deps, consumers; `api/module-surface`)
+  and projects into commits/builds as a `modules` file. The `:export`
+  dial on a defn's name: true = world surface; `"prefix"` string =
+  visible to that subtree only. The
   module GATE (recursive visibility + declared edges, kondo-resolved
   over the candidate store) rides `replace-form`/`add-form!`/group
   steps/`ingest!`/`ns_create`; `ns-rename!`/`rename_sweep` re-key

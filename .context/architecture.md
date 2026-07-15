@@ -105,9 +105,14 @@
 - **Module = the first two ns segments** (`logi.parcel`); a trailing
   `-test` folds into the subject's module (`x.y-test` → `x.y`), so TDD
   needs no ceremony. Deeper namespaces (`x.y.z`) are **package-private**:
-  callable only from namespaces sharing the parent prefix — unless the var
-  is marked `^:export` in its defn (the definition-site hoist into the
-  module's public surface; no potemkin, no facade ns).
+  callable only from namespaces sharing the parent prefix — unless the
+  var's defn widens it with the `:export` dial: `^:export` (true) hoists
+  it into the module's WORLD surface; `^{:export "prefix"}` exposes it to
+  callers under that subtree only (within-project widening without going
+  public). Definition-site, no potemkin, no facade ns — the gate checks
+  resolved var-usage rows, so the var keeps its one real address.
+  Browse a module's surface (public fns + exported deep vars with
+  sig/doc, deps, consumers): `query_depends {modules true, on "x.y"}`.
 - **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
   it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
   declarations union; `merge-logs` folds them without conflict and NOTES a

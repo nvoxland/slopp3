@@ -96,10 +96,13 @@ recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 needs a declared edge — the refusal names the exact
 `module_dep {from to}` call; DECLARE THEN USE (design the dependency,
 then write the code). Deeper namespaces (`x.y.z`) are package-private
-to `x.y.*`; mark a deep var `^:export` in its defn to hoist it into the
-module's public surface. The graph stays acyclic (cycle adds are
-refused with the cycle named). Read the manifest + any standing debt:
-`query_depends {modules true}`. Public-surface fns warn once when a
+to `x.y.*`; the `:export` dial on a defn widens it — `^:export` hoists
+it into the module's public surface, `^{:export "x.y.z"}` exposes it to
+that subtree only. An edge that closes a cycle is refused (the cycle is
+named). Read the manifest + standing debt: `query_depends {modules
+true}`; browse what a module OFFERS (public fns + exports, deps,
+consumers) before calling into it: `query_depends {modules true, on
+"x.y"}`. Public-surface fns warn once when a
 write leaves them undocumented — add the docstring.
 
 ## Questions → the oracle
