@@ -210,9 +210,29 @@ hot-loading a new GATE into the live store enforces it before the
 adoption/migration machinery exists — sequence gates AFTER their
 adoption story (the :modules nil marker resolved it here).
 
-First-person friction (2026-07-15): the query_eval observe-only guard
-refuses any code containing a `defn` token — including `'#{defn
-defmacro}` as a quoted literal in a read-only census. It should check
-definition POSITION (unquoted, operator slot), not token presence.
-Workaround: compare strings (`#{"defn" "defmacro"}`). Fix when next in
-the guard's neighborhood.
+First-person friction (2026-07-15) — six items from the module-system
+window, ALL FIXED same day: (1) the full isolated suite (~3.5min) was
+the only gate — `test_run {isolated true, affected true}` now runs just
+the test namespaces whose require-closure reaches a change since the
+last milestone (provable slice; empty slice says so; full suite stays
+the milestone gate). Fixing it exposed that the :test alias's baked
+`-r ".*"` (Q13) UNIONS with -n in cognitect's runner — :ns narrowing
+had been silently broadened ever since; narrowed runs now use a
+filter-free :test-run alias. (2) big edit_group payloads truncated on
+the wire and splitting broke atomicity — stage=open/add/commit builds a
+group across calls, validated at staging, committed as ONE intent.
+(3) the compile gate refused specs referencing not-yet-written fns
+(green-first inversion) — writes into -test namespaces now intern
+throwing IMAGE stubs for missing store vars and land as a REAL red
+(:red-first names them); the isolated suite still refuses until
+implemented, which is honest. (4) giant forms (call-tool ~320 lines)
+kept tripping the response trim — query_slice match+window returns the
+neighborhood around the match. (5) 50-failure fallout was 3 root causes
+— red isolated runs now carry :themes (phrases clustered by
+distinct-test coverage, >=3). (6) the observe-only guard refused
+`'#{defn defmacro}` as a quoted literal — it now checks POSITION
+(quote-pruned walk), so read-only censuses pass while `apply` smuggling
+still refuses. Lesson from the wave itself: a spec that mis-arities an
+api call can burn a debug cycle — the keyword-slid-into-source error
+("count not supported on Keyword" from parse-form) is worth a nicer
+message someday.

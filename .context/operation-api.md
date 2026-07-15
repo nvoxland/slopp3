@@ -115,6 +115,21 @@ is what catches a missing one.
   the image has no source files, so a store ns is loaded via `load-ns!` not the
   classpath, and the muscle-memory `(require 'the.ns :reload)` would otherwise
   throw FileNotFoundException instead of the intended no-op.
+- Red-first TDD is native: `add-form!`/`edit-replace!` into a `-test`
+  namespace with references to MISSING store vars intern throwing stubs
+  in the image and land the spec as a real red (`:red-first` names the
+  vars); the isolated suite refuses to compile until they're implemented
+  — the short red-first window is the point.
+- `isolated-test-run!` extras: `:affected true` = the provable slice
+  (test namespaces whose require-closure reaches a form changed since
+  the last milestone; empty slice returns a note, full suite stays the
+  milestone gate); narrowed runs use the generated `:test-run` alias
+  (no baked `-r` — cognitect's runner UNIONS -r with -n, which silently
+  defeated `:ns` narrowing before). Red results carry `:failing`,
+  `:all-failing` {file [tests]}, and `:themes` (cause phrases clustered
+  by distinct-test coverage). MCP `edit_group` supports staged
+  construction (stage open/add/commit/drop — one atomic group across
+  several calls).
 - `checkpoint!` — unit-of-work boundary (user-designed): deterministically
   normalizes every form changed since the last checkpoint (`slopp.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),

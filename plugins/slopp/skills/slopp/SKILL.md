@@ -33,7 +33,7 @@ context; the patterns below are where sessions measurably bleed tokens.
    need arities/flags for a specific ns (`query_source {ns}` = the outline).
    `query_search {pattern}` to find things.
 2. **Read only what the brief can't tell you — and prefer NOT reading.**
-   About to edit a function? `query_slice {ns name}` is THE read: full
+   About to edit a function? `query_slice {ns name}` (add `match`+`window` on giant forms — the neighborhood, not the whole thing) is THE read: full
    source of that one form + interface CARDS (sig, doc, why, test
    warranty) for everything it reaches. TRUST the cards — you don't need
    a callee's body to call it; if an assumption is wrong, the write turns
@@ -79,6 +79,7 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | `edit_group {steps, prompt}` — atomic, verified once; steps mix add/replace/delete/move/subform/require, so a rename's leftover `:mentions`, a threshold tweak, and a new require are ONE call |
+| Group too big for one call | `edit_group {stage "open", steps}` → `{stage "add", steps}`… → `{stage "commit", prompt}` — staged across calls, still ONE atomic group |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
 | Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_depends {on ns/name, direction :dependencies}`) |
@@ -86,6 +87,16 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
+
+**Red-first is native:** a spec in a `-test` ns may reference store fns
+that don't exist yet — it lands as a REAL red (`:red-first` names the
+missing vars, stubbed in-image as failing); implement them to go green.
+
+**Iterate on the slice, gate on the suite:** `test_run {isolated true,
+affected true}` runs only the test namespaces that can reach your
+changes since the last milestone; run the FULL `test_run {isolated
+true}` at milestones. Red runs return `:all-failing {file [tests]}` and
+`:themes` (clustered causes) — read those before drilling into blocks.
 
 **Every write must compile** — callees before callers ((declare) for mutual
 recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
