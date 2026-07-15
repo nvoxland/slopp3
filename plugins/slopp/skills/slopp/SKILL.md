@@ -85,10 +85,22 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
+| Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
 
 **Every write must compile** — callees before callers ((declare) for mutual
 recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 `^:reads` marks read-only dep calls; `^:unsafe` is the dialect escape hatch.
+
+**Modules are enforced.** A module is the first two ns segments
+(`logi.parcel`; `x.y-test` belongs to `x.y`). Calling ACROSS modules
+needs a declared edge — the refusal names the exact
+`module_dep {from to}` call; DECLARE THEN USE (design the dependency,
+then write the code). Deeper namespaces (`x.y.z`) are package-private
+to `x.y.*`; mark a deep var `^:export` in its defn to hoist it into the
+module's public surface. The graph stays acyclic (cycle adds are
+refused with the cycle named). Read the manifest + any standing debt:
+`query_depends {modules true}`. Public-surface fns warn once when a
+write leaves them undocumented — add the docstring.
 
 ## Questions → the oracle
 
@@ -116,6 +128,6 @@ edit_replace_form edit_delete_form edit_subform edit_trivia edit_group
 edit_rename change_signature edit_extract edit_extract_ns edit_move
 edit_revert episode_revert fix_declares · branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
-deps_pure · file_put file_remove file_list file_get file_history · config
-config_file · git_push git_clone git_pull git_conflicts git_resolve ·
+deps_pure · module_dep · file_put file_remove file_list file_get
+file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
 test_run draft_test checkpoint commit_point restart build help

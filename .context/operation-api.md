@@ -148,6 +148,20 @@ is what catches a missing one.
   `deps_list`, `deps_pure {target pure?}` — assert a dep pure (narrow M3's
   effectful-by-default boundary) at var / namespace / whole-lib granularity
   (a lib expands to every namespace it provides; see `dependencies.md`).
+- `module-dep!` / MCP `module_dep {from to [remove] prompt}` — the ONLY
+  way the module manifest changes: one `:module-edge` delta per
+  declare/retract (edge-grain CRDT — concurrent declarations union in
+  merges; the why rides the delta). Adds are cycle-checked against the
+  resulting graph; results carry the module's folded dep set plus any
+  standing `:violations` debt. `config_file "modules"` is refused and
+  teaches this verb; the manifest reads via `query_depends {modules
+  true}` and projects into commits/builds as a `modules` file. The
+  module GATE (recursive visibility + declared edges, kondo-resolved
+  over the candidate store) rides `replace-form`/`add-form!`/group
+  steps/`ingest!`/`ns_create`; `ns-rename!`/`rename_sweep` re-key
+  manifest entries when a module's last ns renames away; adoption
+  (pre-module dbs at `open!`, `clone!` after ingest) derives the
+  manifest from the actual graph. See `architecture.md` § module system.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build): production
   namespaces under `src/`, **test namespaces (name ends `-test`) under `test/`**

@@ -99,3 +99,36 @@
   recreated-source guard.
 - Host language is Clojure/JVM by decision H1; the CRDT is Clojure —
   **no Rust planned**.
+
+## The module system (enforced architecture)
+
+- **Module = the first two ns segments** (`logi.parcel`); a trailing
+  `-test` folds into the subject's module (`x.y-test` → `x.y`), so TDD
+  needs no ceremony. Deeper namespaces (`x.y.z`) are **package-private**:
+  callable only from namespaces sharing the parent prefix — unless the var
+  is marked `^:export` in its defn (the definition-site hoist into the
+  module's public surface; no potemkin, no facade ns).
+- **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
+  it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
+  declarations union; `merge-logs` folds them without conflict and NOTES a
+  cycle neither side saw). Writes go through the semantic verb
+  `module_dep {from to [remove] prompt}` — an add that CLOSES a cycle is
+  refused (LOCAL reachability check; adopted test-fold cycles like
+  api↔db never block unrelated declarations), the why rides the delta;
+  reads through `query_depends {modules true}` (manifest +
+  standing debt). The manifest projects into git commits/builds as a
+  `modules` file (read-only transparency).
+- **Enforcement is on from birth** (`empty-store` has `:modules {}`); the
+  first cross-module call teaches declare-then-use. A populated store
+  whose db predates the system (`:modules` nil) is ADOPTED at `open!`:
+  the manifest derives from the actual kondo-resolved graph — acyclic
+  with zero violations by construction, so adoption never breaks working
+  code; the gate then blocks drift. `clone!` ingests with the gate off
+  (`:adopting?`) and adopts what landed.
+- **Gates** ride the existing write pipeline (`replace-form`, `add-form!`,
+  group steps, `ingest!`/`ns_create`) over the CANDIDATE store via kondo
+  `var-usages` (so `:refer`'d calls count). Refusals teach the exact fix.
+  `ns-rename!`/`rename_sweep` re-key the manifest automatically when a
+  module's last ns renames away. Public-surface defns without docstrings
+  get a per-form advisory on the WRITE result (only on the has-doc→no-doc
+  transition or brand-new forms — never a ns-wide nag).

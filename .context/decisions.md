@@ -1306,3 +1306,28 @@ aliases (:old/:from etc. — they serve live agents guessing, not old
 versions) and push! itself (fileless stores publish projections — a
 capability, not a legacy path; git_push routes checkouts to mirrors and
 fileless stores to projection publishing). Suite 291/1470.
+
+Module system (user design, 2026-07-14): **enforced architectural
+boundaries as a module system.** Module = first two ns segments
+(`-test` folds into the subject's module); RECURSIVE VISIBILITY — deeper
+namespaces are package-private to their parent prefix, `^:export` on a
+defn's name hoists that var into the module surface (definition-site,
+no var copying); cross-module calls require a DECLARED edge; a declared
+edge that CLOSES a cycle is refused (the check is LOCAL — reachability
+to→from — because -test folding makes some adopted cycles legitimate,
+e.g. slopp.api↔slopp.db via each other's tests; a pre-existing cycle
+never blocks an unrelated declaration); public-surface defns without docstrings warn
+(per written form, transition-only — never a ns-wide nag). The manifest
+ALWAYS exists (user: "we shouldn't have to explicitly init — start
+modifying it from empty"): fresh stores are born enforcing with zero
+edges; pre-module dbs adopt at open! (manifest derived from the actual
+kondo-resolved graph = zero violations by construction); clone! ingests
+gate-off then adopts what landed. Tracked CRDT-WAY with SEMANTIC calls
+(user directive): the edge is the unit — one `:module-edge` delta per
+declare/retract carrying its why; merges fold edges (adds union, never
+a conflict; a cycle the union closes is surfaced as a note); writes go
+through `module_dep` only (config_file "modules" is refused and
+teaches); reads through `query_depends {modules true}`; the fold
+projects as a `modules` file into git commits for transparency.
+ns-rename/rename_sweep re-key manifest entries when a module's last ns
+renames away. Suite 296/1520.

@@ -195,3 +195,17 @@ materializes the whole store as files for grep/read-at-leisure — a
 read-only SNAPSHOT (edits still go through the tools; re-build after
 writes; never slice stale dumps into edits — the Q4 clobber lesson).
 Prefer it over raw sqlite queries against store.db.
+
+First-person friction (2026-07-14, module-system wave) — all fixed the
+same day, in-wave: (1) a red isolated run capped :failing at 5 blocks,
+so enumerating 50 fallout failures took fix→rerun loops at ~3min each;
+isolated results now also carry :all-failing {file [test-names]} — the
+whole fallout map in one run. (2) `test_run {only [...]}` without
+:isolated silently ran 0 tests when given ns-qualified names (the live
+path expected plain names scoped by :ns); qualified names now
+auto-scope, and a 0-match run says so instead of passing green.
+(3) edit_subform demanded :form where every sibling tool says :name —
+it now takes either. (4) Inherent bootstrap catch-22 worth remembering:
+hot-loading a new GATE into the live store enforces it before the
+adoption/migration machinery exists — sequence gates AFTER their
+adoption story (the :modules nil marker resolved it here).
