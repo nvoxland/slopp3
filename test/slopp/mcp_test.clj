@@ -71,7 +71,10 @@
       (testing "a write between test_run and done keeps done QUIET (spot-check flow)"
         (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] x)"})
         (is (not (re-find #"pre-flight" (call sess "done" {:label "quiet"})))))
-      (testing "test_run immediately before done earns the redundancy hint"
+      (testing "an ISOLATED run before done stays quiet — it is the milestone gate"
+        (call sess "test_run" {:ns "hint" :isolated true})
+        (is (not (re-find #"pre-flight" (call sess "done" {:label "gated"})))))
+      (testing "an in-image test_run immediately before done earns the redundancy hint"
         (call sess "test_run" {:ns "hint"})
         (is (re-find #"pre-flight" (call sess "done" {:label "noisy"}))))
       (finally (api/close! sess)))))
