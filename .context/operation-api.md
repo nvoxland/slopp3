@@ -155,8 +155,11 @@ is what catches a missing one.
   resulting graph; results carry the module's folded dep set plus any
   standing `:violations` debt. `config_file "modules"` is refused and
   teaches this verb; the manifest reads via `query_depends {modules
-  true}` (add `on <module>` for that module's SURFACE — public fns +
-  exported deep vars with sig/doc/level, deps, consumers; `api/module-surface`)
+  true}` — which also carries the GRAPH: `:layers` (topological, SCC-
+  condensed via `store/module-layers`), `:cycles`, `:unused-edges`
+  (declared-but-unused drift) — (add `on <module>` for that module's
+  SURFACE — public fns + exported deep vars with sig/doc/level, deps,
+  consumers; `api/module-surface`)
   and projects into commits/builds as a `modules` file. The `:export`
   dial on a defn's name: true = world surface; `"prefix"` string =
   visible to that subtree only. The

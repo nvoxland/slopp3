@@ -112,7 +112,12 @@
   public). Definition-site, no potemkin, no facade ns — the gate checks
   resolved var-usage rows, so the var keeps its one real address.
   Browse a module's surface (public fns + exported deep vars with
-  sig/doc, deps, consumers): `query_depends {modules true, on "x.y"}`.
+  sig/doc, deps, consumers): `query_depends {modules true, on "x.y"}`;
+  the bare `{modules true}` view carries the GRAPH: topological `:layers`
+  (cycles condensed via SCC so they share a layer instead of poisoning
+  the picture), the `:cycles` themselves, and `:unused-edges` (declared
+  but no call uses them — the retire-direction drift the debt view can't
+  see). One kondo pass feeds debt and drift both.
 - **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
   it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
   declarations union; `merge-logs` folds them without conflict and NOTES a

@@ -99,10 +99,11 @@ then write the code). Deeper namespaces (`x.y.z`) are package-private
 to `x.y.*`; the `:export` dial on a defn widens it — `^:export` hoists
 it into the module's public surface, `^{:export "x.y.z"}` exposes it to
 that subtree only. An edge that closes a cycle is refused (the cycle is
-named). Read the manifest + standing debt: `query_depends {modules
-true}`; browse what a module OFFERS (public fns + exports, deps,
-consumers) before calling into it: `query_depends {modules true, on
-"x.y"}`. Public-surface fns warn once when a
+named). Read the whole architecture in one call: `query_depends {modules
+true}` — manifest, topological :layers, :cycles, :unused-edges (dead
+declarations), standing debt; browse what a module OFFERS (public fns +
+exports, deps, consumers) before calling into it: `query_depends
+{modules true, on "x.y"}`. Public-surface fns warn once when a
 write leaves them undocumented — add the docstring.
 
 ## Questions → the oracle
