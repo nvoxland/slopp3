@@ -270,17 +270,22 @@
   (let [segs (clojure.string/split (str ns-sym) #"\.")]
     (clojure.string/join "." (map #(clojure.string/replace % #"-test$" "")
                                   (take 2 segs)))))
-(defn exported?
-  "True when the target var's definition carries ^:export metadata on its
-  name — the definition-site hoist that lifts a deep (package-private) var
-  into its module's public surface. No var copying, no facade namespace:
-  the module gate simply treats it as surface."
+(defn export-level
+  "The :export declared on the target var's defn name — nil (package-
+  private), true (hoisted to the module's WORLD surface, reachable by any
+  module with a declared edge), or a namespace-prefix string (visible only
+  to callers under that subtree — within-project widening without going
+  public). The definition-site visibility dial: no var copying, no facade
+  namespace — the gate reads it where the fn lives."
   [store to-ns to-name]
-  (boolean
-   (when (and to-ns to-name)
-     (when-let [e (store/form-named store (symbol (str to-ns)) (symbol (str to-name)))]
-       (some-> (try (n/sexpr (:node e)) (catch Exception _ nil))
-               second meta :export)))))
+  (when (and to-ns to-name)
+    (when-let [e (store/form-named store (symbol (str to-ns)) (symbol (str to-name)))]
+      (let [x (some-> (try (n/sexpr (:node e)) (catch Exception _ nil))
+                      second meta :export)]
+        (cond (true? x)   true
+              (string? x) x
+              (symbol? x) (str x)          ; ^{:export a.pub} — unquoted, forgiven
+              :else       (when x true))))))
 (defn derive-module-edges
   "The ACTUAL cross-module dependency edges of a store — kondo-resolved
   var usages grouped by module — as {module #{dep-modules}}, dep-less
@@ -301,38 +306,50 @@
             (sort nses))))
 (defn module-violations
   "The module system's pure RULES over resolved usage rows (kondo
-  var-usages shape: {:from-ns :from-var :to :to-export?}) — nil `manifest`
+  var-usages shape: {:from-ns :from-var :to :to-export}) — nil `manifest`
   = a pre-adoption store, rules off. Two rules: (1) RECURSIVE VISIBILITY —
   an ns deeper than two segments is callable only from namespaces sharing
-  its parent prefix, unless the target var is ^:export (hoisted into the
-  module surface at its definition site); (2) DECLARED EDGES — a
-  cross-module call requires the caller's module to list the target module
-  in the manifest. Rows must already be filtered to store-internal
+  its parent prefix, unless the target var's :export widens it (true =
+  world surface; a prefix string = that subtree only); (2) DECLARED EDGES
+  — a cross-module call requires the caller's module to list the target
+  module in the manifest. Rows must already be filtered to store-internal
   targets. Returns violation maps ({:from-ns :from-var :target-ns :rule
   :error}), nil when clean."
   [manifest rows]
   (when manifest
     (->> (distinct rows)
-         (keep (fn [{:keys [from-ns from-var to to-export?]}]
+         (keep (fn [{:keys [from-ns from-var to to-export]}]
                  (let [caller-mod (module-of from-ns)
                        caller-str (str from-ns)
                        tsegs      (str/split (str to) #"\.")
                        tmod       (module-of to)
                        parent     (str/join "." (butlast tsegs))
-                       shares?    (or (= caller-str parent)
-                                      (str/starts-with? caller-str (str parent ".")))]
+                       under?     (fn [prefix]
+                                    (or (= caller-str prefix)
+                                        (str/starts-with? caller-str (str prefix "."))))
+                       visible?   (or (under? parent)
+                                      (true? to-export)
+                                      (and (string? to-export) (under? to-export)))]
                    (cond
                      (= (str from-ns) (str to)) nil
 
-                     (and (> (count tsegs) 2) (not shares?) (not to-export?))
+                     (and (> (count tsegs) 2) (not visible?))
                      {:from-ns from-ns :from-var from-var :target-ns to
                       :rule :visibility
-                      :error (str from-ns "/" from-var " calls " to " which is"
-                                  " package-private to " parent ".* (recursive"
-                                  " visibility) — call " tmod "'s public"
-                                  " surface, mark the target ^:export in its"
-                                  " defn to hoist it into that surface, or move"
-                                  " the definition up a level")}
+                      :error (if (string? to-export)
+                               (str from-ns "/" from-var " calls " to " which is"
+                                    " exported only within " to-export ".* — call"
+                                    " it from inside that subtree, raise its"
+                                    " :export level, or use " tmod "'s public"
+                                    " surface")
+                               (str from-ns "/" from-var " calls " to " which is"
+                                    " package-private to " parent ".* (recursive"
+                                    " visibility) — call " tmod "'s public"
+                                    " surface, mark the target ^:export in its"
+                                    " defn to hoist it into that surface"
+                                    " (^{:export \"prefix\"} exposes it to a"
+                                    " subtree only), or move the definition up"
+                                    " a level"))}
 
                      (and (not= tmod caller-mod)
                           (not (contains? (get manifest caller-mod #{}) tmod)))
@@ -359,7 +376,7 @@
                      :when (and (= form-name (:from-var u))
                                 (contains? nses (:to u)))]
                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                  :to-export? (exported? candidate (:to u) (:name u))})]
+                  :to-export (export-level candidate (:to u) (:name u))})]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn module-scan
@@ -372,7 +389,7 @@
           rows (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
                      :when (contains? nses (:to u))]
                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                  :to-export? (exported? candidate (:to u) (:name u))})]
+                  :to-export (export-level candidate (:to u) (:name u))})]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn modules-cycle
@@ -410,7 +427,9 @@
                    (not (:private (meta (second s))))
                    (not (string? (nth s 2 nil)))
                    (or (<= (count (str/split (str ns-sym) #"\.")) 2)
-                       (:export (meta (second s)))))
+                       ;; only a WORLD export is public surface — a subtree
+                       ;; export stays internal, no docstring nag
+                       (true? (:export (meta (second s))))))
           {:var (symbol (str ns-sym) (str (second s)))
            :missing-doc true
            :suggest "add a docstring — this is module public surface"})))))

@@ -49,7 +49,7 @@
                                :depth {:type "integer"} :limit {:type "integer"}}
                   :required ["ns" "name"]}}
    {:name "query_depends"
-    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true (no `on`) reads the MODULE manifest: declared edges + standing debt. Ask this first; query_impact/query_flow/query_references give depth."
+    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true reads the MODULE system: alone = the manifest (declared edges + standing debt); with on=<module> = that module's SURFACE (public fns + exported deep vars with sig/doc, its deps, its consumers) — the cheap browse before calling into a module. Ask this first; query_impact/query_flow/query_references give depth."
     :inputSchema {:type "object"
                   :properties {:on {:type "string"}
                                :direction {:type "string" :enum ["dependents" "dependencies"]}

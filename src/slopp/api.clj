@@ -3399,7 +3399,7 @@
                      u   (:var-usages (index/analyze (render/render-ns store nsx)))
                      :when (contains? nses (:to u))]
                  {:from-ns nsx :from-var (:from-var u) :to (:to u)
-                  :to-export? (edit/exported? store (:to u) (:name u))})
+                  :to-export (edit/export-level store (:to u) (:name u))})
           vs   (edit/module-violations manifest rows)]
       (when vs
         {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
@@ -3807,6 +3807,44 @@
                :cards cards}
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
+(defn module-surface
+  "What module `m` OFFERS: the public defns/defmacros/defs of its depth<=2
+  namespaces plus every deeper var widened by :export (with its level) —
+  compact rows {:ns :name :sig :doc :export?}, -test namespaces and
+  ^:private vars excluded. Plus :deps (its declared edges) and :consumers
+  (modules declaring an edge to it). The cheap browse before calling into
+  a module."
+  [session m]
+  (let [st       (:store @session)
+        m        (str m)
+        manifest (or (edit/modules-manifest st) {})
+        nses     (filter #(= m (edit/module-of %)) (keys (:namespaces st)))
+        rows     (for [nsx  (sort nses)
+                       :when (not (str/ends-with? (str nsx) "-test"))
+                       :let [deep? (> (count (str/split (str nsx) #"\.")) 2)]
+                       e    (store/forms st nsx)
+                       :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                       :when (and (seq? s)
+                                  (contains? '#{defn defmacro def} (first s))
+                                  (symbol? (second s))
+                                  (not (:private (meta (second s))))
+                                  (or (not deep?)
+                                      (:export (meta (second s)))))
+                       :let [doc (first (filter string? (take 2 (drop 2 s))))
+                             sig (first (filter vector? s))
+                             ex  (:export (meta (second s)))]]
+                   (cond-> {:ns nsx :name (second s)}
+                     sig             (assoc :sig sig)
+                     doc             (assoc :doc (first (str/split-lines doc)))
+                     (and deep? ex)  (assoc :export (if (true? ex) true (str ex)))))]
+    (if (empty? nses)
+      {:error (str "no namespaces in module " m
+                   " — query_depends {modules true} lists the modules")}
+      {:module    m
+       :surface   (vec rows)
+       :deps      (vec (sort (get manifest m #{})))
+       :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
+                                   manifest)))})))
 ^:reads (defn query-depends
   "The generic dependency front door: what depends on `on` (`:direction
   :dependents`, the default) or what `on` depends on (`:direction
@@ -3819,10 +3857,12 @@
   [session on & {:keys [direction modules] :or {direction :dependents}}]
   (let [st (:store @session)]
     (if modules
-      {:kind :modules
-       :manifest (into (sorted-map) (map (fn [[m ds]] [m (vec (sort ds))]))
-                       (or (edit/modules-manifest st) {}))
-       :debt (module-debt st)}
+      (if (seq (str on))
+        (assoc (module-surface session on) :kind :module-surface)
+        {:kind :modules
+         :manifest (into (sorted-map) (map (fn [[m ds]] [m (vec (sort ds))]))
+                         (or (edit/modules-manifest st) {}))
+         :debt (module-debt st)})
       (let [on (str/trim (str on))]
         (cond
           (str/starts-with? on ":")

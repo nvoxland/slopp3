@@ -68,12 +68,29 @@
                    (:error (first (viol {"b.user" #{"a.pub"}}
                                         [(row 'b.user 'a.pub.deep)]))))
           "the refusal teaches the hoist"))
-    (testing "^:export hoists a deep var into the module surface (edge still required)"
+    (testing "^:export true hoists to the WORLD surface (edge still required)"
       (is (nil? (viol {"b.user" #{"a.pub"}}
-                      [(assoc (row 'b.user 'a.pub.deep) :to-export? true)])))
+                      [(assoc (row 'b.user 'a.pub.deep) :to-export true)])))
       (is (some #(= :undeclared-edge (:rule %))
-                (viol {} [(assoc (row 'b.user 'a.pub.deep) :to-export? true)]))
+                (viol {} [(assoc (row 'b.user 'a.pub.deep) :to-export true)]))
           "export does not waive the edge declaration"))
+    (testing "a string :export names the LEVEL: visible to that subtree only"
+      (is (nil? (viol {} [(assoc (row 'a.pub.other 'a.pub.deep.deeper)
+                                 :to-export "a.pub")]))
+          "exported to a.pub — any a.pub.* caller reaches it")
+      (is (nil? (viol {} [(assoc (row 'a.pub 'a.pub.deep.deeper)
+                                 :to-export "a.pub")]))
+          "the prefix namespace itself counts as inside")
+      (is (some #(= :visibility (:rule %))
+                (viol {"b.user" #{"a.pub"}}
+                      [(assoc (row 'b.user 'a.pub.deep.deeper)
+                              :to-export "a.pub")]))
+          "NOT world-visible — a foreign module is refused even with an edge")
+      (is (re-find #"a\.pub\.\*"
+                   (:error (first (viol {"b.user" #{"a.pub"}}
+                                        [(assoc (row 'b.user 'a.pub.deep.deeper)
+                                                :to-export "a.pub")]))))
+          "the refusal names the granted subtree"))
     (testing "same-ns rows are exempt"
       (is (nil? (viol {"b.user" #{}} [(row 'b.user 'b.user)]))))))
 (deftest ^:isolated the-manifest-follows-ns-renames
@@ -139,6 +156,44 @@
         (let [r (api/module-dep! sess "c.z" "b.y" :prompt "b.y does not reach c.z — fine")]
           (is (nil? (:error r)) (pr-str r)))
         (finally (api/close! sess))))))
+(deftest ^:isolated the-module-surface-is-browsable
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ma.core
+                   (str "(ns ma.core)\n"
+                        "(defn shared \"Public.\" [x] x)\n"
+                        "(defn- internal [x] x)\n"))
+      (api/ingest! sess 'ma.core.impl
+                   (str "(ns ma.core.impl)\n"
+                        "(defn hidden \"Package.\" [x] x)\n"
+                        "(defn ^:export hoisted \"World.\" [x] x)\n"
+                        "(defn ^{:export \"ma.core\"} scoped \"Module-wide.\" [x] x)\n"))
+      (api/module-dep! sess "mb.app" "ma.core" :prompt "consumer")
+      (api/ingest! sess 'mb.app
+                   (str "(ns mb.app (:require [ma.core :as core]))\n"
+                        "(defn go \"Runs.\" [x] (core/shared x))\n"))
+      (let [r     (api/module-surface sess "ma.core")
+            names (into #{} (map (juxt :ns :name)) (:surface r))]
+        (testing "public fns and exported deep vars ride; private and hidden don't"
+          (is (contains? names ['ma.core 'shared]) (pr-str r))
+          (is (contains? names ['ma.core.impl 'hoisted]))
+          (is (contains? names ['ma.core.impl 'scoped]))
+          (is (not (contains? names ['ma.core 'internal])))
+          (is (not (contains? names ['ma.core.impl 'hidden]))))
+        (testing "rows carry sig, first doc line, and the export level"
+          (let [hoisted (first (filter #(= 'hoisted (:name %)) (:surface r)))
+                scoped  (first (filter #(= 'scoped (:name %)) (:surface r)))]
+            (is (= '[x] (:sig hoisted)))
+            (is (= "World." (:doc hoisted)))
+            (is (true? (:export hoisted)))
+            (is (= "ma.core" (:export scoped)))))
+        (testing "deps and consumers come from the manifest"
+          (is (= ["ma.core"] (get-in (api/module-surface sess "mb.app") [:deps]))
+              "mb.app declares ma.core")
+          (is (= ["mb.app"] (:consumers r)))))
+      (testing "an unknown module teaches the list"
+        (is (re-find #"modules true" (str (:error (api/module-surface sess "zz.nope"))))))
+      (finally (api/close! sess)))))
 (deftest ^:isolated the-module-lifecycle
   (let [sess (api/open!)]
     (try
@@ -147,7 +202,8 @@
       (is (nil? (:error (api/ingest! sess 'ma.core.impl
                                      (str "(ns ma.core.impl)\n"
                                           "(defn hidden \"Package.\" [x] x)\n"
-                                          "(defn ^:export hoisted \"Public via export.\" [x] x)\n"))))
+                                          "(defn ^:export hoisted \"Public via export.\" [x] x)\n"
+                                          "(defn ^{:export \"ma.core\"} scoped \"Module-wide only.\" [x] x)\n"))))
           "deep ns lands fine — same module")
       (testing "enforcement is on from birth: declare-then-use"
         (let [r (api/ingest! sess 'mb.app
@@ -194,6 +250,15 @@
         (is (nil? (:error (api/edit-replace! sess 'mb.app 'use-it
                                              "(defn use-it \"Uses ma.\" [x] (impl/hoisted x))"
                                              :prompt "fine: exported")))))
+      (testing "a subtree :export reaches its prefix but not the world"
+        (is (nil? (:error (api/edit-replace! sess 'ma.core 'shared
+                                             "(defn shared \"Public.\" [x] (ma.core.impl/scoped x))"
+                                             :prompt "fine: ma.core is inside ma.core.*"))))
+        (let [r (api/edit-replace! sess 'mb.app 'use-it
+                                   "(defn use-it \"Uses ma.\" [x] (impl/scoped x))"
+                                   :prompt "blocked: exported to ma.core.* only")]
+          (is (re-find #"exported only within ma\.core\.\*" (str (:error r)))
+              (pr-str r))))
       (testing "ns_create of a violating namespace is gated too"
         (let [r (api/create-ns! sess 'mc.rogue
                                 :source (str "(ns mc.rogue (:require [ma.core :as core]))\n"
