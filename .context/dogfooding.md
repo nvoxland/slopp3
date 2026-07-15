@@ -322,3 +322,18 @@ the isolated full suite dominated everything (~15 runs × ~4-6min) →
 test_run {isolated, parallel N} shards it (1.9× at N=4, same merged
 truth). (4) The author reached for removed edit_group out of muscle
 memory; the eval agents never did — teaching beats habit.
+
+Per-write kondo + test_run interaction (2026-07-15, user questions):
+kondo was already SCOPED to changed namespaces (lint-refusals lints only
+the written ns; done lints only changed nses — never project-wide). The
+waste was structural: analyze and lint ran as TWO kondo passes over the
+same content, and lint wasn't memoized, so every write re-linted the
+unchanged base. Unified into one memoized run-kondo — measured ~541ms
+saved per consecutive write to slopp.api (the base pass is now a cache
+hit). test_run wire guardrail (user): bare test_run {} returns guidance
+(done runs your affected tests; name a target to spot-check), whole
+suite is explicit ({all true} in-image with a done-covers-it note,
+{isolated true} the merge gate). isolated :parallel now defaults to
+AUTO — scales shards to test-ns count + cores, serial below ~8 nses.
+The whole wave dogfooded the diet: :still-red/:went-green/:carried-errors
+all fired on their own author's edits and read cleanly.

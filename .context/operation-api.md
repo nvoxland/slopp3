@@ -113,7 +113,11 @@ is what catches a missing one.
   decisions.md, self-hosting lesson).
 - `test-run!` — traced+diagnosed run; `ns-sym` nil = the WHOLE project in
   one image eval (instrumentation paid once — F-3c1); refreshes the trace
-  map. `query-eval` surfaces evaluation errors as `{:error msg}` (F-3c2);
+  map. The WIRE tool guards this: a bare `test_run {}` returns GUIDANCE
+  (name `:ns`/`:only` to spot-check; done runs the affected tests itself),
+  `{all true}` runs the whole in-image suite explicitly with a
+  done-covers-it note, `{isolated true}` is the merge gate. Surgical by
+  default, whole-suite by explicit request. `query-eval` surfaces evaluation errors as `{:error msg}` (F-3c2);
   `query-references` scans every namespace (F-3c3). `query-eval` strips
   `:reload`/`:reload-all` from `require`/`use` forms (`edit/strip-image-reload`):
   the image has no source files, so a store ns is loaded via `load-ns!` not the
@@ -133,9 +137,11 @@ is what catches a missing one.
   through the image is covered. The isolated suite (fresh JVM, no image)
   still refuses until implementation — the short red-first window is the
   point.
-- `isolated-test-run!` extras: `:parallel N` shards the run (one build,
-  N concurrent JVMs over round-robin ns shards, merged summary — the
-  full gate measured 1.9× faster at N=4); `:affected true` = the provable slice
+- `isolated-test-run!` extras: `:parallel` shards a full/affected run
+  across JVMs (one build, round-robin ns shards, merged summary — 1.9×
+  at N=4). Defaults to AUTO (`auto-parallel`: serial below ~8 test nses,
+  else n/8 capped at 4 and half the cores); explicit N overrides, a
+  single `:ns`/`:only` run never shards. `:affected true` = the provable slice
   (test namespaces whose require-closure reaches a form changed since
   the last milestone; empty slice returns a note, full suite stays the
   milestone gate); narrowed runs use the generated `:test-run` alias
