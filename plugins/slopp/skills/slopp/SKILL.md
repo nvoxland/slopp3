@@ -16,7 +16,7 @@ The system runs the mechanical series FOR you: a fresh clone of a
 slopp-published repo imports itself; turns and identity are automatic (the
 hooks handle them — never call `turn_begin` unless a write is refused);
 every write is formatted, linted, compile-gated, and test-verified before
-it lands; when your session pauses, a checkpoint pipeline tidies and
+it lands; when your session pauses, a done-point pipeline tidies and
 re-verifies what you touched. Setup/sync/shipping: the `slopp-setup`
 skill. Full result-shape and oracle reference: `reference.md` next to this
 file.
@@ -24,8 +24,9 @@ file.
 ## The loop — and the budget
 
 A whole task should be ~10–20 tool calls: orient (1) → read (1) → write
-(a few groups) → ONE milestone. Each extra call re-reads your entire
-context; the patterns below are where sessions measurably bleed tokens.
+REPL-style (small individual writes) → `done` → ONE milestone. Each extra
+call re-reads your entire context; the patterns below are where sessions
+measurably bleed tokens.
 
 1. **Orient with ONE small call: `session_brief`.** Form names, recent
    milestones with their asks, git alignment, the loop — everything a
@@ -38,8 +39,8 @@ context; the patterns below are where sessions measurably bleed tokens.
    warranty) for everything it reaches. TRUST the cards — you don't need
    a callee's body to call it; if an assumption is wrong, the write turns
    red with `:implicated` (the covering tests re-run on every edit).
-   Writes are OPTIMISTIC: compose `edit_subform`/`edit_group` matches from
-   the brief/slice; a missed or ambiguous match returns the form's CURRENT
+   Writes are OPTIMISTIC: compose `edit_subform` matches from the
+   brief/slice; a missed or ambiguous match returns the form's CURRENT
    source in `:source-now` — correct from the error and resend. Batched
    named reads: `query_source {targets: [{ns name}…]}`; whole-namespace
    dumps are outline-by-default (`full: true` = the rare escape). Never
@@ -57,15 +58,21 @@ context; the patterns below are where sessions measurably bleed tokens.
    double-check yourself.** When the user asks how to verify, GIVE them
    the commands (`slopp --call test_run`, `query_commits`) — don't
    execute a dry run.
-4. **Batch multi-form intent.** Several changes for one reason = ONE
-   `edit_group` (mixing add/replace/delete/move/subform/require). Red-first
-   TDD: stub + test in one group (honest red), real implementation next
-   (green) — two writes total. An `:untested` flag? `draft_test {ns name
-   code}` drafts a deftest from OBSERVED calls — edit it in, don't compose
-   from nothing.
-5. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
-   (green-gated) unless the user asks for more. Session pauses checkpoint
-   automatically.
+4. **Work like a REPL — one small write at a time.** Mid-episode reds are
+   normal TDD state: a spec naming a not-yet-written fn lands as an honest
+   red (`:red-first` names the stubs); changing a signature lands with the
+   stale callers riding `:carried-errors` — catch them up in your next
+   writes. Nothing asks you to pre-plan groups. Red-first TDD: write the
+   failing test FIRST, then implement. An `:untested` flag? `draft_test
+   {ns name code}` drafts a deftest from OBSERVED calls.
+5. **Say `done {label}` when you believe you're finished.** It runs the
+   AFFECTED TESTS for everything you touched (a pre-flight `test_run` is
+   redundant — mid-episode runs are for spot-checks only), normalizes,
+   lints, and marks the episode boundary; address its findings. If your
+   session pauses first, the hook fires it for you and the findings greet
+   the next session's brief.
+6. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
+   (green-gated) unless the user asks for more.
 
 ## Choosing the write tool
 
@@ -78,8 +85,7 @@ context; the patterns below are where sessions measurably bleed tokens.
 | Change a whole form | `edit_replace_form` |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
-| Several changes, one reason | `edit_group {steps, prompt}` — atomic, verified once; steps mix add/replace/delete/move/subform/require, so a rename's leftover `:mentions`, a threshold tweak, and a new require are ONE call |
-| Group too big for one call | `edit_group {stage "open", steps}` → `{stage "add", steps}`… → `{stage "commit", prompt}` — staged across calls, still ONE atomic group |
+| Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
 | Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_depends {on ns/name, direction :dependencies}`) |
@@ -139,10 +145,10 @@ query_project query_search query_source query_brief query_history
 query_changes query_eval query_observe
 query_macroexpand query_branches query_commits query_git · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
-edit_replace_form edit_delete_form edit_subform edit_trivia edit_group
+edit_replace_form edit_delete_form edit_subform edit_trivia
 edit_rename change_signature edit_extract edit_extract_ns edit_move
 edit_revert episode_revert fix_declares · branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
-test_run draft_test checkpoint commit_point restart build help
+test_run draft_test done commit_point restart build help

@@ -252,3 +252,24 @@ never saw why their spec was red. Lesson: when a result gains a key,
 grep the wire's select-keys; result-shape specs should ride the WIRE
 (mcp-test `call`), not just the api. The refactor's 16-delta group was
 staged (stage open/add/commit) — first real use, worked as designed.
+
+Inferred-episodes wave (2026-07-15): the grouping burden moves off the
+agent — see decisions.md for the terms + design. Ledger notes from the
+wave itself: (1) the lint-refusals arity change deadlocked the write
+pipeline mid-wave (self-hosting: hot-loaded fn vs committed callers) —
+rescued by a user-approved hand-minted append!-equivalent delta; rule
+recorded. (2) The carried-errors design would have made that exact
+accident survivable — the change prevented its own class of failure one
+hour too late. (3) rename_sweep handled the checkpoint→done concept
+rename (35 forms, 11 nses, one intent) with the journal op migrated by
+one-off UPDATE (85 rows) — sweep-then-migrate-immediately kept the
+boundary-blind window to minutes. (4) The staged-group machinery shipped
+last wave was removed by this one at the user's direction — measured
+lesson: don't gold-plate a crutch when the real fix is removing the
+need for it.
+
+Plan-mode prompts (2026-07-15, user friction): allowlists don't help in
+plan mode — the client only auto-permits tools that PROVE read-onlyness
+via the MCP readOnlyHint annotation; slopp's read tools now declare it.
+Lesson: when a client keeps prompting despite allow rules, the fix may
+belong in OUR wire contract, not the user's settings.

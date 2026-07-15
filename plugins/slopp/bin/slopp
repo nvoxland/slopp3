@@ -39,7 +39,7 @@ if [ "${1:-}" = "--doctor" ]; then
   for f in hooks/hooks.json skills/slopp/SKILL.md skills/slopp-setup/SKILL.md .mcp.json; do
     if [ -f "$ROOT/$f" ]; then say "ok " "plugin file: $f"; else say "FAIL" "plugin file missing: $f"; rc=1; fi
   done
-  if command -v python3 >/dev/null 2>&1; then say "ok " "python3 (prompt/checkpoint hooks)"; else say "FAIL" "no python3 — the intent + checkpoint hooks will not fire"; rc=1; fi
+  if command -v python3 >/dev/null 2>&1; then say "ok " "python3 (prompt/done hooks)"; else say "FAIL" "no python3 — the intent + done hooks will not fire"; rc=1; fi
   if [ -n "${SLOPP_JAR:-}" ]; then
     if [ -f "$SLOPP_JAR" ]; then say "ok " "SLOPP_JAR override: $SLOPP_JAR"; else say "FAIL" "SLOPP_JAR set but missing: $SLOPP_JAR"; rc=1; fi
   elif [ -f "$JAR" ]; then

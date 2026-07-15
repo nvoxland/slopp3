@@ -62,7 +62,7 @@ points, e.g. milestone targets from `query_commits`).
 - Multi-form intent = `edit_group`; signature change = `change_signature`.
 - Tests land in the same group as the fn (red-first); `test_run {:only}`
   while iterating; full sweep = `test_run` with no ns — never loop it.
-- `checkpoint {label}` when you'd say "done with that";
+- `done {label}` when you believe your changes are complete — it runs the AFFECTED tests itself (no test_run needed first), plus tidy + lint;
   `commit_point {description}` at milestones (green-gated).
 
 ## Shipping

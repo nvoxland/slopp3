@@ -1331,3 +1331,39 @@ teaches); reads through `query_depends {modules true}`; the fold
 projects as a `modules` file into git commits for transparency.
 ns-rename/rename_sweep re-key manifest entries when a module's last ns
 renames away. Suite 296/1520.
+
+Inferred episodes — REPL-native flow (user design, 2026-07-15): agents
+must NOT plan groups or worry about wire limits; they work like a REPL
+developer and the SYSTEM infers the unit of work. STANDARD TERMS (use
+everywhere): WRITE (delta) = one gated, hot-loaded, verified form-level
+change; CHANGESET = internal atomic multi-form op (rename,
+change_signature, normalize) — implementation detail, never an agent
+decision; EPISODE = one agent's writes between done-points — inferred,
+per-agent, the history unit; DONE-POINT = the boundary (`done {label}`,
+or the turn-end hook): normalize + declare hygiene + lint + AFFECTED
+TESTS over everything the episode touched + findings recorded on the
+boundary delta; TURN = the user-ask bracket; MILESTONE = commit_point,
+green-gated, spans turns. Decisions: verb renamed checkpoint→done
+(journal op migrated one-off, 85 rows, user-approved); tests never
+implicitly close an episode (explicit done + turn-end only; spot-check
+test_runs stay in-progress, and a redundant pre-done test_run earns a
+hint); edit_group + staging REMOVED from the wire (api-level
+edit-group!/changesets stay internal); per-write verification stays
+automatic. The invalid-arity lint gate is scoped to the WRITTEN form:
+own-form errors refuse (with the change_signature hint), stale-caller
+errors ride :carried-errors until done re-checks them hard. done always
+verifies (not only when normalize rewrote); findings resurface in
+session_brief :last-done + the prompt-hook heads-up. Concurrency note:
+sub-agent isolation was never the group's job — form-grain CRDT
+rebasing is; episodes are per-agent derived.
+
+Self-hosting lesson (2026-07-15, cost one rescue): changing the
+SIGNATURE of a write-pipeline function (edit/lint-refusals 3→4 args)
+via a single write deadlocks the pipeline — the hot-loaded new fn
+breaks the still-committed old callers, and no write can land to fix
+them (there is no fallback pipeline; the jar is only a boot kernel).
+Rescue: user-approved hand-minted append!-equivalent delta installing a
+dual-arity bridge, then normal writes. RULE: pipeline-critical
+signature changes go through the internal atomic changeset
+(edit-group!/change_signature), never incremental writes — exactly the
+carve-out the inferred-episode design keeps changesets for.

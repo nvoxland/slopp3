@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c 'import json,sys,os,subprocess; d=json.load(sys.stdin); sid=d.get(\"session_id\",\"\"); os.path.exists(\".slopp/store.db\") and subprocess.run([os.environ.get(\"CLAUDE_PLUGIN_ROOT\",\"\")+\"/bin/slopp\",\"--call\",\"checkpoint\",json.dumps({\"agent\": sid, \"label\": \"session pause\"})], capture_output=True, timeout=280)' 2>/dev/null || true",
+            "command": "python3 -c 'import json,sys,os,subprocess; d=json.load(sys.stdin); sid=d.get(\"session_id\",\"\"); os.path.exists(\".slopp/store.db\") and subprocess.run([os.environ.get(\"CLAUDE_PLUGIN_ROOT\",\"\")+\"/bin/slopp\",\"--call\",\"done\",json.dumps({\"agent\": sid, \"label\": \"session pause\"})], capture_output=True, timeout=280)' 2>/dev/null || true",
             "async": true,
             "timeout": 300,
             "statusMessage": "slopp: tidying + re-verifying your changes"

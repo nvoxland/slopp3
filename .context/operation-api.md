@@ -99,14 +99,18 @@ is what catches a missing one.
   Planned in `refactor/change-signature-plan`, executed via `edit-group!`
   (all gates, one verification). Higher-order references return under
   `:manual`; nested self-call sites / template-arity misses are hard errors
-  pointing at `edit_group`. Companion: invalid-arity lint refusals carry
-  the "defn + callers in ONE edit_group, or change_signature" hint.
-- `edit-group!` — several `:replace`/`:add`/`:delete` steps as ONE atomic
-  intent (F2): all steps apply to a store VALUE first (any error → whole group
-  rejected, nothing committed — store purity makes this free), then commit +
-  persist + hot-reload together and verify ONCE. Deltas share a `:group` id.
-  Use for every multi-form refactor — it avoids the mid-refactor red + wasted
-  diagnostic restart.
+  (rewrite those sites with `edit_subform`). Companion: OWN-FORM
+  invalid-arity refusals carry the change_signature hint; stale-CALLER
+  arity errors don't refuse at all — they ride `:carried-errors` until
+  the done-point.
+- `edit-group!` — INTERNAL changeset machinery only (no wire tool): several
+  steps applied to a store VALUE, committed + hot-reloaded together, verified
+  once, deltas sharing a `:group` id. Used by rename-sweep!,
+  change-signature!, revert paths, and normalize. Agents make individual
+  writes; episodes group them. RULE: pipeline-critical signature changes
+  (anything the write path itself calls) MUST go through a changeset —
+  an incremental signature change to the pipeline deadlocks it (see
+  decisions.md, self-hosting lesson).
 - `test-run!` — traced+diagnosed run; `ns-sym` nil = the WHOLE project in
   one image eval (instrumentation paid once — F-3c1); refreshes the trace
   map. `query-eval` surfaces evaluation errors as `{:error msg}` (F-3c2);
@@ -139,7 +143,7 @@ is what catches a missing one.
   by distinct-test coverage). MCP `edit_group` supports staged
   construction (stage open/add/commit/drop — one atomic group across
   several calls).
-- `checkpoint!` — unit-of-work boundary (user-designed): deterministically
+- `done!` — THE done-point (see decisions.md terminology). Formerly: deterministically
   normalizes every form changed since the last checkpoint (`slopp.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),
   commits ONE `:normalize` group delta, hot-reloads + re-verifies affected

@@ -43,13 +43,18 @@
   work lands, identical changes converge, same-form divergence is an MV
   conflict (ours live, theirs surfaced).
 - **Every write is a tracked delta** `{op, ns, prompt, agent, at, ...}`; the
-  provenance stack is COMMIT POINT (named milestone, green-gated,
-  `commit_point`; carries a byte-exact rendered `:tree` snapshot — the git
-  projection's input, P4-m8) → TURN (verbatim user
-  ask, `turn_begin`/`turn_end`; enforced on real servers) → EPISODE
-  (per-agent work-unit between checkpoints, derived — nothing stored) →
-  step → per-form version. Raw REPL eval may observe but never redefines
-  code.
+  provenance stack is MILESTONE (commit_point: named, green-gated; carries
+  a byte-exact rendered `:tree` snapshot — the git projection's input,
+  P4-m8) ⊃ TURN (verbatim user ask, `turn_begin`/`turn_end`; enforced on
+  real servers) ⊃ EPISODE (per-agent work-unit between DONE-POINTS —
+  inferred, nothing stored; agents never plan grouping) ⊃ WRITE (one
+  verified form-level delta). A DONE-POINT (`done {label}`, or the
+  turn-end hook) closes the episode: normalize + declare hygiene + lint +
+  affected tests over everything touched, findings recorded on the `:done`
+  boundary delta and resurfaced by the next session's brief. CHANGESETS
+  (rename, change_signature, normalize) are internal atomic multi-form
+  ops — implementation detail, not an agent surface. Raw REPL eval may
+  observe but never redefines code.
 
 ## Layer map (bottom-up)
 
