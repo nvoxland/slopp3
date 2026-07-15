@@ -4038,7 +4038,11 @@
                 :status (or (get-in verify* [:summary :status])
                             (:status verify*) :unknown)})
       :verify (str "writes self-verify; test_run {} re-runs in-image; "
-                   "test_run {:isolated true} = the full external suite")})))
+                   "test_run {:isolated true} = the full external suite. "
+                   "HANDOFF one-shots (humans/scripts, no session needed): "
+                   "`slopp --call test_run '{\"isolated\":true}'` and "
+                   "`slopp --call query_commits` — quote these in handoff "
+                   "docs; no need to read skill files for the CLI forms")})))
 ^:reads (defn query-slice
   "The focused read (driver, not doer): FULL source for the form you're
   about to edit + interface CARDS for what it reaches (same-ns private
