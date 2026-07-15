@@ -3388,22 +3388,29 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
+(defn- module-usage-rows
+  "Every store-internal, kondo-resolved var-usage row ({:from-ns :from-var
+  :to :to-export}) — ONE pass over the store shared by the debt view and
+  the drift (declared-but-unused) view."
+  [store]
+  (let [nses (set (keys (:namespaces store)))]
+    (vec (for [nsx (sort nses)
+               u   (:var-usages (index/analyze (render/render-ns store nsx)))
+               :when (contains? nses (:to u))]
+           {:from-ns nsx :from-var (:from-var u) :to (:to u)
+            :to-export (edit/export-level store (:to u) (:name u))}))))
 (defn- module-debt
   "Whole-store module violations under the store's CURRENT manifest —
   compact rows, G13-capped — the debt a manifest change reveals (per-write
-  gates block NEW violations; the advisory shows what already stands)."
-  [store]
-  (when-let [manifest (edit/modules-manifest store)]
-    (let [nses (set (keys (:namespaces store)))
-          rows (for [nsx (sort nses)
-                     u   (:var-usages (index/analyze (render/render-ns store nsx)))
-                     :when (contains? nses (:to u))]
-                 {:from-ns nsx :from-var (:from-var u) :to (:to u)
-                  :to-export (edit/export-level store (:to u) (:name u))})
-          vs   (edit/module-violations manifest rows)]
-      (when vs
-        {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
-         :count (count vs)}))))
+  gates block NEW violations; the advisory shows what already stands).
+  Pass precomputed `rows` (module-usage-rows) to share the kondo pass."
+  ([store] (module-debt store (module-usage-rows store)))
+  ([store rows]
+   (when-let [manifest (edit/modules-manifest store)]
+     (let [vs (edit/module-violations manifest rows)]
+       (when vs
+         {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
+          :count (count vs)})))))
 (defn config-file!
   "Structured config files: the store holds SEMANTIC key/values per path
   (per-key delta history, like forms); the projection serializes them into
@@ -3859,10 +3866,33 @@
     (if modules
       (if (seq (str on))
         (assoc (module-surface session on) :kind :module-surface)
-        {:kind :modules
-         :manifest (into (sorted-map) (map (fn [[m ds]] [m (vec (sort ds))]))
-                         (or (edit/modules-manifest st) {}))
-         :debt (module-debt st)})
+        (let [manifest (or (edit/modules-manifest st) {})
+              rows     (module-usage-rows st)
+              actual   (into #{}
+                             (comp (map (fn [{:keys [from-ns to]}]
+                                          [(edit/module-of from-ns)
+                                           (edit/module-of to)]))
+                                   (remove (fn [[a b]] (= a b))))
+                             rows)
+              unused   (vec (for [[m ds] (sort manifest)
+                                  d      (sort ds)
+                                  :when  (not (contains? actual [m d]))]
+                              [m d]))
+              graph    (store/module-layers manifest)]
+          (cond-> {:kind :modules
+                   :manifest (into (sorted-map)
+                                   (map (fn [[m ds]] [m (vec (sort ds))]))
+                                   manifest)
+                   :layers (:layers graph)
+                   :debt (module-debt st rows)}
+            (seq (:cycles graph))
+            (assoc :cycles (:cycles graph))
+
+            (seq unused)
+            (assoc :unused-edges unused
+                   :unused-note (str "declared but no call uses them —"
+                                     " module_dep {from .. to .. remove true}"
+                                     " retires an edge")))))
       (let [on (str/trim (str on))]
         (cond
           (str/starts-with? on ":")

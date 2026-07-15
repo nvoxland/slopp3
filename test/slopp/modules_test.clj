@@ -193,7 +193,27 @@
           (is (= ["mb.app"] (:consumers r)))))
       (testing "an unknown module teaches the list"
         (is (re-find #"modules true" (str (:error (api/module-surface sess "zz.nope"))))))
+      (testing "the graph view: layers, and drift toward DEAD edges is named"
+        (api/module-dep! sess "mb.app" "mc.ghost" :prompt "declared, never used")
+        (let [r (api/query-depends sess nil :modules true)]
+          (is (= [["ma.core" "mc.ghost"] ["mb.app"]] (:layers r)) (pr-str r))
+          (is (= [["mb.app" "mc.ghost"]] (:unused-edges r)))
+          (is (re-find #"remove true" (:unused-note r)))
+          (is (nil? (:cycles r)))))
       (finally (api/close! sess)))))
+(deftest module-layers-condense-cycles
+  (testing "a DAG layers by deepest dependency"
+    (is (= {:layers [["a.core"] ["a.util"] ["b.app"]] :cycles []}
+           (store/module-layers {"b.app" #{"a.core" "a.util"}
+                                 "a.util" #{"a.core"}}))))
+  (testing "cycle members share a layer and are named, not poisonous"
+    (let [r (store/module-layers {"x.a" #{"x.b"} "x.b" #{"x.a"}
+                                  "y.c" #{"x.a"}})]
+      (is (= [["x.a" "x.b"] ["y.c"]] (:layers r)) (pr-str r))
+      (is (= [["x.a" "x.b"]] (:cycles r)))))
+  (testing "dep-only modules (declaring nothing) sit at layer 0"
+    (is (= [["z.leaf"] ["z.top"]]
+           (:layers (store/module-layers {"z.top" #{"z.leaf"}}))))))
 (deftest ^:isolated the-module-lifecycle
   (let [sess (api/open!)]
     (try

@@ -667,6 +667,66 @@
                          (map #(conj path %))
                          nexts)
                    (into seen nexts))))))))
+(defn module-layers
+  "Topological LAYERS of a module manifest ({module #{deps}}) — the
+  architecture at a glance: layer 0 depends on nothing, layer n's deepest
+  dep sits at n-1. Cycles are CONDENSED first (Kosaraju SCC), so members
+  of a dependency cycle share one layer instead of poisoning the picture;
+  multi-member components also return under :cycles. Modules appearing
+  only as deps (declaring nothing) are layer 0. Pure; deterministic.
+  Returns {:layers [[module ...] ...] :cycles [[member ...] ...]}."
+  [manifest]
+  (let [nodes (vec (sort (into (set (keys manifest))
+                               (mapcat identity)
+                               (vals manifest))))
+        succs (fn [m] (sort (get manifest m #{})))
+        preds (reduce (fn [acc [m ds]]
+                        (reduce #(update %1 %2 (fnil conj #{}) m) acc ds))
+                      {} manifest)
+        ;; Kosaraju pass 1: finish order
+        [_ order] (reduce (fn dfs1 [[seen order :as st] m]
+                            (if (contains? seen m)
+                              st
+                              (let [[seen order]
+                                    (reduce dfs1 [(conj seen m) order] (succs m))]
+                                [seen (conj order m)])))
+                          [#{} []] nodes)
+        ;; pass 2: components on the transpose, reverse finish order
+        [assigned comps]
+        (loop [ms (reverse order) assigned {} comps []]
+          (if-let [m (first ms)]
+            (if (assigned m)
+              (recur (rest ms) assigned comps)
+              (let [members (loop [stack [m] mem #{}]
+                              (if-let [x (peek stack)]
+                                (let [stack (pop stack)]
+                                  (if (or (contains? mem x) (assigned x))
+                                    (recur stack mem)
+                                    (recur (into stack (sort (get preds x #{})))
+                                           (conj mem x))))
+                                mem))]
+                (recur (rest ms)
+                       (reduce #(assoc %1 %2 (count comps)) assigned members)
+                       (conj comps (vec (sort members))))))
+            [assigned comps]))
+        comp-deps (fn [ci] (into #{}
+                                 (comp (mapcat succs) (map assigned) (remove #{ci}))
+                                 (nth comps ci)))
+        ;; condensation is a DAG — memoized layer recursion is safe
+        layers (reduce (fn layer-of [memo ci]
+                         (if (contains? memo ci)
+                           memo
+                           (let [ds   (comp-deps ci)
+                                 memo (reduce layer-of memo ds)]
+                             (assoc memo ci (if (empty? ds)
+                                              0
+                                              (inc (apply max (map memo ds))))))))
+                       {} (range (count comps)))
+        maxl   (reduce max 0 (vals layers))]
+    {:layers (vec (for [i (range (inc maxl))]
+                    (vec (sort (mapcat (fn [[ci l]] (when (= l i) (nth comps ci)))
+                                       layers)))))
+     :cycles (vec (filter #(> (count %) 1) comps))}))
 (defn merge-logs
   "Phase 4 m2 (C4/C5 activation): merge `theirs` — a store sharing a common
   delta-log prefix with `ours` (a fork = a copied project dir) — into ours by
