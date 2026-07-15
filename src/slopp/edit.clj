@@ -442,8 +442,7 @@
                        ;; export stays internal, no docstring nag
                        (true? (:export (meta (second s))))))
           {:var (symbol (str ns-sym) (str (second s)))
-           :missing-doc true
-           :suggest "add a docstring — this is module public surface"})))))
+           :missing-doc true})))))
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.

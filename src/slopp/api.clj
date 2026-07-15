@@ -2022,6 +2022,23 @@
                :skipped (vec (filter #(= :skip (:action %)) plan))
                :test    summary})))))))
 
+(defn- test-nses-reaching
+  "Test namespaces (any ns holding a deftest) whose require-closure
+  reaches one of `changed-nses` — the PROVABLE set of tests a change can
+  affect (a test only exercises code it can load). The honest fallback
+  scope when the trace map is silent."
+  [store changed-nses]
+  (let [changed  (set changed-nses)
+        test-ns? (fn [nsx]
+                   (some #(str/starts-with? (str/triml (n/string (:node %)))
+                                            "(deftest")
+                         (store/forms store nsx)))]
+    (vec (sort (for [t (keys (:namespaces store))
+                     :when (and (test-ns? t)
+                                (seq (set/intersection
+                                      (store/ns-closure store t)
+                                      changed)))]
+                 t)))))
 (defn done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
   the episode boundary and runs the automatic done-processing — normalize
@@ -2097,7 +2114,12 @@
                               qsyms)
                 affected (when (not-any? nil? per)
                            (vec (sort (distinct (apply concat per)))))
-                main-ns  (vec (distinct (keep #(store/ns-of-form-id st* %) changed)))
+                changed-nses (vec (distinct (keep #(store/ns-of-form-id st* %)
+                                                  changed)))
+                ;; with no trace coverage the fallback must still REACH the
+                ;; tests: closure-bounded test nses, not just the changed ones
+                main-ns  (vec (distinct (concat changed-nses
+                                                (test-nses-reaching st* changed-nses))))
                 s        (run-verification! session main-ns
                                             (when (seq affected) affected)
                                             :edited qsyms
@@ -3422,22 +3444,13 @@
   the milestone can affect any test. Full-suite confidence stays the
   milestone gate's job."
   [session]
-  (let [st       (:store @session)
-        last-c   (:id (last (filter #(= :commit (:op %)) (store/deltas st))))
-        changed  (into #{}
-                       (keep #(store/ns-of-form-id st %))
-                       (forms-changed-since st last-c))
-        test-ns? (fn [nsx]
-                   (some #(str/starts-with? (str/triml (n/string (:node %)))
-                                            "(deftest")
-                         (store/forms st nsx)))
-        selected (vec (sort (for [t (keys (:namespaces st))
-                                  :when (and (test-ns? t)
-                                             (seq (set/intersection
-                                                   (store/ns-closure st t)
-                                                   changed)))]
-                              t)))]
-    {:changed-nses (vec (sort changed)) :selected selected}))
+  (let [st      (:store @session)
+        last-c  (:id (last (filter #(= :commit (:op %)) (store/deltas st))))
+        changed (into #{}
+                      (keep #(store/ns-of-form-id st %))
+                      (forms-changed-since st last-c))]
+    {:changed-nses (vec (sort changed))
+     :selected     (test-nses-reaching st changed)}))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the

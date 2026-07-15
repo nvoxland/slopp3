@@ -371,3 +371,23 @@
           (is (pos? (get-in b [:last-done :findings :failures] 0))
               (pr-str (:last-done b))))
         (finally (api/close! sess2))))))
+(deftest ^:isolated done-reaches-tests-in-other-namespaces
+  ;; dogfooding catch: with no trace coverage, done's fallback ran "all
+  ;; tests in the CHANGED nses" — which contain none when tests live in a
+  ;; separate -test ns. The require-closure bounds the honest fallback.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dr.core "(ns dr.core)\n(defn f \"F.\" [x] (inc x))\n")
+      (api/ingest! sess 'dr.core-test
+                   (str "(ns dr.core-test (:require [dr.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest f-t (is (= 2 (c/f 1))))\n"))
+      (api/done! sess :label "baseline")
+      ;; break f WITHOUT ever running tests — the trace map knows nothing
+      (api/edit-replace! sess 'dr.core 'f "(defn f \"F.\" [x] (+ x 2))"
+                         :prompt "breaks f-t; only dr.core-test can prove it")
+      (let [r (api/done! sess :label "must catch the red")]
+        (is (pos? (:test (:test r) 0))
+            (str "the done-point must reach dr.core-test: " (pr-str r)))
+        (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r))))
+      (finally (api/close! sess)))))

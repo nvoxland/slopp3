@@ -23,7 +23,7 @@
 
 (def calculator
   ;; v3: the two-form fix is two REPL-style writes (episodes are inferred)
-  {:name "calculator" :v 2 :test-ns "calc.core"
+  {:name "calculator" :v 3 :test-ns "calc.core"
    :steps
    [{:tool "ns_create" :args {:ns "calc.core" :source "(ns calc.core\n  (:require [clojure.test :refer [deftest is]]))\n"}}
     {:tool "edit_add_form" :args {:ns "calc.core" :prompt "tokenizer"
