@@ -79,6 +79,7 @@
       (doseq [i (range 2 13)]
         (let [ns-sym  (symbol (str "x3.n" i))
               prev    (str "x3.n" (dec i))]
+          (api/module-dep! sess (str "x3.n" i) prev :prompt "chain link")
           (api/create-ns! sess ns-sym
                           :requires [(str "[" prev " :as p]")])
           (api/add-form! sess ns-sym
@@ -98,6 +99,7 @@
       (api/add-form! sess 'x2.m "(defn f [x] (* 2 x))")
       (doseq [i (range 1 10)]
         (let [ns-sym (symbol (str "x2.c" i))]
+          (api/module-dep! sess (str "x2.c" i) "x2.m" :prompt "caller")
           (api/create-ns! sess ns-sym :requires ["[x2.m :as m]"])
           (api/add-form! sess ns-sym (format "(defn call%d [x] (m/f x))" i))))
       (let [r (api/rename! sess 'x2.m 'f 'g :prompt "x2 regression")]

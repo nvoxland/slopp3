@@ -26,6 +26,7 @@
           (is (some #(re-find #"core\.clj:3" %) frames) (pr-str frames))))
       (testing "F8: editing a form no test exercises is flagged"
         (api/add-form! sess 'tr.core "(defn quiet [x] x)")
+        (api/module-dep! sess "tr.t" "tr.core" :prompt "fixture edge")
         (api/ingest! sess 'tr.t (str "(ns tr.t (:require [clojure.test :refer [deftest is]]\n"
                                      "                   [tr.core]))\n"
                                      "(deftest outer-t (is (thrown? Exception (tr.core/outer))))\n"))

@@ -10,6 +10,7 @@
                (str "(ns ta.a (:require [clojure.test :refer [deftest is]]))\n"
                     "(defn f [x] (inc x))\n"
                     "(deftest a-t (is (= 2 (f 1))))\n"))
+  (api/module-dep! sess "ta.b" "ta.a" :prompt "fixture edge")
   (api/ingest! sess 'ta.b
                (str "(ns ta.b (:require [ta.a :as a]\n"
                     "                   [clojure.test :refer [deftest is]]))\n"
