@@ -101,7 +101,10 @@
                         (pr-str (:files store {}))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:config store {}))]))
+                        (pr-str (:config store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:modules store {}))]))
    nil))
 
 ^:reads (defn data-version
@@ -158,6 +161,9 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:config store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:modules store {}))])
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
@@ -305,6 +311,11 @@
      :deps       (deps conn)
      :files      (files conn)
      :config     (config-files conn)
+     ;; nil (row absent) = a pre-module db — open! adopts it by deriving
+     ;; the manifest from the actual dependency graph
+     :modules    (some-> (jdbc/execute-one!
+                          conn ["SELECT v FROM meta WHERE k = 'modules'"])
+                         :meta/v edn/read-string)
      :dep-ns     (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-ns'"])
                              :meta/v edn/read-string) {})

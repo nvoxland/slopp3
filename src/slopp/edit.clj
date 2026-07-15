@@ -146,6 +146,15 @@
     (catch Exception e
       {:error (str "bad require clause: " (ex-message e))})))
 
+(defn modules-manifest
+  "The module manifest — {module-string #{dep-module-strings}} — the FOLD
+  of the store's :module-edge deltas (edge-grain: concurrent declarations
+  merge as a union, and every edge carries its why). {} for a fresh store
+  (enforcement is on from birth; the first cross-module call teaches
+  declare-then-use). nil ONLY for a populated store that predates the
+  module system — open! derives its manifest from reality (adoption)."
+  [store]
+  (:modules store))
 (defn ns-warnings
   "D6 `!`-effect violations for `ns-sym`'s current state. The external-dep
   boundary (M3): a call into any namespace provided by a manifest dependency
@@ -252,6 +261,159 @@
                  (if near
                    (str " — nearest: " (str/join ", " near))
                    (str " — query_source {ns " ns-sym "} lists what exists")))}))
+(defn module-of
+  "A namespace's MODULE: its first two segments (\"x.y\"), or the whole
+  name for single-segment namespaces. A trailing \"-test\" folds into the
+  subject's module (\"x.y-test\" → \"x.y\") — tests live with what they
+  test, so the natural TDD flow needs no edge ceremony."
+  [ns-sym]
+  (let [segs (clojure.string/split (str ns-sym) #"\.")]
+    (clojure.string/join "." (map #(clojure.string/replace % #"-test$" "")
+                                  (take 2 segs)))))
+(defn exported?
+  "True when the target var's definition carries ^:export metadata on its
+  name — the definition-site hoist that lifts a deep (package-private) var
+  into its module's public surface. No var copying, no facade namespace:
+  the module gate simply treats it as surface."
+  [store to-ns to-name]
+  (boolean
+   (when (and to-ns to-name)
+     (when-let [e (store/form-named store (symbol (str to-ns)) (symbol (str to-name)))]
+       (some-> (try (n/sexpr (:node e)) (catch Exception _ nil))
+               second meta :export)))))
+(defn derive-module-edges
+  "The ACTUAL cross-module dependency edges of a store — kondo-resolved
+  var usages grouped by module — as {module #{dep-modules}}, dep-less
+  modules absent. Adoption uses this: a manifest derived from reality is
+  acyclic with zero violations by construction."
+  [store]
+  (let [nses (set (keys (:namespaces store)))]
+    (reduce (fn [acc nsx]
+              (let [cmod  (module-of nsx)
+                    tmods (into #{}
+                                (comp (filter #(contains? nses (:to %)))
+                                      (map #(module-of (:to %)))
+                                      (remove #{cmod}))
+                                (:var-usages
+                                 (index/analyze (render/render-ns store nsx))))]
+                (if (seq tmods) (merge-with into acc {cmod tmods}) acc)))
+            {}
+            (sort nses))))
+(defn module-violations
+  "The module system's pure RULES over resolved usage rows (kondo
+  var-usages shape: {:from-ns :from-var :to :to-export?}) — nil `manifest`
+  = a pre-adoption store, rules off. Two rules: (1) RECURSIVE VISIBILITY —
+  an ns deeper than two segments is callable only from namespaces sharing
+  its parent prefix, unless the target var is ^:export (hoisted into the
+  module surface at its definition site); (2) DECLARED EDGES — a
+  cross-module call requires the caller's module to list the target module
+  in the manifest. Rows must already be filtered to store-internal
+  targets. Returns violation maps ({:from-ns :from-var :target-ns :rule
+  :error}), nil when clean."
+  [manifest rows]
+  (when manifest
+    (->> (distinct rows)
+         (keep (fn [{:keys [from-ns from-var to to-export?]}]
+                 (let [caller-mod (module-of from-ns)
+                       caller-str (str from-ns)
+                       tsegs      (str/split (str to) #"\.")
+                       tmod       (module-of to)
+                       parent     (str/join "." (butlast tsegs))
+                       shares?    (or (= caller-str parent)
+                                      (str/starts-with? caller-str (str parent ".")))]
+                   (cond
+                     (= (str from-ns) (str to)) nil
+
+                     (and (> (count tsegs) 2) (not shares?) (not to-export?))
+                     {:from-ns from-ns :from-var from-var :target-ns to
+                      :rule :visibility
+                      :error (str from-ns "/" from-var " calls " to " which is"
+                                  " package-private to " parent ".* (recursive"
+                                  " visibility) — call " tmod "'s public"
+                                  " surface, mark the target ^:export in its"
+                                  " defn to hoist it into that surface, or move"
+                                  " the definition up a level")}
+
+                     (and (not= tmod caller-mod)
+                          (not (contains? (get manifest caller-mod #{}) tmod)))
+                     {:from-ns from-ns :from-var from-var :target-ns to
+                      :rule :undeclared-edge
+                      :error (str from-ns "/" from-var " uses " to " but module "
+                                  caller-mod " does not declare " tmod
+                                  " — declare the edge: module_dep {from \""
+                                  caller-mod "\" to \"" tmod "\"} (say why in"
+                                  " prompt), or restructure the call")}
+
+                     :else nil))))
+         seq)))
+(defn module-refusal
+  "The per-form module gate over the CANDIDATE store (post-edit value):
+  kondo-analyzes the namespace (memoized on source — the lint gate pays
+  for the same analysis) and applies the module rules to `form-name`'s
+  outbound usages. Resolution is kondo's, so :refer'd bare calls and
+  full qualification are all seen. nil when clean or pre-adoption."
+  [candidate ns-sym form-name]
+  (when-let [manifest (modules-manifest candidate)]
+    (let [nses (set (keys (:namespaces candidate)))
+          rows (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
+                     :when (and (= form-name (:from-var u))
+                                (contains? nses (:to u)))]
+                 {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
+                  :to-export? (exported? candidate (:to u) (:name u))})]
+      (when-let [vs (module-violations manifest rows)]
+        (str/join "; " (map :error vs))))))
+(defn module-scan
+  "The whole-namespace module gate (ingest/ns_create counterpart of
+  dialect-scan) over a candidate store value: nil when clean, else every
+  violation joined."
+  [candidate ns-sym]
+  (when-let [manifest (modules-manifest candidate)]
+    (let [nses (set (keys (:namespaces candidate)))
+          rows (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
+                     :when (contains? nses (:to u))]
+                 {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
+                  :to-export? (exported? candidate (:to u) (:name u))})]
+      (when-let [vs (module-violations manifest rows)]
+        (str/join "; " (map :error vs))))))
+(defn modules-cycle
+  "A dependency cycle in `manifest` as a module path [a b ... a], or nil
+  when the graph is acyclic. Pure DFS three-coloring; deterministic order."
+  [manifest]
+  (letfn [(visit [state path m]
+            (case (get state m)
+              :done [state nil]
+              :in   [state (subvec path (.indexOf ^java.util.List path m))]
+              (let [[state cyc]
+                    (reduce (fn [[st c] d]
+                              (if c [st c] (visit st (conj path d) d)))
+                            [(assoc state m :in) nil]
+                            (sort (get manifest m #{})))]
+                [(assoc state m :done) cyc])))]
+    (loop [state {}
+           ms (sort (keys manifest))]
+      (when-let [m (first ms)]
+        (let [[state cyc] (visit state [m] m)]
+          (if cyc cyc (recur state (rest ms))))))))
+(defn missing-doc-warning
+  "Public-surface documentation rule (module system): a defn/defmacro on
+  the module surface — depth<=2 namespace, or a deeper var hoisted by
+  ^:export — should carry a docstring. One advisory row for the NAMED form
+  (write paths attach it to their result; it never rides ns-warnings, so
+  it nags only where you are working), or nil."
+  [store ns-sym form-name]
+  (when (and (modules-manifest store) form-name)
+    (when-let [e (store/form-named store ns-sym form-name)]
+      (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+        (when (and (seq? s)
+                   (contains? '#{defn defmacro} (first s))
+                   (symbol? (second s))
+                   (not (:private (meta (second s))))
+                   (not (string? (nth s 2 nil)))
+                   (or (<= (count (str/split (str ns-sym) #"\.")) 2)
+                       (:export (meta (second s)))))
+          {:var (symbol (str ns-sym) (str (second s)))
+           :missing-doc true
+           :suggest "add a docstring — this is module public surface"})))))
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
@@ -268,9 +430,19 @@
       :else
       (if-let [[store' delta] (store/replace-node store ns-sym form-name node
                                                   :prompt prompt :agent agent)]
-        {:store    store'
-         :delta    delta
-         :warnings (ns-warnings store' ns-sym)}
+        (if-let [merr (module-refusal store' ns-sym
+                                      (or (store/form-symbol node) form-name))]
+          {:error merr}
+          {:store    store'
+           :delta    delta
+           :warnings (concat (ns-warnings store' ns-sym)
+                             ;; only the has-doc→no-doc TRANSITION warns — a
+                             ;; chronically undocumented form doesn't nag every touch
+                             (when (nil? (missing-doc-warning store ns-sym form-name))
+                               (some-> (missing-doc-warning
+                                        store' ns-sym
+                                        (or (store/form-symbol node) form-name))
+                                       vector)))})
         (missing-form-error store ns-sym form-name)))))
 
 (defn hot-load-form!

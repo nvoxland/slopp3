@@ -21,6 +21,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
+      (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
       (api/ingest! sess 'sg.util util-src)
       (let [d (api/query-deps sess 'sg.util 'wrap)]
         (is (= 'sg.util/wrap (:root d)))
@@ -61,6 +62,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
+      (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
       (api/ingest! sess 'sg.util util-src)
       ;; a fully-qualified reference too
       (api/add-form! sess 'sg.util "(defn fq [x] (sg.core/leaf x))")

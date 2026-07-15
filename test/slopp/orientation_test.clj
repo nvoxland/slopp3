@@ -87,6 +87,7 @@
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
+      (api/module-dep! sess "qb.b" "qb.a" :prompt "fixture edge")
       (api/create-ns! sess 'qb.b :source "(ns qb.b (:require [qb.a :as a]))\n(defn g [x] (a/f x))\n")
       (api/edit-replace! sess 'qb.a 'f "(defn f\n  \"Core fn.\"\n  [x] (+ x 1))" :prompt "prefer + for clarity" :agent "t")
       (api/test-run! sess nil)
@@ -105,6 +106,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
+      (api/module-dep! sess "fl.b" "fl.a" :prompt "fixture edge")
       (api/ingest! sess 'fl.b
                    (str "(ns fl.b (:require [fl.a :as a] [clojure.test :refer [deftest is]]))\n"
                         "(defn ship [o] (if (:rush? o) 2 1))\n"
@@ -223,6 +225,7 @@
     (try
       (api/ingest! sess 'sl.util
                    "(ns sl.util)\n(defn pad \"Pads.\" [s] (str \" \" s))\n(defn fmt \"Formats cents.\" [c] (pad (str \"$\" c)))\n")
+      (api/module-dep! sess "sl.core" "sl.util" :prompt "fixture edge")
       (api/ingest! sess 'sl.core
                    (str "(ns sl.core (:require [sl.util :as u]))\n"
                         "(defn- tax \"Ten percent.\" [c] (long (* c 0.1)))\n"
@@ -285,6 +288,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
+      (api/module-dep! sess "dp.app" "dp.base" :prompt "fixture edge")
       (api/ingest! sess 'dp.app
                    (str "(ns dp.app (:require [dp.base :as base]))\n"
                         "(defn total [o] (+ 100 (base/fee (:dest-zone o))))\n"))

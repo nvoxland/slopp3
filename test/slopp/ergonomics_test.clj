@@ -83,10 +83,10 @@
     (try
       (api/create-ns! sess 'w.core)
       (testing "first violation reported in full"
-        (let [r (api/add-form! sess 'w.core "(defn stash [a v] (reset! a v))")]
+        (let [r (api/add-form! sess 'w.core "(defn stash \"Stash.\" [a v] (reset! a v))")]
           (is (= ['w.core/stash] (mapv :var (:warnings r))))))
       (testing "an unrelated green write doesn't repeat it — just counts it"
-        (let [r (api/add-form! sess 'w.core "(defn pure-f [x] x)")]
+        (let [r (api/add-form! sess 'w.core "(defn pure-f \"Id.\" [x] x)")]
           (is (empty? (:warnings r)))
           (is (= 1 (:existing-warnings r)))))
       (finally (api/close! sess)))))

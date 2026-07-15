@@ -50,6 +50,7 @@
         sess (api/open! {:dir dir})]
     (try
       (api/ingest! sess 'liba "(ns liba)\n(defn helper [x] (* x 2))\n")
+      (api/module-dep! sess "libb" "liba" :prompt "fixture edge")
       (api/ingest! sess 'libb (str "(ns libb\n  (:require [liba :as la]))\n"
                                    "(defn use-it [x] (la/helper x))\n"))
       (let [r (api/rename! sess 'liba 'helper 'twice :prompt "cross-ns")]

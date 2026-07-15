@@ -19,7 +19,11 @@
   ;; :dep-ns   lib → #{namespaces the dep provides} (M4 surface, for M3's
   ;;           external-call effect boundary)
   ;; :dep-pure #{qualified syms} the user has asserted pure (narrows M3)
-  {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}})
+  ;; :modules  module → #{declared dep modules} — fold of :module-edge
+  ;;           deltas; {} from birth (enforcement always on), nil only in
+  ;;           stores loaded from a pre-module db (open! adopts them)
+  {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}
+   :modules {}})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -458,6 +462,15 @@
                   (assoc-in [:config (:path d) :format] (:format d))
                   (assoc-in [:config (:path d) :values (:key d)] (:value d))))
 
+      :module-edge
+      (with-d
+        (if (= :remove (:action d))
+          (let [deps (disj (get-in store [:modules (:from d)] #{}) (:to d))]
+            (if (empty? deps)
+              (update store :modules dissoc (:from d))
+              (assoc-in store [:modules (:from d)] deps)))
+          (update-in store [:modules (:from d)] (fnil conj #{}) (:to d))))
+
       :config-unset
       (with-d
         (let [st (update-in store [:config (:path d) :values] dissoc (:key d))]
@@ -616,6 +629,26 @@
   (update store :deltas
           (fn [ds] (conj (pop ds) (assoc (peek ds) :merged-from their-id)))))
 
+(defn modules-cycle
+  "A dependency cycle in a module manifest ({module #{deps}}) as a module
+  path [a b ... a], or nil when the graph is acyclic. Pure DFS
+  three-coloring; deterministic order."
+  [manifest]
+  (letfn [(visit [state path m]
+            (case (get state m)
+              :done [state nil]
+              :in   [state (subvec path (.indexOf ^java.util.List path m))]
+              (let [[state cyc]
+                    (reduce (fn [[st c] d]
+                              (if c [st c] (visit st (conj path d) d)))
+                            [(assoc state m :in) nil]
+                            (sort (get manifest m #{})))]
+                [(assoc state m :done) cyc])))]
+    (loop [state {}
+           ms (sort (keys manifest))]
+      (when-let [m (first ms)]
+        (let [[state cyc] (visit state [m] m)]
+          (if cyc cyc (recur state (rest ms))))))))
 (defn merge-logs
   "Phase 4 m2 (C4/C5 activation): merge `theirs` — a store sharing a common
   delta-log prefix with `ours` (a fork = a copied project dir) — into ours by
@@ -881,6 +914,29 @@
                                      :reason "ordering is cosmetic; re-run edit_move if wanted"})
                         changed new-nses (conj applied (:id d)))
 
+                  ;; module edges are CRDT-grain: fold theirs in (adds union,
+                  ;; removes disj) — never a conflict. A union can close a
+                  ;; cycle neither side saw; surface it as a note.
+                  :module-edge
+                  (let [st' (if (= :remove (:action d))
+                              (let [deps (disj (get-in st [:modules (:from d)] #{})
+                                               (:to d))]
+                                (if (empty? deps)
+                                  (update st :modules dissoc (:from d))
+                                  (assoc-in st [:modules (:from d)] deps)))
+                              (update-in st [:modules (:from d)]
+                                         (fnil conj #{}) (:to d)))
+                        cyc (when (= :add (:action d))
+                              (modules-cycle (:modules st')))]
+                    (done st' idmap (inc merged) conflicts
+                          (cond-> notes
+                            cyc (conj {:modules-cycle cyc
+                                       :reason (str "the merged module graphs form a"
+                                                    " cycle neither side saw — retract"
+                                                    " an edge (module_dep {from .. to .."
+                                                    " remove true})")}))
+                          changed new-nses (conj applied (:id d))))
+
                 ;; unknown op: never guess with someone's code
                   (done st idmap merged conflicts
                         (conj notes {:skipped (:op d) :delta (:id d)})
@@ -1002,6 +1058,27 @@
 
                   :else cur))
               nil upto))))
+(defn record-module-edge
+  "Declare (or retract) ONE module dependency edge — the CRDT grain of the
+  module manifest: concurrent edge declarations touch disjoint state and
+  merge as a set union, and each edge carries its own why (:prompt) in the
+  journal instead of vanishing into a file diff. `action` is :add or
+  :remove. Returns [store' delta]."
+  [store from to action & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :module-edge :ns '*session* :at (now-ms)
+                       :from (str from) :to (str to) :action action}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))
+        fold  (fn [st]
+                (if (= :remove action)
+                  (let [deps (disj (get-in st [:modules (str from)] #{}) (str to))]
+                    (if (empty? deps)
+                      (update st :modules dissoc (str from))
+                      (assoc-in st [:modules (str from)] deps)))
+                  (update-in st [:modules (str from)] (fnil conj #{}) (str to))))]
+    [(-> store' fold (update :deltas conj delta)) delta]))
 (defn record-config-put
   "Set one KEY of the structured config file at `path` (format `fmt`, e.g.
   :manifest) — the non-code analog of a form edit: the store holds SEMANTIC

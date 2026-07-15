@@ -1,0 +1,165 @@
+(ns slopp.modules-test
+  "The module system: recursive namespace visibility (depth ≤2 public,
+  deeper scoped to the parent subtree), declared cross-module dependency
+  edges (default-deny once a `modules` manifest exists), acyclic graph,
+  and docstring warnings on the public surface."
+  (:require [clojure.test :refer [deftest is testing]]
+            [rewrite-clj.parser :as p]
+            [slopp.api :as api]
+            [slopp.edit :as edit]
+            [slopp.store :as store]))
+(deftest module-of-is-the-first-two-segments
+  (is (= "logi.quoting" (edit/module-of 'logi.quoting)))
+  (is (= "logi.quoting" (edit/module-of 'logi.quoting.internal)))
+  (is (= "scratch" (edit/module-of 'scratch))))
+(deftest module-edges-are-crdt-grain
+  (let [base    (store/empty-store)
+        [s1 d1] (store/record-module-edge base "b.app" "a.core" :add
+                                          :prompt "app uses core" :agent "t")
+        [s2 d2] (store/record-module-edge s1 "b.app" "a.util" :add)
+        [s3 d3] (store/record-module-edge s2 "b.app" "a.util" :remove)]
+    (testing "the EDGE is the unit: one semantic delta each, state is the fold"
+      (is (= :module-edge (:op d1)))
+      (is (= {:from "b.app" :to "a.core" :action :add}
+             (select-keys d1 [:from :to :action])))
+      (is (= "app uses core" (:prompt d1)) "the why rides the delta")
+      (is (= {"b.app" #{"a.core" "a.util"}} (:modules s2)))
+      (is (= {"b.app" #{"a.core"}} (:modules s3)) "remove folds out"))
+    (testing "replay-delta reconstructs the fold"
+      (is (= (:modules s2) (:modules (store/replay-delta s1 d2))))
+      (is (= (:modules s3) (:modules (store/replay-delta s2 d3)))))
+    (testing "concurrent adds to the SAME module merge as a union — never a conflict"
+      (let [[ours _]   (store/record-module-edge s1 "b.app" "a.util" :add)
+            [theirs _] (store/record-module-edge s1 "b.app" "a.extra" :add)
+            r          (store/merge-logs ours theirs :from "fork")]
+        (is (empty? (:conflicts r)) (pr-str (:conflicts r)))
+        (is (= #{"a.core" "a.util" "a.extra"}
+               (get-in r [:store :modules "b.app"])))))
+    (testing "a merge whose union creates a cycle gets a NOTE, not silence"
+      (let [[ours _]   (store/record-module-edge base "x.a" "x.b" :add)
+            [theirs _] (store/record-module-edge base "x.b" "x.a" :add)
+            r          (store/merge-logs ours theirs :from "fork")]
+        (is (empty? (:conflicts r)))
+        (is (some :modules-cycle (:notes r)) (pr-str (:notes r)))))))
+(deftest module-rules-are-recursive-and-declared
+  (let [viol (fn [manifest rows] (seq (edit/module-violations manifest rows)))
+        row  (fn [from to] {:from-ns from :from-var 'f :to to})]
+    (testing "nil manifest = a pre-adoption store — rules off until open! adopts"
+      (is (nil? (viol nil [(row 'b.user 'a.pub)]))))
+    (testing "an undeclared cross-module edge is a violation teaching the semantic verb"
+      (let [[v] (viol {"b.user" #{}} [(row 'b.user 'a.pub)])]
+        (is (= :undeclared-edge (:rule v)) (pr-str v))
+        (is (re-find #"module_dep \{from \"b\.user\" to \"a\.pub\"\}" (:error v))
+            (:error v))))
+    (testing "a declared edge passes"
+      (is (nil? (viol {"b.user" #{"a.pub"}} [(row 'b.user 'a.pub)]))))
+    (testing "visibility is recursive: deep namespaces are parent-scoped"
+      (is (some #(= :visibility (:rule %))
+                (viol {"b.user" #{"a.pub"}} [(row 'b.user 'a.pub.deep)]))
+          "a.pub.deep is not reachable from another module even WITH the edge")
+      (is (nil? (viol {} [(row 'a.pub.other 'a.pub.deep)]))
+          "a.pub.deep IS callable from its sibling under a.pub")
+      (is (nil? (viol {} [(row 'a.pub.deep 'a.pub.deep.deeper)]))
+          "a.pub.deep.deeper is callable from a.pub.deep")
+      (is (some #(= :visibility (:rule %))
+                (viol {} [(row 'a.pub.other 'a.pub.deep.deeper)]))
+          "but NOT from a.pub.other — sibling sub-packages are isolated")
+      (is (re-find #"\^:export"
+                   (:error (first (viol {"b.user" #{"a.pub"}}
+                                        [(row 'b.user 'a.pub.deep)]))))
+          "the refusal teaches the hoist"))
+    (testing "^:export hoists a deep var into the module surface (edge still required)"
+      (is (nil? (viol {"b.user" #{"a.pub"}}
+                      [(assoc (row 'b.user 'a.pub.deep) :to-export? true)])))
+      (is (some #(= :undeclared-edge (:rule %))
+                (viol {} [(assoc (row 'b.user 'a.pub.deep) :to-export? true)]))
+          "export does not waive the edge declaration"))
+    (testing "same-ns rows are exempt"
+      (is (nil? (viol {"b.user" #{}} [(row 'b.user 'b.user)]))))))
+(deftest ^:isolated the-manifest-follows-ns-renames
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ma.core "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n")
+      (api/module-dep! sess "mb.app" "ma.core" :prompt "app uses core")
+      (api/ingest! sess 'mb.app
+                   (str "(ns mb.app (:require [ma.core :as core]))\n"
+                        "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))
+      (testing "renaming the CALLER module re-keys the manifest entry"
+        (is (nil? (:error (api/ns-rename! sess 'mb.app 'mb.hub :prompt "rebrand"))))
+        (is (= {"mb.hub" #{"ma.core"}}
+               (edit/modules-manifest (:store @sess)))))
+      (testing "renaming the TARGET module re-keys the dep values"
+        (is (nil? (:error (api/ns-rename! sess 'ma.core 'mx.core :prompt "rebrand"))))
+        (is (= {"mb.hub" #{"mx.core"}}
+               (edit/modules-manifest (:store @sess))))
+        (is (nil? (:error (api/edit-replace! sess 'mb.hub 'use-it
+                                             "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
+                                             :prompt "still declared under the new names")))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated the-module-lifecycle
+  (let [sess (api/open!)]
+    (try
+      (is (nil? (:error (api/ingest! sess 'ma.core
+                                     "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n"))))
+      (is (nil? (:error (api/ingest! sess 'ma.core.impl
+                                     (str "(ns ma.core.impl)\n"
+                                          "(defn hidden \"Package.\" [x] x)\n"
+                                          "(defn ^:export hoisted \"Public via export.\" [x] x)\n"))))
+          "deep ns lands fine — same module")
+      (testing "enforcement is on from birth: declare-then-use"
+        (let [r (api/ingest! sess 'mb.app
+                             (str "(ns mb.app (:require [ma.core :as core]\n"
+                                  "                     [ma.core.impl :as impl]))\n"
+                                  "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))]
+          (is (re-find #"does not declare ma\.core" (str (:error r))) (pr-str r))
+          (is (re-find #"module_dep \{from \"mb\.app\" to \"ma\.core\"\}" (str (:error r)))
+              "the refusal teaches the semantic verb")))
+      (testing "declaring the edge is a semantic call whose WHY lands in the journal"
+        (let [r (api/module-dep! sess "mb.app" "ma.core"
+                                 :prompt "the app renders core's data")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= {:from "mb.app" :to "ma.core" :action :add}
+                 (select-keys r [:from :to :action])))
+          (let [d (last (filter #(= :module-edge (:op %))
+                                (store/deltas (:store @sess))))]
+            (is (= "the app renders core's data" (:prompt d)))))
+        (is (nil? (:error (api/ingest! sess 'mb.app
+                                       (str "(ns mb.app (:require [ma.core :as core]\n"
+                                            "                     [ma.core.impl :as impl]))\n"
+                                            "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))))
+            "the same ingest now lands"))
+      (testing "re-declaring is idempotent, not journal noise"
+        (is (:already-declared (api/module-dep! sess "mb.app" "ma.core"))))
+      (testing "an edge that would close a CYCLE is refused with the cycle named"
+        (let [r (api/module-dep! sess "ma.core" "mb.app" :prompt "nope")]
+          (is (re-find #"(?i)cycle" (str (:error r))) (pr-str r))))
+      (testing "retracting an edge is the same verb and re-arms the gate"
+        (is (nil? (:error (api/module-dep! sess "mb.app" "ma.core" :remove true
+                                           :prompt "trying decoupling"))))
+        (let [r (api/edit-replace! sess 'mb.app 'use-it
+                                   "(defn use-it \"Uses ma.\" [x] (core/shared (inc x)))"
+                                   :prompt "should be blocked again")]
+          (is (re-find #"does not declare" (str (:error r))) (pr-str r)))
+        (is (nil? (:error (api/module-dep! sess "mb.app" "ma.core"
+                                           :prompt "restored")))))
+      (testing "deep vars are package-private; ^:export hoists into the surface"
+        (let [r (api/edit-replace! sess 'mb.app 'use-it
+                                   "(defn use-it \"Uses ma.\" [x] (impl/hidden x))"
+                                   :prompt "blocked: package-private")]
+          (is (re-find #"package-private" (str (:error r))) (pr-str r))
+          (is (re-find #"\^:export" (str (:error r))) "the refusal teaches the hoist"))
+        (is (nil? (:error (api/edit-replace! sess 'mb.app 'use-it
+                                             "(defn use-it \"Uses ma.\" [x] (impl/hoisted x))"
+                                             :prompt "fine: exported")))))
+      (testing "ns_create of a violating namespace is gated too"
+        (let [r (api/create-ns! sess 'mc.rogue
+                                :source (str "(ns mc.rogue (:require [ma.core :as core]))\n"
+                                             "(defn steal \"Rogue.\" [x] (core/shared x))\n"))]
+          (is (re-find #"does not declare" (str (:error r))) (pr-str r))))
+      (testing "a public defn without a docstring WARNS (never blocks)"
+        (let [r (api/edit-replace! sess 'mb.app 'use-it
+                                   "(defn use-it [x] (impl/hoisted x))"
+                                   :prompt "drop the doc")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some :missing-doc (:warnings r)) (pr-str (:warnings r)))))
+      (finally (api/close! sess)))))

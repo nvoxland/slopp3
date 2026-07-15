@@ -143,11 +143,14 @@
                                              :prompt (str "clone: dep from " url))]
                         (when (:error r)
                           (throw (ex-info (str "dep " lib ": " (:error r)) {})))))
+                    (swap! sess assoc :adopting? true)
                     (doseq [ns-sym (boot/dependency-order sources)]
                       (let [r (api/ingest! sess ns-sym (get sources ns-sym)
                                            :agent agent)]
                         (when (:error r)
                           (throw (ex-info (str ns-sym ": " (:error r)) {})))))
+                    (swap! sess dissoc :adopting?)
+                    (api/adopt-modules! sess :agent agent)
                     (let [conn (:db @sess)]
                       (db/set-meta! conn "git-remote" (str url))
                                             (doseq [[path text] tree

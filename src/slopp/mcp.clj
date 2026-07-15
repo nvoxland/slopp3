@@ -49,11 +49,11 @@
                                :depth {:type "integer"} :limit {:type "integer"}}
                   :required ["ns" "name"]}}
    {:name "query_depends"
-    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). Ask this first; query_impact/query_flow/query_references give depth."
+    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true (no `on`) reads the MODULE manifest: declared edges + standing debt. Ask this first; query_impact/query_flow/query_references give depth."
     :inputSchema {:type "object"
                   :properties {:on {:type "string"}
-                               :direction {:type "string" :enum ["dependents" "dependencies"]}}
-                  :required ["on"]}}
+                               :direction {:type "string" :enum ["dependents" "dependencies"]}
+                               :modules {:type "boolean"}}}}
    {:name "query_detail"
     :description "The FULL version of a trimmed response (responses over the size gate carry a query_detail id). The spool keeps the last 20."
     :inputSchema {:type "object"
@@ -330,6 +330,13 @@
                                :format {:type "string"}
                                :prompt {:type "string"}}
                   :required ["path"]}}
+   {:name "module_dep"
+    :description "Declare (or retract with remove=true) ONE module dependency edge — modules are the first two ns segments (\"logi.parcel\"). Each call is one journaled delta; say WHY in prompt. Adds are cycle-checked. Read the manifest: query_depends {modules true}."
+    :inputSchema {:type "object"
+                  :properties {:from {:type "string"} :to {:type "string"}
+                               :remove {:type "boolean"}
+                               :prompt {:type "string"}}
+                  :required ["from" "to"]}}
    {:name "deps_add"
     :description "Add an external dependency (hot to the live classpath, no restart). lib like \"org.clojure/data.json\"; version string or full coord map."
     :inputSchema {:type "object"
@@ -736,7 +743,12 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
      (text! (api/config-file! session (:path a)
                                            :key (:key a) :value (:value a)
                                            :unset (:unset a) :format (:format a)
-                                           :prompt (:prompt a) :agent (:agent a))))})
+                                           :prompt (:prompt a) :agent (:agent a))))
+   "module_dep"
+   (fn [session a _sym]
+     (text! (api/module-dep! session (:from a) (:to a)
+                             :remove (:remove a)
+                             :prompt (:prompt a) :agent (:agent a))))})
 (def ^:private sync-handlers!
   "call-tool dispatch \u2014 git publish/absorb + remotes (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
   {"git_push"
@@ -914,6 +926,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                         :limit (or (:limit a) 8))))
       "query_depends" (text! (told! session name a
                                         (api/query-depends session (:on a)
+                                                          :modules (:modules a)
                                                           :direction (if (= "dependencies" (:direction a))
                                                                        :dependencies :dependents))))
       "session_brief" (text! (let [b    (api/session-brief session)
@@ -1062,7 +1075,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                 src   (or (:source a) (:to a))]
                             (when-not (and (or match (:where a)) src)
                               (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it), plus :source" {})))
-                            (text! (-> (api/edit-subform! session (sym :ns) (sym :form)
+                            (text! (-> (api/edit-subform! session (sym :ns)
+                                            (symbol (or (:form a) (:name a)
+                                                        (throw (ex-info "edit_subform needs :form (the containing form's name; :name works too)" {}))))
                                                          match src
                                                          :text (:text a)
                                                          :where (:where a)

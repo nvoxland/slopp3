@@ -101,6 +101,7 @@
                       (let [fs (into #{} (filter live?) forms)]
                         (when (seq fs) [t fs])))))
             raw))))
+(declare adopt-modules!)
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
@@ -134,6 +135,11 @@
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
        (when-let [err (image/load-ns! image store ns-sym)]
          (throw (ex-info (str "image load failed for " ns-sym ": " err) {}))))
+     ;; module adoption: a populated store from a pre-module db (:modules
+     ;; nil) gets its manifest derived from reality, once — fresh stores
+     ;; are born with {} and enforcement already on
+     (when (and conn (seq (:namespaces store)) (nil? (:modules store)))
+       (adopt-modules! session :agent (or agent-id "slopp")))
      session)))
 
 (defn close! [session]
@@ -357,7 +363,11 @@
     (try
       (let [base      (:store @session)
             candidate (store/ingest base ns-sym source :agent agent)]
-        (if-let [derr (edit/dialect-scan candidate ns-sym)]
+        (if-let [derr (or (edit/dialect-scan candidate ns-sym)
+                          ;; bulk imports (clone) land reality first and derive
+                          ;; the manifest after — the gate blocks DRIFT, not adoption
+                          (when-not (:adopting? @session)
+                            (edit/module-scan candidate ns-sym)))]
           ;; same D3/D4 gate the edit path enforces — a host form can only enter
           ;; the store already ^:unsafe, so imported code is never frozen and the
           ;; image is never touched by a rejected namespace.
@@ -388,7 +398,11 @@
                                     [])
                   {:ns ns-sym
                    :forms (count (store/forms candidate ns-sym))
-                   :warnings (edit/ns-warnings candidate ns-sym)
+                   :warnings (vec (concat
+                                   (edit/ns-warnings candidate ns-sym)
+                                   (keep #(edit/missing-doc-warning
+                                           candidate ns-sym (:name %))
+                                         (store/forms candidate ns-sym))))
                    :test summary}))))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
@@ -1454,7 +1468,9 @@
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     {:store st' :delta d}
+                     (if-let [merr (when nm (edit/module-refusal st' ns-sym nm))]
+                       {:error merr}
+                       {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
                (fn [base] (when nm (:node (store/form-named base ns-sym nm))))
                (symbol (str ns-sym) (str (or nm "anonymous")))
@@ -1473,7 +1489,11 @@
                 (with-ms
                   (cond-> {:delta    (:delta r)
                            ;; T3: only NEW violations; pre-existing as a count
-                           :warnings (vec (remove (comp pre-warned :var) all-w))
+                           :warnings (vec (concat
+                                           (remove (comp pre-warned :var) all-w)
+                                           (some-> (edit/missing-doc-warning
+                                                    (:store @session) ns-sym nm)
+                                                   vector)))
                            :test     summary
                            :affected (or affected :all)}
                     (:image-healed r) (assoc :image-healed true)
@@ -1530,10 +1550,12 @@
                                                       :prompt prompt :group gid
                                                       :agent agent)]
                    (let [nm' (store/form-symbol node)]
-                     {:store st' :delta d
-                      :hot (if (and nm' (not= nm' name))
-                             [:load-unmap (:form-id d) ns name]
-                             [:load (:form-id d)])})
+                     (if-let [merr (edit/module-refusal st' ns (or nm' name))]
+                       {:error merr}
+                       {:store st' :delta d
+                        :hot (if (and nm' (not= nm' name))
+                               [:load-unmap (:form-id d) ns name]
+                               [:load (:form-id d)])}))
                    (edit/missing-form-error st ns name))))
     :add     (let [{:keys [node error]} (edit/parse-form source)
                    nm (some-> node store/form-symbol)
@@ -1550,7 +1572,9 @@
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
                                                      :agent agent :before before)]
-                   {:store st' :delta d :hot [:load (:form-id d)]}
+                   (if-let [merr (when nm (edit/module-refusal st' ns nm))]
+                     {:error merr}
+                     {:store st' :delta d :hot [:load (:form-id d)]})
                    {:error (str "no namespace " ns " (ingest it first)")})))
     :subform (let [plan (cond
                           (seq (:where step))
@@ -1667,12 +1691,22 @@
                                   [])
                 (let [all-w    (->> (map :ns steps) distinct
                                     (mapcat #(edit/ns-warnings (:store @session) %)))
+                      doc-w    (keep identity
+                                     (map (fn [step x]
+                                            (when-let [[action nsx nm] x]
+                                              (when (or (= :add action)
+                                                        (nil? (edit/missing-doc-warning
+                                                               base0 nsx (:name step))))
+                                                (edit/missing-doc-warning
+                                                 (:store @session) nsx nm))))
+                                          steps step-nms))
                       existing (count (filter (comp pre-warned :var) all-w))]
                   (with-ms
                     (cond-> {:group    gid
                              :deltas   deltas
                              :changed-nses (vec (distinct (map :ns steps)))
-                             :warnings (vec (remove (comp pre-warned :var) all-w))
+                             :warnings (vec (concat (remove (comp pre-warned :var) all-w)
+                                                    (distinct doc-w)))
                              :test     summary
                              :affected (or (not-empty affected) :all)}
                       (:healed load-res) (assoc :image-healed true)
@@ -1742,16 +1776,28 @@
          (filter #(store/ns-of-form-id store %)))))
 
 (defn test-run!
-  "Traced, diagnosed run of `ns-sym`'s tests (all, or just the plain names in
-  `:only`); refreshes the test→form map and records the result (C4).
-  `ns-sym` nil = the WHOLE project in one image eval, instrumentation paid
-  once (F-3c1 — per-ns sweeps were 12 calls and 12 instrumentation passes).
-  D5.1: reds are judged against the forms changed since the last verification;
+  "Traced, diagnosed run of `ns-sym`'s tests (all, or just those in `:only`
+  — plain names within `ns-sym`, or ns-qualified names which auto-scope);
+  refreshes the test→form map and records the result (C4). `ns-sym` nil =
+  the WHOLE project in one image eval, instrumentation paid once (F-3c1 —
+  per-ns sweeps were 12 calls and 12 instrumentation passes). D5.1: reds
+  are judged against the forms changed since the last verification;
   `:fresh true` restarts first for a guaranteed-faithful single run."
   [session ns-sym & {:keys [only fresh]}]
   (let [t0          (System/nanoTime)
         st          (:store @session)
-        ns-sym      (or ns-sym (vec (sort (keys (:namespaces st)))))
+        only        (seq only)
+        qual        (filter #(str/includes? (str %) "/") only)
+        ns-sym      (or ns-sym
+                        (when (seq qual)
+                          (vec (sort (distinct (map #(symbol (namespace (symbol (str %))))
+                                                    qual)))))
+                        (vec (sort (keys (:namespaces st)))))
+        only'       (seq (map #(let [s (str %)]
+                                 (if (str/includes? s "/")
+                                   (symbol (name (symbol s)))
+                                   %))
+                              only))
         last-verify (:id (last (filter #(= :verify (:op %)) (store/deltas st))))
         edited      (into #{}
                           (keep (fn [id]
@@ -1759,12 +1805,17 @@
                                     (symbol (str (store/ns-of-form-id st id))
                                             (str (or (:name e) (:id e)))))))
                           (forms-changed-since st last-verify))
-        summary     (diagnosed-run! session ns-sym (seq only)
+        summary     (diagnosed-run! session ns-sym only'
                                     :edited edited :fresh fresh
                                     :include-integration? true)]  ; M5: explicit run
     (commit-appended! session
                       #(store/record-verification % ns-sym summary) [])
-    (with-ms summary t0)))
+    (with-ms (cond-> summary
+               (and only' (zero? (:test summary 0)))
+               (assoc :note (str "0 tests matched :only " (vec only)
+                                 " — check the names; ^:isolated tests only run"
+                                 " under test_run {:isolated true}")))
+             t0)))
 
 (defn fix-declares!
   "clj-surgeon-inspired tidy: for each (declare ...) in `ns-sym`, move the
@@ -2055,6 +2106,16 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
+(defn- modules-config-entry
+  "The module manifest PROJECTED as a structured-config entry — how the
+  edge fold becomes a `modules` file in git commits and builds (read-only
+  transparency; writes go through module_dep)."
+  [store]
+  (when (seq (:modules store))
+    {:format :manifest
+     :values (into (sorted-map)
+                   (map (fn [[m ds]] [m (clojure.string/join " " (sort ds))]))
+                   (:modules store))}))
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
@@ -2124,7 +2185,10 @@
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
-                       (seq (:config st)) (assoc :config (:config st)))))))))))
+                       (or (seq (:config st)) (modules-config-entry st))
+                            (assoc :config (cond-> (:config st)
+                                             (modules-config-entry st)
+                                             (assoc "modules" (modules-config-entry st)))))))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -2544,6 +2608,43 @@
                        (into {} (map (fn [[t fs]]
                                        [(fix t) (into #{} (map fix) fs)]))
                              tm))))
+            ;; the manifest follows: module names are ns prefixes, so when the
+            ;; LAST ns of a module renames away, its edges re-key (semantic
+            ;; :module-edge removes+adds — the journal shows the follow)
+            (let [old-mod (edit/module-of old)
+                  new-mod (edit/module-of new)
+                  why     (str "manifest follows ns rename " old " → " new)]
+              (when (and (not= old-mod new-mod)
+                         (not-any? #(= old-mod (edit/module-of %))
+                                   (keys (:namespaces (:store @session)))))
+                (commit-appended!
+                 session
+                 (fn [base]
+                   (let [sub #(if (= old-mod %) new-mod %)]
+                     (reduce
+                      (fn [s [m deps]]
+                        (cond
+                          (= m old-mod)
+                          (as-> s $
+                            (reduce #(first (store/record-module-edge
+                                             %1 m %2 :remove :prompt why :agent agent))
+                                    $ (sort deps))
+                            (reduce #(first (store/record-module-edge
+                                             %1 new-mod %2 :add :prompt why :agent agent))
+                                    $ (sort (disj (into #{} (map sub) deps) new-mod))))
+
+                          (contains? deps old-mod)
+                          (as-> s $
+                            (first (store/record-module-edge
+                                    $ m old-mod :remove :prompt why :agent agent))
+                            (if (= m new-mod)
+                              $
+                              (first (store/record-module-edge
+                                      $ m new-mod :add :prompt why :agent agent))))
+
+                          :else s))
+                      base (or (:modules base) {}))))
+                 [])))
             (fresh-image! session)          ; the old ns must NOT linger
             (let [verify-nses (vec (remove #{old} touched))
                   summary (run-verification! session verify-nses nil
@@ -3062,7 +3163,9 @@
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file text)))
-  (doseq [[path entry] (:config st)]
+  (doseq [[path entry] (cond-> (:config st)
+                               (modules-config-entry st)
+                               (assoc "modules" (modules-config-entry st)))]
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file (store/render-config entry))))
@@ -3127,6 +3230,18 @@
                               block)}))))
        (take limit)
        vec))
+(defn- failing-test-rollup
+  "EVERY failing test name from a runner's output, grouped by file:
+  {file [test-names]} — the :failing detail blocks are capped, so without
+  this a many-failure run needs fix-rerun loops just to enumerate its
+  fallout classes (measured: 50 failures × 5-block cap = four reruns)."
+  [output]
+  (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
+       (keep (fn [b]
+               (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
+                 [(or (second (re-find #"\(([^()\s]+\.clj):" b)) "?") nm])))
+       distinct
+       (reduce (fn [m [f nm]] (update m f (fnil conj []) nm)) (sorted-map))))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3158,7 +3273,9 @@
                                      :output (->> (str/split-lines out)
                                                   (remove str/blank?)
                                                   (take-last 8) (str/join "\n"))}
-                 (= :red (:status s)) (assoc s :failing (parse-test-failures out))
+                 (= :red (:status s)) (assoc s
+                                       :failing (parse-test-failures out)
+                                       :all-failing (failing-test-rollup out))
                  :else s))))))
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
@@ -3264,15 +3381,35 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
+(defn- module-debt
+  "Whole-store module violations under the store's CURRENT manifest —
+  compact rows, G13-capped — the debt a manifest change reveals (per-write
+  gates block NEW violations; the advisory shows what already stands)."
+  [store]
+  (when-let [manifest (edit/modules-manifest store)]
+    (let [nses (set (keys (:namespaces store)))
+          rows (for [nsx (sort nses)
+                     u   (:var-usages (index/analyze (render/render-ns store nsx)))
+                     :when (contains? nses (:to u))]
+                 {:from-ns nsx :from-var (:from-var u) :to (:to u)
+                  :to-export? (edit/exported? store (:to u) (:name u))})
+          vs   (edit/module-violations manifest rows)]
+      (when vs
+        {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
+         :count (count vs)}))))
 (defn config-file!
   "Structured config files: the store holds SEMANTIC key/values per path
   (per-key delta history, like forms); the projection serializes them into
   the file format (`:manifest` → sorted `K: V` lines). Set a key
   (`:key`+`:value`, `:format` on first touch, default :manifest), remove one
-  (`:key`+`:unset true`), or read (path only: values + rendered preview)."
+  (`:key`+`:unset true`), or read (path only: values + rendered preview).
+  The module manifest is NOT a config file — module_dep is its verb."
   [session path & {:keys [key value unset format prompt agent]}]
   (let [entry (get-in (:store @session) [:config (str path)])]
     (cond
+      (= "modules" (str path))
+      {:error "the module manifest is edge-grain, not a file — declare or retract one dependency at a time: module_dep {from \"x.y\" to \"a.b\"} (add) or module_dep {from \"x.y\" to \"a.b\" remove true}; read it via query_depends {modules true}"}
+
       (and key unset)
       (if-not (get-in entry [:values (str key)])
         {:error (str key " is not set on " path)}
@@ -3670,48 +3807,131 @@
   KEYWORD (\":dest-zone\"). Dependents: ns → who requires it + qualified
   refs; var → blast radius (callers, value refs, covering tests); keyword
   → the field's flow. Dependencies: var → the transitive callee tree; ns
-  → its requires. One tool to ask — results carry :kind."
-  [session on & {:keys [direction] :or {direction :dependents}}]
-  (let [on (str/trim (str on))
-        st (:store @session)]
+  → its requires. `:modules true` (no `on`) → the module manifest (declared
+  edges + any standing debt). One tool to ask — results carry :kind."
+  [session on & {:keys [direction modules] :or {direction :dependents}}]
+  (let [st (:store @session)]
+    (if modules
+      {:kind :modules
+       :manifest (into (sorted-map) (map (fn [[m ds]] [m (vec (sort ds))]))
+                       (or (edit/modules-manifest st) {}))
+       :debt (module-debt st)}
+      (let [on (str/trim (str on))]
+        (cond
+          (str/starts-with? on ":")
+          {:kind :keyword :on on :rows (query-flow session on)}
+
+          (str/includes? on "/")
+          (let [[nsx nm] (str/split on #"/" 2)]
+            (if (= :dependencies direction)
+              (let [r (query-deps session (symbol nsx) (symbol nm))]
+                (assoc r :kind :var :on on :direction :dependencies))
+              (let [r (query-impact session (symbol nsx) (symbol nm))]
+                (if (:error r) r (assoc r :kind :var :on on)))))
+
+          (contains? (:namespaces st) (symbol on))
+          (let [target   (symbol on)
+                requires (vec (sort (distinct (vals (edit/require-aliases st target)))))]
+            (if (= :dependencies direction)
+              {:kind :namespace :on target :direction :dependencies
+               :requires requires}
+              (let [req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
+                    required-by (vec (sort (filter #(and (not= % target)
+                                                         (contains? (req-set %) target))
+                                                   (keys (:namespaces st)))))
+                    pat         (re-pattern (str "(?<![\\w.-])"
+                                                 (java.util.regex.Pattern/quote on) "/"))
+                    refs        (vec (for [nsx (sort (keys (:namespaces st)))
+                                           :when (not= nsx target)
+                                           e (store/forms st nsx)
+                                           :when (and (:name e)
+                                                      (re-find pat (n/string (:node e))))]
+                                       {:ns nsx :form (:name e)}))]
+                {:kind :namespace :on target
+                 :required-by required-by
+                 :requires requires
+                 :qualified-refs (vec (take 20 refs))})))
+
+          :else
+          {:error (str "nothing named " on
+                       " — `on` is a namespace, var (ns/name), or :keyword;"
+                       " modules true reads the module manifest")})))))
+(defn adopt-modules!
+  "ADOPTION (internal — never a tool, never explicit): derive the module
+  manifest from the CURRENT actual dependency graph — kondo-resolved, so
+  :refer'd calls count — and record it as one :module-edge delta per edge.
+  Called once by open! for a populated store whose db predates the module
+  system (:modules nil); by construction the result is acyclic with zero
+  violations, so adoption never breaks working code — the gate then blocks
+  DRIFT until the agent declares new edges (module_dep)."
+  [session & {:keys [agent]}]
+  (let [edges (edit/derive-module-edges (:store @session))]
+    (commit-appended!
+     session
+     (fn [base]
+       (reduce (fn [s [m deps]]
+                 (reduce (fn [s2 dep]
+                           (first (store/record-module-edge
+                                   s2 m dep :add
+                                   :prompt "module adoption: edge derived from the actual dependency graph"
+                                   :agent agent)))
+                         s (sort deps)))
+               (update base :modules #(or % {}))
+               (sort edges)))
+     [])
+    {:modules (count edges)
+     :edges   (reduce + 0 (map count (vals edges)))}))
+(defn module-dep!
+  "Declare or retract ONE module dependency edge — the semantic verb behind
+  the module manifest (there is no file to edit): each call is one
+  :module-edge delta carrying its why (:prompt). Adds are refused when the
+  resulting graph would contain a cycle; the response carries the module's
+  folded dep set and, when any exists, the store's remaining :violations
+  debt."
+  [session from to & {:keys [remove prompt agent]}]
+  (let [manifest (or (edit/modules-manifest (:store @session)) {})
+        from     (str from)
+        to       (str to)
+        modish   #(re-matches #"[^.\s]+(\.[^.\s]+)?" %)
+        action   (if remove :remove :add)]
     (cond
-      (str/starts-with? on ":")
-      {:kind :keyword :on on :rows (query-flow session on)}
+      (not (and (modish from) (modish to)))
+      {:error (str "modules are the first TWO segments of a namespace"
+                   " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
+                   (pr-str [from to]))}
 
-      (str/includes? on "/")
-      (let [[nsx nm] (str/split on #"/" 2)]
-        (if (= :dependencies direction)
-          (let [r (query-deps session (symbol nsx) (symbol nm))]
-            (assoc r :kind :var :on on :direction :dependencies))
-          (let [r (query-impact session (symbol nsx) (symbol nm))]
-            (if (:error r) r (assoc r :kind :var :on on)))))
+      (= from to)
+      {:error "a module never declares itself"}
 
-      (contains? (:namespaces st) (symbol on))
-      (let [target   (symbol on)
-            requires (vec (sort (distinct (vals (edit/require-aliases st target)))))]
-        (if (= :dependencies direction)
-          {:kind :namespace :on target :direction :dependencies
-           :requires requires}
-          (let [req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
-                required-by (vec (sort (filter #(and (not= % target)
-                                                     (contains? (req-set %) target))
-                                               (keys (:namespaces st)))))
-                pat         (re-pattern (str "(?<![\\w.-])"
-                                             (java.util.regex.Pattern/quote on) "/"))
-                refs        (vec (for [nsx (sort (keys (:namespaces st)))
-                                       :when (not= nsx target)
-                                       e (store/forms st nsx)
-                                       :when (and (:name e)
-                                                  (re-find pat (n/string (:node e))))]
-                                   {:ns nsx :form (:name e)}))]
-            {:kind :namespace :on target
-             :required-by required-by
-             :requires requires
-             :qualified-refs (vec (take 20 refs))})))
+      (and remove (not (contains? (get manifest from #{}) to)))
+      {:error (str from " does not declare " to " — nothing to remove")}
+
+      (and (not remove) (contains? (get manifest from #{}) to))
+      {:from from :to to :action action :already-declared true
+       :deps (vec (sort (get manifest from)))}
 
       :else
-      {:error (str "nothing named " on
-                   " — `on` is a namespace, var (ns/name), or :keyword")})))
+      (if-let [cyc (and (not remove)
+                        (store/modules-cycle
+                         (update manifest from (fnil conj #{}) to)))]
+        {:error (str "that edge creates a dependency CYCLE: "
+                     (clojure.string/join " → " cyc)
+                     " — modules stay acyclic; point the dependency one way"
+                     " (usually by extracting the shared piece into a module"
+                     " both sides may depend on)")}
+        (let [st' (commit-appended!
+                   session
+                   #(first (store/record-module-edge % from to action
+                                                     :prompt prompt
+                                                     :agent agent))
+                   [])]
+          (cond-> {:from from :to to :action action
+                   :deps (vec (sort (get-in st' [:modules from])))}
+            (module-debt st')
+            (assoc :violations (module-debt st')
+                   :note (str "existing debt under this manifest — writes"
+                              " touching these forms stay blocked until the"
+                              " edge is declared or the call restructured"))))))))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

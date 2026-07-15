@@ -328,7 +328,7 @@
                                {:action "require" :ns "gs.core"
                                 :require "[clojure.string :as str]"}
                                {:action "add" :ns "gs.core"
-                                :source "(defn label [n] (str/upper-case (str \"tier \" n)))"}]
+                                :source "(defn label \"Tier label.\" [n] (str/upper-case (str \"tier \" n)))"}]
                        :prompt "volume tier + labels"})]
           (is (re-find #":ok true" r) r)
           (is (re-find #":deltas 4" r) r)))
@@ -376,6 +376,7 @@
                           "(def zone-fees {1 500, 2 900})\n"
                           "(defn zone-fee \"The zone fee table lookup.\" [z] (get zone-fees z 0))\n"
                           "(deftest zone-t (is (= 500 (zone-fee 1))))\n")})
+      (call sess "module_dep" {:from "sw.core" :to "sw.zone" :prompt "fixture edge"})
       (call sess "ns_create"
             {:ns "sw.core"
              :source (str "(ns sw.core (:require [clojure.test :refer [deftest is]] [sw.zone :as zone]))\n"
