@@ -200,3 +200,31 @@
           (is (some #{'ia.core} (get-in r [:affected :changed-nses])))
           (is (= :green (:status r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated parallel-isolated-runs-shard-and-merge
+  ;; the full isolated suite is the wall-time king (~210s at repo scale,
+  ;; run at every milestone) — sharding test nses across parallel JVMs
+  ;; must return the same merged truth
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pa.core
+                   (str "(ns pa.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      (api/ingest! sess 'pb.core
+                   (str "(ns pb.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn g \"G.\" [x] (dec x))\n"
+                        "(deftest g-t (is (= 0 (g 1))))\n"
+                        "(deftest g2-t (is (= -1 (g 0))))\n"))
+      (let [r (api/isolated-test-run! sess :parallel 2)]
+        (is (= 3 (:ran r)) (pr-str (dissoc r :output)))
+        (is (= 3 (:assertions r 0)) (pr-str (dissoc r :output)))
+        (is (= :green (:status r)))
+        (is (= 2 (:shards r))))
+      (testing "a red in any shard surfaces with its details"
+        (api/edit-replace! sess 'pb.core 'g "(defn g \"G.\" [x] (+ x 5))"
+                           :prompt "breaks both g tests")
+        (let [r (api/isolated-test-run! sess :parallel 2)]
+          (is (= :red (:status r)))
+          (is (pos? (:failures r 0)))
+          (is (seq (:all-failing r)) (pr-str (dissoc r :output)))))
+      (finally (api/close! sess)))))

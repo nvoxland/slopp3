@@ -253,7 +253,8 @@
                                :only {:type "array" :items {:type "string"}}
                                :fresh {:type "boolean"}
                                :isolated {:type "boolean"}
-                               :affected {:type "boolean"}}}}
+                               :affected {:type "boolean"}
+                               :parallel {:type "integer"}}}}
    {:name "draft_test"
     :description "A ready-to-edit deftest DRAFT for an :untested form. With :code (a driver expression) it observes real calls and turns each into an assertion; without, a signature skeleton with TODO holes. Nothing is written — adopt via edit_add_form, red-first."
     :inputSchema {:type "object"
@@ -1126,6 +1127,7 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
                                    (api/isolated-test-run! session
                                                            :ns (some-> (:ns a) symbol)
                                                            :affected (:affected a)
+                                                           :parallel (some-> (:parallel a) str parse-long)
                                                            :only (some->> (:only a) (mapv symbol)))
                                    (api/test-run! session
                                                   (when (:ns a) (sym :ns))

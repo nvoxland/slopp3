@@ -2037,19 +2037,20 @@
                :skipped (vec (filter #(= :skip (:action %)) plan))
                :test    summary})))))))
 
+(defn- test-ns?
+  "Does `nsx` hold any deftest? (Inline tests count — Q13.)"
+  [store nsx]
+  (some #(str/starts-with? (str/triml (n/string (:node %))) "(deftest")
+        (store/forms store nsx)))
 (defn- test-nses-reaching
   "Test namespaces (any ns holding a deftest) whose require-closure
   reaches one of `changed-nses` — the PROVABLE set of tests a change can
   affect (a test only exercises code it can load). The honest fallback
   scope when the trace map is silent."
   [store changed-nses]
-  (let [changed  (set changed-nses)
-        test-ns? (fn [nsx]
-                   (some #(str/starts-with? (str/triml (n/string (:node %)))
-                                            "(deftest")
-                         (store/forms store nsx)))]
+  (let [changed (set changed-nses)]
     (vec (sort (for [t (keys (:namespaces store))
-                     :when (and (test-ns? t)
+                     :when (and (test-ns? store t)
                                 (seq (set/intersection
                                       (store/ns-closure store t)
                                       changed)))]
@@ -3484,53 +3485,92 @@
   executes ^:isolated tests (they spawn their own images/subprocesses, so
   running them in-image would recurse). Needs no repo files — the store is
   the source, which is what lets the working dir go fileless. `:ns` narrows
-  to one test namespace, `:only` to specific ns-qualified test vars (Q2 —
-  targeted red/green loops without paying for the whole suite);
-  `:affected true` narrows to the PROVABLE slice — test namespaces whose
-  require-closure reaches a form changed since the last milestone (iterate
-  on this; run the full suite at milestones). Returns {:isolated true
-  :status :ran :assertions :failures :errors :exit} plus :failing
-  [{:test :detail}] + :all-failing {file [tests]} + :themes (clustered
-  root-cause phrases) when red (:output = last lines when the run didn't
-  even produce a summary)."
-  [session & {:keys [alias ns only affected]}]
-  (let [aff   (when affected (affected-test-nses session))
-        ;; narrowed runs need the filter-free alias: the :test alias bakes
-        ;; -r \".*\" (inline tests, Q13) which UNIONS with -n and defeats it
-        alias (or alias
-                  (if (or ns aff (seq only)) ":test-run" ":test"))]
+  to one test namespace, `:only` to specific ns-qualified test vars (Q2);
+  `:affected true` narrows to the PROVABLE slice (test namespaces whose
+  require-closure reaches a form changed since the last milestone);
+  `:parallel N` SHARDS the run — one build, N concurrent JVMs over
+  round-robin namespace shards, merged into one summary (the full-suite
+  wall drops roughly by N; composes with :affected). Returns {:isolated
+  true :status :ran :assertions :failures :errors :exit} plus :failing +
+  :all-failing {file [tests]} + :themes (clustered causes) when red."
+  [session & {:keys [alias ns only affected parallel]}]
+  (let [aff (when affected (affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
       {:isolated true :ran 0 :status :green :affected aff
        :note (str "no test namespace can reach the changes since the last"
                   " milestone — nothing to verify (run without affected for"
                   " the full gate)")}
-      (let [dir (str (java.nio.file.Files/createTempDirectory
+      (let [shard-nses (when (and parallel (> parallel 1) (nil? ns) (empty? only))
+                         (or (:selected aff)
+                             (vec (sort (filter #(test-ns? (:store @session) %)
+                                                (keys (:namespaces (:store @session))))))))
+            ;; narrowed runs need the filter-free alias: the :test alias bakes
+            ;; -r ".*" (inline tests, Q13) which UNIONS with -n and defeats it
+            alias (or alias
+                      (if (or ns aff (seq only) (seq shard-nses)) ":test-run" ":test"))
+            dir (str (java.nio.file.Files/createTempDirectory
                       "slopp-isolated"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
             b   (build! session dir)]
         (if (:error b)
           b
-          (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
-                       ns         (conj "-n" (str ns))
-                       aff        (into (mapcat #(vector "-n" (str %))
-                                                (:selected aff)))
-                       (seq only) (into (mapcat #(vector "-v" (str %)) only)))
-                r    (apply sh/sh (concat args [:dir dir]))
-                out  (str (:out r) "\n" (:err r))
-                s    (parse-test-summary out)]
-            (merge {:isolated true :exit (:exit r)}
-                   (when aff {:affected aff})
-                   (cond
-                     (nil? s)           {:status :error
-                                         :output (->> (str/split-lines out)
-                                                      (remove str/blank?)
-                                                      (take-last 8) (str/join "\n"))}
-                     (= :red (:status s)) (cond-> (assoc s
-                                                         :failing (parse-test-failures out)
-                                                         :all-failing (failing-test-rollup out))
-                                            (seq (failure-themes out))
-                                            (assoc :themes (failure-themes out)))
-                     :else s))))))))
+          (if (seq shard-nses)
+            (let [shards (->> (map-indexed vector shard-nses)
+                              (group-by #(mod (first %) parallel))
+                              vals
+                              (mapv #(mapv second %)))
+                  runs   (mapv (fn [grp]
+                                 (future
+                                   (apply sh/sh
+                                          (concat [repl/clojure-bin (str "-M" alias)]
+                                                  (mapcat #(vector "-n" (str %)) grp)
+                                                  [:dir dir]))))
+                               shards)
+                  outs   (mapv deref runs)
+                  out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
+                  sums   (mapv #(parse-test-summary (str (:out %) "\n" (:err %))) outs)]
+              (if (some nil? sums)
+                {:isolated true :exit (apply max (map :exit outs)) :status :error
+                 :shards (count shards)
+                 :output (->> (str/split-lines out)
+                              (remove str/blank?)
+                              (take-last 12) (str/join "\n"))}
+                (let [merged {:ran        (reduce + (map :ran sums))
+                              :assertions (reduce + (map :assertions sums))
+                              :failures   (reduce + (map :failures sums))
+                              :errors     (reduce + (map :errors sums))}
+                      red?   (pos? (+ (:failures merged) (:errors merged)))]
+                  (cond-> (merge {:isolated true
+                                  :exit (apply max (map :exit outs))
+                                  :shards (count shards)
+                                  :status (if red? :red :green)}
+                                 merged
+                                 (when aff {:affected aff}))
+                    red? (assoc :failing (parse-test-failures out)
+                                :all-failing (failing-test-rollup out))
+                    (and red? (seq (failure-themes out)))
+                    (assoc :themes (failure-themes out))))))
+            (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
+                         ns         (conj "-n" (str ns))
+                         aff        (into (mapcat #(vector "-n" (str %))
+                                                  (:selected aff)))
+                         (seq only) (into (mapcat #(vector "-v" (str %)) only)))
+                  r    (apply sh/sh (concat args [:dir dir]))
+                  out  (str (:out r) "\n" (:err r))
+                  s    (parse-test-summary out)]
+              (merge {:isolated true :exit (:exit r)}
+                     (when aff {:affected aff})
+                     (cond
+                       (nil? s)           {:status :error
+                                           :output (->> (str/split-lines out)
+                                                        (remove str/blank?)
+                                                        (take-last 8) (str/join "\n"))}
+                       (= :red (:status s)) (cond-> (assoc s
+                                                           :failing (parse-test-failures out)
+                                                           :all-failing (failing-test-rollup out))
+                                              (seq (failure-themes out))
+                                              (assoc :themes (failure-themes out)))
+                       :else s)))))))))
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
   `user.email` — the git author identity milestones are stamped with (G5).
@@ -3951,7 +3991,8 @@
                         "probe with query_eval; spot-check with targeted test_run; "
                         "call done {label} when you believe you're finished — it "
                         "runs the affected tests + lint + tidy for you; ONE "
-                        "commit_point {description} closes the user-visible chunk.")}
+                        "commit_point {description} closes the user-visible chunk. "
+                        "Results are self-describing: act on them, don't narrate them.")}
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
       relevant   (assoc :relevant relevant))))
