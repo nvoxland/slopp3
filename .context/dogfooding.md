@@ -337,3 +337,18 @@ suite is explicit ({all true} in-image with a done-covers-it note,
 AUTO — scales shards to test-ns count + cores, serial below ~8 nses.
 The whole wave dogfooded the diet: :still-red/:went-green/:carried-errors
 all fired on their own author's edits and read cleanly.
+
+review_scan tool + the review-tooling assessment (2026-07-15, user): a
+code review is mostly read/navigate, and the honest verdict is slopp is
+AS GOOD OR BETTER than files for reviewing a CHANGE (query_changes gives
+form-addressed diffs + the recorded why + red/green arc; brief/slice give
+coverage+blast+effects inline; query_eval runs the code) but SLOWER for
+free-roaming sweep (build-to-scratchpad is the escape hatch). The gap
+worth a tool was whole-codebase triage → review_scan (risk-ranked forms).
+Independence matters more than tooling: an author's self-review is weak
+regardless, so route real reviews through the slopp-reader subagent
+(fresh eyes). Dogfooding the new tool on slopp itself immediately caught
+its own worst bug: a trace-only :untested signal flagged 545/966 forms
+because slopp's tests are ^:isolated (external JVMs, invisible to the
+in-image trace) — fixed with static call-graph reachability, dropping
+false positives to 72 real ones.

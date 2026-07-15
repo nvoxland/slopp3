@@ -32,6 +32,21 @@ ms stays in the store); `query-history {format "text"}` is the story view;
 `query-changes {format "text"}` renders LINE diffs (LCS — context lines are
 never re-emitted as churn). EDN stays the agent-facing default.
 
+## Review triage (`review_scan`)
+
+`review-scan` (tool `review_scan`) is the fileless store's answer to
+"where do I look first" in a whole-codebase review — the store knows what
+files don't. One analysis pass builds the call graph + lint, then every
+form is scored on review-relevant signal and RISK-RANKED: `:untested`
+(STATIC — not reachable from any test namespace in the call graph, so it
+survives `^:isolated` tests that never touch the in-image trace map; the
+trace refines it when warm), `:high-blast` (many callers), `:large`,
+`:lint`, `:undocumented` (public surface), `:effectful` (`!`). Clean forms
+drop out; `:top` rows carry `:form/:risk/:flags/:callers/:covered`, drill
+in with `query_slice`. `:ns` scopes to a namespace. Lesson baked in
+(dogfooding): a trace-only `:untested` signal reports an isolated-test
+codebase as ~100% untested — static call-graph reachability is the fix.
+
 ## Semantic × history depth (roadmap #5 — "the moat")
 
 Queries over the journal that git can't represent — form granularity ×
