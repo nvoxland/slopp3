@@ -40,7 +40,9 @@ Purpose: track whether the product is getting better to use — **wall time**
 and **token cost** (chars/4 of the JSON actually sent/received through
 `mcp/handle`) to build each sample app via scripted agent sessions.
 
-- Run: `clojure -M -m slopp.benchmark` (NOT part of `clojure -M:test` — it
+- Run: `clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main`
+  (the tree is fileless — plain `-m slopp.benchmark` finds nothing; NOT part
+  of `clojure -M:test` — it
   spawns several JVMs and takes minutes).
 - Each app = a deterministic script of MCP tool calls (deliberate red steps
   included — debugging is part of real usage). The run fails loudly if an
@@ -273,3 +275,14 @@ plan mode — the client only auto-permits tools that PROVE read-onlyness
 via the MCP readOnlyHint annotation; slopp's read tools now declare it.
 Lesson: when a client keeps prompting despite allow rules, the fix may
 belong in OUR wire contract, not the user's settings.
+
+Benchmark dogfood of the inferred-episodes flow (2026-07-15): findings
+in benchmarks/results.md (interim-red cost quantified; :suggest fat
+removed; done!'s green-by-vacancy fallback caught by its own first real
+use and fixed via closure-bounded selection — test-nses-reaching now
+shared by done! and the affected slice). Stale command fixed: the
+benchmark runs via the boot kernel (`clojure -M -m slopp.boot .
+--snapshot --main slopp.benchmark/-main`) — the tree is fileless.
+Improvement candidates parked: :still-red compression for repeated
+identical failure sets; per-write :all fallback stays ns-scoped by
+design (fast) now that the done-point is the reaching safety net.

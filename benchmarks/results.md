@@ -595,3 +595,23 @@ acceptance both cells — Q14 adopted on first exposure. Feature steps
 fan is the next named target). The poisoned first sweep batch paid for
 itself: it exposed ns-resurrection + ghost-var store bugs (fixed,
 close-and-reopen specs added).
+| 2026-07-15 | a0f8e5c | calculator | 3 | 12 | 348 | 755 | 1152 |
+| 2026-07-15 | a0f8e5c | inventory | 1 | 7 | 120 | 345 | 527 |
+| 2026-07-15 | a0f8e5c | wordstats | 1 | 8 | 124 | 427 | 631 |
+
+### Inferred-episodes flow, first measurement (2026-07-15, calculator v3)
+
+The scripted calculator now works REPL-style (the two-form precedence
+fix is two individual writes instead of one atomic group). Cost of the
+honest interim red: +1 step, +18ms wall, and ~+400 out-tokens vs the v2
+atomic-group scenario — two full red reports (the scripted red at
+evaluate-t plus the mid-refactor red after the eval-pass fix) are the
+price of seeing true state between writes. Dropping the repeated
+:suggest prose from missing-doc advisories cut every app 8-13% out
+(calculator 1230→1152, inventory 573→527, wordstats 678→631).
+Dogfooding catch, fixed same session: with a cold trace map, done!'s
+fallback ran "all tests in the CHANGED nses" — zero tests when tests
+live in a separate -test ns — a done-point could report green having
+run nothing; the fallback is now closure-bounded (test nses whose
+requires reach the change). Candidate next diet: consecutive writes
+re-printing an IDENTICAL failure set could summarize as :still-red.

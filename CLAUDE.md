@@ -32,7 +32,7 @@ for design decisions, system mechanics, gotchas, and conventions.
 - **Dogfooding is a standing practice:** build real things through slopp
   itself under `projects/<name>/` (untracked); write findings to a
   `REPORT.md` there; findings drive the roadmap. See `.context/dogfooding.md`.
-- **Benchmark at milestones** (`clojure -M -m slopp.benchmark`) and commit
+- **Benchmark at milestones** (`clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main` — the tree is fileless; plain `-m slopp.benchmark` finds nothing) and commit
   the updated `benchmarks/results.md` row. See `.context/dogfooding.md`.
 - **The image is the oracle:** verification correctness depends on
   restart-as-diagnostic and the trace map. Don't weaken those paths without
