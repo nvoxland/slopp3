@@ -113,6 +113,9 @@
         (is (:error (api/query-eval sess "(in-ns 'g.core)")))
         (is (:error (api/query-eval sess "(ns-unmap 'g.core 'f)")))
         (is (:error (api/query-eval sess "(do (defn g [] 1) (g))"))))
+      (testing "banned tokens as QUOTED DATA are observation (position-aware gate)"
+        (is (= [2] (api/query-eval sess "(count '#{defn defmacro})")))
+        (is (= [true] (api/query-eval sess "(contains? '#{defn} 'defn)"))))
       (testing "observation — including calling effectful fns — still works"
         (is (= [3] (api/query-eval sess "(g.core/f 3)")))
         (is (= [1] (api/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
@@ -139,3 +142,26 @@
     (testing "a cold miss points at the outline"
       (is (re-find #"query_source"
                    (:error (edit/missing-form-error store 'mf.core 'zzz)))))))
+(deftest ^:isolated red-first-specs-land-as-red
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rf.core "(ns rf.core)\n(defn seed \"S.\" [x] x)\n")
+      (api/ingest! sess 'rf.core-test
+                   (str "(ns rf.core-test (:require [rf.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest seed-t (is (= 1 (c/seed 1))))\n"))
+      (testing "a spec referencing a NOT-YET-WRITTEN fn lands as a real red"
+        (let [r (api/add-form! sess 'rf.core-test
+                               "(deftest future-t (is (= 4 (c/future-fn 2))))"
+                               :prompt "red first")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= ['rf.core/future-fn] (:red-first r)) (pr-str r))
+          (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              "the red is a failing test, not a refusal")))
+      (testing "implementing the fn turns the same spec green"
+        (let [r (api/add-form! sess 'rf.core
+                               "(defn future-fn \"Doubles.\" [x] (* 2 x))"
+                               :prompt "green")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))))
+      (finally (api/close! sess)))))

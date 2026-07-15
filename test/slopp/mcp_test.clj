@@ -504,3 +504,38 @@
           (is (re-find #"refs/heads/slopp/main"
                        (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
           (finally (api/close! s3)))))))
+(deftest ^:isolated staged-groups-commit-as-one-intent
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "st.core"
+                              :source "(ns st.core)\n(defn a \"A.\" [x] x)\n"})
+      (testing "steps stage across calls; NOTHING commits until stage=commit"
+        (is (re-find #":staged 1"
+                     (call sess "edit_group"
+                           {:stage "open"
+                            :steps [{:action "replace" :ns "st.core" :name "a"
+                                     :source "(defn a \"A.\" [x] (inc x))"}]})))
+        (is (re-find #":staged 2"
+                     (call sess "edit_group"
+                           {:stage "add"
+                            :steps [{:action "add" :ns "st.core"
+                                     :source "(defn b \"B.\" [x] (a x))"}]})))
+        (is (re-find #"\[1\]" (call sess "query_eval" {:code "(st.core/a 1)"}))
+            "a is still the identity — staged steps are held, not applied"))
+      (testing "commit executes everything as ONE atomic group"
+        (let [r (call sess "edit_group" {:stage "commit" :prompt "staged pair"})]
+          (is (re-find #":deltas 2" r) r)
+          (is (not (re-find #":error" r)) r))
+        (is (re-find #"\[3\]" (call sess "query_eval" {:code "(st.core/b 2)"}))))
+      (testing "drop discards the pending steps"
+        (call sess "edit_group" {:stage "open"
+                                 :steps [{:action "delete" :ns "st.core" :name "b"}]})
+        (is (re-find #":dropped true" (call sess "edit_group" {:stage "drop"})))
+        (is (re-find #"\[3\]" (call sess "query_eval" {:code "(st.core/b 2)"}))
+            "b survives — the staged delete was dropped"))
+      (testing "a bad step is refused AT STAGING, not at commit"
+        (is (re-find #"needs :action"
+                     (call sess "edit_group"
+                           {:stage "open"
+                            :steps [{:action "explode" :ns "st.core"}]}))))
+      (finally (api/close! sess)))))

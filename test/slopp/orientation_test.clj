@@ -237,6 +237,11 @@
                  (set (map :form (:cards r)))) (pr-str r))
           (is (every? #(nil? (:source %)) (:cards r)))
           (is (< (count (pr-str r)) 1400) (str (count (pr-str r))))))
+      (testing "match windows the target — giant forms read as neighborhoods"
+        (let [r (api/query-slice sess 'sl.core 'total :match "u/fmt" :window 0)]
+          (is (re-find #"u/fmt" (get-in r [:target :source])) (pr-str r))
+          (is (zero? (count (re-seq #"\n" (get-in r [:target :source])))))
+          (is (get-in r [:target :window]))))
       (testing "depth 1 = direct callees only"
         (let [r (api/query-slice sess 'sl.core 'total :depth 1)]
           (is (= #{'sl.core/tax 'sl.util/fmt}

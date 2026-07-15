@@ -1392,6 +1392,35 @@
 
 ;; --- edit.* / runtime ---
 
+(defn- red-first-stubs!
+  "Red-first TDD support: a spec in a -test namespace may reference store
+  vars that DON'T EXIST YET — that IS the red, not a reason to refuse the
+  write. Find them (kondo over the ns + the new form), intern throwing
+  stubs in the IMAGE (never the store) so the spec compiles and fails
+  honestly; the real implementation later redefines the var. Returns the
+  stubbed qsyms (nil when none). NOTE: until they're implemented, a fresh
+  JVM (isolated suite, restart) can't compile the spec — the short
+  red-first window is the point."
+  [session ns-sym source]
+  (when (str/ends-with? (str ns-sym) "-test")
+    (let [st      (:store @session)
+          nses    (set (keys (:namespaces st)))
+          nm      (some-> (edit/parse-form source) :node store/form-symbol)
+          missing (when nm
+                    (vec (distinct
+                          (for [u (:var-usages
+                                   (index/analyze
+                                    (str (render/render-ns st ns-sym) "\n" source)))
+                                :when (and (= nm (:from-var u))
+                                           (contains? nses (:to u))
+                                           (not (store/form-named st (:to u) (:name u))))]
+                            (symbol (str (:to u)) (str (:name u)))))))]
+      (when (seq missing)
+        (doseq [q missing]
+          (repl/eval! (:image @session)
+                      (format "(intern '%s '%s (fn [& _] (throw (ex-info \"red-first stub: %s is speced but not implemented\" {:red-first '%s}))))"
+                              (namespace q) (name q) q q)))
+        missing))))
 (defn edit-replace!
   "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace):
   pipeline + hot-reload, then re-verify — only the tests the trace map says
@@ -1400,6 +1429,7 @@
   [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+        stubs (red-first-stubs! session ns-sym new-source)
         r (rebased-write!
            session
            (fn [base] (edit/replace-form base ns-sym nm new-source
@@ -1434,7 +1464,11 @@
                    :affected (or affected :all)}
             (:image-healed r) (assoc :image-healed true)
             (pos? existing)   (assoc :existing-warnings existing)
-            untested          (assoc :untested true))
+            untested          (assoc :untested true)
+            stubs             (assoc :red-first stubs
+                                     :note (str "these vars don't exist yet — stubbed"
+                                                " in-image as failing (red-first);"
+                                                " implement them to go green.")))
           t0)))))
 
 (defn add-form!
@@ -1460,6 +1494,7 @@
 
       :else
       (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+            stubs (red-first-stubs! session ns-sym source)
             r (rebased-write!
                session
                (fn [base]
@@ -1504,7 +1539,13 @@
                            :test     summary
                            :affected (or affected :all)}
                     (:image-healed r) (assoc :image-healed true)
-                    (pos? existing)   (assoc :existing-warnings existing))
+                    (pos? existing)   (assoc :existing-warnings existing)
+                    stubs             (assoc :red-first stubs
+                                             :note (str "these vars don't exist yet —"
+                                                        " stubbed in-image as failing"
+                                                        " (red-first); implement them to"
+                                                        " go green. A fresh JVM can't"
+                                                        " compile this spec until then.")))
                   t0)))))))
 
 (defn delete-form!
@@ -3249,6 +3290,59 @@
                  [(or (second (re-find #"\(([^()\s]+\.clj):" b)) "?") nm])))
        distinct
        (reduce (fn [m [f nm]] (update m f (fnil conj []) nm)) (sorted-map))))
+(defn- failure-themes
+  "Heuristic ROOT-CAUSE clusters for a red run: word 3-grams from the
+  QUOTED strings inside each failure block (error messages carry the
+  cause; expected/actual scaffolding is noise), ranked by how many
+  distinct tests mention them (>=3), subset-covered grams dropped —
+  '38 failures say does-not-declare' in one read instead of an
+  enumerate-classify loop. Advisory; the blocks stay authoritative."
+  [output]
+  (let [blocks (keep (fn [b]
+                       (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
+                         [nm b]))
+                     (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )"))
+        grams  (fn [b]
+                 (let [quoted (map second (re-seq #"\"([^\"]+)\"" b))
+                       ws     (mapcat #(re-seq #"[A-Za-z][A-Za-z-]{2,}" %) quoted)]
+                   (distinct (map #(str/join " " %) (partition 3 1 ws)))))
+        counts (reduce (fn [m [nm b]]
+                         (reduce #(update %1 %2 (fnil conj #{}) nm) m (grams b)))
+                       {} blocks)
+        ranked (sort-by (fn [[g ts]] [(- (count ts)) g])
+                        (filter #(>= (count (val %)) 3) counts))]
+    (loop [rs ranked, seen [], out []]
+      (if (or (empty? rs) (>= (count out) 5))
+        out
+        (let [[g ts] (first rs)]
+          (if (some #(set/subset? ts %) seen)
+            (recur (rest rs) seen out)
+            (recur (rest rs) (conj seen ts)
+                   (conj out {:phrase g :tests (count ts)}))))))))
+(defn- affected-test-nses
+  "The PROVABLE verification slice: test namespaces (any ns holding a
+  deftest) whose require-closure reaches a form changed since the last
+  MILESTONE — a test can only exercise code it can load. Returns
+  {:changed-nses [...] :selected [...]}; empty :selected = nothing since
+  the milestone can affect any test. Full-suite confidence stays the
+  milestone gate's job."
+  [session]
+  (let [st       (:store @session)
+        last-c   (:id (last (filter #(= :commit (:op %)) (store/deltas st))))
+        changed  (into #{}
+                       (keep #(store/ns-of-form-id st %))
+                       (forms-changed-since st last-c))
+        test-ns? (fn [nsx]
+                   (some #(str/starts-with? (str/triml (n/string (:node %)))
+                                            "(deftest")
+                         (store/forms st nsx)))
+        selected (vec (sort (for [t (keys (:namespaces st))
+                                  :when (and (test-ns? t)
+                                             (seq (set/intersection
+                                                   (store/ns-closure st t)
+                                                   changed)))]
+                              t)))]
+    {:changed-nses (vec (sort changed)) :selected selected}))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3257,33 +3351,52 @@
   running them in-image would recurse). Needs no repo files — the store is
   the source, which is what lets the working dir go fileless. `:ns` narrows
   to one test namespace, `:only` to specific ns-qualified test vars (Q2 —
-  targeted red/green loops without paying for the whole suite). Returns
-  {:isolated true :status :ran :assertions :failures :errors :exit} plus
-  :failing [{:test :detail}] when red (:output = last lines when the run
-  didn't even produce a summary)."
-  [session & {:keys [alias ns only] :or {alias ":test"}}]
-  (let [dir (str (java.nio.file.Files/createTempDirectory
-                  "slopp-isolated"
-                  (make-array java.nio.file.attribute.FileAttribute 0)))
-        b   (build! session dir)]
-    (if (:error b)
-      b
-      (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
-                   ns         (conj "-n" (str ns))
-                   (seq only) (into (mapcat #(vector "-v" (str %)) only)))
-            r    (apply sh/sh (concat args [:dir dir]))
-            out  (str (:out r) "\n" (:err r))
-            s    (parse-test-summary out)]
-        (merge {:isolated true :exit (:exit r)}
-               (cond
-                 (nil? s)           {:status :error
-                                     :output (->> (str/split-lines out)
-                                                  (remove str/blank?)
-                                                  (take-last 8) (str/join "\n"))}
-                 (= :red (:status s)) (assoc s
-                                       :failing (parse-test-failures out)
-                                       :all-failing (failing-test-rollup out))
-                 :else s))))))
+  targeted red/green loops without paying for the whole suite);
+  `:affected true` narrows to the PROVABLE slice — test namespaces whose
+  require-closure reaches a form changed since the last milestone (iterate
+  on this; run the full suite at milestones). Returns {:isolated true
+  :status :ran :assertions :failures :errors :exit} plus :failing
+  [{:test :detail}] + :all-failing {file [tests]} + :themes (clustered
+  root-cause phrases) when red (:output = last lines when the run didn't
+  even produce a summary)."
+  [session & {:keys [alias ns only affected]}]
+  (let [aff   (when affected (affected-test-nses session))
+        ;; narrowed runs need the filter-free alias: the :test alias bakes
+        ;; -r \".*\" (inline tests, Q13) which UNIONS with -n and defeats it
+        alias (or alias
+                  (if (or ns aff (seq only)) ":test-run" ":test"))]
+    (if (and aff (empty? (:selected aff)))
+      {:isolated true :ran 0 :status :green :affected aff
+       :note (str "no test namespace can reach the changes since the last"
+                  " milestone — nothing to verify (run without affected for"
+                  " the full gate)")}
+      (let [dir (str (java.nio.file.Files/createTempDirectory
+                      "slopp-isolated"
+                      (make-array java.nio.file.attribute.FileAttribute 0)))
+            b   (build! session dir)]
+        (if (:error b)
+          b
+          (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
+                       ns         (conj "-n" (str ns))
+                       aff        (into (mapcat #(vector "-n" (str %))
+                                                (:selected aff)))
+                       (seq only) (into (mapcat #(vector "-v" (str %)) only)))
+                r    (apply sh/sh (concat args [:dir dir]))
+                out  (str (:out r) "\n" (:err r))
+                s    (parse-test-summary out)]
+            (merge {:isolated true :exit (:exit r)}
+                   (when aff {:affected aff})
+                   (cond
+                     (nil? s)           {:status :error
+                                         :output (->> (str/split-lines out)
+                                                      (remove str/blank?)
+                                                      (take-last 8) (str/join "\n"))}
+                     (= :red (:status s)) (cond-> (assoc s
+                                                         :failing (parse-test-failures out)
+                                                         :all-failing (failing-test-rollup out))
+                                            (seq (failure-themes out))
+                                            (assoc :themes (failure-themes out)))
+                     :else s))))))))
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
   `user.email` — the git author identity milestones are stamped with (G5).
@@ -3788,8 +3901,11 @@
   about to edit + interface CARDS for what it reaches (same-ns private
   helpers and cross-ns callees, breadth-first to `:depth`, capped at
   `:limit` with an honest :omitted). Replaces outline→guess→fetch loops:
-  name ONE entry point, receive the neighborhood."
-  [session ns-sym nm & {:keys [depth limit] :or {depth 2 limit 8}}]
+  name ONE entry point, receive the neighborhood. `:match` WINDOWS the
+  target — only `:window` lines (default 25) each side of the first line
+  containing it ride back, with :window metadata — so one clause of a
+  giant form reads without paying for the whole thing."
+  [session ns-sym nm & {:keys [depth limit match window] :or {depth 2 limit 8}}]
   (if-let [e (store/form-named (:store @session) ns-sym nm)]
     (let [root    (symbol (str ns-sym) (str nm))
           adj     (:calls (query-deps session ns-sym nm))
@@ -3809,8 +3925,25 @@
                         (keep (fn [q] (form-card session
                                                  (symbol (namespace q))
                                                  (symbol (name q)))))
-                        shown)]
-      (cond-> {:target {:form root :source (n/string (:node e))}
+                        shown)
+          src     (n/string (:node e))
+          target  (if match
+                    (let [lines (vec (str/split-lines src))
+                          w     (or (some-> window str parse-long) 25)
+                          idx   (first (keep-indexed
+                                        (fn [i l] (when (str/includes? l (str match)) i))
+                                        lines))]
+                      (if idx
+                        (let [lo (max 0 (- idx w))
+                              hi (min (count lines) (+ idx w 1))]
+                          {:form root
+                           :source (str/join "\n" (subvec lines lo hi))
+                           :window {:match (str match) :lines [(inc lo) hi]
+                                    :of (count lines)}})
+                        {:form root :source src
+                         :note (str "match not found in the form: " match)}))
+                    {:form root :source src})]
+      (cond-> {:target target
                :cards cards}
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))

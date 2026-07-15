@@ -84,16 +84,27 @@
      create-ns load-file load-string})
 
 (defn observe-gate
-  "nil if `code` is observation-only; an error string if it (re)defines code
-  or doesn't parse."
+  "nil if `code` is observation-only; an error string if it (re)defines
+  code or doesn't parse. POSITION-aware: banned symbols count anywhere
+  they could act (operator or value position — `apply` smuggling included),
+  but QUOTED data is inert, so a read-only census like `'#{defn defmacro}`
+  passes."
   [code]
   (try
-    (let [syms (mapcat all-symbols
-                       (filter n/sexpr-able?
-                               (n/children (p/parse-string-all code))))]
-      (when-let [bad (first (filter observe-banned syms))]
-        (str "query-eval is observe-only; `" bad
-             "` (re)defines code — use the edit tools")))
+    (letfn [(scan [form]
+              (cond
+                (and (seq? form) (= 'quote (first form))) nil
+                (symbol? form) (when (observe-banned form) form)
+                (map? form)    (some scan (mapcat identity form))
+                (coll? form)   (some scan form)
+                :else nil))]
+      (let [forms (keep #(try (n/sexpr %) (catch Exception _ nil))
+                        (filter n/sexpr-able?
+                                (n/children (p/parse-string-all code))))]
+        (when-let [bad (some scan forms)]
+          (str "query-eval is observe-only; `" bad
+               "` (re)defines code — use the edit tools (quoted `" bad
+               "` as data is fine)"))))
     (catch Exception e
       (str "unparseable code: " (ex-message e)))))
 

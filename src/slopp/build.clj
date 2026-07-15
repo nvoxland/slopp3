@@ -71,7 +71,16 @@
                                        "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
                                        "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
                                        "   :main-opts   [\"-m\" \"cognitect.test-runner\"\n"
-                                       "                 \"-d\" \"test\" \"-d\" \"src\" \"-r\" \".*\"]}"))
+                                       "                 \"-d\" \"test\" \"-d\" \"src\" \"-r\" \".*\"]}")
+                                  ;; :test-run = same runner WITHOUT the baked -r
+                                  ;; regex: -n/-v args actually narrow (the baked
+                                  ;; -r unions with -n in cognitect's runner)
+                                  (str ":test-run\n"
+                                       "  {:extra-paths [\"test\"]\n"
+                                       "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
+                                       "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
+                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"\n"
+                                       "                 \"-d\" \"test\" \"-d\" \"src\"]}"))
                     native? (conj (str ":native\n"
                                        "  {:extra-paths [\"classes\"]\n"
                                        "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"

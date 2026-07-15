@@ -154,3 +154,49 @@
                                      :prompt "commute")]
             (is (= ['vdemo/mul-t] (:affected r)) (pr-str (select-keys r [:affected :test])))))
         (finally (api/close! s2))))))
+(deftest failure-themes-cluster-root-causes
+  (let [block  (fn [t msg]
+                 (str "FAIL in (" t ") (x.clj:1)\n"
+                      "expected: ok\n"
+                      "  actual: (not (= 1 \"" msg "\"))\n"))
+        out    (str (block "t1" "module a.b does not declare c.d")
+                    (block "t2" "module e.f does not declare g.h")
+                    (block "t3" "module i.j does not declare k.l")
+                    (block "t4" "totally unrelated kaboom"))
+        themes (#'api/failure-themes out)]
+    (testing "a phrase shared by three failures becomes ONE theme"
+      (is (= [{:phrase "does not declare" :tests 3}] themes) (pr-str themes)))
+    (testing "below the threshold nothing clusters"
+      (is (empty? (#'api/failure-themes (block "t9" "lone wolf failure")))))))
+(deftest ^:isolated affected-slice-runs-only-reachable-tests
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-affected"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'ia.core "(ns ia.core)\n(defn f \"F.\" [x] (inc x))\n")
+      (api/ingest! sess 'ia.core-test
+                   (str "(ns ia.core-test (:require [ia.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest f-t (is (= 2 (c/f 1))))\n"))
+      (api/ingest! sess 'ib.core "(ns ib.core)\n(defn g \"G.\" [x] (dec x))\n")
+      (api/ingest! sess 'ib.core-test
+                   (str "(ns ib.core-test (:require [ib.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest g-t (is (= 0 (c/g 1))))\n"))
+      (api/commit-point! sess "baseline")
+      (testing "right after a milestone the slice is empty — and says so"
+        (let [r (api/isolated-test-run! sess :affected true)]
+          (is (zero? (:ran r)) (pr-str r))
+          (is (re-find #"full gate" (str (:note r))))))
+      (testing "changing ONE island runs only the tests that can reach it"
+        (let [er (api/edit-replace! sess 'ia.core 'f "(defn f \"F.\" [x] (+ x 1))"
+                                    :prompt "same behavior, new spelling")]
+          (is (nil? (:error er)) (pr-str er))
+          (is (nil? (:conflict er)) (pr-str er)))
+        (let [r (api/isolated-test-run! sess :affected true)]
+          (is (= 1 (:ran r)) (pr-str (dissoc r :output)))
+          (is (= '[ia.core-test] (get-in r [:affected :selected])) (pr-str (:affected r)))
+          (is (some #{'ia.core} (get-in r [:affected :changed-nses])))
+          (is (= :green (:status r)))))
+      (finally (api/close! sess)))))

@@ -43,10 +43,11 @@
     :description "START HERE, once: namespaces with form names, recent milestones, git alignment, and the working loop — orientation in one small call. Depth on demand: query_source {ns}/query_brief/report."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_slice"
-    :description "THE focused read: full source of ONE entry-point form + interface CARDS (sig, doc, why, test warranty) for everything it reaches — same-ns private helpers and cross-ns callees, breadth-first to depth (default 2, capped). Trust the cards: edits re-run covering tests, a violated contract turns red with :implicated. Prefer over fetching several forms."
+    :description "THE focused read: full source of ONE entry-point form + interface CARDS (sig, doc, why, test warranty) for everything it reaches — same-ns private helpers and cross-ns callees, breadth-first to depth (default 2, capped). match=<text> WINDOWS the target to `window` lines (default 25) around the first matching line — use it on giant forms. Trust the cards: edits re-run covering tests, a violated contract turns red with :implicated. Prefer over fetching several forms."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
-                               :depth {:type "integer"} :limit {:type "integer"}}
+                               :depth {:type "integer"} :limit {:type "integer"}
+                               :match {:type "string"} :window {:type "integer"}}
                   :required ["ns" "name"]}}
    {:name "query_depends"
     :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true reads the MODULE system: alone = the manifest (declared edges + standing debt); with on=<module> = that module's SURFACE (public fns + exported deep vars with sig/doc, its deps, its consumers) — the cheap browse before calling into a module. Ask this first; query_impact/query_flow/query_references give depth."
@@ -173,7 +174,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_group"
-    :description "Several writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move/subform/require. add takes optional `before`; subform takes name+match+source (`text` true for docstrings/strings); require takes a clause string."
+    :description "Several writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move/subform/require. add takes optional `before`; subform takes name+match+source (`text` true for docstrings/strings); require takes a clause string. BIG groups: stage=open holds steps (validated, uncommitted), stage=add appends, stage=commit executes everything as ONE group — beats payload limits without splitting the intent; stage=drop discards."
     :inputSchema {:type "object"
                   :properties {:steps {:type "array"
                                        :items {:type "object"
@@ -186,6 +187,7 @@
                                                             :text {:type "boolean"}
                                                             :require {:type "string"}}
                                                :required ["action" "ns"]}}
+                               :stage {:type "string" :enum ["open" "add" "commit" "drop"]}
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["steps"]}}
@@ -263,12 +265,13 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "test_run"
-    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes) — :ns/:only narrow it, and red isolated runs return :failing details. Writes already verify — rarely needed after edits."
+    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes) — :ns/:only narrow it; isolated+affected=true runs ONLY the test namespaces whose require-closure reaches a change since the last milestone (the fast iteration gate — keep the FULL isolated suite for milestones). Red isolated runs return :failing + :all-failing {file [tests]} + :themes (clustered causes). Writes already verify — rarely needed after edits."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
                                :fresh {:type "boolean"}
-                               :isolated {:type "boolean"}}}}
+                               :isolated {:type "boolean"}
+                               :affected {:type "boolean"}}}}
    {:name "draft_test"
     :description "A ready-to-edit deftest DRAFT for an :untested form. With :code (a driver expression) it observes real calls and turns each into an assertion; without, a signature skeleton with TODO holes. Nothing is written — adopt via edit_add_form, red-first."
     :inputSchema {:type "object"
@@ -923,7 +926,9 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "query_slice" (text! (told! session name a
                                         (api/query-slice session (sym :ns) (sym :name)
                                                         :depth (or (:depth a) 2)
-                                                        :limit (or (:limit a) 8))))
+                                                        :limit (or (:limit a) 8)
+                                                        :match (:match a)
+                                                        :window (:window a))))
       "query_depends" (text! (told! session name a
                                         (api/query-depends session (:on a)
                                                           :modules (:modules a)
@@ -1020,33 +1025,50 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                       :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_group" (text! (-> (api/edit-group!
-                                     session
-                                     (mapv (fn [s]
-                                             (let [action (or (:action s) (:op s))] ; :op guessed in evals
-                                               (when-not (contains? #{"replace" "add" "delete" "move" "subform" "require"} action)
-                                                 (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move|subform|require (got "
-                                                                      (pr-str action) "); keys: :action :ns :name :source :before :match :text :require")
-                                                                 {})))
-                                               (cond-> {:action (keyword action)
-                                                        :ns (symbol (:ns s))}
-                                                 (:name s)    (assoc :name (symbol (:name s)))
-                                                 (:source s)  (assoc :source (:source s))
-                                                 (:before s)  (assoc :before (symbol (:before s)))
-                                                 (:match s)   (assoc :match (:match s))
-                                                 (:text s)    (assoc :text true)
-                                                 (:where s)   (assoc :where (:where s))
-                                                 (:require s) (assoc :require (:require s)))))
-                                           (:steps a))
-                                     :prompt (:prompt a) :agent (:agent a))
-                                    (assoc :forms (into []
-                                                        (keep (fn [s]
-                                                                (when (:name s)
-                                                                  (str (:ns s) "/" (:name s)))))
-                                                        (:steps a)))
-                                    (select-keys [:error :source-now :step :group :warnings :existing-warnings :changed-nses
-                                                  :image-healed :test :affected :deltas :forms])
-                                    (summarize (:verbose a))))
+      "edit_group" (let [convert (fn [s]
+                                   (let [action (or (:action s) (:op s))] ; :op guessed in evals
+                                     (when-not (contains? #{"replace" "add" "delete" "move" "subform" "require"} action)
+                                       (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move|subform|require (got "
+                                                            (pr-str action) "); keys: :action :ns :name :source :before :match :text :require")
+                                                       {})))
+                                     (cond-> {:action (keyword action)
+                                              :ns (symbol (:ns s))}
+                                       (:name s)    (assoc :name (symbol (:name s)))
+                                       (:source s)  (assoc :source (:source s))
+                                       (:before s)  (assoc :before (symbol (:before s)))
+                                       (:match s)   (assoc :match (:match s))
+                                       (:text s)    (assoc :text true)
+                                       (:where s)   (assoc :where (:where s))
+                                       (:require s) (assoc :require (:require s)))))
+                         exec!   (fn [raw-steps]
+                                   (text! (-> (api/edit-group! session (mapv convert raw-steps)
+                                                               :prompt (:prompt a) :agent (:agent a))
+                                              (assoc :forms (into []
+                                                                  (keep (fn [s]
+                                                                          (when (:name s)
+                                                                            (str (:ns s) "/" (:name s)))))
+                                                                  raw-steps))
+                                              (select-keys [:error :source-now :step :group :warnings :existing-warnings :changed-nses
+                                                            :image-healed :test :affected :deltas :forms])
+                                              (summarize (:verbose a)))))]
+                     ;; staged construction: big groups arrive across several
+                     ;; calls (wire payload ceilings) but commit as ONE atomic
+                     ;; intent with ONE verification
+                     (case (:stage a)
+                       "open"   (do (mapv convert (:steps a))   ; validate NOW, fail fast
+                                    (swap! session assoc ::staged-steps (vec (:steps a)))
+                                    (text! {:staged (count (:steps a))
+                                            :note "held, nothing committed — add more with stage \"add\"; edit_group {stage \"commit\", prompt} executes ONE atomic group; stage \"drop\" discards"}))
+                       "add"    (do (mapv convert (:steps a))
+                                    (swap! session update ::staged-steps (fnil into []) (vec (:steps a)))
+                                    (text! {:staged (count (::staged-steps @session))}))
+                       "drop"   (do (swap! session dissoc ::staged-steps)
+                                    (text! {:dropped true}))
+                       "commit" (let [steps (into (vec (::staged-steps @session)) (:steps a))]
+                                  (swap! session dissoc ::staged-steps)
+                                  (exec! steps))
+                       nil      (exec! (:steps a))
+                       (throw (ex-info "stage must be open|add|commit|drop (or omitted to execute steps directly)" {}))))
       "edit_rename" (let [old (or (:old a) (:name a) (:from a))
                                 new (or (:new a) (:to a))]
                             (when-not (and old new)
@@ -1134,6 +1156,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
       "test_run" (text! (if (:isolated a)
                                    (api/isolated-test-run! session
                                                            :ns (some-> (:ns a) symbol)
+                                                           :affected (:affected a)
                                                            :only (some->> (:only a) (mapv symbol)))
                                    (api/test-run! session
                                                   (when (:ns a) (sym :ns))
