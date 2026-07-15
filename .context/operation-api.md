@@ -133,7 +133,9 @@ is what catches a missing one.
   through the image is covered. The isolated suite (fresh JVM, no image)
   still refuses until implementation — the short red-first window is the
   point.
-- `isolated-test-run!` extras: `:affected true` = the provable slice
+- `isolated-test-run!` extras: `:parallel N` shards the run (one build,
+  N concurrent JVMs over round-robin ns shards, merged summary — the
+  full gate measured 1.9× faster at N=4); `:affected true` = the provable slice
   (test namespaces whose require-closure reaches a form changed since
   the last milestone; empty slice returns a note, full suite stays the
   milestone gate); narrowed runs use the generated `:test-run` alias

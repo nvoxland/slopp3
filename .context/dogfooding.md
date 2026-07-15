@@ -304,3 +304,21 @@ The honest wrinkle: raw model-output tokens now favor plain (1.24×) —
 tool traffic is won; the next frontier is the agent's own narration
 around results. Friction fixed in-run: report :verify hands over the
 one-shot CLI forms (handoff agents were grepping skill files for them).
+
+Wall + narration measurements (2026-07-15, post-eval9): per-call mining
+of the eval transcripts + 36h of own sessions. Findings: (1) plugin
+agents' WALL is ~98% model generation — total slopp tool execution
+across five eval steps was ~22s (writes ~0.15s, done ~0.5s) vs plain's
+137s of Bash test runs; the wall fix IS the token fix. (2) The
+narration sink is between-call PROSE (79k chars vs plain's 38k), not
+thinking, not tool inputs — slopp's structured inputs are CHEAPER than
+plain's Edit strings (27k vs 45k). Skill + brief now carry the diet:
+"results are self-describing — act on them, don't narrate them."
+(3) At repo scale: targeted in-image runs cost 43ms (nothing to fix);
+per-write seconds are kondo on giant nses (slopp.api renders 219KB →
+~500ms/analyze; semver 4ms) — the STRUCTURAL fix is splitting slopp.api
+into deep modules (named target; also dogfoods deep-module machinery);
+the isolated full suite dominated everything (~15 runs × ~4-6min) →
+test_run {isolated, parallel N} shards it (1.9× at N=4, same merged
+truth). (4) The author reached for removed edit_group out of muscle
+memory; the eval agents never did — teaching beats habit.

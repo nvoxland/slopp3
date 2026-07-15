@@ -104,6 +104,14 @@ changes since the last milestone; run the FULL `test_run {isolated
 true}` at milestones. Red runs return `:all-failing {file [tests]}` and
 `:themes` (clustered causes) — read those before drilling into blocks.
 
+**Say less between calls.** Results are structured and self-describing —
+never restate a result's contents in prose (eval9 measured: agents wrote
+2× the commentary plain-file agents did, and it was ALL of the remaining
+overhead — the tool traffic itself is cheaper than files). Between
+calls: nothing, unless a decision changed. Final summary: short —
+name what shipped and quote result keys (`:test`, `:done`,
+`:findings`); don't re-describe what the tools already said.
+
 **Every write must compile** — callees before callers ((declare) for mutual
 recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
 `^:reads` marks read-only dep calls; `^:unsafe` is the dialect escape hatch.
