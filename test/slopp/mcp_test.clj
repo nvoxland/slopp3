@@ -518,3 +518,21 @@
             "episodes are inferred — no agent-facing grouping")
         (is (not (contains? names "checkpoint"))))
       (finally (api/close! sess)))))
+(deftest ^:isolated test-run-wire-guards-the-whole-suite
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "tg.core"
+                              :source (str "(ns tg.core (:require [clojure.test :refer [deftest is]]))\n"
+                                           "(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n")})
+      (testing "bare test_run gives GUIDANCE, does not silently run everything"
+        (let [r (call sess "test_run" {})]
+          (is (re-find #":guidance" r) r)
+          (is (re-find #"done runs the affected" r))
+          (is (not (re-find #":pass" r)) "no suite actually ran")))
+      (testing "a named spot-check runs"
+        (is (re-find #":pass" (call sess "test_run" {:ns "tg.core"}))))
+      (testing "all:true runs the in-image suite AND warns done covers it"
+        (let [r (call sess "test_run" {:all true})]
+          (is (re-find #":pass" r) r)
+          (is (re-find #"rarely needed" r))))
+      (finally (api/close! sess)))))

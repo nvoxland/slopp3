@@ -77,3 +77,17 @@
     (testing "missing-bang (effectful, unlabeled) is STILL flagged"
       (let [an2 (index/analyze "(ns app)\n(defn go [a] (reset! a 1))\n")]
         (is (some #(= 'app/go (:var %)) (index/effect-violations an2)))))))
+(deftest analyze-and-lint-share-one-memoized-kondo-pass
+  ;; per-write kondo cost: analyze + lint used to be TWO passes over the same
+  ;; rendered ns, and lint wasn't memoized (the unchanged base re-linted every
+  ;; write). One cached pass now feeds both.
+  (let [s "(ns kx.core)\n(defn f [x] (reduce + x))\n(defn g [] (f 1 2 3))\n"]
+    (index/analyze s)
+    (is (contains? @@#'index/kondo-cache s)
+        "analyze populates the shared cache")
+    (is (seq (index/lint s)) "lint returns findings")
+    (testing "lint of the SAME content is a cache hit (no second kondo run)"
+      (let [before (get @@#'index/kondo-cache s)]
+        (index/lint s)
+        (is (identical? before (get @@#'index/kondo-cache s))
+            "same cached kondo result object — no recompute")))))

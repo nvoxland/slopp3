@@ -3478,6 +3478,13 @@
                       (forms-changed-since st last-c))]
     {:changed-nses (vec (sort changed))
      :selected     (test-nses-reaching st changed)}))
+(defn- auto-parallel
+  "Default shard count for an isolated run over `n` test namespaces on a
+  `cores`-core box. Each shard reloads the WHOLE materialized store, so
+  sharding only pays at real scale: 1 below ~8 test nses (boot overhead
+  beats the gain), then n/8 shards, capped at 4 and at half the cores."
+  [n cores]
+  (max 1 (min 4 (quot cores 2) (quot n 8))))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3488,9 +3495,11 @@
   to one test namespace, `:only` to specific ns-qualified test vars (Q2);
   `:affected true` narrows to the PROVABLE slice (test namespaces whose
   require-closure reaches a form changed since the last milestone);
-  `:parallel N` SHARDS the run — one build, N concurrent JVMs over
-  round-robin namespace shards, merged into one summary (the full-suite
-  wall drops roughly by N; composes with :affected). Returns {:isolated
+  `:parallel` SHARDS a full/affected run across concurrent JVMs — one
+  build, round-robin namespace shards, merged into one summary. Defaults
+  to AUTO (auto-parallel: scales with test-ns count + cores, serial below
+  ~8 nses where boot overhead beats the gain); an explicit N overrides
+  (1 forces serial). A single :ns/:only run never shards. Returns {:isolated
   true :status :ran :assertions :failures :errors :exit} plus :failing +
   :all-failing {file [tests]} + :themes (clustered causes) when red."
   [session & {:keys [alias ns only affected parallel]}]
@@ -3500,10 +3509,17 @@
        :note (str "no test namespace can reach the changes since the last"
                   " milestone — nothing to verify (run without affected for"
                   " the full gate)")}
-      (let [shard-nses (when (and parallel (> parallel 1) (nil? ns) (empty? only))
-                         (or (:selected aff)
-                             (vec (sort (filter #(test-ns? (:store @session) %)
-                                                (keys (:namespaces (:store @session))))))))
+      ;; the full/affected set is shardable (a single :ns or :only run is not);
+      ;; :parallel defaults to AUTO — scale the shard count to the work + cores
+      (let [full-set (when (and (nil? ns) (empty? only))
+                       (or (:selected aff)
+                           (vec (sort (filter #(test-ns? (:store @session) %)
+                                              (keys (:namespaces (:store @session))))))))
+            par (cond (some? parallel) parallel
+                      (nil? full-set)  1
+                      :else (auto-parallel (count full-set)
+                                           (.availableProcessors (Runtime/getRuntime))))
+            shard-nses (when (and (> par 1) (seq full-set)) full-set)
             ;; narrowed runs need the filter-free alias: the :test alias bakes
             ;; -r ".*" (inline tests, Q13) which UNIONS with -n and defeats it
             alias (or alias
@@ -3516,7 +3532,7 @@
           b
           (if (seq shard-nses)
             (let [shards (->> (map-indexed vector shard-nses)
-                              (group-by #(mod (first %) parallel))
+                              (group-by #(mod (first %) par))
                               vals
                               (mapv #(mapv second %)))
                   runs   (mapv (fn [grp]

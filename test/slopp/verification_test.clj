@@ -228,3 +228,15 @@
           (is (pos? (:failures r 0)))
           (is (seq (:all-failing r)) (pr-str (dissoc r :output)))))
       (finally (api/close! sess)))))
+(deftest auto-parallel-scales-with-work-and-cores
+  ;; sharding only pays above real scale (each shard reloads the whole store);
+  ;; default = auto, capped by cores; explicit overrides.
+  (let [ap #'api/auto-parallel]
+    (testing "small suites stay serial — boot overhead beats the gain"
+      (is (= 1 (ap 2 8)))
+      (is (= 1 (ap 7 8))))
+    (testing "real scale shards, capped at 4 and by cores"
+      (is (= 2 (ap 20 8)))
+      (is (= 4 (ap 50 8)))
+      (is (= 1 (ap 50 2)) "a 2-core box never over-parallelizes")
+      (is (<= (ap 999 64) 4) "hard cap at 4"))))

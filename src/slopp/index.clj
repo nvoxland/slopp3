@@ -23,24 +23,35 @@
      clojure.core/assoc! clojure.core/dissoc! clojure.core/pop!
      clojure.core/spit clojure.core/delete-file})
 
-(def ^:private analysis-cache
-  "source-string -> :analysis memo (bounded). Every write triggers several
-  analyses of identical rendered source (pre/post warnings, affected lookups);
-  eval round 2 showed the re-runs dominating per-write wall time."
+(def ^:private kondo-cache
+  "source-string -> {:analysis :findings} memo (bounded). ONE kondo pass
+  per unique rendered ns feeds both analyze and lint — every write used
+  to run kondo several times over identical source (pre/post warnings,
+  affected lookups, AND a separate un-memoized lint pass over the
+  unchanged base). Eval round 2 + the post-eval9 wall trace both showed
+  these re-runs dominating per-write time on large namespaces."
   (atom {}))
 
-^:reads (defn analyze
-  "Run clj-kondo over `source` (fed via stdin, no disk); return its `:analysis`
-  ({:var-definitions :var-usages :namespace-definitions :namespace-usages}).
-  Memoized on the source string (bounded)."
+^:reads (defn- run-kondo
+  "The single memoized kondo invocation: {:analysis ... :findings ...}
+  for `source`. Findings are warning/error level, trimmed to the fields
+  callers use."
   [source]
-  (or (get @analysis-cache source)
-      (let [an (:analysis
-                (with-in-str source
-                  (kondo/run! {:lint ["-"] :config {:output {:analysis true}}})))]
-        (swap! analysis-cache
-               (fn [c] (assoc (if (>= (count c) 32) {} c) source an)))
-        an)))
+  (or (get @kondo-cache source)
+      (let [r (with-in-str source
+                (kondo/run! {:lint ["-"] :config {:output {:analysis true}}}))
+            v {:analysis (:analysis r)
+               :findings (->> (:findings r)
+                              (filter #(#{:warning :error} (:level %)))
+                              (mapv #(select-keys % [:level :type :message :row :col])))}]
+        (swap! kondo-cache (fn [c] (assoc (if (>= (count c) 64) {} c) source v)))
+        v)))
+^:reads (defn analyze
+  "clj-kondo's `:analysis` ({:var-definitions :var-usages
+  :namespace-definitions :namespace-usages}) for `source`, from the shared
+  memoized kondo pass (run-kondo) that also feeds `lint`."
+  [source]
+  (:analysis (run-kondo source)))
 
 (defn- node
   "Fully-qualified node key for a var: ns/name."
@@ -134,13 +145,12 @@
                   :config {:analysis {:locals true} :output {:analysis true}}}))))
 
 ^:reads (defn lint
-  "clj-kondo FINDINGS for `source` (syntax + best-practice violations, distinct
-  from the :analysis extraction): [{:level :type :message :row :col} ...],
-  warnings and errors only."
+  "clj-kondo FINDINGS for `source` (warnings + errors: [{:level :type
+  :message :row :col} ...]), from the shared memoized kondo pass
+  (run-kondo). Memoized like analyze now, so re-linting an unchanged
+  namespace (the base, every write) is free after the first."
   [source]
-  (->> (:findings (with-in-str source (kondo/run! {:lint ["-"]})))
-       (filter #(#{:warning :error} (:level %)))
-       (mapv #(select-keys % [:level :type :message :row :col]))))
+  (:findings (run-kondo source)))
 
 (defn references
   "Usages of `to-ns/to-name` — who references this var."

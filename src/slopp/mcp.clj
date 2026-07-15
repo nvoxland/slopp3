@@ -247,7 +247,7 @@
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "test_run"
-    :description "Run tests in the live image (no ns = the whole project in one call). :only names tests; :fresh restarts first; :isolated runs the file-based suite in a fresh JVM (for tests that spawn processes) — :ns/:only narrow it; isolated+affected=true runs ONLY the test namespaces whose require-closure reaches a change since the last milestone (the fast iteration gate — keep the FULL isolated suite for milestones). Red isolated runs return :failing + :all-failing {file [tests]} + :themes (clustered causes). Writes already verify — rarely needed after edits."
+    :description "SPOT-CHECK specific tests: {ns \"x.y-test\"} or {only [\"x.y-test/some-t\"]}. You do NOT need this before done — done runs the affected tests for everything you touched. Whole in-image suite: {all true} (rarely needed). MERGE GATE: {isolated true} — fresh external JVM, the only tier that runs ^:isolated tests; auto-shards across cores (:parallel N to override), and {affected true} narrows to the test nses reaching changes since the last milestone. Red isolated runs return :failing + :all-failing {file [tests]} + :themes."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
@@ -1123,16 +1123,36 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
                                                                :error :status]))
                                         r)
                                       r)))
-      "test_run" (text! (if (:isolated a)
-                                   (api/isolated-test-run! session
-                                                           :ns (some-> (:ns a) symbol)
-                                                           :affected (:affected a)
-                                                           :parallel (some-> (:parallel a) str parse-long)
-                                                           :only (some->> (:only a) (mapv symbol)))
-                                   (api/test-run! session
-                                                  (when (:ns a) (sym :ns))
-                                                  :only (some->> (:only a) (mapv symbol))
-                                                  :fresh (:fresh a))))
+      "test_run" (text!
+                       (cond
+                         (:isolated a)
+                         (api/isolated-test-run! session
+                                                 :ns (some-> (:ns a) symbol)
+                                                 :affected (:affected a)
+                                                 :parallel (some-> (:parallel a) str parse-long)
+                                                 :only (some->> (:only a) (mapv symbol)))
+                         ;; surgical spot-checks name a target; bare test_run is
+                         ;; almost always the redundant "confirm everything" the
+                         ;; done-point already does — make ALL explicit, and teach
+                         (or (:ns a) (seq (:only a)))
+                         (api/test-run! session
+                                        (when (:ns a) (sym :ns))
+                                        :only (some->> (:only a) (mapv symbol))
+                                        :fresh (:fresh a))
+
+                         (:all a)
+                         (assoc (api/test-run! session nil :fresh (:fresh a))
+                                :note (str "done runs the affected tests for everything"
+                                           " you touched — a whole-suite in-image run is"
+                                           " rarely needed mid-episode; the merge gate is"
+                                           " test_run {isolated true}"))
+
+                         :else
+                         {:guidance (str "name what to spot-check: test_run {ns \"x.y-test\"}"
+                                         " or {only [\"x.y-test/some-t\"]}. You do NOT need to"
+                                         " run tests before done — done runs the affected"
+                                         " tests itself. Whole suite in-image: {all true};"
+                                         " external merge gate: {isolated true}.")}))
       "fix_declares" (text! (api/fix-declares! session (sym :ns)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)))
