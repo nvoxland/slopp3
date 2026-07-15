@@ -97,7 +97,7 @@
                                       test-nses)
                        ;; M5: the fast per-write path skips ^:integration tests
                        ;; (external-system tests — a DB dep shouldn't fire on
-                       ;; every edit); checkpoint/commit/test_run include them
+                       ;; every edit); done/commit/test_run include them
                        skip-integration? (remove (comp :integration meta))
                        ;; ^:isolated tests spawn their own images/JVMs — they
                        ;; NEVER run in-image (recursion); only the external

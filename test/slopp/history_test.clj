@@ -27,9 +27,9 @@
           (is (= 1 (count hist)))
           (is (= :replace (:op (first hist)))))
         (is (<= (count (api/query-history sess :limit 3)) 3)))
-      (testing "checkpoint labels appear in the story"
-        (api/checkpoint! sess :label "phase one done")
-        (is (= :checkpoint
+      (testing "done labels appear in the story"
+        (api/done! sess :label "phase one done")
+        (is (= :done
                (:op (first (api/query-history sess :contains "phase one"))))))
       (testing "lineage responses stay lean (no bulk sources)"
         (is (not-any? :sources (api/query-lineage sess 'h.core 'f))))
