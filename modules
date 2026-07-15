@@ -1,0 +1,59 @@
+slopp.addelete: slopp.api
+slopp.api: slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store
+slopp.bench: slopp.api slopp.render slopp.store
+slopp.benchmark: slopp.api slopp.mcp
+slopp.branch: slopp.api
+slopp.build-native: slopp.api slopp.build
+slopp.chsig: slopp.api slopp.refactor slopp.store
+slopp.coldload: slopp.index
+slopp.coldload-gate: slopp.api
+slopp.commit: slopp.api slopp.mcp slopp.store
+slopp.concurrency: slopp.api slopp.store
+slopp.db: slopp.api slopp.render slopp.store
+slopp.deps: slopp.api slopp.build slopp.db slopp.mcp slopp.repl slopp.store
+slopp.edit: slopp.image slopp.index slopp.render slopp.repl slopp.store
+slopp.edit-group: slopp.api slopp.store
+slopp.effect-boundary: slopp.api slopp.edit
+slopp.episode: slopp.api slopp.mcp slopp.store slopp.turn
+slopp.ergonomics: slopp.api slopp.edit slopp.store
+slopp.eval-findings: slopp.api slopp.store
+slopp.evalseed: slopp.api
+slopp.extract: slopp.api
+slopp.f3c: slopp.api
+slopp.files: slopp.store
+slopp.git: slopp.build slopp.db slopp.render slopp.store
+slopp.git-client: slopp.api slopp.git
+slopp.git-concurrency: slopp.api slopp.git
+slopp.git-embedded: slopp.api slopp.git slopp.mcp
+slopp.git-projection: slopp.api slopp.db slopp.git slopp.store
+slopp.git-server: slopp.api slopp.git
+slopp.gitauthor: slopp.git
+slopp.history: slopp.api slopp.mcp slopp.store
+slopp.http: slopp.api slopp.mcp
+slopp.image: slopp.render slopp.repl slopp.store
+slopp.integration-tier: slopp.api
+slopp.lintgate: slopp.edit slopp.store
+slopp.mcp: slopp.api slopp.db slopp.git slopp.store slopp.sync
+slopp.merge: slopp.render slopp.store
+slopp.mine: slopp.db
+slopp.modules: slopp.api slopp.edit slopp.store
+slopp.multiproc: slopp.api slopp.render slopp.store
+slopp.normalize: slopp.api slopp.store
+slopp.observe: slopp.api
+slopp.orientation: slopp.api
+slopp.phase4: slopp.api slopp.http slopp.store
+slopp.refactor: slopp.index slopp.render slopp.store
+slopp.rename: slopp.api slopp.store
+slopp.render: slopp.store
+slopp.store: slopp.semver
+slopp.subform: slopp.api
+slopp.subform-plan: slopp.refactor slopp.store
+slopp.surgeon: slopp.api
+slopp.sync: slopp.api slopp.boot slopp.db slopp.git slopp.store
+slopp.sync-plan: slopp.sync
+slopp.trace: slopp.api
+slopp.trivia: slopp.render slopp.store
+slopp.turn: slopp.db slopp.store
+slopp.unsafe: slopp.api slopp.edit slopp.store
+slopp.verification: slopp.api slopp.repl
+slopp.warm-spare: slopp.api

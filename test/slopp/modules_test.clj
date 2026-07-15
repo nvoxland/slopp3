@@ -96,6 +96,49 @@
                                              "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
                                              :prompt "still declared under the new names")))))
       (finally (api/close! sess)))))
+(deftest ^:isolated an-unadopted-populated-store-adopts-on-reopen
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-modules-adopt"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    ;; land cross-module reality with the gate bypassed (what a bulk import
+    ;; does) — manifest stays {}, journal has no :module-edge deltas
+    (try
+      (swap! sess assoc :adopting? true)
+      (api/ingest! sess 'ka.core "(ns ka.core)\n(defn f \"F.\" [x] x)\n")
+      (api/ingest! sess 'kb.app
+                   (str "(ns kb.app (:require [ka.core :as core]))\n"
+                        "(defn g \"G.\" [x] (core/f x))\n"))
+      (is (= {} (edit/modules-manifest (:store @sess))))
+      (finally (api/close! sess)))
+    ;; reopen: empty manifest + populated + no edge delta ever = adopt
+    (let [sess2 (api/open! {:dir dir})]
+      (try
+        (is (= {"kb.app" #{"ka.core"}}
+               (edit/modules-manifest (:store @sess2))))
+        (is (nil? (:error (api/edit-replace! sess2 'kb.app 'g
+                                             "(defn g \"G.\" [x] (core/f (inc x)))"
+                                             :prompt "gated edits work under the adopted manifest"))))
+        (finally (api/close! sess2))))))
+(deftest ^:isolated cycle-refusal-is-local-to-the-new-edge
+  (testing "module-path answers reachability deterministically"
+    (let [m {"a.x" #{"b.y"} "b.y" #{"c.z"}}]
+      (is (= ["a.x" "b.y" "c.z"] (store/module-path m "a.x" "c.z")))
+      (is (nil? (store/module-path m "c.z" "a.x")))))
+  (testing "an adopted cycle (test folding makes them real) blocks nothing unrelated"
+    (let [sess (api/open!)]
+      (try
+        ;; simulate adoption having recorded a cycle: api<->db via test folding
+        (swap! sess update :store
+               #(-> % (store/record-module-edge "a.x" "b.y" :add) first
+                    (store/record-module-edge "b.y" "a.x" :add) first))
+        (let [r (api/module-dep! sess "c.z" "a.x" :prompt "unrelated — must land")]
+          (is (nil? (:error r)) (pr-str r)))
+        (let [r (api/module-dep! sess "a.x" "c.z" :prompt "would close a.x→c.z→a.x")]
+          (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r)))
+        (let [r (api/module-dep! sess "c.z" "b.y" :prompt "b.y does not reach c.z — fine")]
+          (is (nil? (:error r)) (pr-str r)))
+        (finally (api/close! sess))))))
 (deftest ^:isolated the-module-lifecycle
   (let [sess (api/open!)]
     (try

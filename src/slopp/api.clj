@@ -138,7 +138,14 @@
      ;; module adoption: a populated store from a pre-module db (:modules
      ;; nil) gets its manifest derived from reality, once — fresh stores
      ;; are born with {} and enforcement already on
-     (when (and conn (seq (:namespaces store)) (nil? (:modules store)))
+     (when (and conn (seq (:namespaces store))
+                (or (nil? (:modules store))
+                    ;; an EMPTY manifest on a populated store whose journal has
+                    ;; never seen a :module-edge delta = pre-adoption (the
+                    ;; journal is the record of truth; a user who retracted
+                    ;; edges has retraction deltas)
+                    (and (empty? (:modules store))
+                         (not-any? #(= :module-edge (:op %)) (:deltas store)))))
        (adopt-modules! session :agent (or agent-id "slopp")))
      session)))
 
@@ -3911,14 +3918,11 @@
        :deps (vec (sort (get manifest from)))}
 
       :else
-      (if-let [cyc (and (not remove)
-                        (store/modules-cycle
-                         (update manifest from (fnil conj #{}) to)))]
-        {:error (str "that edge creates a dependency CYCLE: "
-                     (clojure.string/join " → " cyc)
-                     " — modules stay acyclic; point the dependency one way"
-                     " (usually by extracting the shared piece into a module"
-                     " both sides may depend on)")}
+      (if-let [back (and (not remove) (store/module-path manifest to from))]
+        {:error (str "that edge CLOSES a dependency cycle: "
+                     (clojure.string/join " → " (conj back to))
+                     " — point the dependency one way (usually by extracting"
+                     " the shared piece into a module both sides may depend on)")}
         (let [st' (commit-appended!
                    session
                    #(first (store/record-module-edge % from to action

@@ -649,6 +649,24 @@
       (when-let [m (first ms)]
         (let [[state cyc] (visit state [m] m)]
           (if cyc cyc (recur state (rest ms))))))))
+(defn module-path
+  "The shortest dependency path from module `from` to module `to` through
+  `manifest` ({module #{deps}}) as [from ... to], or nil when unreachable.
+  BFS, deterministic. An edge a→b CLOSES a cycle iff (module-path m b a)
+  exists — the local check module_dep uses, so a pre-existing (adopted)
+  cycle elsewhere never blocks an unrelated declaration."
+  [manifest from to]
+  (loop [frontier [[(str from)]]
+         seen #{(str from)}]
+    (when-let [path (first frontier)]
+      (let [cur (peek path)]
+        (if (= cur (str to))
+          path
+          (let [nexts (remove seen (sort (get manifest cur #{})))]
+            (recur (into (vec (rest frontier))
+                         (map #(conj path %))
+                         nexts)
+                   (into seen nexts))))))))
 (defn merge-logs
   "Phase 4 m2 (C4/C5 activation): merge `theirs` — a store sharing a common
   delta-log prefix with `ours` (a fork = a copied project dir) — into ours by

@@ -102,9 +102,10 @@
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                         (pr-str (:config store {}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:modules store {}))]))
+     (when (:modules store)
+       (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                           ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                          (pr-str (:modules store))])))
    nil))
 
 ^:reads (defn data-version
@@ -161,9 +162,12 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:config store {}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:modules store {}))])
+        (when (:modules store)
+          ;; nil = pre-module session; writing a default here would destroy
+          ;; the adoption marker before open! ever sees it
+          (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                              ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                             (pr-str (:modules store))]))
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
