@@ -209,3 +209,10 @@ it now takes either. (4) Inherent bootstrap catch-22 worth remembering:
 hot-loading a new GATE into the live store enforces it before the
 adoption/migration machinery exists — sequence gates AFTER their
 adoption story (the :modules nil marker resolved it here).
+
+First-person friction (2026-07-15): the query_eval observe-only guard
+refuses any code containing a `defn` token — including `'#{defn
+defmacro}` as a quoted literal in a read-only census. It should check
+definition POSITION (unquoted, operator slot), not token presence.
+Workaround: compare strings (`#{"defn" "defmacro"}`). Fix when next in
+the guard's neighborhood.
