@@ -335,3 +335,48 @@
           (is (some #(re-find #"100" %) (:examples c)) (pr-str c))
           (is (some #(re-find #"50" %) (:examples c)) (pr-str c))))
       (finally (api/close! sess)))))
+(deftest ^:isolated review-scan-triages-by-risk
+  ;; a whole-codebase review shouldn't read 800 forms blindly — the store
+  ;; knows which are risky. :untested must be STATIC (reachable from any
+  ;; test ns), not trace-only — else an isolated-test codebase looks 100%
+  ;; untested (the flaw dogfooding caught).
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rv.core
+                   (str "(ns rv.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn safe \"Doc.\" [x] (inc x))\n"
+                        "(deftest safe-t (is (= 2 (safe 1))))\n"))
+      (api/ingest! sess 'rv.io
+                   (str "(ns rv.io)\n"
+                        "(defn orphan! [x] (spit \"/dev/null\" x))\n"
+                        "(defn probed! [x] (spit \"/dev/null\" x))\n"))
+      (api/module-dep! sess "rv.app" "rv.io" :prompt "fixture edge")
+      (api/ingest! sess 'rv.app
+                   (str "(ns rv.app (:require [rv.io :as io]))\n"
+                        "(defn a [x] (io/orphan! x))\n"
+                        "(defn b [x] (io/orphan! x))\n"
+                        "(defn c [x] (io/orphan! x))\n"))
+      (api/module-dep! sess "rv.probe" "rv.io" :prompt "test edge")
+      (api/ingest! sess 'rv.probe-test
+                   (str "(ns rv.probe-test (:require [rv.io :as io]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n"
+                        "(deftest probe-t (is (nil? (io/probed! 1))))\n"))
+      (api/test-run! sess 'rv.core)   ; trace covers ONLY safe — not probed!
+      (let [r   (api/review-scan sess)
+            top (mapv :form (:top r))
+            row (fn [q] (first (filter #(= q (:form %)) (:top r))))]
+        (testing "the orphan fn (no test reaches it) ranks first, flagged untested"
+          (is (= 'rv.io/orphan! (first top)) (pr-str (:top r)))
+          (is (contains? (set (:flags (row 'rv.io/orphan!))) :untested))
+          (is (contains? (set (:flags (row 'rv.io/orphan!))) :effectful))
+          (is (= 3 (:callers (row 'rv.io/orphan!)))))
+        (testing "a fn a TEST ns references is NOT untested (isolated-safe)"
+          (let [pr (row 'rv.io/probed!)]
+            (is (or (nil? pr)
+                    (not (contains? (set (:flags pr)) :untested)))
+                (pr-str pr))))
+        (testing "the tested, documented, pure fn is not flagged"
+          (is (not (some #{'rv.core/safe} top))))
+        (testing "totals roll up the risks"
+          (is (pos? (get-in r [:totals :untested] 0)))))
+      (finally (api/close! sess)))))

@@ -536,3 +536,17 @@
           (is (re-find #":pass" r) r)
           (is (re-find #"rarely needed" r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated review-scan-is-on-the-wire-and-read-only
+  (let [sess (api/open!)]
+    (try
+      (let [tools   (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                            [:result :tools])
+            by-name (into {} (map (juxt :name identity)) tools)]
+        (is (contains? by-name "review_scan"))
+        (is (true? (get-in by-name ["review_scan" :annotations :readOnlyHint]))
+            "a review tool must not prompt in plan mode"))
+      (call sess "ns_create" {:ns "rw.io" :source "(ns rw.io)\n(defn zap! [x] (spit \"/dev/null\" x))\n"})
+      (let [r (call sess "review_scan" {})]
+        (is (re-find #":flagged" r) r)
+        (is (re-find #"rw.io/zap!" r) "the effectful undocumented fn is flagged"))
+      (finally (api/close! sess)))))

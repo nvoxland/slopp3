@@ -55,6 +55,10 @@
                   :properties {:on {:type "string"}
                                :direction {:type "string" :enum ["dependents" "dependencies"]}
                                :modules {:type "boolean"}}}}
+   {:name "review_scan"
+    :description "REVIEW TRIAGE for a whole codebase (or one :ns): every form the store thinks is RISKY — untested (no covering test), effectful (!), high-blast (many callers), large, lint-flagged, or undocumented public surface — RISK-RANKED so you read the dangerous forms first instead of eyeballing everything. One pass; :top rows carry :form/:risk/:flags/:callers/:covered; drill in with query_slice. Run a test_run first so :untested is populated."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :limit {:type "integer"}}}}
    {:name "query_detail"
     :description "The FULL version of a trimmed response (responses over the size gate carry a query_detail id). The spool keeps the last 20."
     :inputSchema {:type "object"
@@ -407,6 +411,7 @@
     "query_brief" "query_slice" "query_depends" "query_eval"
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
+    "review_scan"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 (def tools
   "Every tool descriptor the server advertises — concatenated from the
@@ -954,6 +959,10 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
                                                (str "slopp/" (:branch @session))
                                                (api/query-commits session)))]
                                    (told! session name a (cond-> b al (assoc :alignment al)))))
+      "review_scan" (text! (told! session name a
+                                            (api/review-scan session
+                                                             :ns (:ns a)
+                                                             :limit (or (:limit a) 25))))
       "report" (text! (let [r    (api/report session
                                                        :since (:since a)
                                                        :contains (:contains a)
