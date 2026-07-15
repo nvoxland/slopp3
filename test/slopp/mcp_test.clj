@@ -539,3 +539,22 @@
                            {:stage "open"
                             :steps [{:action "explode" :ns "st.core"}]}))))
       (finally (api/close! sess)))))
+(deftest ^:isolated red-first-rides-the-wire
+  ;; the api carried :red-first but the wire's select-keys dropped it —
+  ;; an agent would never have seen WHY its spec landed red
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "rw.core"
+                              :source "(ns rw.core)\n(defn seed \"S.\" [x] x)\n"})
+      (call sess "ns_create"
+            {:ns "rw.core-test"
+             :source (str "(ns rw.core-test (:require [rw.core :as c]\n"
+                          "                           [clojure.test :refer [deftest is]]))\n"
+                          "(deftest seed-t (is (= 1 (c/seed 1))))\n")})
+      (let [r (call sess "edit_add_form"
+                    {:ns "rw.core-test"
+                     :source "(deftest dbl-t (is (= 4 (c/dbl 2))))"
+                     :prompt "red first over the wire"})]
+        (is (re-find #":red-first \[rw\.core/dbl\]" r) r)
+        (is (re-find #"stubbed in-image" r) r))
+      (finally (api/close! sess)))))

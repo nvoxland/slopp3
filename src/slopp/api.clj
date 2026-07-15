@@ -102,6 +102,49 @@
                         (when (seq fs) [t fs])))))
             raw))))
 (declare adopt-modules!)
+(defn- stub-missing-test-vars!
+  "The GENERIC red-first seam (command-agnostic — every write path that
+  compiles through the image inherits it, including future ops): when a
+  -test namespace fails to load, intern a throwing stub in `image` for
+  every store var the CANDIDATE store shows it referencing but not
+  defining — aliased/qualified calls via kondo rows, :refer'd names via
+  the ns form (stubs precede the require, so the refer check passes) —
+  then the caller retries the load and the spec lands as an honest RED
+  naming the stub. Never touches the store; the real implementation
+  redefines the var. Returns the stubbed qsyms (nil when none — the
+  failure wasn't red-first)."
+  [image candidate ns-syms]
+  (let [nses    (set (keys (:namespaces candidate)))
+        tests   (filter #(str/ends-with? (str %) "-test") ns-syms)
+        ns-form (fn [t]
+                  (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
+                           (when (and (seq? s) (= 'ns (first s))) s))
+                        (store/forms candidate t)))
+        missing (vec (distinct
+                      (concat
+                       (for [t tests
+                             u (:var-usages (index/analyze (render/render-ns candidate t)))
+                             :when (and (contains? nses (:to u)) (:name u)
+                                        (not (store/form-named candidate (:to u) (:name u))))]
+                         (symbol (str (:to u)) (str (:name u))))
+                       (for [t tests
+                             :let [form (ns-form t)]
+                             clause (when form
+                                      (mapcat rest
+                                              (filter #(and (seq? %) (= :require (first %)))
+                                                      form)))
+                             :when (and (vector? clause)
+                                        (contains? nses (first clause)))
+                             [k v] (partition 2 (rest clause))
+                             :when (and (= :refer k) (vector? v))
+                             sym v
+                             :when (not (store/form-named candidate (first clause) sym))]
+                         (symbol (str (first clause)) (str sym))))))]
+    (doseq [q missing]
+      (repl/eval! image
+                  (format "(intern '%s '%s (fn [& _] (throw (ex-info \"red-first stub: %s is speced but not implemented\" {:red-first '%s}))))"
+                          (namespace q) (name q) q q)))
+    (when (seq missing) missing)))
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
@@ -134,7 +177,10 @@
        (swap! session assoc :reaper t))
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
        (when-let [err (image/load-ns! image store ns-sym)]
-         (throw (ex-info (str "image load failed for " ns-sym ": " err) {}))))
+         ;; a store carrying red-first specs still opens — stub and retry
+         (when-not (and (stub-missing-test-vars! image store [ns-sym])
+                        (nil? (image/load-ns! image store ns-sym)))
+           (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
      ;; module adoption: a populated store from a pre-module db (:modules
      ;; nil) gets its manifest derived from reality, once — fresh stores
      ;; are born with {} and enforcement already on
@@ -287,7 +333,8 @@
   this op began (`target-node`: store → CST node), the commit aborts with
   {:conflict ...} — C5's MV-register semantics, Phase-1 face.
   The compile gate runs once, before commit: the form's CONTENT (what the
-  image compiles) is invariant across rebases."
+  image compiles) is invariant across rebases. Red-first stubs surface as
+  :red-first on the result — the seam is hot-load-all!, not any command."
   [session transform target-node target-desc ns-sym
    & {:keys [load?] :or {load? true}}]
   (let [orig     (some-> (target-node (:store @session)) n/string)
@@ -295,7 +342,7 @@
                              :reason "form changed concurrently — re-read and retry"}}]
     (if (:db @session)
       ;; durable: the JOURNAL arbitrates (m5a) — append-CAS, refresh, rebase
-      (loop [attempt 0, loaded? false, healed? false]
+      (loop [attempt 0, loaded? false, healed? false, stubbed nil]
         (if (> attempt 12)
           {:error "commit contention: too many concurrent writes — retry"}
           (let [base (:store @session)
@@ -317,11 +364,15 @@
                           (if (try-commit! session base (:store out) [ns-sym])
                             (cond-> out
                               (or healed? (:healed load-res))
-                              (assoc :image-healed true))
+                              (assoc :image-healed true)
+
+                              (or stubbed (:stubbed load-res))
+                              (assoc :red-first (or stubbed (:stubbed load-res))))
                             (do (refresh-cache! session)
                                 (recur (inc attempt) true
                                        (or healed?
-                                           (boolean (:healed load-res)))))))))))))))
+                                           (boolean (:healed load-res)))
+                                       (or stubbed (:stubbed load-res))))))))))))))
       ;; ephemeral: the pure transform reruns INSIDE swap! — starvation-free
       (let [base0 (:store @session)
             out0  (transform base0)]
@@ -348,7 +399,11 @@
                     (cond-> @res
                       (and (nil? (:error @res)) (nil? (:conflict @res))
                            (:healed load-res))
-                      (assoc :image-healed true)))))))))))
+                      (assoc :image-healed true)
+
+                      (and (nil? (:error @res)) (nil? (:conflict @res))
+                           (:stubbed load-res))
+                      (assoc :red-first (:stubbed load-res))))))))))))
 
 (defn- with-ms
   "Attach total op wall time (item 2 observability)."
@@ -379,9 +434,15 @@
           ;; the store already ^:unsafe, so imported code is never frozen and the
           ;; image is never touched by a rejected namespace.
           {:error derr}
-          (let [res (repl/load-checked! (:image @session)
-                                        (render/render-ns candidate ns-sym)
-                                        (render/ns-path ns-sym))]
+          (let [load!   #(repl/load-checked! (:image @session)
+                                             (render/render-ns candidate ns-sym)
+                                             (render/ns-path ns-sym))
+                res     (load!)
+                ;; the generic red-first seam, ingest face: a spec ns naming
+                ;; not-yet-written vars stubs + retries instead of refusing
+                stubbed (when (:err res)
+                          (stub-missing-test-vars! (:image @session) candidate [ns-sym]))
+                res     (if (and stubbed (nil? (:err (load!)))) {} res)]
             (cond
               (:err res)
               {:error (str "namespace failed to load: " (:err res))}
@@ -403,14 +464,18 @@
                   (commit-appended! session
                                     #(store/record-verification % ns-sym summary)
                                     [])
-                  {:ns ns-sym
-                   :forms (count (store/forms candidate ns-sym))
-                   :warnings (vec (concat
-                                   (edit/ns-warnings candidate ns-sym)
-                                   (keep #(edit/missing-doc-warning
-                                           candidate ns-sym (:name %))
-                                         (store/forms candidate ns-sym))))
-                   :test summary}))))))
+                  (cond-> {:ns ns-sym
+                           :forms (count (store/forms candidate ns-sym))
+                           :warnings (vec (concat
+                                           (edit/ns-warnings candidate ns-sym)
+                                           (keep #(edit/missing-doc-warning
+                                                   candidate ns-sym (:name %))
+                                                 (store/forms candidate ns-sym))))
+                           :test summary}
+                    stubbed (assoc :red-first stubbed
+                                   :note (str "these vars don't exist yet — stubbed"
+                                              " in-image as failing (red-first);"
+                                              " implement them to go green.")))))))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 
@@ -1235,7 +1300,10 @@
     (let [{:keys [store image]} @session]
       (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
         (when-let [err (image/load-ns! image store ns-sym)]
-          (throw (ex-info (str "restart load failed for " ns-sym ": " err) {})))))))
+          ;; outstanding red-first stubs die with the old image — re-stub, retry
+          (when-not (and (stub-missing-test-vars! image store [ns-sym])
+                         (nil? (image/load-ns! image store ns-sym)))
+            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {}))))))))
 
 (defn restart!
   "D5 escape hatch: the agent-callable fresh-image restart."
@@ -1245,21 +1313,29 @@
 
 (defn- hot-load-all!
   "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).
-  Returns nil on success, {:healed true} when a STALE IMAGE had to be
-  refreshed to make the load succeed (D5.1 — e.g. a var the store defines was
-  missing from the image), or {:err msg} when the forms genuinely don't
-  compile (image restored either way)."
+  nil on success; {:healed true} when a STALE IMAGE had to be refreshed to
+  make the load succeed (D5.1); {:stubbed [qsyms]} when red-first stubs made
+  a -test namespace compile (the generic red-first seam — the spec runs and
+  fails honestly); {:err msg} when the forms genuinely don't compile (image
+  restored either way). Keys compose."
   [session candidate form-ids]
-  (letfn [(load-all []
-            (loop [ids (seq form-ids)]
-              (when ids
-                (or (edit/hot-load-form! (:image @session) candidate (first ids))
-                    (recur (next ids))))))]
-    (when-let [_err (load-all)]
-      (fresh-image! session)                 ; maybe the image was stale
-      (if-let [err2 (load-all)]
-        (do (fresh-image! session) {:err err2})
-        {:healed true}))))
+  (let [nses  (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
+        stub! #(stub-missing-test-vars! (:image @session) candidate nses)]
+    (letfn [(load-all []
+              (loop [ids (seq form-ids)]
+                (when ids
+                  (or (edit/hot-load-form! (:image @session) candidate (first ids))
+                      (recur (next ids))))))]
+      (when-let [_err (load-all)]
+        (let [stubbed (stub!)]
+          (if (and (seq stubbed) (nil? (load-all)))
+            {:stubbed stubbed}
+            (do (fresh-image! session)             ; maybe the image was stale
+                (let [stubbed (stub!)]             ; a fresh image loses stubs
+                  (if-let [err2 (load-all)]
+                    (do (fresh-image! session) {:err err2})
+                    (cond-> {:healed true}
+                      (seq stubbed) (assoc :stubbed stubbed)))))))))))
 
 (defn- traced-run!
   "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
@@ -1392,35 +1468,6 @@
 
 ;; --- edit.* / runtime ---
 
-(defn- red-first-stubs!
-  "Red-first TDD support: a spec in a -test namespace may reference store
-  vars that DON'T EXIST YET — that IS the red, not a reason to refuse the
-  write. Find them (kondo over the ns + the new form), intern throwing
-  stubs in the IMAGE (never the store) so the spec compiles and fails
-  honestly; the real implementation later redefines the var. Returns the
-  stubbed qsyms (nil when none). NOTE: until they're implemented, a fresh
-  JVM (isolated suite, restart) can't compile the spec — the short
-  red-first window is the point."
-  [session ns-sym source]
-  (when (str/ends-with? (str ns-sym) "-test")
-    (let [st      (:store @session)
-          nses    (set (keys (:namespaces st)))
-          nm      (some-> (edit/parse-form source) :node store/form-symbol)
-          missing (when nm
-                    (vec (distinct
-                          (for [u (:var-usages
-                                   (index/analyze
-                                    (str (render/render-ns st ns-sym) "\n" source)))
-                                :when (and (= nm (:from-var u))
-                                           (contains? nses (:to u))
-                                           (not (store/form-named st (:to u) (:name u))))]
-                            (symbol (str (:to u)) (str (:name u)))))))]
-      (when (seq missing)
-        (doseq [q missing]
-          (repl/eval! (:image @session)
-                      (format "(intern '%s '%s (fn [& _] (throw (ex-info \"red-first stub: %s is speced but not implemented\" {:red-first '%s}))))"
-                              (namespace q) (name q) q q)))
-        missing))))
 (defn edit-replace!
   "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace):
   pipeline + hot-reload, then re-verify — only the tests the trace map says
@@ -1429,7 +1476,6 @@
   [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-        stubs (red-first-stubs! session ns-sym new-source)
         r (rebased-write!
            session
            (fn [base] (edit/replace-form base ns-sym nm new-source
@@ -1465,7 +1511,7 @@
             (:image-healed r) (assoc :image-healed true)
             (pos? existing)   (assoc :existing-warnings existing)
             untested          (assoc :untested true)
-            stubs             (assoc :red-first stubs
+            (:red-first r)    (assoc :red-first (:red-first r)
                                      :note (str "these vars don't exist yet — stubbed"
                                                 " in-image as failing (red-first);"
                                                 " implement them to go green.")))
@@ -1494,7 +1540,6 @@
 
       :else
       (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-            stubs (red-first-stubs! session ns-sym source)
             r (rebased-write!
                session
                (fn [base]
@@ -1540,12 +1585,11 @@
                            :affected (or affected :all)}
                     (:image-healed r) (assoc :image-healed true)
                     (pos? existing)   (assoc :existing-warnings existing)
-                    stubs             (assoc :red-first stubs
+                    (:red-first r)    (assoc :red-first (:red-first r)
                                              :note (str "these vars don't exist yet —"
                                                         " stubbed in-image as failing"
                                                         " (red-first); implement them to"
-                                                        " go green. A fresh JVM can't"
-                                                        " compile this spec until then.")))
+                                                        " go green.")))
                   t0)))))))
 
 (defn delete-form!
@@ -1758,6 +1802,11 @@
                              :test     summary
                              :affected (or (not-empty affected) :all)}
                       (:healed load-res) (assoc :image-healed true)
+                      (:stubbed load-res) (assoc :red-first (:stubbed load-res)
+                                                 :note (str "these vars don't exist yet —"
+                                                            " stubbed in-image as failing"
+                                                            " (red-first); implement them to"
+                                                            " go green."))
                       (pos? existing)    (assoc :existing-warnings existing))
                     t0))))))))))
 

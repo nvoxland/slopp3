@@ -165,3 +165,40 @@
           (is (nil? (:error r)) (pr-str r))
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated red-first-is-command-agnostic
+  ;; the seam is the compile gate, not the command: EVERY write path that
+  ;; loads a -test namespace inherits red-first — groups, whole-ns ingest,
+  ;; :refer'd bare names, and image restarts with stubs outstanding
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rg.core "(ns rg.core)\n(defn seed \"S.\" [x] x)\n")
+      (api/ingest! sess 'rg.core-test
+                   (str "(ns rg.core-test (:require [rg.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest seed-t (is (= 1 (c/seed 1))))\n"))
+      (testing "a GROUP step spec lands red with the missing var named"
+        (let [r (api/edit-group! sess
+                                 [{:action :add :ns 'rg.core-test
+                                   :source "(deftest dbl-t (is (= 4 (c/dbl 2))))"}]
+                                 :prompt "red first via group")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= ['rg.core/dbl] (:red-first r)) (pr-str r))))
+      (testing "a whole spec NS with a :refer to a missing fn lands red (ingest path)"
+        (let [r (api/create-ns! sess 'rg.core.extra-test
+                                :source (str "(ns rg.core.extra-test\n"
+                                             "  (:require [rg.core :refer [trbl]]\n"
+                                             "            [clojure.test :refer [deftest is]]))\n"
+                                             "(deftest trbl-t (is (= 6 (trbl 2))))\n"))]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= ['rg.core/trbl] (:red-first r)) (pr-str r))))
+      (testing "a fresh image survives outstanding red-first stubs"
+        (is (nil? (:error (api/restart! sess)))))
+      (testing "implementing the fns turns the whole store green"
+        (api/add-form! sess 'rg.core "(defn dbl \"Doubles.\" [x] (* 2 x))"
+                       :prompt "green dbl")
+        (let [r (api/add-form! sess 'rg.core "(defn trbl \"Triples.\" [x] (* 3 x))"
+                               :prompt "green trbl")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              (pr-str (:test r)))))
+      (finally (api/close! sess)))))

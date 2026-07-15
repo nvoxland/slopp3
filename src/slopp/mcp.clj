@@ -1011,14 +1011,16 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                        :agent (:agent a))
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
-                                                  :untested :image-healed :test :affected :delta])
+                                                  :untested :image-healed :test :affected :delta
+                                                  :red-first :note])
                                     (summarize (:verbose a))))
       "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
-                                                  :untested :image-healed :test :affected :delta])
+                                                  :untested :image-healed :test :affected :delta
+                                                  :red-first :note])
                                     (summarize (:verbose a))))
       "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
@@ -1049,7 +1051,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                                             (str (:ns s) "/" (:name s)))))
                                                                   raw-steps))
                                               (select-keys [:error :source-now :step :group :warnings :existing-warnings :changed-nses
-                                                            :image-healed :test :affected :deltas :forms])
+                                                            :image-healed :test :affected :deltas :forms
+                                                            :red-first :note])
                                               (summarize (:verbose a)))))]
                      ;; staged construction: big groups arrive across several
                      ;; calls (wire payload ceilings) but commit as ONE atomic
