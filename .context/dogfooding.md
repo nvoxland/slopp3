@@ -236,3 +236,19 @@ still refuses. Lesson from the wave itself: a spec that mis-arities an
 api call can burn a debug cycle — the keyword-slid-into-source error
 ("count not supported on Keyword" from parse-form) is worth a nicer
 message someday.
+
+Red-first generalization (2026-07-15, user directive: "make sure
+red-first stubs cover everything... more purely in the test reporting,
+however we got there"): the per-command wiring (add-form!/edit-replace!
+only) was the bug factory — groups, ingest, and :refer'd names were
+uncovered, and FUTURE commands would silently miss it. Moved the whole
+mechanism to the compile gate: any -test namespace that fails to load,
+by any path, stubs its missing store vars and retries (failure-
+triggered, so zero cost when green). open!/fresh-image! do the same, so
+a store carrying an unimplemented spec still opens and restarts. Found
+en route: the MCP layer's select-keys silently DROPPED :red-first from
+write results — the api-level spec passed while agents on the wire
+never saw why their spec was red. Lesson: when a result gains a key,
+grep the wire's select-keys; result-shape specs should ride the WIRE
+(mcp-test `call`), not just the api. The refactor's 16-delta group was
+staged (stage open/add/commit) — first real use, worked as designed.

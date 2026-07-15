@@ -115,11 +115,20 @@ is what catches a missing one.
   the image has no source files, so a store ns is loaded via `load-ns!` not the
   classpath, and the muscle-memory `(require 'the.ns :reload)` would otherwise
   throw FileNotFoundException instead of the intended no-op.
-- Red-first TDD is native: `add-form!`/`edit-replace!` into a `-test`
-  namespace with references to MISSING store vars intern throwing stubs
-  in the image and land the spec as a real red (`:red-first` names the
-  vars); the isolated suite refuses to compile until they're implemented
-  — the short red-first window is the point.
+- Red-first TDD is native and COMMAND-AGNOSTIC: the seam is the compile
+  gate itself (`stub-missing-test-vars!`), not any write op. When a
+  `-test` namespace fails to load — through `hot-load-all!` (single
+  writes, groups, renames), `ingest!`/`ns_create`, `open!`, or a fresh
+  image — every store var it references but doesn't define gets a
+  throwing stub interned in the image (kondo rows for aliased/qualified
+  calls; the ns form's `:refer` vectors for bare names, since stubs
+  precede the require) and the load retries: the spec lands as an honest
+  red with `:red-first` naming the vars (carried on the wire). Restarts
+  and reopens with stubs outstanding survive the same way. Future write
+  paths inherit all of this by construction — anything that compiles
+  through the image is covered. The isolated suite (fresh JVM, no image)
+  still refuses until implementation — the short red-first window is the
+  point.
 - `isolated-test-run!` extras: `:affected true` = the provable slice
   (test namespaces whose require-closure reaches a form changed since
   the last milestone; empty slice returns a note, full suite stays the
