@@ -24,7 +24,7 @@
             [slopp.normalize :as normalize]
             [slopp.build :as build]
             [slopp.deps :as deps]
-            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -2740,7 +2740,7 @@
           (let [[gid st0] (store/alloc-id st "g")
                 [st1 d1]  (store/append-form st0 ns-sym (:node pd)
                                              :prompt prompt :group gid)
-                [st2 d2]  (store/move-form st1 ns-sym new-name from
+                [st2 _]   (store/move-form st1 ns-sym new-name from
                                            :prompt prompt :group gid)
                 [st3 d3]  (store/replace-node st2 ns-sym from (:node pf)
                                               :prompt prompt :group gid)]
@@ -2749,7 +2749,7 @@
               {:error (str "extract failed to compile: " err)}
               (if-not (try-commit! session st st3 [ns-sym])
                 {:conflict {:reason "store changed during extract — retry"}}
-                (do (let [affected (affected-tests session ns-sym from)
+                (let [affected (affected-tests session ns-sym from)
                           summary  (run-verification! session ns-sym affected
                                                       :edited
                                                       #{(symbol (str ns-sym) (str from))
@@ -2761,7 +2761,7 @@
                                    :params (:params plan)}
                        :group    gid
                        :test     summary
-                       :affected (or affected :all)}))))))))))
+                       :affected (or affected :all)})))))))))
 
 (defn ns-rename!
   "Rename a WHOLE namespace: its ns decl, every require clause, and every
@@ -3691,6 +3691,24 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
+(defn- production-manifest
+  "Module dependency edges from PRODUCTION namespaces only — the
+  architecture VIEW's graph. A `-test` namespace folds into its subject
+  module (module-of strips `-test`), so its fixture deps would manufacture
+  cycles that don't exist in production; excluding them tells the truth.
+  Every production module is a key (isolated ones → layer 0). The stored
+  manifest still carries the test edges — this derivation is for
+  layers/cycles, not for enforcement."
+  [store rows]
+  (let [prod? #(not (str/ends-with? (str %) "-test"))
+        base  (into {} (map (fn [n] [(edit/module-of n) #{}]))
+                    (filter prod? (keys (:namespaces store))))]
+    (reduce (fn [m {:keys [from-ns to]}]
+              (if (prod? from-ns)
+                (let [a (edit/module-of from-ns) b (edit/module-of to)]
+                  (if (= a b) m (update m a (fnil conj #{}) b)))
+                m))
+            base rows)))
 (defn- module-usage-rows
   "Every store-internal, kondo-resolved var-usage row ({:from-ns :from-var
   :to :to-export}) — ONE pass over the store shared by the debt view and
@@ -4196,7 +4214,7 @@
   KEYWORD (\":dest-zone\"). Dependents: ns → who requires it + qualified
   refs; var → blast radius (callers, value refs, covering tests); keyword
   → the field's flow. Dependencies: var → the transitive callee tree; ns
-  → its requires. `:modules true` (no `on`) → the module manifest (declared
+  → its requires. `:modules true` (no `on`) → the module graph (:manifest=DECLARED, :layers/:cycles=PRODUCTION-only; declared
   edges + any standing debt). One tool to ask — results carry :kind."
   [session on & {:keys [direction modules] :or {direction :dependents}}]
   (let [st (:store @session)]
@@ -4215,7 +4233,9 @@
                                   d      (sort ds)
                                   :when  (not (contains? actual [m d]))]
                               [m d]))
-              graph    (store/module-layers manifest)]
+              ;; layers/cycles reflect PRODUCTION architecture (test fixtures excluded);
+              ;; :manifest below stays the DECLARED/enforced set
+              graph    (store/module-layers (production-manifest st rows))]
           (cond-> {:kind :modules
                    :manifest (into (sorted-map)
                                    (map (fn [[m ds]] [m (vec (sort ds))]))

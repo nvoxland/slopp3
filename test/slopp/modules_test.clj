@@ -4,7 +4,6 @@
   edges (default-deny once a `modules` manifest exists), acyclic graph,
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
-            [rewrite-clj.parser :as p]
             [slopp.api :as api]
             [slopp.edit :as edit]
             [slopp.store :as store]))
@@ -196,7 +195,9 @@
       (testing "the graph view: layers, and drift toward DEAD edges is named"
         (api/module-dep! sess "mb.app" "mc.ghost" :prompt "declared, never used")
         (let [r (api/query-depends sess nil :modules true)]
-          (is (= [["ma.core" "mc.ghost"] ["mb.app"]] (:layers r)) (pr-str r))
+          ;; mc.ghost is a phantom (declared edge, NO code) — production layers
+          ;; exclude it, though :unused-edges still flags the dead edge
+          (is (= [["ma.core"] ["mb.app"]] (:layers r)) (pr-str r))
           (is (= [["mb.app" "mc.ghost"]] (:unused-edges r)))
           (is (re-find #"remove true" (:unused-note r)))
           (is (nil? (:cycles r)))))
@@ -293,4 +294,36 @@
         (let [r (api/done! sess :label "docs review")]
           (is (some #{'mb.app/use-it} (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated module-graph-views-use-production-edges
+  ;; -test namespaces fold into the subject module, so their fixture deps
+  ;; pollute the graph and manufacture cycles that don't exist in
+  ;; production. The DECLARED manifest keeps them (enforcement); the
+  ;; layers/cycles VIEW must reflect production only. Mirrors slopp's own
+  ;; adopted-store situation.
+  (let [sess (api/open!)]
+    (try
+      ;; adoption-style setup (gate off) so we can land the cyclic fixture edge
+      (swap! sess assoc :adopting? true)
+      (api/ingest! sess 'pa.core "(ns pa.core)\n(defn base \"B.\" [x] x)\n")
+      (api/ingest! sess 'pb.app
+                   (str "(ns pb.app (:require [pa.core :as c]))\n"
+                        "(defn go \"G.\" [x] (c/base x))\n"))
+      (api/ingest! sess 'pa.core-test
+                   (str "(ns pa.core-test (:require [pb.app :as app]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest go-t (is (= 1 (app/go 1))))\n"))
+      (swap! sess dissoc :adopting?)
+      (api/adopt-modules! sess)   ; records pb.app→pa.core AND (test) pa.core→pb.app
+      (let [r (api/query-depends sess nil :modules true)]
+        (testing "the DECLARED manifest still carries the test-fixture back-edge"
+          (is (contains? (set (get-in r [:manifest "pa.core"])) "pb.app")
+              (pr-str (:manifest r))))
+        (testing "the production graph is acyclic — no false cycle in the view"
+          (is (nil? (:cycles r)) (pr-str (:cycles r))))
+        (testing "layers reflect production: pa.core sits below pb.app"
+          (let [layer-of (into {} (for [[i layer] (map-indexed vector (:layers r))
+                                        m layer] [m i]))]
+            (is (< (layer-of "pa.core") (layer-of "pb.app"))
+                (pr-str (:layers r))))))
       (finally (api/close! sess)))))
