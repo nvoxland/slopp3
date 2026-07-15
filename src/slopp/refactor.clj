@@ -440,7 +440,7 @@
                      (assoc m :error
                             (str "call site in " ns-sym "/" (:name e) " has "
                                  (count args) " args but the template needs $"
-                                 max-n " — rewrite that one with edit_group"))
+                                 max-n " — rewrite that call site yourself (edit_subform)"))
                      (let [head    (n/string (z/node zl))
                            subst   (str/trim
                                     (str/replace args-template #"\$(\d)"
@@ -466,7 +466,7 @@
                           (partition 2 1 spans))]
         (if nested?
           (assoc acc :error (str "nested call sites of the fn in " ns-sym "/"
-                                 (:name e) " — rewrite that form with edit_group"))
+                                 (:name e) " — rewrite that form yourself (edit_subform)"))
           (-> acc
               (assoc :manual (:manual info))
               (update :caller-steps conj

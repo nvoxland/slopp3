@@ -173,24 +173,6 @@
                                :to {:type "string"} :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
-   {:name "edit_group"
-    :description "Several writes as ONE atomic intent, one verification — the default for ANY multi-form change. Steps: replace/add/delete/move/subform/require. add takes optional `before`; subform takes name+match+source (`text` true for docstrings/strings); require takes a clause string. BIG groups: stage=open holds steps (validated, uncommitted), stage=add appends, stage=commit executes everything as ONE group — beats payload limits without splitting the intent; stage=drop discards."
-    :inputSchema {:type "object"
-                  :properties {:steps {:type "array"
-                                       :items {:type "object"
-                                               :properties {:action {:type "string" :enum ["replace" "add" "delete" "move" "subform" "require"]}
-                                                            :ns {:type "string"}
-                                                            :name {:type "string"}
-                                                            :source {:type "string"}
-                                                            :before {:type "string"}
-                                                            :match {:type "string"}
-                                                            :text {:type "boolean"}
-                                                            :require {:type "string"}}
-                                               :required ["action" "ns"]}}
-                               :stage {:type "string" :enum ["open" "add" "commit" "drop"]}
-                               :prompt {:type "string"}
-                               :verbose {:type "boolean"}}
-                  :required ["steps"]}}
    {:name "rename_sweep"
     :description "A concept rename as ONE intent: every namespace, var, keyword, and prose occurrence of `from` (whole word/segment) becomes `to`, store-wide — ns renames + one atomic group, one verification. THE tool for docs-team renames ('zone is now region'); never do those form-by-form."
     :inputSchema {:type "object"
@@ -221,7 +203,7 @@
                                :prompt {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
    {:name "episode_revert"
-    :description "Roll back everything YOU changed since your last checkpoint (other sessions' forms skipped, reported)."
+    :description "Roll back everything YOU changed since your last done (other sessions' forms skipped, reported)."
     :inputSchema {:type "object"
                   :properties {:prompt {:type "string"}}}}
    {:name "fix_declares"
@@ -243,7 +225,7 @@
                                :to {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}])
 (def flow-tools
-  "Session-flow tool descriptors: turns, tests, checkpoints, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
+  "Session-flow tool descriptors: turns, tests, done-points, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
   [{:name "turn_begin"
     :description "Open a turn manually (records the verbatim user ask as intent). Turns are normally opened FOR you by the plugin's hooks — only needed if a write is refused."
     :inputSchema {:type "object"
@@ -254,7 +236,7 @@
     :description "Close the turn (usually automatic)."
     :inputSchema {:type "object"
                   :properties {:note {:type "string"}}}}
-   {:name "checkpoint"
+   {:name "done"
     :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary."
     :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "commit_point"
@@ -500,15 +482,19 @@
 
 (def ^:private write-tools
   (into single-write-tools
-        ["edit_delete_form" "edit_group" "edit_rename" "edit_extract"
+        ["edit_delete_form" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
-         "checkpoint" "commit_point" "deps_add" "deps_remove" "deps_pure"
+         "done" "commit_point" "deps_add" "deps_remove" "deps_pure"
          "change_signature"]))
 
 (defn- bump-smell-counts
-  "Fold one tool call into the smell counters (pure)."
+  "Fold one tool call into the smell counters (pure). :done-now is set
+  only on the done/commit_point call itself (true when a test_run
+  preceded it with no intervening write — the redundant pre-flight);
+  every other call clears it."
   [c tool args]
-  (let [c (merge {:test-runs 0 :singles 0 :history 0 :dumps 0 :renames 0 :searches 0} c)]
+  (let [c (-> (merge {:test-runs 0 :history 0 :dumps 0 :renames 0 :searches 0} c)
+              (dissoc :done-now))]
     (cond
       (= tool "query_search")
       (update c :searches inc)
@@ -525,13 +511,8 @@
       (= tool "edit_rename")
       (-> c (update :renames inc) (assoc :test-runs 0))
 
-      (single-write-tools tool)
-      (-> c (assoc :test-runs 0)
-          (assoc :singles (if (= (:ns args) (:last-ns c)) (inc (:singles c)) 1))
-          (assoc :last-ns (:ns args)))
-
-      (#{"edit_group" "checkpoint" "commit_point"} tool)
-      (assoc c :test-runs 0 :singles 0 :last-ns nil)
+      (#{"done" "commit_point"} tool)
+      (assoc c :done-now (pos? (:test-runs c 0)) :test-runs 0)
 
       (write-tools tool)
       (assoc c :test-runs 0)
@@ -545,8 +526,8 @@
   cooldown) lives in track-hint!; messages are suggestions, never refusals."
   [[:test-runs #(>= (:test-runs %) 3)
     "every write already verifies (its result includes :test) — test_run is rarely needed"]
-   [:singles #(>= (:singles %) 4)
-    "several single-form writes in a row — batch related changes into ONE edit_group"]
+   [:pre-done-test #(:done-now %)
+    "done already runs the affected tests for everything you touched — a pre-flight test_run is redundant; mid-episode runs are for spot-checks"]
    [:history #(>= (:history %) 2)
     "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read"]
    [:dumps #(>= (:dumps %) 2)
@@ -592,15 +573,17 @@ ORIENT:  query_project (everything, one call) · query_search {pattern} (the gre
          query_symbol {ns name} (one form's source) · query_references {ns name}
 OBSERVE: query_eval {code} (your REPL: call anything; cannot redefine code)
          query_observe {ns name code} (capture args/returns flowing through a fn)
-WRITE:   every write verifies immediately and returns :test — trust it.
+WRITE:   work like a REPL: small individual writes, each verifies and returns
+         :test — mid-episode reds are normal; stale callers ride :carried-errors
+         until done re-checks them.
          edit_add_form / edit_replace_form {ns name source prompt}
-         edit_group {steps prompt}  <- SEVERAL forms for one reason: always batch
          edit_rename {ns old new}   <- never rename by editing call sites
          edit_extract {ns from form name} · edit_move {ns name before}
          ns_create {ns requires?|source?}  <- NEW namespace: scaffold+grow, or whole source at once
          ns_add_require / ns_remove_require  <- never hand-edit the ns form
 RULES:   every write must compile (define callees first; (declare x) for cycles)
-         red-first TDD = minimal fn + test in ONE edit_group, then replace
+         red-first TDD = write the failing test FIRST (missing fns land as
+         :red-first stubs and fail honestly), then implement
 READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)
          :diagnosis :genuine = real red, yours · :staleness-detected = healed
          :warnings = fix with edit_rename per :suggest · :untested = add a test
@@ -609,9 +592,9 @@ SHARE:   git_push {url?} (milestones -> a normal git remote; url saved once)
          git_pull (3-way absorb: remote wins where you're clean; both-touched =
          conflict, yours stays live, push blocked until git_resolve {path})
          config {key value?} (user.name/user.email = milestone author identity)
-FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
+FINISH:  done {label} (tidies, lints, marks the unit boundary)
          commit_point {description} <- MILESTONE: green-gated, the grain a
-         human diffs and reverts to; coarser than checkpoints and turns")
+         human diffs and reverts to; coarser than done-points and turns")
 
 (defn- red? [t]
   (and t (pos? (+ (:fail t 0) (:error t 0)))))
@@ -877,8 +860,8 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
   (absorb-pending-intent! session)
   (when (and (:require-turns? @session)
              (contains? write-tools name)
-             ;; checkpoint/commit_point CLOSE work; always allowed
-             (not (#{"checkpoint" "commit_point"} name)))
+             ;; done/commit_point CLOSE work; always allowed
+             (not (#{"done" "commit_point"} name)))
     (let [ag (or (:agent arguments) (:agent-id @session))]
       (when-not (api/turn-open? session ag)
         (if-let [intent (:pending-intent @session)]
@@ -1031,7 +1014,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta
-                                                  :red-first :note])
+                                                  :red-first :carried-errors :note])
                                     (summarize (:verbose a))))
       "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (:source a)
                                                    :prompt (:prompt a)
@@ -1039,58 +1022,13 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                    :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta
-                                                  :red-first :note])
+                                                  :red-first :carried-errors :note])
                                     (summarize (:verbose a))))
       "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "edit_group" (let [convert (fn [s]
-                                   (let [action (or (:action s) (:op s))] ; :op guessed in evals
-                                     (when-not (contains? #{"replace" "add" "delete" "move" "subform" "require"} action)
-                                       (throw (ex-info (str "edit_group step needs :action of replace|add|delete|move|subform|require (got "
-                                                            (pr-str action) "); keys: :action :ns :name :source :before :match :text :require")
-                                                       {})))
-                                     (cond-> {:action (keyword action)
-                                              :ns (symbol (:ns s))}
-                                       (:name s)    (assoc :name (symbol (:name s)))
-                                       (:source s)  (assoc :source (:source s))
-                                       (:before s)  (assoc :before (symbol (:before s)))
-                                       (:match s)   (assoc :match (:match s))
-                                       (:text s)    (assoc :text true)
-                                       (:where s)   (assoc :where (:where s))
-                                       (:require s) (assoc :require (:require s)))))
-                         exec!   (fn [raw-steps]
-                                   (text! (-> (api/edit-group! session (mapv convert raw-steps)
-                                                               :prompt (:prompt a) :agent (:agent a))
-                                              (assoc :forms (into []
-                                                                  (keep (fn [s]
-                                                                          (when (:name s)
-                                                                            (str (:ns s) "/" (:name s)))))
-                                                                  raw-steps))
-                                              (select-keys [:error :source-now :step :group :warnings :existing-warnings :changed-nses
-                                                            :image-healed :test :affected :deltas :forms
-                                                            :red-first :note])
-                                              (summarize (:verbose a)))))]
-                     ;; staged construction: big groups arrive across several
-                     ;; calls (wire payload ceilings) but commit as ONE atomic
-                     ;; intent with ONE verification
-                     (case (:stage a)
-                       "open"   (do (mapv convert (:steps a))   ; validate NOW, fail fast
-                                    (swap! session assoc ::staged-steps (vec (:steps a)))
-                                    (text! {:staged (count (:steps a))
-                                            :note "held, nothing committed — add more with stage \"add\"; edit_group {stage \"commit\", prompt} executes ONE atomic group; stage \"drop\" discards"}))
-                       "add"    (do (mapv convert (:steps a))
-                                    (swap! session update ::staged-steps (fnil into []) (vec (:steps a)))
-                                    (text! {:staged (count (::staged-steps @session))}))
-                       "drop"   (do (swap! session dissoc ::staged-steps)
-                                    (text! {:dropped true}))
-                       "commit" (let [steps (into (vec (::staged-steps @session)) (:steps a))]
-                                  (swap! session dissoc ::staged-steps)
-                                  (exec! steps))
-                       nil      (exec! (:steps a))
-                       (throw (ex-info "stage must be open|add|commit|drop (or omitted to execute steps directly)" {}))))
       "edit_rename" (let [old (or (:old a) (:name a) (:from a))
                                 new (or (:new a) (:to a))]
                             (when-not (and old new)
@@ -1153,7 +1091,7 @@ FINISH:  checkpoint {label} (tidies, lints, marks the unit boundary)
                                                     :prompt (:prompt a))
                                       (select-keys [:error :extracted :group :test :affected])
                                       (summarize (:verbose a)))))
-      "checkpoint" (text! (api/checkpoint! session :label (:label a)
+      "done" (text! (api/done! session :label (:label a)
                                                   :agent (:agent a)))
       "commit_point" (text! (let [r (api/commit-point! session (:description a)
                                                        :agent (:agent a)

@@ -334,7 +334,9 @@
   {:conflict ...} — C5's MV-register semantics, Phase-1 face.
   The compile gate runs once, before commit: the form's CONTENT (what the
   image compiles) is invariant across rebases. Red-first stubs surface as
-  :red-first on the result — the seam is hot-load-all!, not any command."
+  :red-first; lint errors in OTHER forms (stale callers) surface as
+  :carried-errors — both ride the result, never block, and the done-point
+  re-checks."
   [session transform target-node target-desc ns-sym
    & {:keys [load?] :or {load? true}}]
   (let [orig     (some-> (target-node (:store @session)) n/string)
@@ -342,7 +344,7 @@
                              :reason "form changed concurrently — re-read and retry"}}]
     (if (:db @session)
       ;; durable: the JOURNAL arbitrates (m5a) — append-CAS, refresh, rebase
-      (loop [attempt 0, loaded? false, healed? false, stubbed nil]
+      (loop [attempt 0, loaded? false, healed? false, stubbed nil, carried nil]
         (if (> attempt 12)
           {:error "commit contention: too many concurrent writes — retry"}
           (let [base (:store @session)
@@ -353,11 +355,14 @@
                 (if (:error out)
                   out
                   (let [load-res (when (and load? (not loaded?))
-                                   (or (some->> (or (edit/cold-load-errors (:store out) [ns-sym])
-                                       (edit/lint-refusals base (:store out) [ns-sym]))
-                                                (hash-map :err))
-                                       (hot-load-all! session (:store out)
-                                                      [(:form-id (:delta out))])))]
+                                   (let [lr (edit/lint-refusals base (:store out) [ns-sym]
+                                                                [(:form-id (:delta out))])]
+                                     (if-let [gate (or (edit/cold-load-errors (:store out) [ns-sym])
+                                                       (:refuse lr))]
+                                       {:err gate}
+                                       (merge (hot-load-all! session (:store out)
+                                                             [(:form-id (:delta out))])
+                                              (select-keys lr [:carried])))))]
                     (if (:err load-res)
                       {:error (str "form failed to compile: " (:err load-res))}
                       (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -367,23 +372,29 @@
                               (assoc :image-healed true)
 
                               (or stubbed (:stubbed load-res))
-                              (assoc :red-first (or stubbed (:stubbed load-res))))
+                              (assoc :red-first (or stubbed (:stubbed load-res)))
+
+                              (or carried (:carried load-res))
+                              (assoc :carried-errors (or carried (:carried load-res))))
                             (do (refresh-cache! session)
                                 (recur (inc attempt) true
-                                       (or healed?
-                                           (boolean (:healed load-res)))
-                                       (or stubbed (:stubbed load-res))))))))))))))
+                                       (or healed? (boolean (:healed load-res)))
+                                       (or stubbed (:stubbed load-res))
+                                       (or carried (:carried load-res))))))))))))))
       ;; ephemeral: the pure transform reruns INSIDE swap! — starvation-free
       (let [base0 (:store @session)
             out0  (transform base0)]
         (if (:error out0)
           out0
           (let [load-res (when load?
-                           (or (some->> (or (edit/cold-load-errors (:store out0) [ns-sym])
-                                        (edit/lint-refusals base0 (:store out0) [ns-sym]))
-                                        (hash-map :err))
-                               (hot-load-all! session (:store out0)
-                                              [(:form-id (:delta out0))])))]
+                           (let [lr (edit/lint-refusals base0 (:store out0) [ns-sym]
+                                                        [(:form-id (:delta out0))])]
+                             (if-let [gate (or (edit/cold-load-errors (:store out0) [ns-sym])
+                                               (:refuse lr))]
+                               {:err gate}
+                               (merge (hot-load-all! session (:store out0)
+                                                     [(:form-id (:delta out0))])
+                                      (select-keys lr [:carried])))))]
             (if (:err load-res)
               {:error (str "form failed to compile: " (:err load-res))}
               (do (when *pre-commit-hook* (*pre-commit-hook*))
@@ -403,7 +414,11 @@
 
                       (and (nil? (:error @res)) (nil? (:conflict @res))
                            (:stubbed load-res))
-                      (assoc :red-first (:stubbed load-res))))))))))))
+                      (assoc :red-first (:stubbed load-res))
+
+                      (and (nil? (:error @res)) (nil? (:conflict @res))
+                           (:carried load-res))
+                      (assoc :carried-errors (:carried load-res))))))))))))
 
 (defn- with-ms
   "Attach total op wall time (item 2 observability)."
@@ -651,7 +666,7 @@
 
 (defn query-search-history
   "Delta-log search — the 'which prompts touched X' query. Case-insensitive
-  substring match of `pattern` against each delta's prompt, checkpoint label,
+  substring match of `pattern` against each delta's prompt, done label,
   commit/turn description, turn-end note, AND its enclosing turn intent;
   returns the matching deltas NEWEST-first with the forms they touched (as
   ns/name qsyms, resolved as of that delta) and the human time. `:limit`
@@ -693,7 +708,7 @@
   "The delta log as a story, newest first. Filters: `:ns`, `:contains`
   (substring of prompt/label — and, collapsed, of turn intents). `:limit`
   (default 20). `:collapse true` returns EPISODE rows instead of raw deltas —
-  one row per agent-work-unit between checkpoints, the readable long-term
+  one row per agent-work-unit between done-points, the readable long-term
   view. All rows carry `:at` (local date-time)."
   [session & {:keys [ns contains limit collapse format] :or {limit 20}}]
   (let [render-text
@@ -745,14 +760,14 @@
                 relevant (filter #(or (contains? #{:ingest :add :replace :delete
                                                    :rename :normalize :move :merge}
                                                  (:op %))
-                                      (= :checkpoint (:op %)))
+                                      (= :done (:op %)))
                                  ds)
                 pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
                 rows     (mapcat
                           (fn [[agent ads]]
                             (loop [ads ads, cur [], out []]
                               (if-let [d (first ads)]
-                                (if (= :checkpoint (:op d))
+                                (if (= :done (:op d))
                                   (recur (rest ads) []
                                          (if (seq cur)
                                            (conj out {:episode
@@ -937,7 +952,7 @@
   (let [st   (:store @session)
         ds   (store/deltas st)
         head (:id (last ds))
-        quiet-ops #{:verify :checkpoint :commit :turn-begin :turn-end}
+        quiet-ops #{:verify :done :commit :turn-begin :turn-end}
         unchanged? (and since
                        (some #(= since (:id %)) ds)
                        (->> ds
@@ -973,17 +988,17 @@
   #{:ingest :add :replace :delete :rename :normalize :move :merge})
 
 (defn- episode-boundary
-  "Where `agent-label`'s episode begins: its own last :checkpoint — or, for
-  an agent that has never checkpointed, the last stable spot (ANY agent's
-  checkpoint) before its first activity, so pre-existing history is never
+  "Where `agent-label`'s episode begins: its own last :done — or, for
+  an agent that has never marked done, the last stable spot (ANY agent's
+  done) before its first activity, so pre-existing history is never
   mistaken for contested work. nil = log start."
   [store agent-label]
   (let [ds  (store/deltas store)
-        own (last (filter #(and (= :checkpoint (:op %))
+        own (last (filter #(and (= :done (:op %))
                                 (= agent-label (:agent %)))
                           ds))]
     (:id (or own
-             (let [ckpts     (filter #(= :checkpoint (:op %)) ds)
+             (let [ckpts     (filter #(= :done (:op %)) ds)
                    first-own (first (filter #(and (contains? content-ops (:op %))
                                                   (= agent-label (:agent %)))
                                             ds))]
@@ -1135,7 +1150,7 @@
           versions))))
 
 (defn query-changes
-  "The agent's EPISODE — everything since `:agent`'s last checkpoint: net
+  "The agent's EPISODE — everything since `:agent`'s last done: net
   per-form diffs (:was/:now), the step list, and the verification arc. The
   'what have I done since my last stable spot' view. Parallel agents with
   distinct :agent labels each see only their own work. `:format \"text\"`
@@ -1514,7 +1529,8 @@
             (:red-first r)    (assoc :red-first (:red-first r)
                                      :note (str "these vars don't exist yet — stubbed"
                                                 " in-image as failing (red-first);"
-                                                " implement them to go green.")))
+                                                " implement them to go green."))
+            (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
           t0)))))
 
 (defn add-form!
@@ -1589,7 +1605,8 @@
                                              :note (str "these vars don't exist yet —"
                                                         " stubbed in-image as failing"
                                                         " (red-first); implement them to"
-                                                        " go green.")))
+                                                        " go green."))
+                    (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
                   t0)))))))
 
 (defn delete-form!
@@ -1725,12 +1742,15 @@
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
-          (let [load-res (or (some->> (or (edit/cold-load-errors st (distinct (map :ns steps)))
-                                          (edit/lint-refusals base0 st (distinct (map :ns steps))))
-                                         (hash-map :err))
-                                (hot-load-all! session st
-                                               (keep (fn [[k a]] (when (#{:load :load-unmap} k) a))
-                                                     hots)))]
+          (let [lr       (edit/lint-refusals base0 st (distinct (map :ns steps))
+                                             (keep :form-id deltas))
+                load-res (if-let [gate (or (edit/cold-load-errors st (distinct (map :ns steps)))
+                                           (:refuse lr))]
+                           {:err gate}
+                           (merge (hot-load-all! session st
+                                                 (keep (fn [[k a]] (when (#{:load :load-unmap} k) a))
+                                                       hots))
+                                  (select-keys lr [:carried])))]
             (cond
               (:err load-res)
               {:error (str "group failed to compile: " (:err load-res))}
@@ -1807,6 +1827,7 @@
                                                             " stubbed in-image as failing"
                                                             " (red-first); implement them to"
                                                             " go green."))
+                      (:carried load-res) (assoc :carried-errors (:carried load-res))
                       (pos? existing)    (assoc :existing-warnings existing))
                     t0))))))))))
 
@@ -2001,12 +2022,16 @@
                :skipped (vec (filter #(= :skip (:action %)) plan))
                :test    summary})))))))
 
-(defn checkpoint!
-  "Mark a unit of work done: deterministically normalize every form changed
-  since the last checkpoint (slopp.normalize — conservative behavior-preserving
-  rewrites), commit the rewrites as ONE `:normalize` group delta, hot-reload +
-  re-verify them, then record a labeled `:checkpoint` boundary delta.
-  Returns {:checkpoint id :normalized n :rewrites [{:form :applied}] :test s}."
+(defn done!
+  "The DONE-POINT: call when you believe your changes are complete. Marks
+  the episode boundary and runs the automatic done-processing — normalize
+  every form changed this episode (conservative behavior-preserving
+  rewrites), clean up safe (declare)s, kondo-lint every touched namespace,
+  and RUN THE AFFECTED TESTS for everything the episode touched (no
+  test_run needed first — mid-episode runs are for spot-checks). Findings
+  ride the boundary delta so the next session's brief surfaces anything
+  left red. Returns {:done id :normalized n :rewrites [{:form :applied}]
+  :lint [...] :test s :findings {...}}."
   [session & {:keys [label agent]}]
   (let [st       (:store @session)
         changed  (->> (episode-span st agent)
@@ -2024,42 +2049,29 @@
                                           (str (or (:name e) (:id e))))
                          :node    node
                          :applied applied}))
-        summary
-        (when (seq rewrites)
-          (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
-                main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
-                [st' delta] (store/apply-changeset st :normalize main-ns changeset
-                                                   :prompt (or label "checkpoint normalization")
-                                                   :agent agent)
-                touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
-            (when-let [err (:err (hot-load-all! session st' (keys changeset)))]
-              (throw (ex-info (str "normalization failed to compile: " err) {})))
-            (when-not (try-commit! session st st' (vec touched))
-              (throw (ex-info "store changed during checkpoint — retry" {})))
-            (let [per      (map (fn [r] (affected-tests session
-                                                        (symbol (namespace (:form r)))
-                                                        (symbol (name (:form r)))))
-                                rewrites)
-                  affected (when (not-any? nil? per)
-                             (vec (sort (distinct (apply concat per)))))
-                  s        (run-verification! session main-ns affected
-                                              :edited (set (map :form rewrites))
-                                              :include-integration? true)]  ; M5
-              (commit-appended! session
-                                #(store/record-verification % main-ns s) [])
-              s)))
+        _        (when (seq rewrites)
+                   (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
+                         main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
+                         [st' _]     (store/apply-changeset st :normalize main-ns changeset
+                                                            :prompt (or label "done normalization")
+                                                            :agent agent)
+                         touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
+                     (when-let [err (:err (hot-load-all! session st' (keys changeset)))]
+                       (throw (ex-info (str "normalization failed to compile: " err) {})))
+                     (when-not (try-commit! session st st' (vec touched))
+                       (throw (ex-info "store changed during done — retry" {})))))
         ;; automatic declare hygiene (user-directed): the compile gate makes
-        ;; agents mint (declare)s; the checkpoint cleans the safe ones up
+        ;; agents mint (declare)s; the done-point cleans the safe ones up
         declare-fixes
         (vec (for [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
                                        changed))
                    :let [r (fix-declares! session ns*
-                                          :prompt (or label "checkpoint declare hygiene")
+                                          :prompt (or label "done declare hygiene")
                                           :agent agent)]
                    :when (pos? (:removed r 0))]
                {:ns ns* :removed (:removed r) :moved (:moved r)}))
-        ;; kondo lint over every namespace touched since the last checkpoint —
-        ;; syntax + best-practice findings, form-addressed (user-requested gate)
+        ;; kondo lint over every namespace touched since the last done-point —
+        ;; carried mid-episode errors (stale callers) get re-checked HARD here
         lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
                                               changed))
                         :let [st* (:store @session)]
@@ -2068,20 +2080,54 @@
                            :form (when-let [e (render/owner-form st* ns-sym
                                                                  (:row f) (:col f))]
                                    (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
+        ;; THE done-point verification: the episode's whole working set —
+        ;; independent of whether normalize rewrote anything
+        summary
+        (when (seq changed)
+          (let [st*      (:store @session)
+                qsyms    (into #{}
+                               (keep (fn [fid]
+                                       (when-let [e (store/form-by-id st* fid)]
+                                         (symbol (str (store/ns-of-form-id st* fid))
+                                                 (str (or (:name e) (:id e)))))))
+                               changed)
+                per      (map (fn [q] (affected-tests session
+                                                      (symbol (namespace q))
+                                                      (symbol (name q))))
+                              qsyms)
+                affected (when (not-any? nil? per)
+                           (vec (sort (distinct (apply concat per)))))
+                main-ns  (vec (distinct (keep #(store/ns-of-form-id st* %) changed)))
+                s        (run-verification! session main-ns
+                                            (when (seq affected) affected)
+                                            :edited qsyms
+                                            :include-integration? true)]  ; M5
+            (commit-appended! session
+                              #(store/record-verification % main-ns s) [])
+            s))
+        findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
+                       failures    (+ (:fail summary 0) (:error summary 0))]
+                   {:test-status (cond (nil? summary)  :none
+                                       (pos? failures) :red
+                                       :else           :green)
+                    :failures    failures
+                    :lint-errors lint-errors})
         cid (let [v (volatile! nil)]
               (commit-appended! session
                                 (fn [base]
-                                  (let [[st2 c] (store/record-checkpoint base label
-                                                                         :agent agent)]
+                                  (let [[st2 c] (store/record-done base label
+                                                                   :agent agent
+                                                                   :findings findings)]
                                     (vreset! v c)
                                     st2))
                                 [])
-              (swap! session assoc :checkpoint @v)
+              (swap! session assoc :done @v)
               @v)]
-    (cond-> {:checkpoint cid
+    (cond-> {:done cid
              :normalized (count rewrites)
              :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
-             :lint       lint}
+             :lint       lint
+             :findings   findings}
       (seq declare-fixes) (assoc :declares-fixed declare-fixes)
       summary             (assoc :test summary))))
 
@@ -2214,14 +2260,14 @@
                    (map (fn [[m ds]] [m (clojure.string/join " " (sort ds))]))
                    (:modules store))}))
 (defn commit-point!
-  "Record a MILESTONE (P4-m7): run the full checkpoint pipeline (normalize,
+  "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
   pointing at the resulting state with a human `description`. GREEN-GATED:
-  a red verification refuses the milestone (the checkpoint still stands —
+  a red verification refuses the milestone (the done still stands —
   fix and retry) unless `:force true`, which records `:status :red`
   honestly. Re-requesting a milestone on an UNCHANGED store returns the
   existing marker instead of minting an empty one. With `:target` (a past
-  delta id) it is a pure retroactive marker: no checkpoint runs, status is
+  delta id) it is a pure retroactive marker: no done runs, status is
   derived from the log at that spot — and no `:tree` snapshot is captured
   (the live store is past the target by definition; projection backfills,
   lossily). `:extra` merges op-specific payload into the marker delta
@@ -2261,7 +2307,7 @@
                   :status (:status last-d)
                   :description (:description last-d)
                   :note "nothing changed since this milestone — returning it"})
-          (let [cp     (checkpoint! session :label description :agent agent)
+          (let [cp     (done! session :label description :agent agent)
                 st     (:store @session)
                 head   (:id (last (store/deltas st)))
                 status (if-let [t (:test cp)]
@@ -2275,10 +2321,10 @@
                              (keys (:namespaces st)))]
             (if (and (= :red status) (not force))
               {:error (str "verification is RED — milestone refused (your work is "
-                           "checkpointed; fix and retry, or :force true to record "
+                           "at its done-point; fix and retry, or :force true to record "
                            "a red milestone honestly)")
-               :status :red :checkpoint (:checkpoint cp) :test (:test cp)}
-              (mark! head status {:checkpoint (:checkpoint cp)}
+               :status :red :done (:done cp) :test (:test cp)}
+              (mark! head status {:done (:done cp)}
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
@@ -2484,7 +2530,7 @@
 
 (defn revert-episode!
   "Scrap the agent's episode: roll every form it changed since its last
-  checkpoint back to the boundary state — as ONE atomic verified group
+  done back to the boundary state — as ONE atomic verified group
   (honest provenance, not history erasure). Forms that OTHER agents also
   touched since the boundary are SKIPPED and reported in :skipped-shared,
   never stomped."
@@ -2511,7 +2557,7 @@
                             mine))]
     (cond
       (empty? (:forms changes))
-      {:reverted 0 :note "episode is empty — already at the last checkpoint"}
+      {:reverted 0 :note "episode is empty — already at the last done"}
 
       (empty? steps)
       {:reverted 0 :skipped-shared (mapv :form shared)
@@ -3828,6 +3874,12 @@
                       (take 5)
                       (mapv #(-> (select-keys % [:commit :description :at :status])
                                  (update :description snip 110))))
+        last-done (let [d (last (filter #(= :done (:op %)) (store/deltas st)))]
+                    (when (and d (or (= :red (get-in d [:findings :test-status]))
+                                     (pos? (get-in d [:findings :lint-errors] 0))))
+                      (-> (select-keys d [:label :at :findings])
+                          (assoc :note (str "the last done-point left problems —"
+                                            " address them or tell the user why not")))))
         intent   (:last-intent @session)
         stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
                    "tell" "every" "should" "their" "them" "than" "then" "they"
@@ -3854,13 +3906,16 @@
                         vec
                         not-empty))]
     (cond-> {:project project
-             :loop (str "read: query_slice {ns name} (source + cards); "
-                        "write: edit_group steps (optimistic — a missed :match "
-                        "returns :source-now; correct and resend); every write "
-                        "self-verifies; history: report {since}; close: ONE "
-                        "commit_point {description}. Suite: test_run {:isolated true}.")}
-      (seq ms)  (assoc :milestones ms)
-      relevant  (assoc :relevant relevant))))
+             :loop (str "work like a REPL: small writes (edit_replace_form / "
+                        "edit_add_form / edit_subform — each self-verifies against "
+                        "the live image; mid-episode reds are normal TDD state); "
+                        "probe with query_eval; spot-check with targeted test_run; "
+                        "call done {label} when you believe you're finished — it "
+                        "runs the affected tests + lint + tidy for you; ONE "
+                        "commit_point {description} closes the user-visible chunk.")}
+      (seq ms)   (assoc :milestones ms)
+      last-done  (assoc :last-done last-done)
+      relevant   (assoc :relevant relevant))))
 (defn- fit-report
   "G13 at the gate boundary — by AGGREGATION, never amputation: an
   over-budget report first trims asks to 1/row, then ROLLS CHANGES UP by

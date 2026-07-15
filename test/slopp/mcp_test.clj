@@ -53,7 +53,7 @@
     (try
       (testing "the help tool exists (agents invented the name twice)"
         (let [h (call sess "help" {})]
-          (is (re-find #"edit_group" h))
+          (is (re-find #"edit_replace_form" h))
           (is (re-find #"query_project" h))))
       (call sess "ns_create" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
       (testing "redundant test_runs earn a hint; a write resets the counter"
@@ -68,11 +68,12 @@
         (call sess "test_run" {:ns "hint"})
         (let [r6 (call sess "test_run" {:ns "hint"})]
           (is (not (re-find #"rarely needed" r6)))))
-      (testing "a streak of single-form writes suggests edit_group exactly ONCE"
-        (let [rs (mapv (fn [i] (call sess "edit_add_form"
-                                     {:ns "hint" :source (str "(defn g" i " [x] x)")}))
-                       (range 4))]
-          (is (= 1 (count (filter #(re-find #"edit_group" %) rs))))))
+      (testing "a write between test_run and done keeps done QUIET (spot-check flow)"
+        (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] x)"})
+        (is (not (re-find #"pre-flight" (call sess "done" {:label "quiet"})))))
+      (testing "test_run immediately before done earns the redundancy hint"
+        (call sess "test_run" {:ns "hint"})
+        (is (re-find #"pre-flight" (call sess "done" {:label "noisy"}))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated rename-arg-forgiveness                        ; from the symmetric eval
@@ -94,13 +95,6 @@
   (let [sess (api/open!)]
     (try
       (call sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
-      (testing "edit_group accepts :op for :action; bad actions get a real message"
-        (let [r (edn/read-string (call sess "edit_group"
-                                       {:steps [{:op "replace" :ns "wa" :name "g"
-                                                 :source "(defn g [x] (f (f x)))"}]}))]
-          (is (nil? (:error r))))
-        (is (re-find #"replace\|add\|delete"
-                     (call sess "edit_group" {:steps [{:ns "wa" :name "g"}]}))))
       (testing "edit_extract accepts :source for :form; missing gets a real message"
         (let [r (edn/read-string (call sess "edit_extract"
                                        {:ns "wa" :from "f" :name "doubled"
@@ -225,11 +219,6 @@
         (is (re-find #":forms \[\"tf.core/f\"\]"
                      (call sess "edit_replace_form" {:ns "tf.core" :name "f"
                                                      :source "(defn f [x] (identity x))"}))))
-      (testing "groups list their named steps"
-        (is (re-find #"tf.core/f"
-                     (call sess "edit_group"
-                           {:steps [{:action "replace" :ns "tf.core" :name "f"
-                                     :source "(defn f [x] x)"}]}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated trimmed-responses-spool-the-full-version
   (let [sess (api/open!)]
@@ -311,30 +300,6 @@
           (is (= 40 (count (clojure.string/trim head))) head)))
       (testing "no REMOTE is touched or saved — remote publishing stays explicit"
         (is (nil? (db/get-meta (:db @sess) "git-remote"))))
-      (finally (api/close! sess)))))
-(deftest ^:isolated groups-take-subform-and-require-steps
-  (let [sess (api/open!)]
-    (try
-      (call sess "ns_create"
-            {:ns "gs.core"
-             :source "(ns gs.core)\n(defn calc\n  \"Applies the bulk tier.\"\n  [n]\n  (if (>= n 10) (* n 2) n))\n"})
-      (testing "one group mixes subform + text subform + require + add (Rock 3 core)"
-        (let [r (call sess "edit_group"
-                      {:steps [{:action "subform" :ns "gs.core" :name "calc"
-                                :match "(>= n 10)" :source "(>= n 8)"}
-                               {:action "subform" :ns "gs.core" :name "calc"
-                                :match "Applies the bulk tier."
-                                :source "Applies the volume tier." :text true}
-                               {:action "require" :ns "gs.core"
-                                :require "[clojure.string :as str]"}
-                               {:action "add" :ns "gs.core"
-                                :source "(defn label \"Tier label.\" [n] (str/upper-case (str \"tier \" n)))"}]
-                       :prompt "volume tier + labels"})]
-          (is (re-find #":ok true" r) r)
-          (is (re-find #":deltas 4" r) r)))
-      (testing "the result verifies against the final state"
-        (let [r (call sess "query_eval" {:code "[(gs.core/calc 8) (gs.core/label 1)]"})]
-          (is (re-find #"\[16 \"TIER 1\"\]" r) r)))
       (finally (api/close! sess)))))
 (deftest ^:isolated commits-prove-git-alignment
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -504,41 +469,6 @@
           (is (re-find #"refs/heads/slopp/main"
                        (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
           (finally (api/close! s3)))))))
-(deftest ^:isolated staged-groups-commit-as-one-intent
-  (let [sess (api/open!)]
-    (try
-      (call sess "ns_create" {:ns "st.core"
-                              :source "(ns st.core)\n(defn a \"A.\" [x] x)\n"})
-      (testing "steps stage across calls; NOTHING commits until stage=commit"
-        (is (re-find #":staged 1"
-                     (call sess "edit_group"
-                           {:stage "open"
-                            :steps [{:action "replace" :ns "st.core" :name "a"
-                                     :source "(defn a \"A.\" [x] (inc x))"}]})))
-        (is (re-find #":staged 2"
-                     (call sess "edit_group"
-                           {:stage "add"
-                            :steps [{:action "add" :ns "st.core"
-                                     :source "(defn b \"B.\" [x] (a x))"}]})))
-        (is (re-find #"\[1\]" (call sess "query_eval" {:code "(st.core/a 1)"}))
-            "a is still the identity — staged steps are held, not applied"))
-      (testing "commit executes everything as ONE atomic group"
-        (let [r (call sess "edit_group" {:stage "commit" :prompt "staged pair"})]
-          (is (re-find #":deltas 2" r) r)
-          (is (not (re-find #":error" r)) r))
-        (is (re-find #"\[3\]" (call sess "query_eval" {:code "(st.core/b 2)"}))))
-      (testing "drop discards the pending steps"
-        (call sess "edit_group" {:stage "open"
-                                 :steps [{:action "delete" :ns "st.core" :name "b"}]})
-        (is (re-find #":dropped true" (call sess "edit_group" {:stage "drop"})))
-        (is (re-find #"\[3\]" (call sess "query_eval" {:code "(st.core/b 2)"}))
-            "b survives — the staged delete was dropped"))
-      (testing "a bad step is refused AT STAGING, not at commit"
-        (is (re-find #"needs :action"
-                     (call sess "edit_group"
-                           {:stage "open"
-                            :steps [{:action "explode" :ns "st.core"}]}))))
-      (finally (api/close! sess)))))
 (deftest ^:isolated red-first-rides-the-wire
   ;; the api carried :red-first but the wire's select-keys dropped it —
   ;; an agent would never have seen WHY its spec landed red
@@ -573,4 +503,15 @@
         (is (nil? (get-in by-name ["edit_replace_form" :annotations]))
             "writes carry NO read-only claim")
         (is (nil? (get-in by-name ["module_dep" :annotations]))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated the-wire-speaks-done-not-groups
+  (let [sess (api/open!)]
+    (try
+      (let [names (into #{} (map :name)
+                        (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                                [:result :tools]))]
+        (is (contains? names "done"))
+        (is (not (contains? names "edit_group"))
+            "episodes are inferred — no agent-facing grouping")
+        (is (not (contains? names "checkpoint"))))
       (finally (api/close! sess)))))

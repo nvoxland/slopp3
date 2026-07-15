@@ -77,7 +77,7 @@
         (let [r (api/test-run! sess ns-sym)]
           (when-not (zero? (+ (:fail r) (:error r)))
             (throw (ex-info (str "seed not green in " ns-sym) r)))))
-      (api/checkpoint! sess :label "seed: tasker v1")
+      (api/done! sess :label "seed: tasker v1")
       (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
@@ -270,7 +270,7 @@
           (when (:error r) (throw (ex-info (str ns-sym ": " (:error r)) r)))
           (when-not (zero? (+ (get-in r [:test :fail]) (get-in r [:test :error])))
             (throw (ex-info (str ns-sym " not green") r)))))
-      (api/checkpoint! sess :label "seed: orders v1")
+      (api/done! sess :label "seed: orders v1")
       (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 

@@ -26,13 +26,13 @@
                  "(if x y (do a b))"]]
       (is (= src (normed src)) src))))
 
-(deftest ^:isolated checkpoint-normalizes-the-working-set
+(deftest ^:isolated done-normalizes-the-working-set
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cp.core
                    (str "(ns cp.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn clean [x] (inc x))\n"))
-      (api/checkpoint! sess :label "baseline")           ; everything-so-far boundary
+      (api/done! sess :label "baseline")           ; everything-so-far boundary
       ;; agent writes working-but-clunky code
       (api/add-form! sess 'cp.core
                      "(defn classify [x] (if (not (neg? x)) (if (pos? x) :pos :zero) :neg))")
@@ -41,8 +41,8 @@
                           "  (is (= :pos (classify 2)))\n"
                           "  (is (= :zero (classify 0)))\n"
                           "  (is (= :neg (classify -2))))"))
-      (let [r (api/checkpoint! sess :label "classification done")]
-        (testing "changed-since-checkpoint forms are normalized, others untouched"
+      (let [r (api/done! sess :label "classification done")]
+        (testing "changed-since-done forms are normalized, others untouched"
           (is (= 1 (:normalized r)))
           (is (= ['cp.core/classify] (mapv :form (:rewrites r))))
           (is (re-find #"if-not" (api/query-source sess 'cp.core)))
@@ -51,17 +51,17 @@
         (testing "behavior verified after normalization (affected tests green)"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
           (is (= [:pos] (api/query-eval sess "(cp.core/classify 5)"))))
-        (testing "provenance: a :normalize delta + a :checkpoint boundary"
+        (testing "provenance: a :normalize delta + a :done boundary"
           (is (contains? (set (map :op (api/query-lineage sess 'cp.core 'classify)))
                          :normalize))
-          (is (= :checkpoint (:op (last (store/deltas (:store @sess))))))))
-      (testing "an immediate second checkpoint is a no-op"
-        (let [r (api/checkpoint! sess)]
+          (is (= :done (:op (last (store/deltas (:store @sess))))))))
+      (testing "an immediate second done is a no-op"
+        (let [r (api/done! sess)]
           (is (zero? (:normalized r)))
           (is (empty? (:lint r)))))
-      (testing "checkpoint lints the changed namespaces (kondo findings)"
+      (testing "done lints the changed namespaces (kondo findings)"
         (api/add-form! sess 'cp.core "(defn sloppy [x] (let [unused 1] x))")
-        (let [r    (api/checkpoint! sess :label "lint probe")
+        (let [r    (api/done! sess :label "lint probe")
               hits (filter #(= :unused-binding (:type %)) (:lint r))]
           (is (seq hits))
           (is (= 'cp.core/sloppy (:form (first hits))))
@@ -81,19 +81,19 @@
                  "(filter pred xs)"]]
       (is (= src (:src (norm/normalize-source src))) src))))
 
-(deftest ^:isolated checkpoint-runs-declare-hygiene
+(deftest ^:isolated done-runs-declare-hygiene
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dh.core
                    (str "(ns dh.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(deftest t (is true))\n"))
-      (api/checkpoint! sess :label "base")
+      (api/done! sess :label "base")
       ;; the compile gate's escape hatch, as agents actually use it
       (api/add-form! sess 'dh.core "(declare later)")
       (api/add-form! sess 'dh.core "(defn caller [x] (later x))")
       (api/add-form! sess 'dh.core "(defn later [x] (inc x))")
       (api/add-form! sess 'dh.core "(deftest caller-t (is (= 3 (caller 2))))")
-      (let [r (api/checkpoint! sess :label "feature")]
+      (let [r (api/done! sess :label "feature")]
         (is (seq (:declares-fixed r)) (pr-str (keys r)))
         (let [src (api/query-source sess 'dh.core)]
           (is (not (re-find #"declare" src)))

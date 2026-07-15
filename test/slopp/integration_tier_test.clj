@@ -1,7 +1,7 @@
 (ns slopp.integration-tier-test
   "External deps M5: the `^:integration` test tier. Fast per-write
   verification SKIPS integration tests (external-system tests — a DB dep
-  shouldn't fire on every edit); explicit test_run / checkpoint / commit_point
+  shouldn't fire on every edit); explicit test_run / done / commit_point
   include them."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]))

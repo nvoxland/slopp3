@@ -566,30 +566,48 @@
                           findings))
            " — or add (declare ...)"))))
 (defn lint-refusals
-  "NEW error-level kondo findings a candidate store would introduce over its
-  base — nil when clean, else one actionable message. Error-level lint is
-  ~never a false positive (two 'invalid-arity' errors once dismissed as noise
-  were real ArityExceptions in shipped handlers); a write may not ADD one.
-  Pre-existing errors don't block (no deadlock on legacy); warnings stay
-  advisory. Arity findings carry the P2 resolution hint: a signature change
-  lands the defn AND its callers in ONE edit_group (or change_signature)."
-  [base cand ns-syms]
-  (let [errs  (fn [store ns-sym]
-                (when (get-in store [:namespaces ns-sym])
-                  (->> (index/lint (render/render-ns store ns-sym))
-                       (filter #(= :error (:level %)))
-                       (map (juxt :type :message)))))
-        pairs (mapcat (fn [ns-sym]
-                        (let [old (set (errs base ns-sym))]
-                          (->> (errs cand ns-sym)
-                               (remove old)
-                               (map (fn [[t m]]
-                                      [t (str ns-sym ": " (name t) " — " m)])))))
-                      (distinct ns-syms))]
-    (when (seq pairs)
-      (str "lint ERROR introduced: " (str/join "; " (map second pairs))
-           " — error-level kondo findings are almost never false positives; "
-           "fix before committing"
-           (when (some #(= :invalid-arity (first %)) pairs)
-             (str " (changing a signature? put the defn AND its callers in "
-                  "ONE edit_group, or use change_signature)"))))))
+  "NEW error-level kondo findings a candidate store would introduce over
+  its base. An error IN one of the forms being written (`written-fids`)
+  returns {:refuse msg} — your own form must be well-formed. New errors in
+  OTHER forms (stale callers after an incremental signature change) don't
+  block the REPL flow: they return as {:carried [{:form :type :message}]}
+  and the done-point re-checks them hard. nil when clean. Error-level
+  lint is ~never a false positive (two 'invalid-arity' errors once
+  dismissed as noise were real ArityExceptions in shipped handlers);
+  pre-existing errors never block (no deadlock on legacy)."
+  [base cand ns-syms written-fids]
+  (let [written (set written-fids)
+        errs    (fn [store ns-sym]
+                  (when (get-in store [:namespaces ns-sym])
+                    (->> (index/lint (render/render-ns store ns-sym))
+                         (filter #(= :error (:level %)))
+                         (map #(assoc % :ns ns-sym)))))
+        key*    (juxt :ns :type :message)
+        news    (mapcat (fn [ns-sym]
+                          (let [old (set (map key* (errs base ns-sym)))]
+                            (remove #(old (key* %)) (errs cand ns-sym))))
+                        (distinct ns-syms))
+        located (map (fn [f]
+                       (let [e (render/owner-form cand (:ns f) (:row f) (:col f))]
+                         (assoc f :form-id (:id e)
+                                :form (when e
+                                        (symbol (str (:ns f))
+                                                (str (or (:name e) (:id e))))))))
+                     news)
+        [own carried] ((juxt filter remove) #(contains? written (:form-id %)) located)]
+    (cond
+      (seq own)
+      {:refuse (str "lint ERROR in the form you are writing: "
+                    (str/join "; " (map #(str (:ns %) ": " (name (:type %))
+                                              " — " (:message %))
+                                        own))
+                    " — error-level kondo findings are almost never false"
+                    " positives; fix the form before sending it"
+                    (when (some #(= :invalid-arity (:type %)) own)
+                      " (changing a signature? change_signature rewrites the defn AND its call sites as one intent)"))}
+
+      (seq carried)
+      {:carried (vec (for [f carried]
+                       {:form (:form f) :type (:type f) :message (:message f)}))}
+
+      :else nil)))

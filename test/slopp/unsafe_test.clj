@@ -76,15 +76,15 @@
         (is (not (:unsafe? (api/query-symbol sess 'us.core '*tap*)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated unsafe-survives-checkpoint-normalize
-  ;; checkpoint runs slopp.normalize over changed forms — the ^:unsafe marker
+(deftest ^:isolated unsafe-survives-done-normalize
+  ;; done runs slopp.normalize over changed forms — the ^:unsafe marker
   ;; (and the form's addressability) must survive that node-level rewrite
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'us.chk
                    (str "(ns us.chk)\n\n"
                         "^:unsafe\n(defn q [x] (binding [*out* *out*] (inc x)))\n"))
-      (api/checkpoint! sess :label "cp" :agent "a")
+      (api/done! sess :label "cp" :agent "a")
       (is (str/includes? (api/query-source sess 'us.chk) "^:unsafe"))
       (is (:unsafe? (api/query-symbol sess 'us.chk 'q)))
       (is (= [2] (api/query-eval sess "(us.chk/q 1)")))

@@ -1,5 +1,5 @@
 (ns slopp.episode-test
-  "Episodes: the automatic work-unit between an agent's checkpoints — derived
+  "Episodes: the automatic work-unit between an agent's done-points — derived
   from the journal (no tagging), PER-AGENT so parallel sub-agents don't
   collapse into one braid, with a shared-form guard on revert."
   (:require [clojure.test :refer [deftest is testing]]
@@ -20,7 +20,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/checkpoint! sess :label "baseline")
+      (api/done! sess :label "baseline")
       ;; a classic TDD arc: red test change, then the fix
       (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
                          :prompt "want +10 behavior")
@@ -37,8 +37,8 @@
             (is (re-find #"\+ x 10" (:now f-chg))))
           (testing "the red→green arc is visible"
             (is (= [1 0] (mapv :fail (:verification-arc c)))))))
-      (testing "checkpoint closes the episode"
-        (api/checkpoint! sess :label "plus-ten")
+      (testing "done closes the episode"
+        (api/done! sess :label "plus-ten")
         (is (empty? (:forms (api/query-changes sess)))))
       (testing "collapsed history reads at episode grain"
         (let [rows (api/query-history sess :collapse true)]
@@ -49,7 +49,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/checkpoint! sess :label "baseline")
+      (api/done! sess :label "baseline")
       ;; two "sub-agents" interleave on one session
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1 1))"
                          :prompt "alice's work" :agent "alice")
@@ -60,8 +60,8 @@
                (set (map :form (:forms (api/query-changes sess :agent "alice"))))))
         (is (= #{'ep.core/g}
                (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
-      (testing "alice checkpointing does NOT close bob's episode"
-        (api/checkpoint! sess :label "alice done" :agent "alice")
+      (testing "alice marking done does NOT close bob's episode"
+        (api/done! sess :label "alice done" :agent "alice")
         (is (empty? (:forms (api/query-changes sess :agent "alice"))))
         (is (= #{'ep.core/g}
                (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
@@ -71,7 +71,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/checkpoint! sess :label "baseline")
+      (api/done! sess :label "baseline")
       ;; alice: modifies f, adds a helper — and touches the SHARED form h
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 9))"
                          :prompt "alice attempt" :agent "alice")
@@ -99,7 +99,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/checkpoint! sess :label "baseline" :agent "alice")
+      (api/done! sess :label "baseline" :agent "alice")
       ;; alice's turn: her own edit + two sub-agents she spawned
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
                          :prompt "alice's own step" :agent "alice")
@@ -107,7 +107,7 @@
                          :prompt "sub tests work" :agent "alice/tests")
       (api/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
                          :prompt "sub impl work" :agent "alice/impl")
-      (api/checkpoint! sess :label "alice turn done" :agent "alice")
+      (api/done! sess :label "alice turn done" :agent "alice")
       (testing "the collapsed history nests sub-agent episodes under the turn"
         (let [rows   (api/query-history sess :collapse true)
               alice  (first (filter #(= "alice turn done"
@@ -135,7 +135,7 @@
                          :prompt "step 1" :agent "alice")
       (api/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
                          :prompt "sub step" :agent "alice/impl")
-      (api/checkpoint! sess :label "rush support" :agent "alice")
+      (api/done! sess :label "rush support" :agent "alice")
       (let [r (api/turn-end! sess :agent "alice")]
         (is (nil? (:error r))))
       (testing "lineage + form-history resolve the enclosing turn's ask"
@@ -254,7 +254,7 @@
                          :prompt "red first" :agent "alice")
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
                          :prompt "green" :agent "alice")
-      (api/checkpoint! sess :label "plus-ten" :agent "alice")
+      (api/done! sess :label "plus-ten" :agent "alice")
       (api/turn-end! sess :agent "alice")
       ;; more work after, so the span is genuinely historical
       (api/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
@@ -269,7 +269,8 @@
                  (set (map :form (:forms c)))))
           (is (re-find #"inc x" (:was (first (filter #(= 'ep.core/f (:form %))
                                                      (:forms c))))))
-          (is (= [1 0] (mapv :fail (:verification-arc c))))
+          (is (= [1 0 0] (mapv :fail (:verification-arc c)))
+            "red write, green fix, then the done-point's own verification")
           (testing "bob's later work is NOT in the span"
             (is (not-any? #(= 'ep.core/g (:form %)) (:forms c))))))
       (testing "format text renders a human story"
@@ -289,7 +290,7 @@
       (api/edit-replace! sess 'ep.core 'h
                          "(defn h [x]\n  ;; loud on purpose\n  (* x 2))"
                          :prompt "make h double" :agent "alice")
-      (api/checkpoint! sess :label "h doubles" :agent "alice")
+      (api/done! sess :label "h doubles" :agent "alice")
       (api/turn-end! sess :agent "alice")
       ;; a later, still-open episode so was/now spans a real line-level change
       (api/edit-replace! sess 'ep.core 'h
@@ -326,3 +327,47 @@
           (is (map? c))
           (is (re-find #"\* x 2" (:was (first (:forms c)))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated done-always-verifies-the-episode
+  ;; the done-point IS the test run — it must verify the episode's changes
+  ;; even when normalization has nothing to rewrite
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dv.core
+                   (str "(ns dv.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      (api/test-run! sess 'dv.core)
+      (api/done! sess :label "baseline")
+      (api/edit-replace! sess 'dv.core 'f "(defn f \"F2.\" [x] (inc x))"
+                         :prompt "docstring only — normalize will not rewrite")
+      (let [r (api/done! sess :label "tweaked")]
+        (is (zero? (:normalized r)) (pr-str r))
+        (is (pos? (:test (:test r) 0))
+            (str "tests must run at the done-point even with zero rewrites: "
+                 (pr-str r))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated done-findings-resurface-in-the-next-session
+  ;; a turn-end auto-done that leaves reds must greet the next session —
+  ;; findings ride the boundary delta and surface in session-brief
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-findings"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'fr.core
+                   (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [x] x)\n"
+                        "(deftest f-t (is (= 1 (f 1))))\n"))
+      (api/test-run! sess 'fr.core)
+      (api/edit-replace! sess 'fr.core 'f "(defn f \"F.\" [x] (inc x))"
+                         :prompt "breaks f-t")
+      (let [r (api/done! sess :label "left red")]
+        (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str r)))
+      (finally (api/close! sess)))
+    (let [sess2 (api/open! {:dir dir})]
+      (try
+        (let [b (api/session-brief sess2)]
+          (is (= "left red" (get-in b [:last-done :label])) (pr-str (:last-done b)))
+          (is (pos? (get-in b [:last-done :findings :failures] 0))
+              (pr-str (:last-done b))))
+        (finally (api/close! sess2))))))

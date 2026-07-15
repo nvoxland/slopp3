@@ -328,22 +328,26 @@
                 store' (:namespaces store'))]
     [(update store' :deltas conj delta) delta]))
 
-(defn record-checkpoint
-  "Append a `:checkpoint` boundary delta — a unit-of-work marker (and the
-  close of `agent`'s episode). Returns [store' delta-id]."
-  [store label & {:keys [agent]}]
+(defn record-done
+  "Append a `:done` boundary delta — a unit-of-work marker (and the
+  close of `agent`'s episode). `:findings` is the done-processing verdict
+  ({:test-status :failures :lint-errors ...}) riding the delta so history
+  and the next session's brief can surface what the episode left behind.
+  Returns [store' delta-id]."
+  [store label & {:keys [agent findings]}]
   (let [[did store'] (gen-id store "d")]
     [(update store' :deltas conj
              (cond-> {:id did :parent (:id (last (:deltas store)))
-                      :op :checkpoint :ns '*session* :at (now-ms)}
-               label (assoc :label label)
-               agent (assoc :agent agent)))
+                      :op :done :ns '*session* :at (now-ms)}
+               label    (assoc :label label)
+               agent    (assoc :agent agent)
+               findings (assoc :findings findings)))
      did]))
 
 (defn record-commit
   "Append a `:commit` MILESTONE marker (P4-m7) — a named pointer at `target`
-  (a delta id, normally the just-checkpointed head) with a human-facing
-  `description`. The important-checkpoint grain above turns; git's annotated
+  (a delta id, normally the head the done-point just produced) with a human-facing
+  `description`. The important-done grain above turns; git's annotated
   tag, inside the journal. `extra` merges op-specific payload into the delta
   (P4-m8: `:tree` rendered-source snapshot, `:git-sha` import identity) —
   it must not carry the core keys (:id :op :ns :parent :at :description
@@ -442,7 +446,7 @@
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
     (case (:op d)
-      (:verify :checkpoint :merge :turn-begin :turn-end :commit)
+      (:verify :done :merge :turn-begin :turn-end :commit)
       (with-d store)
 
       ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure
@@ -789,7 +793,7 @@
                             [st idmap merged conflicts notes changed new-nses applied])
                 [st idmap merged conflicts notes changed new-nses applied]
                 (case op
-                  (:verify :checkpoint :merge)
+                  (:verify :done :merge)
                   (done st idmap merged conflicts notes changed new-nses applied)
 
                   :deps-add

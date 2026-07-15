@@ -202,3 +202,39 @@
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
               (pr-str (:test r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated incremental-signature-change-is-unforced
+  ;; REPL-native flow: growing a signature one write at a time must not be
+  ;; refused — stale callers are CARRIED to the done-point, not blockers;
+  ;; an error inside the form being written still refuses
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sg2.core
+                   (str "(ns sg2.core)\n"
+                        "(defn base \"B.\" [x] (* 2 x))\n"
+                        "(defn caller \"C.\" [x] (base x))\n"))
+      (testing "editing the defn's signature ALONE lands, stale callers carried"
+        (let [r (api/edit-replace! sess 'sg2.core 'base
+                                   "(defn base \"B.\" [x y] (* x y))"
+                                   :prompt "grow the signature incrementally")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some #(= 'sg2.core/caller (:form %)) (:carried-errors r))
+              (pr-str r))))
+      (testing "an error IN the written form itself still refuses"
+        (let [r (api/edit-replace! sess 'sg2.core 'caller
+                                   "(defn caller \"C.\" [x] (base))"
+                                   :prompt "zero-arity call in MY OWN form")]
+          (is (:error r) (pr-str r))))
+      (testing "catching the caller up, then done → clean lint"
+        (api/edit-replace! sess 'sg2.core 'caller
+                           "(defn caller \"C.\" [x] (base x 3))"
+                           :prompt "caller catches up")
+        (let [r (api/done! sess :label "signature change complete")]
+          (is (empty? (filter #(= :error (:level %)) (:lint r)))
+              (pr-str (:lint r)))))
+      (testing "done with a STANDING stale caller reports it in findings"
+        (api/edit-replace! sess 'sg2.core 'base
+                           "(defn base \"B.\" [x y z] (* x y z))"
+                           :prompt "grow again, forget the caller")
+        (let [r (api/done! sess :label "left broken")]
+          (is (pos? (get-in r [:findings :lint-errors] 0)) (pr-str r))))
+      (finally (api/close! sess)))))

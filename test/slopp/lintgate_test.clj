@@ -11,23 +11,20 @@
 (def bad   "(ns lg.core)\n(defn f [x] x)\n(defn g [] (f 1 2))\n")
 
 (deftest introducing-an-arity-error-is-refused
-  (let [msg (edit/lint-refusals (st clean) (st bad) ['lg.core])]
-    (is (some? msg))
-    (is (re-find #"invalid-arity" (str msg)))))
+  (testing "an arity error in a form NOT being written CARRIES (REPL flow)"
+    (let [r (edit/lint-refusals (st clean) (st bad) ['lg.core] [])]
+      (is (nil? (:refuse r)) (pr-str r))
+      (is (some #(re-find #"invalid-arity" (name (:type %))) (:carried r))
+          (pr-str r))))
+  (testing "the SAME error refuses when it is in the form being written"
+    (let [g-fid (:id (store/form-named (st bad) 'lg.core 'g))
+          r     (edit/lint-refusals (st clean) (st bad) ['lg.core] [g-fid])]
+      (is (re-find #"in the form you are writing" (str (:refuse r))) (pr-str r))
+      (is (re-find #"invalid-arity" (str (:refuse r)))))))
 
 (deftest clean-writes-pass
-  (is (nil? (edit/lint-refusals (st clean) (st clean) ['lg.core]))))
+  (is (nil? (edit/lint-refusals (st clean) (st clean) ['lg.core] []))))
 
 (deftest pre-existing-errors-do-not-block
   (testing "base already has the error — the write is not the one to blame"
-    (is (nil? (edit/lint-refusals (st bad) (st bad) ['lg.core])))))
-(deftest arity-refusals-suggest-the-atomic-resolution
-  (testing "P2a: the discovered resolution is now IN the refusal"
-    (let [msg (edit/lint-refusals (st clean) (st bad) ['lg.core])]
-      (is (re-find #"edit_group" (str msg)))
-      (is (re-find #"change_signature" (str msg)))))
-  (testing "non-arity errors don't get the signature hint"
-    (let [unresolved "(ns lg.core)\n(defn f [x] x)\n(defn g [] (nope 1))\n"
-          msg (edit/lint-refusals (st clean) (st unresolved) ['lg.core])]
-      (is (some? msg))
-      (is (not (re-find #"edit_group" (str msg)))))))
+    (is (nil? (edit/lint-refusals (st bad) (st bad) ['lg.core] [])))))

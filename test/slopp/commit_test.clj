@@ -1,7 +1,7 @@
 (ns slopp.commit-test
   "Commit points (P4-m7): named MILESTONE markers in a branch's history — the
-  human-important grain above turn ends, episode ends, and checkpoints.
-  A commit point implies a checkpoint, is green-gated (:force records a red
+  human-important grain above turn ends, episode ends, and done-points.
+  A commit point implies a done, is green-gated (:force records a red
   one honestly), and is a plain :commit marker delta so it rides the journal,
   branch snapshots, and merges for free."
   (:require [clojure.test :refer [deftest is testing]]
@@ -27,8 +27,8 @@
         (is (nil? (:error r)) (pr-str r))
         (is (= :green (:status r)))
         (is (some? (:commit r)))
-        (testing "a commit point IMPLIES a checkpoint (episode closed)"
-          (is (some? (:checkpoint r)))
+        (testing "a commit point IMPLIES a done (episode closed)"
+          (is (some? (:done r)))
           (is (empty? (:forms (api/query-changes sess :agent "alice")))))
         (testing "the marker delta is real provenance"
           (let [d (first (filter #(= :commit (:op %))
@@ -64,7 +64,7 @@
       (api/ingest! sess 'cm.core seed)
       (api/edit-replace! sess 'cm.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
                          :prompt "deliberately red" :agent "bob")
-      (testing "a red state refuses the milestone (work stays checkpointed)"
+      (testing "a red state refuses the milestone (work stays at its done-point)"
         (let [r (api/commit-point! sess "broken milestone" :agent "bob")]
           (is (:error r))
           (is (= :red (:status r)))

@@ -1,7 +1,7 @@
 (ns slopp.normalize
   "Deterministic 'if the form looks like X, rewrite to Y' normalization —
   conservative, provably behavior-preserving, kibit-style rules for the
-  patterns agents habitually over-write. Runs at explicit checkpoints (never
+  patterns agents habitually over-write. Runs at explicit done-points (never
   silently mid-edit), and the rewrite is committed as a tracked `:normalize`
   delta whose behavior the normal verification loop re-checks.
 
