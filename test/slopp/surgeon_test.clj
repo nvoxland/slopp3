@@ -46,16 +46,18 @@
         (let [src (api/query-source sess 'fd.core)]
           (is (not (re-find #"declare" src)))
           (is (< (.indexOf src "defn helper") (.indexOf src "defn caller")))))
-      (testing "mutual recursion is UNSAFE: declare stays, reported"
+      (testing "mutual recursion: the hand-written declare MIGRATES to a pipeline-owned marked one"
         (api/ingest! sess 'fd.rec
                      (str "(ns fd.rec)\n"
                           "(declare odd-x)\n"
                           "(defn even-x [n] (if (zero? n) true (odd-x (dec n))))\n"
                           "(defn odd-x [n] (if (zero? n) false (even-x (dec n))))\n"))
         (let [r (api/fix-declares! sess 'fd.rec)]
-          (is (zero? (:removed r)))
-          (is (seq (:skipped r)))
-          (is (re-find #"declare" (api/query-source sess 'fd.rec)))))
+          (is (nil? (:error r)) (pr-str r))
+          (let [src (api/query-source sess 'fd.rec)]
+            (is (re-find #"\(declare" src) "a real cycle still needs a declare")
+            (is (re-find #":auto-declare" src)
+                "but it is the PIPELINE's now, and it says why"))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated ns-rename-rewrites-the-world

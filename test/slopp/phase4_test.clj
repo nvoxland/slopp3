@@ -6,7 +6,7 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.http :as http])
+            [slopp.http :as http] [slopp.api.branch :as branch])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))
@@ -121,7 +121,7 @@
           (api/edit-replace! sess 'fm.core 'f "(defn f [x] (+ 1 x))"
                              :prompt "same behavior, our style" :agent "mainliner")
           ;; 5. merge the fork back into the LIVE session
-          (let [r (api/merge! sess b-dir)]
+          (let [r (branch/merge! sess b-dir)]
             (is (nil? (:error r)) (pr-str r))
             (is (empty? (:conflicts r)))
             (is (= 3 (:merged r)))
@@ -134,7 +134,7 @@
               (is (re-find #"forker"
                            (pr-str (api/query-history sess :contains "double-apply"))))))
           ;; 6. merging again is a no-op (idempotent)
-          (let [r2 (api/merge! sess b-dir)]
+          (let [r2 (branch/merge! sess b-dir)]
             (is (zero? (:merged r2)))
             (is (empty? (:conflicts r2))))
           (finally (api/close! sess))))
