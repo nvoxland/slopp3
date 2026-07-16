@@ -116,6 +116,13 @@
      :to-form   (:id e)
      :via       :declared
      :marker    marker}))
+(defn- drop-self
+  "Remove self-references — a form pointing at ITSELF (same form both ends).
+  Not a reference: replacing the defn covers it. Uniform across producers
+  (kondo excludes its own inline, but carrier/un-required needed this — a
+  carrier self-ref was keeping dead forms alive)."
+  [rs]
+  (remove #(and (:from-form %) (= (:from-form %) (:to-form %))) rs))
 (defn ^:export refs
   "EVERY reference in the store as canonical records — THE single source
   of truth for 'who references what'. Producers normalize here (kondo
@@ -129,9 +136,10 @@
   an index of source, and the journal owes them no consistency."
   [st]
   (let [known (set (keys (:namespaces st)))]
-    (vec (concat (static-refs st known (sort known))
-                 (carrier-refs st known (sort known))
-                 (declared-refs st known (sort known))))))
+    (vec (drop-self
+          (concat (static-refs st known (sort known))
+                  (carrier-refs st known (sort known))
+                  (declared-refs st known (sort known)))))))
 (defn ^:export ns-refs
   "The graph SLICE for one namespace's outbound references — the same
   canonical records `refs` yields, produced for `nsx` alone (the write
@@ -139,9 +147,10 @@
   producers, same record shape; scoping is an access path, not a dialect."
   [st nsx]
   (let [known (set (keys (:namespaces st)))]
-    (vec (concat (static-refs st known [nsx])
-                 (carrier-refs st known [nsx])
-                 (declared-refs st known [nsx])))))
+    (vec (drop-self
+          (concat (static-refs st known [nsx])
+                  (carrier-refs st known [nsx])
+                  (declared-refs st known [nsx]))))))
 (defn ^:export observed-refs
   "RUNTIME evidence as graph records: the trace map ({test-qsym #{form-qsym}})
   says test T exercised form F — {:via :observed}. Session-grain input (the

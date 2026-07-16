@@ -108,3 +108,13 @@
                                   "  ['cr.core/helper 1])\n"))
             r  (modules/unused-report st '[cr.core])]
         (is (= '[cr.core/helper cr.core/orphan] (:unused r)) (pr-str r))))))
+(deftest a-carrier-self-reference-does-not-keep-a-form-alive
+  ;; regression: a form that carrier-references ITSELF was escaping the
+  ;; dead-code gate (the graph's carrier producer lacked self-exclusion).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cs.core
+                             (str "(ns cs.core)\n\n"
+                                  "(defn loops \"L.\" [s] (query-call s 'cs.core/loops 1))\n\n"
+                                  "(defn dead \"D.\" [x] x)\n")))]
+    (is (= '[cs.core/dead cs.core/loops]
+           (:unused (modules/unused-report st '[cs.core]))))))

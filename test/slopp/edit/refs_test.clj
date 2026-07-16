@@ -69,3 +69,20 @@
       (let [r (first (filter #(= :static (:via %)) rs))]
         (is (:from-form r))
         (is (= 'helper (:name (store/form-by-id st (:to-form r)))))))))
+(deftest self-references-never-count-any-producer
+  ;; a form referencing ITSELF — statically OR through a carrier — is not
+  ;; a reference (replacing the form covers it). The carrier producer
+  ;; lacked this exclusion, so a form could keep ITSELF alive through a
+  ;; carrier self-ref (eval-reproduced); drop-self is the uniform fix.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'sr.core
+                             (str "(ns sr.core)\n\n"
+                                  "(defn loops \"L.\" [s] (query-call s 'sr.core/loops 1))\n\n"
+                                  "(defn calls-self \"C.\" [x] (sr.core/calls-self x))\n\n"
+                                  "(defn dead \"D.\" [x] x)\n")))]
+    (is (empty? (refs/refs-to st 'sr.core/loops)) "carrier self-ref excluded")
+    (is (empty? (refs/refs-to st 'sr.core/calls-self)) "qualified self-ref excluded")
+    ;; a genuine CROSS-form reference still lands (exclusion is self-only)
+    (let [st2 (store/ingest st 'sr.user
+                            "(ns sr.user (:require [sr.core :as c]))\n(defn u [x] (c/dead x))\n")]
+      (is (seq (refs/refs-to st2 'sr.core/dead))))))
