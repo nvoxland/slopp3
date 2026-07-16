@@ -47,3 +47,43 @@
                                                 "(+ (inc a) (inc a))"
                                                 "(eval a)")))))
       (finally (api/close! sess)))))
+(deftest ^:isolated text-misses-teach-and-reflow
+  ;; text-mode misses returned a bare error (no :source-now to correct
+  ;; against), and exact-text matching is brittle across docstring
+  ;; reflows — a whitespace-fuzzy fallback should land the unique match.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'tm.core
+                   (str "(ns tm.core)\n\n"
+                        "(defn f \"Original doc line one\n  continued here.\" [x] x)\n"))
+      (testing "a text miss carries :source-now like structural misses do"
+        (let [r (api/edit-subform! sess 'tm.core 'f "no such text" "x"
+                                   :text true)]
+          (is (:error r))
+          (is (re-find #"defn f" (str (:source-now r))) (pr-str r))))
+      (testing "whitespace-fuzzy: a reflowed match still lands uniquely"
+        (let [r (api/edit-subform! sess 'tm.core 'f
+                                   "Original doc line one continued here."
+                                   "New doc." :text true)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (re-find #"New doc" (api/query-source sess 'tm.core)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated fragment-matches-suggest-the-enclosing-form
+  ;; the recurring loop: a match that opens a delimiter it doesn't close is
+  ;; refused with the rule — but when the fragment appears in the form, the
+  ;; error should SHOW the smallest complete form containing it, so the
+  ;; retry needs no re-read.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'fg.core
+                   (str "(ns fg.core)\n\n"
+                        "(defn g \"G.\" [x]\n"
+                        "  (let [a (inc x)\n"
+                        "        b (* 2 a)]\n"
+                        "    (+ a b)))\n"))
+      (let [r (api/edit-subform! sess 'fg.core 'g
+                                 "a (inc x)\n        b (* 2 a)]" "ignored")]
+        (is (:error r))
+        (is (re-find #"\[a \(inc x\)" (str (:suggestion r)))
+            (pr-str r)))
+      (finally (api/close! sess)))))

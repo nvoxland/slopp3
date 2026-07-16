@@ -259,6 +259,20 @@
                      (= 'cond head) (odd? idx)
                      :else false))
          false)))))
+(defn- fuzzy-spans
+  "[[start end] ...] where `text` matches `src` with whitespace runs
+  treated as equivalent (any run matches any run) — the tolerance text
+  matches need across docstring reflows and re-indentation."
+  [^String src ^String text]
+  (let [words (str/split (str/trim text) #"\s+")]
+    (when (seq words)
+      (let [pat (re-pattern (str/join "\\s+" (map #(java.util.regex.Pattern/quote %)
+                                                  words)))
+            mt  (re-matcher pat src)]
+        (loop [acc []]
+          (if (.find mt)
+            (recur (conj acc [(.start mt) (.end mt)]))
+            acc))))))
 (defn- find-unique-subform
   "The unique position-tracked zloc in `form-src` matching `match-src`
   (shared by extract and subform edits). A node matches when its sexpr
@@ -279,11 +293,28 @@
                                     (n/children (p/parse-string-all match-src)))}
                     (catch Exception e {:parse-error (ex-message e)}))]
     (if-let [pe (:parse-error parsed)]
-      {:error (str "the match isn't well-formed Clojure on its own (" pe
-                   ") — match COMPLETE forms: a whole expression, clause, or "
-                   "binding pair, never a fragment that opens a delimiter it "
-                   "doesn't close. Often the fix is matching the ENCLOSING "
-                   "form and restating it in the replacement")}
+      ;; when the fragment APPEARS once in the form, hand back the smallest
+      ;; complete form containing it — the retry needs no re-read
+      (let [cand (when (= 1 (count (fuzzy-spans form-src match-src)))
+                   (->> (iterate z/next (z/of-string form-src))
+                        (take-while (complement z/end?))
+                        (map z/node)
+                        (filter n/sexpr-able?)
+                        (map n/string)
+                        (filter #(seq (fuzzy-spans % match-src)))
+                        (sort-by count)
+                        first))]
+        (cond-> {:error (str "the match isn't well-formed Clojure on its own ("
+                             pe ") — match COMPLETE forms: a whole expression,"
+                             " clause, or binding pair, never a fragment that"
+                             " opens a delimiter it doesn't close."
+                             (if cand
+                               (str " :suggestion is the smallest complete form"
+                                    " containing your fragment — match THAT and"
+                                    " restate it in the replacement")
+                               (str " Often the fix is matching the ENCLOSING"
+                                    " form and restating it in the replacement")))}
+          cand (assoc :suggestion cand)))
       (let [mnodes  (:nodes parsed)
             pair?   (= 2 (count mnodes))
             matcher (fn [mnode]
@@ -582,35 +613,53 @@
         (keys (:namespaces store))))
 (defn text-replace-plan
   "Plan a RAW-TEXT replace inside form `form-name`: `match-text` must occur
-  exactly ONCE in the form's source, and the spliced result must still parse
-  to ONE form. The escape hatch for content no structural match can address
-  — string literals, docstrings. Rides the same gated replace pipeline.
-  Returns {:new-form-src s} or {:error msg}."
+  exactly ONCE in the form's source — exactly, or failing that under
+  whitespace-fuzzy matching (runs of whitespace are equivalent, so a
+  reflowed docstring still matches) — and the spliced result must still
+  parse to ONE form. The escape hatch for content no structural match can
+  address — string literals, docstrings. Misses carry :source-now (the
+  form's current text) so the retry needs no read.
+  Returns {:new-form-src s} or {:error msg [:source-now s]}."
   [store ns-sym form-name match-text new-text]
   (try
     (if-let [e (store/form-named store ns-sym form-name)]
-      (let [src   ^String (n/string (:node e))
-            m     ^String (str match-text)
-            i     (.indexOf src m)]
-        (cond
-          (str/blank? m)
+      (let [src ^String (n/string (:node e))
+            m   ^String (str match-text)]
+        (if (str/blank? m)
           {:error "text mode needs a non-empty match"}
+          (let [i     (.indexOf src m)
+                dup?  (and (>= i 0) (>= (.indexOf src m (inc i)) 0))
+                spans (when (neg? i) (fuzzy-spans src m))
+                [start len] (cond
+                              (and (>= i 0) (not dup?)) [i (count m)]
+                              (= 1 (count spans)) (let [[s e] (first spans)]
+                                                    [s (- e s)])
+                              :else nil)]
+            (cond
+              dup?
+              {:error (str "text occurs more than once in " form-name
+                           " — give a longer unique snippet (:source-now is"
+                           " the form's current text)")
+               :source-now src}
 
-          (neg? i)
-          {:error (str "text not found in " form-name)}
+              (nil? start)
+              {:error (str (if (seq spans)
+                             (str "text matches " (count spans) " places in "
+                                  form-name)
+                             (str "text not found in " form-name))
+                           " — :source-now is the form's CURRENT text; correct"
+                           " the match against it and resend, no read needed")
+               :source-now src}
 
-          (>= (.indexOf src m (inc i)) 0)
-          {:error (str "text occurs more than once in " form-name
-                       " — give a longer unique snippet")}
-
-          :else
-          (let [out   (str (subs src 0 i) new-text (subs src (+ i (count m))))
-                nodes (filter n/sexpr-able?
-                              (n/children (p/parse-string-all out)))]
-            (if (= 1 (count nodes))
-              {:new-form-src out}
-              {:error (str "the replacement does not leave ONE valid form ("
-                           (count nodes) " forms parsed)")}))))
+              :else
+              (let [out   (str (subs src 0 start) new-text
+                               (subs src (+ start len)))
+                    nodes (filter n/sexpr-able?
+                                  (n/children (p/parse-string-all out)))]
+                (if (= 1 (count nodes))
+                  {:new-form-src out}
+                  {:error (str "the replacement does not leave ONE valid form ("
+                               (count nodes) " forms parsed)")}))))))
       {:error (str "no form named " form-name " in " ns-sym)})
     (catch Exception ex
       {:error (str "text replace failed: " (ex-message ex))})))

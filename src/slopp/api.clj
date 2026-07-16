@@ -1522,6 +1522,22 @@
                            :form (when-let [e (render/owner-form st* ns-sym
                                                                  (:row f) (:col f))]
                                    (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
+        ;; NEW warnings (on forms this episode touched) report in full;
+        ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
+        ;; re-listing them at every done buries real findings. Errors and
+        ;; unattributed rows never demote.
+        touched-q (into #{}
+                        (keep (fn [fid]
+                                (let [st* (:store @session)]
+                                  (when-let [e (store/form-by-id st* fid)]
+                                    (symbol (str (store/ns-of-form-id st* fid))
+                                            (str (or (:name e) (:id e))))))))
+                        changed)
+        loud?     (fn [f] (or (= :error (:level f))
+                              (nil? (:form f))
+                              (contains? touched-q (:form f))))
+        lint-new  (vec (filter loud? lint))
+        carried   (vec (remove loud? lint))
         ;; THE done-point verification: the episode's whole working set —
         ;; independent of whether normalize rewrote anything
         summary
@@ -1584,8 +1600,11 @@
     (cond-> {:done cid
              :normalized (count rewrites)
              :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
-             :lint       lint
+             :lint       lint-new
              :findings   findings}
+      (seq carried)       (assoc :lint-carried
+                                 {:count (count carried)
+                                  :forms (vec (sort (distinct (keep :form carried))))})
       (seq declare-fixes) (assoc :declares-fixed declare-fixes)
       summary             (assoc :test summary))))
 

@@ -1088,7 +1088,8 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
                                                          :where (:where a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
-                                      (select-keys [:error :source-now :conflict :warnings :existing-warnings
+                                      (select-keys [:error :source-now :suggestion :conflict
+                                                    :warnings :existing-warnings
                                                     :untested :image-healed :test :affected :delta :ms])
                                       (summarize (:verbose a)))))
       "edit_revert" (text! (-> (api/revert-form! session (sym :ns) (sym :name)

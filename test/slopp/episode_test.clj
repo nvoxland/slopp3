@@ -434,3 +434,26 @@
           (is (= '[md.core/bare] (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated done-separates-new-lint-from-carried
+  ;; every done re-listed the same stale warnings from untouched forms —
+  ;; alarm fatigue that buries real findings. NEW warnings (on forms this
+  ;; episode touched) ride :lint in full; carried ones compress to a count
+  ;; + form names. Errors are never demoted.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'lc.core
+                   (str "(ns lc.core)\n\n"
+                        "(defn stale \"S.\" [x] (let [a x] (let [b a] b)))\n\n"
+                        "(defn fresh \"F.\" [x] x)\n"))
+      (api/done! sess :label "baseline" :agent "t")
+      (api/edit-replace! sess 'lc.core 'fresh
+                         "(defn fresh \"F.\" [x] (let [c x] (let [d c] d)))"
+                         :prompt "introduce a new warning" :agent "t")
+      (let [r (api/done! sess :label "the split" :agent "t")]
+        (testing "the new warning rides in full"
+          (is (some #(= 'lc.core/fresh (:form %)) (:lint r)) (pr-str (:lint r))))
+        (testing "the carried one compresses to a count + names"
+          (is (not-any? #(= 'lc.core/stale (:form %)) (:lint r)))
+          (is (= 1 (:count (:lint-carried r))) (pr-str (:lint-carried r)))
+          (is (some #{'lc.core/stale} (:forms (:lint-carried r))))))
+      (finally (api/close! sess)))))
