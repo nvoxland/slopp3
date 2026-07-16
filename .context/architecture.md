@@ -70,6 +70,23 @@
   references are an index of source, and the journal owes them no
   consistency. Adding a new reference kind = adding a producer HERE; a
   tool consuming kondo rows directly for reference questions is a bug.
+  ALL consumers ported (epic closed 2026-07-16): the module gates
+  (`ns-refs` slice — per-write affordable), unused/debt/drift, review
+  triage, move-plan's direction+caller analysis, and query_impact blast
+  radius (carrier refs and declarations now visible to agents; coverage
+  via `observed-refs`, the trace map joining as `:via :observed`).
+  STANCE-COMPLIANT NON-CONSUMERS: rewriters (rename-changeset) and
+  planner node-walks (imports-for) re-derive positions/classes inside
+  forms at rewrite time — their rightful domain, not a reference
+  question; move-plan's external-LIB require selection keeps kondo (out
+  of the store graph's domain by design).
+- **Diagnostics speak anchors**: everything telling an agent to fix
+  something carries `:form` (the owning qsym) plus `:at` (a match-ready
+  snippet that pastes into edit_subform/query_slice match) — render
+  row/col NEVER crosses the wire (reads are name-addressed, edits are
+  anchor-addressed; coordinates are consumed internally by owner-form
+  only). Compile errors translate once at the hot-load chokepoint
+  (`edit/anchor-error`); lint rows carry :at natively.
   **The wire never carries canonical records**: `to-wire` groups by target
   ({:to qsym :from [qsym ...] :tagged [...]} — :static implied, tags only
   for exceptions, ~3-5× slimmer). NAMES are the only reference currency on

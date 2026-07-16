@@ -1532,3 +1532,20 @@ between the same forms share one handle). Handles remain an ACCEPTED INPUT
 convenience for future ref-consuming tools — which must equally accept
 qsym pairs, so agents never need to convert — and are EMITTED only
 alongside an actionable follow-up operation, never as noise columns.
+
+Epic close — agent-native addressing end to end (2026-07-16): every
+reference consumer ports to THE graph (gates via the ns-refs slice,
+move-plan direction/caller analysis, query_impact blast radius — which
+now shows agents carrier refs and outside-world declarations; the trace
+map joined as observed-refs, giving :via :observed a real consumer in
+coverage). qualified-usage-rows deleted — its job became a producer.
+Rewriters (rename-changeset) and planner node-walks (imports-for) are
+stance-compliant NON-consumers: positions and class names are rewrite-
+time derivations inside single forms, not reference questions; external-
+lib require selection stays kondo (outside the store graph's domain).
+Diagnostics speak anchors: compile errors translate at the hot-load
+chokepoint (edit/anchor-error → {:form :at}), lint rows carry :at
+snippets, row/col never crosses the wire. kondo-cache bound 64→256 (a
+101-ns store reset a 64-entry cache mid-sweep). The graph surfaced and
+retired real debt on the way: store-test's undeclared render use became
+an element-order assertion (better test, no cross-module reach).
