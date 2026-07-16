@@ -23,7 +23,7 @@
   "kondo-resolved var usages PLUS syntactically-qualified references into
   store namespaces kondo can't resolve (un-required — the gate-hole class),
   normalized to canonical records. Self-references excluded."
-  [st known]
+  [st known nses]
   (mapcat
    (fn [nsx]
      (let [fid-of (into {} (keep (fn [e] (when (:name e) [(:name e) (:id e)])))
@@ -33,13 +33,14 @@
                                    (contains? known (:to u))
                                    (not (and (= nsx (:to u))
                                              (= (:from-var u) (:name u)))))]
-                    {:from-form (fid-of (:from-var u))
-                     :from-ns   nsx
-                     :from-var  (:from-var u)
-                     :to-ns     (:to u)
-                     :to-name   (:name u)
-                     :to-form   (:id (store/form-named st (:to u) (:name u)))
-                     :via       :static})
+                    (cond-> {:from-form (fid-of (:from-var u))
+                              :from-ns   nsx
+                              :from-var  (:from-var u)
+                              :to-ns     (:to u)
+                              :to-name   (:name u)
+                              :to-form   (:id (store/form-named st (:to u) (:name u)))
+                              :via       :static}
+                      (:arity u) (assoc :arity (:arity u))))
            seen   (set (map (juxt :from-var :to-ns :to-name) kondo))
            unreq  (for [e (store/forms st nsx)
                         :when (:name e)
@@ -58,14 +59,14 @@
                      :to-form   (:id (store/form-named st to (symbol (name s))))
                      :via       :static})]
        (concat kondo unreq)))
-   (sort known)))
+   (sort nses)))
 (defn- carrier-refs
   "Quoted symbols in DESIGNATED CARRIER positions (query-call / invoke! /
   late-ref) as canonical records — the blessed forms of the reference-
   carrier decision; a naked quoted symbol stays data."
-  [st known]
+  [st known nses]
   (let [carrier? #{"query-call" "query_call" "invoke!" "late-ref"}]
-    (for [nsx (sort known)
+    (for [nsx (sort nses)
           e   (store/forms st nsx)
           :when (:name e)
           s ((fn walk [f]
@@ -97,8 +98,8 @@
   (invoked via CLI/wire/eval injection) and ^:unused-ok (deliberately
   uncalled) both keep a var alive in the graph; :marker preserves WHICH
   dial so consumers like the stale check can distinguish."
-  [st known]
-  (for [nsx (sort known)
+  [st _known nses]
+  (for [nsx (sort nses)
         e   (store/forms st nsx)
         :when (:name e)
         :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))
@@ -128,9 +129,35 @@
   an index of source, and the journal owes them no consistency."
   [st]
   (let [known (set (keys (:namespaces st)))]
-    (vec (concat (static-refs st known)
-                 (carrier-refs st known)
-                 (declared-refs st known)))))
+    (vec (concat (static-refs st known (sort known))
+                 (carrier-refs st known (sort known))
+                 (declared-refs st known (sort known))))))
+(defn ^:export ns-refs
+  "The graph SLICE for one namespace's outbound references — the same
+  canonical records `refs` yields, produced for `nsx` alone (the write
+  gates run per write; a whole-store sweep there would be waste). Same
+  producers, same record shape; scoping is an access path, not a dialect."
+  [st nsx]
+  (let [known (set (keys (:namespaces st)))]
+    (vec (concat (static-refs st known [nsx])
+                 (carrier-refs st known [nsx])
+                 (declared-refs st known [nsx])))))
+(defn ^:export observed-refs
+  "RUNTIME evidence as graph records: the trace map ({test-qsym #{form-qsym}})
+  says test T exercised form F — {:via :observed}. Session-grain input (the
+  trace lives with the session, not the store), same canonical record shape;
+  consumers merge these with the store graph when runtime truth matters
+  (coverage, blast radius)."
+  [tmap]
+  (vec (for [[t forms] tmap
+             f forms]
+         {:from-form nil
+          :from-ns   (symbol (namespace t))
+          :from-var  (symbol (name t))
+          :to-ns     (symbol (namespace f))
+          :to-name   (symbol (name f))
+          :to-form   nil
+          :via       :observed})))
 (defn ^:export refs-to
   "Every reference TO `qsym` (an ns/name symbol) — the blast-radius/liveness
   question, answered from THE graph."

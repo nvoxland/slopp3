@@ -44,7 +44,7 @@
                :findings (->> (:findings r)
                               (filter #(#{:warning :error} (:level %)))
                               (mapv #(select-keys % [:level :type :message :row :col])))}]
-        (swap! kondo-cache (fn [c] (assoc (if (>= (count c) 64) {} c) source v)))
+        (swap! kondo-cache (fn [c] (assoc (if (>= (count c) 256) {} c) source v)))
         v)))
 ^:reads (defn analyze
   "clj-kondo's `:analysis` ({:var-definitions :var-usages

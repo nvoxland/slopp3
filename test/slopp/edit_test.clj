@@ -86,3 +86,19 @@
             (is (= :replace (:op d)))
             (is (= "off-by-one" (:prompt d))))))
       (finally (repl/stop! h)))))
+(deftest compile-errors-speak-anchors
+  ;; agents can't consume file:line (reads are name-addressed, edits are
+  ;; anchor-addressed) — the boundary translates VFS coordinates into the
+  ;; owning FORM plus a match-ready snippet.
+  (let [st (store/ingest (store/empty-store) 'an.err
+                         (str "(ns an.err)\n"
+                              "(defn ok \"O.\" [x] x)\n"
+                              "(defn broken \"B.\" [x]\n"
+                              "  (nope-not-a-fn x))\n"))]
+    (testing "a located error resolves to form + snippet"
+      (let [a (edit/anchor-error st "Syntax error compiling at (an/err.clj:4:3).\nUnable to resolve symbol: nope-not-a-fn")]
+        (is (= 'an.err/broken (:form a)) (pr-str a))
+        (is (= "(nope-not-a-fn x))" (:at a)))))
+    (testing "unlocatable text stays nil — the caller keeps the raw message"
+      (is (nil? (edit/anchor-error st "something exploded, no coordinates")))
+      (is (nil? (edit/anchor-error st nil))))))

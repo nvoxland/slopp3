@@ -405,6 +405,31 @@
                       root)})))))
     (catch Exception e
       {:error (str "remove-require failed: " (ex-message e))})))
+(defn anchor-error
+  "Compile/exception text with VFS coordinates → the anchor agents can act
+  on: {:form qsym :at \"snippet\"} — the owning form plus the trimmed
+  offending line, paste-ready for edit_subform/query_slice match. nil when
+  the text carries no resolvable location (the caller keeps the raw
+  message). Agents never consume file:line — reads are name-addressed and
+  edits are anchor-addressed; this is the translation, applied once at the
+  boundary."
+  [store err]
+  (when err
+    (when-let [[_ path line] (re-find #"\(([\w/._-]+\.clj):(\d+)(?::\d+)?\)"
+                                      (str err))]
+      (let [nsx (symbol (-> path
+                            (str/replace #"\.clj$" "")
+                            (str/replace "/" ".")
+                            (str/replace "_" "-")))]
+        (when (contains? (:namespaces store) nsx)
+          (let [row (parse-long line)
+                e   (render/owner-form store nsx row 1)
+                at  (nth (str/split-lines (render/render-ns store nsx))
+                         (dec row) nil)]
+            (when (or e at)
+              (cond-> {}
+                e  (assoc :form (symbol (str nsx) (str (or (:name e) (:id e)))))
+                at (assoc :at (str/trim at))))))))))
 (defn cold-load-errors
   "The cold-load half of the compile gate: nil when every ns in `ns-syms`
   renders to a namespace a FRESH load can resolve top-to-bottom; else one

@@ -318,7 +318,8 @@
                 (let [stubbed (stub!)]             ; a fresh image loses stubs
                   (if-let [err2 (load-all)]
                     (do (fresh-image! session)
-                        (cond-> {:err err2}
+                        (cond-> (merge {:err err2}
+                                       (edit/anchor-error candidate err2))
                           (not= err1 err2) (assoc :first-err err1)))
                     (cond-> {:healed true}
                       (seq stubbed) (assoc :stubbed stubbed)))))))))))

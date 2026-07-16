@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index] [clojure.string :as str] [clojure.set :as set]))
+            [slopp.index :as index] [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -795,14 +795,23 @@
         analyze* (fn [nsx] (:var-usages (index/analyze (render/render-ns store nsx))))
         rows     (analyze* from-ns)
         moved-rows (filter #(moved (:from-var %)) rows)
-        stay-rows  (filter #(and (:from-var %) (not (moved (:from-var %)))) rows)
-        stay->moved (set (keep #(when (and (= from-ns (:to %)) (moved (:name %)))
+        
+        ;; direction analysis reads THE graph (store-internal questions);
+        ;; kondo rows remain only for EXTERNAL-lib require selection
+        srefs (refs/ns-refs store from-ns)
+        stay->moved (set (keep #(when (and (= from-ns (:to-ns %))
+                                           (moved (:to-name %))
+                                           (:from-var %)
+                                           (not (moved (:from-var %)))
+                                           (not= :declared (:via %)))
                                   (:from-var %))
-                               stay-rows))
-        moved->stay (set (keep #(when (and (= from-ns (:to %))
-                                           (not (moved (:name %))))
-                                  (:name %))
-                               moved-rows))
+                               srefs))
+        moved->stay (set (keep #(when (and (= from-ns (:to-ns %))
+                                           (not (moved (:to-name %)))
+                                           (moved (:from-var %))
+                                           (not= :declared (:via %)))
+                                  (:to-name %))
+                               srefs))
         private-callees (filter #(private-form?
                                   (:node (store/form-named store from-ns %)))
                                 (sort moved->stay))
@@ -845,15 +854,17 @@
                                              refer-hits)))}
 
       :else
-      (let [ext-usages  (into {}
-                              (keep (fn [nsx]
-                                      (let [hits (filter #(and (= from-ns (:to %))
-                                                               (moved (:name %))
-                                                               (:from-var %))
-                                                         (analyze* nsx))]
-                                        (when (seq hits)
-                                          [nsx (set (map :from-var hits))]))))
-                              other-nses)
+      (let [;; external callers from THE graph — one assembly, not a per-ns sweep
+            ext-usages  (reduce (fn [m r]
+                                  (if (and (= from-ns (:to-ns r))
+                                           (moved (:to-name r))
+                                           (:from-var r)
+                                           (not= from-ns (:from-ns r))
+                                           (not= :declared (:via r)))
+                                    (update m (:from-ns r)
+                                            (fnil conj #{}) (:from-var r))
+                                    m))
+                                {} (refs/refs store))
             need-alias  (cond-> (set (keys ext-usages))
                           (seq stay->moved) (conj from-ns))
             alias-of    (into {}

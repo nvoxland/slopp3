@@ -1552,12 +1552,22 @@
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
         lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
                                               changed))
-                        :let [st* (:store @session)]
-                        f (index/lint (render/render-ns st* ns-sym))]
-                    (assoc f :ns ns-sym
-                           :form (when-let [e (render/owner-form st* ns-sym
-                                                                 (:row f) (:col f))]
-                                   (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
+                        :let [st*   (:store @session)
+                              src   (render/render-ns st* ns-sym)
+                              lines (vec (str/split-lines src))]
+                        f (index/lint src)]
+                    ;; anchors, not coordinates: the owning form + a
+                    ;; match-ready snippet; row/col never cross the wire
+                    (cond-> (-> f
+                                (dissoc :row :col)
+                                (assoc :ns ns-sym
+                                       :form (when-let [e (render/owner-form
+                                                           st* ns-sym
+                                                           (:row f) (:col f))]
+                                               (symbol (str ns-sym)
+                                                       (str (or (:name e) (:id e)))))))
+                      (get lines (dec (:row f 0)))
+                      (assoc :at (str/trim (nth lines (dec (:row f))))))))
         ;; the unused-public GATE: unmarked dead surface — and stale
         ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
         unused-rep (let [st* (:store @session)]
@@ -2321,10 +2331,12 @@
                                  (keep #(:id (store/form-named st4 % %))
                                        (keys (:require-adds plan)))
                                  (keys (:rewrites plan))))
-                load-err (:err (session/hot-load-all! session st4 ordered))]
+                hl       (session/hot-load-all! session st4 ordered)
+                load-err (:err hl)]
             (if load-err
               (do (session/fresh-image! session)
-                  {:error (str "move failed to compile: " load-err)})
+                  (merge {:error (str "move failed to compile: " load-err)}
+                         (select-keys hl [:form :at])))
               (if-not (session/try-commit! session st st4 touched)
                 {:conflict {:reason "store changed during move — retry"}}
                 (do (doseq [nm (:removals plan)]
@@ -3050,40 +3062,44 @@
             :lines (mapv str/trim (take 3 lines))})
          vec)))
 (defn query-impact
-  "Rock 4: the blast radius of reshaping `ns-sym/nm` — call sites grouped
-  per caller form (:calls), value/higher-order references (:value-refs — a
-  template rewrite can't reach those), and the tests the trace map will
-  run. change_signature's discovery as a READ: plan the edit before paying
-  for it. Self-references inside the target form are excluded — replacing
-  the defn covers them."
+  "Rock 4: the blast radius of reshaping `ns-sym/nm`, answered from THE
+  reference graph — call sites grouped per caller form (:calls),
+  value/higher-order references (:value-refs — a template rewrite can't
+  reach those), CARRIER references (:carrier-refs — quoted-symbol
+  positions; signature templates can't reach those either), outside-world
+  declarations (:declared), and the tests runtime evidence says exercise
+  it (:covered-by — the graph's :observed records). change_signature's
+  discovery as a READ: plan the edit before paying for it."
   [session ns-sym nm]
   (let [st (:store @session)]
     (if-not (store/form-named st ns-sym nm)
       (edit/missing-form-error st ns-sym nm)
-      (let [rows    (for [nsx (keys (:namespaces st))
-                          :let [an (index/analyze (render/render-ns st nsx))]
-                          u   (:var-usages an)
-                          :when (and (= ns-sym (:to u)) (= nm (:name u))
-                                     (not (and (= nsx ns-sym)
-                                               (= nm (:from-var u)))))]
-                      {:ns nsx :from (:from-var u) :arity (:arity u)})
-            callers (->> rows
-                         (group-by (juxt :ns :from))
+      (let [qsym    (symbol (str ns-sym) (str nm))
+            rs      (refs/refs-to st qsym)
+            statics (filter #(= :static (:via %)) rs)
+            callers (->> statics
+                         (group-by (juxt :from-ns :from-var))
                          (mapv (fn [[[nsx from] us]]
                                  {:ns nsx :form from
                                   :calls (count (keep :arity us))
                                   :value-refs (count (remove :arity us))}))
                          (sort-by (juxt (comp str :ns) (comp str :form)))
                          vec)
-            qsym    (symbol (str ns-sym) (str nm))
-            tests   (->> (:test-map @session)
-                         (keep (fn [[t fs]] (when (contains? fs qsym) t)))
+            carried (vec (sort (distinct
+                                (for [r rs :when (= :carrier (:via r))]
+                                  (symbol (str (:from-ns r)) (str (:from-var r)))))))
+            marks   (vec (sort (keep :marker rs)))
+            tests   (->> (refs/observed-refs (:test-map @session))
+                         (filter #(and (= ns-sym (:to-ns %)) (= nm (:to-name %))))
+                         (map #(symbol (str (:from-ns %)) (str (:from-var %))))
                          sort vec)]
         (cond-> {:target qsym :callers callers :covered-by tests}
-          (some (comp pos? :value-refs) callers)
-          (assoc :hint (str "value/higher-order refs can't be template-rewritten"
-                            " — change_signature handles :calls; edit the"
-                            " :value-refs forms by hand")))))))
+          (seq carried) (assoc :carrier-refs carried)
+          (seq marks)   (assoc :declared marks)
+          (or (some (comp pos? :value-refs) callers) (seq carried))
+          (assoc :hint (str "value/higher-order and carrier refs can't be"
+                            " template-rewritten — change_signature handles"
+                            " :calls; edit the others by hand")))))))
 ^:reads (defn draft-test
   "Rock 5: a ready-to-EDIT deftest draft for `ns-sym/nm`. With `:code` (a
   driver expression) it OBSERVES real calls and turns each capture into an

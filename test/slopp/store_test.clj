@@ -1,6 +1,6 @@
 (ns slopp.store-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store]))
+            [slopp.store :as store] [rewrite-clj.parser :as p]))
 
 (def src "(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n")
 
@@ -33,15 +33,14 @@
         [st d] (store/append-form base 'an.core
                                   (rewrite-clj.parser/parse-string "(defn mid [] 3)")
                                   :prompt "anchored" :before 'late)]
-    (testing "renders between early and late"
-      (let [src ^String (slopp.render/render-ns st 'an.core)]
-        (is (< (.indexOf src "early") (.indexOf src "mid") (.indexOf src "late")))))
+    (testing "lands between early and late (element order IS the store truth)"
+      (is (= '[an.core early mid late]
+             (mapv :name (store/forms st 'an.core)))))
     (testing "the delta records the anchor's form-id for replay"
       (is (= (:id (store/form-named base 'an.core 'late)) (:before d))))
     (testing "a foreign store replays the add into the SAME position"
-      (let [replayed (store/replay-delta base d)
-            src ^String (slopp.render/render-ns replayed 'an.core)]
-        (is (< (.indexOf src "early") (.indexOf src "mid") (.indexOf src "late")))))
+      (is (= '[an.core early mid late]
+             (mapv :name (store/forms (store/replay-delta base d) 'an.core)))))
     (testing "a missing anchor name returns nil (caller errors)"
       (is (nil? (store/append-form base 'an.core
                                    (rewrite-clj.parser/parse-string "(defn x [] 4)")

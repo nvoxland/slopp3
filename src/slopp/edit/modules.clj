@@ -123,58 +123,31 @@
 
                      :else nil))))
          seq)))
-(defn ^:export qualified-usage-rows
-  "Usage rows kondo CANNOT produce: namespace-qualified symbols that name a
-  store namespace the form never requires. Such a call compiles in the image
-  (every store ns is loaded there), and kondo emits NO var-usage row for an
-  unresolved namespace — so a bare `deep.ns/var` call would slip the module
-  gate entirely. Quote-pruned. Same row shape the gates feed to
-  module-violations."
-  [candidate ns-sym form-names]
-  (let [nses (set (keys (:namespaces candidate)))]
-    (vec (for [fname form-names
-               :let [e (store/form-named candidate ns-sym fname)]
-               :when e
-               s (distinct (refs/quote-pruned-qualified-syms
-                            (try (n/sexpr (:node e)) (catch Exception _ nil))))
-               :let [to (symbol (namespace s))]
-               :when (and (contains? nses to) (not= to ns-sym))]
-           {:from-ns ns-sym :from-var fname :to to
-            :to-export (export-level candidate to (symbol (name s)))}))))
 (defn ^:export module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):
-  kondo-analyzes the namespace (memoized on source — the lint gate pays
-  for the same analysis) and applies the module rules to `form-name`'s
-  outbound usages. Resolution is kondo's, so :refer'd bare calls and
-  full qualification are all seen. nil when clean or pre-adoption."
+  applies the module rules to `form-name`'s outbound references from THE
+  graph (edit.refs — resolved statics, un-required qualified calls, and
+  carrier positions all count; declarations aren't calls). nil when clean
+  or pre-adoption."
   [candidate ns-sym form-name]
   (when-let [manifest (modules-manifest candidate)]
-    (let [nses (set (keys (:namespaces candidate)))
-          rows (concat
-                (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
-                      :when (and (= form-name (:from-var u))
-                                 (contains? nses (:to u)))]
-                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                   :to-export (export-level candidate (:to u) (:name u))})
-                ;; kondo misses un-required qualified calls — synthesize
-                (qualified-usage-rows candidate ns-sym [form-name]))]
+    (let [rows (for [r (refs/ns-refs candidate ns-sym)
+                     :when (and (= form-name (:from-var r))
+                                (not= :declared (:via r)))]
+                 {:from-ns ns-sym :from-var (:from-var r) :to (:to-ns r)
+                  :to-export (export-level candidate (:to-ns r) (:to-name r))})]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn ^:export module-scan
   "The whole-namespace module gate (ingest/ns_create counterpart of
-  dialect-scan) over a candidate store value: nil when clean, else every
-  violation joined."
+  dialect-scan) over a candidate store value, judged from THE graph's
+  slice for the namespace: nil when clean, else every violation joined."
   [candidate ns-sym]
   (when-let [manifest (modules-manifest candidate)]
-    (let [nses (set (keys (:namespaces candidate)))
-          rows (concat
-                (for [u (:var-usages (index/analyze (render/render-ns candidate ns-sym)))
-                      :when (contains? nses (:to u))]
-                  {:from-ns ns-sym :from-var (:from-var u) :to (:to u)
-                   :to-export (export-level candidate (:to u) (:name u))})
-                ;; kondo misses un-required qualified calls — synthesize
-                (qualified-usage-rows candidate ns-sym
-                                      (keep :name (store/forms candidate ns-sym))))]
+    (let [rows (for [r (refs/ns-refs candidate ns-sym)
+                     :when (not= :declared (:via r))]
+                 {:from-ns ns-sym :from-var (:from-var r) :to (:to-ns r)
+                  :to-export (export-level candidate (:to-ns r) (:to-name r))})]
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 (defn ^:export missing-doc-warning
