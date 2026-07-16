@@ -896,6 +896,17 @@
         {:error (:err r)}
         (:values r)))))
 
+^:reads (defn query-call
+  "Observe-only INVOKE of one var in the live image: `(query-call session
+  'app.core/f 1 2)` — the structured face of the common query-eval case.
+  The var reference is CARRIED (a quoted symbol in a designated position —
+  renames, moves, and the unused gate all see it) instead of hidden in an
+  eval string; args must be printable data (they cross the nREPL boundary
+  as pr-str). query-eval remains the escape hatch for genuinely arbitrary
+  expressions."
+  [session qsym & args]
+  (query-eval session
+              (str "(" qsym (apply str (map #(str " " (pr-str %)) args)) ")")))
 ^:reads (defn query-observe
   "Run `driver-code` (observe-gated) while capturing the args and return value
   of up to `:limit` calls to `ns-sym/nm` — the oracle's direct answer to 'what
@@ -3506,6 +3517,7 @@
                                        (contains? '#{defn def} (first s))
                                        (not (:private (meta (second s))))
                                        (not (:unused-ok (meta (second s))))
+                                       (not (:entry-point (meta (second s))))
                                        (not= '-main nm))
                          untested (and (not test?)
                                        (zero? traced)

@@ -392,7 +392,10 @@
         (when-let [url (db/get-meta map-conn "git-remote")]
           ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
           ;; so a static require back would cycle — resolve at call time
-          (try ((requiring-resolve 'slopp.git.client/fetch-remote!) repo url)
+          ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
+          ;; so a static require back would cycle — the carrier makes the
+          ;; reference visible to renames/moves/the unused gate
+          (try ((store/late-ref 'slopp.git.client/fetch-remote!) repo url)
                (catch Exception _ nil))))
       (let [main-tip (project-journal! ctx "main" main-ds :base base)
             _        (ensure-wip! ctx "main" map-conn main-ds main-tip)

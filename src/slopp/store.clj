@@ -29,6 +29,17 @@
   "Epoch ms — the store's clock (public for the deep store packages)."
   [] (System/currentTimeMillis))
 
+(defn late-ref
+  "The BLESSED late-binding reference: a fn that resolves `qsym` at first
+  call and delegates — for the narrow case where a static require would
+  close a load cycle. This is the ONLY sanctioned home for a runtime-
+  resolved var reference (the reference-carrier decision): the indexer
+  reads the quoted symbol in this position as a REAL edge, so renames,
+  moves, and the unused gate all see it — a naked requiring-resolve is
+  invisible to all three."
+  [qsym]
+  (let [v (delay (requiring-resolve qsym))]
+    (fn [& args] (apply @v args))))
 (defn gen-id
   "Mint the next `prefix`-typed id → [id store'] — the store's id counter
   (public for the deep store packages; `alloc-id` is the external face)."

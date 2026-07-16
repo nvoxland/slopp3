@@ -1,6 +1,6 @@
 (ns slopp.api.modules-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules]))
+            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store]))
 
 (deftest ^:isolated the-module-surface-is-browsable
   (let [sess (api/open!)]
@@ -82,3 +82,29 @@
             (is (< (layer-of "pa.core") (layer-of "pb.app"))
                 (pr-str (:layers r))))))
       (finally (api/close! sess)))))
+(deftest entry-points-and-carriers-are-real-references
+  ;; the designated-carrier decision: references may live in data ONLY
+  ;; through blessed forms. ^:entry-point DECLARES outside-world invocation
+  ;; (exempt from the unused gate — no stale symmetry, the outside world is
+  ;; statically unverifiable); quoted symbols in CARRIER positions
+  ;; (query-call, late-ref, invoke!) COUNT as use.
+  (let [base (-> (store/empty-store)
+                 (store/ingest 'cr.core
+                               (str "(ns cr.core)\n\n"
+                                    "(defn ^:entry-point serve \"S.\" [x] x)\n\n"
+                                    "(defn helper \"H.\" [x] x)\n\n"
+                                    "(defn orphan \"O.\" [x] x)\n")))]
+    (testing "^:entry-point exempts; carriers count; naked orphans still fail"
+      (let [st (store/ingest base 'cr.driver
+                             (str "(ns cr.driver)\n\n"
+                                  "(defn drive \"D.\" [sess]\n"
+                                  "  (query-call sess 'cr.core/helper 1))\n"))
+            r  (modules/unused-report st '[cr.core])]
+        (is (= '[cr.core/orphan] (:unused r)) (pr-str r))))
+    (testing "without the carrier, the same quoted symbol is just data"
+      (let [st (store/ingest base 'cr.driver
+                             (str "(ns cr.driver)\n\n"
+                                  "(defn drive \"D.\" [_]\n"
+                                  "  ['cr.core/helper 1])\n"))
+            r  (modules/unused-report st '[cr.core])]
+        (is (= '[cr.core/helper cr.core/orphan] (:unused r)) (pr-str r))))))

@@ -100,39 +100,72 @@
                                    manifest)))})))
 (defn unused-report
   "PUBLIC defn/def vars in `nses`, judged against the whole store's call
-  graph and the ^:unused-ok dial:
-  {:unused [q ...]   ; ZERO in-store callers, NO marker — dead code or
-                     ; unadvertised surface; gate-failing at done. Delete
-                     ; it, or mark the NAME ^:unused-ok to declare it
-                     ; deliberate (external surface, string-eval'd entry).
+  graph, CARRIER references, and the marker dials:
+  {:unused [q ...]   ; ZERO in-store references and NO marker — dead code
+                     ; or unadvertised surface; gate-failing at done.
+                     ; Delete it, mark ^:unused-ok (deliberately uncalled),
+                     ; or ^:entry-point (invoked from OUTSIDE — CLI, wire,
+                     ; runtime resolution).
    :stale  [q ...]}  ; carry ^:unused-ok but ARE called — remove the flag.
-  Self-calls don't count as use; -main, privates, and test namespaces are
-  exempt. Kondo covers unused PRIVATES per-namespace; this is the
+                     ; (^:entry-point has no stale symmetry: the outside
+                     ; world is statically unverifiable.)
+  References count when kondo resolves them OR when a quoted symbol sits in
+  a DESIGNATED CARRIER position (query-call / invoke! / late-ref) — the
+  blessed forms of the reference-carrier decision; a naked quoted symbol
+  stays data. Self-calls don't count; -main, privates, and test namespaces
+  are exempt. Kondo covers unused PRIVATES per-namespace; this is the
   whole-store public counterpart."
   [store nses]
   (let [known (set (keys (:namespaces store)))
-        used  (into #{}
-                    (for [nsx known
-                          u   (:var-usages (index/analyze (render/render-ns store nsx)))
-                          :when (and (:name u) (:from-var u)
-                                     (contains? known (:to u))
-                                     (not (and (= nsx (:to u))
-                                               (= (:from-var u) (:name u)))))]
-                      (symbol (str (:to u)) (str (:name u)))))
-        rows  (for [nsx nses
-                    :when (not (clojure.string/ends-with? (str nsx) "-test"))
-                    e (store/forms store nsx)
-                    :when (:name e)
-                    :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                    :when (and (seq? s)
-                               (contains? #{'defn 'def} (first s))
-                               (not (:private (meta (second s))))
-                               (not= '-main (:name e)))
-                    :let [q (symbol (str nsx) (str (:name e)))]]
-                {:q q
-                 :marked? (boolean (:unused-ok (meta (second s))))
-                 :used?   (contains? used q)})]
-    {:unused (vec (sort (keep #(when-not (or (:used? %) (:marked? %)) (:q %))
+        kondo-used
+        (into #{}
+              (for [nsx known
+                    u   (:var-usages (index/analyze (render/render-ns store nsx)))
+                    :when (and (:name u) (:from-var u)
+                               (contains? known (:to u))
+                               (not (and (= nsx (:to u))
+                                         (= (:from-var u) (:name u)))))]
+                (symbol (str (:to u)) (str (:name u)))))
+        carrier? #{"query-call" "query_call" "invoke!" "late-ref"}
+        carrier-used
+        (into #{}
+              (comp (mapcat (fn [nsx] (store/forms store nsx)))
+                    (mapcat (fn [e]
+                              ((fn walk [f]
+                                 (cond
+                                   (and (seq? f) (= 'quote (first f))) nil
+                                   (seq? f)
+                                   (concat
+                                    (when (and (symbol? (first f))
+                                               (carrier? (name (first f))))
+                                      (for [a (rest f)
+                                            :when (and (seq? a)
+                                                       (= 'quote (first a))
+                                                       (symbol? (second a))
+                                                       (namespace (second a)))]
+                                        (second a)))
+                                    (mapcat walk f))
+                                   (coll? f) (mapcat walk f)
+                                   :else nil))
+                               (try (n/sexpr (:node e)) (catch Exception _ nil))))))
+              known)
+        used (into kondo-used carrier-used)
+        rows (for [nsx nses
+                   :when (not (clojure.string/ends-with? (str nsx) "-test"))
+                   e (store/forms store nsx)
+                   :when (:name e)
+                   :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                   :when (and (seq? s)
+                              (contains? #{'defn 'def} (first s))
+                              (not (:private (meta (second s))))
+                              (not= '-main (:name e)))
+                   :let [m (meta (second s))
+                         q (symbol (str nsx) (str (:name e)))]]
+               {:q q
+                :unused-ok? (boolean (:unused-ok m))
+                :exempt?    (boolean (or (:unused-ok m) (:entry-point m)))
+                :used?      (contains? used q)})]
+    {:unused (vec (sort (keep #(when-not (or (:used? %) (:exempt? %)) (:q %))
                               rows)))
-     :stale  (vec (sort (keep #(when (and (:used? %) (:marked? %)) (:q %))
+     :stale  (vec (sort (keep #(when (and (:used? %) (:unused-ok? %)) (:q %))
                               rows)))}))

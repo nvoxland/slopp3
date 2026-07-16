@@ -377,3 +377,17 @@
         (is (not (some #{:unused} (:flags (row 'ru.core/-main))))
             "entry points are exempt from the unused flag"))
       (finally (api/close! sess)))))
+(deftest ^:isolated query-call-invokes-the-oracle
+  ;; the structured face of query-eval's common case: the reference rides
+  ;; as a quoted symbol in a carrier position, args as printable data.
+  ;; (The fixture var still carries ^:unused-ok — this driver lives in
+  ;; SLOPP's store, not the fixture's; cross-store references are invisible
+  ;; by construction. In-store drivers — the normal app case — need none.)
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'qc.core
+                   "(ns qc.core)\n\n(defn ^:unused-ok pair \"P.\" [x y] [x y])\n")
+      (is (= [[1 2]] (api/query-call sess 'qc.core/pair 1 2)))
+      (is (= [[[:a 1] "s"]] (api/query-call sess 'qc.core/pair [:a 1] "s"))
+          "data args ride pr-str")
+      (finally (api/close! sess)))))
