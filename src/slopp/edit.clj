@@ -411,17 +411,19 @@
 (defn compile-error
   "The standard compile-failure result every 'failed to compile' surface
   returns: `{:error <prefix + clean message> :form qsym :at snippet}` when
-  the error's VFS coordinate resolves against `store` (the coordinate is
-  STRIPPED from the message — row/col never rides the wire), else a plain
-  `{:error <prefix + raw>}` fallback so an unresolvable error keeps its one
-  location clue. `prefix` is the op label ('rename failed to compile: ')."
+  the error's VFS coordinate resolves against `store`, else just
+  `{:error <prefix + clean message>}`. The `(file.clj:line:col)` coordinate
+  is ALWAYS stripped from the message — row/col never reaches an agent, even
+  as a fallback (a coordinate no tool consumes is noise, not a clue).
+  `prefix` is the op label ('rename failed to compile: ')."
   [store err prefix]
-  (if-let [a (anchor-error store err)]
-    (assoc a :error
-           (str prefix
-                (str/trim (str/replace (str err)
-                                       #"\s*(?:at\s+)?\([\w/._-]+\.clj:\d+(?::\d+)?\)\.?" ""))))
-    {:error (str prefix err)}))
+  (let [clean (str prefix
+                   (str/trim (str/replace (str err)
+                                          #"\s*(?:at\s+)?\([\w/._-]+\.clj:\d+(?::\d+)?\)\.?"
+                                          "")))]
+    (if-let [a (anchor-error store err)]
+      (assoc a :error clean)
+      {:error clean})))
 (defn apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:
   `replace-form`, then redefine the form in the live image (D5) — a form that

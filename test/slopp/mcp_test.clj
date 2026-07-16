@@ -1,5 +1,5 @@
 (ns slopp.mcp-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
@@ -576,3 +576,42 @@
       "the store oracle is a tool")
   (is (contains? @#'tools/read-only-tools "query_store")
       "plan mode may call it without prompts"))
+(use-fixtures :once
+  (fn [run]
+    (reset! @#'mcp/strict-boundary? true)
+    (try (run) (finally (reset! @#'mcp/strict-boundary? false)))))
+(deftest the-boundary-refuses-file-line-coordinates
+  ;; agents NEVER think in files: no agent-facing response may carry a
+  ;; source file:line coordinate or a :row/:col key. The strict-boundary
+  ;; audit (on across the wire test suite) turns that invariant into a
+  ;; throw, so any tool — current or future — that leaks a coordinate
+  ;; fails a test the moment it is exercised.
+  (testing "the scanner catches coordinates and :row/:col keys, spares clean data"
+    (is (#'mcp/boundary-leak {:error "boom at (foo/bar.clj:12:3)"}))
+    (is (#'mcp/boundary-leak {:lint [{:type :redundant-do :row 5 :col 2}]}))
+    (is (#'mcp/boundary-leak ["ok" {:at "(defn f [] (g))" :nested {:col 1}}]))
+    (is (nil? (#'mcp/boundary-leak {:form 'a.b/c :at "(defn c [] (d))"
+                                    :error "No matching method"})))
+    (is (nil? (#'mcp/boundary-leak {:built "/tmp/build-xyz/src/a.clj"}))
+        "a bare build path is not a coordinate"))
+  (testing "text! throws under the audit when a response leaks"
+    (reset! @#'mcp/strict-boundary? true)
+    (try
+      (is (thrown-with-msg? Exception #"boundary leak"
+                            (#'mcp/text! {:error "at (x/y.clj:9)"})))
+      (is (map? (#'mcp/text! {:form 'a.b/c :at "(defn c [])"})) "clean passes")
+      (finally (reset! @#'mcp/strict-boundary? false)))))
+(deftest ^:isolated a-compile-failure-crosses-the-wire-anchored
+  ;; drives a real compile error THROUGH the wire under the boundary audit:
+  ;; the response must anchor (form + snippet) and carry NO coordinate —
+  ;; the audit would throw otherwise, so this pins the compile-error path.
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "wce.core" :source "(ns wce.core)\n(defn f [x] x)\n"})
+      (let [r (call sess "edit_replace_form"
+                    {:ns "wce.core" :name "f"
+                     :source "(defn f [x] (String/noSuchStaticThing x))"})]
+        (is (re-find #"wce\.core/f" r) "the owning form is named")
+        (is (re-find #"noSuchStaticThing" r) "a match-ready snippet rides")
+        (is (not (re-find #"\.clj:\d" r)) "no file:line in the wire text"))
+      (finally (api/close! sess)))))

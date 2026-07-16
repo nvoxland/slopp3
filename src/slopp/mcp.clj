@@ -53,7 +53,38 @@
                                        f)))
                                  f [:expected :actual :message]))
                        fs)))))
+(def ^:private strict-boundary?
+  "When true, the response boundary (text!) THROWS on any file/line
+  coordinate leak — the invariant 'agents never think in files' made
+  mechanical. On across the wire test suite (a fixture flips it), off in
+  production (zero cost). An atom, not a dynamic var: `binding` is
+  dialect-banned, and the flag is process-global test state."
+  (atom false))
+(defn- boundary-leak
+  "The FIRST filesystem-COORDINATE leak in agent-facing response `x` — a
+  source `file.clj:line` in any string, or a `:row`/`:col` map key — else
+  nil. Agents address by NAME + paste-ready snippet, never file/line, so a
+  coordinate crossing the wire is a boundary bug. A bare build path (no
+  `:line`) is not a coordinate and passes."
+  [x]
+  (letfn [(scan [v]
+            (cond
+              (string? v) (re-find #"[\w./-]*\.clj[cx]?:\d+" v)
+              (map? v)    (or (when (or (contains? v :row) (contains? v :col))
+                                (str "row/col key: "
+                                     (pr-str (select-keys v [:row :col]))))
+                              (some scan (keys v))
+                              (some scan (vals v)))
+              (coll? v)   (some scan v)
+              :else       nil))]
+    (scan x)))
 (defn- text! [x]
+  (when @strict-boundary?
+    (when-let [leak (boundary-leak x)]
+      (throw (ex-info (str "boundary leak — a file/line coordinate reached an"
+                           " agent response: " leak " (agents address by name +"
+                           " snippet, never file:line — anchor it)")
+                      {:leak leak}))))
   (let [x       (cond
                   (and *hint* (map? x) (nil? (:hint x))) (assoc x :hint *hint*)
                   (and *hint* (string? x)) (str x "\n\n[hint] " *hint*)
