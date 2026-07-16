@@ -70,6 +70,12 @@
   references are an index of source, and the journal owes them no
   consistency. Adding a new reference kind = adding a producer HERE; a
   tool consuming kondo rows directly for reference questions is a bug.
+  **The wire never carries canonical records**: `to-wire` groups by target
+  ({:to qsym :from [qsym ...] :tagged [...]} — :static implied, tags only
+  for exceptions, ~3-5× slimmer); `ref-id`/`parse-ref` mint and expand the
+  short handle "fA→fB" (stable form-ids, mechanically invertible through
+  the current graph, nothing stored). Convert at the boundary, both
+  directions, one place.
 
 ## Layer map (bottom-up)
 
