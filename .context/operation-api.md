@@ -233,6 +233,16 @@ is what catches a missing one.
   `refactor/move-plan` (unit-tested), atomic executor. Limits (refused or
   compile-gated): `:refer`'d moved names, java `:import`, shadowed-local
   mis-qualification.
+- `query-store` / MCP `query_store {code [timeout_ms]}` — the STORE-VALUE
+  oracle: one read-only `(fn [store] ...)` evaluated over the current
+  immutable store value IN THE SERVER (where the value lives — nothing is
+  serialized to the image). The sanctioned home for ad-hoc
+  codebase-as-data analysis; `query_eval` stays the oracle for code
+  BEHAVIOR. Gated hard: single fn-of-store shape, `edit/pure-eval-refusal`
+  (quote-pruned walk — no `!`-enders, defs, interop, IO/eval), worker
+  thread + timeout (a wedged analysis can't freeze the serve loop),
+  results pr-str-capped at 32KB. Safe by construction against writes: the
+  store value is immutable and the eval only ever holds the pointer.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build): production
   namespaces under `src/`, **test namespaces (name ends `-test`) under `test/`**

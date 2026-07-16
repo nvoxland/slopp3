@@ -1442,3 +1442,15 @@ just commit_point. Explicitly rejected: auto remote push (the user asks
 for mirror pushes), per-wave jar rebuilds (the jar is only the boot
 kernel — rebuild on kernel/deps change only). Roadmap: warm isolated
 runner + incremental build! make the tier cheap enough to remove the cap.
+
+query_store — the store-value oracle (2026-07-16, user-approved surface):
+read-only eval of one `(fn [store] ...)` over the immutable store value,
+in the server process. Rationale: the image answers questions OF the
+code; there was no oracle for questions ABOUT the codebase-as-data, so
+one-off analysis kept becoming canned tools (review_scan) or tempting
+raw db reads. Boundaries: pure-eval gate (no effects/defs/interop/IO),
+fn-of-store shape only, worker + timeout, pr-str-capped output. The
+stance "raw REPL eval may observe but never redefines" extends to the
+store value: observation of an immutable pointer, never mutation.
+Repeatedly-asked query_store questions are evidence for the next canned
+tool.
