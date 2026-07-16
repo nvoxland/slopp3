@@ -5,7 +5,6 @@
   simulate a concurrent competitor deterministically. Never set in production.
   Exported to the contention specs that bind it; package-private otherwise."
   nil)
-(declare affected-tests commit-appended! diagnosed-run! fresh-image! green? hot-load-all! image-with-deps! implicate load-trace persist-trace! rebased-write! refresh-cache! reload-signature-res reload-signature? rename-in-trace run-verification! session-identity shape-episode-reds! start-spare! stub-missing-test-vars! suspicious-red? test-ns? test-nses-reaching traced-run! try-commit! with-ms)
 (defn start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled. The
   spare is launched BARE (deps unknown until a line adopts it); its manifest
@@ -166,6 +165,69 @@
         (try-commit! session base st' nses) st'
         (< n 12) (do (refresh-cache! session) (recur (inc n)))
         :else (throw (ex-info "commit contention on append" {}))))))
+(defn with-ms
+  "Attach total op wall time (item 2 observability)."
+  [m t0]
+  (if (map? m)
+    (assoc m :ms (quot (- (System/nanoTime) t0) 1000000))
+    m))
+(defn green? [summary]
+  (zero? (+ (:fail summary 0) (:error summary 0))))
+(defn fresh-image!
+  "Replace the image with a fresh process reloaded from the store — faithful by
+  construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
+  on the critical path; the next spare starts warming immediately."
+  [session]
+  (let [{:keys [image spare store]} @session
+        fresh (image-with-deps! spare (:deps store))]  ; adopt+reconcile or fresh
+    (repl/stop! image)
+    (swap! session assoc :image fresh :spare nil)
+    (start-spare! session)
+    (let [{:keys [store image]} @session]
+      (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
+        (when-let [err (image/load-ns! image store ns-sym)]
+          ;; outstanding red-first stubs die with the old image — re-stub, retry
+          (when-not (and (stub-missing-test-vars! image store [ns-sym])
+                         (nil? (image/load-ns! image store ns-sym)))
+            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {}))))))))
+(defn hot-load-all!
+  "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).
+  nil on success; {:healed true} when a STALE IMAGE had to be refreshed to
+  make the load succeed (D5.1); {:stubbed [qsyms]} when red-first stubs made
+  a -test namespace compile (the generic red-first seam — the spec runs and
+  fails honestly); {:err msg} when the forms genuinely don't compile (image
+  restored either way; :first-err carries the pre-heal error when it
+  differs). Keys compose.
+  The heal boots from the COMMITTED store, so the candidate's touched nses
+  are replayed from the CANDIDATE (dependency order, full load-ns! so new
+  namespaces exist and are *loaded-libs*-stamped) before the retry —
+  without that, a candidate that CREATES a namespace (extract_ns) dies
+  with FileNotFound when a survivor requires it."
+  [session candidate form-ids]
+  (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
+        stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
+        replay! #(doseq [ns-sym (filter (set nses)
+                                        (store/ns-dependency-order candidate))]
+                   (image/load-ns! (:image @session) candidate ns-sym))]
+    (letfn [(load-all []
+              (loop [ids (seq form-ids)]
+                (when ids
+                  (or (edit/hot-load-form! (:image @session) candidate (first ids))
+                      (recur (next ids))))))]
+      (when-let [err1 (load-all)]
+        (let [stubbed (stub!)]
+          (if (and (seq stubbed) (nil? (load-all)))
+            {:stubbed stubbed}
+            (do (fresh-image! session)             ; maybe the image was stale
+                (replay!)                          ; candidate truth over the committed boot
+                (let [stubbed (stub!)]             ; a fresh image loses stubs
+                  (if-let [err2 (load-all)]
+                    (do (fresh-image! session)
+                        (cond-> (merge {:err err2}
+                                       (edit/anchor-error candidate err2))
+                          (not= err1 err2) (assoc :first-err err1)))
+                    (cond-> {:healed true}
+                      (seq stubbed) (assoc :stubbed stubbed)))))))))))
 (defn rebased-write!
   "Run a single-form write with an atomic rebasing commit (item 4, the
   granularity dodge). The pure `transform` (store → {:store :delta ...} |
@@ -278,81 +340,6 @@
                       (and (nil? (:error @res)) (nil? (:conflict @res))
                            (:carried load-res))
                       (assoc :carried-errors (:carried load-res))))))))))))
-(defn with-ms
-  "Attach total op wall time (item 2 observability)."
-  [m t0]
-  (if (map? m)
-    (assoc m :ms (quot (- (System/nanoTime) t0) 1000000))
-    m))
-(defn green? [summary]
-  (zero? (+ (:fail summary 0) (:error summary 0))))
-(defn fresh-image!
-  "Replace the image with a fresh process reloaded from the store — faithful by
-  construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
-  on the critical path; the next spare starts warming immediately."
-  [session]
-  (let [{:keys [image spare store]} @session
-        fresh (image-with-deps! spare (:deps store))]  ; adopt+reconcile or fresh
-    (repl/stop! image)
-    (swap! session assoc :image fresh :spare nil)
-    (start-spare! session)
-    (let [{:keys [store image]} @session]
-      (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
-        (when-let [err (image/load-ns! image store ns-sym)]
-          ;; outstanding red-first stubs die with the old image — re-stub, retry
-          (when-not (and (stub-missing-test-vars! image store [ns-sym])
-                         (nil? (image/load-ns! image store ns-sym)))
-            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {}))))))))
-(defn hot-load-all!
-  "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).
-  nil on success; {:healed true} when a STALE IMAGE had to be refreshed to
-  make the load succeed (D5.1); {:stubbed [qsyms]} when red-first stubs made
-  a -test namespace compile (the generic red-first seam — the spec runs and
-  fails honestly); {:err msg} when the forms genuinely don't compile (image
-  restored either way; :first-err carries the pre-heal error when it
-  differs). Keys compose.
-  The heal boots from the COMMITTED store, so the candidate's touched nses
-  are replayed from the CANDIDATE (dependency order, full load-ns! so new
-  namespaces exist and are *loaded-libs*-stamped) before the retry —
-  without that, a candidate that CREATES a namespace (extract_ns) dies
-  with FileNotFound when a survivor requires it."
-  [session candidate form-ids]
-  (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
-        stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
-        replay! #(doseq [ns-sym (filter (set nses)
-                                        (store/ns-dependency-order candidate))]
-                   (image/load-ns! (:image @session) candidate ns-sym))]
-    (letfn [(load-all []
-              (loop [ids (seq form-ids)]
-                (when ids
-                  (or (edit/hot-load-form! (:image @session) candidate (first ids))
-                      (recur (next ids))))))]
-      (when-let [err1 (load-all)]
-        (let [stubbed (stub!)]
-          (if (and (seq stubbed) (nil? (load-all)))
-            {:stubbed stubbed}
-            (do (fresh-image! session)             ; maybe the image was stale
-                (replay!)                          ; candidate truth over the committed boot
-                (let [stubbed (stub!)]             ; a fresh image loses stubs
-                  (if-let [err2 (load-all)]
-                    (do (fresh-image! session)
-                        (cond-> (merge {:err err2}
-                                       (edit/anchor-error candidate err2))
-                          (not= err1 err2) (assoc :first-err err1)))
-                    (cond-> {:healed true}
-                      (seq stubbed) (assoc :stubbed stubbed)))))))))))
-(defn traced-run!
-  "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
-  observed test→form map into the session (persisted — Q3); return the summary.
-  `skip-integration?` drops `^:integration` tests (M5, the fast-path default)."
-  [session test-ns only & [skip-integration?]]
-  (let [{:keys [image store]} @session
-        {:keys [summary trace]} (image/traced-test-run
-                                 image store test-ns :only only
-                                 :skip-integration? skip-integration?)]
-    (swap! session update :test-map merge trace)
-    (persist-trace! session)
-    summary))
 (def reload-signature-res
   "Failure texts that smell like hot-reload staleness rather than logic bugs."
   [#"Unable to resolve symbol"
@@ -388,29 +375,6 @@
                        (and (not (contains? edited t))
                             (empty? (set/intersection touched edited))))))
                failures)))))
-(defn diagnosed-run!
-  "Run tests. Reds cross-check on a fresh image ONLY when staleness is
-  plausible (D5.1: reload signatures, unexplained flips, missing provenance);
-  a red clearly caused by the just-edited forms returns immediately as
-  {:diagnosis :genuine} — no restart, no second run. `:fresh true` restarts
-  FIRST and runs once against a guaranteed-faithful image."
-  [session test-ns only & {:keys [edited fresh include-integration?]}]
-  (when fresh (fresh-image! session))
-  (let [skip? (not include-integration?)               ; M5: fast path skips
-        r1    (traced-run! session test-ns only skip?)]
-    (cond
-      (green? r1) r1
-
-      fresh (assoc r1 :fresh-confirmed true)
-
-      (suspicious-red? session edited r1)
-      (do (fresh-image! session)
-          (let [r2 (traced-run! session test-ns only skip?)]
-            (if (green? r2)
-              (assoc r2 :staleness-detected true)
-              (assoc r2 :fresh-confirmed true))))
-
-      :else (assoc r1 :diagnosis :genuine))))
 (defn affected-tests
   "Which tests must re-run after editing `ns-sym/nm`: the tests observed (via
   tracing) to exercise that form — or the form itself if it IS a test. nil =
@@ -468,34 +432,6 @@
           (empty? new-blocks) (dissoc :failures)
           (seq stills)        (assoc :still-red stills)
           (seq greens)        (assoc :went-green greens))))))
-(defn run-verification!
-  "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
-  `default-ns`'s tests when there's no trace information. `:edited` (the
-  just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
-  red-result :implicated correlation (Rock 2). Results pass through the
-  episode-red shaper (direction over repetition); `:boundary? true` (the
-  done-point) bypasses compression and resets the ledger."
-  [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
-  (shape-episode-reds!
-   session
-   (implicate
-    (if (nil? affected)
-      (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                      :include-integration? include-integration?)
-      (reduce (fn [acc [tns tsyms]]
-                (merge-with (fn [a b]
-                              (cond (number? a) (+ a b)
-                                    (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                    :else (or b a)))
-                            acc
-                            (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                            :edited edited :fresh fresh
-                                            :include-integration? include-integration?)))
-              {}
-              (group-by (comp symbol namespace) affected)))
-    (:test-map @session)
-    edited)
-   affected default-ns boundary?))
 (defn test-ns?
   "Does `nsx` hold any deftest? (Inline tests count — Q13.)"
   [store nsx]
@@ -537,3 +473,106 @@
                [(if (= t qold) qnew t)
                 (into #{} (map #(if (= % qold) qnew %)) forms)]))
         tmap))
+(defn test-var-tiers
+  "Plain deftest names of `ns-sym` split by execution tier:
+   {:image [...] :isolated [...]}. `^:isolated` tests spawn images / recurse,
+   so the IN-IMAGE runner must skip them (they only behave in the external
+   tier) — this is what lets `traced-run!` defer them as :isolated-pending
+   instead of running (and false-greening) them in-image."
+  [store ns-sym]
+  (reduce (fn [m e]
+            (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+              (if (and (seq? s) (= 'deftest (first s)))
+                (update m (if (:isolated (meta (second s))) :isolated :image)
+                        (fnil conj []) (second s))
+                m)))
+          {:image [] :isolated []}
+          (store/forms store ns-sym)))
+(defn traced-run!
+  "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
+  observed test→form map into the session (persisted — Q3); return the summary.
+  `skip-integration?` drops `^:integration` tests (M5, the fast-path default).
+  The in-image tier NEVER runs `^:isolated` tests (they spawn images / recurse
+  and only behave in the external tier): any in scope are filtered OUT of the
+  run and reported as `:isolated-pending` on the summary — never executed
+  in-image (which would false-green/false-red them). The done-point / merge
+  gate runs them for real in the external tier."
+  [session test-ns only & [skip-integration?]]
+  (let [{:keys [image store]} @session
+        nses     (if (coll? test-ns) test-ns [test-ns])
+        isolated (into #{} (mapcat #(:isolated (test-var-tiers store %))) nses)]
+    (if (empty? isolated)
+      ;; no ^:isolated tests in scope — original path, untouched
+      (let [{:keys [summary trace]} (image/traced-test-run
+                                     image store test-ns :only only
+                                     :skip-integration? skip-integration?)]
+        (swap! session update :test-map merge trace)
+        (persist-trace! session)
+        summary)
+      ;; some are isolated — run only the in-image tier, defer the rest
+      (let [pending (if only (filterv isolated only) (vec isolated))
+            only'   (if only
+                      (vec (remove isolated only))
+                      (vec (mapcat #(:image (test-var-tiers store %)) nses)))
+            summary (if (empty? only')
+                      ;; every impacted test is isolated — nothing to run here
+                      {:test 0 :pass 0 :fail 0 :error 0 :type :summary}
+                      (let [{:keys [summary trace]} (image/traced-test-run
+                                                     image store test-ns :only only'
+                                                     :skip-integration? skip-integration?)]
+                        (swap! session update :test-map merge trace)
+                        (persist-trace! session)
+                        summary))]
+        (cond-> summary
+          (seq pending) (assoc :isolated-pending (vec (sort pending))))))))
+(defn diagnosed-run!
+  "Run tests. Reds cross-check on a fresh image ONLY when staleness is
+  plausible (D5.1: reload signatures, unexplained flips, missing provenance);
+  a red clearly caused by the just-edited forms returns immediately as
+  {:diagnosis :genuine} — no restart, no second run. `:fresh true` restarts
+  FIRST and runs once against a guaranteed-faithful image."
+  [session test-ns only & {:keys [edited fresh include-integration?]}]
+  (when fresh (fresh-image! session))
+  (let [skip? (not include-integration?)               ; M5: fast path skips
+        r1    (traced-run! session test-ns only skip?)]
+    (cond
+      (green? r1) r1
+
+      fresh (assoc r1 :fresh-confirmed true)
+
+      (suspicious-red? session edited r1)
+      (do (fresh-image! session)
+          (let [r2 (traced-run! session test-ns only skip?)]
+            (if (green? r2)
+              (assoc r2 :staleness-detected true)
+              (assoc r2 :fresh-confirmed true))))
+
+      :else (assoc r1 :diagnosis :genuine))))
+(defn run-verification!
+  "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
+  `default-ns`'s tests when there's no trace information. `:edited` (the
+  just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
+  red-result :implicated correlation (Rock 2). Results pass through the
+  episode-red shaper (direction over repetition); `:boundary? true` (the
+  done-point) bypasses compression and resets the ledger."
+  [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
+  (shape-episode-reds!
+   session
+   (implicate
+    (if (nil? affected)
+      (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                      :include-integration? include-integration?)
+      (reduce (fn [acc [tns tsyms]]
+                (merge-with (fn [a b]
+                              (cond (number? a) (+ a b)
+                                    (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                    :else (or b a)))
+                            acc
+                            (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                            :edited edited :fresh fresh
+                                            :include-integration? include-integration?)))
+              {}
+              (group-by (comp symbol namespace) affected)))
+    (:test-map @session)
+    edited)
+   affected default-ns boundary?))

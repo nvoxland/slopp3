@@ -352,3 +352,16 @@
                              "(ns nd.imp)\n(declare h)\n(defn f [] (h))\n(defn h [] 2)\n")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated inline-run-defers-isolated-tests
+  ;; ^:isolated tests only behave in a FRESH image — the in-image per-write
+  ;; run must never execute them (a false green/red); it reports them
+  ;; :isolated-pending. The whole-ns fallback (no trace) is where they leak in.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ir.test
+                   (str "(ns ir.test (:require [clojure.test :refer [deftest is]]))\n"
+                        "(deftest fast (is true))\n"))
+      (let [r (api/add-form! sess 'ir.test "(deftest ^:isolated slow (is true))")]
+        (is (some #{'slow} (:isolated-pending (:test r)))
+            (str "slow must be deferred, not run in-image: " (pr-str (:test r)))))
+      (finally (api/close! sess)))))
