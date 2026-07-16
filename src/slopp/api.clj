@@ -23,35 +23,13 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.deps :as deps]
-            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
          content-ops delta-fids episode-boundary episode-span
          query-changes edit-group! fix-declares! status-at status-after
          human-time render-form-history-text)
-
-(defn- start-spare!
-  "Kick off a background-warming spare image (D5 warm spare) if enabled. The
-  spare is launched BARE (deps unknown until a line adopts it); its manifest
-  is reconciled at adoption via `image-with-deps!`."
-  [session]
-  (when (:warm-spare? @session)
-    (swap! session assoc :spare (future (repl/start!)))))
-
-(defn- image-with-deps!
-  "A ready owned image carrying `deps` (lib→coord) on its classpath: adopt the
-  bare `spare` and hot-`add-libs` the manifest into it, falling back to a fresh
-  launch if the spare can't reconcile; or launch fresh with `:deps` when there
-  is no spare. The caller owns spare bookkeeping (nil-ing + rewarming)."
-  [spare deps]
-  (if spare
-    (let [img @spare]
-      (if (and (seq deps) (:err (repl/add-libs! img deps)))
-        (do (repl/stop! img) (repl/start! {:deps deps}))
-        img))
-    (repl/start! {:deps deps})))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -73,78 +51,31 @@
     (doseq [img @victims] (repl/stop! img))
     {:reaped (count @victims)}))
 
-^:reads
-(defn session-identity
-  "The identity a fresh session starts with: explicit SLOPP_AGENT env (how
-  orchestrators name agents and CLI scripts keep cross-invocation
-  continuity), else a generated unique id. The plugin's prompt hook can
-  supersede the generated id with the harness session id (adopt-identity!
-  in slopp.mcp) so every delta of one Claude session shares a key — and
-  two concurrent sessions on one store never merge episodes."
-  []
-  (or (not-empty (System/getenv "SLOPP_AGENT"))
-      (str "s-" (subs (str (java.util.UUID/randomUUID)) 0 8))))
-(defn- load-trace
-  "The persisted trace map, pruned to tests/forms that still exist in `store`
-  (names move between sessions — including renames that never re-persisted —
-  so stale entries drop out and narrowing stays conservative)."
-  [conn store]
-  (when conn
-    (let [raw   (try (some-> (db/get-meta conn "trace-map") edn/read-string)
-                     (catch Exception _ nil))
-          live? (fn [qsym]
-                  (let [n (some-> (namespace qsym) symbol)]
-                    (boolean (and n (store/form-named store n (symbol (name qsym)))))))]
-      (into {}
-            (keep (fn [[t forms]]
-                    (when (live? t)
-                      (let [fs (into #{} (filter live?) forms)]
-                        (when (seq fs) [t fs])))))
-            raw))))
-(declare adopt-modules!)
-(defn- stub-missing-test-vars!
-  "The GENERIC red-first seam (command-agnostic — every write path that
-  compiles through the image inherits it, including future ops): when a
-  -test namespace fails to load, intern a throwing stub in `image` for
-  every store var the CANDIDATE store shows it referencing but not
-  defining — aliased/qualified calls via kondo rows, :refer'd names via
-  the ns form (stubs precede the require, so the refer check passes) —
-  then the caller retries the load and the spec lands as an honest RED
-  naming the stub. Never touches the store; the real implementation
-  redefines the var. Returns the stubbed qsyms (nil when none — the
-  failure wasn't red-first)."
-  [image candidate ns-syms]
-  (let [nses    (set (keys (:namespaces candidate)))
-        tests   (filter #(str/ends-with? (str %) "-test") ns-syms)
-        ns-form (fn [t]
-                  (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
-                           (when (and (seq? s) (= 'ns (first s))) s))
-                        (store/forms candidate t)))
-        missing (vec (distinct
-                      (concat
-                       (for [t tests
-                             u (:var-usages (index/analyze (render/render-ns candidate t)))
-                             :when (and (contains? nses (:to u)) (:name u)
-                                        (not (store/form-named candidate (:to u) (:name u))))]
-                         (symbol (str (:to u)) (str (:name u))))
-                       (for [t tests
-                             :let [form (ns-form t)]
-                             clause (when form
-                                      (mapcat rest
-                                              (filter #(and (seq? %) (= :require (first %)))
-                                                      form)))
-                             :when (and (vector? clause)
-                                        (contains? nses (first clause)))
-                             [k v] (partition 2 (rest clause))
-                             :when (and (= :refer k) (vector? v))
-                             sym v
-                             :when (not (store/form-named candidate (first clause) sym))]
-                         (symbol (str (first clause)) (str sym))))))]
-    (doseq [q missing]
-      (repl/eval! image
-                  (format "(intern '%s '%s (fn [& _] (throw (ex-info \"red-first stub: %s is speced but not implemented\" {:red-first '%s}))))"
-                          (namespace q) (name q) q q)))
-    (when (seq missing) missing)))
+(defn adopt-modules!
+  "ADOPTION (internal — never a tool, never explicit): derive the module
+  manifest from the CURRENT actual dependency graph — kondo-resolved, so
+  :refer'd calls count — and record it as one :module-edge delta per edge.
+  Called once by open! for a populated store whose db predates the module
+  system (:modules nil); by construction the result is acyclic with zero
+  violations, so adoption never breaks working code — the gate then blocks
+  DRIFT until the agent declares new edges (module_dep)."
+  [session & {:keys [agent]}]
+  (let [edges (edit/derive-module-edges (:store @session))]
+    (session/commit-appended!
+     session
+     (fn [base]
+       (reduce (fn [s [m deps]]
+                 (reduce (fn [s2 dep]
+                           (first (store/record-module-edge
+                                   s2 m dep :add
+                                   :prompt "module adoption: edge derived from the actual dependency graph"
+                                   :agent agent)))
+                         s (sort deps)))
+               (update base :modules #(or % {}))
+               (sort edges)))
+     [])
+    {:modules (count edges)
+     :edges   (reduce + 0 (map count (vals edges)))}))
 (defn open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
@@ -160,12 +91,12 @@
          session (atom {:store store :image image :db conn
                         :data-version (some-> conn db/data-version)
                         :dir dir :branch "main" :lines {}
-                        :test-map (or (load-trace conn store) {})
-                        :agent-id (or agent-id (session-identity))
+                        :test-map (or (session/load-trace conn store) {})
+                        :agent-id (or agent-id (session/session-identity))
                         :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                         :branch-image-ttl-ms ttl
                         :warm-spare? (boolean warm-spare?)})]
-     (start-spare! session)
+     (session/start-spare! session)
      ;; m4: parked branch images retire after sitting idle for the TTL
      (let [t      (java.util.Timer. "slopp-branch-reaper" true)
            period (long (max 1000 (quot ttl 3)))]
@@ -178,7 +109,7 @@
      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
        (when-let [err (image/load-ns! image store ns-sym)]
          ;; a store carrying red-first specs still opens — stub and retry
-         (when-not (and (stub-missing-test-vars! image store [ns-sym])
+         (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
                         (nil? (image/load-ns! image store ns-sym)))
            (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
      ;; module adoption: a populated store from a pre-module db (:modules
@@ -208,72 +139,6 @@
   (when-let [^java.util.Timer t (:reaper @session)] (.cancel t))
   nil)
 
-(def ^:dynamic *pre-commit-hook*
-  "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
-  simulate a concurrent competitor deterministically. Never set in production."
-  nil)
-
-(defn- try-commit!
-  "Commit base→st' — JOURNAL-FIRST for durable sessions (m5a storage
-  inversion): the new deltas + the full element rows of `nses` land in ONE
-  conditional db transaction (iff the journal head still equals base's
-  head), then the cache follows; the cache is only ever behind the journal,
-  never ahead. Ephemeral sessions commit to the cache alone (identity CAS).
-  True iff committed; false = the head/cache moved — caller refreshes and
-  rebases, or surfaces contention."
-  [session base st' nses]
-  (if-let [conn (:db @session)]
-    (if (db/append! conn st'
-                    (drop (count (store/deltas base)) (store/deltas st'))
-                    (vec nses)
-                    (:id (last (store/deltas base))))
-      (do (swap! session
-                 (fn [s]
-                   (if (< (count (store/deltas (:store s)))
-                          (count (store/deltas st')))
-                     (assoc s :store st')
-                     s)))
-          true)
-      false)
-    (let [[old _] (swap-vals! session
-                              (fn [s]
-                                (if (identical? (:store s) base)
-                                  (assoc s :store st')
-                                  s)))]
-      (identical? (:store old) base))))
-
-(defn- refresh-cache!
-  "Advance the cached store from the journal (the record of truth in a
-  durable session): INCREMENTALLY when every foreign delta in the suffix
-  replays (the common case — no full re-parse), falling back to a full
-  load-store otherwise (:ingest/:move/unknown ops). Advance-only — the
-  cache can never regress."
-  [session]
-  (when-let [conn (:db @session)]
-    (let [local  (:store @session)
-          suffix (db/deltas-after conn (count (store/deltas local)))
-          incr   (when (seq suffix)
-                   (reduce (fn [st d]
-                             (if-let [st' (store/replay-delta st d)]
-                               st'
-                               (reduced nil)))
-                           local suffix))
-          fresh  (or incr (when (seq suffix) (db/load-store conn)))]
-      (when fresh
-        (swap! session
-               (fn [s]
-                 (if (> (count (store/deltas fresh))
-                        (count (store/deltas (:store s))))
-                   (assoc s :store fresh)
-                   s)))))))
-
-(defn- persist-trace!
-  "Q3: the trace map survives the session — written to store meta so the NEXT
-  session (or a CLI one-shot) starts with narrowing warm instead of
-  {:ran 0 :affected :all}. Last writer wins; load-trace prunes stale names."
-  [session]
-  (when-let [conn (:db @session)]
-    (db/set-meta! conn "trace-map" (pr-str (:test-map @session)))))
 (defn sync-with-journal!
   "m5b: absorb commits made by OTHER servers sharing this store dir. Cheap
   when nothing changed (one PRAGMA read). On foreign commits: refresh the
@@ -287,7 +152,7 @@
     (let [v (db/data-version conn)]
       (when (not= v (:data-version @session))
         (let [old (:store @session)]
-          (refresh-cache! session)
+          (session/refresh-cache! session)
           (swap! session assoc :data-version v)
           (let [new (:store @session)]
             (if (identical? old new)
@@ -310,122 +175,8 @@
                                          (or (contains? stale t)
                                              (seq (set/intersection forms stale)))))
                                tm)))
-                (do (persist-trace! session)
+                (do (session/persist-trace! session)
                     {:synced (count changed)})))))))))
-
-(defn- commit-appended!
-  "Commit a pure APPEND `f` (store → store', deltas only unless `nses`),
-  retrying across journal/cache races. Returns the committed store'."
-  [session f nses]
-  (loop [n 0]
-    (let [base (:store @session)
-          st'  (f base)]
-      (cond
-        (try-commit! session base st' nses) st'
-        (< n 12) (do (refresh-cache! session) (recur (inc n)))
-        :else (throw (ex-info "commit contention on append" {}))))))
-
-(defn- rebased-write!
-  "Run a single-form write with an atomic rebasing commit (item 4, the
-  granularity dodge). The pure `transform` (store → {:store :delta ...} |
-  {:error}) runs INSIDE swap!, so concurrent different-form writes rebase and
-  land without locks or starvation; if the TARGET form itself changed since
-  this op began (`target-node`: store → CST node), the commit aborts with
-  {:conflict ...} — C5's MV-register semantics, Phase-1 face.
-  The compile gate runs once, before commit: the form's CONTENT (what the
-  image compiles) is invariant across rebases. Red-first stubs surface as
-  :red-first; lint errors in OTHER forms (stale callers) surface as
-  :carried-errors — both ride the result, never block, and the done-point
-  re-checks."
-  [session transform target-node target-desc ns-sym
-   & {:keys [load?] :or {load? true}}]
-  (let [orig     (some-> (target-node (:store @session)) n/string)
-        conflict {:conflict {:form target-desc
-                             :reason "form changed concurrently — re-read and retry"}}]
-    (if (:db @session)
-      ;; durable: the JOURNAL arbitrates (m5a) — append-CAS, refresh, rebase
-      (loop [attempt 0, loaded? false, healed? false, stubbed nil, carried nil]
-        (if (> attempt 12)
-          {:error "commit contention: too many concurrent writes — retry"}
-          (let [base (:store @session)
-                cur  (some-> (target-node base) n/string)]
-            (if (and (pos? attempt) (not= orig cur))
-              conflict
-              (let [out (transform base)]
-                (if (:error out)
-                  out
-                  (let [load-res (when (and load? (not loaded?))
-                                   (let [lr (edit/lint-refusals base (:store out) [ns-sym]
-                                                                [(:form-id (:delta out))])]
-                                     (if-let [gate (or (edit/cold-load-errors (:store out) [ns-sym])
-                                                       (:refuse lr))]
-                                       {:err gate}
-                                       (merge (hot-load-all! session (:store out)
-                                                             [(:form-id (:delta out))])
-                                              (select-keys lr [:carried])))))]
-                    (if (:err load-res)
-                      {:error (str "form failed to compile: " (:err load-res))}
-                      (do (when *pre-commit-hook* (*pre-commit-hook*))
-                          (if (try-commit! session base (:store out) [ns-sym])
-                            (cond-> out
-                              (or healed? (:healed load-res))
-                              (assoc :image-healed true)
-
-                              (or stubbed (:stubbed load-res))
-                              (assoc :red-first (or stubbed (:stubbed load-res)))
-
-                              (or carried (:carried load-res))
-                              (assoc :carried-errors (or carried (:carried load-res))))
-                            (do (refresh-cache! session)
-                                (recur (inc attempt) true
-                                       (or healed? (boolean (:healed load-res)))
-                                       (or stubbed (:stubbed load-res))
-                                       (or carried (:carried load-res))))))))))))))
-      ;; ephemeral: the pure transform reruns INSIDE swap! — starvation-free
-      (let [base0 (:store @session)
-            out0  (transform base0)]
-        (if (:error out0)
-          out0
-          (let [load-res (when load?
-                           (let [lr (edit/lint-refusals base0 (:store out0) [ns-sym]
-                                                        [(:form-id (:delta out0))])]
-                             (if-let [gate (or (edit/cold-load-errors (:store out0) [ns-sym])
-                                               (:refuse lr))]
-                               {:err gate}
-                               (merge (hot-load-all! session (:store out0)
-                                                     [(:form-id (:delta out0))])
-                                      (select-keys lr [:carried])))))]
-            (if (:err load-res)
-              {:error (str "form failed to compile: " (:err load-res))}
-              (do (when *pre-commit-hook* (*pre-commit-hook*))
-                  (let [res (volatile! nil)]
-                    (swap! session update :store
-                           (fn [base]
-                             (if (not= orig (some-> (target-node base) n/string))
-                               (do (vreset! res conflict) base)
-                               (let [out (transform base)]
-                                 (if (:error out)
-                                   (do (vreset! res out) base)
-                                   (do (vreset! res out) (:store out)))))))
-                    (cond-> @res
-                      (and (nil? (:error @res)) (nil? (:conflict @res))
-                           (:healed load-res))
-                      (assoc :image-healed true)
-
-                      (and (nil? (:error @res)) (nil? (:conflict @res))
-                           (:stubbed load-res))
-                      (assoc :red-first (:stubbed load-res))
-
-                      (and (nil? (:error @res)) (nil? (:conflict @res))
-                           (:carried load-res))
-                      (assoc :carried-errors (:carried load-res))))))))))))
-
-(defn- with-ms
-  "Attach total op wall time (item 2 observability)."
-  [m t0]
-  (if (map? m)
-    (assoc m :ms (quot (- (System/nanoTime) t0) 1000000))
-    m))
 
 (defn ingest!
   "The batch write for BRAND-NEW namespaces (W1, user decision): land a whole
@@ -456,13 +207,13 @@
                 ;; the generic red-first seam, ingest face: a spec ns naming
                 ;; not-yet-written vars stubs + retries instead of refusing
                 stubbed (when (:err res)
-                          (stub-missing-test-vars! (:image @session) candidate [ns-sym]))
+                          (session/stub-missing-test-vars! (:image @session) candidate [ns-sym]))
                 res     (if (and stubbed (nil? (:err (load!)))) {} res)]
             (cond
               (:err res)
               {:error (str "namespace failed to load: " (:err res))}
 
-              (not (try-commit! session base candidate [ns-sym]))
+              (not (session/try-commit! session base candidate [ns-sym]))
               {:conflict {:reason "store changed during ingest — retry"}}
 
               :else
@@ -475,8 +226,8 @@
                                             (when (:name e)
                                               (symbol (str ns-sym) (str (:name e))))))
                                     (store/forms candidate ns-sym))
-                      summary (run-verification! session ns-sym nil :edited edited)]
-                  (commit-appended! session
+                      summary (session/run-verification! session ns-sym nil :edited edited)]
+                  (session/commit-appended! session
                                     #(store/record-verification % ns-sym summary)
                                     [])
                   (cond-> {:ns ns-sym
@@ -997,7 +748,7 @@
   the brief arrives task-shaped."
   [session & {:keys [agent intent user]}]
   (when intent (swap! session assoc :last-intent intent))
-  (commit-appended! session
+  (session/commit-appended! session
                     #(first (store/record-turn % :turn-begin
                                                :agent agent :intent intent
                                                :user user))
@@ -1007,7 +758,7 @@
 (defn turn-end!
   "Close `agent`'s turn (stable or not — a red turn is still history)."
   [session & {:keys [agent note]}]
-  (commit-appended! session
+  (session/commit-appended! session
                     #(first (store/record-turn % :turn-end
                                                :agent agent :note note))
                     [])
@@ -1180,232 +931,11 @@
 
 ;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
 
-(defn- green? [summary]
-  (zero? (+ (:fail summary 0) (:error summary 0))))
-
-(defn- fresh-image!
-  "Replace the image with a fresh process reloaded from the store — faithful by
-  construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
-  on the critical path; the next spare starts warming immediately."
-  [session]
-  (let [{:keys [image spare store]} @session
-        fresh (image-with-deps! spare (:deps store))]  ; adopt+reconcile or fresh
-    (repl/stop! image)
-    (swap! session assoc :image fresh :spare nil)
-    (start-spare! session)
-    (let [{:keys [store image]} @session]
-      (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
-        (when-let [err (image/load-ns! image store ns-sym)]
-          ;; outstanding red-first stubs die with the old image — re-stub, retry
-          (when-not (and (stub-missing-test-vars! image store [ns-sym])
-                         (nil? (image/load-ns! image store ns-sym)))
-            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {}))))))))
-
 (defn restart!
   "D5 escape hatch: the agent-callable fresh-image restart."
   [session]
-  (fresh-image! session)
+  (session/fresh-image! session)
   session)
-
-(defn- hot-load-all!
-  "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).
-  nil on success; {:healed true} when a STALE IMAGE had to be refreshed to
-  make the load succeed (D5.1); {:stubbed [qsyms]} when red-first stubs made
-  a -test namespace compile (the generic red-first seam — the spec runs and
-  fails honestly); {:err msg} when the forms genuinely don't compile (image
-  restored either way; :first-err carries the pre-heal error when it
-  differs). Keys compose.
-  The heal boots from the COMMITTED store, so the candidate's touched nses
-  are replayed from the CANDIDATE (dependency order, full load-ns! so new
-  namespaces exist and are *loaded-libs*-stamped) before the retry —
-  without that, a candidate that CREATES a namespace (extract_ns) dies
-  with FileNotFound when a survivor requires it."
-  [session candidate form-ids]
-  (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
-        stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
-        replay! #(doseq [ns-sym (filter (set nses)
-                                        (store/ns-dependency-order candidate))]
-                   (image/load-ns! (:image @session) candidate ns-sym))]
-    (letfn [(load-all []
-              (loop [ids (seq form-ids)]
-                (when ids
-                  (or (edit/hot-load-form! (:image @session) candidate (first ids))
-                      (recur (next ids))))))]
-      (when-let [err1 (load-all)]
-        (let [stubbed (stub!)]
-          (if (and (seq stubbed) (nil? (load-all)))
-            {:stubbed stubbed}
-            (do (fresh-image! session)             ; maybe the image was stale
-                (replay!)                          ; candidate truth over the committed boot
-                (let [stubbed (stub!)]             ; a fresh image loses stubs
-                  (if-let [err2 (load-all)]
-                    (do (fresh-image! session)
-                        (cond-> {:err err2}
-                          (not= err1 err2) (assoc :first-err err1)))
-                    (cond-> {:healed true}
-                      (seq stubbed) (assoc :stubbed stubbed)))))))))))
-
-(defn- traced-run!
-  "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
-  observed test→form map into the session (persisted — Q3); return the summary.
-  `skip-integration?` drops `^:integration` tests (M5, the fast-path default)."
-  [session test-ns only & [skip-integration?]]
-  (let [{:keys [image store]} @session
-        {:keys [summary trace]} (image/traced-test-run
-                                 image store test-ns :only only
-                                 :skip-integration? skip-integration?)]
-    (swap! session update :test-map merge trace)
-    (persist-trace! session)
-    summary))
-
-(def ^:private reload-signature-res
-  "Failure texts that smell like hot-reload staleness rather than logic bugs."
-  [#"Unable to resolve symbol"
-   #"Attempting to call unbound fn"
-   #"No implementation of method"
-   #"Var .* is unbound"])
-
-(defn- reload-signature? [failure]
-  (let [s (str (:actual failure) " " (:message failure))]
-    (or (boolean (some #(re-find % s) reload-signature-res))
-        ;; same-named classes cast-failing against each other = redefined type
-        (boolean
-         (when-let [[_ c1 c2] (re-find #"class (\S+) cannot be cast to class (\S+)" s)]
-           (= (last (str/split c1 #"\.")) (last (str/split c2 #"\."))))))))
-
-(defn- suspicious-red?
-  "Could this red plausibly be image staleness rather than a genuine failure
-  (D5.1)? Yes iff: no edit context; a truncated failure list; a
-  reload-signature failure; or an UNEXPLAINED FLIP — a failing test whose
-  traced form-set doesn't intersect the just-edited forms and which wasn't
-  itself edited (this also catches value-capture staleness, since captured
-  calls bypass the trace)."
-  [session edited summary]
-  (let [tmap       (:test-map @session)
-        failures   (:failures summary)
-        truncated? (> (+ (:fail summary 0) (:error summary 0)) (count failures))]
-    (or (nil? edited)
-        truncated?
-        (boolean (some reload-signature? failures))
-        (boolean
-         (some (fn [f]
-                 (let [t       (:test f)
-                       touched (get tmap t)]
-                   (or (nil? touched)
-                       (and (not (contains? edited t))
-                            (empty? (set/intersection touched edited))))))
-               failures)))))
-
-(defn- diagnosed-run!
-  "Run tests. Reds cross-check on a fresh image ONLY when staleness is
-  plausible (D5.1: reload signatures, unexplained flips, missing provenance);
-  a red clearly caused by the just-edited forms returns immediately as
-  {:diagnosis :genuine} — no restart, no second run. `:fresh true` restarts
-  FIRST and runs once against a guaranteed-faithful image."
-  [session test-ns only & {:keys [edited fresh include-integration?]}]
-  (when fresh (fresh-image! session))
-  (let [skip? (not include-integration?)               ; M5: fast path skips
-        r1    (traced-run! session test-ns only skip?)]
-    (cond
-      (green? r1) r1
-
-      fresh (assoc r1 :fresh-confirmed true)
-
-      (suspicious-red? session edited r1)
-      (do (fresh-image! session)
-          (let [r2 (traced-run! session test-ns only skip?)]
-            (if (green? r2)
-              (assoc r2 :staleness-detected true)
-              (assoc r2 :fresh-confirmed true))))
-
-      :else (assoc r1 :diagnosis :genuine))))
-
-(defn- affected-tests
-  "Which tests must re-run after editing `ns-sym/nm`: the tests observed (via
-  tracing) to exercise that form — or the form itself if it IS a test. nil =
-  no trace information; run everything (conservative)."
-  [session ns-sym nm]
-  (let [qform (symbol (str ns-sym) (str nm))
-        tmap  (:test-map @session)]
-    (if (contains? tmap qform)
-      [qform]
-      (let [hits (->> tmap
-                      (keep (fn [[t forms]] (when (contains? forms qform) t)))
-                      sort vec)]
-        (when (seq hits) hits)))))
-
-(defn- implicate
-  "Rock 2: annotate each failure with the just-changed forms that failing
-  test actually exercises (trace map ∩ edited) — the correlation agents
-  otherwise re-derive from raw expected/actual on every red."
-  [summary tmap edited]
-  (if-not (and (seq (:failures summary)) (seq edited) (seq tmap))
-    summary
-    (update summary :failures
-            (fn [fs]
-              (mapv (fn [f]
-                      (let [hits (some->> (get tmap (:test f))
-                                          set
-                                          (set/intersection (set edited))
-                                          seq sort vec)]
-                        (cond-> f hits (assoc :implicated hits))))
-                    fs)))))
-(defn- shape-episode-reds!
-  "Mid-episode response diet (direction over repetition): full failure
-  detail rides ONLY for tests newly red on THIS write; tests already
-  reported red this episode compress to :still-red names; previously-red
-  tests that ran clean report :went-green. The ledger lives on the
-  session (:episode-reds) and the done-point (`boundary?` true) bypasses
-  compression — the boundary always reports every standing red in full —
-  and resets the ledger. Explicit test_run bypasses this shaping too
-  (spot-checks get everything)."
-  [session summary affected scope boundary?]
-  (let [prev     (or (:episode-reds @session) #{})
-        blocks   (vec (:failures summary))
-        now-red  (into #{} (keep :test) blocks)
-        scope-ns (into #{} (map str) (if (sequential? scope) scope [scope]))
-        ran      (if (seq affected)
-                   (set affected)
-                   (into #{} (filter #(contains? scope-ns (namespace %))) prev))
-        greens   (vec (sort (remove now-red (filter ran prev))))
-        ledger   (-> prev (set/difference (set greens)) (into now-red))]
-    (swap! session assoc :episode-reds (if boundary? now-red ledger))
-    (if boundary?
-      summary
-      (let [new-blocks (vec (remove #(contains? prev (:test %)) blocks))
-            stills     (vec (sort (filter prev now-red)))]
-        (cond-> (assoc summary :failures new-blocks)
-          (empty? new-blocks) (dissoc :failures)
-          (seq stills)        (assoc :still-red stills)
-          (seq greens)        (assoc :went-green greens))))))
-(defn- run-verification!
-  "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
-  `default-ns`'s tests when there's no trace information. `:edited` (the
-  just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
-  red-result :implicated correlation (Rock 2). Results pass through the
-  episode-red shaper (direction over repetition); `:boundary? true` (the
-  done-point) bypasses compression and resets the ledger."
-  [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
-  (shape-episode-reds!
-   session
-   (implicate
-    (if (nil? affected)
-      (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                      :include-integration? include-integration?)
-      (reduce (fn [acc [tns tsyms]]
-                (merge-with (fn [a b]
-                              (cond (number? a) (+ a b)
-                                    (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                    :else (or b a)))
-                            acc
-                            (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                            :edited edited :fresh fresh
-                                            :include-integration? include-integration?)))
-              {}
-              (group-by (comp symbol namespace) affected)))
-    (:test-map @session)
-    edited)
-   affected default-ns boundary?))
 
 ;; --- edit.* / runtime ---
 
@@ -1417,7 +947,7 @@
   [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-        r (rebased-write!
+        r (session/rebased-write!
            session
            (fn [base] (edit/replace-form base ns-sym nm new-source
                                          :prompt prompt :agent agent))
@@ -1431,19 +961,19 @@
                                               (:form-id (:delta r))))
             edited   (into #{qform}
                            (when new-nm [(symbol (str ns-sym) (str new-nm))]))
-            affected (affected-tests session ns-sym nm)
+            affected (session/affected-tests session ns-sym nm)
             untested (and (nil? affected) (seq (:test-map @session))
                            (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
                                          (str/triml new-source))))
             _        (when (and new-nm (not= new-nm nm))
                        (repl/eval! (:image @session)
                                    (format "(ns-unmap '%s '%s)" ns-sym nm)))
-            summary  (run-verification! session ns-sym affected
+            summary  (session/run-verification! session ns-sym affected
                                         :edited edited)
             existing (count (filter (comp pre-warned :var) (:warnings r)))]
-        (commit-appended! session
+        (session/commit-appended! session
                           #(store/record-verification % ns-sym summary) [])
-        (with-ms
+        (session/with-ms
           (cond-> {:delta    (:delta r)
                    ;; T3: only NEW violations; pre-existing ones as a count
                    :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
@@ -1482,7 +1012,7 @@
 
       :else
       (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-            r (rebased-write!
+            r (session/rebased-write!
                session
                (fn [base]
                  (cond
@@ -1507,15 +1037,15 @@
         (if (or (:error r) (:conflict r))
           r
           (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
-                    affected (when nm (affected-tests session ns-sym nm))
-                    summary  (run-verification! session ns-sym affected
+                    affected (when nm (session/affected-tests session ns-sym nm))
+                    summary  (session/run-verification! session ns-sym affected
                                                 :edited edited)
                     all-w    (edit/ns-warnings (:store @session) ns-sym)
                     existing (count (filter (comp pre-warned :var) all-w))]
-                (commit-appended! session
+                (session/commit-appended! session
                                   #(store/record-verification % ns-sym summary)
                                   [])
-                (with-ms
+                (session/with-ms
                   (cond-> {:delta    (:delta r)
                            ;; T3: only NEW violations; pre-existing as a count
                            :warnings (vec (remove (comp pre-warned :var) all-w))
@@ -1536,7 +1066,7 @@
   image, verification (tests that exercised it will go red — the honest signal
   if it was still referenced), provenance."
   [session ns-sym nm & {:keys [prompt agent]}]
-  (let [r (rebased-write!
+  (let [r (session/rebased-write!
            session
            (fn [base]
              (if-let [[st' d] (store/remove-form base ns-sym nm
@@ -1549,11 +1079,11 @@
            :load? false)]
     (if (or (:error r) (:conflict r))
       r
-      (let [affected (affected-tests session ns-sym nm)]
+      (let [affected (session/affected-tests session ns-sym nm)]
             (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
-            (let [summary (run-verification! session ns-sym affected
+            (let [summary (session/run-verification! session ns-sym affected
                                              :edited #{(symbol (str ns-sym) (str nm))})]
-              (commit-appended! session
+              (session/commit-appended! session
                                 #(store/record-verification % ns-sym summary)
                                 [])
               {:delta (:delta r) :test summary :affected (or affected :all)})))))
@@ -1669,7 +1199,7 @@
                 load-res (if-let [gate (or (edit/cold-load-errors st (distinct (map :ns steps)))
                                            (:refuse lr))]
                            {:err gate}
-                           (merge (hot-load-all! session st
+                           (merge (session/hot-load-all! session st
                                                  (keep (fn [[k a]] (when (#{:load :load-unmap} k) a))
                                                        hots))
                                   (select-keys lr [:carried])))]
@@ -1677,7 +1207,7 @@
               (:err load-res)
               {:error (str "group failed to compile: " (:err load-res))}
 
-              (not (try-commit! session base0 st
+              (not (session/try-commit! session base0 st
                                 (vec (distinct (map :ns steps)))))
               {:conflict {:reason "store changed during multi-form op — retry"}}
 
@@ -1705,7 +1235,7 @@
                     ;; affected = union across steps; unknown → conservative full
                     per-step (map (fn [x]
                                     (if-let [[action ns nm] x]
-                                      (let [a (affected-tests session ns nm)]
+                                      (let [a (session/affected-tests session ns nm)]
                                         (cond
                                           (some? a)       (set a)
                                           (= action :add) #{}
@@ -1717,16 +1247,16 @@
                     ;; F-3c5: with no/partial trace info the fallback run must
                     ;; cover EVERY touched namespace, not just the first step's
                     main-ns  (vec (distinct (map :ns steps)))
-                    summary  (run-verification! session main-ns
+                    summary  (session/run-verification! session main-ns
                                                 (when (seq affected) affected)
                                                 :edited edited)]
-                (commit-appended! session
+                (session/commit-appended! session
                                   #(store/record-verification % main-ns summary)
                                   [])
                 (let [all-w    (->> (map :ns steps) distinct
                                     (mapcat #(edit/ns-warnings (:store @session) %)))
                       existing (count (filter (comp pre-warned :var) all-w))]
-                  (with-ms
+                  (session/with-ms
                     (cond-> {:group    gid
                              :deltas   deltas
                              :changed-nses (vec (distinct (map :ns steps)))
@@ -1787,7 +1317,7 @@
                                             :prompt prompt :agent agent)]
         (if-let [cold (edit/cold-load-errors st' [ns-sym])]
           {:error cold}
-          (if-not (try-commit! session base0 st' [ns-sym])
+          (if-not (session/try-commit! session base0 st' [ns-sym])
             {:conflict {:reason "store changed concurrently — retry"}}
             {:delta delta :moved {:form nm :before before}}))
         {:error (str "cannot move " nm)}))))
@@ -1835,12 +1365,12 @@
                                     (symbol (str (store/ns-of-form-id st id))
                                             (str (or (:name e) (:id e)))))))
                           (forms-changed-since st last-verify))
-        summary     (diagnosed-run! session ns-sym only'
+        summary     (session/diagnosed-run! session ns-sym only'
                                     :edited edited :fresh fresh
                                     :include-integration? true)]  ; M5: explicit run
-    (commit-appended! session
+    (session/commit-appended! session
                       #(store/record-verification % ns-sym summary) [])
-    (with-ms (cond-> summary
+    (session/with-ms (cond-> summary
                (and only' (zero? (:test summary 0)))
                (assoc :note (str "0 tests matched :only " (vec only)
                                  " — check the names; ^:isolated tests only run"
@@ -1921,37 +1451,19 @@
         (if (and (empty? removable)
                  (not-any? #(= :move (:action %)) plan))
           {:removed 0 :skipped (vec (filter #(= :skip (:action %)) plan))}
-          (if-not (try-commit! session st st' [ns-sym])
+          (if-not (session/try-commit! session st st' [ns-sym])
             {:conflict {:reason "store changed during fix-declares — retry"}}
-            (let [summary (run-verification! session ns-sym nil
+            (let [summary (session/run-verification! session ns-sym nil
                                              :edited (set (map #(symbol (str ns-sym)
                                                                         (str (:name %)))
                                                                plan)))]
-              (commit-appended! session
+              (session/commit-appended! session
                                 #(store/record-verification % ns-sym summary) [])
               {:removed (count removable)
                :moved   (vec (keep #(when (= :move (:action %)) (:name %)) plan))
                :skipped (vec (filter #(= :skip (:action %)) plan))
                :test    summary})))))))
 
-(defn- test-ns?
-  "Does `nsx` hold any deftest? (Inline tests count — Q13.)"
-  [store nsx]
-  (some #(str/starts-with? (str/triml (n/string (:node %))) "(deftest")
-        (store/forms store nsx)))
-(defn- test-nses-reaching
-  "Test namespaces (any ns holding a deftest) whose require-closure
-  reaches one of `changed-nses` — the PROVABLE set of tests a change can
-  affect (a test only exercises code it can load). The honest fallback
-  scope when the trace map is silent."
-  [store changed-nses]
-  (let [changed (set changed-nses)]
-    (vec (sort (for [t (keys (:namespaces store))
-                     :when (and (test-ns? store t)
-                                (seq (set/intersection
-                                      (store/ns-closure store t)
-                                      changed)))]
-                 t)))))
 (defn done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
   the episode boundary and runs the automatic done-processing — normalize
@@ -1986,9 +1498,9 @@
                                                             :prompt (or label "done normalization")
                                                             :agent agent)
                          touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
-                     (when-let [err (:err (hot-load-all! session st' (keys changeset)))]
+                     (when-let [err (:err (session/hot-load-all! session st' (keys changeset)))]
                        (throw (ex-info (str "normalization failed to compile: " err) {})))
-                     (when-not (try-commit! session st st' (vec touched))
+                     (when-not (session/try-commit! session st st' (vec touched))
                        (throw (ex-info "store changed during done — retry" {})))))
         ;; automatic declare hygiene (user-directed): the compile gate makes
         ;; agents mint (declare)s; the done-point cleans the safe ones up
@@ -2021,7 +1533,7 @@
                                          (symbol (str (store/ns-of-form-id st* fid))
                                                  (str (or (:name e) (:id e)))))))
                                changed)
-                per      (map (fn [q] (affected-tests session
+                per      (map (fn [q] (session/affected-tests session
                                                       (symbol (namespace q))
                                                       (symbol (name q))))
                               qsyms)
@@ -2032,13 +1544,13 @@
                 ;; with no trace coverage the fallback must still REACH the
                 ;; tests: closure-bounded test nses, not just the changed ones
                 main-ns  (vec (distinct (concat changed-nses
-                                                (test-nses-reaching st* changed-nses))))
-                s        (run-verification! session main-ns
+                                                (session/test-nses-reaching st* changed-nses))))
+                s        (session/run-verification! session main-ns
                                             (when (seq affected) affected)
                                             :edited qsyms
                                             :include-integration? true
                                             :boundary? true)]  ; M5
-            (commit-appended! session
+            (session/commit-appended! session
                               #(store/record-verification % main-ns s) [])
             s))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
@@ -2059,7 +1571,7 @@
                             :lint-errors lint-errors}
                      (seq missing-doc) (assoc :missing-doc missing-doc)))
         cid (let [v (volatile! nil)]
-              (commit-appended! session
+              (session/commit-appended! session
                                 (fn [base]
                                   (let [[st2 c] (store/record-done base label
                                                                    :agent agent
@@ -2185,7 +1697,7 @@
   [session description & {:keys [agent force target extra]}]
   (let [mark! (fn [target status result-extra delta-extra]
                 (let [v (volatile! nil)]
-                  (commit-appended!
+                  (session/commit-appended!
                    session
                    (fn [base]
                      (let [[st2 d] (store/record-commit base description
@@ -2271,41 +1783,6 @@
 ;; ---------------------------------------------------------------------------
 ;; External dependencies (Tier 1) — the per-store manifest
 
-(defn- analyze-dep!
-  "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —
-  best-effort: surface analysis must never fail a deps-add. Persists to the
-  durable `dep_surface` cache when the session has a db; the process-level
-  memo in `slopp.deps` covers ephemeral sessions. Returns the surface or nil."
-  [session lib coord]
-  (try
-    (let [conn (:db @session)
-          id   (deps/coord-key lib coord)]
-      (if-let [cached (some-> conn (db/get-dep-surface id))]
-        cached
-        (let [jars (deps/dep-jars lib coord)                  ; resolve once
-              surf (deps/surface jars)]
-          (when conn
-            (db/put-dep-surface! conn id surf)
-            (db/put-dep-native! conn id (deps/native-verdict jars)))  ; M6
-          surf)))
-    (catch Throwable _ nil)))
-
-(defn- dep-native-verdict
-  "The cached (or freshly-computed) GraalVM native-image verdict for a
-  dependency (M6). Best-effort; nil on failure."
-  [session lib coord]
-  (let [conn (:db @session)
-        id   (deps/coord-key lib coord)]
-    (or (some-> conn (db/get-dep-native id))
-        (try (deps/native-verdict (deps/dep-jars lib coord))
-             (catch Throwable _ nil)))))
-
-(def ^:private native-incompatible-deps
-  "Dependencies KNOWN to break GraalVM native-image (extensible, deliberately
-  tiny — a build refuses these without `:force`). Empty for now; a missing
-  reachability manifest is only a WARN, not a hard incompatibility."
-  #{})
-
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
   at `coord` (a deps.edn coordinate map, e.g. `{:mvn/version \"2.5.0\"}`).
@@ -2319,8 +1796,8 @@
     (not (and (map? coord) (seq coord)))
     {:error "dependency coord must be a non-empty map like {:mvn/version \"1.2.3\"}"}
     :else
-    (let [surf (analyze-dep! session lib coord)]                 ; M4: API surface
-      (commit-appended! session
+    (let [surf (api.deps/analyze-dep! session lib coord)]                 ; M4: API surface
+      (session/commit-appended! session
                         #(first (store/record-deps-add
                                  % lib coord :agent agent :prompt prompt
                                  :namespaces (:namespaces surf)))  ; M3: dep-ns index
@@ -2329,7 +1806,7 @@
                    surf (assoc :namespaces (vec (:namespaces surf))
                                :vars (count (:vars surf))))]
         (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
-          (do (fresh-image! session)            ; hot add failed → faithful restart
+          (do (session/fresh-image! session)            ; hot add failed → faithful restart
               (assoc base :restarted true :note (:err hot)))
           (assoc base :hot true))))))
 
@@ -2341,11 +1818,11 @@
   (if-not (contains? (:deps (:store @session)) lib)
     {:error (str lib " is not a declared dependency")}
     (do
-      (commit-appended! session
+      (session/commit-appended! session
                         #(first (store/record-deps-remove % lib
                                                           :agent agent :prompt prompt))
                         [])
-      (fresh-image! session)
+      (session/fresh-image! session)
       {:removed lib :restarted true})))
 
 (defn deps-list
@@ -2356,7 +1833,7 @@
 (defn- record-pure!
   "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
   [session syms pure? {:keys [agent prompt]}]
-  (commit-appended! session
+  (session/commit-appended! session
                     (fn [base]
                       (reduce (fn [s x]
                                 (first (store/record-deps-pure s x pure?
@@ -2485,15 +1962,6 @@
                  :reverted (count steps)
                  :skipped-shared (mapv :form shared)))))))
 
-(defn- rename-in-trace
-  "Carry the observed test→form map across a rename (old qsym → new qsym)."
-  [tmap qold qnew]
-  (into {}
-        (map (fn [[t forms]]
-               [(if (= t qold) qnew t)
-                (into #{} (map #(if (= % qold) qnew %)) forms)]))
-        tmap))
-
 (defn rename!
   "Rename `ns-sym/old-name` to `new-name` everywhere: ONE coordinated delta over
   the def + every reference across all namespaces (position-based via the index,
@@ -2544,18 +2012,18 @@
             ;; hash-map key order destroyed cross-ns renames at scale
             def-id       (:id (store/form-named st' ns-sym new-name))
             ordered-ids  (into [def-id] (remove #{def-id} (keys changeset)))]
-        (if-let [err (:err (hot-load-all! session st' ordered-ids))]
+        (if-let [err (:err (session/hot-load-all! session st' ordered-ids))]
           {:error (str "rename failed to compile: " err)}
-          (if-not (try-commit! session st st' (vec touched-nses))
+          (if-not (session/try-commit! session st st' (vec touched-nses))
             {:conflict {:reason "store changed during rename — retry"}}
             (do
-              (do (swap! session update :test-map rename-in-trace qold qnew)
-                     (persist-trace! session))
+              (do (swap! session update :test-map session/rename-in-trace qold qnew)
+                     (session/persist-trace! session))
               (repl/eval! (:image @session)
                           (format "(ns-unmap '%s '%s)" ns-sym old-name))
-              (let [summary (run-verification! session ns-sym affected
+              (let [summary (session/run-verification! session ns-sym affected
                                                :edited changed-syms)]
-                (commit-appended! session
+                (session/commit-appended! session
                                   #(store/record-verification % ns-sym summary)
                                   [])
                 (let [pat      (re-pattern (str "\\b" (java.util.regex.Pattern/quote (str old-name)) "\\b"))
@@ -2605,17 +2073,17 @@
                                            :prompt prompt :group gid)
                 [st3 d3]  (store/replace-node st2 ns-sym from (:node pf)
                                               :prompt prompt :group gid)]
-            (if-let [err (:err (hot-load-all! session st3
+            (if-let [err (:err (session/hot-load-all! session st3
                                               [(:form-id d1) (:form-id d3)]))]
               {:error (str "extract failed to compile: " err)}
-              (if-not (try-commit! session st st3 [ns-sym])
+              (if-not (session/try-commit! session st st3 [ns-sym])
                 {:conflict {:reason "store changed during extract — retry"}}
-                (let [affected (affected-tests session ns-sym from)
-                          summary  (run-verification! session ns-sym affected
+                (let [affected (session/affected-tests session ns-sym from)
+                          summary  (session/run-verification! session ns-sym affected
                                                       :edited
                                                       #{(symbol (str ns-sym) (str from))
                                                         (symbol (str ns-sym) (str new-name))})]
-                      (commit-appended! session
+                      (session/commit-appended! session
                                         #(store/record-verification % ns-sym summary)
                                         [])
                       {:extracted {:new    (symbol (str ns-sym) (str new-name))
@@ -2745,11 +2213,11 @@
                                  (keep #(:id (store/form-named st4 % %))
                                        (keys (:require-adds plan)))
                                  (keys (:rewrites plan))))
-                load-err (:err (hot-load-all! session st4 ordered))]
+                load-err (:err (session/hot-load-all! session st4 ordered))]
             (if load-err
-              (do (fresh-image! session)
+              (do (session/fresh-image! session)
                   {:error (str "move failed to compile: " load-err)})
-              (if-not (try-commit! session st st4 touched)
+              (if-not (session/try-commit! session st st4 touched)
                 {:conflict {:reason "store changed during move — retry"}}
                 (do (doseq [nm (:removals plan)]
                       (repl/eval! (:image @session)
@@ -2758,13 +2226,13 @@
                                                   (:moved plan)))
                                         (map #(symbol (str to-ns) (str %)))
                                         (:moved plan))
-                          summary (run-verification!
+                          summary (session/run-verification!
                                    session touched nil
                                    :edited (into moved-q
                                                  (map (fn [[_ m]]
                                                         (symbol (str (:ns m)) (str (:name m)))))
                                                  (:rewrites plan)))]
-                      (commit-appended! session
+                      (session/commit-appended! session
                                         #(store/record-verification
                                           % touched summary)
                                         [])
@@ -2801,7 +2269,7 @@
             touched (vec (distinct (concat [old new]
                                            (keep #(store/ns-of-form-id st2 %)
                                                  (keys changeset)))))]
-        (if-not (try-commit! session st st2 touched)
+        (if-not (session/try-commit! session st st2 touched)
           {:conflict {:reason "store changed during ns-rename — retry"}}
           (do
             ;; trace map: rewrite every old/... qsym
@@ -2821,7 +2289,7 @@
               (when (and (not= old-mod new-mod)
                          (not-any? #(= old-mod (edit/module-of %))
                                    (keys (:namespaces (:store @session)))))
-                (commit-appended!
+                (session/commit-appended!
                  session
                  (fn [base]
                    (let [sub #(if (= old-mod %) new-mod %)]
@@ -2849,95 +2317,21 @@
                           :else s))
                       base (or (:modules base) {}))))
                  [])))
-            (fresh-image! session)          ; the old ns must NOT linger
+            (session/fresh-image! session)          ; the old ns must NOT linger
             (let [verify-nses (vec (remove #{old} touched))
-                  summary (run-verification! session verify-nses nil
+                  summary (session/run-verification! session verify-nses nil
                                              :edited (into #{}
                                                            (keep (fn [id]
                                                                    (when-let [e (store/form-by-id st2 id)]
                                                                      (symbol (str (store/ns-of-form-id st2 id))
                                                                              (str (or (:name e) (:id e)))))))
                                                            (keys changeset)))]
-              (commit-appended! session
+              (session/commit-appended! session
                                 #(store/record-verification % verify-nses summary)
                                 [])
               {:renamed {:old old :new new :forms (count changeset)}
                :delta (:id delta)
                :test summary})))))))
-
-(defn- merge-into-session!
-  "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
-  session store (store/merge-logs), hot-load what arrived (new namespaces in
-  dependency order, then changed forms through the compile gate), commit,
-  persist, verify every touched namespace, and record ONE `:merge` delta."
-  [session theirs from-label]
-  (let [t0   (System/nanoTime)
-        base (:store @session)
-        r    (store/merge-logs base theirs :from from-label)]
-    (cond
-      (nil? (:fork-point r))
-      {:error "stores share no history — not a fork/branch of this project"}
-
-      (and (zero? (:merged r)) (empty? (:conflicts r)))
-      {:merged 0 :conflicts [] :note "already converged — nothing to merge"}
-
-      :else
-      (let [st'      (:store r)
-            load-err (or ;; cold-load first (S1b): two individually-legal lines can
-                      ;; interleave into a forward ref — refuse before the
-                      ;; image is touched
-                      (edit/cold-load-errors
-                       st'
-                       (filter #(contains? (:namespaces st') %)
-                               (distinct
-                                (concat (keep :ns (drop (count (store/deltas base))
-                                                        (store/deltas st')))
-                                        (:new-nses r)))))
-                      ;; new namespaces first, dependency order
-                      (some (fn [ns-sym]
-                              (when (contains? (set (:new-nses r)) ns-sym)
-                                (image/load-ns! (:image @session) st' ns-sym)))
-                            (store/ns-dependency-order st'))
-                      ;; then every changed form (compile gate, heals)
-                      (:err (hot-load-all! session st'
-                                           (:changed-form-ids r))))]
-        (if load-err
-          (do (fresh-image! session)
-              {:error (str "merge failed to compile: " load-err)})
-          (let [[st'' mdelta] (store/record-merge st' from-label r)]
-            (if-not (try-commit! session base st''
-                                 (vec (distinct
-                                       (concat (keep :ns (drop (count (store/deltas base))
-                                                               (store/deltas st'')))
-                                               (:new-nses r)))))
-              {:conflict {:reason "store changed during merge — retry"}}
-              (let [new-deltas   (drop (count (store/deltas base))
-                                       (store/deltas st''))
-                    touched-nses (vec (distinct
-                                       (concat (keep :ns new-deltas)
-                                               (:new-nses r))))
-                    edited       (into #{}
-                                       (keep (fn [id]
-                                               (when-let [e (store/form-by-id st'' id)]
-                                                 (symbol (str (store/ns-of-form-id st'' id))
-                                                         (str (or (:name e) (:id e)))))))
-                                       (:changed-form-ids r))
-                    verify-nses  (vec (remove #{'*session*} touched-nses))
-                    summary      (when (seq verify-nses)
-                                   (run-verification! session verify-nses nil
-                                                      :edited edited))]
-                (when summary
-                  (commit-appended! session
-                                    #(store/record-verification % verify-nses summary)
-                                    []))
-                (with-ms
-                  (cond-> {:merged     (:merged r)
-                           :conflicts  (:conflicts r)
-                           :merge-delta (:id mdelta)}
-                    (seq (:new-nses r)) (assoc :new-nses (:new-nses r))
-                    (seq (:notes r))    (assoc :notes (:notes r))
-                    summary             (assoc :test summary))
-                  t0)))))))))
 
 (defn merge!
   "Phase 4 m2: merge a DIVERGED COPY of this project back into the live
@@ -2960,36 +2354,9 @@
       (let [conn   (db/open! (str f))
             theirs (try (db/load-store conn)
                         (finally (.close ^java.sql.Connection conn)))]
-        (merge-into-session! session theirs (str other-dir))))))
+        (branch/merge-into-session! session theirs (str other-dir))))))
 
 ;; --- Phase 4 m3: branches within one repo -------------------------------
-
-(defn- line-dir
-  "Where a branch line persists in a durable session."
-  [dir nm]
-  (str (io/file dir ".slopp" "branches" nm)))
-
-(defn- snapshot-to-conn!
-  "Full-store snapshot into a (fresh) branch db: every delta + all elements."
-  [conn store]
-  (let [ds   (store/deltas store)
-        nses (vec (keys (:namespaces store)))]
-    (doseq [d (butlast ds)] (db/persist! conn store d []))
-    (when-let [d (last ds)] (db/persist! conn store d nses))))
-
-(defn- delete-dir! [^java.io.File f]
-  (when (.exists f)
-    (doseq [^java.io.File c (reverse (file-seq f))] (.delete c))))
-
-^:reads (defn- load-line
-  "An inactive line's {:store :conn}: from memory, or lazily from its branch
-  db in a durable session. nil if unknown."
-  [session nm]
-  (let [{:keys [lines dir]} @session]
-    (or (get lines nm)
-        (when (and dir (.exists (io/file (line-dir dir nm) ".slopp" "store.db")))
-          (let [c (db/open! (line-dir dir nm))]
-            {:store (db/load-store c) :conn c})))))
 
 (defn branch!
   "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
@@ -3007,7 +2374,7 @@
 
       (or (= nm branch)
           (contains? lines nm)
-          (and dir (.exists (io/file (line-dir dir nm)))))
+          (and dir (.exists (io/file (branch/line-dir dir nm)))))
       {:error (str "branch " nm " already exists")}
 
       :else
@@ -3021,15 +2388,15 @@
                                     (update s :lines assoc nm ::claimed))))]
         (if (or (= nm (:branch old)) (contains? (:lines old) nm))
           {:error (str "branch " nm " already exists")}
-          (let [bdir (when dir (io/file (line-dir dir nm)))]
+          (let [bdir (when dir (io/file (branch/line-dir dir nm)))]
             (when bdir (.mkdirs (.getParentFile bdir)))
             (if (and bdir (not (.mkdir bdir)))
               (do (swap! session update :lines dissoc nm)   ; release the claim
                   {:error (str "branch " nm " already exists")})
               (let [line-id (str (java.util.UUID/randomUUID))
                     conn    (when dir
-                              (doto (db/open! (line-dir dir nm))
-                                (snapshot-to-conn! (:store @session))
+                              (doto (db/open! (branch/line-dir dir nm))
+                                (branch/snapshot-to-conn! (:store @session))
                                 (db/set-line-id! line-id)))]
                 (swap! session
                        (fn [s]
@@ -3042,21 +2409,6 @@
                                     :data-version (some-> conn db/data-version)))))
                 {:branch nm :from branch :id line-id}))))))))
 
-(defn- boot-line-image!
-  "A fresh image loaded with `store` (consumes the warm spare when ready).
-  Returns {:image handle} or {:error msg}."
-  [session store]
-  (let [spare (:spare @session)
-        img   (image-with-deps! spare (:deps store))]
-    (when spare
-      (swap! session assoc :spare nil)
-      (start-spare! session))
-    (if-let [err (some #(image/load-ns! img store %)
-                       (store/ns-dependency-order store))]
-      (do (repl/stop! img)
-          {:error (str "branch image failed to load: " err)})
-      {:image img})))
-
 (defn branch-switch!
   "Checkout with LINE-OWNED images (m4): the outgoing line PARKS its image
   intact (its REPL state included — inactive lines are immutable, so a parked
@@ -3068,10 +2420,10 @@
   (let [nm (str nm)]
     (if (= nm (:branch @session))
       {:switched nm :note "already on it"}
-      (if-let [target (load-line session nm)]
+      (if-let [target (branch/load-line session nm)]
         (do (let [adopted (:image target)
                   booted  (when-not adopted
-                            (boot-line-image! session (:store target)))]
+                            (branch/boot-line-image! session (:store target)))]
               (if (:error booted)
                 booted
                 (do (swap! session
@@ -3103,8 +2455,8 @@
   (let [nm (str nm)]
     (if (= nm (:branch @session))
       {:error "cannot merge a branch into itself — switch to the target line first"}
-      (if-let [target (load-line session nm)]
-        (let [res (merge-into-session! session (:store target)
+      (if-let [target (branch/load-line session nm)]
+        (let [res (branch/merge-into-session! session (:store target)
                                        (str "branch:" nm "#"
                                             (or (:line-id (:store target))
                                                 "legacy")))]
@@ -3126,7 +2478,7 @@
       {:error "cannot delete the branch you are on"}
 
       (not (or (contains? lines nm)
-               (and dir (.exists (io/file (line-dir dir nm))))))
+               (and dir (.exists (io/file (branch/line-dir dir nm))))))
       {:error (str "no branch named " nm)}
 
       :else
@@ -3134,7 +2486,7 @@
           (some-> (get-in lines [nm :conn])
                   ^java.sql.Connection (.close))
           (swap! session update :lines dissoc nm)
-          (when dir (delete-dir! (io/file (line-dir dir nm))))
+          (when dir (branch/delete-dir! (io/file (branch/line-dir dir nm))))
           {:deleted nm}))))
 
 (defn query-branches
@@ -3188,7 +2540,7 @@
                                                         (n/string (:node %)))
                                               (store/forms st nsx)))
                                       (keys (:namespaces st)))))
-        incompat (when main (seq (filter native-incompatible-deps (keys deps))))
+        incompat (when main (seq (filter api.deps/native-incompatible-deps (keys deps))))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
         ours?    #(contains? #{(build/deps-edn false deps has-tests?)
@@ -3256,7 +2608,7 @@
                      (.setExecutable script true false)
                      (let [warns (vec (for [[lib coord] deps
                                             :when (= :none (:verdict
-                                                            (dep-native-verdict session lib coord)))]
+                                                            (api.deps/dep-native-verdict session lib coord)))]
                                         lib))]
                        (cond-> {:binary bin
                                 :launcher "src/native/main.clj"
@@ -3283,7 +2635,7 @@
                       (keep #(store/ns-of-form-id st %))
                       (forms-changed-since st last-c))]
     {:changed-nses (vec (sort changed))
-     :selected     (test-nses-reaching st changed)}))
+     :selected     (session/test-nses-reaching st changed)}))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3312,7 +2664,7 @@
       ;; :parallel defaults to AUTO — scale the shard count to the work + cores
       (let [full-set (when (and (nil? ns) (empty? only))
                        (or (:selected aff)
-                           (vec (sort (filter #(test-ns? (:store @session) %)
+                           (vec (sort (filter #(session/test-ns? (:store @session) %)
                                               (keys (:namespaces (:store @session))))))))
             par (cond (some? parallel) parallel
                       (nil? full-set)  1
@@ -3433,7 +2785,7 @@
     {:error "file_put needs :content"}
 
     :else
-    (do (commit-appended! session
+    (do (session/commit-appended! session
                           #(first (store/record-file-put % path content
                                                          :prompt prompt :agent agent))
                           [])
@@ -3443,7 +2795,7 @@
   [session path & {:keys [prompt agent]}]
   (if-not (contains? (:files (:store @session)) (str path))
     {:error (str path " is not on the files manifest")}
-    (do (commit-appended! session
+    (do (session/commit-appended! session
                           #(first (store/record-file-remove % path
                                                             :prompt prompt :agent agent))
                           [])
@@ -3468,7 +2820,7 @@
     (if (:error r)
       r
       (let [[st' d] r]
-        (if-not (try-commit! session base st' [ns-sym])
+        (if-not (session/try-commit! session base st' [ns-sym])
           {:conflict {:reason "store changed concurrently — retry"}}
           {:delta (:id d) :before (some-> anchor str) :ns (str ns-sym)})))))
 ^:reads (defn file-get
@@ -3554,7 +2906,7 @@
       (and key unset)
       (if-not (get-in entry [:values (str key)])
         {:error (str key " is not set on " path)}
-        (do (commit-appended! session
+        (do (session/commit-appended! session
                               #(first (store/record-config-unset % path key
                                                                  :prompt prompt
                                                                  :agent agent))
@@ -3564,7 +2916,7 @@
       (and key (some? value))
       (let [fmt (or (some-> format clojure.core/keyword)
                     (:format entry) :manifest)]
-        (commit-appended! session
+        (session/commit-appended! session
                           #(first (store/record-config-put % path fmt key value
                                                            :prompt prompt
                                                            :agent agent))
@@ -4096,31 +3448,6 @@
           {:error (str "nothing named " on
                        " — `on` is a namespace, var (ns/name), or :keyword;"
                        " modules true reads the module manifest")})))))
-(defn adopt-modules!
-  "ADOPTION (internal — never a tool, never explicit): derive the module
-  manifest from the CURRENT actual dependency graph — kondo-resolved, so
-  :refer'd calls count — and record it as one :module-edge delta per edge.
-  Called once by open! for a populated store whose db predates the module
-  system (:modules nil); by construction the result is acyclic with zero
-  violations, so adoption never breaks working code — the gate then blocks
-  DRIFT until the agent declares new edges (module_dep)."
-  [session & {:keys [agent]}]
-  (let [edges (edit/derive-module-edges (:store @session))]
-    (commit-appended!
-     session
-     (fn [base]
-       (reduce (fn [s [m deps]]
-                 (reduce (fn [s2 dep]
-                           (first (store/record-module-edge
-                                   s2 m dep :add
-                                   :prompt "module adoption: edge derived from the actual dependency graph"
-                                   :agent agent)))
-                         s (sort deps)))
-               (update base :modules #(or % {}))
-               (sort edges)))
-     [])
-    {:modules (count edges)
-     :edges   (reduce + 0 (map count (vals edges)))}))
 (defn module-dep!
   "Declare or retract ONE module dependency edge — the semantic verb behind
   the module manifest (there is no file to edit): each call is one
@@ -4156,7 +3483,7 @@
                      (clojure.string/join " → " (conj back to))
                      " — point the dependency one way (usually by extracting"
                      " the shared piece into a module both sides may depend on)")}
-        (let [st' (commit-appended!
+        (let [st' (session/commit-appended!
                    session
                    #(first (store/record-module-edge % from to action
                                                      :prompt prompt

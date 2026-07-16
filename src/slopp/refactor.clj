@@ -102,6 +102,18 @@
              [(str (subs (ls (dec sr)) 0 (dec sc)) repl (subs (ls (dec er)) (dec ec)))]
              (subvec ls er)))))
 
+(defn- under-meta
+  "Apply `f` to the form node beneath any form-level meta wrappers
+  (`^:reads (defn- ...)` parses as a :meta node around the list) —
+  the wrapper survives, the transform sees the defn."
+  [node f]
+  (if (= :meta (n/tag node))
+    (let [kids (vec (n/children node))
+          i    (last (keep-indexed
+                      (fn [i k] (when-not (#{:whitespace :comment} (n/tag k)) i))
+                      kids))]
+      (n/replace-children node (assoc kids i (under-meta (kids i) f))))
+    (f node)))
 (defn publicize
   "The form node with its top-level privacy stripped: the `defn-` operator
   becomes `defn`, and a `^:private` marker on the def symbol is removed.
@@ -762,6 +774,15 @@
                               needed-libs)
             from-alias  (when (seq moved->stay)
                           (alias-for (if new-ns? [] (require-specs store to-ns)) from-ns))
+            ;; refs INTO the target go bare — its ns gets no self-alias
+            to-prefixes (into #{to-ns}
+                              (keep #(when (= (:lib %) to-ns) (:alias %)))
+                              from-specs)
+            dequalify   (fn [node]
+                          (rewrite-symbols node
+                                           (fn [s] (when (and (some? (namespace s))
+                                                              (to-prefixes (symbol (namespace s))))
+                                                     (symbol (name s))))))
             to-specs    (cond-> need-specs
                           from-alias (conj {:lib from-ns
                                             :spec (str "[" from-ns " :as " from-alias "]")}))
@@ -775,9 +796,11 @@
                             node))
             moved-nodes (vec (for [e (store/forms store from-ns)
                                    :when (moved (:name e))]
-                               (-> (:node e) publicize qualify
+                               (-> (:node e)
+                                   (under-meta publicize)
+                                   dequalify qualify
                                    (cond-> (:export opts)
-                                     (export-mark (:export opts))))))
+                                     (under-meta #(export-mark % (:export opts)))))))
             ;; rewrites: from-ns stay forms (bare→alias) + external (alias→alias)
             from-alias* (get alias-of from-ns)
             from-rw     (when (seq stay->moved)
@@ -843,11 +866,22 @@
                                                     (sort (map :spec to-specs)))
                                ")"))
                         ")\n\n"
+                        ;; the source ns may order callers before definitions
+                        ;; (declare-then-use) — the moved set carries its own
+                        (when (> (count moved) 1)
+                          (str "(declare " (clojure.string/join " " (sort moved))
+                               ")\n\n"))
                         (clojure.string/join "\n\n" (map n/string moved-nodes))
                         "\n"))
 
             (not new-ns?)
-            (assoc :append moved-nodes
+            (assoc :append (if (> (count moved) 1)
+                             (into [(p/parse-string
+                                     (str "(declare "
+                                          (clojure.string/join " " (sort moved))
+                                          ")"))]
+                                   moved-nodes)
+                             moved-nodes)
                    :to-require-adds
                    (let [have (set (map :lib (require-specs store to-ns)))]
                      (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))

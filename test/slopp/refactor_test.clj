@@ -80,7 +80,7 @@
             p   (refactor/move-plan st2 'mv.core '[util mid] 'mv.extra {})]
         (is (nil? (:error p)) (pr-str (:error p)))
         (is (not (:new-ns? p)))
-        (is (= 2 (count (:append p))) "publicized nodes to append")
+        (is (= 3 (count (:append p))) "a declare + the publicized nodes")
         (is (= ["[clojure.string :as str]"] (:to-require-adds p))
             "the existing target gains only what the moved forms need")))
     (testing "a name collision in the target refuses"
@@ -102,3 +102,46 @@
       (let [p (refactor/move-plan st 'mv.core '[util mid] 'mv.core.impl
                                   {:export "mv.app"})]
         (is (re-find #"\{:export \"mv\.app\"\}" (:new-src p)) (:new-src p))))))
+(deftest plan-dequalifies-refs-into-the-target
+  ;; moving a form INTO a namespace it already calls: its alias-qualified
+  ;; refs to the target must become BARE names, or the moved source can't
+  ;; compile in its new home (the target ns gets no self-alias).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'dq.base "(ns dq.base)\n\n(defn ground \"G.\" [x] x)\n")
+               (store/ingest 'dq.mid
+                             (str "(ns dq.mid (:require [dq.base :as base]))\n\n"
+                                  "(defn lift \"L.\" [x] (base/ground x))\n")))
+        p  (refactor/move-plan st 'dq.mid '[lift] 'dq.base {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (let [moved-src (apply str (map str (:append p)))]
+      (is (re-find #"\(ground x\)" moved-src)
+          (str "qualified ref must go bare: " moved-src))
+      (is (not (re-find #"base/ground" moved-src))))))
+(deftest plan-declares-moved-names-against-forward-refs
+  ;; the source ns may order callers before definitions (declare-then-use);
+  ;; the moved set keeps its relative order, so the new home needs its own
+  ;; (declare ...) — over-declaring is harmless, missing one won't compile.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'fw.core
+                             (str "(ns fw.core)\n\n(declare helper)\n\n"
+                                  "(defn run \"R.\" [x] (helper x))\n\n"
+                                  "(defn helper \"H.\" [x] x)\n")))
+        p  (refactor/move-plan st 'fw.core '[run helper] 'fw.moved {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (let [src (:new-src p)]
+      (is (re-find #"\(declare helper run\)" src) src)
+      (is (< (.indexOf ^String src "(declare") (.indexOf ^String src "(defn run"))
+          "the declare precedes the first definition"))))
+(deftest plan-publicizes-meta-wrapped-privates
+  ;; effect-tagged forms (^:reads / ^:unsafe on the WHOLE defn) wrap the
+  ;; list in a :meta node — publicize/export-mark must transform the defn
+  ;; underneath and keep the wrapper.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'mw.core
+                             (str "(ns mw.core)\n\n"
+                                  "^:reads (defn- peek* \"P.\" [x] x)\n\n"
+                                  "(defn use-it \"U.\" [x] (peek* x))\n")))
+        p  (refactor/move-plan st 'mw.core '[peek*] 'mw.deep {:export true})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"\(defn \^:export peek\*" (:new-src p)) (:new-src p))
+    (is (re-find #"\^:reads" (:new-src p)) "the effect tag survives the move")))

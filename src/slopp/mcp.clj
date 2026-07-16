@@ -1230,10 +1230,11 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
   (case method
     "initialize" {:jsonrpc "2.0" :id id
                   :result {:protocolVersion protocol-version
-                           :capabilities {:tools {}}
+                           :capabilities {:tools {:listChanged true}}
                            :serverInfo {:name "slopp" :version "0.1.0"}}}
     "notifications/initialized" nil
-    "tools/list" {:jsonrpc "2.0" :id id :result {:tools tools}}
+    "tools/list" (do (swap! session assoc :slopp.mcp/tools-hash (hash tools))
+                     {:jsonrpc "2.0" :id id :result {:tools tools}})
     "tools/call" {:jsonrpc "2.0" :id id
                   :result (binding [*hint* (track-hint! session
                                                         (:name params)
@@ -1248,12 +1249,29 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
       {:jsonrpc "2.0" :id id
        :error {:code -32601 :message (str "method not found: " method)}})))
 
+(defn- tools-note!
+  "The notifications/tools/list_changed message when the tool registry has
+  DRIFTED from what this session last advertised (a live reload renamed or
+  added a tool — edit_move_forms replaced edit_extract_ns mid-session and no
+  client could see it), else nil. Emitting updates the baseline, so each
+  drift notifies exactly once. No baseline (tools/list never served) → nil."
+  [session]
+  (let [h    (hash tools)
+        last (:slopp.mcp/tools-hash @session)]
+    (when (and last (not= last h))
+      (swap! session assoc :slopp.mcp/tools-hash h)
+      {:jsonrpc "2.0" :method "notifications/tools/list_changed"})))
 (defn serve!
   "Newline-delimited-JSON stdio loop over `in-reader`/`out-writer`."
   [session in-reader out-writer]
   (doseq [line (line-seq in-reader) :when (not (str/blank? line))]
     (when-let [resp (handle session (json/parse-string line true))]
       (.write out-writer (str (json/generate-string resp) "\n"))
+      (.flush out-writer))
+    ;; a live reload may have changed the tool registry — tell the client
+    ;; to re-list (ordered: same writer, right after the response)
+    (when-let [note (tools-note! session)]
+      (.write out-writer (str (json/generate-string note) "\n"))
       (.flush out-writer)))
   nil)
 

@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.session :as session]))
 
 (def seed
   (str "(ns cc.core)\n"
@@ -45,9 +45,9 @@
       ;; commit, a competing write to the SAME form lands (one-shot: the hook
       ;; must not re-fire on the rebase retry)
       (let [fired (atom false)
-            r (binding [api/*pre-commit-hook*
+            r (binding [session/*pre-commit-hook*
                         (fn [] (when (compare-and-set! fired false true)
-                                 (binding [api/*pre-commit-hook* nil]
+                                 (binding [session/*pre-commit-hook* nil]
                                    (api/edit-replace! sess 'cc.core 'a
                                                       "(defn a [x] :competitor)"
                                                       :prompt "raced in first"))))]
@@ -60,9 +60,9 @@
           (is (not (re-find #":loser" (api/query-source sess 'cc.core))))))
       (testing "but a DIFFERENT-form competitor rebases cleanly instead"
         (let [fired (atom false)
-              r (binding [api/*pre-commit-hook*
+              r (binding [session/*pre-commit-hook*
                           (fn [] (when (compare-and-set! fired false true)
-                                   (binding [api/*pre-commit-hook* nil]
+                                   (binding [session/*pre-commit-hook* nil]
                                      (api/edit-replace! sess 'cc.core 'b
                                                         "(defn b [x] :other)"
                                                         :prompt "raced, different form"))))]

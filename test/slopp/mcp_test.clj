@@ -550,3 +550,24 @@
         (is (re-find #":flagged" r) r)
         (is (re-find #"rw.io/zap!" r) "the effectful undocumented fn is flagged"))
       (finally (api/close! sess)))))
+(deftest tool-registry-changes-notify-the-client
+  ;; a live reload can rename/add tools (edit_move_forms replaced
+  ;; edit_extract_ns mid-session and no client could see it) — the server
+  ;; must declare tools.listChanged and emit the notification when the
+  ;; registry drifts from what it last advertised.
+  (let [sess (atom {})]
+    (testing "the capability is declared"
+      (is (true? (get-in (mcp/handle sess {:id 1 :method "initialize"})
+                         [:result :capabilities :tools :listChanged]))))
+    (testing "no baseline advertised → nothing to invalidate"
+      (is (nil? (#'mcp/tools-note! sess))))
+    (testing "tools/list records the advertised baseline"
+      (mcp/handle sess {:id 2 :method "tools/list"})
+      (is (some? (:slopp.mcp/tools-hash @sess)))
+      (is (nil? (#'mcp/tools-note! sess)) "freshly advertised → current"))
+    (testing "a drifted registry emits the notification, once"
+      (swap! sess assoc :slopp.mcp/tools-hash -1)
+      (let [n (#'mcp/tools-note! sess)]
+        (is (= "notifications/tools/list_changed" (:method n)))
+        (is (nil? (:id n)) "a notification carries no id"))
+      (is (nil? (#'mcp/tools-note! sess)) "baseline updated after emitting"))))
