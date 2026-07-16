@@ -1237,7 +1237,7 @@
                                   (select-keys lr [:carried])))]
             (cond
               (:err load-res)
-              {:error (str "group failed to compile: " (:err load-res))}
+              (edit/compile-error st (:err load-res) "group failed to compile: ")
 
               (not (session/try-commit! session base0 st
                                 (vec (distinct (map :ns steps)))))
@@ -2131,7 +2131,7 @@
             def-id       (:id (store/form-named st' ns-sym new-name))
             ordered-ids  (into [def-id] (remove #{def-id} (keys changeset)))]
         (if-let [err (:err (session/hot-load-all! session st' ordered-ids))]
-          {:error (str "rename failed to compile: " err)}
+          (edit/compile-error st' err "rename failed to compile: ")
           (if-not (session/try-commit! session st st' (vec touched-nses))
             {:conflict {:reason "store changed during rename — retry"}}
             (do
@@ -2193,7 +2193,7 @@
                                               :prompt prompt :group gid)]
             (if-let [err (:err (session/hot-load-all! session st3
                                               [(:form-id d1) (:form-id d3)]))]
-              {:error (str "extract failed to compile: " err)}
+              (edit/compile-error st3 err "extract failed to compile: ")
               (if-not (session/try-commit! session st st3 [ns-sym])
                 {:conflict {:reason "store changed during extract — retry"}}
                 (let [affected (session/affected-tests session ns-sym from)
@@ -2335,8 +2335,7 @@
                 load-err (:err hl)]
             (if load-err
               (do (session/fresh-image! session)
-                  (merge {:error (str "move failed to compile: " load-err)}
-                         (select-keys hl [:form :at])))
+                  (edit/compile-error st4 load-err "move failed to compile: "))
               (if-not (session/try-commit! session st st4 touched)
                 {:conflict {:reason "store changed during move — retry"}}
                 (do (doseq [nm (:removals plan)]

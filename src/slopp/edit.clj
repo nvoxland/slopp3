@@ -353,24 +353,6 @@
                   (str "(in-ns '" ns-sym ") " src))]
     (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))
 
-(defn apply-replace!
-  "Pipeline through hot-reload over `system` {:store store :image handle}:
-  `replace-form`, then redefine the form in the live image (D5) — a form that
-  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
-  {:system {:store ...} :delta :warnings} or {:error msg}."
-  [system ns-sym form-name new-source & {:keys [prompt]}]
-  (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
-    (cond
-      (:error r) r
-
-      :else
-      (if-let [err (hot-load-form! (:image system) (:store r)
-                                   (:form-id (:delta r)))]
-        {:error (str "form failed to compile: " err)}
-        {:system   (assoc system :store (:store r))
-         :delta    (:delta r)
-         :warnings (:warnings r)}))))
-
 (defn remove-require-source
   "Symmetric counterpart of add-require-source: structurally remove the
   require spec for `lib` from an ns form's source. Returns {:src new-src} or
@@ -426,6 +408,38 @@
               (cond-> {}
                 e  (assoc :form (symbol (str nsx) (str (or (:name e) (:id e)))))
                 at (assoc :at (str/trim at))))))))))
+(defn compile-error
+  "The standard compile-failure result every 'failed to compile' surface
+  returns: `{:error <prefix + clean message> :form qsym :at snippet}` when
+  the error's VFS coordinate resolves against `store` (the coordinate is
+  STRIPPED from the message — row/col never rides the wire), else a plain
+  `{:error <prefix + raw>}` fallback so an unresolvable error keeps its one
+  location clue. `prefix` is the op label ('rename failed to compile: ')."
+  [store err prefix]
+  (if-let [a (anchor-error store err)]
+    (assoc a :error
+           (str prefix
+                (str/trim (str/replace (str err)
+                                       #"\s*(?:at\s+)?\([\w/._-]+\.clj:\d+(?::\d+)?\)\.?" ""))))
+    {:error (str prefix err)}))
+(defn apply-replace!
+  "Pipeline through hot-reload over `system` {:store store :image handle}:
+  `replace-form`, then redefine the form in the live image (D5) — a form that
+  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
+  {:system {:store ...} :delta :warnings} or {:error msg}."
+  [system ns-sym form-name new-source & {:keys [prompt]}]
+  (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
+    (cond
+      (:error r) r
+
+      :else
+      (if-let [err (hot-load-form! (:image system) (:store r)
+                                   (:form-id (:delta r)))]
+        (compile-error (:store r) err "form failed to compile: ")
+        {:system   (assoc system :store (:store r))
+         :delta    (:delta r)
+         :warnings (:warnings r)}))))
+
 (defn cold-load-errors
   "The cold-load half of the compile gate: nil when every ns in `ns-syms`
   renders to a namespace a FRESH load can resolve top-to-bottom; else one

@@ -258,3 +258,21 @@
                                    "(defn ^:unused-ok consumer \"U.\" [x] (helper x))")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated compile-failures-reach-the-agent-as-anchors
+  ;; a write that fails to compile must hand the agent an ACTIONABLE
+  ;; address — the owning form + a match-ready snippet — not a VFS
+  ;; file:line no tool consumes; the coordinate never rides the message.
+  ;; (Java interop is the genuine kondo-miss → raw compiler path.)
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ca.core "(ns ca.core)\n\n(defn ok \"O.\" [x] x)\n")
+      (let [r (api/edit-replace! sess 'ca.core 'ok
+                                 "(defn ok \"O.\" [x] (String/noSuchStaticThing x))")]
+        (is (:error r) (pr-str r))
+        (is (= 'ca.core/ok (:form r)) "the owning form is named")
+        (is (re-find #"noSuchStaticThing" (str (:at r))) "a match-ready snippet")
+        (is (re-find #"No matching method" (str (:error r)))
+            "the semantic message survives")
+        (is (not (re-find #"\.clj:\d" (str (:error r))))
+            "no file:line in the message"))
+      (finally (api/close! sess)))))

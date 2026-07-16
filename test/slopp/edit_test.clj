@@ -102,3 +102,20 @@
     (testing "unlocatable text stays nil — the caller keeps the raw message"
       (is (nil? (edit/anchor-error st "something exploded, no coordinates")))
       (is (nil? (edit/anchor-error st nil))))))
+(deftest compile-error-anchors-or-falls-back
+  (let [st (store/ingest (store/empty-store) 'ce.core
+                         "(ns ce.core)\n(defn f \"F.\" [x] (boom x))\n")]
+    (testing "resolvable coordinate → form + snippet, coordinate stripped"
+      (let [r (edit/compile-error
+               st "Syntax error compiling boom at (ce/core.clj:2:18).\nUnable to resolve symbol: boom"
+               "form failed to compile: ")]
+        (is (= 'ce.core/f (:form r)))
+        (is (re-find #"boom" (:at r)))
+        (is (re-find #"Unable to resolve" (:error r)) "message survives")
+        (is (not (re-find #"\.clj:\d" (:error r))) "coordinate gone")
+        (is (not (re-find #" at\b" (:error r))) "the dangling 'at' goes too")))
+    (testing "no coordinate → raw fallback keeps the message"
+      (let [r (edit/compile-error st "something broke, no location"
+                                  "form failed to compile: ")]
+        (is (nil? (:form r)))
+        (is (= "form failed to compile: something broke, no location" (:error r)))))))

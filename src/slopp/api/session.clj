@@ -177,7 +177,8 @@
   image compiles) is invariant across rebases. Red-first stubs surface as
   :red-first; lint errors in OTHER forms (stale callers) surface as
   :carried-errors — both ride the result, never block, and the done-point
-  re-checks."
+  re-checks. A genuine compile failure returns an ANCHORED error
+  (edit/compile-error — form + snippet, no file:line)."
   [session transform target-node target-desc ns-sym
    & {:keys [load?] :or {load? true}}]
   (let [orig     (some-> (target-node (:store @session)) n/string)
@@ -205,7 +206,8 @@
                                                              [(:form-id (:delta out))])
                                               (select-keys lr [:carried])))))]
                     (if (:err load-res)
-                      {:error (str "form failed to compile: " (:err load-res))}
+                      (edit/compile-error (:store out) (:err load-res)
+                                          "form failed to compile: ")
                       (do (when *pre-commit-hook* (*pre-commit-hook*))
                           (if (try-commit! session base (:store out) [ns-sym])
                             (cond-> out
@@ -237,7 +239,8 @@
                                                      [(:form-id (:delta out0))])
                                       (select-keys lr [:carried])))))]
             (if (:err load-res)
-              {:error (str "form failed to compile: " (:err load-res))}
+              (edit/compile-error (:store out0) (:err load-res)
+                                  "form failed to compile: ")
               (do (when *pre-commit-hook* (*pre-commit-hook*))
                   (let [res (volatile! nil)]
                     (swap! session update :store
