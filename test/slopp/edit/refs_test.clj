@@ -37,3 +37,36 @@
         (is (= 'go (:name (store/form-by-id st (:from-form r)))))))
     (testing "self-references are excluded; unknown targets empty"
       (is (empty? (refs/refs-to st 'g.core/nope))))))
+(deftest the-wire-codec-slims-references
+  ;; canonical records are INTERNAL; the wire always carries the compact
+  ;; form — grouped by target, self-describing qsyms, via-tagged only when
+  ;; not the common :static. The short handle (stable form-ids) converts
+  ;; back MECHANICALLY through the graph — nothing stored.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'w.core
+                             (str "(ns w.core)\n\n"
+                                  "(defn ^:entry-point helper \"H.\" [x] x)\n"))
+               (store/ingest 'w.app
+                             (str "(ns w.app (:require [w.core :as core]))\n\n"
+                                  "(defn go \"G.\" [x] (core/helper x))\n\n"
+                                  "(defn drive \"D.\" [sess]\n"
+                                  "  (query-call sess 'w.core/helper 2))\n")))
+        rs (refs/refs-to st 'w.core/helper)
+        w  (refs/to-wire rs)]
+    (testing "grouped and strictly slimmer"
+      (is (= 'w.core/helper (:to w)))
+      (is (= '[w.app/drive w.app/go]
+             (vec (sort (concat (:from w) (keep :from (:tagged w))))))
+          (pr-str w))
+      (is (< (count (pr-str w)) (count (pr-str rs)))
+          (str (count (pr-str w)) " vs " (count (pr-str rs)))))
+    (testing "non-static references carry their tag; declarations show the dial"
+      (is (some #(and (= 'w.app/drive (:from %)) (= :carrier (:via %)))
+                (:tagged w)))
+      (is (some #(= :entry-point (:marker %)) (:tagged w))))
+    (testing "the short handle round-trips mechanically"
+      (let [r     (first (filter #(and (= :static (:via %))
+                                       (= 'w.app (:from-ns %))) rs))
+            short (refs/ref-id r)]
+        (is (re-matches #"f\d+→f\d+" short) short)
+        (is (some #(= r %) (refs/parse-ref st short)))))))

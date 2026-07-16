@@ -7,7 +7,7 @@
   (:require [rewrite-clj.node :as n]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [clojure.string :as str]))
 (defn quote-pruned-qualified-syms
   "Every namespace-qualified symbol in sexpr `x`, skipping quoted subtrees —
   a quoted symbol is data and never resolves, so it isn't a call."
@@ -38,6 +38,7 @@
                      :from-var  (:from-var u)
                      :to-ns     (:to u)
                      :to-name   (:name u)
+                     :to-form   (:id (store/form-named st (:to u) (:name u)))
                      :via       :static})
            seen   (set (map (juxt :from-var :to-ns :to-name) kondo))
            unreq  (for [e (store/forms st nsx)
@@ -54,6 +55,7 @@
                      :from-var  (:name e)
                      :to-ns     to
                      :to-name   (symbol (name s))
+                     :to-form   (:id (store/form-named st to (symbol (name s))))
                      :via       :static})]
        (concat kondo unreq)))
    (sort known)))
@@ -88,6 +90,7 @@
        :from-var  (:name e)
        :to-ns     to
        :to-name   (symbol (name s))
+       :to-form   (:id (store/form-named st to (symbol (name s))))
        :via       :carrier})))
 (defn- declared-refs
   "Marker declarations as edges FROM the outside world: ^:entry-point
@@ -109,6 +112,7 @@
      :from-var  nil
      :to-ns     nsx
      :to-name   (:name e)
+     :to-form   (:id e)
      :via       :declared
      :marker    marker}))
 (defn ^:export refs
@@ -134,4 +138,43 @@
   (let [to-ns (symbol (namespace qsym))
         to-nm (symbol (name qsym))]
     (vec (filter #(and (= to-ns (:to-ns %)) (= to-nm (:to-name %)))
+                 (refs st)))))
+(defn ^:export to-wire
+  "Reference records → the COMPACT wire shape agents read (canonical maps
+  stay internal; convert at the boundary, both directions, one place).
+  Grouped by target: {:to qsym
+                      :from [qsym ...]      ; the common case (:via :static)
+                      :tagged [{:from qsym :via kw [:marker kw]} ...]}
+  Self-describing qsyms — agents never think in form-ids; ~3-5× slimmer
+  than records and repetition-free."
+  [rs]
+  (let [qsym  (fn [r] (when (:from-var r)
+                        (symbol (str (:from-ns r)) (str (:from-var r)))))
+        stat  (filter #(= :static (:via %)) rs)
+        other (remove #(= :static (:via %)) rs)]
+    (cond-> {:to (when-let [r (first rs)]
+                   (symbol (str (:to-ns r)) (str (:to-name r))))}
+      (seq stat)  (assoc :from (vec (sort (distinct (keep qsym stat)))))
+      (seq other) (assoc :tagged
+                         (vec (for [r other]
+                                (cond-> {:via (:via r)}
+                                  (qsym r)     (assoc :from (qsym r))
+                                  (:marker r)  (assoc :marker (:marker r)))))))))
+(defn ^:export ref-id
+  "A reference's SHORT HANDLE — \"fA→fB\" from the two stable form-ids.
+  Mechanically invertible via parse-ref; nothing is stored (form-ids
+  survive edits, so the handle stays valid while both forms live).
+  Declared references (no owning form) have no handle."
+  [r]
+  (when (and (:from-form r) (:to-form r))
+    (str (:from-form r) "→" (:to-form r))))
+(defn ^:export parse-ref
+  "The MECHANICAL inverse of ref-id: \"fA→fB\" → the canonical records
+  matching that from-form/to-form pair in the CURRENT graph (plural — one
+  form may reference the same target several ways, e.g. statically AND
+  through a carrier). Nothing is stored; the handle is a pure projection.
+  Unknown or dead handles → empty."
+  [st handle]
+  (let [[a b] (str/split (str handle) #"→")]
+    (vec (filter #(and (= a (:from-form %)) (= b (:to-form %)))
                  (refs st)))))
