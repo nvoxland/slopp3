@@ -89,7 +89,9 @@
   row/col NEVER crosses the wire (reads are name-addressed, edits are
   anchor-addressed; coordinates are consumed internally by owner-form
   only). Compile errors translate once at the hot-load chokepoint
-  (`edit/anchor-error`); lint rows carry :at natively.
+  (`edit/anchor-error` → `edit/compile-error`, the one shape every
+  'failed to compile' surface returns); lint rows carry :at natively;
+  test-failure detail strips the coordinate (the test is named).
   **The wire never carries canonical records**: `to-wire` groups by target
   ({:to qsym :from [qsym ...] :tagged [...]} — :static implied, tags only
   for exceptions, ~3-5× slimmer). NAMES are the only reference currency on
