@@ -1466,3 +1466,27 @@ rots. Known blind spot the dial exists for: string-eval'd and
 runtime-resolved entries (rt/observe, rt/traced-run, mcp/call-main!)
 are kondo-invisible by nature. Kondo's unused-private-var already
 covers privates per-namespace.
+
+Designated reference carriers (2026-07-16, user decision — thesis-level):
+references must not hide in strings or naked quoted symbols; they live in
+BLESSED CARRIER positions the tooling reads as real edges, or in
+DECLARATIONS. The carrier set: `#'var` literals for in-process references
+in data (already hard edges — the preferred form); `store/late-ref 'ns/nm`
+for load-cycle late binding (the ONLY sanctioned runtime resolution;
+replaced the naked requiring-resolve in git/ensure-projected!);
+`api/query-call` / wire `query_call {sym args}` for the oracle's common
+invoke case (query_eval stays the escape hatch for arbitrary expressions);
+`^:entry-point` on the NAME declares outside-world invocation (CLI, wire,
+eval-injected — rt/observe, rt/traced-run, mcp/call-main! migrated from
+^:unused-ok; no stale symmetry — the outside world is statically
+unverifiable). KEYWORDS REJECTED as the replacement: a keyword names a
+table slot, not a var — statically worse than a string. unused-report and
+review_scan read carriers and declarations; a naked quoted symbol stays
+data. Phase 2 (parked with .ideas/): the dialect LINT that detects
+var-shaped strings / naked requiring-resolve outside carriers and teaches
+the sanctioned form; per-library carrier adapters (kondo-hook style) for
+framework config; the unified reference graph builds over these so
+references CANNOT hide rather than being tolerated. Scope note: carriers
+relieve markers only for SAME-STORE drivers — slopp's own nested-store
+test fixtures keep ^:unused-ok (cross-store references are invisible by
+construction, and ordinary apps' tests call statically anyway).

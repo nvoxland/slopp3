@@ -98,6 +98,13 @@ measurably bleed tokens.
 that don't exist yet — it lands as a REAL red (`:red-first` names the
 missing vars, stubbed in-image as failing); implement them to go green.
 
+**References never hide in strings:** in-process references in data use
+`#'var` literals; late binding across a load cycle uses
+`(store/late-ref 'ns/name)`; vars invoked from OUTSIDE (CLI, wire, eval
+injection) declare `^:entry-point` on the name. These carriers are what
+renames, moves, and the unused gate can see — a naked quoted symbol or a
+var name in a string is invisible to all three.
+
 **Dead surface fails the gate:** a public `defn`/`def` nothing in the
 store calls is an ERROR at `done` and refuses milestones (globally).
 Deliberate? Mark the NAME: `(defn ^:unused-ok f ...)` — external surface,
@@ -143,7 +150,9 @@ write leaves them undocumented — add the docstring.
 
 ## Questions → the oracle
 
-Run code instead of reading callers: `query_eval "(my.ns/f X)"` (read-only
+Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
+(the reference is CARRIED — renames/moves/the unused gate see it; args are
+printable data) · `query_eval "(...)"` for arbitrary expressions (read-only
 REPL, image pre-loaded — questions OF the code) · `query_store
 "(fn [store] ...)"` (read-only analysis over the immutable store VALUE —
 questions ABOUT the codebase: counts, metadata sweeps, custom aggregation
