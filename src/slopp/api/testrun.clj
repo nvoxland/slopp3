@@ -25,9 +25,12 @@
   (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
        (keep (fn [b]
                (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
-                 (let [block (->> (str/split-lines b)
-                                  (take-while (complement str/blank?))
-                                  (str/join "\n"))]
+                 (let [block (-> (->> (str/split-lines b)
+                                     (take-while (complement str/blank?))
+                                     (str/join "\n"))
+                                 ;; strip the VFS coordinate — the test is
+                                 ;; NAMED in :test; file:line is unconsumable
+                                 (str/replace #"\s*\([\w/._-]+\.clj:\d+(?::\d+)?\)" ""))]
                    {:test nm
                     :detail (if (< 500 (count block))
                               (str (subs block 0 500) " …")

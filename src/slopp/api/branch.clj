@@ -45,7 +45,7 @@
                                            (:changed-form-ids r))))]
         (if load-err
           (do (session/fresh-image! session)
-              {:error (str "merge failed to compile: " load-err)})
+              (edit/compile-error st' load-err "merge failed to compile: "))
           (let [[st'' mdelta] (merge/record-merge st' from-label r)]
             (if-not (session/try-commit! session base st''
                                  (vec (distinct
