@@ -1417,3 +1417,15 @@ forced: de-qualify refs into the target, moved sets carry their own
 (declare ...), publicize/export under form-level meta wrappers, per-move
 export levels compose across steps (the hook moved alone with
 ^{:export "slopp.concurrency"}).
+
+slopp.api decomposition complete at the internals grain (2026-07-16):
+seven deep packages — history, testrun, session (the engine), deps,
+branch, modules, orient — hold the implementation; slopp.api keeps only
+the public verbs and query composites (187KB from 231KB). Placement
+rules that emerged: a PRODUCTION cross-module caller makes a helper
+public API (adopt-modules! stayed for sync/clone!); specs live with the
+machinery they exercise (session/modules/orient -test namespaces);
+public verbs stay on the surface even when thin. The debt view caught a
+real gate-vs-reality gap: a move's export pre-check trusted intent while
+export-mark silently skipped a meta-wrapped name (^:dynamic) — fixed;
+the gate reads declared plans, the debt view reads reality, keep both.
