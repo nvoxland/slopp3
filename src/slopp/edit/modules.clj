@@ -1,16 +1,5 @@
-(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.index :as index] [slopp.render :as render] [slopp.store :as store]))
+(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.index :as index] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs]))
 
-(defn quote-pruned-qualified-syms
-  "Every namespace-qualified symbol in sexpr `x`, skipping quoted subtrees —
-  a quoted symbol is data and never resolves, so it isn't a call."
-  [x]
-  (cond
-    (and (seq? x) (= 'quote (first x))) nil
-    (symbol? x) (when (namespace x) [x])
-    (map-entry? x) (concat (quote-pruned-qualified-syms (key x))
-                           (quote-pruned-qualified-syms (val x)))
-    (coll? x) (mapcat quote-pruned-qualified-syms x)
-    :else nil))
 (defn ^:export modules-manifest
   "The module manifest — {module-string #{dep-module-strings}} — the FOLD
   of the store's :module-edge deltas (edge-grain: concurrent declarations
@@ -146,7 +135,7 @@
     (vec (for [fname form-names
                :let [e (store/form-named candidate ns-sym fname)]
                :when e
-               s (distinct (quote-pruned-qualified-syms
+               s (distinct (refs/quote-pruned-qualified-syms
                             (try (n/sexpr (:node e)) (catch Exception _ nil))))
                :let [to (symbol (namespace s))]
                :when (and (contains? nses to) (not= to ns-sym))]

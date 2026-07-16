@@ -3,7 +3,7 @@
             [rewrite-clj.node :as n]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.edit.modules :as modules]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs]))
 
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
@@ -36,16 +36,17 @@
             base rows)))
 
 (defn module-usage-rows
-  "Every store-internal, kondo-resolved var-usage row ({:from-ns :from-var
-  :to :to-export}) — ONE pass over the store shared by the debt view and
-  the drift (declared-but-unused) view."
+  "Every store-internal usage row ({:from-ns :from-var :to :to-export}) for
+  the debt view and the drift (declared-but-unused) view — consumed from
+  THE reference graph (edit.refs), so carrier references count as usage
+  exactly like resolved calls; declarations don't (they aren't calls)."
   [store]
-  (let [nses (set (keys (:namespaces store)))]
-    (vec (for [nsx (sort nses)
-               u   (:var-usages (index/analyze (render/render-ns store nsx)))
-               :when (contains? nses (:to u))]
-           {:from-ns nsx :from-var (:from-var u) :to (:to u)
-            :to-export (modules/export-level store (:to u) (:name u))}))))
+  (vec (for [r (refs/refs store)
+             :when (not= :declared (:via r))]
+         {:from-ns   (:from-ns r)
+          :from-var  (:from-var r)
+          :to        (:to-ns r)
+          :to-export (modules/export-level store (:to-ns r) (:to-name r))})))
 
 (defn module-debt
   "Whole-store module violations under the store's CURRENT manifest —
@@ -99,57 +100,20 @@
        :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
                                    manifest)))})))
 (defn unused-report
-  "PUBLIC defn/def vars in `nses`, judged against the whole store's call
-  graph, CARRIER references, and the marker dials:
-  {:unused [q ...]   ; ZERO in-store references and NO marker — dead code
-                     ; or unadvertised surface; gate-failing at done.
-                     ; Delete it, mark ^:unused-ok (deliberately uncalled),
-                     ; or ^:entry-point (invoked from OUTSIDE — CLI, wire,
-                     ; runtime resolution).
-   :stale  [q ...]}  ; carry ^:unused-ok but ARE called — remove the flag.
-                     ; (^:entry-point has no stale symmetry: the outside
-                     ; world is statically unverifiable.)
-  References count when kondo resolves them OR when a quoted symbol sits in
-  a DESIGNATED CARRIER position (query-call / invoke! / late-ref) — the
-  blessed forms of the reference-carrier decision; a naked quoted symbol
-  stays data. Self-calls don't count; -main, privates, and test namespaces
-  are exempt. Kondo covers unused PRIVATES per-namespace; this is the
-  whole-store public counterpart."
+  "PUBLIC defn/def vars in `nses` with NO references in THE graph
+  (edit.refs — static, carrier, and declared records all count):
+  {:unused [q ...]   ; nothing references it and no marker declares why —
+                     ; dead code or unadvertised surface; gate-failing.
+                     ; Delete it, mark ^:unused-ok, or ^:entry-point.
+   :stale  [q ...]}  ; carry ^:unused-ok but static/carrier references
+                     ; exist — remove the flag. (^:entry-point has no
+                     ; stale symmetry: the outside world is unverifiable.)
+  Self-calls never count; -main, privates, and test namespaces are exempt.
+  Kondo covers unused PRIVATES per-namespace; this is the whole-store
+  public counterpart, and it consumes the ONE reference graph — no
+  private source fusion."
   [store nses]
-  (let [known (set (keys (:namespaces store)))
-        kondo-used
-        (into #{}
-              (for [nsx known
-                    u   (:var-usages (index/analyze (render/render-ns store nsx)))
-                    :when (and (:name u) (:from-var u)
-                               (contains? known (:to u))
-                               (not (and (= nsx (:to u))
-                                         (= (:from-var u) (:name u)))))]
-                (symbol (str (:to u)) (str (:name u)))))
-        carrier? #{"query-call" "query_call" "invoke!" "late-ref"}
-        carrier-used
-        (into #{}
-              (comp (mapcat (fn [nsx] (store/forms store nsx)))
-                    (mapcat (fn [e]
-                              ((fn walk [f]
-                                 (cond
-                                   (and (seq? f) (= 'quote (first f))) nil
-                                   (seq? f)
-                                   (concat
-                                    (when (and (symbol? (first f))
-                                               (carrier? (name (first f))))
-                                      (for [a (rest f)
-                                            :when (and (seq? a)
-                                                       (= 'quote (first a))
-                                                       (symbol? (second a))
-                                                       (namespace (second a)))]
-                                        (second a)))
-                                    (mapcat walk f))
-                                   (coll? f) (mapcat walk f)
-                                   :else nil))
-                               (try (n/sexpr (:node e)) (catch Exception _ nil))))))
-              known)
-        used (into kondo-used carrier-used)
+  (let [by-target (group-by (juxt :to-ns :to-name) (refs/refs store))
         rows (for [nsx nses
                    :when (not (clojure.string/ends-with? (str nsx) "-test"))
                    e (store/forms store nsx)
@@ -159,13 +123,14 @@
                               (contains? #{'defn 'def} (first s))
                               (not (:private (meta (second s))))
                               (not= '-main (:name e)))
-                   :let [m (meta (second s))
-                         q (symbol (str nsx) (str (:name e)))]]
-               {:q q
-                :unused-ok? (boolean (:unused-ok m))
-                :exempt?    (boolean (or (:unused-ok m) (:entry-point m)))
-                :used?      (contains? used q)})]
-    {:unused (vec (sort (keep #(when-not (or (:used? %) (:exempt? %)) (:q %))
+                   :let [rs (get by-target [nsx (:name e)])
+                         markers (set (keep :marker rs))
+                         real?   (some #(not= :declared (:via %)) rs)]]
+               {:q          (symbol (str nsx) (str (:name e)))
+                :unused-ok? (contains? markers :unused-ok)
+                :exempt?    (boolean (seq markers))
+                :real?      (boolean real?)})]
+    {:unused (vec (sort (keep #(when-not (or (:real? %) (:exempt? %)) (:q %))
                               rows)))
-     :stale  (vec (sort (keep #(when (and (:used? %) (:unused-ok? %)) (:q %))
+     :stale  (vec (sort (keep #(when (and (:real? %) (:unused-ok? %)) (:q %))
                               rows)))}))

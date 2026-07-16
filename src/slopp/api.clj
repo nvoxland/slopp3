@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -3467,15 +3467,16 @@
   [session & {:keys [ns limit] :or {limit 25}}]
   (let [st    (:store @session)
         nses  (if ns [(symbol (str ns))] (sort (keys (:namespaces st))))
-        known (set (keys (:namespaces st)))
+         ;; retired: the graph owns the known-set
         tmap  (:test-map @session)
         rendered (into {} (map (fn [n] [n (render/render-ns st n)])) nses)
         ;; one analyze per ns → every store-internal call edge
-        usages (for [[nsx src] rendered
-                     u (:var-usages (index/analyze src))
-                     :when (and (:name u) (:from-var u) (contains? known (:to u)))]
-                 [(symbol (str nsx) (str (:from-var u)))
-                  (symbol (str (:to u)) (str (:name u)))])
+        ;; THE reference graph — whole-store edges (carriers included), so
+        ;; caller counts are true even in :ns-scoped scans
+        usages (for [r (refs/refs st)
+                     :when (and (not= :declared (:via r)) (:from-var r))]
+                 [(symbol (str (:from-ns r)) (str (:from-var r)))
+                  (symbol (str (:to-ns r)) (str (:to-name r)))])
         blast (frequencies (for [[from to] usages :when (not= from to)] to))
         adj   (reduce (fn [m [from to]] (update m from (fnil conj #{}) to)) {} usages)
         ;; STATIC coverage: everything reachable from a test ns's forms
@@ -3511,14 +3512,16 @@
                          doc?     (some? (edit.modules/missing-doc-warning st nsx nm))
                          ;; zero-caller PUBLICS need the whole graph — only a
                          ;; full scan sees every caller, so :ns scoping skips it
-                         unused   (and (nil? ns) (not test?)
-                                       (zero? callers)
-                                       (seq? s)
-                                       (contains? '#{defn def} (first s))
-                                       (not (:private (meta (second s))))
-                                       (not (:unused-ok (meta (second s))))
-                                       (not (:entry-point (meta (second s))))
-                                       (not= '-main nm))
+                         unused   ;; the whole-store graph makes caller counts true even
+                         ;; under :ns scoping — the flag works everywhere
+                         (and (not test?)
+                              (zero? callers)
+                              (seq? s)
+                              (contains? '#{defn def} (first s))
+                              (not (:private (meta (second s))))
+                              (not (:unused-ok (meta (second s))))
+                              (not (:entry-point (meta (second s))))
+                              (not= '-main nm))
                          untested (and (not test?)
                                        (zero? traced)
                                        (not (contains? covered-static q)))
