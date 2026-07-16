@@ -11,6 +11,16 @@ The check —
 - **D3 denylist** (analysis defeaters): `eval`, `alter-var-root`, `binding`,
   `gen-class`, `definline`, `read-string`. Extensible — the list is a sample,
   grow it deliberately (and record here).
+- **D5 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
+  pipeline OWNS form ordering and declares (auto-avoid-declare). A same-ns
+  forward ref is resolved by reordering definitions above their callers, or —
+  for a genuine cycle — by inserting a MARKED `^{:auto-declare "<why>"}
+  (declare …)` itself. So a hand-written declare is always redundant and is
+  refused with teaching ("slopp orders forms itself — drop the declare"). This
+  is the FIRST prune of a human convenience the pipeline can fully own; it
+  lives in `parse-form` (NOT `dialect-check`), so **imports (`dialect-scan`)
+  keep their declares** and the pipeline's own inserts (built via the raw
+  parser, not `parse-form`) are unaffected. See `.context/verification.md` S1b.
 
 Import is gated identically to edit (fixed 2026-07 via self-host dogfooding):
 before this, `ingest!` skipped the gate, so a host form could enter the store

@@ -68,19 +68,27 @@ The oracle must never return a false verdict. Everything here serves that.
    `move-form!`) statically checks the CANDIDATE's rendered namespaces
    before touching the image: any same-ns var usage positioned (row, col)
    before the var's first definition-or-declare that the pipeline cannot
-   auto-resolve is refused with the fix options (reorder / declare).
-   **Auto-avoid-declare (2026-07-16):** before the gate refuses,
-   `rebased-write!` wraps the pure transform in `edit/resolve-cold-load` —
-   if a topological order exists (`refs/cold-load-order`, Kahn over THE
-   reference graph), the definitions are reordered above their callers
-   (`store/reorder-to`, minimal replayable `:move` deltas) and the write
-   proceeds. The agent NEVER writes `(declare …)` for the acyclic case, and
-   the reorder is **SILENT** — no result key surfaces it (form ordering is a
-   file concept the agent must not hold; provenance lives in the move-deltas'
-   `"auto-reorder: define before use"` prompt). Only a genuine cycle (mutual
-   recursion, no legal order) falls through to the refusal, which still
-   teaches the `declare`. Pure kondo analysis, memoized on content —
-   effectively free next to the ns-warnings pass. Known over-approximation:
+   auto-resolve is refused with the fix options.
+   **Auto-avoid-declare (2026-07-16): the pipeline OWNS form ordering and
+   declares — the agent never writes `(declare …)`.** Before the gate can
+   refuse, `rebased-write!` and `edit-group!` wrap the candidate in
+   `edit/resolve-cold-load`, which makes the ns cold-load one of two ways,
+   both **SILENT** (no result key — form ordering is a file concept the agent
+   must not hold; provenance lives in the deltas):
+   - **Reorder** (acyclic forward ref): definitions moved above their callers
+     (`refs/cold-load-order` = Kahn over THE reference graph → `store/reorder-to`,
+     minimal replayable `:move` deltas).
+   - **Auto-declare** (a genuine cycle — mutual recursion, no legal order):
+     insert a MARKED `^{:auto-declare "<why>"} (declare …)` for the cycle
+     members (built via the raw parser, bypassing the edit gate). The marker's
+     value is the why (markers-carry-their-why); `fix-declares!` at `done`
+     removes it once the cycle breaks (silently — no `:declares-fixed` report).
+   Hand-written declares are consequently REFUSED on the edit path (`parse-form`)
+   with teaching — the pipeline owns them (see `dialect.md`). `move-form!` (an
+   explicit reorder command) and merge replay are NOT auto-resolved: an illegal
+   move / merge-interleaved forward ref still refuses, since the agent (or the
+   merge) explicitly commanded that order. Pure kondo analysis, memoized on
+   content — effectively free next to the ns-warnings pass. Known over-approximation:
    syntax-quoted own-ns symbols count as usages (a declare satisfies).
    `ingest!`/`ns_create` are exempt — a brand-new ns cold-loads for real in
    the image. Merge replay IS gated (`merge-into-session!`, so both

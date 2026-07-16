@@ -782,6 +782,30 @@ cleanup. Friction found + logged: the edit tools' INLINE `:test` summary ran
 an `^:isolated` test in-image and reported a false green (the isolated run
 was red) — inline impacted-runs must not trust `^:isolated` results.
 
+S1b ✅ **Update 2 — full declare ownership (2026-07-16, same day): cycles
+auto-declare, hand-written declares are banned.** Update 1 above left ONE case
+where the agent still had to think about ordering: a genuine cycle (mutual
+recursion) has no legal order, so the write refused and taught the `declare`.
+The user's call: "auto-inserting declares that are needed is a good idea …
+then we can fully own the declare pipeline." Now `resolve-cold-load`'s cycle
+branch INSERTS the declare itself — a MARKED `^{:auto-declare "<why>"}
+(declare …)` for the cycle members, built via the raw parser (bypassing the
+edit gate) and appended before the first member. The marker's value is the
+why — the first concrete instance of `markers-carry-their-why`; it records
+provenance and lets `fix-declares!` (at `done`) remove the declare once the
+cycle breaks. `edit-group!` got the same reorder/declare pass (an intra-group
+forward ref shouldn't wall a batch a sequence of single writes wouldn't).
+With the pipeline owning every declare, **hand-written `(declare …)` is now
+REFUSED on the edit path** (`parse-form`, NOT `dialect-check` — so imports via
+`dialect-scan` keep their declares, and the pipeline's own raw-parser inserts
+are unaffected). Teaching: "slopp orders forms itself — drop the declare."
+Consequences: the auto-declare, like the reorder, is SILENT (no `:declared`
+result key); `done!`'s declare hygiene stops reporting `:declares-fixed`
+(cleanup runs for effect only — the agent never manages declares). Left
+refusing (deliberately, for now): `move-form!` (an explicit ordering command)
+and merge replay — the agent/merge explicitly commanded that order, so an
+illegal one is honest feedback, not a hidden chore.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp
