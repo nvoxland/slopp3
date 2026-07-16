@@ -88,7 +88,7 @@ measurably bleed tokens.
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
-| Extract helper / split ns | `edit_extract` / `edit_extract_ns` (plan with `query_depends {on ns/name, direction :dependencies}`) |
+| Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers) |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
@@ -154,7 +154,7 @@ query_changes query_eval query_observe
 query_macroexpand query_branches query_commits query_git · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
-edit_rename change_signature edit_extract edit_extract_ns edit_move
+edit_rename change_signature edit_extract edit_move_forms edit_move
 edit_revert episode_revert fix_declares · branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep · file_put file_remove file_list file_get

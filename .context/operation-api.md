@@ -220,6 +220,19 @@ is what catches a missing one.
   manifest entries when a module's last ns renames away; adoption
   (pre-module dbs at `open!`, `clone!` after ingest) derives the
   manifest from the actual graph. See `architecture.md` § module system.
+- `move-forms!` / MCP `edit_move_forms {ns forms to [export]}` — the
+  general relocation refactor (v2, replacing `extract-ns!`): move forms to
+  a NEW or EXISTING namespace; callers EVERYWHERE (production + tests) are
+  rewritten alias-qualified with requires injected; the target gets only
+  the requires the moved code uses; moved privates are publicized
+  (module-grain visibility is the boundary); direction-aware (stay→moved
+  requires back; moved→stay qualifies public stay refs; two-way refuses);
+  cross-module edges the rewires necessitate are auto-declared with the
+  move's prompt (cycle-closers refuse); `export: true` hoists moved vars
+  for a deep target with outside callers. Pure planner
+  `refactor/move-plan` (unit-tested), atomic executor. Limits (refused or
+  compile-gated): `:refer`'d moved names, java `:import`, shadowed-local
+  mis-qualification.
 - `restart!` — agent-callable fresh image (D5 escape hatch).
 - `build!` — materialize `.clj` files (the C1/C6 explicit build): production
   namespaces under `src/`, **test namespaces (name ends `-test`) under `test/`**
