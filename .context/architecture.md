@@ -68,7 +68,8 @@
 | `slopp.image` | store↔image bridge: load-ns!, traced-test-run (dependency-closure instrumentation) |
 | `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
 | `slopp.refactor` | position-based structural rewrites (rename, extract, subform) |
-| `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate |
+| `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate; pure-eval gate (query_store) |
+| `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
 | `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |
 | `slopp.mcp` | MCP over stdio; tool schemas, hints, turn gate; `handle` is pure dispatch |
