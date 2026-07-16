@@ -72,10 +72,12 @@
   tool consuming kondo rows directly for reference questions is a bug.
   **The wire never carries canonical records**: `to-wire` groups by target
   ({:to qsym :from [qsym ...] :tagged [...]} — :static implied, tags only
-  for exceptions, ~3-5× slimmer); `ref-id`/`parse-ref` mint and expand the
-  short handle "fA→fB" (stable form-ids, mechanically invertible through
-  the current graph, nothing stored). Convert at the boundary, both
-  directions, one place.
+  for exceptions, ~3-5× slimmer). NAMES are the only reference currency on
+  the wire (opaque ids fail unsafe; a mistyped name fails loudly) — short
+  handles were built and deleted same-day as unconsumed surface; the
+  version-locked variant that WOULD earn its keep is parked in
+  `.ideas/version-locked-references.md`. Convert at the boundary, one
+  place.
 
 ## Layer map (bottom-up)
 
