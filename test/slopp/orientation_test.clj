@@ -320,3 +320,40 @@
         (testing "totals roll up the risks"
           (is (pos? (get-in r [:totals :untested] 0)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated query-store-is-the-data-oracle
+  ;; the image answers questions OF the code; query_store answers questions
+  ;; ABOUT it — read-only eval over the immutable store value, in the server
+  ;; where that value lives. The sanctioned home for ad-hoc analysis that
+  ;; otherwise becomes a canned tool or a raw db read.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'qs.core
+                   (str "(ns qs.core)\n\n"
+                        "(defn f \"F.\" [x] x)\n\n"
+                        "(defn- g \"G.\" [x] x)\n"))
+      (testing "pure analysis over the live store value"
+        (let [r (api/query-store sess
+                                 "(fn [store] (count (slopp.store/forms store 'qs.core)))")]
+          (is (= 3 (:result r)) (pr-str r)))
+        (let [r (api/query-store sess
+                                 "(fn [store] (sort (map :name (slopp.store/forms store 'qs.core))))")]
+          (is (= '(f g qs.core) (:result r)) (pr-str r))))
+      (testing "the code must be one fn of the store"
+        (is (re-find #"\(fn \[store\]" (str (:error (api/query-store sess "(+ 1 2)"))))))
+      (testing "effects refuse with teaching"
+        (is (re-find #"(?i)read-only"
+                     (str (:error (api/query-store
+                                   sess "(fn [store] (spit \"/tmp/x\" store))")))))
+        (is (:error (api/query-store
+                     sess "(fn [store] (slopp.db/append! nil store nil))")))
+        (is (:error (api/query-store sess "(fn [store] (eval '(+ 1 2)))"))))
+      (testing "runaway code times out instead of wedging the server"
+        (is (re-find #"timed out"
+                     (str (:error (api/query-store
+                                   sess "(fn [store] (loop [] (recur)))"
+                                   :timeout-ms 300))))))
+      (testing "exceptions surface as errors"
+        (is (re-find #"boom"
+                     (str (:error (api/query-store
+                                   sess "(fn [store] (throw (ex-info \"boom\" {})))"))))))
+      (finally (api/close! sess)))))

@@ -571,3 +571,8 @@
         (is (= "notifications/tools/list_changed" (:method n)))
         (is (nil? (:id n)) "a notification carries no id"))
       (is (nil? (#'mcp/tools-note! sess)) "baseline updated after emitting"))))
+(deftest query-store-rides-the-wire-read-only
+  (is (some #(= "query_store" (:name %)) mcp/tools)
+      "the store oracle is a tool")
+  (is (contains? @#'mcp/read-only-tools "query_store")
+      "plan mode may call it without prompts"))

@@ -3466,6 +3466,52 @@
              :top      (vec (take limit ranked))
              :totals   (into (sorted-map) (frequencies (mapcat :flags rows)))}
       (> (count rows) limit) (assoc :omitted (- (count rows) limit)))))
+^:unsafe (defn query-store
+  "The STORE-VALUE oracle: evaluate one read-only `(fn [store] ...)` over
+  the CURRENT immutable store value, in the server process where that
+  value lives — the sanctioned home for ad-hoc codebase-as-data analysis
+  (`query_eval` answers questions OF the code in the image; this answers
+  questions ABOUT it). Gated hard: the form must be a single fn of the
+  store, effect-free by the pure-eval walk (no `!`, defs, interop, IO,
+  eval), and it runs on a worker with a timeout so runaway analysis can't
+  wedge the serve loop (the store value is immutable — the pointer is safe
+  by construction). Results must print small (pr-str capped); fully-qualify
+  everything (no aliases in eval context). Returns {:result v :ms n} or
+  {:error msg}."
+  [session code & {:keys [timeout-ms] :or {timeout-ms 10000}}]
+  (let [parsed (edit/parse-form (str code))]
+    (if (:error parsed)
+      {:error (str "query_store takes ONE (fn [store] ...) form — "
+                   (:error parsed))}
+      (let [sx (try (n/sexpr (:node parsed)) (catch Exception _ nil))]
+        (cond
+          (not (and (seq? sx) (contains? #{'fn 'fn*} (first sx))))
+          {:error "query_store takes ONE (fn [store] ...) form — got something else"}
+
+          :else
+          (if-let [refusal (edit/pure-eval-refusal sx)]
+            {:error refusal}
+            (let [store (:store @session)
+                  t0    (System/currentTimeMillis)
+                  fut   (future
+                          (try {:result ((eval sx) store)}
+                               (catch Throwable e
+                                 {:error (str "query_store threw: "
+                                              (ex-message e))})))
+                  out   (deref fut timeout-ms ::timeout)]
+              (if (= ::timeout out)
+                (do (future-cancel fut)
+                    {:error (str "query_store timed out after " timeout-ms
+                                 "ms — narrow the analysis (or raise"
+                                 " :timeout-ms)")})
+                (let [ms (- (System/currentTimeMillis) t0)]
+                  (if (:error out)
+                    (assoc out :ms ms)
+                    (let [s (pr-str (:result out))]
+                      (if (> (count s) 32768)
+                        {:result (str (subs s 0 32768) " …")
+                         :truncated true :ms ms}
+                        (assoc out :ms ms)))))))))))))
 (defn query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it

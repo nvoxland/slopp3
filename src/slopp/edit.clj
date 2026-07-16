@@ -83,6 +83,48 @@
      defmethod in-ns ns ns-unmap ns-unalias alter-var-root intern remove-ns
      create-ns load-file load-string})
 
+(defn pure-eval-refusal
+  "nil when sexpr `x` looks READ-ONLY, else a teaching error string — the
+  gate for the store-value oracle (query_store), which must never write.
+  Conservative, quote-pruned symbol walk refusing: `!`-enders (the effect
+  convention), def-family and redefinition forms, java interop (method
+  calls, constructors — arbitrary IO hides there), and an explicit denylist
+  of IO/eval/binding entry points. Pure analysis needs none of those."
+  [x]
+  (let [deny (set (str/split (str "spit slurp eval read-string load-string"
+                                  " load-file load require use import intern"
+                                  " in-ns remove-ns ns-unmap alter-var-root"
+                                  " set! with-redefs with-redefs-fn"
+                                  " push-thread-bindings future future-call"
+                                  " agent send send-off pmap pcalls promise"
+                                  " proxy reify deftype defrecord definterface"
+                                  " gen-class new def defn defn- defmacro"
+                                  " defmethod defmulti defonce defprotocol"
+                                  " extend extend-type extend-protocol binding"
+                                  " shutdown-agents add-watch remove-watch")
+                             #" "))
+        deny-ns #{"System" "java.lang.System" "clojure.java.io"
+                  "clojure.java.shell" "java.io" "java.nio.file"}
+        bad (fn bad [f]
+              (cond
+                (and (seq? f) (= 'quote (first f))) nil
+                (symbol? f)
+                (let [nm (name f)]
+                  (when (or (str/ends-with? nm "!")
+                            (str/starts-with? nm ".")
+                            (str/ends-with? nm ".")
+                            (contains? deny nm)
+                            (contains? deny-ns (namespace f)))
+                    f))
+                (map-entry? f) (or (bad (key f)) (bad (val f)))
+                (coll? f) (some bad f)
+                :else nil))]
+    (when-let [f (bad x)]
+      (str "query_store is READ-ONLY analysis over the immutable store value — "
+           f " is refused (no effects, no defs, no interop, no IO/eval). "
+           "Pure clojure.core plus slopp's pure fns (slopp.store/forms, "
+           "slopp.render/render-ns, slopp.index/analyze ...) cover the "
+           "analysis space"))))
 (defn observe-gate
   "nil if `code` is observation-only; an error string if it (re)defines
   code or doesn't parse. POSITION-aware: banned symbols count anywhere

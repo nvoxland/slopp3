@@ -65,8 +65,16 @@
                   :properties {:id {:type "string"}}
                   :required ["id"]}}
    {:name "query_eval"
-    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops."
-    :inputSchema {:type "object" :properties {:code {:type "string"}} :required ["code"]}}
+    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops. Questions OF the code — for questions ABOUT the codebase-as-data, use query_store."
+    :inputSchema {:type "object"
+                  :properties {:code {:type "string"}}
+                  :required ["code"]}}
+   {:name "query_store"
+    :description "The STORE-VALUE oracle: one read-only (fn [store] ...) evaluated over the current immutable store value — ad-hoc analysis ABOUT the codebase (form counts, metadata sweeps, custom aggregation) that no canned query covers. Fully-qualify everything (slopp.store/forms, slopp.render/render-ns, slopp.index/analyze ...); no effects/defs/interop/IO; results must print small. timeout_ms default 10000."
+    :inputSchema {:type "object"
+                  :properties {:code {:type "string"}
+                               :timeout_ms {:type "integer"}}
+                  :required ["code"]}}
    {:name "query_observe"
     :description "Capture args/returns of ns/name while running driver `code` — what actually flows through it."
     :inputSchema {:type "object"
@@ -416,7 +424,7 @@
     "query_brief" "query_slice" "query_depends" "query_eval"
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
-    "review_scan"
+    "review_scan" "query_store"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 (def tools
   "Every tool descriptor the server advertises — concatenated from the
@@ -1027,6 +1035,9 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
                                                               :format (:format a)
                                                               :limit (or (:limit a) 20))))))
       "query_eval" (text! (api/query-eval session (:code a)))
+      "query_store" (text! (told! session name a
+                                  (api/query-store session (:code a)
+                                                   :timeout-ms (or (:timeout_ms a) 10000))))
       "query_observe" (text! (let [r (api/query-observe session (sym :ns) (sym :name)
                                                           (:code a)
                                                           :limit (or (:limit a) 10))]
