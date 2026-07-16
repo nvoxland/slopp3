@@ -1490,3 +1490,14 @@ references CANNOT hide rather than being tolerated. Scope note: carriers
 relieve markers only for SAME-STORE drivers — slopp's own nested-store
 test fixtures keep ^:unused-ok (cross-store references are invisible by
 construction, and ordinary apps' tests call statically anyway).
+
+Resolver denylist (2026-07-16, completes the carrier decision's teeth):
+requiring-resolve, resolve, ns-resolve, find-var, and intern join the D3
+denylist. Blocking var-shaped STRINGS is the wrong enforcement point —
+docstrings mention vars and tests hold quoted symbols as data, both
+legitimately inert. The gate blocks where a mention could BECOME a var;
+refusals teach the carriers (store/late-ref, #'var literals) and the
+^:unsafe owned-obligation escape. Sanctioned resolver homes: late-ref
+itself and slopp.boot/-main (the OS boundary). Consequence: in gated
+store code, a string can no longer become a reference — strings are
+inert by construction, which is stronger than any string lint.
