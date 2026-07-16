@@ -91,7 +91,12 @@
   only). Compile errors translate once at the hot-load chokepoint
   (`edit/anchor-error` → `edit/compile-error`, the one shape every
   'failed to compile' surface returns); lint rows carry :at natively;
-  test-failure detail strips the coordinate (the test is named).
+  test-failure detail strips the coordinate (the test is named). The
+  invariant is ENFORCED, not trusted: `mcp/boundary-leak` + the
+  `strict-boundary?` audit at `text!` (the universal response chokepoint)
+  THROW on any `file.clj:line` or `:row`/`:col` reaching an agent — on
+  across the wire test suite, so any tool that leaks a coordinate fails a
+  test.
   **The wire never carries canonical records**: `to-wire` groups by target
   ({:to qsym :from [qsym ...] :tagged [...]} — :static implied, tags only
   for exceptions, ~3-5× slimmer). NAMES are the only reference currency on
