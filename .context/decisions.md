@@ -806,6 +806,31 @@ refusing (deliberately, for now): `move-form!` (an explicit ordering command)
 and merge replay — the agent/merge explicitly commanded that order, so an
 illegal one is honest feedback, not a hidden chore.
 
+S1b ✅ **Update 3 — ONE ordering algorithm; phantom names can't freeze a
+declare (2026-07-16).** Found dogfooding the slopp.api split. TWO orderers had
+grown up: `refs/cold-load-order` (Kahn over THE reference graph, the write
+pipeline's) and `fix-declares!`'s bespoke conservative single-form mover (a
+clj-surgeon port from when AGENTS minted declares). The Kahn sort strictly
+dominates — the mover's giving-up is why `(declare isolated-test-run!)` sat in
+slopp.api indefinitely. `fix-declares!` now DROPS a namespace's declares and
+delegates to `edit/resolve-cold-load`: reorder, or the pipeline's own MARKED
+auto-declare for a live cycle (so a legacy hand-written declare MIGRATES to a
+pipeline-owned one that says why); it no-ops when the rendered ns wouldn't
+change. It no longer reorders anything itself. Result: ZERO declares remain
+anywhere in `slopp.api*`.
+Also fixed: a PHANTOM declared name (declared here, defined nowhere — an
+earlier `move-forms!` lifted the var out) classified as `:skip`, and removal
+required no skips, so ONE phantom froze its declare FOREVER. slopp.api's
+`f463` had 7 of 17: they minted unbound vars (a typo'd unqualified call
+resolves silently instead of failing loudly) AND appeared as phantom FORMS in
+`query_source`'s outline — the agent was told about forms that don't exist,
+and no tool could address the anonymous declare to fix it (`query_search`
+reports it by form-id; the edit tools only take a name). Phantoms are now
+`:phantom`: dead, never a reason to keep a declare. Root cause still open:
+`move-forms!` mints its own unmarked declares
+(`.ideas/move-forms-mints-unmanaged-declares.md`) — it is the last declare
+writer outside the pipeline.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

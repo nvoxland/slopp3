@@ -352,3 +352,71 @@ its own worst bug: a trace-only :untested signal flagged 545/966 forms
 because slopp's tests are ^:isolated (external JVMs, invisible to the
 in-image trace) — fixed with static call-graph reachability, dropping
 false positives to 72 real ones.
+
+## The slopp.api deep-module split — MEASURED, and the premise was wrong
+(2026-07-16, user-directed; friction-hunting run)
+
+The parked plan was "split slopp.api into depth-3 `slopp.api.*` namespaces,
+package-private by recursive visibility, slopp.api stays the public surface —
+and win back the ~500ms/write kondo cost on its 195KB." Measured against THE
+reference graph before touching anything:
+
+- slopp.api: **103 forms, 195KB**. Of that, **only 23 forms / 22KB (12%) is
+  genuinely internal** (no callers outside the slopp.api module, production
+  edges only). **78 forms / 171KB (88%) is PUBLIC surface** — called by
+  slopp.mcp, slopp.sync, slopp.http, slopp.bench, slopp.evalseed. The biggest
+  forms are ALL public (query-history 12.8KB, done! 12.3KB, move-forms! 8.4KB).
+- So a package-private deep split **cannot deliver the kondo win**: the cost
+  IS the public surface, and package-private is exactly what public can't be.
+  Moving 12% is not worth a refactor.
+
+**The resolution (user's call, and it's the right model): cohesion decides
+WHERE code lives; the export dial decides WHO sees it — they are independent.**
+Don't keep a form in a god-namespace *because* it's public, and don't distort
+structure to dodge an `^:export` marker. Move the cluster where it belongs and
+export the genuinely-public vars. That unblocks the 88% and makes the marker
+say something true. Now taught in the slopp SKILL.
+
+Proof done this run: the branch/line cluster → `slopp.api.branch` with
+`export: true`. `move-forms!` correctly pulled the **downward closure** (the
+cluster's private helpers came along unasked). slopp.api **102→95 forms,
+195→185KB**; branch tests green. The remaining clean clusters (measured,
+zero escapes): deps (3KB), files (5KB, 1 escape via `config!`→`git-config-value`).
+The real bulk is the big public ops (done!, edit-group!, move-forms!,
+isolated-test-run!, review-scan, commit-point!, build!) — each its own cluster.
+
+### Friction found (each cost real time; several are now fixed)
+1. **Stale declares mint PHANTOM forms in `query_source`'s outline** — the
+   agent is told about forms that DON'T EXIST (`status-at`, `human-time`, …
+   were lifted to api.history/api.session by earlier moves; their names stayed
+   in slopp.api's declare). Trying to move them: "no such forms". FIXED.
+2. **An anonymous form is unaddressable by the agent-facing tools.**
+   `query_search` reports the declare as "form f463"; `query_source {targets}`
+   and `edit_delete_form` take only a NAME and reject the id — and the outline
+   doesn't list it. The one wire-uniformity hole: ids come OUT but don't go IN.
+   (decisions.md says ids should be accepted alongside qsyms.) STILL OPEN.
+3. **One phantom froze its whole declare forever** (`:skip` blocked removal).
+   FIXED — and it cleared f463 + finally `(declare isolated-test-run!)`.
+4. **TWO ordering algorithms** (Kahn topo sort vs fix-declares!'s conservative
+   mover). FIXED — one algorithm; fix-declares! delegates.
+5. **`move-forms!` mints its own UNMARKED declares** — the source of (1)/(3).
+   Self-heals at the next done now, but it's debt we create then clean. OPEN.
+6. **`query_store` applies the D3 dialect denylist to read-only ad-hoc
+   analysis** — `read-string` refused in a pure query over an immutable store
+   value. The gate is for STORED code; a one-shot analysis query isn't that.
+7. **My own regression, caught by dogfooding:** the new `:isolated-pending`
+   dumped ~200 test names into every whole-project `done`. Compressed to
+   count+sample and suppressed at the boundary. Mid-episode responses must
+   report DIRECTION, not enumerate standing state — the recurring lesson.
+8. **Test namespaces are FEATURE-named** (`slopp.history-test`,
+   `slopp.episode-test`), not subject-named, so the module test-fold assigns
+   them to phantom modules (`slopp.history` doesn't exist) and they can't see
+   the deep namespaces of the module they actually test. Inflates "external"
+   and would force exports for tests alone. Renaming them `slopp.api.*-test`
+   would fold them correctly. OPEN — worth doing before more splitting.
+
+### The ergonomics gap worth a feature
+Every public var in a deep namespace needs its own `^:export`. For a deep ns
+that IS a public surface, that's a marker per var (6 here; ~78 for the whole
+split). An **ns-level export** ("this deep namespace is public surface") would
+say it once. Consider before splitting the big public clusters.

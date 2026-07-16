@@ -129,9 +129,12 @@ calls: nothing, unless a decision changed. Final summary: short —
 name what shipped and quote result keys (`:test`, `:done`,
 `:findings`); don't re-describe what the tools already said.
 
-**Every write must compile** — callees before callers ((declare) for mutual
-recursion). Mutating fns end in `!` (rename with the `:suggest` if warned);
-`^:reads` marks read-only dep calls; `^:unsafe` is the dialect escape hatch.
+**Every write must compile.** Form ORDER is not your job: write forms in any
+order — the pipeline moves definitions above their callers, and inserts a
+marked `(declare …)` itself for genuine mutual recursion. Hand-written
+`(declare …)` is refused; you never need one. Mutating fns end in `!` (rename
+with the `:suggest` if warned); `^:reads` marks read-only dep calls;
+`^:unsafe` is the dialect escape hatch.
 
 **Modules are enforced.** A module is the first two ns segments
 (`logi.parcel`; `x.y-test` belongs to `x.y`). Calling ACROSS modules
@@ -147,6 +150,17 @@ declarations), standing debt; browse what a module OFFERS (public fns +
 exports, deps, consumers) before calling into it: `query_depends
 {modules true, on "x.y"}`. Public-surface fns warn once when a
 write leaves them undocumented — add the docstring.
+
+**Cohesion decides WHERE code lives; the export dial decides WHO sees it —
+they are independent.** Put forms that serve one concern in one namespace (a
+deep `x.y.z` for a cluster inside a module); if one has legitimate outside
+callers, mark it `^:export` and move on. Never park a form in a grab-bag
+namespace — or drag unrelated forms along with it — just to dodge an export
+marker: the marker is cheap, a god-namespace is not. Conversely, `^:export`
+ASSERTS "this is public surface", so it is not a substitute for putting a form
+where it belongs. `edit_move_forms` relocates a cluster in one verified
+intent (callers everywhere rewritten, requires added, `export: true` for a
+deep target with outside callers).
 
 ## Questions → the oracle
 
