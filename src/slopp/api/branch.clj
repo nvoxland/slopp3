@@ -5,7 +5,7 @@
             [slopp.edit :as edit]
             [slopp.image :as image]
             [slopp.repl :as repl]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.store.merge :as merge]))
 
 (defn merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
@@ -15,7 +15,7 @@
   [session theirs from-label]
   (let [t0   (System/nanoTime)
         base (:store @session)
-        r    (store/merge-logs base theirs :from from-label)]
+        r    (merge/merge-logs base theirs :from from-label)]
     (cond
       (nil? (:fork-point r))
       {:error "stores share no history — not a fork/branch of this project"}
@@ -46,7 +46,7 @@
         (if load-err
           (do (session/fresh-image! session)
               {:error (str "merge failed to compile: " load-err)})
-          (let [[st'' mdelta] (store/record-merge st' from-label r)]
+          (let [[st'' mdelta] (merge/record-merge st' from-label r)]
             (if-not (session/try-commit! session base st''
                                  (vec (distinct
                                        (concat (keep :ns (drop (count (store/deltas base))
