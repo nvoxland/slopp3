@@ -556,12 +556,14 @@
   clone/import, and to bring a remote's objects in before a grafted push.
   Scheme-less urls are local paths — made absolute (an in-memory repo has no
   dir to resolve against)."
-  [^Repository repo url & {:keys [token branch] :or {branch "main"}}]
+  [^Repository repo url & {:keys [token branch timeout]
+                           :or {branch "main" timeout 30}}]
   (let [s   (str url)
         uri (URIish. ^String (if (re-find #"^[a-z+]+://" s)
                                 s
                                 (.getAbsolutePath (io/file s))))]
     (with-open [tn (Transport/open repo uri)]
+      (.setTimeout tn (int timeout))   ; seconds; a dead socket must throw, not freeze
       (when-let [creds (remote-credentials token)]
         (.setCredentialsProvider tn creds))
       (.fetch tn NullProgressMonitor/INSTANCE
@@ -594,10 +596,11 @@
   remote is an honest :error, never a force. Returns
   {:pushed sha :status s :remote-branch b} | {:error msg}."
   [{:keys [^Repository repo map-conn] :as ctx} url
-   & {:keys [token branch remote-branch] :or {branch "main"}}]
+   & {:keys [token branch remote-branch timeout]
+      :or {branch "main" timeout 30}}]
   (when-let [base (db/get-meta map-conn "git-base-sha")]
     (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
-      (fetch-remote! repo url :token token)))
+      (fetch-remote! repo url :token token :timeout timeout)))
   (ensure-projected! ctx)
   (let [rbranch (or remote-branch branch)
         src     (str "refs/heads/" branch)
@@ -608,6 +611,7 @@
                                    (.getAbsolutePath (io/file s))))]
     (if-let [tip (.resolve repo src)]
       (with-open [tn (Transport/open repo uri)]
+        (.setTimeout tn (int timeout))   ; a dead socket must throw, not freeze
         (when-let [creds (remote-credentials token)]
           (.setCredentialsProvider tn creds))
         (let [rru    (RemoteRefUpdate. repo src dst false nil nil)

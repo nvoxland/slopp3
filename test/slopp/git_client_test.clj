@@ -92,3 +92,23 @@
         (git/close-ctx! ctx)
         (rm-rf dir)
         (rm-rf (io/file bare))))))
+(deftest ^:isolated dead-remotes-time-out
+  ;; a half-dead HTTPS connection froze the server's serve thread for 40+
+  ;; minutes mid-commit_point: JGit transports carried NO timeout, so one
+  ;; wedged socket read blocked every tool. A dead remote must become a
+  ;; fast exception the publish path degrades from.
+  (let [srv (java.net.ServerSocket. 0)   ; accepts, never answers
+        dir (temp-dir)
+        ctx (git/open-ctx! dir)]
+    (try
+      (let [url (str "http://127.0.0.1:" (.getLocalPort srv) "/dead.git")
+            f   (future (try (git/fetch-remote! (:repo ctx) url :timeout 2)
+                             (catch Exception e {:threw (str e)})))
+            r   (deref f 20000 ::wedged)]
+        (is (not= ::wedged r)
+            "the fetch must fail fast, never hang the calling thread")
+        (is (:threw r) (pr-str r)))
+      (finally
+        (git/close-ctx! ctx)
+        (rm-rf dir)
+        (.close srv)))))
