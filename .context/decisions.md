@@ -755,6 +755,33 @@ lint ERRORS on mcp's branch_merge/merge_from handlers were REAL — both
 tools threw ArityException on every call (`:agent` kwarg their api fns
 never had); fixed, checkpoint lint now clean.
 
+S1b ✅ **Update — auto-avoid-declare (2026-07-16): the pipeline orders forms,
+the agent never writes `(declare …)`.** The cold-load gate refused a forward
+ref and told the agent to `edit_move` or add a declare — a mechanical
+ordering chore the store (order is an element property, not text) can do
+itself. Now `rebased-write!` wraps the pure transform in
+`edit/resolve-cold-load`: on a forward ref it computes a topological order
+(`refs/cold-load-order`, Kahn over THE reference graph) and realizes it via
+`store/reorder-to` (minimal replayable `:move` deltas) BEFORE the gate. The
+gate then passes; the write proceeds. Wrapping the *transform* (not patching
+each branch's gate) means the reorder rides both the durable append-CAS loop
+and the ephemeral in-swap rerun consistently, and all three callers
+(`add-form!`, `edit-replace!`, `delete-form!`) inherit it. Only a genuine
+cycle (mutual recursion — no legal order) falls through to the original
+refusal, which still teaches the `declare`. **The reorder is SILENT to the
+agent** — deliberately no `:reordered`/`:moved` result key: form ordering is
+a file-oriented concept, and surfacing it would re-anchor the agent to the
+"think about the file" model the boundary audit deletes (same category as a
+`file:line` leak). Provenance is NOT lost — it lives in the move-deltas'
+`"auto-reorder: define before use"` prompt, queryable by a human/tool. The
+`fix_declares` **MCP tool was removed** in the same change: with writes
+auto-reordered and `done!` running `fix-declares!` internally (declare
+hygiene for any cycle-declare that outlives its need), there is no reason for
+an agent to ever reach for it. `api/fix-declares!` stays as the internal
+cleanup. Friction found + logged: the edit tools' INLINE `:test` summary ran
+an `^:isolated` test in-image and reported a false green (the isolated run
+was red) — inline impacted-runs must not trust `^:isolated` results.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

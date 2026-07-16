@@ -55,8 +55,10 @@
 
 ## Gotchas
 
-- The cold-load gate (S1b) refuses writes/moves/merges whose rendered ns
-  can't fresh-load (forward refs) — reorder with edit_move or add a declare.
+- The cold-load gate (S1b) auto-resolves acyclic forward refs by reordering
+  defs above callers at write time (silent — the agent never writes a
+  declare). It refuses ONLY a genuine cycle (mutual recursion), which no
+  reorder can fix — that refusal still teaches the `declare`.
 - Image-spawning tests MUST be `^:isolated` (in-image recursion) and must
   `close!`/`stop!` in `finally` — leaked child JVMs are a bug
   (`ps aux | grep nrepl.cmdline`).
