@@ -73,16 +73,30 @@
 (defn parse-form
   "Parse `source` as exactly ONE dialect-legal top-level form (the D3/D4 gate
   every write shares). Returns {:node node} or {:error msg} — including for
-  unparseable/unbalanced source (F3: never throws)."
+  unparseable/unbalanced source (F3: never throws). Hand-written `(declare …)`
+  is refused here (the EDIT path only): the pipeline OWNS ordering — it reorders
+  definitions above their callers, or inserts a marked declare itself for a
+  genuine cycle, so the agent never writes one. Imports (`dialect-scan`) keep
+  their declares."
   [source]
   (try
     (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
       (if (not= 1 (count forms))
         {:error (str "expected exactly one top-level form, got " (count forms))}
-        (let [node (first forms)]
-          (if-let [err (dialect-check node)]
-            {:error err}
-            {:node node}))))
+        (let [node (first forms)
+              s    (n/sexpr node)]
+          (cond
+            (and (seq? s) (= 'declare (first s)))
+            {:error (str "(declare …) is managed for you — slopp orders forms"
+                         " itself: write your forms in any order (definitions are"
+                         " reordered above their callers), and a genuine"
+                         " mutual-recursion cycle gets a marked declare inserted"
+                         " automatically. Drop the declare and write the real forms.")}
+
+            (dialect-check node)
+            {:error (dialect-check node)}
+
+            :else {:node node}))))
     (catch Exception e
       {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
 
@@ -513,17 +527,36 @@
 
       :else nil)))
 (defn resolve-cold-load
-  "AUTO-AVOID-DECLARE: if `store`'s `ns-sym` has a forward reference a
-  REORDER can fix, return {:store <reordered> :moved n} — definitions
-  moved above their callers, the arrangement a fresh load resolves without
-  a declare. nil when the namespace already cold-loads, OR a genuine cycle
-  (mutual recursion) makes reorder insufficient (a real declare is needed —
-  the write gate then teaches it). The write pipeline calls this so agents
-  never hand-write (declare ...)."
+  "AUTO-AVOID-DECLARE: make `store`'s `ns-sym` cold-load WITHOUT the agent ever
+  writing (declare …). Returns {:store <fixed> …} or nil (already cold-loads).
+  Two moves, both silent to the agent (the pipeline OWNS form ordering):
+  - **Reorder** (acyclic forward ref): definitions moved above their callers
+    — {:store :moved n}. A fresh load then resolves top-to-bottom, no declare.
+  - **Auto-declare** (a genuine cycle — mutual recursion, no legal order):
+    insert a MARKED `^{:auto-declare \"<why>\"} (declare …)` for the cycle
+    members — {:store :declared [names]}. The marker's value is the why
+    (markers-carry-their-why); `fix-declares!` removes it once the cycle
+    breaks. The write pipeline calls this so agents never hand-write declares."
   [store ns-sym & {:keys [prompt agent]}]
   (when (cold-load-errors store [ns-sym])
     (let [{:keys [order cycle]} (refs/cold-load-order store ns-sym)]
-      (when-not cycle
+      (if cycle
+        (let [names  (mapv #(symbol (name %)) cycle)
+              why    (str "mutual recursion: " (str/join ", " (map str names)))
+              decl   (first (filter n/sexpr-able?
+                                    (n/children
+                                     (p/parse-string-all
+                                      (str "^{:auto-declare \"" why "\"}\n"
+                                           "(declare " (str/join " " (map str names)) ")")))))
+              nameset (set names)
+              anchor (some #(when (nameset (:name %)) (:name %))
+                           (store/forms store ns-sym))
+              [st' _] (store/append-form store ns-sym decl
+                                         :before anchor
+                                         :prompt (or prompt (str "auto-declare: " why))
+                                         :agent agent)]
+          (when (and st' (nil? (cold-load-errors st' [ns-sym])))
+            {:store st' :declared names}))
         (let [names   (mapv #(:name (store/form-by-id store %)) order)
               [st' n] (store/reorder-to store ns-sym names
                                         :prompt (or prompt "auto-reorder: define before use")

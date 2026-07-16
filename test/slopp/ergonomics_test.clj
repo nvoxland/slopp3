@@ -314,3 +314,41 @@
         (is (nil? (edit/cold-load-errors (:store @sess) '[cc.core])))
         (is (not (re-find #"\(declare" (api/query-source sess 'cc.core)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated genuine-cycle-auto-declares-with-marker
+  ;; mutual recursion has no legal form order — the pipeline OWNS the declare:
+  ;; it inserts a MARKED (declare …) itself so the ns cold-loads. The agent
+  ;; never writes one, and no declare key leaks back (like the reorder).
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'cy.core "(ns cy.core)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
+      (testing "editing ping into mutual recursion auto-declares (no refusal)"
+        (let [r (api/edit-replace! sess 'cy.core 'ping "(defn ping [n] (pong n))"
+                                   :prompt "cyc")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:declared r)) "silent — no declare key leaks to the agent")))
+      (testing "the ns cold-loads via an auto-inserted, marked declare"
+        (is (nil? (edit/cold-load-errors (:store @sess) '[cy.core])))
+        (let [src  (api/query-source sess 'cy.core)
+              decl (re-find #"\(declare[^)]*\)" src)]
+          (is (re-find #":auto-declare" src) "the declare carries the marker/why")
+          (is (and decl (re-find #"ping" decl)) "ping is declared")
+          (is (and decl (re-find #"pong" decl)) "pong is declared")))
+      (finally (api/close! sess)))))
+(deftest ^:isolated hand-written-declares-are-refused
+  ;; the pipeline OWNS declares — an agent never writes one. A hand-written
+  ;; (declare …) on the EDIT path is refused with teaching; imports (ingest)
+  ;; and the pipeline's own inserts are unaffected.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'nd.core "(ns nd.core)\n(defn a [] 1)\n")
+      (testing "add_form of a bare declare is refused with teaching"
+        (let [r (api/add-form! sess 'nd.core "(declare later)" :prompt "x")]
+          (is (:error r))
+          (is (re-find #"declare" (str (:error r))))
+          (is (re-find #"order" (str (:error r)))
+              "teaches that ordering is automatic")))
+      (testing "ingest of ported code containing a declare is still allowed"
+        (let [r (api/ingest! sess 'nd.imp
+                             "(ns nd.imp)\n(declare h)\n(defn f [] (h))\n(defn h [] 2)\n")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))

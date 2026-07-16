@@ -1545,16 +1545,16 @@
                        (throw (ex-info (str "normalization failed to compile: " err) {})))
                      (when-not (session/try-commit! session st st' (vec touched))
                        (throw (ex-info "store changed during done — retry" {})))))
-        ;; automatic declare hygiene (user-directed): the compile gate makes
-        ;; agents mint (declare)s; the done-point cleans the safe ones up
-        declare-fixes
-        (vec (for [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
-                                       changed))
-                   :let [r (fix-declares! session ns*
-                                          :prompt (or label "done declare hygiene")
-                                          :agent agent)]
-                   :when (pos? (:removed r 0))]
-               {:ns ns* :removed (:removed r) :moved (:moved r)}))
+        ;; automatic declare hygiene: the pipeline OWNS declares (auto-inserted
+        ;; for a genuine cycle); once the cycle breaks the declare is stale —
+        ;; remove it here. SILENT: the agent never manages declares, so this
+        ;; runs for effect and is not reported.
+        _
+        (doseq [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
+                                    changed))]
+          (fix-declares! session ns*
+                         :prompt (or label "done declare hygiene")
+                         :agent agent))
         ;; kondo lint over every namespace touched since the last done-point —
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
         lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
@@ -1698,7 +1698,6 @@
       (seq carried)       (assoc :lint-carried
                                  {:count (count carried)
                                   :forms (vec (sort (distinct (keep :form carried))))})
-      (seq declare-fixes) (assoc :declares-fixed declare-fixes)
       summary             (assoc :test summary)
       (:status iso)       (assoc :isolated iso))))
 
