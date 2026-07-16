@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -81,13 +81,13 @@
                         "(defn g [] 1)\n"
                         "(defn h [] 2)\n"))
       ;; branch: g starts calling h — legal, the declare is above
-      (let [r (api/branch! sess "side")]
+      (let [r (branch/branch! sess "side")]
         (is (nil? (:error r)) (pr-str r)))
       (let [r (api/edit-replace! sess 'm.core 'g "(defn g [] (h))"
                                  :prompt "g uses h" :agent "t")]
         (is (nil? (:error r)) (pr-str r)))
       ;; main: f drops h, the satisfied declare is tidied away — also legal
-      (let [r (api/branch-switch! sess "main")]
+      (let [r (branch/branch-switch! sess "main")]
         (is (nil? (:error r)) (pr-str r)))
       (let [r (api/edit-replace! sess 'm.core 'f "(defn f [] :indep)"
                                  :prompt "f drops h" :agent "t")]
@@ -98,7 +98,7 @@
             "setup: the declare must be gone on main"))
       ;; the merge would land g→(h) with no declare and h defined after g
       (let [before (api/query-source sess 'm.core)
-            r      (api/branch-merge! sess "side")]
+            r      (branch/branch-merge! sess "side")]
         (is (:error r) (pr-str r))
         (is (re-find #"cold-load" (str (:error r))))
         (testing "nothing committed, image intact"

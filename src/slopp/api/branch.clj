@@ -5,7 +5,7 @@
             [slopp.edit :as edit]
             [slopp.image :as image]
             [slopp.repl :as repl]
-            [slopp.store :as store] [slopp.store.merge :as merge]))
+            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str]))
 
 (defn merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
@@ -122,3 +122,177 @@
       (do (repl/stop! img)
           {:error (str "branch image failed to load: " err)})
       {:image img})))
+(defn ^:export merge!
+  "Phase 4 m2: merge a DIVERGED COPY of this project back into the live
+  session. A 'fork' is just a copied project dir edited by its own slopp
+  server; `other-dir` is that copy. Their delta-log suffix replays onto our
+  store: different-form work lands, identical changes converge, same-form
+  divergence returns `:conflicts` (ours kept, theirs surfaced — resolve by
+  hand with edit_replace_form)."
+  [session other-dir]
+  (let [f    (io/file (str other-dir))
+        db-f (io/file f ".slopp" "store.db")]
+    (cond
+      (not (.isAbsolute f))
+      {:error "merge needs an ABSOLUTE project-dir path"}
+
+      (not (.exists db-f))
+      {:error (str "no slopp store under " other-dir)}
+
+      :else
+      (let [conn   (db/open! (str f))
+            theirs (try (db/load-store conn)
+                        (finally (.close ^java.sql.Connection conn)))]
+        (merge-into-session! session theirs (str other-dir))))))
+(defn ^:export branch!
+  "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
+  it — O(1), the store is a value; the image is already correct (identical
+  content). Durable sessions snapshot the line under .slopp/branches/<nm>."
+  [session nm]
+  (let [nm (str nm)
+        {:keys [branch lines dir]} @session]
+    (cond
+      (str/blank? nm)
+      {:error "branch needs a name"}
+
+      (= nm "main")
+      {:error "main is the trunk — branch FROM it"}
+
+      (or (= nm branch)
+          (contains? lines nm)
+          (and dir (.exists (io/file (line-dir dir nm)))))
+      {:error (str "branch " nm " already exists")}
+
+      :else
+      ;; claim the name atomically: in-process via the lines map, and
+      ;; cross-process via mkdir (fails if the dir exists)
+      (let [[old _] (swap-vals! session
+                                (fn [s]
+                                  (if (or (= nm (:branch s))
+                                          (contains? (:lines s) nm))
+                                    s
+                                    (update s :lines assoc nm ::claimed))))]
+        (if (or (= nm (:branch old)) (contains? (:lines old) nm))
+          {:error (str "branch " nm " already exists")}
+          (let [bdir (when dir (io/file (line-dir dir nm)))]
+            (when bdir (.mkdirs (.getParentFile bdir)))
+            (if (and bdir (not (.mkdir bdir)))
+              (do (swap! session update :lines dissoc nm)   ; release the claim
+                  {:error (str "branch " nm " already exists")})
+              (let [line-id (str (java.util.UUID/randomUUID))
+                    conn    (when dir
+                              (doto (db/open! (line-dir dir nm))
+                                (snapshot-to-conn! (:store @session))
+                                (db/set-line-id! line-id)))]
+                (swap! session
+                       (fn [s]
+                         (-> s
+                             (update :lines dissoc nm)      ; claim → active
+                             (update :lines assoc (:branch s)
+                                     {:store (:store s) :conn (:db s)})
+                             (assoc :branch nm :db conn
+                                    :store (assoc (:store s) :line-id line-id)
+                                    :data-version (some-> conn db/data-version)))))
+                {:branch nm :from branch :id line-id}))))))))
+(defn ^:export branch-switch!
+  "Checkout with LINE-OWNED images (m4): the outgoing line PARKS its image
+  intact (its REPL state included — inactive lines are immutable, so a parked
+  image stays in step by construction); the target ADOPTS its parked image if
+  it still has one, else BOOTS a fresh one on demand (the warm spare makes
+  that cheap). Parked images retire after the session's idle TTL. The trace
+  map resets — it described the other line."
+  [session nm]
+  (let [nm (str nm)]
+    (if (= nm (:branch @session))
+      {:switched nm :note "already on it"}
+      (if-let [target (load-line session nm)]
+        (let [adopted (:image target)
+              booted  (when-not adopted
+                        (boot-line-image! session (:store target)))]
+          (if (:error booted)
+            booted
+            (do (swap! session
+                       (fn [s]
+                         (-> s
+                             (update :lines assoc (:branch s)
+                                     {:store     (:store s)
+                                      :conn      (:db s)
+                                      :image     (:image s)
+                                      :last-used (System/currentTimeMillis)})
+                             (update :lines dissoc nm)
+                             (assoc :branch nm
+                                    :db (:conn target)
+                                    :store (:store target)
+                                    :data-version (some-> (:conn target)
+                                                          db/data-version)
+                                    :image (or adopted (:image booted))
+                                    :test-map {}))))
+                (cond-> {:switched nm}
+                  adopted       (assoc :adopted true)
+                  (not adopted) (assoc :booted true)))))
+        {:error (str "no branch named " nm)}))))
+(defn ^:export branch-merge!
+  "Merge branch `nm` into the CURRENT line (switch to main first to merge
+  down). Same engine and semantics as fork merges, iterated merges included;
+  the branch survives and can keep going."
+  [session nm]
+  (let [nm (str nm)]
+    (if (= nm (:branch @session))
+      {:error "cannot merge a branch into itself — switch to the target line first"}
+      (if-let [target (load-line session nm)]
+        (let [res (merge-into-session! session (:store target)
+                                       (str "branch:" nm "#"
+                                            (or (:line-id (:store target))
+                                                "legacy")))]
+          ;; lazily-opened conn is only needed for reading here
+          (when (and (:conn target)
+                     (not (contains? (:lines @session) nm)))
+            (.close ^java.sql.Connection (:conn target)))
+          res)
+        {:error (str "no branch named " nm)}))))
+(defn ^:export branch-delete!
+  "Drop branch `nm` (never the one you are on). Durable sessions also remove
+  its .slopp/branches dir."
+  [session nm]
+  (let [nm (str nm)
+        {:keys [branch lines dir]} @session]
+    (cond
+      (= nm branch)
+      {:error "cannot delete the branch you are on"}
+
+      (not (or (contains? lines nm)
+               (and dir (.exists (io/file (line-dir dir nm))))))
+      {:error (str "no branch named " nm)}
+
+      :else
+      (do (some-> (get-in lines [nm :image]) repl/stop!)
+          (some-> (get-in lines [nm :conn])
+                  ^java.sql.Connection (.close))
+          (swap! session update :lines dissoc nm)
+          (when dir (delete-dir! (io/file (line-dir dir nm))))
+          {:deleted nm}))))
+(defn ^:export query-branches
+  "Every line in the repo: the current one, in-memory lines, and (durable)
+  on-disk branches not yet loaded this session."
+  [session]
+  (let [{:keys [branch lines dir store]} @session
+        on-disk (when dir
+                  (let [bdir (io/file dir ".slopp" "branches")]
+                    (when (.exists bdir)
+                      (map #(.getName ^java.io.File %)
+                           (filter #(.isDirectory ^java.io.File %)
+                                   (.listFiles bdir))))))
+        info    (fn [nm st line]
+                  (cond-> {:name nm}
+                    st (assoc :head   (:id (last (store/deltas st)))
+                              :deltas (count (store/deltas st)))
+                    (:line-id st) (assoc :id (:line-id st))
+                    (:image line) (assoc :image :parked)))]
+    {:current  branch
+     :branches (vec (concat
+                     [(assoc (info branch store nil) :image :live)]
+                     (for [[nm line] (sort-by key lines)]
+                       (info nm (:store line) line))
+                     (for [nm (sort (remove (set (conj (keys lines) branch))
+                                            (or on-disk [])))]
+                       {:name nm})))}))

@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server]))
+            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -211,19 +211,19 @@
                            (api/deps-pure! session (sym :target) :agent (:agent a)))))
    "branch_create"
    (fn [session a _sym]
-     (text! (api/branch! session (:name a))))
+     (text! (branch/branch! session (:name a))))
    "branch_switch"
    (fn [session a _sym]
-     (text! (api/branch-switch! session (:name a))))
+     (text! (branch/branch-switch! session (:name a))))
    "branch_merge"
    (fn [session a _sym]
-     (text! (api/branch-merge! session (:name a))))
+     (text! (branch/branch-merge! session (:name a))))
    "branch_delete"
    (fn [session a _sym]
-     (text! (api/branch-delete! session (:name a))))
+     (text! (branch/branch-delete! session (:name a))))
    "query_branches"
    (fn [session _a _sym]
-     (text! (api/query-branches session)))
+     (text! (branch/query-branches session)))
    "restart"
    (fn [session _a _sym]
      (api/restart! session)
@@ -346,7 +346,7 @@
                 rows))))
    "merge_from"
    (fn [session a _sym]
-     (text! (api/merge! session (:dir a))))})
+     (text! (branch/merge! session (:dir a))))})
 (def ^:private tail-handlers!
   "Every handler-map entry (Q4) \u2014 call-tool checks here first."
   (merge env-handlers! file-handlers! sync-handlers!))

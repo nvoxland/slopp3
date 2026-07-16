@@ -11,7 +11,7 @@
             [slopp.api :as api]
             [slopp.db :as db]
             [slopp.git :as git]
-            [slopp.store :as store])
+            [slopp.store :as store] [slopp.api.branch :as branch])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.lib ObjectId Repository]
@@ -146,7 +146,7 @@
     (try
       (api/ingest! sess 'gp.core seed)
       (api/commit-point! sess "v1: f ships" :agent "alice")
-      (api/branch! sess "feature")
+      (branch/branch! sess "feature")
       (api/edit-replace! sess 'gp.core 'f "(defn f [x] (int (+ x 10)))"
                          :prompt "tweak on feature" :agent "bob")
       (api/commit-point! sess "feature: tweak" :agent "bob")

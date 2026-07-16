@@ -1411,291 +1411,54 @@
              t0)))
 
 (defn fix-declares!
-  "clj-surgeon-inspired tidy: for each (declare ...) in `ns-sym`, move the
-  declared defns above their first caller when safe (the defn's own intra-ns
-  callees must already precede that point — otherwise SKIP with a reason,
-  e.g. mutual recursion), then delete declares whose every name was
-  satisfied. One atomic group, verified."
+  "Declare hygiene at the done-point. The write pipeline OWNS form ordering, so
+  this no longer reorders anything itself (it used to carry a second,
+  conservative single-form mover that gave up on cases the topological sort
+  handles). It DROPS `ns-sym`'s declares and lets `edit/resolve-cold-load`
+  re-establish what is genuinely needed — a topological reorder (Kahn over THE
+  reference graph), or the pipeline's own MARKED auto-declare for a real cycle.
+  Net effect: a satisfied declare vanishes, PHANTOM names (a var an earlier
+  move lifted out — they mint unbound vars) vanish with it, a legacy
+  hand-written declare MIGRATES to a pipeline-owned marked one that says why,
+  and a stale auto-declare disappears once its cycle breaks. No-ops when the
+  rendered namespace would be unchanged. One atomic group, verified."
   [session ns-sym & {:keys [prompt agent]}]
-  (let [st     (:store @session)
-        forms  (store/forms st ns-sym)
-        idx-of (into {} (map-indexed (fn [i f] [(:name f) i])
-                                     forms))
-        adj    (callee-adjacency st)
-        an     (index/analyze (render/render-ns st ns-sym))
-        decls  (filter (fn [f]
-                         (and (nil? (:name f))
-                              (= 'declare (try (first (n/sexpr (:node f)))
-                                               (catch Exception _ nil)))))
-                       forms)]
+  (let [st    (:store @session)
+        decls (filter (fn [f]
+                        (and (nil? (:name f))
+                             (= 'declare (try (first (n/sexpr (:node f)))
+                                              (catch Exception _ nil)))))
+                      (store/forms st ns-sym))]
     (if (empty? decls)
       {:removed 0 :note "no declares"}
       (let [[gid st0] (store/alloc-id st "g")
-            plan
-            (for [d decls
-                  nm (rest (n/sexpr (:node d)))]
-              (let [def-idx (get idx-of nm)
-                    callers (for [u (:var-usages an)
-                                  :when (and (= ns-sym (:to u))
-                                             (= nm (:name u))
-                                             (:from-var u)
-                                             (get idx-of (:from-var u)))]
-                              (get idx-of (:from-var u)))
-                    first-caller (when (seq callers) (apply min callers))
-                    my-deps (keep #(when (= (str ns-sym) (namespace %))
-                                     (get idx-of (symbol (name %))))
-                                  (get adj (symbol (str ns-sym) (str nm)) []))]
-                (cond
-                  (nil? def-idx)
-                  {:name nm :decl (:id d) :action :phantom
-                   :reason (str "declared but defined nowhere here — an earlier"
-                                " move lifted it out; the name mints an unbound"
-                                " var, so it is dropped, never kept")}
+            stripped  (reduce (fn [s d]
+                                (or (first (store/remove-form s ns-sym (:id d)
+                                                              :prompt (or prompt "fix-declares")
+                                                              :group gid :agent agent))
+                                    s))
+                              st0 decls)
+            rz  (edit/resolve-cold-load stripped ns-sym
+                                        :prompt (or prompt "fix-declares: pipeline owns ordering")
+                                        :agent agent)
+            st' (or (:store rz) stripped)]
+        (cond
+          ;; the pipeline could not make it load without the declares — leave
+          ;; the namespace exactly as it was
+          (edit/cold-load-errors st' [ns-sym])
+          {:removed 0 :note "declares still required — left as-is"}
 
-                  (or (nil? first-caller) (< def-idx first-caller))
-                  {:name nm :decl (:id d) :action :ok}   ; already fine
+          ;; nothing would actually change: don't churn the journal
+          (= (render/render-ns st ns-sym) (render/render-ns st' ns-sym))
+          {:removed 0 :note "already tidy"}
 
-                  (every? #(or (= % def-idx) (< % first-caller)) my-deps)
-                  {:name nm :decl (:id d) :action :move
-                   :before (:name (nth forms first-caller))}
-
-                  :else
-                  {:name nm :decl (:id d) :action :skip
-                   :reason "its own callees sit below the caller (mutual recursion?)"})))
-            by-decl (group-by :decl plan)
-            removable (into #{}
-                            (keep (fn [[decl-id entries]]
-                                    (when (every? #(not= :skip (:action %)) entries)
-                                      decl-id)))
-                            by-decl)
-            st' (as-> st0 st*
-                  (reduce (fn [st* {:keys [action name before]}]
-                            (if (= :move action)
-                              (or (first (store/move-form st* ns-sym name before
-                                                          :prompt prompt :group gid
-                                                          :agent agent))
-                                  st*)
-                              st*))
-                          st* plan)
-                  (reduce (fn [st* decl-id]
-                            (or (first (store/remove-form st* ns-sym decl-id
-                                                          :prompt (or prompt "fix-declares")
-                                                          :group gid :agent agent))
-                                st*))
-                          st* removable))]
-        (if (and (empty? removable)
-                 (not-any? #(= :move (:action %)) plan))
-          {:removed 0 :skipped (vec (filter #(= :skip (:action %)) plan))}
+          :else
           (if-not (session/try-commit! session st st' [ns-sym])
             {:conflict {:reason "store changed during fix-declares — retry"}}
-            (let [summary (session/run-verification! session ns-sym nil
-                                             :edited (set (map #(symbol (str ns-sym)
-                                                                        (str (:name %)))
-                                                               plan)))]
+            (let [summary (session/run-verification! session ns-sym nil)]
               (session/commit-appended! session
-                                #(store/record-verification % ns-sym summary) [])
-              {:removed (count removable)
-               :moved   (vec (keep #(when (= :move (:action %)) (:name %)) plan))
-               :skipped (vec (filter #(= :skip (:action %)) plan))
-               :test    summary})))))))
-
-(declare isolated-test-run!)
-(defn done!
-  "The DONE-POINT: call when you believe your changes are complete. Marks
-  the episode boundary and runs the automatic done-processing — normalize
-  every form changed this episode (conservative behavior-preserving
-  rewrites), clean up safe (declare)s, kondo-lint every touched namespace,
-  and RUN THE AFFECTED TESTS for everything the episode touched (no
-  test_run needed first — mid-episode runs are for spot-checks). Unused
-  PUBLIC surface in touched namespaces GATES here (error-grade): delete it
-  or mark the name ^:unused-ok; a stale marker (the var is called now)
-  fails symmetrically. Findings ride the boundary delta so the next
-  session's brief surfaces anything left red. Returns {:done id
-  :normalized n :rewrites [{:form :applied}] :lint [...] :test s
-  :findings {...}}."
-  [session & {:keys [label agent isolated?] :or {isolated? true}}]
-  (let [st       (:store @session)
-        changed  (->> (episode-span st agent)
-                      (filter #(and (contains? content-ops (:op %))
-                                    (= agent (:agent %))))
-                      (mapcat delta-fids)
-                      distinct
-                      (filter #(store/ns-of-form-id st %)))
-        rewrites (vec (for [fid changed
-                            :let [e (store/form-by-id st fid)
-                                  {:keys [node applied]} (normalize/normalize-form (:node e))]
-                            :when (seq applied)]
-                        {:form-id fid
-                         :form    (symbol (str (store/ns-of-form-id st fid))
-                                          (str (or (:name e) (:id e))))
-                         :node    node
-                         :applied applied}))
-        _        (when (seq rewrites)
-                   (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
-                         main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
-                         [st' _]     (store/apply-changeset st :normalize main-ns changeset
-                                                            :prompt (or label "done normalization")
-                                                            :agent agent)
-                         touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
-                     (when-let [err (:err (session/hot-load-all! session st' (keys changeset)))]
-                       (throw (ex-info (str "normalization failed to compile: " err) {})))
-                     (when-not (session/try-commit! session st st' (vec touched))
-                       (throw (ex-info "store changed during done — retry" {})))))
-        ;; automatic declare hygiene: the pipeline OWNS declares (auto-inserted
-        ;; for a genuine cycle); once the cycle breaks the declare is stale —
-        ;; remove it here. SILENT: the agent never manages declares, so this
-        ;; runs for effect and is not reported.
-        _
-        (doseq [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
-                                    changed))]
-          (fix-declares! session ns*
-                         :prompt (or label "done declare hygiene")
-                         :agent agent))
-        ;; kondo lint over every namespace touched since the last done-point —
-        ;; carried mid-episode errors (stale callers) get re-checked HARD here
-        lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
-                                              changed))
-                        :let [st*   (:store @session)
-                              src   (render/render-ns st* ns-sym)
-                              lines (vec (str/split-lines src))]
-                        f (index/lint src)]
-                    ;; anchors, not coordinates: the owning form + a
-                    ;; match-ready snippet; row/col never cross the wire
-                    (cond-> (-> f
-                                (dissoc :row :col)
-                                (assoc :ns ns-sym
-                                       :form (when-let [e (render/owner-form
-                                                           st* ns-sym
-                                                           (:row f) (:col f))]
-                                               (symbol (str ns-sym)
-                                                       (str (or (:name e) (:id e)))))))
-                      (get lines (dec (:row f 0)))
-                      (assoc :at (str/trim (nth lines (dec (:row f))))))))
-        ;; the unused-public GATE: unmarked dead surface — and stale
-        ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
-        unused-rep (let [st* (:store @session)]
-                     (modules/unused-report
-                      st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
-        lint (into lint
-                   (concat
-                    (for [q (:unused unused-rep)]
-                      {:level :error :type :unused-public
-                       :ns (symbol (namespace q)) :form q
-                       :message (str q " is public but NOTHING in the store"
-                                     " calls it — delete it, or mark the name"
-                                     " ^:unused-ok to declare it deliberate"
-                                     " (external surface, runtime-resolved"
-                                     " entry)")})
-                    (for [q (:stale unused-rep)]
-                      {:level :error :type :stale-unused-ok
-                       :ns (symbol (namespace q)) :form q
-                       :message (str q " carries ^:unused-ok but IS called now"
-                                     " — remove the flag")})))
-        ;; NEW warnings (on forms this episode touched) report in full;
-        ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
-        ;; re-listing them at every done buries real findings. Errors and
-        ;; unattributed rows never demote.
-        touched-q (into #{}
-                        (keep (fn [fid]
-                                (let [st* (:store @session)]
-                                  (when-let [e (store/form-by-id st* fid)]
-                                    (symbol (str (store/ns-of-form-id st* fid))
-                                            (str (or (:name e) (:id e))))))))
-                        changed)
-        loud?     (fn [f] (or (= :error (:level f))
-                              (nil? (:form f))
-                              (contains? touched-q (:form f))))
-        lint-new  (vec (filter loud? lint))
-        carried   (vec (remove loud? lint))
-        ;; THE done-point verification: the episode's whole working set —
-        ;; independent of whether normalize rewrote anything
-        summary
-        (when (seq changed)
-          (let [st*      (:store @session)
-                qsyms    (into #{}
-                               (keep (fn [fid]
-                                       (when-let [e (store/form-by-id st* fid)]
-                                         (symbol (str (store/ns-of-form-id st* fid))
-                                                 (str (or (:name e) (:id e)))))))
-                               changed)
-                per      (map (fn [q] (session/affected-tests session
-                                                      (symbol (namespace q))
-                                                      (symbol (name q))))
-                              qsyms)
-                affected (when (not-any? nil? per)
-                           (vec (sort (distinct (apply concat per)))))
-                changed-nses (vec (distinct (keep #(store/ns-of-form-id st* %)
-                                                  changed)))
-                ;; with no trace coverage the fallback must still REACH the
-                ;; tests: closure-bounded test nses, not just the changed ones
-                main-ns  (vec (distinct (concat changed-nses
-                                                (session/test-nses-reaching st* changed-nses))))
-                s        (session/run-verification! session main-ns
-                                            (when (seq affected) affected)
-                                            :edited qsyms
-                                            :include-integration? true
-                                            :boundary? true)]  ; M5
-            (session/commit-appended! session
-                              #(store/record-verification % main-ns s) [])
-            s))
-        ;; the tier is an implementation detail: ^:isolated tests the episode's
-        ;; changes reach run in the EXTERNAL tier here — capped, and a deferral
-        ;; is REPORTED (isolated-pending), never silent
-        iso (when (and isolated? (seq changed))
-              (let [st*      (:store @session)
-                    ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
-                    iso-nses (session/isolated-test-nses
-                              st* (session/test-nses-reaching st* ch-nses))]
-                (when (seq iso-nses)
-                  (if (<= (count iso-nses) 4)
-                    (isolated-test-run! session :nses iso-nses)
-                    {:pending (cond-> {:count (count iso-nses)
-                                       :nses  (vec (take 5 (sort iso-nses)))}
-                                (> (count iso-nses) 5)
-                                (assoc :note "first 5 shown — the milestone gate runs them all"))}))))
-        findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
-                       failures    (+ (:fail summary 0) (:error summary 0)
-                                      (:failures iso 0) (:errors iso 0))
-                       iso-red?    (contains? #{:red :error} (:status iso))
-                       st*         (:store @session)
-                       missing-doc (vec (sort (distinct
-                                               (keep (fn [fid]
-                                                       (when-let [e (store/form-by-id st* fid)]
-                                                         (:var (edit.modules/missing-doc-warning
-                                                                st*
-                                                                (store/ns-of-form-id st* fid)
-                                                                (:name e)))))
-                                                     changed))))]
-                   (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
-                                               (or (pos? failures) iso-red?)   :red
-                                               :else                           :green)
-                            :failures    failures
-                            :lint-errors lint-errors}
-                     (:pending iso)    (assoc :isolated-pending (:pending iso))
-                     (seq missing-doc) (assoc :missing-doc missing-doc)
-                     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
-                     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
-        cid (let [v (volatile! nil)]
-              (session/commit-appended! session
-                                (fn [base]
-                                  (let [[st2 c] (store/record-done base label
-                                                                   :agent agent
-                                                                   :findings findings)]
-                                    (vreset! v c)
-                                    st2))
-                                [])
-              (swap! session assoc :done @v)
-              @v)]
-    (cond-> {:done cid
-             :normalized (count rewrites)
-             :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
-             :lint       lint-new
-             :findings   findings}
-      (seq carried)       (assoc :lint-carried
-                                 {:count (count carried)
-                                  :forms (vec (sort (distinct (keep :form carried))))})
-      summary             (assoc :test summary)
-      (:status iso)       (assoc :isolated iso))))
+                                        #(store/record-verification % ns-sym summary) [])
+              {:removed (count decls) :test summary})))))))
 
 (defn query-status-at
   "was-green-at: the project's verification state that GOVERNED delta `at`
@@ -1779,102 +1542,6 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
-(defn commit-point!
-  "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
-  declare hygiene, verify) for `:agent`, then append a `:commit` marker
-  pointing at the resulting state with a human `description`. GREEN-GATED:
-  a red verification refuses the milestone (the done still stands —
-  fix and retry) unless `:force true`, which records `:status :red`
-  honestly. Re-requesting a milestone on an UNCHANGED store returns the
-  existing marker instead of minting an empty one. With `:target` (a past
-  delta id) it is a pure retroactive marker: no done runs, status is
-  derived from the log at that spot — and no `:tree` snapshot is captured
-  (the live store is past the target by definition; projection backfills,
-  lossily). `:extra` merges op-specific payload into the marker delta
-  (P4-m8 uses it for `:git-sha` on imported commits)."
-  [session description & {:keys [agent force target extra]}]
-  (let [mark! (fn [target status result-extra delta-extra]
-                (let [v (volatile! nil)]
-                  (session/commit-appended!
-                   session
-                   (fn [base]
-                     (let [[st2 d] (store/record-commit base description
-                                                        :agent agent
-                                                        :target target
-                                                        :status status
-                                                        :extra (if-let [au (author-identity session)]
-                                                                 (assoc delta-extra :author au)
-                                                                 delta-extra))]
-                       (vreset! v d)
-                       st2))
-                   [])
-                  (merge {:commit (:id @v) :target target :status status
-                          :description description}
-                         result-extra)))]
-    (cond
-      (str/blank? (str description))
-      {:error "a commit point needs a human-facing :description"}
-
-      target
-      (if (some #(= target (:id %)) (store/deltas (:store @session)))
-        (mark! target (history/status-at (:store @session) target) {} extra)
-        {:error (str "no delta " target " in this branch's history")})
-
-      :else
-      (let [last-d (last (store/deltas (:store @session)))]
-        (if (= :commit (:op last-d))
-          (merge {:commit (:id last-d) :target (:target last-d)
-                  :status (:status last-d)
-                  :description (:description last-d)
-                  :note "nothing changed since this milestone — returning it"})
-          (let [cp     (done! session :label description :agent agent
-                            :isolated? false) ; the milestone owns the FULL gate
-                st     (:store @session)
-                head   (:id (last (store/deltas st)))
-                ;; the whole isolated suite IS the milestone gate — run it when
-                ;; the store has any ^:isolated tests (fixture stores without
-                ;; them skip the tier); :force skips straight to honest red
-                iso    (when (and (not force)
-                                  (seq (session/isolated-test-nses
-                                        st (filter #(session/test-ns? st %)
-                                                   (keys (:namespaces st))))))
-                         (isolated-test-run! session))
-                status (if-let [t (:test cp)]
-                         (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
-                         (history/status-at st head))
-                status (if (= :unknown status) :green status) ; nothing ever ran red
-                status (if (contains? #{:red :error} (:status iso)) :red status)
-                ;; the milestone gates GLOBALLY (like the full suite): standing
-                ;; unused surface anywhere refuses, not just this episode's
-                dead   (let [rep (modules/unused-report
-                                  st (keys (:namespaces st)))]
-                         (concat (:unused rep) (:stale rep)))
-                status (if (seq dead) :red status)
-                ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
-                ;; so the git projection is a pure function of this marker delta
-                tree   (into (sorted-map)
-                             (map (fn [n] [n (render/render-ns st n)]))
-                             (keys (:namespaces st)))]
-            (if (and (= :red status) (not force))
-              (cond-> {:error (str "verification is RED — milestone refused (your work is "
-                                   "at its done-point; fix and retry, or :force true to record "
-                                   "a red milestone honestly)"
-                                   (when (seq dead)
-                                     (str " — unused public surface: " (vec dead)
-                                          " (delete it, mark ^:unused-ok, or"
-                                          " remove a stale marker)")))
-                       :status :red :done (:done cp) :test (:test cp)}
-                iso (assoc :isolated iso))
-              (mark! head status (cond-> {:done (:done cp)}
-                                   iso (assoc :isolated iso))
-                     (cond-> (merge {:tree tree} extra)
-                       (seq (:deps st))  (assoc :deps (:deps st))
-                       (seq (:files st)) (assoc :files (:files st))
-                       (or (seq (:config st)) (modules/modules-config-entry st))
-                            (assoc :config (cond-> (:config st)
-                                             (modules/modules-config-entry st)
-                                             (assoc "modules" (modules/modules-config-entry st)))))))))))))
-
 ^:reads (defn query-commits
   "Milestones, newest first:
   [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
@@ -1899,9 +1566,6 @@
                    (:agent d) (assoc :agent (:agent d))
                    (or (:git-sha d) (get shas (:id d)))
                    (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
-
-;; ---------------------------------------------------------------------------
-;; External dependencies (Tier 1) — the per-store manifest
 
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
@@ -2454,188 +2118,6 @@
                :delta (:id delta)
                :test summary})))))))
 
-(defn merge!
-  "Phase 4 m2: merge a DIVERGED COPY of this project back into the live
-  session. A 'fork' is just a copied project dir edited by its own slopp
-  server; `other-dir` is that copy. Their delta-log suffix replays onto our
-  store: different-form work lands, identical changes converge, same-form
-  divergence returns `:conflicts` (ours kept, theirs surfaced — resolve by
-  hand with edit_replace_form)."
-  [session other-dir]
-  (let [f    (io/file (str other-dir))
-        db-f (io/file f ".slopp" "store.db")]
-    (cond
-      (not (.isAbsolute f))
-      {:error "merge needs an ABSOLUTE project-dir path"}
-
-      (not (.exists db-f))
-      {:error (str "no slopp store under " other-dir)}
-
-      :else
-      (let [conn   (db/open! (str f))
-            theirs (try (db/load-store conn)
-                        (finally (.close ^java.sql.Connection conn)))]
-        (branch/merge-into-session! session theirs (str other-dir))))))
-
-;; --- Phase 4 m3: branches within one repo -------------------------------
-
-(defn branch!
-  "Phase 4 m3: create branch `nm` from the CURRENT line's state and switch to
-  it — O(1), the store is a value; the image is already correct (identical
-  content). Durable sessions snapshot the line under .slopp/branches/<nm>."
-  [session nm]
-  (let [nm (str nm)
-        {:keys [branch lines dir]} @session]
-    (cond
-      (str/blank? nm)
-      {:error "branch needs a name"}
-
-      (= nm "main")
-      {:error "main is the trunk — branch FROM it"}
-
-      (or (= nm branch)
-          (contains? lines nm)
-          (and dir (.exists (io/file (branch/line-dir dir nm)))))
-      {:error (str "branch " nm " already exists")}
-
-      :else
-      ;; claim the name atomically: in-process via the lines map, and
-      ;; cross-process via mkdir (fails if the dir exists)
-      (let [[old _] (swap-vals! session
-                                (fn [s]
-                                  (if (or (= nm (:branch s))
-                                          (contains? (:lines s) nm))
-                                    s
-                                    (update s :lines assoc nm ::claimed))))]
-        (if (or (= nm (:branch old)) (contains? (:lines old) nm))
-          {:error (str "branch " nm " already exists")}
-          (let [bdir (when dir (io/file (branch/line-dir dir nm)))]
-            (when bdir (.mkdirs (.getParentFile bdir)))
-            (if (and bdir (not (.mkdir bdir)))
-              (do (swap! session update :lines dissoc nm)   ; release the claim
-                  {:error (str "branch " nm " already exists")})
-              (let [line-id (str (java.util.UUID/randomUUID))
-                    conn    (when dir
-                              (doto (db/open! (branch/line-dir dir nm))
-                                (branch/snapshot-to-conn! (:store @session))
-                                (db/set-line-id! line-id)))]
-                (swap! session
-                       (fn [s]
-                         (-> s
-                             (update :lines dissoc nm)      ; claim → active
-                             (update :lines assoc (:branch s)
-                                     {:store (:store s) :conn (:db s)})
-                             (assoc :branch nm :db conn
-                                    :store (assoc (:store s) :line-id line-id)
-                                    :data-version (some-> conn db/data-version)))))
-                {:branch nm :from branch :id line-id}))))))))
-
-(defn branch-switch!
-  "Checkout with LINE-OWNED images (m4): the outgoing line PARKS its image
-  intact (its REPL state included — inactive lines are immutable, so a parked
-  image stays in step by construction); the target ADOPTS its parked image if
-  it still has one, else BOOTS a fresh one on demand (the warm spare makes
-  that cheap). Parked images retire after the session's idle TTL. The trace
-  map resets — it described the other line."
-  [session nm]
-  (let [nm (str nm)]
-    (if (= nm (:branch @session))
-      {:switched nm :note "already on it"}
-      (if-let [target (branch/load-line session nm)]
-        (let [adopted (:image target)
-              booted  (when-not adopted
-                        (branch/boot-line-image! session (:store target)))]
-          (if (:error booted)
-            booted
-            (do (swap! session
-                       (fn [s]
-                         (-> s
-                             (update :lines assoc (:branch s)
-                                     {:store     (:store s)
-                                      :conn      (:db s)
-                                      :image     (:image s)
-                                      :last-used (System/currentTimeMillis)})
-                             (update :lines dissoc nm)
-                             (assoc :branch nm
-                                    :db (:conn target)
-                                    :store (:store target)
-                                    :data-version (some-> (:conn target)
-                                                          db/data-version)
-                                    :image (or adopted (:image booted))
-                                    :test-map {}))))
-                (cond-> {:switched nm}
-                  adopted       (assoc :adopted true)
-                  (not adopted) (assoc :booted true)))))
-        {:error (str "no branch named " nm)}))))
-
-(defn branch-merge!
-  "Merge branch `nm` into the CURRENT line (switch to main first to merge
-  down). Same engine and semantics as fork merges, iterated merges included;
-  the branch survives and can keep going."
-  [session nm]
-  (let [nm (str nm)]
-    (if (= nm (:branch @session))
-      {:error "cannot merge a branch into itself — switch to the target line first"}
-      (if-let [target (branch/load-line session nm)]
-        (let [res (branch/merge-into-session! session (:store target)
-                                       (str "branch:" nm "#"
-                                            (or (:line-id (:store target))
-                                                "legacy")))]
-          ;; lazily-opened conn is only needed for reading here
-          (when (and (:conn target)
-                     (not (contains? (:lines @session) nm)))
-            (.close ^java.sql.Connection (:conn target)))
-          res)
-        {:error (str "no branch named " nm)}))))
-
-(defn branch-delete!
-  "Drop branch `nm` (never the one you are on). Durable sessions also remove
-  its .slopp/branches dir."
-  [session nm]
-  (let [nm (str nm)
-        {:keys [branch lines dir]} @session]
-    (cond
-      (= nm branch)
-      {:error "cannot delete the branch you are on"}
-
-      (not (or (contains? lines nm)
-               (and dir (.exists (io/file (branch/line-dir dir nm))))))
-      {:error (str "no branch named " nm)}
-
-      :else
-      (do (some-> (get-in lines [nm :image]) repl/stop!)
-          (some-> (get-in lines [nm :conn])
-                  ^java.sql.Connection (.close))
-          (swap! session update :lines dissoc nm)
-          (when dir (branch/delete-dir! (io/file (branch/line-dir dir nm))))
-          {:deleted nm}))))
-
-(defn query-branches
-  "Every line in the repo: the current one, in-memory lines, and (durable)
-  on-disk branches not yet loaded this session."
-  [session]
-  (let [{:keys [branch lines dir store]} @session
-        on-disk (when dir
-                  (let [bdir (io/file dir ".slopp" "branches")]
-                    (when (.exists bdir)
-                      (map #(.getName ^java.io.File %)
-                           (filter #(.isDirectory ^java.io.File %)
-                                   (.listFiles bdir))))))
-        info    (fn [nm st line]
-                  (cond-> {:name nm}
-                    st (assoc :head   (:id (last (store/deltas st)))
-                              :deltas (count (store/deltas st)))
-                    (:line-id st) (assoc :id (:line-id st))
-                    (:image line) (assoc :image :parked)))]
-    {:current  branch
-     :branches (vec (concat
-                     [(assoc (info branch store nil) :image :live)]
-                     (for [[nm line] (sort-by key lines)]
-                       (info nm (:store line) line))
-                     (for [nm (sort (remove (set (conj (keys lines) branch))
-                                            (or on-disk [])))]
-                       {:name nm})))}))
-
 (defn build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
   `src/<ns-path>.clj` per namespace plus a minimal `deps.edn` (F8). Guarded
@@ -2872,6 +2354,304 @@
                                               (seq (testrun/failure-themes out))
                                               (assoc :themes (testrun/failure-themes out)))
                        :else s)))))))))
+(defn done!
+  "The DONE-POINT: call when you believe your changes are complete. Marks
+  the episode boundary and runs the automatic done-processing — normalize
+  every form changed this episode (conservative behavior-preserving
+  rewrites), clean up safe (declare)s, kondo-lint every touched namespace,
+  and RUN THE AFFECTED TESTS for everything the episode touched (no
+  test_run needed first — mid-episode runs are for spot-checks). Unused
+  PUBLIC surface in touched namespaces GATES here (error-grade): delete it
+  or mark the name ^:unused-ok; a stale marker (the var is called now)
+  fails symmetrically. Findings ride the boundary delta so the next
+  session's brief surfaces anything left red. Returns {:done id
+  :normalized n :rewrites [{:form :applied}] :lint [...] :test s
+  :findings {...}}."
+  [session & {:keys [label agent isolated?] :or {isolated? true}}]
+  (let [st       (:store @session)
+        changed  (->> (episode-span st agent)
+                      (filter #(and (contains? content-ops (:op %))
+                                    (= agent (:agent %))))
+                      (mapcat delta-fids)
+                      distinct
+                      (filter #(store/ns-of-form-id st %)))
+        rewrites (vec (for [fid changed
+                            :let [e (store/form-by-id st fid)
+                                  {:keys [node applied]} (normalize/normalize-form (:node e))]
+                            :when (seq applied)]
+                        {:form-id fid
+                         :form    (symbol (str (store/ns-of-form-id st fid))
+                                          (str (or (:name e) (:id e))))
+                         :node    node
+                         :applied applied}))
+        _        (when (seq rewrites)
+                   (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
+                         main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
+                         [st' _]     (store/apply-changeset st :normalize main-ns changeset
+                                                            :prompt (or label "done normalization")
+                                                            :agent agent)
+                         touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
+                     (when-let [err (:err (session/hot-load-all! session st' (keys changeset)))]
+                       (throw (ex-info (str "normalization failed to compile: " err) {})))
+                     (when-not (session/try-commit! session st st' (vec touched))
+                       (throw (ex-info "store changed during done — retry" {})))))
+        ;; automatic declare hygiene: the pipeline OWNS declares (auto-inserted
+        ;; for a genuine cycle); once the cycle breaks the declare is stale —
+        ;; remove it here. SILENT: the agent never manages declares, so this
+        ;; runs for effect and is not reported.
+        _
+        (doseq [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
+                                    changed))]
+          (fix-declares! session ns*
+                         :prompt (or label "done declare hygiene")
+                         :agent agent))
+        ;; kondo lint over every namespace touched since the last done-point —
+        ;; carried mid-episode errors (stale callers) get re-checked HARD here
+        lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
+                                              changed))
+                        :let [st*   (:store @session)
+                              src   (render/render-ns st* ns-sym)
+                              lines (vec (str/split-lines src))]
+                        f (index/lint src)]
+                    ;; anchors, not coordinates: the owning form + a
+                    ;; match-ready snippet; row/col never cross the wire
+                    (cond-> (-> f
+                                (dissoc :row :col)
+                                (assoc :ns ns-sym
+                                       :form (when-let [e (render/owner-form
+                                                           st* ns-sym
+                                                           (:row f) (:col f))]
+                                               (symbol (str ns-sym)
+                                                       (str (or (:name e) (:id e)))))))
+                      (get lines (dec (:row f 0)))
+                      (assoc :at (str/trim (nth lines (dec (:row f))))))))
+        ;; the unused-public GATE: unmarked dead surface — and stale
+        ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
+        unused-rep (let [st* (:store @session)]
+                     (modules/unused-report
+                      st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
+        lint (into lint
+                   (concat
+                    (for [q (:unused unused-rep)]
+                      {:level :error :type :unused-public
+                       :ns (symbol (namespace q)) :form q
+                       :message (str q " is public but NOTHING in the store"
+                                     " calls it — delete it, or mark the name"
+                                     " ^:unused-ok to declare it deliberate"
+                                     " (external surface, runtime-resolved"
+                                     " entry)")})
+                    (for [q (:stale unused-rep)]
+                      {:level :error :type :stale-unused-ok
+                       :ns (symbol (namespace q)) :form q
+                       :message (str q " carries ^:unused-ok but IS called now"
+                                     " — remove the flag")})))
+        ;; NEW warnings (on forms this episode touched) report in full;
+        ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
+        ;; re-listing them at every done buries real findings. Errors and
+        ;; unattributed rows never demote.
+        touched-q (into #{}
+                        (keep (fn [fid]
+                                (let [st* (:store @session)]
+                                  (when-let [e (store/form-by-id st* fid)]
+                                    (symbol (str (store/ns-of-form-id st* fid))
+                                            (str (or (:name e) (:id e))))))))
+                        changed)
+        loud?     (fn [f] (or (= :error (:level f))
+                              (nil? (:form f))
+                              (contains? touched-q (:form f))))
+        lint-new  (vec (filter loud? lint))
+        carried   (vec (remove loud? lint))
+        ;; THE done-point verification: the episode's whole working set —
+        ;; independent of whether normalize rewrote anything
+        summary
+        (when (seq changed)
+          (let [st*      (:store @session)
+                qsyms    (into #{}
+                               (keep (fn [fid]
+                                       (when-let [e (store/form-by-id st* fid)]
+                                         (symbol (str (store/ns-of-form-id st* fid))
+                                                 (str (or (:name e) (:id e)))))))
+                               changed)
+                per      (map (fn [q] (session/affected-tests session
+                                                      (symbol (namespace q))
+                                                      (symbol (name q))))
+                              qsyms)
+                affected (when (not-any? nil? per)
+                           (vec (sort (distinct (apply concat per)))))
+                changed-nses (vec (distinct (keep #(store/ns-of-form-id st* %)
+                                                  changed)))
+                ;; with no trace coverage the fallback must still REACH the
+                ;; tests: closure-bounded test nses, not just the changed ones
+                main-ns  (vec (distinct (concat changed-nses
+                                                (session/test-nses-reaching st* changed-nses))))
+                s        (session/run-verification! session main-ns
+                                            (when (seq affected) affected)
+                                            :edited qsyms
+                                            :include-integration? true
+                                            :boundary? true)]  ; M5
+            (session/commit-appended! session
+                              #(store/record-verification % main-ns s) [])
+            s))
+        ;; the tier is an implementation detail: ^:isolated tests the episode's
+        ;; changes reach run in the EXTERNAL tier here — capped, and a deferral
+        ;; is REPORTED (isolated-pending), never silent
+        iso (when (and isolated? (seq changed))
+              (let [st*      (:store @session)
+                    ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
+                    iso-nses (session/isolated-test-nses
+                              st* (session/test-nses-reaching st* ch-nses))]
+                (when (seq iso-nses)
+                  (if (<= (count iso-nses) 4)
+                    (isolated-test-run! session :nses iso-nses)
+                    {:pending (cond-> {:count (count iso-nses)
+                                       :nses  (vec (take 5 (sort iso-nses)))}
+                                (> (count iso-nses) 5)
+                                (assoc :note "first 5 shown — the milestone gate runs them all"))}))))
+        findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
+                       failures    (+ (:fail summary 0) (:error summary 0)
+                                      (:failures iso 0) (:errors iso 0))
+                       iso-red?    (contains? #{:red :error} (:status iso))
+                       st*         (:store @session)
+                       missing-doc (vec (sort (distinct
+                                               (keep (fn [fid]
+                                                       (when-let [e (store/form-by-id st* fid)]
+                                                         (:var (edit.modules/missing-doc-warning
+                                                                st*
+                                                                (store/ns-of-form-id st* fid)
+                                                                (:name e)))))
+                                                     changed))))]
+                   (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
+                                               (or (pos? failures) iso-red?)   :red
+                                               :else                           :green)
+                            :failures    failures
+                            :lint-errors lint-errors}
+                     (:pending iso)    (assoc :isolated-pending (:pending iso))
+                     (seq missing-doc) (assoc :missing-doc missing-doc)
+                     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
+                     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
+        cid (let [v (volatile! nil)]
+              (session/commit-appended! session
+                                (fn [base]
+                                  (let [[st2 c] (store/record-done base label
+                                                                   :agent agent
+                                                                   :findings findings)]
+                                    (vreset! v c)
+                                    st2))
+                                [])
+              (swap! session assoc :done @v)
+              @v)]
+    (cond-> {:done cid
+             :normalized (count rewrites)
+             :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
+             :lint       lint-new
+             :findings   findings}
+      (seq carried)       (assoc :lint-carried
+                                 {:count (count carried)
+                                  :forms (vec (sort (distinct (keep :form carried))))})
+      summary             (assoc :test summary)
+      (:status iso)       (assoc :isolated iso))))
+
+(defn commit-point!
+  "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
+  declare hygiene, verify) for `:agent`, then append a `:commit` marker
+  pointing at the resulting state with a human `description`. GREEN-GATED:
+  a red verification refuses the milestone (the done still stands —
+  fix and retry) unless `:force true`, which records `:status :red`
+  honestly. Re-requesting a milestone on an UNCHANGED store returns the
+  existing marker instead of minting an empty one. With `:target` (a past
+  delta id) it is a pure retroactive marker: no done runs, status is
+  derived from the log at that spot — and no `:tree` snapshot is captured
+  (the live store is past the target by definition; projection backfills,
+  lossily). `:extra` merges op-specific payload into the marker delta
+  (P4-m8 uses it for `:git-sha` on imported commits)."
+  [session description & {:keys [agent force target extra]}]
+  (let [mark! (fn [target status result-extra delta-extra]
+                (let [v (volatile! nil)]
+                  (session/commit-appended!
+                   session
+                   (fn [base]
+                     (let [[st2 d] (store/record-commit base description
+                                                        :agent agent
+                                                        :target target
+                                                        :status status
+                                                        :extra (if-let [au (author-identity session)]
+                                                                 (assoc delta-extra :author au)
+                                                                 delta-extra))]
+                       (vreset! v d)
+                       st2))
+                   [])
+                  (merge {:commit (:id @v) :target target :status status
+                          :description description}
+                         result-extra)))]
+    (cond
+      (str/blank? (str description))
+      {:error "a commit point needs a human-facing :description"}
+
+      target
+      (if (some #(= target (:id %)) (store/deltas (:store @session)))
+        (mark! target (history/status-at (:store @session) target) {} extra)
+        {:error (str "no delta " target " in this branch's history")})
+
+      :else
+      (let [last-d (last (store/deltas (:store @session)))]
+        (if (= :commit (:op last-d))
+          (merge {:commit (:id last-d) :target (:target last-d)
+                  :status (:status last-d)
+                  :description (:description last-d)
+                  :note "nothing changed since this milestone — returning it"})
+          (let [cp     (done! session :label description :agent agent
+                            :isolated? false) ; the milestone owns the FULL gate
+                st     (:store @session)
+                head   (:id (last (store/deltas st)))
+                ;; the whole isolated suite IS the milestone gate — run it when
+                ;; the store has any ^:isolated tests (fixture stores without
+                ;; them skip the tier); :force skips straight to honest red
+                iso    (when (and (not force)
+                                  (seq (session/isolated-test-nses
+                                        st (filter #(session/test-ns? st %)
+                                                   (keys (:namespaces st))))))
+                         (isolated-test-run! session))
+                status (if-let [t (:test cp)]
+                         (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
+                         (history/status-at st head))
+                status (if (= :unknown status) :green status) ; nothing ever ran red
+                status (if (contains? #{:red :error} (:status iso)) :red status)
+                ;; the milestone gates GLOBALLY (like the full suite): standing
+                ;; unused surface anywhere refuses, not just this episode's
+                dead   (let [rep (modules/unused-report
+                                  st (keys (:namespaces st)))]
+                         (concat (:unused rep) (:stale rep)))
+                status (if (seq dead) :red status)
+                ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
+                ;; so the git projection is a pure function of this marker delta
+                tree   (into (sorted-map)
+                             (map (fn [n] [n (render/render-ns st n)]))
+                             (keys (:namespaces st)))]
+            (if (and (= :red status) (not force))
+              (cond-> {:error (str "verification is RED — milestone refused (your work is "
+                                   "at its done-point; fix and retry, or :force true to record "
+                                   "a red milestone honestly)"
+                                   (when (seq dead)
+                                     (str " — unused public surface: " (vec dead)
+                                          " (delete it, mark ^:unused-ok, or"
+                                          " remove a stale marker)")))
+                       :status :red :done (:done cp) :test (:test cp)}
+                iso (assoc :isolated iso))
+              (mark! head status (cond-> {:done (:done cp)}
+                                   iso (assoc :isolated iso))
+                     (cond-> (merge {:tree tree} extra)
+                       (seq (:deps st))  (assoc :deps (:deps st))
+                       (seq (:files st)) (assoc :files (:files st))
+                       (or (seq (:config st)) (modules/modules-config-entry st))
+                            (assoc :config (cond-> (:config st)
+                                             (modules/modules-config-entry st)
+                                             (assoc "modules" (modules/modules-config-entry st)))))))))))))
+
+;; ---------------------------------------------------------------------------
+;; External dependencies (Tier 1) — the per-store manifest
+
+;; --- Phase 4 m3: branches within one repo -------------------------------
+
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
   `user.email` — the git author identity milestones are stamped with (G5).

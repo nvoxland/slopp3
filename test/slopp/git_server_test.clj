@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git.server :as server])
+            [slopp.git.server :as server] [slopp.api.branch :as branch])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -77,7 +77,7 @@
                      (.getFullMessage (.parseCommit rw tip))
                      "v3: coverage")))))))
       (testing "branches advertise as refs/heads/<name>"
-        (api/branch! sess "feature")
+        (branch/branch! sess "feature")
         (api/edit-replace! sess 'gs.core 'f "(defn f [x] (int (+ x 10)))"
                            :prompt "feature work" :agent "bob")
         (api/commit-point! sess "feature: tweak" :agent "bob")

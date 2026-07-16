@@ -9,7 +9,7 @@
             [slopp.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.db :as db] [slopp.store.merge :as merge])
+            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -137,7 +137,7 @@
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
         (testing "a branch created after the add inherits the manifest"
-          (api/branch! sess "feature")
+          (branch/branch! sess "feature")
           (is (= {:mvn/version "2.5.0"}
                  (get (api/deps-list sess) 'org.clojure/data.json))))
         (finally (api/close! sess))))
