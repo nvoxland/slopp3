@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge]))
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
   (is (= "logi.quoting" (modules/module-of 'logi.quoting.internal)))
@@ -29,14 +29,14 @@
     (testing "concurrent adds to the SAME module merge as a union — never a conflict"
       (let [[ours _]   (store/record-module-edge s1 "b.app" "a.util" :add)
             [theirs _] (store/record-module-edge s1 "b.app" "a.extra" :add)
-            r          (store/merge-logs ours theirs :from "fork")]
+            r          (merge/merge-logs ours theirs :from "fork")]
         (is (empty? (:conflicts r)) (pr-str (:conflicts r)))
         (is (= #{"a.core" "a.util" "a.extra"}
                (get-in r [:store :modules "b.app"])))))
     (testing "a merge whose union creates a cycle gets a NOTE, not silence"
       (let [[ours _]   (store/record-module-edge base "x.a" "x.b" :add)
             [theirs _] (store/record-module-edge base "x.b" "x.a" :add)
-            r          (store/merge-logs ours theirs :from "fork")]
+            r          (merge/merge-logs ours theirs :from "fork")]
         (is (empty? (:conflicts r)))
         (is (some :modules-cycle (:notes r)) (pr-str (:notes r)))))))
 (deftest test-namespaces-see-package-private-deep-vars

@@ -9,7 +9,7 @@
             [slopp.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.db :as db])
+            [slopp.db :as db] [slopp.store.merge :as merge])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -49,7 +49,7 @@
     (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n(defn f [] 1)\n")
           [ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.0"})
           [theirs _] (store/record-deps-add base 'b/lib {:mvn/version "2.0"})
-          merged     (store/merge-logs ours theirs)]
+          merged     (merge/merge-logs ours theirs)]
       (is (= {:mvn/version "1.0"} (get-in (:store merged) [:deps 'a/lib])))
       (is (= {:mvn/version "2.0"} (get-in (:store merged) [:deps 'b/lib]))))))
 
@@ -60,7 +60,7 @@
     (testing "theirs is newer → adopt theirs, note, no conflict"
       (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
             [theirs _] (store/record-deps-add base 'a/lib {:mvn/version "1.10.0"})
-            m (store/merge-logs ours theirs)]
+            m (merge/merge-logs ours theirs)]
         (is (= {:mvn/version "1.10.0"} (get-in (:store m) [:deps 'a/lib])))
         (is (empty? (:conflicts m)))
         (is (some #(and (= :deps (:resolved %)) (= {:mvn/version "1.10.0"} (:kept %)))
@@ -68,13 +68,13 @@
     (testing "ours is newer → keep ours (still no conflict)"
       (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.10.0"})
             [theirs _] (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
-            m (store/merge-logs ours theirs)]
+            m (merge/merge-logs ours theirs)]
         (is (= {:mvn/version "1.10.0"} (get-in (:store m) [:deps 'a/lib])))
         (is (empty? (:conflicts m)))))
     (testing "incomparable coords (mvn vs git) remain a real conflict, ours kept"
       (let [[ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.2.0"})
             [theirs _] (store/record-deps-add base 'a/lib {:git/sha "abc123"})
-            m (store/merge-logs ours theirs)]
+            m (merge/merge-logs ours theirs)]
         (is (seq (:conflicts m)))
         (is (= {:mvn/version "1.2.0"} (get-in (:store m) [:deps 'a/lib])))))))
 
