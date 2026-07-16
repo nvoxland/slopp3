@@ -1549,3 +1549,18 @@ snippets, row/col never crosses the wire. kondo-cache bound 64→256 (a
 101-ns store reset a 64-entry cache mid-sweep). The graph surfaced and
 retired real debt on the way: store-test's undeclared render use became
 an element-order assertion (better test, no cross-module reach).
+
+Near-term scope: simple, dependency-lite projects (2026-07-16, user
+decision). The target for slopp-built applications right now is SIMPLE and
+DEPENDENCY-LIGHT. Deferred as explicit FUTURE projects, not near-term work:
+HTTP-server support and how that integrates; framework dependencies
+(routers, component/DI systems) and the carrier/kondo-hook ADAPTERS they'd
+need; the dogfood PROBE APP (was proposed to gather arbitrary-app
+evidence — hold until dependency-heavy support exists to probe). Consequence
+for the roadmap: prioritize agent-ergonomics and gate-FIT for simple
+projects (diagnostics-anchors, auto-avoid-declare, markers-carry-why,
+functional-core-gate, fast-cold-truth) over anything justified mainly by
+framework/dependency/HTTP complexity. The reference-carrier phase-2
+"per-library carrier adapters for framework config" is part of the deferred
+set. Don't build framework/HTTP support speculatively — revisit when the
+project explicitly turns to it.
