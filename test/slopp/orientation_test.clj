@@ -357,3 +357,22 @@
                      (str (:error (api/query-store
                                    sess "(fn [store] (throw (ex-info \"boom\" {})))"))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated review-scan-flags-unused-publics
+  ;; kondo sees unused PRIVATES per-namespace; unused PUBLICS need the
+  ;; whole-store call graph review_scan already builds — zero in-store
+  ;; callers on a public defn/def is dead code or unadvertised surface.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ru.core
+                   (str "(ns ru.core)\n\n"
+                        "(defn used \"U.\" [x] x)\n\n"
+                        "(defn orphan \"O.\" [x] x)\n\n"
+                        "(defn -main \"M.\" [x] (used x))\n"))
+      (let [r    (api/review-scan sess)
+            row  (fn [q] (first (filter #(= q (:form %)) (:top r))))]
+        (is (some #{:unused} (:flags (row 'ru.core/orphan))) (pr-str (:top r)))
+        (is (not (some #{:unused} (:flags (row 'ru.core/used))))
+            "called forms aren't flagged")
+        (is (not (some #{:unused} (:flags (row 'ru.core/-main))))
+            "entry points are exempt from the unused flag"))
+      (finally (api/close! sess)))))

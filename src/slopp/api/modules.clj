@@ -98,3 +98,31 @@
        :deps      (vec (sort (get manifest m #{})))
        :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
                                    manifest)))})))
+(defn unused-publics
+  "PUBLIC defn/def vars in `nses` that NOTHING in the store calls or
+  references — dead code, or surface only external consumers use (advisory
+  grade; the reader decides). Self-calls don't count as use; `-main`,
+  private vars, and test namespaces are exempt. Kondo can only see unused
+  PRIVATES per-namespace — this is the whole-store counterpart."
+  [store nses]
+  (let [known (set (keys (:namespaces store)))
+        used  (into #{}
+                    (for [nsx known
+                          u   (:var-usages (index/analyze (render/render-ns store nsx)))
+                          :when (and (:name u) (:from-var u)
+                                     (contains? known (:to u))
+                                     (not (and (= nsx (:to u))
+                                               (= (:from-var u) (:name u)))))]
+                      (symbol (str (:to u)) (str (:name u)))))]
+    (vec (sort (for [nsx nses
+                     :when (not (clojure.string/ends-with? (str nsx) "-test"))
+                     e (store/forms store nsx)
+                     :when (:name e)
+                     :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                     :when (and (seq? s)
+                                (contains? #{'defn 'def} (first s))
+                                (not (:private (meta (second s))))
+                                (not= '-main (:name e)))
+                     :let [q (symbol (str nsx) (str (:name e)))]
+                     :when (not (contains? used q))]
+                 q)))))

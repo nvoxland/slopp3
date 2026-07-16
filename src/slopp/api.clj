@@ -1595,14 +1595,18 @@
                                                                 st*
                                                                 (store/ns-of-form-id st* fid)
                                                                 (:name e)))))
-                                                     changed))))]
+                                                     changed))))
+                       unused-pub  (modules/unused-publics
+                                    st* (distinct (keep #(store/ns-of-form-id st* %)
+                                                        changed)))]
                    (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
                                                (or (pos? failures) iso-red?)   :red
                                                :else                           :green)
                             :failures    failures
                             :lint-errors lint-errors}
                      (:pending iso)    (assoc :isolated-pending (:pending iso))
-                     (seq missing-doc) (assoc :missing-doc missing-doc)))
+                     (seq missing-doc) (assoc :missing-doc missing-doc)
+                     (seq unused-pub)  (assoc :unused-public unused-pub)))
         cid (let [v (volatile! nil)]
               (session/commit-appended! session
                                 (fn [base]
@@ -3440,17 +3444,27 @@
                          lints    (get lint-by-form q 0)
                          bang?    (str/ends-with? (str nm) "!")
                          doc?     (some? (edit.modules/missing-doc-warning st nsx nm))
+                         ;; zero-caller PUBLICS need the whole graph — only a
+                         ;; full scan sees every caller, so :ns scoping skips it
+                         unused   (and (nil? ns) (not test?)
+                                       (zero? callers)
+                                       (seq? s)
+                                       (contains? '#{defn def} (first s))
+                                       (not (:private (meta (second s))))
+                                       (not= '-main nm))
                          untested (and (not test?)
                                        (zero? traced)
                                        (not (contains? covered-static q)))
                          flags    (cond-> []
                                     untested       (conj :untested)
+                                    unused         (conj :unused)
                                     (>= callers 8) (conj :high-blast)
                                     (>= loc 50)    (conj :large)
                                     (pos? lints)   (conj :lint)
                                     doc?           (conj :undocumented)
                                     bang?          (conj :effectful))
                          risk     (+ (if untested 4 0)
+                                     (if unused 2 0)
                                      (cond (>= callers 8) 2 (>= callers 3) 1 :else 0)
                                      (cond (>= loc 50) 2 (>= loc 30) 1 :else 0)
                                      (min 2 lints)

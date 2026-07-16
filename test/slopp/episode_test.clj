@@ -497,3 +497,18 @@
         (is (= 5 (get-in r [:findings :isolated-pending :count]))
             (pr-str (:findings r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated done-advises-on-unused-publics
+  ;; the done-point names PUBLIC vars in touched namespaces that nothing
+  ;; in the store calls — advisory grade (dead code, or external surface;
+  ;; the agent decides), findings-borne like missing-doc.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'up.core
+                   (str "(ns up.core)\n\n"
+                        "(defn keeper \"K.\" [x] x)\n\n"
+                        "(defn orphan \"O.\" [x] (keeper x))\n")
+                   :agent "t")
+      (let [r (api/done! sess :label "check" :agent "t")]
+        (is (= '[up.core/orphan] (get-in r [:findings :unused-public]))
+            (pr-str (:findings r))))
+      (finally (api/close! sess)))))

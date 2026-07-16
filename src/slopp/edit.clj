@@ -305,25 +305,6 @@
                  (if near
                    (str " — nearest: " (str/join ", " near))
                    (str " — query_source {ns " ns-sym "} lists what exists")))}))
-(defn modules-cycle
-  "A dependency cycle in `manifest` as a module path [a b ... a], or nil
-  when the graph is acyclic. Pure DFS three-coloring; deterministic order."
-  [manifest]
-  (letfn [(visit [state path m]
-            (case (get state m)
-              :done [state nil]
-              :in   [state (subvec path (.indexOf ^java.util.List path m))]
-              (let [[state cyc]
-                    (reduce (fn [[st c] d]
-                              (if c [st c] (visit st (conj path d) d)))
-                            [(assoc state m :in) nil]
-                            (sort (get manifest m #{})))]
-                [(assoc state m :done) cyc])))]
-    (loop [state {}
-           ms (sort (keys manifest))]
-      (when-let [m (first ms)]
-        (let [[state cyc] (visit state [m] m)]
-          (if cyc cyc (recur state (rest ms))))))))
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
