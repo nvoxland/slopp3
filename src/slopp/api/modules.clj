@@ -1,10 +1,9 @@
 (ns slopp.api.modules
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.edit :as edit]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.edit.modules :as modules]))
 
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
@@ -27,11 +26,11 @@
   layers/cycles, not for enforcement."
   [store rows]
   (let [prod? #(not (str/ends-with? (str %) "-test"))
-        base  (into {} (map (fn [n] [(edit/module-of n) #{}]))
+        base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
                     (filter prod? (keys (:namespaces store))))]
     (reduce (fn [m {:keys [from-ns to]}]
               (if (prod? from-ns)
-                (let [a (edit/module-of from-ns) b (edit/module-of to)]
+                (let [a (modules/module-of from-ns) b (modules/module-of to)]
                   (if (= a b) m (update m a (fnil conj #{}) b)))
                 m))
             base rows)))
@@ -46,7 +45,7 @@
                u   (:var-usages (index/analyze (render/render-ns store nsx)))
                :when (contains? nses (:to u))]
            {:from-ns nsx :from-var (:from-var u) :to (:to u)
-            :to-export (edit/export-level store (:to u) (:name u))}))))
+            :to-export (modules/export-level store (:to u) (:name u))}))))
 
 (defn module-debt
   "Whole-store module violations under the store's CURRENT manifest —
@@ -55,8 +54,8 @@
   Pass precomputed `rows` (module-usage-rows) to share the kondo pass."
   ([store] (module-debt store (module-usage-rows store)))
   ([store rows]
-   (when-let [manifest (edit/modules-manifest store)]
-     (let [vs (edit/module-violations manifest rows)]
+   (when-let [manifest (modules/modules-manifest store)]
+     (let [vs (modules/module-violations manifest rows)]
        (when vs
          {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
           :count (count vs)})))))
@@ -71,8 +70,8 @@
   [session m]
   (let [st       (:store @session)
         m        (str m)
-        manifest (or (edit/modules-manifest st) {})
-        nses     (filter #(= m (edit/module-of %)) (keys (:namespaces st)))
+        manifest (or (modules/modules-manifest st) {})
+        nses     (filter #(= m (modules/module-of %)) (keys (:namespaces st)))
         rows     (for [nsx  (sort nses)
                        :when (not (str/ends-with? (str nsx) "-test"))
                        :let [deep? (> (count (str/split (str nsx) #"\.")) 2)]
