@@ -1400,3 +1400,20 @@ for 40+ minutes mid-publish (the milestone was already durable — journal
 first); (6) summary-less test shards (JVM death under fork pressure) retry
 once serially (:shard-retries). Remaining slopp.api clusters (testrun, deps,
 branch, build; verify/session LAST, via changesets) are a follow-on decision.
+
+The session-engine split (2026-07-17): slopp.api's pipeline substrate —
+image lifecycle + journal commit + verification, 27 forms — moved into
+package-private `slopp.api.session` via move-forms, live, with the server
+executing the very pipeline being relocated (safe because a MOVE rewrites
+all addresses atomically and the server hot-reloads only after the
+consistent commit; contrast the D-series signature-change deadlock).
+The two-way refusals DISCOVERED the layering: branch/deps plumbing
+couldn't move before the substrate they call. Deep packages now:
+history, testrun, session, deps, branch; the public verbs stay on
+slopp.api (the surface). Engine specs live with the engine
+(slopp.api.session-test); reap-idle-images! stayed a public verb so
+branch specs stay honestly placed. move-forms hardening the campaign
+forced: de-qualify refs into the target, moved sets carry their own
+(declare ...), publicize/export under form-level meta wrappers, per-move
+export levels compose across steps (the hook moved alone with
+^{:export "slopp.concurrency"}).
