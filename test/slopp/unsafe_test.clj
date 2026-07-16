@@ -149,3 +149,27 @@
             (str "expected a !-naming warning for the reset!-ing fn: "
                  (pr-str ws))))
       (finally (api/close! sess)))))
+(deftest ^:isolated resolvers-are-denylisted-outside-carriers
+  ;; the enforcement point of the reference-carrier decision: a string or
+  ;; quoted symbol is INERT unless something resolves it — so the gate
+  ;; blocks the resolvers, not the mentions. Docstrings may name vars;
+  ;; tests may hold quoted symbols; nothing un-carried may BECOME a var.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rz.core "(ns rz.core)\n\n(defn f \"F.\" [x] x)\n")
+      (testing "naked requiring-resolve is refused with carrier teaching"
+        (let [r (api/add-form! sess 'rz.core
+                               (str "(defn sneak \"S.\" [q]\n"
+                                    "  ((requiring-resolve q) 1))\n"))]
+          (is (re-find #"late-ref" (str (:error r))) (pr-str r))))
+      (testing "resolve and ns-resolve too"
+        (is (:error (api/add-form! sess 'rz.core
+                                   "(defn peek* \"P.\" [q] (resolve q))")))
+        (is (:error (api/add-form! sess 'rz.core
+                                   "(defn peek2 \"P.\" [q] (ns-resolve 'rz.core q))"))))
+      (testing "^:unsafe is the marked escape — the author takes the obligation"
+        (let [r (api/add-form! sess 'rz.core
+                               (str "^:unsafe (defn bridge \"B.\" [q]\n"
+                                    "  ((requiring-resolve q) 1))\n"))]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))

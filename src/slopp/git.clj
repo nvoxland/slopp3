@@ -387,7 +387,7 @@
           missing? (fn [sha] (not (.has (.getObjectDatabase ^Repository repo)
                                         (ObjectId/fromString sha))))]
       (when (some missing? need)
-        ;; requiring-resolve: fetch-remote! is defined later in the ns
+        ;; fetch-remote! lives in git.client, which requires THIS ns
         ;; (append-only form order), so late-bind instead of forward-ref
         (when-let [url (db/get-meta map-conn "git-remote")]
           ;; late-bound: git.client requires THIS ns (push → ensure-projected!),

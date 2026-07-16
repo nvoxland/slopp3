@@ -29,7 +29,7 @@
   "Epoch ms — the store's clock (public for the deep store packages)."
   [] (System/currentTimeMillis))
 
-(defn late-ref
+^:unsafe (defn late-ref
   "The BLESSED late-binding reference: a fn that resolves `qsym` at first
   call and delegates — for the narrow case where a static require would
   close a load cycle. This is the ONLY sanctioned home for a runtime-

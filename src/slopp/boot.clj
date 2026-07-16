@@ -143,7 +143,7 @@
        :main  (symbol (or (second post) "slopp.mcp/-main"))
        :args  (if (seq extra) extra [dir])})))
 
-(defn -main
+^:unsafe (defn -main
   "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn arg...]
 
   Load the store's program into THIS jvm and run its entry point (default

@@ -17,8 +17,14 @@
   '#{defmacro})
 
 ^:unsafe (def ^:private banned-syms
-  "D3 — a sample of the analysis-defeater denylist (extensible)."
-  '#{eval alter-var-root binding gen-class definline read-string})
+  "D3 — the analysis-defeater denylist (extensible). The RESOLVERS
+  (requiring-resolve, resolve, ns-resolve, find-var, intern) are here per
+  the reference-carrier decision: mentions of var names in strings or
+  quoted symbols are INERT data, so the gate blocks the moment they could
+  BECOME a var — carriers (store/late-ref) or ^:unsafe are the sanctioned
+  paths."
+  '#{eval alter-var-root binding gen-class definline read-string
+     requiring-resolve resolve ns-resolve find-var intern})
 
 (defn- all-symbols [node]
   (filter symbol? (tree-seq coll? seq (n/sexpr node))))
@@ -48,16 +54,20 @@
   Shared by the single-form edit gate (`parse-form`) and the whole-namespace
   import gate (`dialect-scan`) so both paths reject identically."
   [node]
-  (if (unsafe? node)
-    nil
-    (let [s    (n/sexpr node)
+  (when-not (unsafe? node) (let [s    (n/sexpr node)
           head (when (seq? s) (first s))]
       (cond
         (contains? banned-heads head)
         (str "dialect (D4): user macros are banned — " head)
         (some banned-syms (all-symbols node))
-        (str "dialect (D3): denylisted symbol used — "
-             (first (filter banned-syms (all-symbols node))))
+        (let [hit (first (filter banned-syms (all-symbols node)))]
+          (str "dialect (D3): denylisted symbol used — " hit
+               (when (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
+                      (name hit))
+                 (str " — references resolve through CARRIERS:"
+                      " (store/late-ref 'ns/name) for load-cycle late binding,"
+                      " #'ns/name for in-process references in data; mark the"
+                      " form ^:unsafe only if you truly own the obligation"))))
         :else nil))))
 
 (defn parse-form
