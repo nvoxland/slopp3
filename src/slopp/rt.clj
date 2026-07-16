@@ -30,7 +30,7 @@
               (pr-str x))
             400))
 
-^:unsafe ^:reads (defn ^:unused-ok observe
+^:unsafe ^:reads (defn ^:entry-point observe
   "Temporarily instrument the var named by `target` (qualified symbol),
   capturing the args and return (or thrown exception) of up to `limit` calls
   while `thunk` runs; the original is restored in a finally. The oracle's
@@ -62,7 +62,7 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
-^:unsafe ^:reads (defn ^:unused-ok traced-run
+^:unsafe ^:reads (defn ^:entry-point traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
   recording which fn vars of `target-nses` each test touches. `test-ns` may be
   a collection of namespaces — the whole project verifies in ONE run, paying

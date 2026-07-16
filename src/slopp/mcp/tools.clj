@@ -53,10 +53,16 @@
                   :properties {:id {:type "string"}}
                   :required ["id"]}}
    {:name "query_eval"
-    :description "Read-only REPL eval against the live image (the oracle). Namespaces are pre-loaded; requires are no-ops. Questions OF the code — for questions ABOUT the codebase-as-data, use query_store."
+    :description "Read-only REPL eval against the live image (the oracle) — the escape hatch for ARBITRARY expressions. For the common case (invoke one fn with data args) prefer query_call: it carries the reference so renames/moves/the unused gate see it. Questions ABOUT the codebase-as-data: query_store."
     :inputSchema {:type "object"
                   :properties {:code {:type "string"}}
                   :required ["code"]}}
+   {:name "query_call"
+    :description "Observe-only INVOKE of one var in the live image: {sym \"app.core/f\", args [1 2]} — the structured face of query_eval's common case. The reference is CARRIED (visible to renames, moves, and the unused gate) instead of hidden in an eval string; args must be printable data."
+    :inputSchema {:type "object"
+                  :properties {:sym {:type "string"}
+                               :args {:type "array"}}
+                  :required ["sym"]}}
    {:name "query_store"
     :description "The STORE-VALUE oracle: one read-only (fn [store] ...) evaluated over the current immutable store value — ad-hoc analysis ABOUT the codebase (form counts, metadata sweeps, custom aggregation) that no canned query covers. Fully-qualify everything (slopp.store/forms, slopp.render/render-ns, slopp.index/analyze ...); no effects/defs/interop/IO; results must print small. timeout_ms default 10000."
     :inputSchema {:type "object"
@@ -418,7 +424,7 @@
     "query_brief" "query_slice" "query_depends" "query_eval"
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
-    "review_scan" "query_store"
+    "review_scan" "query_store" "query_call"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 
 (def tools

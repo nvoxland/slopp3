@@ -501,6 +501,10 @@
                                                               :format (:format a)
                                                               :limit (or (:limit a) 20))))))
       "query_eval" (text! (api/query-eval session (:code a)))
+      "query_call" (text! (apply api/query-call session
+                                 (symbol (or (:sym a)
+                                             (throw (ex-info "query_call needs :sym (a qualified var name)" {}))))
+                                 (:args a)))
       "query_store" (text! (told! session name a
                                   (api/query-store session (:code a)
                                                    :timeout-ms (or (:timeout_ms a) 10000))))
@@ -691,7 +695,7 @@
       (finally (api/close! session)))))
 
 ^:unsafe
-(defn ^:unused-ok call-main!
+(defn ^:entry-point call-main!
   "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main):
   <dir> <tool> [args] — one tool call, result text on stdout, exit 1 on a
   tool error. args is JSON, EDN, or @file (parse-call-args)."
