@@ -160,21 +160,3 @@
                                 (cond-> {:via (:via r)}
                                   (qsym r)     (assoc :from (qsym r))
                                   (:marker r)  (assoc :marker (:marker r)))))))))
-(defn ^:export ref-id
-  "A reference's SHORT HANDLE — \"fA→fB\" from the two stable form-ids.
-  Mechanically invertible via parse-ref; nothing is stored (form-ids
-  survive edits, so the handle stays valid while both forms live).
-  Declared references (no owning form) have no handle."
-  [r]
-  (when (and (:from-form r) (:to-form r))
-    (str (:from-form r) "→" (:to-form r))))
-(defn ^:export parse-ref
-  "The MECHANICAL inverse of ref-id: \"fA→fB\" → the canonical records
-  matching that from-form/to-form pair in the CURRENT graph (plural — one
-  form may reference the same target several ways, e.g. statically AND
-  through a carrier). Nothing is stored; the handle is a pure projection.
-  Unknown or dead handles → empty."
-  [st handle]
-  (let [[a b] (str/split (str handle) #"→")]
-    (vec (filter #(and (= a (:from-form %)) (= b (:to-form %)))
-                 (refs st)))))

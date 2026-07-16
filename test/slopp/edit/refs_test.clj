@@ -40,8 +40,9 @@
 (deftest the-wire-codec-slims-references
   ;; canonical records are INTERNAL; the wire always carries the compact
   ;; form — grouped by target, self-describing qsyms, via-tagged only when
-  ;; not the common :static. The short handle (stable form-ids) converts
-  ;; back MECHANICALLY through the graph — nothing stored.
+  ;; not the common :static. Names are the ONLY reference currency on the
+  ;; wire (opaque ids fail unsafe: a mistyped id can silently resolve to a
+  ;; real other reference; a mistyped name fails loudly).
   (let [st (-> (store/empty-store)
                (store/ingest 'w.core
                              (str "(ns w.core)\n\n"
@@ -64,9 +65,7 @@
       (is (some #(and (= 'w.app/drive (:from %)) (= :carrier (:via %)))
                 (:tagged w)))
       (is (some #(= :entry-point (:marker %)) (:tagged w))))
-    (testing "the short handle round-trips mechanically"
-      (let [r     (first (filter #(and (= :static (:via %))
-                                       (= 'w.app (:from-ns %))) rs))
-            short (refs/ref-id r)]
-        (is (re-matches #"f\d+→f\d+" short) short)
-        (is (some #(= r %) (refs/parse-ref st short)))))))
+    (testing "records anchor BOTH ends to forms (rewriters and post-conditions)"
+      (let [r (first (filter #(= :static (:via %)) rs))]
+        (is (:from-form r))
+        (is (= 'helper (:name (store/form-by-id st (:to-form r)))))))))
