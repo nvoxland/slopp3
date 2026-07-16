@@ -8,7 +8,7 @@
             [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
             [slopp.api :as api]
-            [slopp.git :as git])
+            [slopp.git :as git] [slopp.git.server :as server])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -73,7 +73,7 @@
         sess1 (api/open! {:dir dir})
         port  (free-port)
         url   (str "http://127.0.0.1:" port "/slopp.git")
-        srv   (git/start-server! port {:dir dir})
+        srv   (server/start-server! port {:dir dir})
         tip   (fn []
                 (some #(when (= "refs/heads/main" (.getName %))
                          (.name (.getObjectId %)))
@@ -101,5 +101,5 @@
                    (.getFullMessage (first (-> g (.log) (.call))))
                    "v2: foreign milestone"))))))
       (finally
-        (git/stop-server! srv)
+        (server/stop-server! srv)
         (api/close! sess1)))))

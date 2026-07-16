@@ -8,8 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git :as git]
-            [slopp.mcp :as mcp])
+            [slopp.mcp :as mcp] [slopp.git.server :as server])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -27,25 +26,25 @@
 (deftest ^:isolated derived-port-is-stable-and-in-range
   (let [d "/some/store/dir"]
     (testing "same dir → same port, always in the private range"
-      (is (= (git/derived-port d) (git/derived-port d)))
-      (is (<= 49152 (git/derived-port d) 65535)))
+      (is (= (server/derived-port d) (server/derived-port d)))
+      (is (<= 49152 (server/derived-port d) 65535)))
     (testing "different dirs generally differ"
-      (is (not= (git/derived-port "/a/b") (git/derived-port "/c/d"))))))
+      (is (not= (server/derived-port "/a/b") (server/derived-port "/c/d"))))))
 
 (deftest ^:isolated start-server-reports-actual-bound-port-and-falls-back
   (let [dir (temp-dir "slopp-embed-port")
-        p   (git/derived-port dir)
-        s1  (git/start-server! p {:dir dir})]
+        p   (server/derived-port dir)
+        s1  (server/start-server! p {:dir dir})]
     (try
       (testing "the requested derived port is what got bound"
         (is (= p (:port s1))))
       (testing "a second server on the SAME derived port falls back, still serves"
-        (let [s2 (git/start-server! p {:dir dir})]
+        (let [s2 (server/start-server! p {:dir dir})]
           (try
             (is (not= p (:port s2)))
             (is (<= 1024 (:port s2) 65535))
-            (finally (git/stop-server! s2)))))
-      (finally (git/stop-server! s1)))))
+            (finally (server/stop-server! s2)))))
+      (finally (server/stop-server! s1)))))
 
 (deftest ^:isolated query-git-surfaces-the-url-over-mcp
   (let [dir  (temp-dir "slopp-embed-mcp")
@@ -60,7 +59,7 @@
       (testing "with no listener, query_git says so (no crash)"
         (is (str/includes? (call "query_git" {}) "no git")))
       ;; simulate what mcp/-main does for a durable session
-      (let [srv (git/start-server! (git/derived-port dir) {:dir dir})
+      (let [srv (server/start-server! (server/derived-port dir) {:dir dir})
             url (str "http://127.0.0.1:" (:port srv) "/slopp.git")]
         (try
           (swap! sess assoc :git-url url :git-server srv)
@@ -77,7 +76,7 @@
                      "v1: f ships"))
                 (is (= (api/query-source sess 'ge.core)
                        (slurp (io/file clone-dir "src" "ge" "core.clj")))))))
-          (finally (git/stop-server! srv))))
+          (finally (server/stop-server! srv))))
       (testing "query_git is a READ — allowed with no open turn (write-gated server)"
         (swap! sess assoc :require-turns? true)
         (is (not (str/includes? (call "query_git" {}) "turn_begin"))))
