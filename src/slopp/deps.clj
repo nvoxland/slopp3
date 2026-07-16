@@ -84,7 +84,7 @@
   cache (which survives restart)."
   (atom {}))
 
-^:reads (defn surface-of
+^:reads (defn ^:unused-ok surface-of
   "Full surface for `lib`@`coord` (resolve jars, then analyze), memoized in
   process by `coord@version`. The slow path runs once per coord."
   [lib coord]
