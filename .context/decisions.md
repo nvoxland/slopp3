@@ -1520,3 +1520,15 @@ module gate row builders; plus the :observed producer (trace map — session
 grain, needs an optional arg) and keyword/class targets. Convention going
 forward: a tool reading kondo var-usages directly for a REFERENCE question
 is a bug — add a producer or consume the graph.
+
+Wire uniformity rule (2026-07-16, follow-up to the codec): the wire speaks
+NAMES, always — one output dialect (the grouped-qsym form); short handles
+are never an alternative output format. Rationale: reading is ~99% of
+traffic and qsyms are self-describing (no resolution round-trip); opaque
+ids are a hallucination hazard (a mistyped f4448 can silently resolve to a
+REAL other reference, while a mistyped qsym fails loudly — names fail
+safe); and handles are form-PAIR grain, not edge grain (static + carrier
+between the same forms share one handle). Handles remain an ACCEPTED INPUT
+convenience for future ref-consuming tools — which must equally accept
+qsym pairs, so agents never need to convert — and are EMITTED only
+alongside an actionable follow-up operation, never as noise columns.
