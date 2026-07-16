@@ -214,11 +214,7 @@
     :description "Roll back everything YOU changed since your last done (other sessions' forms skipped, reported)."
     :inputSchema {:type "object"
                   :properties {:prompt {:type "string"}}}}
-   {:name "fix_declares"
-    :description "Tidy (declare …): reorder defns above callers when safe, delete satisfied declares. Atomic, verified."
-    :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :prompt {:type "string"}}
-                  :required ["ns"]}}
+   
    {:name "ns_rename"
     :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
     :inputSchema {:type "object"

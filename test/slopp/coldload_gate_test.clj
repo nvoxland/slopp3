@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -13,42 +13,51 @@
        "(defn late [] 2)\n"
        "(defn tail [] (late))\n"))
 
-(deftest ^:isolated cold-load-breaking-writes-are-refused
+(deftest ^:isolated cold-load-gate-reorders-acyclic-refuses-cycles
   (let [sess (api/open!)]
     (try
-      (api/ingest! sess 'cl.core seed)
-
-      (testing "replace: an early form referencing a later one is refused"
+      (testing "replace: an early form referencing a later one AUTO-REORDERS (silent)"
+        (api/ingest! sess 'cl.core seed)
         (let [r (api/edit-replace! sess 'cl.core 'early "(defn early [] (late))"
                                    :prompt "x" :agent "t")]
-          (is (:error r))
-          (is (re-find #"cold-load" (str (:error r))))
-          (is (re-find #"late" (str (:error r))))))
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:reordered r)) "no ordering key leaks to the agent")
+          (is (= '[cl.core late early tail]
+                 (mapv :name (store/forms (:store @sess) 'cl.core)))
+              "the callee was moved above its caller")
+          (is (nil? (edit/cold-load-errors (:store @sess) '[cl.core])))))
 
-      (testing "group: replace-before-add forward ref is refused atomically"
+      (testing "group: add a helper + a caller referencing it AUTO-REORDERS atomically"
+        (api/ingest! sess 'cl.grp "(ns cl.grp)\n(defn early [] 1)\n")
         (let [r (api/edit-group! sess
-                                 [{:action :replace :ns 'cl.core :name 'early
+                                 [{:action :replace :ns 'cl.grp :name 'early
                                    :source "(defn early [] (brand-new))"}
-                                  {:action :add :ns 'cl.core
+                                  {:action :add :ns 'cl.grp
                                    :source "(defn brand-new [] 42)"}]
                                  :prompt "g" :agent "t")]
-          (is (:error r))
-          (is (re-find #"cold-load" (str (:error r))))
-          (testing "nothing committed"
-            (is (= seed (api/query-source sess 'cl.core))))))
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[cl.grp brand-new early]
+                 (mapv :name (store/forms (:store @sess) 'cl.grp)))
+              "the added helper was ordered above its caller")
+          (is (nil? (edit/cold-load-errors (:store @sess) '[cl.grp])))))
 
-      (testing "move: relocating a caller before its callee is refused"
-        (let [r (api/move-form! sess 'cl.core 'tail :before 'late
+      (testing "genuine CYCLE (mutual recursion) is REFUSED — no legal order exists"
+        (api/ingest! sess 'cl.cyc "(ns cl.cyc)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
+        (let [r (api/edit-replace! sess 'cl.cyc 'ping "(defn ping [n] (pong n))"
+                                   :prompt "cyc" :agent "t")]
+          (is (:error r) "mutual recursion can't be reordered — the declare is taught")
+          (is (re-find #"cold-load" (str (:error r))))))
+
+      (testing "move: relocating a caller before its callee is still REFUSED (explicit order)"
+        (api/ingest! sess 'cl.mv "(ns cl.mv)\n(defn early [] 1)\n(defn late [] 2)\n(defn tail [] (late))\n")
+        (let [r (api/move-form! sess 'cl.mv 'tail :before 'late
                                 :prompt "m" :agent "t")]
           (is (:error r))
           (is (re-find #"cold-load" (str (:error r))))))
 
-      (testing "the legal shapes still land"
+      (testing "legal writes still land"
         (let [r (api/edit-replace! sess 'cl.core 'tail "(defn tail [] (early))"
                                    :prompt "ok" :agent "t")]
-          (is (nil? (:error r)) (pr-str r)))
-        (let [r (api/move-form! sess 'cl.core 'late :before 'early
-                                :prompt "ok" :agent "t")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
 

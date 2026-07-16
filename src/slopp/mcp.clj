@@ -670,9 +670,7 @@
                                          " run tests before done — done runs the affected"
                                          " tests itself. Whole suite in-image: {all true};"
                                          " external merge gate: {isolated true}.")}))
-      "fix_declares" (text! (api/fix-declares! session (sym :ns)
-                                                   :prompt (:prompt a)
-                                                   :agent (:agent a)))
+      
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))

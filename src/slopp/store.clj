@@ -344,6 +344,32 @@
                 store' (:namespaces store'))]
     [(update store' :deltas conj delta) delta]))
 
+(defn reorder-to
+  "Reorder `ns-sym`'s forms to match `name-order` (a vector of form names,
+  the ns declaration first) using the fewest trivia-preserving `move-form`s
+  — each an ordinary replayable `:move` delta, so the reorder survives a
+  fresh journal reload. Right-to-left insertion: for each adjacent target
+  pair, ensure the earlier name precedes the later, skipping pairs already
+  ordered. Returns [store' moved-count]."
+  [store ns-sym name-order & {:keys [group prompt agent]}]
+  (let [target (vec (remove #{ns-sym} name-order))]
+    (loop [st store, i (dec (count target)), moved 0]
+      (if (< i 1)
+        [st moved]
+        (let [earlier (nth target (dec i))
+              later   (nth target i)
+              elems   (get-in st [:namespaces ns-sym :elements])
+              pos     (into {}
+                            (keep-indexed
+                             (fn [k e] (when (and (= :form (:kind e)) (:name e))
+                                         [(:name e) k])))
+                            elems)]
+          (if (and (pos earlier) (pos later) (< (pos earlier) (pos later)))
+            (recur st (dec i) moved)                     ; already ordered
+            (if-let [[st' _] (move-form st ns-sym earlier later
+                                        :group group :prompt prompt :agent agent)]
+              (recur st' (dec i) (inc moved))
+              (recur st (dec i) moved))))))))
 (defn record-done
   "Append a `:done` boundary delta — a unit-of-work marker (and the
   close of `agent`'s episode). `:findings` is the done-processing verdict

@@ -276,3 +276,41 @@
         (is (not (re-find #"\.clj:\d" (str (:error r))))
             "no file:line in the message"))
       (finally (api/close! sess)))))
+(deftest ^:isolated forward-refs-auto-reorder-no-declare
+  ;; the agent writes in any order; a forward reference is RESOLVED by the
+  ;; pipeline reordering defs above callers — SILENTLY: no refusal, no declare,
+  ;; and no ordering signal leaks back (order is store truth, not the agent's
+  ;; concern). The reorder is proven by the store order flipping [a b] → [b a].
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ar.core
+                   "(ns ar.core)\n\n(defn a \"A.\" [x] x)\n\n(defn b \"B.\" [x] x)\n")
+      (is (= '[ar.core a b] (mapv :name (store/forms (:store @sess) 'ar.core)))
+          "precondition: a defined before b")
+      (testing "editing `a` to call `b` (defined below) auto-reorders, not refuses"
+        (let [r (api/edit-replace! sess 'ar.core 'a "(defn a \"A.\" [x] (b x))")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:reordered r)) "the reorder is SILENT — no ordering key leaks to the agent")))
+      (testing "b now precedes a; the ns cold-loads; no declare"
+        (is (= '[ar.core b a] (mapv :name (store/forms (:store @sess) 'ar.core)))
+            "the def was moved above its caller")
+        (is (nil? (edit/cold-load-errors (:store @sess) '[ar.core])))
+        (is (not (re-find #"\(declare" (api/query-source sess 'ar.core)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated add-caller-before-callee-auto-reorders
+  ;; the .ideas motivating case: the agent adds a caller anchored ABOVE the
+  ;; callee it references. That is a forward ref — the pipeline reorders the
+  ;; callee above the caller silently, no declare, no refusal.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'cc.core "(ns cc.core)\n\n(defn callee \"C.\" [x] (inc x))\n")
+      (testing "adding a caller :before its callee resolves the forward ref"
+        (let [r (api/add-form! sess 'cc.core "(defn caller \"C.\" [x] (callee x))"
+                               :before 'callee)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:reordered r)) "silent — no ordering key leaks")))
+      (testing "callee precedes caller; cold-loads; no declare"
+        (is (= '[cc.core callee caller] (mapv :name (store/forms (:store @sess) 'cc.core))))
+        (is (nil? (edit/cold-load-errors (:store @sess) '[cc.core])))
+        (is (not (re-find #"\(declare" (api/query-source sess 'cc.core)))))
+      (finally (api/close! sess)))))

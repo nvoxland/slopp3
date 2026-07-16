@@ -512,3 +512,21 @@
                        {:form (:form f) :type (:type f) :message (:message f)}))}
 
       :else nil)))
+(defn resolve-cold-load
+  "AUTO-AVOID-DECLARE: if `store`'s `ns-sym` has a forward reference a
+  REORDER can fix, return {:store <reordered> :moved n} — definitions
+  moved above their callers, the arrangement a fresh load resolves without
+  a declare. nil when the namespace already cold-loads, OR a genuine cycle
+  (mutual recursion) makes reorder insufficient (a real declare is needed —
+  the write gate then teaches it). The write pipeline calls this so agents
+  never hand-write (declare ...)."
+  [store ns-sym & {:keys [prompt agent]}]
+  (when (cold-load-errors store [ns-sym])
+    (let [{:keys [order cycle]} (refs/cold-load-order store ns-sym)]
+      (when-not cycle
+        (let [names   (mapv #(:name (store/form-by-id store %)) order)
+              [st' n] (store/reorder-to store ns-sym names
+                                        :prompt (or prompt "auto-reorder: define before use")
+                                        :agent agent)]
+          (when (and (pos? n) (nil? (cold-load-errors st' [ns-sym])))
+            {:store st' :moved n}))))))

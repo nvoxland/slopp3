@@ -45,3 +45,20 @@
       (is (nil? (store/append-form base 'an.core
                                    (rewrite-clj.parser/parse-string "(defn x [] 4)")
                                    :before 'nope))))))
+(deftest reorder-to-realizes-a-target-order
+  (let [base (store/ingest (store/empty-store) 'ro.core
+                           "(ns ro.core)\n(defn c [] 3)\n(defn a [] 1)\n(defn b [] 2)\n")
+        names #(mapv :name (store/forms % 'ro.core))]
+    (testing "reorders to the requested sequence, ns decl first"
+      (let [[st n] (store/reorder-to base 'ro.core '[ro.core a b c])]
+        (is (= '[ro.core a b c] (names st)))
+        (is (pos? n) "some moves happened")))
+    (testing "an already-correct order needs no moves"
+      (let [[st n] (store/reorder-to base 'ro.core '[ro.core c a b])]
+        (is (= '[ro.core c a b] (names st)))
+        (is (zero? n))))
+    (testing "the moves are ordinary :move deltas (replay-tested in multiproc)"
+      (let [[st n] (store/reorder-to base 'ro.core '[ro.core a b c])]
+        (is (= n (count (filter #(= :move (:op %))
+                                (drop (count (:deltas base)) (:deltas st)))))
+            "each move is one :move delta")))))

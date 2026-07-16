@@ -121,3 +121,31 @@
           c   (refs/refs st2)]
       (is (not (identical? a c)) "a changed store rebuilds")
       (is (some #(= 'mm.core (:to-ns %)) c) "and reflects the new reference"))))
+(deftest cold-load-order-resolves-forward-refs
+  ;; the arrangement a fresh load resolves top-to-bottom WITHOUT declares —
+  ;; defs before their intra-ns callers (Kahn over the reference graph);
+  ;; genuine mutual recursion is named as a :cycle (those need a declare).
+  (testing "a simple forward ref reorders to defs-first"
+    (let [st (store/ingest (store/empty-store) 'co.core
+                           (str "(ns co.core)\n"
+                                "(defn top \"T.\" [x] (helper x))\n"    ; uses helper (below)
+                                "(defn helper \"H.\" [x] (inc x))\n"))
+          r  (refs/cold-load-order st 'co.core)]
+      (is (nil? (:cycle r)))
+      ;; ns decl first, then helper before top
+      (is (= '[co.core helper top]
+             (mapv #(:name (store/form-by-id st %)) (:order r)))
+          (pr-str r))))
+  (testing "mutual recursion is reported as a cycle, not silently mis-ordered"
+    (let [st (store/ingest (store/empty-store) 'co.rec
+                           (str "(ns co.rec)\n"
+                                "(defn ping \"P.\" [n] (when (pos? n) (pong (dec n))))\n"
+                                "(defn pong \"P.\" [n] (when (pos? n) (ping (dec n))))\n"))
+          r  (refs/cold-load-order st 'co.rec)]
+      (is (= #{'co.rec/ping 'co.rec/pong} (set (:cycle r))) (pr-str r))))
+  (testing "an already-ordered ns is unchanged"
+    (let [st (store/ingest (store/empty-store) 'co.ok
+                           "(ns co.ok)\n(defn a \"A.\" [x] x)\n(defn b \"B.\" [x] (a x))\n")
+          r  (refs/cold-load-order st 'co.ok)]
+      (is (nil? (:cycle r)))
+      (is (= '[co.ok a b] (mapv #(:name (store/form-by-id st %)) (:order r)))))))

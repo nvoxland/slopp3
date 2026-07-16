@@ -211,3 +211,40 @@
                                 (cond-> {:via (:via r)}
                                   (qsym r)     (assoc :from (qsym r))
                                   (:marker r)  (assoc :marker (:marker r)))))))))
+(defn ^:export cold-load-order
+  "The namespace's forms reordered so every intra-ns definition precedes its
+  callers — the arrangement a fresh load resolves top-to-bottom WITHOUT a
+  declare. Kahn topological sort over THE reference graph's intra-ns edges
+  (same pattern as store/ns-dependency-order, at form grain; ties break by
+  original position, so an already-ordered ns is unchanged). Returns
+  {:order [form-id ...] :cycle [qsym ...]|nil}: :order is the resolving
+  sequence (the ns declaration always first); :cycle names the
+  mutual-recursion group when no full order exists — those genuinely need a
+  declare, which the reorder alone can't remove."
+  [store nsx]
+  (let [forms   (vec (store/forms store nsx))
+        pos     (into {} (map-indexed (fn [i f] [(:name f) i])) forms)
+        names   (set (keep :name forms))
+        ;; intra-ns dependency: caller NEEDS callee before it
+        needs   (reduce (fn [m r]
+                          (if (and (= nsx (:to-ns r)) (:from-var r)
+                                   (contains? names (:to-name r))
+                                   (not= :declared (:via r)))
+                            (update m (:from-var r) (fnil conj #{}) (:to-name r))
+                            m))
+                        {} (ns-refs store nsx))
+        nm->id  (into {} (keep (fn [f] (when (:name f) [(:name f) (:id f)])) forms))
+        ns-decl (some (fn [f] (when (= nsx (:name f)) (:id f))) forms)]
+    ;; Kahn: repeatedly take the earliest-positioned form whose deps are done
+    (loop [order (if ns-decl [ns-decl] [])
+           remaining (vec (sort-by pos (remove #{nsx} (keep :name forms))))
+           done #{}]
+      (if (empty? remaining)
+        {:order order :cycle nil}
+        (if-let [ready (first (filter #(every? done (get needs % #{})) remaining))]
+          (recur (conj order (nm->id ready))
+                 (vec (remove #{ready} remaining))
+                 (conj done ready))
+          ;; nothing ready → the remainder is a dependency cycle
+          {:order (into order (map nm->id) remaining)
+           :cycle (vec (sort (map #(symbol (str nsx) (str %)) remaining)))})))))

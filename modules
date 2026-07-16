@@ -6,7 +6,7 @@ slopp.branch: slopp.api
 slopp.build-native: slopp.api slopp.build
 slopp.chsig: slopp.api slopp.refactor slopp.store
 slopp.coldload: slopp.index
-slopp.coldload-gate: slopp.api
+slopp.coldload-gate: slopp.api slopp.edit slopp.store
 slopp.commit: slopp.api slopp.mcp slopp.store
 slopp.concurrency: slopp.api slopp.store
 slopp.db: slopp.api slopp.render slopp.store

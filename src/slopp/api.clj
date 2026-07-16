@@ -1226,7 +1226,14 @@
               (recur (:store r) (rest remaining)
                      (conj deltas (:delta r)) (conj hots (:hot r)) (inc i))))
           ;; commit phase — checked loads FIRST (S1), commit only if all compile
-          (let [lr       (edit/lint-refusals base0 st (distinct (map :ns steps))
+          (let [st       (reduce (fn [s ns-sym]
+                                   (if-let [rz (edit/resolve-cold-load
+                                                s ns-sym
+                                                :prompt "auto-reorder: define before use"
+                                                :agent agent)]
+                                     (:store rz) s))
+                                 st (distinct (map :ns steps)))
+                lr       (edit/lint-refusals base0 st (distinct (map :ns steps))
                                              (keep :form-id deltas))
                 load-res (if-let [gate (or (edit/cold-load-errors st (distinct (map :ns steps)))
                                            (:refuse lr))]

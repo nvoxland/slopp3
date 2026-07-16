@@ -178,12 +178,27 @@
   :red-first; lint errors in OTHER forms (stale callers) surface as
   :carried-errors — both ride the result, never block, and the done-point
   re-checks. A genuine compile failure returns an ANCHORED error
-  (edit/compile-error — form + snippet, no file:line)."
-  [session transform target-node target-desc ns-sym
+  (edit/compile-error — form + snippet, no file:line).
+  AUTO-AVOID-DECLARE: the pure transform is WRAPPED so a candidate with a
+  forward reference is reordered (defs moved above callers) before the
+  cold-load gate — the agent never writes (declare ...). The reorder rides
+  inside the swap! rerun too, so durable rebasing stays consistent; a genuine
+  cycle (mutual recursion) reorder can't fix falls through to the existing
+  refusal, which teaches the declare."
+  [session raw-transform target-node target-desc ns-sym
    & {:keys [load?] :or {load? true}}]
-  (let [orig     (some-> (target-node (:store @session)) n/string)
-        conflict {:conflict {:form target-desc
-                             :reason "form changed concurrently — re-read and retry"}}]
+  (let [orig      (some-> (target-node (:store @session)) n/string)
+        conflict  {:conflict {:form target-desc
+                              :reason "form changed concurrently — re-read and retry"}}
+        transform (fn [base]
+                    (let [out (raw-transform base)]
+                      (if (or (:error out) (not load?))
+                        out
+                        (if-let [rz (edit/resolve-cold-load
+                                     (:store out) ns-sym
+                                     :prompt "auto-reorder: define before use")]
+                          (assoc out :store (:store rz))
+                          out))))]
     (if (:db @session)
       ;; durable: the JOURNAL arbitrates (m5a) — append-CAS, refresh, rebase
       (loop [attempt 0, loaded? false, healed? false, stubbed nil, carried nil]
