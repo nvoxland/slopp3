@@ -10,7 +10,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.index :as index]
-            [slopp.repl :as repl] [slopp.edit.modules :as modules]))
+            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -96,10 +96,11 @@
 (defn pure-eval-refusal
   "nil when sexpr `x` looks READ-ONLY, else a teaching error string — the
   gate for the store-value oracle (query_store), which must never write.
-  Conservative, quote-pruned symbol walk refusing: `!`-enders (the effect
-  convention), def-family and redefinition forms, java interop (method
-  calls, constructors — arbitrary IO hides there), and an explicit denylist
-  of IO/eval/binding entry points. Pure analysis needs none of those."
+  Conservative, quote-pruned symbol walk (refs/walk-pruned) refusing:
+  `!`-enders (the effect convention), def-family and redefinition forms,
+  java interop (method calls, constructors — arbitrary IO hides there),
+  and an explicit denylist of IO/eval/binding entry points. Pure analysis
+  needs none of those."
   [x]
   (let [deny (set (str/split (str "spit slurp eval read-string load-string"
                                   " load-file load require use import intern"
@@ -115,21 +116,16 @@
                              #" "))
         deny-ns #{"System" "java.lang.System" "clojure.java.io"
                   "clojure.java.shell" "java.io" "java.nio.file"}
-        bad (fn bad [f]
-              (cond
-                (and (seq? f) (= 'quote (first f))) nil
-                (symbol? f)
-                (let [nm (name f)]
-                  (when (or (str/ends-with? nm "!")
-                            (str/starts-with? nm ".")
-                            (str/ends-with? nm ".")
-                            (contains? deny nm)
-                            (contains? deny-ns (namespace f)))
-                    f))
-                (map-entry? f) (or (bad (key f)) (bad (val f)))
-                (coll? f) (some bad f)
-                :else nil))]
-    (when-let [f (bad x)]
+        bad? (fn [f]
+               (when (symbol? f)
+                 (let [nm (name f)]
+                   (when (or (str/ends-with? nm "!")
+                             (str/starts-with? nm ".")
+                             (str/ends-with? nm ".")
+                             (contains? deny nm)
+                             (contains? deny-ns (namespace f)))
+                     [f]))))]
+    (when-let [f (first (refs/walk-pruned bad? x))]
       (str "query_store is READ-ONLY analysis over the immutable store value — "
            f " is refused (no effects, no defs, no interop, no IO/eval). "
            "Pure clojure.core plus slopp's pure fns (slopp.store/forms, "
