@@ -40,7 +40,12 @@ files don't. One analysis pass builds the call graph + lint, then every
 form is scored on review-relevant signal and RISK-RANKED: `:untested`
 (STATIC — not reachable from any test namespace in the call graph, so it
 survives `^:isolated` tests that never touch the in-image trace map; the
-trace refines it when warm), `:high-blast` (many callers), `:large`,
+trace refines it when warm), `:unused` (public defn/def with ZERO
+in-store callers — dead code or unadvertised/entry surface; whole scans
+only, since a scoped graph can't see every caller; `-main`, privates, and
+test nses exempt — `done` raises the same signal for TOUCHED nses as the
+findings advisory `:unused-public`, and kondo's `unused-private-var`
+covers privates per-ns), `:high-blast` (many callers), `:large`,
 `:lint`, `:undocumented` (public surface), `:effectful` (`!`). Clean forms
 drop out; `:top` rows carry `:form/:risk/:flags/:callers/:covered`, drill
 in with `query_slice`. `:ns` scopes to a namespace. Lesson baked in
