@@ -42,7 +42,7 @@ slopp.normalize: slopp.api slopp.store
 slopp.observe: slopp.api
 slopp.orientation: slopp.api
 slopp.phase4: slopp.api slopp.http slopp.store
-slopp.refactor: slopp.index slopp.render slopp.store
+slopp.refactor: slopp.edit slopp.index slopp.render slopp.store
 slopp.rename: slopp.api slopp.store
 slopp.render: slopp.store
 slopp.store: slopp.semver
