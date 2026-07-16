@@ -1429,3 +1429,16 @@ public verbs stay on the surface even when thin. The debt view caught a
 real gate-vs-reality gap: a move's export pre-check trusted intent while
 export-mark silently skipped a meta-wrapped name (^:dynamic) — fixed;
 the gate reads declared plans, the debt view reads reality, keep both.
+
+Tier-blind verification (2026-07-16, user decision): the in-image vs
+^:isolated split is an IMPLEMENTATION DETAIL that must not leak into the
+agent's contract. `done` now routes impacted ^:isolated tests to the
+external tier automatically (require-closure slice keyed to the episode
+boundary, capped at 4 nses; a larger slice defers LOUDLY via findings
+:isolated-pending — resurfaced by the brief); `commit_point` green-gates
+on the FULL isolated suite it runs itself (:force skips to honest red;
+stores with no isolated tests skip the tier). The wave-end ritual is now
+just commit_point. Explicitly rejected: auto remote push (the user asks
+for mirror pushes), per-wave jar rebuilds (the jar is only the boot
+kernel — rebuild on kernel/deps change only). Roadmap: warm isolated
+runner + incremental build! make the tier cheap enough to remove the cap.

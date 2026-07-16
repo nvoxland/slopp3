@@ -98,11 +98,14 @@ measurably bleed tokens.
 that don't exist yet — it lands as a REAL red (`:red-first` names the
 missing vars, stubbed in-image as failing); implement them to go green.
 
-**Iterate on the slice, gate on the suite:** `test_run {isolated true,
-affected true}` runs only the test namespaces that can reach your
-changes since the last milestone; run the FULL `test_run {isolated
-true}` at milestones. Red runs return `:all-failing {file [tests]}` and
-`:themes` (clustered causes) — read those before drilling into blocks.
+**Tiers are not your problem:** `done` runs everything your changes
+impact in EVERY tier — impacted `^:isolated` tests run in the external
+JVM automatically (a large slice defers to the milestone and rides
+findings as `:isolated-pending`), and `commit_point` gates itself on the
+FULL isolated suite. You never run `test_run` as a ritual — it's for
+spot-checking one namespace or test mid-flight. Red runs return
+`:all-failing {file [tests]}` and `:themes` (clustered causes) — read
+those before drilling into blocks.
 
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
