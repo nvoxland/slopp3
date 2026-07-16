@@ -56,6 +56,21 @@
   ops — implementation detail, not an agent surface. Raw REPL eval may
   observe but never redefines code.
 
+- **THE reference graph is the single source of truth for "who references
+  what"** (`slopp.edit.refs`). Every producer of reference knowledge
+  NORMALIZES INTO it at the source — kondo-resolved statics, syntactically-
+  qualified un-required calls, carrier positions (`query-call`/`invoke!`/
+  `late-ref`), and marker declarations (`^:entry-point`/`^:unused-ok` as
+  edges from `:external`) — and every consumer (module gates, the unused
+  gate, review triage, debt/drift views, moves, renames, blast radius)
+  queries `refs`/`refs-to` and NEVER re-integrates sources privately.
+  Records are FORM-ANCHORED (`:from-form` is a stable form-id — semantic,
+  not line/column); rewriters re-derive positions inside one form at
+  rewrite time. The graph is DERIVED and content-memoized, never stored:
+  references are an index of source, and the journal owes them no
+  consistency. Adding a new reference kind = adding a producer HERE; a
+  tool consuming kondo rows directly for reference questions is a bug.
+
 ## Layer map (bottom-up)
 
 | ns | Role |
@@ -70,6 +85,7 @@
 | `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
 | `slopp.refactor` | position-based structural rewrites (rename, extract, subform) |
 | `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate; pure-eval gate (query_store) |
+| `slopp.edit.refs` | THE reference graph (deep, world-exported): canonical form-anchored records from every producer — static/carrier/declared; `refs`/`refs-to` are the only reference query surface |
 | `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
 | `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |

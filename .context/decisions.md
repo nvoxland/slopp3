@@ -1501,3 +1501,22 @@ refusals teach the carriers (store/late-ref, #'var literals) and the
 itself and slopp.boot/-main (the OS boundary). Consequence: in gated
 store code, a string can no longer become a reference — strings are
 inert by construction, which is stronger than any string lint.
+
+THE reference graph (2026-07-16, user decision — single source of truth):
+slopp.edit.refs is the ONE place "who references what" lives. Producers
+normalize in at the source (kondo statics + un-required qualified calls,
+carrier positions, marker declarations as edges from :external); consumers
+query refs/refs-to and never fuse sources privately — unused-report,
+module-usage-rows (debt/drift), and review_scan ported this wave, which
+also FIXED review_scan's scoped-scan caller counts (whole-store graph →
+the :unused flag now works under :ns scoping too). Records anchor to
+form-ids (semantic, stable), never line/column; rewriters re-derive
+positions per-form at rewrite time. The graph is DERIVED (content-memoized
+via the kondo cache), never stored — refs are an index of source; the
+journal owes them no consistency, so merge/replay/branching need no new
+machinery. Remaining consumers to port (recorded): move-plan's usage
+assembly, rename's mention sweep, query-depends/query-impact blast, the
+module gate row builders; plus the :observed producer (trace map — session
+grain, needs an optional arg) and keyword/class targets. Convention going
+forward: a tool reading kondo var-usages directly for a REFERENCE question
+is a bug — add a producer or consume the graph.
