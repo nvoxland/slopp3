@@ -81,21 +81,25 @@
                  "(filter pred xs)"]]
       (is (= src (:src (norm/normalize-source src))) src))))
 
-(deftest ^:isolated done-runs-declare-hygiene
+(deftest ^:isolated done-removes-stale-auto-declare-silently
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dh.core
-                   (str "(ns dh.core (:require [clojure.test :refer [deftest is]]))\n"
-                        "(deftest t (is true))\n"))
+                   (str "(ns dh.core)\n"
+                        "(defn ping [n] n)\n"
+                        "(defn pong [n] (ping n))\n"))
       (api/done! sess :label "base")
-      ;; the compile gate's escape hatch, as agents actually use it
-      (api/add-form! sess 'dh.core "(declare later)")
-      (api/add-form! sess 'dh.core "(defn caller [x] (later x))")
-      (api/add-form! sess 'dh.core "(defn later [x] (inc x))")
-      (api/add-form! sess 'dh.core "(deftest caller-t (is (= 3 (caller 2))))")
+      ;; make ping call pong → mutual recursion → the pipeline auto-declares
+      ;; (the agent writes NO declare — the edit path bans them)
+      (api/add-form! sess 'dh.core "(declare later)")  ; refused — proves the ban
+      (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (pong n))")
+      (is (re-find #":auto-declare" (api/query-source sess 'dh.core))
+          "the cycle got a pipeline-owned, marked declare")
+      ;; break the cycle → the auto-declare is now stale
+      (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (inc n))")
       (let [r (api/done! sess :label "feature")]
-        (is (seq (:declares-fixed r)) (pr-str (keys r)))
-        (let [src (api/query-source sess 'dh.core)]
-          (is (not (re-find #"declare" src)))
-          (is (< (.indexOf src "defn later") (.indexOf src "defn caller")))))
+        (is (nil? (:declares-fixed r))
+            "done cleans up SILENTLY — no declare housekeeping reported")
+        (is (not (re-find #"declare" (api/query-source sess 'dh.core)))
+            "the stale auto-declare was removed at done"))
       (finally (api/close! sess)))))

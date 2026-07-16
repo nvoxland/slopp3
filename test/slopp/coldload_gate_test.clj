@@ -13,7 +13,7 @@
        "(defn late [] 2)\n"
        "(defn tail [] (late))\n"))
 
-(deftest ^:isolated cold-load-gate-reorders-acyclic-refuses-cycles
+(deftest ^:isolated cold-load-gate-reorders-acyclic-declares-cycles
   (let [sess (api/open!)]
     (try
       (testing "replace: an early form referencing a later one AUTO-REORDERS (silent)"
@@ -41,12 +41,16 @@
               "the added helper was ordered above its caller")
           (is (nil? (edit/cold-load-errors (:store @sess) '[cl.grp])))))
 
-      (testing "genuine CYCLE (mutual recursion) is REFUSED — no legal order exists"
+      (testing "genuine CYCLE (mutual recursion) AUTO-DECLARES — the pipeline owns it"
         (api/ingest! sess 'cl.cyc "(ns cl.cyc)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
         (let [r (api/edit-replace! sess 'cl.cyc 'ping "(defn ping [n] (pong n))"
                                    :prompt "cyc" :agent "t")]
-          (is (:error r) "mutual recursion can't be reordered — the declare is taught")
-          (is (re-find #"cold-load" (str (:error r))))))
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:declared r)) "silent — no declare key leaks to the agent")
+          (is (nil? (edit/cold-load-errors (:store @sess) '[cl.cyc]))
+              "the inserted declare makes it cold-load")
+          (is (re-find #":auto-declare" (api/query-source sess 'cl.cyc))
+              "a MARKED declare was inserted by the pipeline")))
 
       (testing "move: relocating a caller before its callee is still REFUSED (explicit order)"
         (api/ingest! sess 'cl.mv "(ns cl.mv)\n(defn early [] 1)\n(defn late [] 2)\n(defn tail [] (late))\n")

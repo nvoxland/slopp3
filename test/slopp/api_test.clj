@@ -48,12 +48,14 @@
                                    :prompt "call add")]
           (is (nil? (:error r)) (pr-str r)))
         (is (seq (api/query-references sess 'demo 'add))))
-      (testing "the cold-load gate refuses the reverse (early form calling a later one)"
-        (is (re-find #"cold-load"
-                     (str (:error (api/edit-replace!
-                                   sess 'demo 'add
+      (testing "a cycle (add calls tainted, which already calls add) AUTO-DECLARES"
+        ;; mutual recursion has no legal order — the pipeline inserts a marked
+        ;; declare instead of refusing; the agent writes none
+        (let [r (api/edit-replace! sess 'demo 'add
                                    "(defn add [x y] (tainted (atom (+ x y))))"
-                                   :prompt "call tainted"))))))
+                                   :prompt "call tainted")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (re-find #":auto-declare" (api/query-source sess 'demo)))))
       (testing "query.eval asks the live image (the oracle)"
         (is (= [7] (api/query-eval sess "(+ 3 4)"))))
       (testing "edit.replace-form updates store + hot-reloads image"
