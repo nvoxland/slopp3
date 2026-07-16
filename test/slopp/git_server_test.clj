@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git :as git])
+            [slopp.git.server :as server])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -43,7 +43,7 @@
   (let [dir  (temp-dir "slopp-git-server")
         sess (api/open! {:dir dir})
         port (free-port)
-        srv  (git/start-server! port {:dir dir})]
+        srv  (server/start-server! port {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
       (api/commit-point! sess "v1: f ships" :agent "alice")
@@ -88,21 +88,21 @@
           (is (contains? (set (map #(.getName %) refs))
                          "refs/heads/feature"))))
       (finally
-        (git/stop-server! srv)
+        (server/stop-server! srv)
         (api/close! sess)))))
 
 (deftest ^:isolated empty-store-clones-as-empty-repo
   (let [dir  (temp-dir "slopp-git-empty")
         sess (api/open! {:dir dir})
         port (free-port)
-        srv  (git/start-server! port {:dir dir})]
+        srv  (server/start-server! port {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)   ; content but NO milestones yet
       (let [clone-dir (temp-dir "slopp-git-empty-clone")]
         (with-open [g (clone! port clone-dir)]
           (is (nil? (-> g (.getRepository) (.resolve "HEAD"))))))
       (finally
-        (git/stop-server! srv)
+        (server/stop-server! srv)
         (api/close! sess)))))
 
 (deftest ^:isolated wip-refs-expose-unmilestoned-work
@@ -113,7 +113,7 @@
   (let [dir  (temp-dir "slopp-git-wip")
         sess (api/open! {:dir dir})
         port (free-port)
-        srv  (git/start-server! port {:dir dir})
+        srv  (server/start-server! port {:dir dir})
         url  (clone-url port)
         heads (fn []
                 (into {} (map (fn [r] [(.getName r) (.name (.getObjectId r))]))
@@ -157,7 +157,7 @@
             (is (nil? (get h "refs/heads/wip/main")))
             (is (not= (get h1 "refs/heads/main") (get h "refs/heads/main"))))))
       (finally
-        (git/stop-server! srv)
+        (server/stop-server! srv)
         (api/close! sess)))))
 
 (deftest ^:isolated remote-is-read-only
@@ -166,7 +166,7 @@
   (let [dir  (temp-dir "slopp-git-ro")
         sess (api/open! {:dir dir})
         port (free-port)
-        srv  (git/start-server! port {:dir dir})]
+        srv  (server/start-server! port {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
       (api/commit-point! sess "v1" :agent "alice")
@@ -192,7 +192,7 @@
                               (:updates outcome)))
                   (str "push must fail against a read-only remote: " outcome))))))
       (finally
-        (git/stop-server! srv)
+        (server/stop-server! srv)
         (api/close! sess)))))
 
 (deftest ^:isolated real-git-cli-smoke
@@ -204,7 +204,7 @@
       (let [dir  (temp-dir "slopp-git-cli")
             sess (api/open! {:dir dir})
             port (free-port)
-            srv  (git/start-server! port {:dir dir})]
+            srv  (server/start-server! port {:dir dir})]
         (try
           (api/ingest! sess 'gs.core seed)
           (api/commit-point! sess "v1: f ships" :agent "alice")
@@ -216,5 +216,5 @@
             (let [log (sh/sh "git" "-C" clone-dir "log" "--format=%s")]
               (is (str/includes? (:out log) "v1: f ships"))))
           (finally
-            (git/stop-server! srv)
+            (server/stop-server! srv)
             (api/close! sess)))))))

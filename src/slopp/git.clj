@@ -390,7 +390,9 @@
         ;; requiring-resolve: fetch-remote! is defined later in the ns
         ;; (append-only form order), so late-bind instead of forward-ref
         (when-let [url (db/get-meta map-conn "git-remote")]
-          (try ((requiring-resolve 'slopp.git/fetch-remote!) repo url)
+          ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
+          ;; so a static require back would cycle — resolve at call time
+          (try ((requiring-resolve 'slopp.git.client/fetch-remote!) repo url)
                (catch Exception _ nil))))
       (let [main-tip (project-journal! ctx "main" main-ds :base base)
             _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
@@ -425,152 +427,6 @@
 ;; stateless RPC); we only route bytes. v0 protocol — the Git-Protocol:
 ;; version=2 header is deliberately ignored (spec-legal fallback).
 
-(defn- status! [^HttpExchange ex code]
-  (.sendResponseHeaders ex code -1)
-  (.close ex))
-
-(defn- q-params [^HttpExchange ex]
-  (into {}
-        (keep (fn [kv]
-                (let [[k v] (str/split kv #"=" 2)]
-                  [k (java.net.URLDecoder/decode (str v) "UTF-8")])))
-        (some-> (.getQuery (.getRequestURI ex)) (str/split #"&"))))
-
-(defn- request-body ^java.io.InputStream [^HttpExchange ex]
-  (cond-> (.getRequestBody ex)
-    (= "gzip" (some-> (.getFirst (.getRequestHeaders ex) "Content-Encoding")
-                      str/lower-case))
-    (GZIPInputStream.)))
-
-(defn- advertise-refs! [ctx ^HttpExchange ex]
-  (let [service (get (q-params ex) "service")]
-    (if-not (= "git-upload-pack" service)
-      (status! ex 403)          ; read-only remote — no receive-pack, no dumb protocol
-      (do (ensure-projected! ctx)
-          (doto (.getResponseHeaders ex)
-            (.add "Content-Type" (str "application/x-" service "-advertisement"))
-            (.add "Cache-Control" "no-cache"))
-          (.sendResponseHeaders ex 200 0)
-          (with-open [os (.getResponseBody ex)]
-            (let [pck (PacketLineOut. os)
-                  adv (RefAdvertiser$PacketLineOutRefAdvertiser. pck)]
-              (.writeString pck (str "# service=" service "\n"))
-              (.end pck)
-              (-> (doto (UploadPack. ^Repository (:repo ctx))
-                    (.setBiDirectionalPipe false))
-                  (.sendAdvertisedRefs adv))))))))
-
-(defn- upload-pack! [ctx ^HttpExchange ex]
-  (doto (.getResponseHeaders ex)
-    (.add "Content-Type" "application/x-git-upload-pack-result")
-    (.add "Cache-Control" "no-cache"))
-  (.sendResponseHeaders ex 200 0)
-  (with-open [in (request-body ex)
-              os (.getResponseBody ex)]
-    (doto (UploadPack. ^Repository (:repo ctx))
-      (.setBiDirectionalPipe false)
-      (.upload in os nil))))
-
-(defn- git-handler ^HttpHandler [srv]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (let [path   (.getPath (.getRequestURI ex))
-              method (.getRequestMethod ex)]
-          (cond
-            (and (= "GET" method) (str/ends-with? path "/info/refs"))
-            (advertise-refs! (:ctx srv) ex)
-
-            (and (= "POST" method) (str/ends-with? path "/git-upload-pack"))
-            (upload-pack! (:ctx srv) ex)
-
-            :else (status! ex 404)))
-        (catch Throwable _
-          (try (status! ex 500) (catch Throwable _)))
-        (finally (.close ex))))))
-
-(defn derived-port
-  "A localhost port DERIVED from the store dir — stable across restarts, so
-  a `git remote` saved against it keeps working next session. In the
-  private range [49152, 65535]; a collision (a second server on the same
-  dir) falls back to an ephemeral port at bind time (see `start-server!`),
-  so this is a preference, not a guarantee."
-  [dir]
-  (+ 49152 (mod (hash (str dir)) 16384)))
-
-(defn- bind-localhost!
-  "HttpServer on 127.0.0.1:port, falling back to an ephemeral port if that
-  one is taken (so a shared derived port never blocks startup)."
-  ^HttpServer [port]
-  (try
-    (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)
-    (catch java.net.BindException _
-      (when (zero? (int port)) (throw (java.net.BindException. "no port free")))
-      (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0))))
-
-(defn start-server!
-  "Serve the git smart-HTTP protocol for the store at `:dir` on 127.0.0.1 —
-  READ-ONLY (clone/fetch of milestones). Clone with
-  `git clone http://127.0.0.1:<port>/slopp.git`. The requested `port` is a
-  PREFERENCE — if taken, an ephemeral port is bound; the actual bound port is
-  returned as `:port`. Returns {:server :ctx :port :url} for stop-server!."
-  [port {:keys [dir]}]
-  (when (str/blank? (str dir))
-    (throw (ex-info "the git server needs a durable store :dir" {})))
-  (let [ctx    (open-ctx! dir)
-        server (bind-localhost! port)
-        actual (.getPort (.getAddress server))
-        srv    {:ctx    ctx
-                :server server
-                :port   actual
-                :url    (str "http://127.0.0.1:" actual "/slopp.git")}]
-    (.createContext server "/slopp.git" (git-handler srv))
-    (.start server)
-    srv))
-
-(defn stop-server! [{:keys [^HttpServer server ctx]}]
-  (.stop server 0)
-  (close-ctx! ctx)
-  nil)
-
-(defn -main [& [port dir]]
-  (let [dir  (or dir (System/getProperty "user.dir"))
-        port (if port (Long/parseLong port) (derived-port dir))
-        srv  (start-server! port {:dir dir})]
-    (println (str "slopp git server: " (:url srv) "  (store: " dir ")"))
-    @(promise)))
-^:reads (defn remote-credentials
-  "CredentialsProvider for token auth against an https remote (GitHub PAT /
-  app token) — the `token` argument, else SLOPP_GIT_TOKEN / GIT_TOKEN env.
-  Nil when no token is set (anonymous / filesystem remotes)."
-  [token]
-  (when-let [t (or token
-                   (System/getenv "SLOPP_GIT_TOKEN")
-                   (System/getenv "GIT_TOKEN"))]
-    (UsernamePasswordCredentialsProvider. "x-access-token" ^String t)))
-(defn fetch-remote!
-  "Fetch `url`'s branches into `repo` under refs/remotes/origin/* (plus the
-  source's own remote-tracking refs under refs/remotes/tracking/*, so a
-  plain checkout works as a remote — its slopp branch may exist only as
-  origin/slopp). Returns {:tip sha-or-nil} for `branch`. Used to seed a
-  clone/import, and to bring a remote's objects in before a grafted push.
-  Scheme-less urls are local paths — made absolute (an in-memory repo has no
-  dir to resolve against)."
-  [^Repository repo url & {:keys [token branch timeout]
-                           :or {branch "main" timeout 30}}]
-  (let [s   (str url)
-        uri (URIish. ^String (if (re-find #"^[a-z+]+://" s)
-                                s
-                                (.getAbsolutePath (io/file s))))]
-    (with-open [tn (Transport/open repo uri)]
-      (.setTimeout tn (int timeout))   ; seconds; a dead socket must throw, not freeze
-      (when-let [creds (remote-credentials token)]
-        (.setCredentialsProvider tn creds))
-      (.fetch tn NullProgressMonitor/INSTANCE
-              [(RefSpec. "+refs/heads/*:refs/remotes/origin/*")
-               (RefSpec. "+refs/remotes/origin/*:refs/remotes/tracking/*")])
-      {:tip (or (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))
-                (some-> (.resolve repo (str "refs/remotes/tracking/" branch)) (.name)))})))
 ^:reads (defn tree-at
   "{path text} for the whole tree of commit `sha` — UTF-8 blobs, sorted.
   Works on any repo handle (the in-memory projection or an on-disk remote)."
@@ -586,46 +442,6 @@
                           (String. (.getBytes (.open repo (.getObjectId tw 0)))
                                    StandardCharsets/UTF_8)))
             m))))))
-(defn push-to-remote!
-  "Push the projection to an external git remote `url` (filesystem path or
-  http(s)). `:branch` = the LOCAL projection line (default \"main\", the
-  store's main line); `:remote-branch` = the DEST ref name (default =
-  branch) — mixed-ownership repos point it at the slopp-owned branch while
-  humans keep main. Projects first; a cloned store fetches the remote's
-  objects so its grafted chain is complete. Fast-forward only — a diverged
-  remote is an honest :error, never a force. Returns
-  {:pushed sha :status s :remote-branch b} | {:error msg}."
-  [{:keys [^Repository repo map-conn] :as ctx} url
-   & {:keys [token branch remote-branch timeout]
-      :or {branch "main" timeout 30}}]
-  (when-let [base (db/get-meta map-conn "git-base-sha")]
-    (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
-      (fetch-remote! repo url :token token :timeout timeout)))
-  (ensure-projected! ctx)
-  (let [rbranch (or remote-branch branch)
-        src     (str "refs/heads/" branch)
-        dst     (str "refs/heads/" rbranch)
-        s       (str url)
-        uri     (URIish. ^String (if (re-find #"^[a-z+]+://" s)
-                                   s
-                                   (.getAbsolutePath (io/file s))))]
-    (if-let [tip (.resolve repo src)]
-      (with-open [tn (Transport/open repo uri)]
-        (.setTimeout tn (int timeout))   ; a dead socket must throw, not freeze
-        (when-let [creds (remote-credentials token)]
-          (.setCredentialsProvider tn creds))
-        (let [rru    (RemoteRefUpdate. repo src dst false nil nil)
-              ^PushResult res (.push tn NullProgressMonitor/INSTANCE [rru])
-              ^RemoteRefUpdate upd (first (.getRemoteUpdates res))
-              status (str (.getStatus upd))]
-          (if (contains? #{"OK" "UP_TO_DATE"} status)
-            {:pushed (.name tip) :status status :remote-branch rbranch}
-            {:error (str "push rejected (" status ")"
-                         (when-let [m (.getMessage upd)] (str ": " m))
-                         (when (= status "REJECTED_NONFASTFORWARD")
-                           " — the remote branch has history this store doesn't build on (pull first)"))})))
-      {:error (str "nothing to push — no " src
-                   " in the projection (no milestones yet?)")})))
 ^:reads (defn merge-base
   "The merge base of two commits in `repo`, or nil when the histories are
   unrelated — standard git ancestry (pull uses it to isolate remote-only

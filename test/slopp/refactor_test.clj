@@ -159,3 +159,22 @@
     (is (nil? (:error p)) (pr-str (:error p)))
     (is (re-find #"\{:export \"mh\.watchers\"\}" (:new-src p)) (:new-src p))
     (is (re-find #"\^:dynamic" (:new-src p)) "the dynamic marker survives")))
+(deftest plan-copies-imports-the-moved-code-uses
+  ;; interop code imports classes; a moved form using them must carry the
+  ;; matching (:import ...) entries — selectively, by simple name: static
+  ;; calls, ctors, bare references, AND type hints (the git.client move
+  ;; failed on a ^Repository hint).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'imp.core
+                             (str "(ns imp.core (:import [java.util UUID Random Date]"
+                                  " [java.io File]))\n\n"
+                                  "(defn fresh-id \"F.\" [] (str (UUID/randomUUID)))\n\n"
+                                  "(defn as-file \"A.\" [^Random r p] (File. (str p)))\n\n"
+                                  "(defn plain \"P.\" [x] x)\n")))
+        p  (refactor/move-plan st 'imp.core '[fresh-id as-file] 'imp.ids {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"\(:import \[java\.io File\] \[java\.util Random UUID\]\)"
+                 (:new-src p))
+        (:new-src p))
+    (is (not (re-find #"Date" (:new-src p)))
+        "unused classes don't ride")))

@@ -462,3 +462,10 @@ SHARE:   git_push {url?} (milestones -> a normal git remote; url saved once)
 FINISH:  done {label} (tidies, lints, marks the unit boundary)
          commit_point {description} <- MILESTONE: green-gated, the grain a
          human diffs and reverts to; coarser than done-points and turns")
+(def single-write-tools #{"edit_replace_form" "edit_add_form"})
+(def write-tools
+  (into single-write-tools
+        ["edit_delete_form" "edit_rename" "edit_extract"
+         "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
+         "done" "commit_point" "deps_add" "deps_remove" "deps_pure"
+         "change_signature"]))

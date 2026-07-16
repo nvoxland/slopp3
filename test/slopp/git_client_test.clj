@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git :as git])
+            [slopp.git :as git] [slopp.git.client :as client])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -44,7 +44,7 @@
       (let [ctx (git/open-ctx! dir)]
         (try
           (testing "push lands the milestone tip in the bare remote"
-            (let [r (git/push-to-remote! ctx bare)]
+            (let [r (client/push-to-remote! ctx bare)]
               (is (nil? (:error r)) (pr-str r))
               (is (string? (:pushed r)))
               (let [remote (-> (FileRepositoryBuilder.)
@@ -61,13 +61,13 @@
                   (finally (.close remote))))))
 
           (testing "re-push is a clean no-op (up to date, not an error)"
-            (let [r (git/push-to-remote! ctx bare)]
+            (let [r (client/push-to-remote! ctx bare)]
               (is (nil? (:error r)) (pr-str r))))
 
           (testing "fetch reads the tip + tree back into a fresh in-memory repo"
             (let [repo (git/open-repo! nil)]
               (try
-                (let [{:keys [tip]} (git/fetch-remote! repo bare)]
+                (let [{:keys [tip]} (client/fetch-remote! repo bare)]
                   (is (string? tip))
                   (let [tree (git/tree-at repo tip)]
                     (is (= (api/query-source sess 'gc.core)
@@ -86,7 +86,7 @@
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         ctx  (git/open-ctx! dir)]
     (try
-      (let [r (git/push-to-remote! ctx bare)]
+      (let [r (client/push-to-remote! ctx bare)]
         (is (:error r)))
       (finally
         (git/close-ctx! ctx)
@@ -102,7 +102,7 @@
         ctx (git/open-ctx! dir)]
     (try
       (let [url (str "http://127.0.0.1:" (.getLocalPort srv) "/dead.git")
-            f   (future (try (git/fetch-remote! (:repo ctx) url :timeout 2)
+            f   (future (try (client/fetch-remote! (:repo ctx) url :timeout 2)
                              (catch Exception e {:threw (str e)})))
             r   (deref f 20000 ::wedged)]
         (is (not= ::wedged r)

@@ -724,6 +724,53 @@
        node
        (map-indexed (fn [i k] (if (= i nami) (n/meta-node mark k) k)) kids))
       node)))
+(defn- imports-for
+  "The (:import ...) clause text the moved `nodes` need from `ns-sym`'s
+  declaration — entries filtered to the SIMPLE class names the moved code
+  references (static calls `C/member`, ctors `C.`, bare `C`, `^C` type
+  hints), grouped and sorted; nil when nothing matches."
+  [store ns-sym nodes]
+  (let [decl    (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
+                         (when (and (seq? s) (= 'ns (first s))) s))
+                      (store/elements store ns-sym))
+        entries (for [clause (drop 2 (or decl ()))
+                      :when (and (seq? clause) (= :import (first clause)))
+                      spec  (rest clause)]
+                  (cond
+                    (vector? spec) {:pkg (first spec) :classes (set (map str (rest spec)))}
+                    (symbol? spec) (let [parts (str/split (str spec) #"\.")]
+                                     {:pkg (symbol (str/join "." (butlast parts)))
+                                      :classes #{(last parts)}})))
+        syms    (fn syms [f]
+                  (let [hint (when-let [t (:tag (meta f))]
+                               (when (symbol? t) [t]))]
+                    (cond
+                      (and (seq? f) (= 'quote (first f))) nil
+                      (symbol? f) (into [f] hint)
+                      (map-entry? f) (concat (syms (key f)) (syms (val f)))
+                      (coll? f) (concat hint (mapcat syms f))
+                      :else nil)))
+        used    (set
+                 (for [node nodes
+                       s (syms (try (n/sexpr node) (catch Exception _ nil)))
+                       :let [nm (name s) nsp (namespace s)]
+                       c [(when (and nsp (Character/isUpperCase (char (first nsp))))
+                            nsp)
+                          (when (and (nil? nsp) (str/ends-with? nm ".")
+                                     (Character/isUpperCase (char (first nm))))
+                            (subs nm 0 (dec (count nm))))
+                          (when (and (nil? nsp)
+                                     (Character/isUpperCase (char (first nm))))
+                            nm)]
+                       :when c]
+                   c))
+        kept    (sort (keep (fn [{:keys [pkg classes]}]
+                              (let [hit (sort (filter used classes))]
+                                (when (seq hit)
+                                  (str "[" pkg " " (str/join " " hit) "]"))))
+                            entries))]
+    (when (seq kept)
+      (str "(:import " (str/join " " kept) ")"))))
 (defn move-plan
   "PLAN moving `moved-names` from `from-ns` into `to-ns` (new or existing) —
   pure analysis over a store value; the executor applies it atomically.
@@ -916,6 +963,9 @@
                                (clojure.string/join "\n            "
                                                     (sort (map :spec to-specs)))
                                ")"))
+                        ;; interop moves carry the classes they use
+                        (when-let [imp (imports-for store from-ns moved-nodes)]
+                          (str "\n  " imp))
                         ")\n\n"
                         ;; the source ns may order callers before definitions
                         ;; (declare-then-use) — the moved set carries its own

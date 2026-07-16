@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -80,7 +80,7 @@
                        " working tree).")}
 
           :else
-          (let [r     (git/push-to-remote! ctx target
+          (let [r     (client/push-to-remote! ctx target
                                            :token token :remote-branch rbranch)
                 saved (db/get-meta conn "git-remote")]
             ;; save the FIRST url as the default; a one-off push elsewhere
@@ -120,7 +120,7 @@
     (let [repo (git/open-repo! nil)]
       (try
         (let [want (or branch "slopp/main")
-              {:keys [tip]} (git/fetch-remote! repo url :token token :branch want)
+              {:keys [tip]} (client/fetch-remote! repo url :token token :branch want)
               used want]
           (if-not tip
             {:error (str "remote has no " want " branch to clone: " url)}
@@ -397,7 +397,7 @@
             (if (str/blank? (str url))
               {:error "no remote configured — git_push with :url (or clone) first"}
               (let [ours (get-in (git/ensure-projected! ctx) [:refs "main"])
-                    tip  (:tip (git/fetch-remote! (:repo ctx) url :token token
+                    tip  (:tip (client/fetch-remote! (:repo ctx) url :token token
                                               :branch (str "slopp/" (:branch @session "main"))))]
                 (cond
                   (nil? tip)   {:error (str "remote has no slopp/"
@@ -478,7 +478,7 @@
         (if (= mirror (checked-out-branch (str dir)))
           {:error (str "refs/heads/" mirror " is checked out — cannot mirror onto"
                        " a live working tree")}
-          (assoc (git/push-to-remote! ctx (str dir) :remote-branch mirror)
+          (assoc (client/push-to-remote! ctx (str dir) :remote-branch mirror)
                  :branch mirror))
         (finally (git/close-ctx! ctx))))))
 (defn- working-repo
@@ -517,7 +517,7 @@
                            (str/join ", " (map #(str "slopp/" %) missing))
                            " — a commit_point creates it")}
               (let [res (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
-                          (when-let [creds (git/remote-credentials token)]
+                          (when-let [creds (client/remote-credentials token)]
                             (.setCredentialsProvider tn creds))
                           (.push tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE updates))
                     rows (vec (for [^org.eclipse.jgit.transport.RemoteRefUpdate u
@@ -557,7 +557,7 @@
                               (str "refs/heads/slopp/" % ":refs/heads/slopp/" %))
                             branches)]
             (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
-              (when-let [creds (git/remote-credentials token)]
+              (when-let [creds (client/remote-credentials token)]
                 (.setCredentialsProvider tn creds))
               (.fetch tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE specs)
               {:pulled (vec (for [b branches]
