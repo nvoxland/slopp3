@@ -73,15 +73,18 @@
 | `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
 | `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |
-| `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), smells/hints, turn gate |
-| `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, the composed wire list, the cheat sheet |
+| `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), wire shaping (spool/told/hints), turn gate |
+| `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
+| `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
 | `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
 | `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
 | `slopp.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
-| `slopp.git` | P4-m8 git compatibility, two faces over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, no on-disk repo): SERVER — milestones served READ-ONLY (clone/fetch) over local smart-HTTP; CLIENT — push the projection to a NORMAL external remote / fetch a remote tip+tree (byte-moving only, no `slopp.api` dep). A cloned store's chain GRAFTS onto its `git-base-sha` so pushes stay fast-forward |
+| `slopp.git` | P4-m8 git compatibility: the shared PROJECTION CORE over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, journal→commit projection, grafting onto `git-base-sha`) |
+| `slopp.git.client` | CLIENT face (deep): push the projection to a normal external remote / fetch a remote's objects; credentials; 30s transport timeouts |
+| `slopp.git.server` | SERVER face (deep): milestones served READ-ONLY over local smart-HTTP (refs advertisement, upload-pack, localhost lifecycle, CLI entry) |
 | `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.api`): `push!` store→remote (saves `git-remote` meta; refused while conflicts stand), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored, `git-base-sha` recorded), `pull!` 3-way form-granular absorb (remote wins where we're clean; both-touched → off-log `quarantine` conflict; ends with a `:git-sha` chain marker); CLI `-main clone|push|pull` |
 | `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
 
