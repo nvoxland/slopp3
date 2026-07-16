@@ -24,7 +24,7 @@
             [slopp.normalize :as normalize]
             [slopp.build :as build]
             [slopp.deps :as deps]
-            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -2660,7 +2660,7 @@
             rows     (map (fn [r]
                             (assoc r :to-export
                                    (if (= (symbol (str to-ns)) (:to r))
-                                     (when export true)
+                                     export   ; true = world, string = subtree
                                      (edit/export-level st (:to r) (:name r)))))
                           (:module-rows plan))
             ;; edges the move's rewires necessitate are part of its intent
@@ -3269,76 +3269,6 @@
                                      (str/join ", " warns)
                                      " — the native build may need a tracing-agent run")
                                 :metadata-missing warns))))))))))
-(defn parse-test-summary
-  "Parse a clojure.test runner's terminal summary into
-  {:ran :assertions :failures :errors :status}, or nil if none is present."
-  [output]
-  (when-let [[_ t a f e] (re-find
-                          #"Ran (\d+) tests containing (\d+) assertions\.\s+(\d+) failures?, (\d+) errors?"
-                          (str output))]
-    (let [f (parse-long f) e (parse-long e)]
-      {:ran (parse-long t) :assertions (parse-long a)
-       :failures f :errors e
-       :status (if (and (zero? f) (zero? e)) :green :red)})))
-(defn parse-test-failures
-  "The FAIL/ERROR blocks from a clojure.test runner's output:
-  [{:test name :detail block}] (up to `limit` blocks, each capped ~500 chars)
-  — so an isolated run NAMES its failures instead of making the caller
-  rebuild the project and rerun the suite just to see them (Q2)."
-  [output & {:keys [limit] :or {limit 5}}]
-  (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
-       (keep (fn [b]
-               (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
-                 (let [block (->> (str/split-lines b)
-                                  (take-while (complement str/blank?))
-                                  (str/join "\n"))]
-                   {:test nm
-                    :detail (if (< 500 (count block))
-                              (str (subs block 0 500) " …")
-                              block)}))))
-       (take limit)
-       vec))
-(defn- failing-test-rollup
-  "EVERY failing test name from a runner's output, grouped by file:
-  {file [test-names]} — the :failing detail blocks are capped, so without
-  this a many-failure run needs fix-rerun loops just to enumerate its
-  fallout classes (measured: 50 failures × 5-block cap = four reruns)."
-  [output]
-  (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
-       (keep (fn [b]
-               (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
-                 [(or (second (re-find #"\(([^()\s]+\.clj):" b)) "?") nm])))
-       distinct
-       (reduce (fn [m [f nm]] (update m f (fnil conj []) nm)) (sorted-map))))
-(defn- failure-themes
-  "Heuristic ROOT-CAUSE clusters for a red run: word 3-grams from the
-  QUOTED strings inside each failure block (error messages carry the
-  cause; expected/actual scaffolding is noise), ranked by how many
-  distinct tests mention them (>=3), subset-covered grams dropped —
-  '38 failures say does-not-declare' in one read instead of an
-  enumerate-classify loop. Advisory; the blocks stay authoritative."
-  [output]
-  (let [blocks (keep (fn [b]
-                       (when-let [[_ nm] (re-find #"^(?:FAIL|ERROR) in \(([^)\s]+)\)" b)]
-                         [nm b]))
-                     (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )"))
-        grams  (fn [b]
-                 (let [quoted (map second (re-seq #"\"([^\"]+)\"" b))
-                       ws     (mapcat #(re-seq #"[A-Za-z][A-Za-z-]{2,}" %) quoted)]
-                   (distinct (map #(str/join " " %) (partition 3 1 ws)))))
-        counts (reduce (fn [m [nm b]]
-                         (reduce #(update %1 %2 (fnil conj #{}) nm) m (grams b)))
-                       {} blocks)
-        ranked (sort-by (fn [[g ts]] [(- (count ts)) g])
-                        (filter #(>= (count (val %)) 3) counts))]
-    (loop [rs ranked, seen [], out []]
-      (if (or (empty? rs) (>= (count out) 5))
-        out
-        (let [[g ts] (first rs)]
-          (if (some #(set/subset? ts %) seen)
-            (recur (rest rs) seen out)
-            (recur (rest rs) (conj seen ts)
-                   (conj out {:phrase g :tests (count ts)}))))))))
 (defn- affected-test-nses
   "The PROVABLE verification slice: test namespaces (any ns holding a
   deftest) whose require-closure reaches a form changed since the last
@@ -3354,20 +3284,6 @@
                       (forms-changed-since st last-c))]
     {:changed-nses (vec (sort changed))
      :selected     (test-nses-reaching st changed)}))
-(defn- auto-parallel
-  "Default shard count for an isolated run over `n` test namespaces on a
-  `cores`-core box. Each shard reloads the WHOLE materialized store, so
-  sharding only pays at real scale: 1 below ~8 test nses (boot overhead
-  beats the gain), then n/8 shards, capped at 4 and at half the cores."
-  [n cores]
-  (max 1 (min 4 (quot cores 2) (quot n 8))))
-(defn- run-shard!
-  "Shell one test shard: a fresh `clojure -M<alias>` over `grp`'s namespaces
-  in the materialized `dir`. The seam the shard-death retry rides."
-  [alias dir grp]
-  (apply sh/sh (concat [repl/clojure-bin (str "-M" alias)]
-                       (mapcat #(vector "-n" (str %)) grp)
-                       [:dir dir])))
 (defn isolated-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -3400,7 +3316,7 @@
                                               (keys (:namespaces (:store @session))))))))
             par (cond (some? parallel) parallel
                       (nil? full-set)  1
-                      :else (auto-parallel (count full-set)
+                      :else (testrun/auto-parallel (count full-set)
                                            (.availableProcessors (Runtime/getRuntime))))
             shard-nses (when (and (> par 1) (seq full-set)) full-set)
             ;; narrowed runs need the filter-free alias: the :test alias bakes
@@ -3418,20 +3334,20 @@
                               (group-by #(mod (first %) par))
                               vals
                               (mapv #(mapv second %)))
-                  runs   (mapv (fn [grp] (future (run-shard! alias dir grp)))
+                  runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
                                shards)
                   outs0  (mapv deref runs)
                   ;; a shard with NO parseable summary is a JVM-level death
                   ;; (fork pressure, OOM) — test failures PARSE. Retry those
                   ;; shards once, SERIALLY, off the concurrent storm.
-                  dead?  (fn [o] (nil? (parse-test-summary
+                  dead?  (fn [o] (nil? (testrun/parse-test-summary
                                         (str (:out o) "\n" (:err o)))))
                   outs   (mapv (fn [grp o]
-                                 (if (dead? o) (run-shard! alias dir grp) o))
+                                 (if (dead? o) (testrun/run-shard! alias dir grp) o))
                                shards outs0)
                   retries (count (filter dead? outs0))
                   out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
-                  sums   (mapv #(parse-test-summary (str (:out %) "\n" (:err %))) outs)]
+                  sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
               (if (some nil? sums)
                 (cond-> {:isolated true :exit (apply max (map :exit outs))
                          :status :error
@@ -3452,10 +3368,10 @@
                                  merged
                                  (when aff {:affected aff})
                                  (when (pos? retries) {:shard-retries retries}))
-                    red? (assoc :failing (parse-test-failures out)
-                                :all-failing (failing-test-rollup out))
-                    (and red? (seq (failure-themes out)))
-                    (assoc :themes (failure-themes out))))))
+                    red? (assoc :failing (testrun/parse-test-failures out)
+                                :all-failing (testrun/failing-test-rollup out))
+                    (and red? (seq (testrun/failure-themes out)))
+                    (assoc :themes (testrun/failure-themes out))))))
             (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
                          ns         (conj "-n" (str ns))
                          aff        (into (mapcat #(vector "-n" (str %))
@@ -3463,7 +3379,7 @@
                          (seq only) (into (mapcat #(vector "-v" (str %)) only)))
                   r    (apply sh/sh (concat args [:dir dir]))
                   out  (str (:out r) "\n" (:err r))
-                  s    (parse-test-summary out)]
+                  s    (testrun/parse-test-summary out)]
               (merge {:isolated true :exit (:exit r)}
                      (when aff {:affected aff})
                      (cond
@@ -3472,10 +3388,10 @@
                                                         (remove str/blank?)
                                                         (take-last 8) (str/join "\n"))}
                        (= :red (:status s)) (cond-> (assoc s
-                                                           :failing (parse-test-failures out)
-                                                           :all-failing (failing-test-rollup out))
-                                              (seq (failure-themes out))
-                                              (assoc :themes (failure-themes out)))
+                                                           :failing (testrun/parse-test-failures out)
+                                                           :all-failing (testrun/failing-test-rollup out))
+                                              (seq (testrun/failure-themes out))
+                                              (assoc :themes (testrun/failure-themes out)))
                        :else s)))))))))
 (defn config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /

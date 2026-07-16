@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api])
+            [slopp.api :as api] [slopp.api.testrun :as testrun])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -83,16 +83,16 @@
 (deftest ^:isolated parse-test-summary-reads-the-runner-line
   (testing "a green clojure.test summary"
     (is (= {:ran 46 :assertions 1200 :failures 0 :errors 0 :status :green}
-           (api/parse-test-summary
+           (testrun/parse-test-summary
             "Testing slopp.foo\n\nRan 46 tests containing 1200 assertions.\n0 failures, 0 errors.\n"))))
   (testing "a red summary (singular/plural both parse)"
-    (let [r (api/parse-test-summary
+    (let [r (testrun/parse-test-summary
              "Ran 5 tests containing 10 assertions.\n2 failures, 1 error.\n")]
       (is (= :red (:status r)))
       (is (= 2 (:failures r)))
       (is (= 1 (:errors r)))))
   (testing "no summary present -> nil"
-    (is (nil? (api/parse-test-summary "boom — the JVM died before any test ran")))))
+    (is (nil? (testrun/parse-test-summary "boom — the JVM died before any test ran")))))
 
 (deftest ^:isolated build-routes-test-namespaces-to-test-dir
   ;; a normal Clojure layout: production under src/, tests under test/, off the
@@ -128,14 +128,14 @@
                  "  actual: java.lang.ArithmeticException: boom\n"
                  " at foo (bar.clj:1)\n\n"
                  "Ran 5 tests containing 9 assertions.\n2 failures, 1 errors.\n")
-        fs  (api/parse-test-failures out)]
+        fs  (testrun/parse-test-failures out)]
     (testing "each FAIL/ERROR block becomes {:test :detail}"
       (is (= ["my-test" "other-test"] (mapv :test fs)))
       (is (re-find #"expected: \(= 1 2\)" (:detail (first fs))))
       (is (re-find #"boom" (:detail (second fs)))))
     (testing "blocks are capped and limited"
       (is (every? #(<= (count (:detail %)) 520) fs))
-      (is (= 1 (count (api/parse-test-failures out :limit 1)))))))
+      (is (= 1 (count (testrun/parse-test-failures out :limit 1)))))))
 (deftest ^:isolated inline-test-stores-build-a-runnable-suite
   (let [sess (api/open!)]
     (try

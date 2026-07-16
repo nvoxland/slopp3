@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -163,11 +163,11 @@
                     (block "t2" "module e.f does not declare g.h")
                     (block "t3" "module i.j does not declare k.l")
                     (block "t4" "totally unrelated kaboom"))
-        themes (#'api/failure-themes out)]
+        themes (#'testrun/failure-themes out)]
     (testing "a phrase shared by three failures becomes ONE theme"
       (is (= [{:phrase "does not declare" :tests 3}] themes) (pr-str themes)))
     (testing "below the threshold nothing clusters"
-      (is (empty? (#'api/failure-themes (block "t9" "lone wolf failure")))))))
+      (is (empty? (#'testrun/failure-themes (block "t9" "lone wolf failure")))))))
 (deftest ^:isolated affected-slice-runs-only-reachable-tests
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-affected"
@@ -231,7 +231,7 @@
 (deftest auto-parallel-scales-with-work-and-cores
   ;; sharding only pays above real scale (each shard reloads the whole store);
   ;; default = auto, capped by cores; explicit overrides.
-  (let [ap #'api/auto-parallel]
+  (let [ap #'testrun/auto-parallel]
     (testing "small suites stay serial — boot overhead beats the gain"
       (is (= 1 (ap 2 8)))
       (is (= 1 (ap 7 8))))
@@ -261,7 +261,7 @@
                         {:exit 137 :out "" :err "Killed"}  ; JVM death, no summary
                         {:exit 0 :err ""
                          :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."})))]
-        (with-redefs-fn {#'api/run-shard! fake}
+        (with-redefs-fn {#'testrun/run-shard! fake}
           #(let [r (api/isolated-test-run! sess :parallel 2)]
              (is (= :green (:status r)) (pr-str r))
              (is (= 2 (:ran r)))

@@ -227,7 +227,8 @@
                   :properties {:ns {:type "string"}
                                :forms {:type "array" :items {:type "string"}}
                                :to {:type "string"}
-                               :export {:type "boolean"}
+                               :export {:type ["boolean" "string"]
+                                        :description "true = world surface; a namespace-prefix string = visible to that subtree only"}
                                :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}])
 (def flow-tools

@@ -643,22 +643,23 @@
          (or (= 'defn- (first s))
              (boolean (:private (meta (second s))))))))
 (defn- export-mark
-  "The def form with `^:export` on its name symbol — the deliberate widening
-  a deep-ns move needs when callers live outside the subtree."
-  [node]
+  "The def form with an export marker on its name symbol — `level` true
+  gives `^:export` (world surface); a prefix string gives
+  `^{:export \"prefix\"}` (that subtree only) — the deliberate widening a
+  deep-ns move needs when callers live outside the subtree."
+  [node level]
   (let [kids (n/children node)
         op?  (fn [k] (and (= :token (n/tag k)) (symbol? (n/sexpr k))))
         opi  (first (keep-indexed #(when (op? %2) %1) kids))
         nami (first (keep-indexed (fn [i k] (when (and (> i opi) (op? k)) i))
-                                  kids))]
+                                  kids))
+        mark (if (true? level)
+               (n/keyword-node :export)
+               (p/parse-string (pr-str {:export (str level)})))]
     (if nami
       (n/replace-children
        node
-       (map-indexed (fn [i k]
-                      (if (= i nami)
-                        (n/meta-node (n/keyword-node :export) k)
-                        k))
-                    kids))
+       (map-indexed (fn [i k] (if (= i nami) (n/meta-node mark k) k)) kids))
       node)))
 (defn move-plan
   "PLAN moving `moved-names` from `from-ns` into `to-ns` (new or existing) —
@@ -775,7 +776,8 @@
             moved-nodes (vec (for [e (store/forms store from-ns)
                                    :when (moved (:name e))]
                                (-> (:node e) publicize qualify
-                                   (cond-> (:export opts) export-mark))))
+                                   (cond-> (:export opts)
+                                     (export-mark (:export opts))))))
             ;; rewrites: from-ns stay forms (bare→alias) + external (alias→alias)
             from-alias* (get alias-of from-ns)
             from-rw     (when (seq stay->moved)

@@ -97,4 +97,8 @@
     (testing "export: true marks moved vars ^:export in the new source"
       (let [p (refactor/move-plan st 'mv.core '[util mid] 'mv.core.impl
                                   {:export true})]
-        (is (re-find #"\^:export" (:new-src p)) (:new-src p))))))
+        (is (re-find #"\^:export" (:new-src p)) (:new-src p))))
+    (testing "a string export scopes the hoist to that subtree only"
+      (let [p (refactor/move-plan st 'mv.core '[util mid] 'mv.core.impl
+                                  {:export "mv.app"})]
+        (is (re-find #"\{:export \"mv\.app\"\}" (:new-src p)) (:new-src p))))))
