@@ -238,3 +238,23 @@
         (let [r (api/done! sess :label "left broken")]
           (is (pos? (get-in r [:findings :lint-errors] 0)) (pr-str r))))
       (finally (api/close! sess)))))
+(deftest ^:isolated renaming-via-replace-refuses-when-callers-dangle
+  ;; replacing a form with a DIFFERENTLY-NAMED one strands committed callers
+  ;; on the old name — the store stops cold-loading (the self-hosting bind
+  ;; in miniature). The write must refuse and teach the atomic tool.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rn.core
+                   (str "(ns rn.core)\n\n"
+                        "(defn helper \"H.\" [x] x)\n\n"
+                        "(defn ^:unused-ok user \"U.\" [x] (helper x))\n"))
+      (testing "a caller-stranding rename is refused with teaching"
+        (let [r (api/edit-replace! sess 'rn.core 'helper
+                                   "(defn assist \"H.\" [x] x)")]
+          (is (re-find #"edit_rename" (str (:error r))) (pr-str r))
+          (is (re-find #"rn\.core/user" (str (:error r))))))
+      (testing "a rename with NO callers lands (leaf tidy-up)"
+        (let [r (api/edit-replace! sess 'rn.core 'user
+                                   "(defn ^:unused-ok consumer \"U.\" [x] (helper x))")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))

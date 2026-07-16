@@ -943,51 +943,72 @@
   "Replace the form `nm` in `ns-sym` with `new-source` (O1 whole-form replace):
   pipeline + hot-reload, then re-verify — only the tests the trace map says
   exercise this form (D1), cross-checked on a fresh image if red (D5) — and
-  record the outcome as provenance (C4)."
+  record the outcome as provenance (C4). A replace that RENAMES the form
+  refuses while committed callers still reference the old name — edit_rename
+  is the atomic path (the store must keep cold-loading)."
   [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
-        pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
-        r (session/rebased-write!
-           session
-           (fn [base] (edit/replace-form base ns-sym nm new-source
-                                         :prompt prompt :agent agent))
-           (fn [base] (:node (store/form-named base ns-sym nm)))
-           (symbol (str ns-sym) (str nm))
-           ns-sym)]
-    (if (or (:error r) (:conflict r))
-      r
-      (let [qform    (symbol (str ns-sym) (str nm))
-            new-nm   (:name (store/form-by-id (:store r)
-                                              (:form-id (:delta r))))
-            edited   (into #{qform}
-                           (when new-nm [(symbol (str ns-sym) (str new-nm))]))
-            affected (session/affected-tests session ns-sym nm)
-            untested (and (nil? affected) (seq (:test-map @session))
-                           (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
-                                         (str/triml new-source))))
-            _        (when (and new-nm (not= new-nm nm))
-                       (repl/eval! (:image @session)
-                                   (format "(ns-unmap '%s '%s)" ns-sym nm)))
-            summary  (session/run-verification! session ns-sym affected
-                                        :edited edited)
-            existing (count (filter (comp pre-warned :var) (:warnings r)))]
-        (session/commit-appended! session
-                          #(store/record-verification % ns-sym summary) [])
-        (session/with-ms
-          (cond-> {:delta    (:delta r)
-                   ;; T3: only NEW violations; pre-existing ones as a count
-                   :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
-                   :test     summary
-                   :affected (or affected :all)}
-            (:image-healed r) (assoc :image-healed true)
-            (pos? existing)   (assoc :existing-warnings existing)
-            untested          (assoc :untested true)
-            (:red-first r)    (assoc :red-first (:red-first r)
-                                     :note (str "these vars don't exist yet — stubbed"
-                                                " in-image as failing (red-first);"
-                                                " implement them to go green."))
-            (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
-          t0)))))
+        pf       (edit/parse-form new-source)
+        new-name (when-not (:error pf) (store/form-symbol (:node pf)))
+        stranded (when (and new-name (not= new-name (symbol (str nm)))
+                            (store/form-named (:store @session) ns-sym nm))
+                   (let [st    (:store @session)
+                         known (set (keys (:namespaces st)))]
+                     (vec (distinct
+                           (for [nsx known
+                                 u   (:var-usages (index/analyze (render/render-ns st nsx)))
+                                 :when (and (= (symbol (str ns-sym)) (:to u))
+                                            (= (symbol (str nm)) (:name u))
+                                            (not (and (= nsx (symbol (str ns-sym)))
+                                                      (= (symbol (str nm)) (:from-var u)))))]
+                             (symbol (str nsx) (str (:from-var u))))))))]
+    (if (seq stranded)
+      {:error (str "this replace RENAMES " nm " → " new-name " but committed"
+                   " callers still reference " ns-sym "/" nm ": " stranded
+                   " — edit_rename rewrites every caller atomically (or land"
+                   " the callers in this same change)")}
+      (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+            r (session/rebased-write!
+               session
+               (fn [base] (edit/replace-form base ns-sym nm new-source
+                                             :prompt prompt :agent agent))
+               (fn [base] (:node (store/form-named base ns-sym nm)))
+               (symbol (str ns-sym) (str nm))
+               ns-sym)]
+        (if (or (:error r) (:conflict r))
+          r
+          (let [qform    (symbol (str ns-sym) (str nm))
+                new-nm   (:name (store/form-by-id (:store r)
+                                                  (:form-id (:delta r))))
+                edited   (into #{qform}
+                               (when new-nm [(symbol (str ns-sym) (str new-nm))]))
+                affected (session/affected-tests session ns-sym nm)
+                untested (and (nil? affected) (seq (:test-map @session))
+                               (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
+                                             (str/triml new-source))))
+                _        (when (and new-nm (not= new-nm nm))
+                           (repl/eval! (:image @session)
+                                       (format "(ns-unmap '%s '%s)" ns-sym nm)))
+                summary  (session/run-verification! session ns-sym affected
+                                            :edited edited)
+                existing (count (filter (comp pre-warned :var) (:warnings r)))]
+            (session/commit-appended! session
+                              #(store/record-verification % ns-sym summary) [])
+            (session/with-ms
+              (cond-> {:delta    (:delta r)
+                       ;; T3: only NEW violations; pre-existing ones as a count
+                       :warnings (vec (remove (comp pre-warned :var) (:warnings r)))
+                       :test     summary
+                       :affected (or affected :all)}
+                (:image-healed r) (assoc :image-healed true)
+                (pos? existing)   (assoc :existing-warnings existing)
+                untested          (assoc :untested true)
+                (:red-first r)    (assoc :red-first (:red-first r)
+                                         :note (str "these vars don't exist yet — stubbed"
+                                                    " in-image as failing (red-first);"
+                                                    " implement them to go green."))
+                (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
+              t0)))))))
 
 (defn add-form!
   "Add a new top-level form to `ns-sym` (O1 base write): dialect gate, `:add`
@@ -1604,8 +1625,10 @@
                 (when (seq iso-nses)
                   (if (<= (count iso-nses) 4)
                     (isolated-test-run! session :nses iso-nses)
-                    {:pending {:count (count iso-nses)
-                               :nses  (vec (sort iso-nses))}}))))
+                    {:pending (cond-> {:count (count iso-nses)
+                                       :nses  (vec (take 5 (sort iso-nses)))}
+                                (> (count iso-nses) 5)
+                                (assoc :note "first 5 shown — the milestone gate runs them all"))}))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
                        failures    (+ (:fail summary 0) (:error summary 0)
                                       (:failures iso 0) (:errors iso 0))

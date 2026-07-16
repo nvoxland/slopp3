@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools]))
 
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
@@ -572,7 +572,7 @@
         (is (nil? (:id n)) "a notification carries no id"))
       (is (nil? (#'mcp/tools-note! sess)) "baseline updated after emitting"))))
 (deftest query-store-rides-the-wire-read-only
-  (is (some #(= "query_store" (:name %)) mcp/tools)
+  (is (some #(= "query_store" (:name %)) tools/tools)
       "the store oracle is a tool")
-  (is (contains? @#'mcp/read-only-tools "query_store")
+  (is (contains? @#'tools/read-only-tools "query_store")
       "plan mode may call it without prompts"))
