@@ -294,7 +294,7 @@
                     "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn f [x] x)\n"})
+      (call sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn ^:unused-ok f [x] x)\n"})
       (testing "a milestone mirrors into LOCAL git as slopp/<store-branch> (user decision 2026-07-14)"
         (let [r (call sess "commit_point" {:description "first"})]
           (is (re-find #":published" r) r)
@@ -312,7 +312,7 @@
                     "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn f [x] x)\n"})
+      (call sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call sess "commit_point" {:description "first"})
       (testing "query_commits carries the alignment PROOF against the local mirror (Q12)"
         (let [r (call sess "query_commits" {})]
@@ -410,7 +410,7 @@
         _     (sh/sh "git" "init" "--bare" bareb)
         sess  (api/open! {:dir dir})]
     (try
-      (api/ingest! sess 'pr.core "(ns pr.core)\n(defn f [x] x)\n")
+      (api/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
       (api/commit-point! sess "seed" :agent "t")
       (testing "the FIRST url is saved as the default"
         (is (nil? (:error (sync/push! dir :url barea))))
@@ -432,7 +432,7 @@
         _    (sh/sh "git" "init" "--bare" bare)
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn f [x] x)\n"})
+      (call sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call sess "commit_point" {:description "first"})
       (testing "git_push mirrors local slopp/* to the remote (and saves the first url)"
         (let [r (call sess "git_push" {:branches ["main"] :url bare})]
@@ -448,7 +448,7 @@
           (is (some? (sync/maybe-auto-import! dir2)) "marker must accept slopp/main")
           (let [s2 (api/open! {:dir dir2})]
             (try
-              (call s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn g [x] x)\n"})
+              (call s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn ^:unused-ok g [x] x)\n"})
               (let [r (call s2 "git_pull" {:branches ["main"] :url bare})]
                 (is (re-find #":pulled" r) r)
                 (is (re-find #"slopp/main" r) r))
@@ -462,7 +462,7 @@
             _    (sh/sh "git" "init" "--bare" bare2)
             s3   (api/open! {:dir d2})]
         (try
-          (call s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn f [x] x)\n"})
+          (call s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn ^:unused-ok f [x] x)\n"})
           (let [r (call s3 "commit_point" {:description "no git here"})]
             (is (re-find #":commit" r) r)
             (is (not (re-find #":published" r)) r))

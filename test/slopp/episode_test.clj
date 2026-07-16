@@ -12,8 +12,8 @@
 (def seed
   (str "(ns ep.core (:require [clojure.test :refer [deftest is]]))\n"
        "(defn f [x] (inc x))\n"
-       "(defn g [x] (dec x))\n"
-       "(defn h [x] x)\n"
+       "(defn ^:unused-ok g [x] (dec x))\n"
+       "(defn ^:unused-ok h [x] x)\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:isolated solo-episode-lifecycle
@@ -443,11 +443,11 @@
     (try
       (api/ingest! sess 'lc.core
                    (str "(ns lc.core)\n\n"
-                        "(defn stale \"S.\" [x] (let [a x] (let [b a] b)))\n\n"
-                        "(defn fresh \"F.\" [x] x)\n"))
+                        "(defn ^:unused-ok stale \"S.\" [x] (let [a x] (let [b a] b)))\n\n"
+                        "(defn ^:unused-ok fresh \"F.\" [x] x)\n"))
       (api/done! sess :label "baseline" :agent "t")
       (api/edit-replace! sess 'lc.core 'fresh
-                         "(defn fresh \"F.\" [x] (let [c x] (let [d c] d)))"
+                         "(defn ^:unused-ok fresh \"F.\" [x] (let [c x] (let [d c] d)))"
                          :prompt "introduce a new warning" :agent "t")
       (let [r (api/done! sess :label "the split" :agent "t")]
         (testing "the new warning rides in full"
@@ -497,10 +497,11 @@
         (is (= 5 (get-in r [:findings :isolated-pending :count]))
             (pr-str (:findings r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-advises-on-unused-publics
-  ;; the done-point names PUBLIC vars in touched namespaces that nothing
-  ;; in the store calls — advisory grade (dead code, or external surface;
-  ;; the agent decides), findings-borne like missing-doc.
+(deftest ^:isolated unused-publics-gate-the-done
+  ;; unused public surface FAILS the done gate (error-grade lint + findings)
+  ;; and refuses the milestone. The deliberate escape is ^:unused-ok on the
+  ;; name — and a STALE marker (the var IS called now) fails symmetrically,
+  ;; so the dial can never rot.
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'up.core
@@ -508,7 +509,32 @@
                         "(defn keeper \"K.\" [x] x)\n\n"
                         "(defn orphan \"O.\" [x] (keeper x))\n")
                    :agent "t")
-      (let [r (api/done! sess :label "check" :agent "t")]
-        (is (= '[up.core/orphan] (get-in r [:findings :unused-public]))
-            (pr-str (:findings r))))
+      (testing "an unmarked unused public is an ERROR-grade finding"
+        (let [r (api/done! sess :label "check" :agent "t")]
+          (is (= '[up.core/orphan] (get-in r [:findings :unused-public]))
+              (pr-str (:findings r)))
+          (is (some #(and (= :unused-public (:type %)) (= :error (:level %)))
+                    (:lint r))
+              (pr-str (:lint r)))
+          (is (pos? (get-in r [:findings :lint-errors])))))
+      (testing "...and it refuses the milestone"
+        (let [r (api/commit-point! sess "should refuse")]
+          (is (re-find #"unused" (str (:error r))) (pr-str (dissoc r :test)))))
+      (testing "the ^:unused-ok marker is the deliberate escape"
+        (api/edit-replace! sess 'up.core 'orphan
+                           "(defn ^:unused-ok orphan \"O.\" [x] (keeper x))"
+                           :prompt "external surface" :agent "t")
+        (let [r (api/done! sess :label "marked" :agent "t")]
+          (is (nil? (get-in r [:findings :unused-public]))
+              (pr-str (:findings r)))))
+      (testing "a STALE marker fails too — remove the flag when it's called"
+        (api/edit-replace! sess 'up.core 'keeper
+                           "(defn ^:unused-ok keeper \"K.\" [x] x)"
+                           :prompt "wrongly marked — orphan calls it" :agent "t")
+        (let [r (api/done! sess :label "stale" :agent "t")]
+          (is (= '[up.core/keeper] (get-in r [:findings :stale-unused-ok]))
+              (pr-str (:findings r)))
+          (is (some #(and (= :stale-unused-ok (:type %))
+                          (re-find #"remove" (str (:message %))))
+                    (:lint r)))))
       (finally (api/close! sess)))))

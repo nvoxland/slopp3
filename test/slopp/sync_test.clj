@@ -300,7 +300,7 @@
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         sess (api/open! {:dir dir})]
     (try
-      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn f [] 1)\n")
+      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn ^:unused-ok f [] 1)\n")
       (api/commit-point! sess "v1" :agent "a")
       (testing "default push lands on the slopp branch; main is never created"
         (let [p (sync/push! dir :url bare)]
@@ -313,7 +313,7 @@
               (finally (.close remote))))))
       (testing "a human commit on main survives slopp pushes and stays out of pulls"
         (let [human-sha (human-commit! bare "main" "NOTES.md" "mine, not slopp's\n")]
-          (api/edit-replace! sess 'mo.core 'f "(defn f [] 2)"
+          (api/edit-replace! sess 'mo.core 'f "(defn ^:unused-ok f [] 2)"
                              :prompt "v2" :agent "a")
           (api/commit-point! sess "v2" :agent "a")
           (is (nil? (:error (sync/push! dir))))
@@ -361,7 +361,7 @@
         sess   (api/open! {:dir seed-d})]
     (try
       ;; seed origin's slopp branch from a store, and main from a "human"
-      (api/ingest! sess 'im.core "(ns im.core)\n(defn f [] 41)\n")
+      (api/ingest! sess 'im.core "(ns im.core)\n(defn ^:unused-ok f [] 41)\n")
       (api/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
@@ -385,7 +385,7 @@
           (let [sw (api/open! {:dir work})]
             (try
               (is (= "." (db/get-meta (:db @sw) "git-remote")))
-              (api/edit-replace! sw 'im.core 'f "(defn f [] 42)"
+              (api/edit-replace! sw 'im.core 'f "(defn ^:unused-ok f [] 42)"
                                  :prompt "answer" :agent "b")
               (api/commit-point! sw "v2" :agent "b")
               (let [p (sync/push! work)]
@@ -410,7 +410,7 @@
         seed-d (temp-dir)
         sess   (api/open! {:dir seed-d})]
     (try
-      (api/ingest! sess 'im2.core "(ns im2.core)\n(defn f [] 41)\n")
+      (api/ingest! sess 'im2.core "(ns im2.core)\n(defn ^:unused-ok f [] 41)\n")
       (api/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
@@ -436,7 +436,7 @@
         seed-d (temp-dir)
         sess   (api/open! {:dir seed-d})]
     (try
-      (api/ingest! sess 'ai.core "(ns ai.core)\n(defn f [] 41)\n")
+      (api/ingest! sess 'ai.core "(ns ai.core)\n(defn ^:unused-ok f [] 41)\n")
       (api/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# p\n")

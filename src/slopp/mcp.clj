@@ -1225,7 +1225,7 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
              (assoc (text! (str "error: " (ex-message e))) :isError true)))
       (finally (api/close! session)))))
 ^:unsafe
-(defn call-main!
+(defn ^:unused-ok call-main!
   "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main):
   <dir> <tool> [args] — one tool call, result text on stdout, exit 1 on a
   tool error. args is JSON, EDN, or @file (parse-call-args)."

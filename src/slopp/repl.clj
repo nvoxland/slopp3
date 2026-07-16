@@ -117,17 +117,6 @@
                   " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
       (when (:err r) r))))
 
-^:unsafe (defn load!
-  "Load `src` into the image attributed to `path` (VFS coordinates) via nREPL's
-  load-file op — stack traces then cite the VFS file/line instead of
-  NO_SOURCE_FILE (F6)."
-  [{:keys [client session]} src path]
-  (->> (nrepl/message client {:op "load-file" :file src :file-path path
-                              :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
-                              :session session})
-       (keep :value)
-       (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
-
 ^:unsafe (defn load-checked!
   "Like `load!` but surfaces evaluation failures instead of silently dropping
   them (T4 — a failed load must never leave the store and image out of step).

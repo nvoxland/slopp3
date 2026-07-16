@@ -12,7 +12,7 @@
 (def seed
   (str "(ns cm.core (:require [clojure.test :refer [deftest is]]))\n"
        "(defn f [x] (inc x))\n"
-       "(defn g [x] (dec x))\n"
+       "(defn ^:unused-ok g [x] (dec x))\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:isolated commit-point-marks-a-verified-milestone
@@ -37,7 +37,7 @@
             (is (= (:target r) (:target d)))
             (is (= "alice" (:agent d))))))
       (testing "query-commits: newest first, human time, status"
-        (api/edit-replace! sess 'cm.core 'g "(defn g [x] (- x 2))"
+        (api/edit-replace! sess 'cm.core 'g "(defn ^:unused-ok g [x] (- x 2))"
                            :prompt "more" :agent "alice")
         (api/commit-point! sess "v2: minus-two" :agent "alice")
         (let [[c2 c1 :as cs] (api/query-commits sess)]
@@ -124,7 +124,7 @@
 (deftest ^:isolated repeat-milestone-on-unchanged-store-returns-it
   (let [sess (api/open!)]
     (try
-      (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn f [] 1)\n")
+      (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn ^:unused-ok f [] 1)\n")
       (let [m1 (api/commit-point! sess "v1" :agent "t")
             m2 (api/commit-point! sess "anything" :agent "t")]
         (is (nil? (:error m1)))

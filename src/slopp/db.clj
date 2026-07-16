@@ -202,14 +202,6 @@
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
 
-(defn set-deps!
-  "Materialize the external-dependency manifest (`deps-map`, lib→coord) into
-  the meta row — the fast-load view of the `:deps-add`/`:deps-remove` deltas."
-  [conn deps-map]
-  (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('deps', ?)
-                        ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                       (pr-str (or deps-map {}))]))
-
 ^:reads (defn deps
   "The store's external-dependency manifest, read straight from meta — for
   the git/native/launch paths that need it without opening a session."

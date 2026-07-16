@@ -211,7 +211,7 @@
       (api/ingest! sess 'sg2.core
                    (str "(ns sg2.core)\n"
                         "(defn base \"B.\" [x] (* 2 x))\n"
-                        "(defn caller \"C.\" [x] (base x))\n"))
+                        "(defn ^:unused-ok caller \"C.\" [x] (base x))\n"))
       (testing "editing the defn's signature ALONE lands, stale callers carried"
         (let [r (api/edit-replace! sess 'sg2.core 'base
                                    "(defn base \"B.\" [x y] (* x y))"
@@ -226,7 +226,7 @@
           (is (:error r) (pr-str r))))
       (testing "catching the caller up, then done → clean lint"
         (api/edit-replace! sess 'sg2.core 'caller
-                           "(defn caller \"C.\" [x] (base x 3))"
+                           "(defn ^:unused-ok caller \"C.\" [x] (base x 3))"
                            :prompt "caller catches up")
         (let [r (api/done! sess :label "signature change complete")]
           (is (empty? (filter #(= :error (:level %)) (:lint r)))

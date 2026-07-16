@@ -1471,10 +1471,13 @@
   every form changed this episode (conservative behavior-preserving
   rewrites), clean up safe (declare)s, kondo-lint every touched namespace,
   and RUN THE AFFECTED TESTS for everything the episode touched (no
-  test_run needed first — mid-episode runs are for spot-checks). Findings
-  ride the boundary delta so the next session's brief surfaces anything
-  left red. Returns {:done id :normalized n :rewrites [{:form :applied}]
-  :lint [...] :test s :findings {...}}."
+  test_run needed first — mid-episode runs are for spot-checks). Unused
+  PUBLIC surface in touched namespaces GATES here (error-grade): delete it
+  or mark the name ^:unused-ok; a stale marker (the var is called now)
+  fails symmetrically. Findings ride the boundary delta so the next
+  session's brief surfaces anything left red. Returns {:done id
+  :normalized n :rewrites [{:form :applied}] :lint [...] :test s
+  :findings {...}}."
   [session & {:keys [label agent isolated?] :or {isolated? true}}]
   (let [st       (:store @session)
         changed  (->> (episode-span st agent)
@@ -1523,6 +1526,26 @@
                            :form (when-let [e (render/owner-form st* ns-sym
                                                                  (:row f) (:col f))]
                                    (symbol (str ns-sym) (str (or (:name e) (:id e))))))))
+        ;; the unused-public GATE: unmarked dead surface — and stale
+        ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
+        unused-rep (let [st* (:store @session)]
+                     (modules/unused-report
+                      st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
+        lint (into lint
+                   (concat
+                    (for [q (:unused unused-rep)]
+                      {:level :error :type :unused-public
+                       :ns (symbol (namespace q)) :form q
+                       :message (str q " is public but NOTHING in the store"
+                                     " calls it — delete it, or mark the name"
+                                     " ^:unused-ok to declare it deliberate"
+                                     " (external surface, runtime-resolved"
+                                     " entry)")})
+                    (for [q (:stale unused-rep)]
+                      {:level :error :type :stale-unused-ok
+                       :ns (symbol (namespace q)) :form q
+                       :message (str q " carries ^:unused-ok but IS called now"
+                                     " — remove the flag")})))
         ;; NEW warnings (on forms this episode touched) report in full;
         ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
         ;; re-listing them at every done buries real findings. Errors and
@@ -1595,10 +1618,7 @@
                                                                 st*
                                                                 (store/ns-of-form-id st* fid)
                                                                 (:name e)))))
-                                                     changed))))
-                       unused-pub  (modules/unused-publics
-                                    st* (distinct (keep #(store/ns-of-form-id st* %)
-                                                        changed)))]
+                                                     changed))))]
                    (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
                                                (or (pos? failures) iso-red?)   :red
                                                :else                           :green)
@@ -1606,7 +1626,8 @@
                             :lint-errors lint-errors}
                      (:pending iso)    (assoc :isolated-pending (:pending iso))
                      (seq missing-doc) (assoc :missing-doc missing-doc)
-                     (seq unused-pub)  (assoc :unused-public unused-pub)))
+                     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
+                     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
         cid (let [v (volatile! nil)]
               (session/commit-appended! session
                                 (fn [base]
@@ -1777,6 +1798,12 @@
                          (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
                 status (if (contains? #{:red :error} (:status iso)) :red status)
+                ;; the milestone gates GLOBALLY (like the full suite): standing
+                ;; unused surface anywhere refuses, not just this episode's
+                dead   (let [rep (modules/unused-report
+                                  st (keys (:namespaces st)))]
+                         (concat (:unused rep) (:stale rep)))
+                status (if (seq dead) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
                 tree   (into (sorted-map)
@@ -1785,7 +1812,11 @@
             (if (and (= :red status) (not force))
               (cond-> {:error (str "verification is RED — milestone refused (your work is "
                                    "at its done-point; fix and retry, or :force true to record "
-                                   "a red milestone honestly)")
+                                   "a red milestone honestly)"
+                                   (when (seq dead)
+                                     (str " — unused public surface: " (vec dead)
+                                          " (delete it, mark ^:unused-ok, or"
+                                          " remove a stale marker)")))
                        :status :red :done (:done cp) :test (:test cp)}
                 iso (assoc :isolated iso))
               (mark! head status (cond-> {:done (:done cp)}
@@ -3451,6 +3482,7 @@
                                        (seq? s)
                                        (contains? '#{defn def} (first s))
                                        (not (:private (meta (second s))))
+                                       (not (:unused-ok (meta (second s))))
                                        (not= '-main nm))
                          untested (and (not test?)
                                        (zero? traced)

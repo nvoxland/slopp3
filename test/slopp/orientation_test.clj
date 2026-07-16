@@ -145,8 +145,9 @@
 (deftest ^:isolated session-brief-is-the-one-call-orientation
   (let [sess (api/open!)]
     (try
-      (api/ingest! sess 'br.a "(ns br.a)\n(defn f [x] x)\n(defn g [x] x)\n")
-      (api/ingest! sess 'br.b "(ns br.b)\n(defn h [x] x)\n")
+      (api/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
+                                   "(defn ^:unused-ok g [x] x)\n"))
+      (api/ingest! sess 'br.b "(ns br.b)\n(defn ^:unused-ok h [x] x)\n")
       (api/commit-point! sess
                          (str "seeded the br domain "
                               (apply str (repeat 40 "with a very long story ")))
@@ -166,9 +167,9 @@
 (deftest ^:isolated report-composes-the-handoff
   (let [sess (api/open!)]
     (try
-      (api/ingest! sess 'rp.core "(ns rp.core)\n(defn f [x] x)\n")
+      (api/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
       (api/commit-point! sess "seed rp" :agent "t")
-      (api/edit-replace! sess 'rp.core 'f "(defn f [x] (inc x))"
+      (api/edit-replace! sess 'rp.core 'f "(defn ^:unused-ok f [x] (inc x))"
                          :prompt (str "make f increment "
                                       (apply str (repeat 40 "because reasons ")))
                          :agent "t")

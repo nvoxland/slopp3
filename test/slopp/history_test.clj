@@ -38,7 +38,7 @@
 (def seed
   (str "(ns hi.core (:require [clojure.test :refer [deftest is]]))\n"
        "(defn f [x] (+ x 1))\n"
-       "(defn g [x] (* x 2))\n"
+       "(defn ^:unused-ok g [x] (* x 2))\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 ;; ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@
         (testing "the OLD name resolves at a delta before the rename"
           (let [r (api/query-form-at sess 'hi.core 'g :at before)]
             (is (nil? (:error r)) (pr-str r))
-            (is (= "(defn g [x] (* x 2))" (:source r)))))
+            (is (= "(defn ^:unused-ok g [x] (* x 2))" (:source r)))))
         (testing "the NEW name resolves at the current head"
           (let [head (:id (last (store/deltas (:store @sess))))
                 r    (api/query-form-at sess 'hi.core 'doubler :at head)]

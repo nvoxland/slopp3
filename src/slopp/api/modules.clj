@@ -98,12 +98,17 @@
        :deps      (vec (sort (get manifest m #{})))
        :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
                                    manifest)))})))
-(defn unused-publics
-  "PUBLIC defn/def vars in `nses` that NOTHING in the store calls or
-  references — dead code, or surface only external consumers use (advisory
-  grade; the reader decides). Self-calls don't count as use; `-main`,
-  private vars, and test namespaces are exempt. Kondo can only see unused
-  PRIVATES per-namespace — this is the whole-store counterpart."
+(defn unused-report
+  "PUBLIC defn/def vars in `nses`, judged against the whole store's call
+  graph and the ^:unused-ok dial:
+  {:unused [q ...]   ; ZERO in-store callers, NO marker — dead code or
+                     ; unadvertised surface; gate-failing at done. Delete
+                     ; it, or mark the NAME ^:unused-ok to declare it
+                     ; deliberate (external surface, string-eval'd entry).
+   :stale  [q ...]}  ; carry ^:unused-ok but ARE called — remove the flag.
+  Self-calls don't count as use; -main, privates, and test namespaces are
+  exempt. Kondo covers unused PRIVATES per-namespace; this is the
+  whole-store public counterpart."
   [store nses]
   (let [known (set (keys (:namespaces store)))
         used  (into #{}
@@ -113,16 +118,21 @@
                                      (contains? known (:to u))
                                      (not (and (= nsx (:to u))
                                                (= (:from-var u) (:name u)))))]
-                      (symbol (str (:to u)) (str (:name u)))))]
-    (vec (sort (for [nsx nses
-                     :when (not (clojure.string/ends-with? (str nsx) "-test"))
-                     e (store/forms store nsx)
-                     :when (:name e)
-                     :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                     :when (and (seq? s)
-                                (contains? #{'defn 'def} (first s))
-                                (not (:private (meta (second s))))
-                                (not= '-main (:name e)))
-                     :let [q (symbol (str nsx) (str (:name e)))]
-                     :when (not (contains? used q))]
-                 q)))))
+                      (symbol (str (:to u)) (str (:name u)))))
+        rows  (for [nsx nses
+                    :when (not (clojure.string/ends-with? (str nsx) "-test"))
+                    e (store/forms store nsx)
+                    :when (:name e)
+                    :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                    :when (and (seq? s)
+                               (contains? #{'defn 'def} (first s))
+                               (not (:private (meta (second s))))
+                               (not= '-main (:name e)))
+                    :let [q (symbol (str nsx) (str (:name e)))]]
+                {:q q
+                 :marked? (boolean (:unused-ok (meta (second s))))
+                 :used?   (contains? used q)})]
+    {:unused (vec (sort (keep #(when-not (or (:used? %) (:marked? %)) (:q %))
+                              rows)))
+     :stale  (vec (sort (keep #(when (and (:used? %) (:marked? %)) (:q %))
+                              rows)))}))
