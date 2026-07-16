@@ -70,6 +70,9 @@
   references are an index of source, and the journal owes them no
   consistency. Adding a new reference kind = adding a producer HERE; a
   tool consuming kondo rows directly for reference questions is a bug.
+  `refs` is MEMOIZED on store-value identity (immutable store → one build
+  per version; `^:reads`), and all producers share ONE quote-aware
+  traversal (`walk-pruned`).
   ALL consumers ported (epic closed 2026-07-16): the module gates
   (`ns-refs` slice — per-write affordable), unused/debt/drift, review
   triage, move-plan's direction+caller analysis, and query_impact blast
