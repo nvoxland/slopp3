@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -60,7 +60,7 @@
   violations, so adoption never breaks working code — the gate then blocks
   DRIFT until the agent declares new edges (module_dep)."
   [session & {:keys [agent]}]
-  (let [edges (edit/derive-module-edges (:store @session))]
+  (let [edges (edit.modules/derive-module-edges (:store @session))]
     (session/commit-appended!
      session
      (fn [base]
@@ -195,7 +195,7 @@
                           ;; bulk imports (clone) land reality first and derive
                           ;; the manifest after — the gate blocks DRIFT, not adoption
                           (when-not (:adopting? @session)
-                            (edit/module-scan candidate ns-sym)))]
+                            (edit.modules/module-scan candidate ns-sym)))]
           ;; same D3/D4 gate the edit path enforces — a host form can only enter
           ;; the store already ^:unsafe, so imported code is never frozen and the
           ;; image is never touched by a rejected namespace.
@@ -1027,7 +1027,7 @@
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     (if-let [merr (when nm (edit/module-refusal st' ns-sym nm))]
+                     (if-let [merr (when nm (edit.modules/module-refusal st' ns-sym nm))]
                        {:error merr}
                        {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
@@ -1111,7 +1111,7 @@
                                                       :prompt prompt :group gid
                                                       :agent agent)]
                    (let [nm' (store/form-symbol node)]
-                     (if-let [merr (edit/module-refusal st' ns (or nm' name))]
+                     (if-let [merr (edit.modules/module-refusal st' ns (or nm' name))]
                        {:error merr}
                        {:store st' :delta d
                         :hot (if (and nm' (not= nm' name))
@@ -1133,7 +1133,7 @@
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
                                                      :agent agent :before before)]
-                   (if-let [merr (when nm (edit/module-refusal st' ns nm))]
+                   (if-let [merr (when nm (edit.modules/module-refusal st' ns nm))]
                      {:error merr}
                      {:store st' :delta d :hot [:load (:form-id d)]})
                    {:error (str "no namespace " ns " (ingest it first)")})))
@@ -1591,7 +1591,7 @@
                        missing-doc (vec (sort (distinct
                                                (keep (fn [fid]
                                                        (when-let [e (store/form-by-id st* fid)]
-                                                         (:var (edit/missing-doc-warning
+                                                         (:var (edit.modules/missing-doc-warning
                                                                 st*
                                                                 (store/ns-of-form-id st* fid)
                                                                 (:name e)))))
@@ -2163,18 +2163,18 @@
         plan (refactor/move-plan st from-ns form-names to-ns {:export export})]
     (if (:error plan)
       (select-keys plan [:error])
-      (let [manifest (edit/modules-manifest st)
+      (let [manifest (edit.modules/modules-manifest st)
             rows     (map (fn [r]
                             (assoc r :to-export
                                    (if (= (symbol (str to-ns)) (:to r))
                                      export   ; true = world, string = subtree
-                                     (edit/export-level st (:to r) (:name r)))))
+                                     (edit.modules/export-level st (:to r) (:name r)))))
                           (:module-rows plan))
             ;; edges the move's rewires necessitate are part of its intent
             edges    (when manifest
                        (->> rows
-                            (map (fn [r] [(edit/module-of (:from-ns r))
-                                          (edit/module-of (:to r))]))
+                            (map (fn [r] [(edit.modules/module-of (:from-ns r))
+                                          (edit.modules/module-of (:to r))]))
                             (remove (fn [[a b]] (= a b)))
                             (remove (fn [[a b]] (contains? (get manifest a #{}) b)))
                             distinct vec))
@@ -2182,7 +2182,7 @@
                                   edges))
             manifest' (reduce (fn [m [a b]] (update m a (fnil conj #{}) b))
                               manifest edges)
-            viols    (edit/module-violations manifest' rows)
+            viols    (edit.modules/module-violations manifest' rows)
             refusal  (cond
                        cyclic
                        (str "the move would close a module dependency cycle ("
@@ -2322,11 +2322,11 @@
             ;; the manifest follows: module names are ns prefixes, so when the
             ;; LAST ns of a module renames away, its edges re-key (semantic
             ;; :module-edge removes+adds — the journal shows the follow)
-            (let [old-mod (edit/module-of old)
-                  new-mod (edit/module-of new)
+            (let [old-mod (edit.modules/module-of old)
+                  new-mod (edit.modules/module-of new)
                   why     (str "manifest follows ns rename " old " → " new)]
               (when (and (not= old-mod new-mod)
-                         (not-any? #(= old-mod (edit/module-of %))
+                         (not-any? #(= old-mod (edit.modules/module-of %))
                                    (keys (:namespaces (:store @session)))))
                 (session/commit-appended!
                  session
@@ -3265,12 +3265,12 @@
     (if modules
       (if (seq (str on))
         (assoc (modules/module-surface session on) :kind :module-surface)
-        (let [manifest (or (edit/modules-manifest st) {})
+        (let [manifest (or (edit.modules/modules-manifest st) {})
               rows     (modules/module-usage-rows st)
               actual   (into #{}
                              (comp (map (fn [{:keys [from-ns to]}]
-                                          [(edit/module-of from-ns)
-                                           (edit/module-of to)]))
+                                          [(edit.modules/module-of from-ns)
+                                           (edit.modules/module-of to)]))
                                    (remove (fn [[a b]] (= a b))))
                              rows)
               unused   (vec (for [[m ds] (sort manifest)
@@ -3342,7 +3342,7 @@
   folded dep set and, when any exists, the store's remaining :violations
   debt."
   [session from to & {:keys [remove prompt agent]}]
-  (let [manifest (or (edit/modules-manifest (:store @session)) {})
+  (let [manifest (or (edit.modules/modules-manifest (:store @session)) {})
         from     (str from)
         to       (str to)
         modish   #(re-matches #"[^.\s]+(\.[^.\s]+)?" %)
@@ -3439,7 +3439,7 @@
                          loc      (count (str/split-lines (n/string (:node e))))
                          lints    (get lint-by-form q 0)
                          bang?    (str/ends-with? (str nm) "!")
-                         doc?     (some? (edit/missing-doc-warning st nsx nm))
+                         doc?     (some? (edit.modules/missing-doc-warning st nsx nm))
                          untested (and (not test?)
                                        (zero? traced)
                                        (not (contains? covered-static q)))

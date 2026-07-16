@@ -5,12 +5,11 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.edit.modules :as modules]))
 (deftest module-of-is-the-first-two-segments
-  (is (= "logi.quoting" (edit/module-of 'logi.quoting)))
-  (is (= "logi.quoting" (edit/module-of 'logi.quoting.internal)))
-  (is (= "scratch" (edit/module-of 'scratch))))
+  (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
+  (is (= "logi.quoting" (modules/module-of 'logi.quoting.internal)))
+  (is (= "scratch" (modules/module-of 'scratch))))
 (deftest module-edges-are-crdt-grain
   (let [base    (store/empty-store)
         [s1 d1] (store/record-module-edge base "b.app" "a.core" :add
@@ -45,7 +44,7 @@
   ;; module edges — so package-private deep helpers stay unit-testable.
   ;; (found dogfooding the deep-module split: without this, moving a
   ;; test-referenced helper into a deep ns forces a spurious ^:export.)
-  (let [viol (fn [rows] (seq (edit/module-violations {} rows)))
+  (let [viol (fn [rows] (seq (modules/module-violations {} rows)))
         row  (fn [from to] {:from-ns from :from-var 'f :to to})]
     (testing "a -test ns reaches its subject's package-private deep var"
       (is (nil? (viol [(row 'a.b-test 'a.b.impl)]))
@@ -55,7 +54,7 @@
     (testing "a genuine foreign module still can't reach it"
       (is (some #(= :visibility (:rule %)) (viol [(row 'x.y 'a.b.impl)]))))))
 (deftest module-rules-are-recursive-and-declared
-  (let [viol (fn [manifest rows] (seq (edit/module-violations manifest rows)))
+  (let [viol (fn [manifest rows] (seq (modules/module-violations manifest rows)))
         row  (fn [from to] {:from-ns from :from-var 'f :to to})]
     (testing "nil manifest = a pre-adoption store — rules off until open! adopts"
       (is (nil? (viol nil [(row 'b.user 'a.pub)]))))
@@ -117,11 +116,11 @@
       (testing "renaming the CALLER module re-keys the manifest entry"
         (is (nil? (:error (api/ns-rename! sess 'mb.app 'mb.hub :prompt "rebrand"))))
         (is (= {"mb.hub" #{"ma.core"}}
-               (edit/modules-manifest (:store @sess)))))
+               (modules/modules-manifest (:store @sess)))))
       (testing "renaming the TARGET module re-keys the dep values"
         (is (nil? (:error (api/ns-rename! sess 'ma.core 'mx.core :prompt "rebrand"))))
         (is (= {"mb.hub" #{"mx.core"}}
-               (edit/modules-manifest (:store @sess))))
+               (modules/modules-manifest (:store @sess))))
         (is (nil? (:error (api/edit-replace! sess 'mb.hub 'use-it
                                              "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
                                              :prompt "still declared under the new names")))))
@@ -139,13 +138,13 @@
       (api/ingest! sess 'kb.app
                    (str "(ns kb.app (:require [ka.core :as core]))\n"
                         "(defn g \"G.\" [x] (core/f x))\n"))
-      (is (= {} (edit/modules-manifest (:store @sess))))
+      (is (= {} (modules/modules-manifest (:store @sess))))
       (finally (api/close! sess)))
     ;; reopen: empty manifest + populated + no edge delta ever = adopt
     (let [sess2 (api/open! {:dir dir})]
       (try
         (is (= {"kb.app" #{"ka.core"}}
-               (edit/modules-manifest (:store @sess2))))
+               (modules/modules-manifest (:store @sess2))))
         (is (nil? (:error (api/edit-replace! sess2 'kb.app 'g
                                              "(defn g \"G.\" [x] (core/f (inc x)))"
                                              :prompt "gated edits work under the adopted manifest"))))
@@ -273,9 +272,9 @@
       (let [cand (store/ingest base 'x.y
                                "(ns x.y)\n\n(defn f \"F.\" [v] (a.b.impl/hidden v))\n")]
         (is (re-find #"package-private"
-                     (str (edit/module-refusal cand 'x.y 'f))))
-        (is (re-find #"package-private" (str (edit/module-scan cand 'x.y))))))
+                     (str (modules/module-refusal cand 'x.y 'f))))
+        (is (re-find #"package-private" (str (modules/module-scan cand 'x.y))))))
     (testing "quoted symbols are data, not calls"
       (let [cand (store/ingest base 'x.z
                                "(ns x.z)\n\n(defn g \"G.\" [] 'a.b.impl/hidden)\n")]
-        (is (nil? (edit/module-refusal cand 'x.z 'g)))))))
+        (is (nil? (modules/module-refusal cand 'x.z 'g)))))))
