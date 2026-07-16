@@ -457,3 +457,43 @@
           (is (= 1 (:count (:lint-carried r))) (pr-str (:lint-carried r)))
           (is (some #{'lc.core/stale} (:forms (:lint-carried r))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated done-runs-impacted-isolated-tests
+  ;; the tier is an implementation detail: done's contract is "everything
+  ;; impacted, whatever tier" — ^:isolated tests reached by the episode's
+  ;; changes run in the external JVM without the agent asking.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ti.core "(ns ti.core)\n\n(defn f \"F.\" [x] (* 2 x))\n"
+                   :agent "t")
+      (api/ingest! sess 'ti.core-test
+                   (str "(ns ti.core-test (:require [ti.core :as core]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest ^:isolated f-t (is (= 6 (core/f 3))))\n")
+                   :agent "t")
+      (let [r (api/done! sess :label "isolated impact" :agent "t")]
+        (is (= 1 (:ran (:isolated r))) (pr-str (:isolated r)))
+        (is (= :green (:status (:isolated r))))
+        (is (= :green (get-in r [:findings :test-status]))
+            (pr-str (:findings r))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated done-caps-the-isolated-slice-and-reports
+  ;; a hub edit can reach MANY isolated test namespaces — above the cap the
+  ;; done-point doesn't silently run for minutes OR silently skip: it
+  ;; reports :isolated-pending in findings and the milestone gate carries it.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n"
+                   :agent "t")
+      ;; deep test nses: hub.core.uN-test folds into module hub.core, so the
+      ;; fixture needs no edge ceremony
+      (doseq [i (range 5)]
+        (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
+                     (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
+                          "                            [clojure.test :refer [deftest is]]))\n\n"
+                          "(deftest ^:isolated t" i " (is (= 1 (core/f 1))))\n")
+                     :agent "t"))
+      (let [r (api/done! sess :label "hub edit" :agent "t")]
+        (is (nil? (:isolated r)) "above the cap, nothing runs")
+        (is (= 5 (get-in r [:findings :isolated-pending :count]))
+            (pr-str (:findings r))))
+      (finally (api/close! sess)))))

@@ -482,6 +482,21 @@
   [store nsx]
   (some #(str/starts-with? (str/triml (n/string (:node %))) "(deftest")
         (store/forms store nsx)))
+(defn isolated-test-nses
+  "Of `nses`, those defining at least one ^:isolated deftest — tests only
+  the EXTERNAL tier can execute (they spawn sessions/images; in-image runs
+  skip them). The done-point uses this to route impacted tests to the
+  right tier without the agent choosing tiers."
+  [store nses]
+  (vec (for [nsx nses
+             :when (some (fn [e]
+                           (let [s (try (n/sexpr (:node e))
+                                        (catch Exception _ nil))]
+                             (and (seq? s)
+                                  (= 'deftest (first s))
+                                  (boolean (:isolated (meta (second s)))))))
+                         (store/forms store nsx))]
+         nsx)))
 (defn test-nses-reaching
   "Test namespaces (any ns holding a deftest) whose require-closure
   reaches one of `changed-nses` — the PROVABLE set of tests a change can

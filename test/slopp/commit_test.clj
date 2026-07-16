@@ -133,3 +133,25 @@
           (is (= "v1" (:description m2)))
           (is (re-find #"nothing changed" (str (:note m2))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated milestones-gate-on-the-isolated-suite
+  ;; the milestone owns the FULL gate: a red ^:isolated suite refuses the
+  ;; milestone (no manual test_run first), and a green one records its
+  ;; isolated summary on the result.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'mg.core "(ns mg.core)\n\n(defn f \"F.\" [x] x)\n")
+      (api/ingest! sess 'mg.core-test
+                   (str "(ns mg.core-test (:require [mg.core :as core]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest ^:isolated f-t (is (= :nope (core/f 1))))\n"))
+      (let [r (api/commit-point! sess "should refuse")]
+        (is (:error r) (pr-str (dissoc r :test)))
+        (is (= :red (:status r))))
+      (api/edit-replace! sess 'mg.core-test 'f-t
+                         "(deftest ^:isolated f-t (is (= 1 (core/f 1))))"
+                         :prompt "fix the spec")
+      (let [r (api/commit-point! sess "now green")]
+        (is (:commit r) (pr-str (dissoc r :test)))
+        (is (= :green (:status r)))
+        (is (= :green (:status (:isolated r))) (pr-str (:isolated r))))
+      (finally (api/close! sess)))))

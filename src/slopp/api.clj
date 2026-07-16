@@ -1464,6 +1464,7 @@
                :skipped (vec (filter #(= :skip (:action %)) plan))
                :test    summary})))))))
 
+(declare isolated-test-run!)
 (defn done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
   the episode boundary and runs the automatic done-processing — normalize
@@ -1474,7 +1475,7 @@
   ride the boundary delta so the next session's brief surfaces anything
   left red. Returns {:done id :normalized n :rewrites [{:form :applied}]
   :lint [...] :test s :findings {...}}."
-  [session & {:keys [label agent]}]
+  [session & {:keys [label agent isolated?] :or {isolated? true}}]
   (let [st       (:store @session)
         changed  (->> (episode-span st agent)
                       (filter #(and (contains? content-ops (:op %))
@@ -1569,8 +1570,23 @@
             (session/commit-appended! session
                               #(store/record-verification % main-ns s) [])
             s))
+        ;; the tier is an implementation detail: ^:isolated tests the episode's
+        ;; changes reach run in the EXTERNAL tier here — capped, and a deferral
+        ;; is REPORTED (isolated-pending), never silent
+        iso (when (and isolated? (seq changed))
+              (let [st*      (:store @session)
+                    ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
+                    iso-nses (session/isolated-test-nses
+                              st* (session/test-nses-reaching st* ch-nses))]
+                (when (seq iso-nses)
+                  (if (<= (count iso-nses) 4)
+                    (isolated-test-run! session :nses iso-nses)
+                    {:pending {:count (count iso-nses)
+                               :nses  (vec (sort iso-nses))}}))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
-                       failures    (+ (:fail summary 0) (:error summary 0))
+                       failures    (+ (:fail summary 0) (:error summary 0)
+                                      (:failures iso 0) (:errors iso 0))
+                       iso-red?    (contains? #{:red :error} (:status iso))
                        st*         (:store @session)
                        missing-doc (vec (sort (distinct
                                                (keep (fn [fid]
@@ -1580,11 +1596,12 @@
                                                                 (store/ns-of-form-id st* fid)
                                                                 (:name e)))))
                                                      changed))))]
-                   (cond-> {:test-status (cond (nil? summary)  :none
-                                               (pos? failures) :red
-                                               :else           :green)
+                   (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
+                                               (or (pos? failures) iso-red?)   :red
+                                               :else                           :green)
                             :failures    failures
                             :lint-errors lint-errors}
+                     (:pending iso)    (assoc :isolated-pending (:pending iso))
                      (seq missing-doc) (assoc :missing-doc missing-doc)))
         cid (let [v (volatile! nil)]
               (session/commit-appended! session
@@ -1606,7 +1623,8 @@
                                  {:count (count carried)
                                   :forms (vec (sort (distinct (keep :form carried))))})
       (seq declare-fixes) (assoc :declares-fixed declare-fixes)
-      summary             (assoc :test summary))))
+      summary             (assoc :test summary)
+      (:status iso)       (assoc :isolated iso))))
 
 (defn query-status-at
   "was-green-at: the project's verification state that GOVERNED delta `at`
@@ -1738,24 +1756,36 @@
                   :status (:status last-d)
                   :description (:description last-d)
                   :note "nothing changed since this milestone — returning it"})
-          (let [cp     (done! session :label description :agent agent)
+          (let [cp     (done! session :label description :agent agent
+                            :isolated? false) ; the milestone owns the FULL gate
                 st     (:store @session)
                 head   (:id (last (store/deltas st)))
+                ;; the whole isolated suite IS the milestone gate — run it when
+                ;; the store has any ^:isolated tests (fixture stores without
+                ;; them skip the tier); :force skips straight to honest red
+                iso    (when (and (not force)
+                                  (seq (session/isolated-test-nses
+                                        st (filter #(session/test-ns? st %)
+                                                   (keys (:namespaces st))))))
+                         (isolated-test-run! session))
                 status (if-let [t (:test cp)]
                          (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
                          (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
+                status (if (contains? #{:red :error} (:status iso)) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
                 tree   (into (sorted-map)
                              (map (fn [n] [n (render/render-ns st n)]))
                              (keys (:namespaces st)))]
             (if (and (= :red status) (not force))
-              {:error (str "verification is RED — milestone refused (your work is "
-                           "at its done-point; fix and retry, or :force true to record "
-                           "a red milestone honestly)")
-               :status :red :done (:done cp) :test (:test cp)}
-              (mark! head status {:done (:done cp)}
+              (cond-> {:error (str "verification is RED — milestone refused (your work is "
+                                   "at its done-point; fix and retry, or :force true to record "
+                                   "a red milestone honestly)")
+                       :status :red :done (:done cp) :test (:test cp)}
+                iso (assoc :isolated iso))
+              (mark! head status (cond-> {:done (:done cp)}
+                                   iso (assoc :isolated iso))
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
@@ -2662,7 +2692,7 @@
   (1 forces serial). A single :ns/:only run never shards. Returns {:isolated
   true :status :ran :assertions :failures :errors :exit} plus :failing +
   :all-failing {file [tests]} + :themes (clustered causes) when red."
-  [session & {:keys [alias ns only affected parallel]}]
+  [session & {:keys [alias ns only affected parallel nses]}]
   (let [aff (when affected (affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
       {:isolated true :ran 0 :status :green :affected aff
@@ -2671,7 +2701,11 @@
                   " the full gate)")}
       ;; the full/affected set is shardable (a single :ns or :only run is not);
       ;; :parallel defaults to AUTO — scale the shard count to the work + cores
-      (let [full-set (when (and (nil? ns) (empty? only))
+      (let [full-set (cond
+                       (seq nses)
+                       (vec (sort (map symbol nses)))
+
+                       (and (nil? ns) (empty? only))
                        (or (:selected aff)
                            (vec (sort (filter #(session/test-ns? (:store @session) %)
                                               (keys (:namespaces (:store @session))))))))
@@ -2683,7 +2717,8 @@
             ;; narrowed runs need the filter-free alias: the :test alias bakes
             ;; -r ".*" (inline tests, Q13) which UNIONS with -n and defeats it
             alias (or alias
-                      (if (or ns aff (seq only) (seq shard-nses)) ":test-run" ":test"))
+                      (if (or ns aff (seq only) (seq nses) (seq shard-nses))
+                        ":test-run" ":test"))
             dir (str (java.nio.file.Files/createTempDirectory
                       "slopp-isolated"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -2735,6 +2770,7 @@
                     (assoc :themes (testrun/failure-themes out))))))
             (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
                          ns         (conj "-n" (str ns))
+                         (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
                          aff        (into (mapcat #(vector "-n" (str %))
                                                   (:selected aff)))
                          (seq only) (into (mapcat #(vector "-v" (str %)) only)))

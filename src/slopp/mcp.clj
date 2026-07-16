@@ -244,23 +244,25 @@
     :inputSchema {:type "object"
                   :properties {:note {:type "string"}}}}
    {:name "done"
-    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary."
-    :inputSchema {:type "object" :properties {:label {:type "string"}}}}
+    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary. Affected tests run in EVERY tier — impacted ^:isolated tests included, automatically (a large slice defers to the milestone gate and rides findings as :isolated-pending). You never choose tiers."
+    :inputSchema {:type "object"
+                  :properties {:label {:type "string"}}}}
    {:name "commit_point"
-    :description "Record a MILESTONE (green-gated; force=true records red honestly). The git-projection grain; target=<delta id> marks an earlier spot."
+    :description "Record a MILESTONE — green-gated on the FULL ^:isolated suite (run automatically; no test_run first; force=true records red honestly and skips the gate). The git-projection grain; target=<delta id> marks an earlier spot."
     :inputSchema {:type "object"
                   :properties {:description {:type "string"}
                                :force {:type "boolean"}
                                :target {:type "string"}}
                   :required ["description"]}}
    {:name "test_run"
-    :description "SPOT-CHECK specific tests: {ns \"x.y-test\"} or {only [\"x.y-test/some-t\"]}. You do NOT need this before done — done runs the affected tests for everything you touched. Whole in-image suite: {all true} (rarely needed). MERGE GATE: {isolated true} — fresh external JVM, the only tier that runs ^:isolated tests; auto-shards across cores (:parallel N to override), and {affected true} narrows to the test nses reaching changes since the last milestone. Red isolated runs return :failing + :all-failing {file [tests]} + :themes."
+    :description "SPOT-CHECK specific tests: {ns \"x.y-test\"} or {only [\"x.y-test/some-t\"]}. You do NOT need this before done or commit_point — done runs the affected tests in every tier (impacted ^:isolated included) and the milestone runs the whole isolated suite itself. Whole in-image suite: {all true} (rarely needed). Explicit full external run: {isolated true} — fresh JVM, auto-shards (:parallel N overrides), {affected true} narrows to test nses reaching changes since the last milestone. Red isolated runs return :failing + :all-failing {file [tests]} + :themes."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :only {:type "array" :items {:type "string"}}
-                               :fresh {:type "boolean"}
+                               :all {:type "boolean"}
                                :isolated {:type "boolean"}
                                :affected {:type "boolean"}
+                               :fresh {:type "boolean"}
                                :parallel {:type "integer"}}}}
    {:name "draft_test"
     :description "A ready-to-edit deftest DRAFT for an :untested form. With :code (a driver expression) it observes real calls and turns each into an assertion; without, a signature skeleton with TODO holes. Nothing is written — adopt via edit_add_form, red-first."
