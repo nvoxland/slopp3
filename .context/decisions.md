@@ -1380,3 +1380,23 @@ slopp's own graph went from one condensed 7-module cycle to a clean
 8-layer DAG with slopp.api alone at layer 4. Note: the false cycle only
 arises via ADOPTION (module_dep's own cycle guard prevents declaring it
 fresh).
+
+The first deep-module split (2026-07-16): slopp.api's 8 pure history/status
+helpers moved to package-private `slopp.api.history` via `edit_extract_ns` —
+the first depth-3 namespace in slopp itself, proving the deep-module
+machinery on real code. Dogfooding surfaced and fixed, red-first:
+(1) hot-load-all!'s heal path boots from the COMMITTED store, so a
+candidate-created namespace vanished mid-heal (FileNotFound) — the heal now
+replays the candidate's touched nses first, and the pre-heal error rides out
+as :first-err; (2) forms moved across a namespace boundary are PUBLICIZED
+(refactor/publicize strips defn-/^:private) — module-grain visibility is the
+boundary now, not var privacy; (3) the module gate was blind to
+fully-qualified un-required calls (kondo emits no var-usage row for them) —
+edit/qualified-usage-rows synthesizes those rows, quote-pruned; (4) -test
+namespaces share the subject's prefix for deep visibility (fold-test-ns), so
+package-private helpers stay unit-testable; (5) JGit transports now carry a
+30s socket timeout after a half-dead fetch froze the single-threaded server
+for 40+ minutes mid-publish (the milestone was already durable — journal
+first); (6) summary-less test shards (JVM death under fork pressure) retry
+once serially (:shard-retries). Remaining slopp.api clusters (testrun, deps,
+branch, build; verify/session LAST, via changesets) are a follow-on decision.

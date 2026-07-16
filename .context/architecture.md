@@ -70,6 +70,7 @@
 | `slopp.refactor` | position-based structural rewrites (rename, extract, subform) |
 | `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
+| `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |
 | `slopp.mcp` | MCP over stdio; tool schemas, hints, turn gate; `handle` is pure dispatch |
 | `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
 | `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
