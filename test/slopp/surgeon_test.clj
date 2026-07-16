@@ -1,6 +1,6 @@
 (ns slopp.surgeon-test
   "clj-surgeon-inspired structural ops, slopp-grade: gated, verified,
-  recorded. query_deps / fix_declares / ns_rename / edit_extract_ns."
+  recorded. query_deps / fix_declares / ns_rename / edit_move_forms."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]))
 
@@ -86,9 +86,9 @@
     (try
       (api/ingest! sess 'sg.core core-src)
       (testing "guard: moved forms may not call what stays behind"
-        (let [r (api/extract-ns! sess 'sg.core '[top] 'sg.top)]
+        (let [r (api/move-forms! sess 'sg.core '[top] 'sg.top)]
           (is (re-find #"mid" (:error r)))))
-      (let [r (api/extract-ns! sess 'sg.core '[leaf mid] 'sg.calc
+      (let [r (api/move-forms! sess 'sg.core '[leaf mid] 'sg.calc
                                :prompt "split the pure core" :agent "alice")]
         (is (nil? (:error r)) (pr-str r))
         (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
@@ -117,7 +117,7 @@
                         "(defn- helper-a \"A.\" [x] (inc x))\n\n"
                         "(defn- helper-b \"B.\" [x] (* factor (helper-a x)))\n\n"
                         "(defn entry \"E.\" [x] (+ factor (helper-b x)))\n"))
-      (let [r (api/extract-ns! sess 'xr.core '[factor helper-a helper-b] 'xr.core.impl
+      (let [r (api/move-forms! sess 'xr.core '[factor helper-a helper-b] 'xr.core.impl
                                :prompt "package-private helpers" :agent "alice")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the parent requires the deep child; callers rewritten"
@@ -132,4 +132,58 @@
                                     "(defn steal \"S.\" [x] (i/helper-a x))\n"))]
             (is (:error w) (pr-str w))
             (is (re-find #"package-private" (str (:error w)))))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated move-rewrites-callers-everywhere
+  ;; THE v1 gap: in a tested codebase everything has external references, so
+  ;; no real cluster was movable. v2 rewrites every caller — production AND
+  ;; tests — injects requires, and the export dial covers deep targets.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'mvx.core
+                   (str "(ns mvx.core)\n\n"
+                        "(defn util \"U.\" [x] (inc x))\n\n"
+                        "(defn entry \"E.\" [x] (util x))\n"))
+      (api/module-dep! sess "mvx.app" "mvx.core" :prompt "consumer")
+      (api/ingest! sess 'mvx.app
+                   (str "(ns mvx.app (:require [mvx.core :as core]))\n\n"
+                        "(defn go \"G.\" [x] (core/util x))\n"))
+      (api/ingest! sess 'mvx.core-test
+                   (str "(ns mvx.core-test (:require [mvx.core :as core]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest util-t (is (= 3 (core/util 2))))\n"))
+      (testing "a deep target with foreign callers refuses, teaching the dial"
+        (let [r (api/move-forms! sess 'mvx.core '[util] 'mvx.core.util)]
+          (is (re-find #"export" (str (:error r))) (pr-str r))))
+      (let [r (api/move-forms! sess 'mvx.core '[util] 'mvx.core.util
+                               :export true :prompt "deep home")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= '[mvx.app mvx.core mvx.core-test] (:callers r)) (pr-str r))
+        (testing "every caller rewritten, requires injected"
+          (is (re-find #"util/util" (api/query-source sess 'mvx.app)))
+          (is (re-find #"\[mvx\.core\.util :as util\]"
+                       (api/query-source sess 'mvx.core-test))))
+        (testing "behavior lives at the new address"
+          (is (= [4] (api/query-eval sess "(mvx.app/go 3)")))
+          (is (= [3] (api/query-eval sess "(mvx.core/entry 2)")))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated move-into-an-existing-namespace
+  ;; consolidation: the target already exists — moved forms append, the
+  ;; stay-behind caller is rewritten, only missing requires are added.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'mve.a
+                   (str "(ns mve.a)\n\n"
+                        "(defn f \"F.\" [x] (* 2 x))\n\n"
+                        "(defn g \"G.\" [x] (f x))\n"))
+      (api/ingest! sess 'mve.b "(ns mve.b)\n\n(defn spare \"S.\" [x] x)\n")
+      (api/module-dep! sess "mve.a" "mve.b" :prompt "f is moving to b")
+      (let [r (api/move-forms! sess 'mve.a '[f] 'mve.b :prompt "consolidate")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "appended to the existing target, caller rewritten"
+          (is (re-find #"defn f" (api/query-source sess 'mve.b)))
+          (is (re-find #"defn spare" (api/query-source sess 'mve.b))
+              "existing content untouched")
+          (is (re-find #"b/f" (api/query-source sess 'mve.a))))
+        (testing "behavior intact"
+          (is (= [6] (api/query-eval sess "(mve.a/g 3)")))))
       (finally (api/close! sess)))))

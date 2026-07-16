@@ -221,12 +221,14 @@
                   :properties {:old {:type "string"} :new {:type "string"}
                                :prompt {:type "string"}}
                   :required ["old" "new"]}}
-   {:name "edit_extract_ns"
-    :description "Move forms into a BRAND-NEW namespace (callers rewritten to alias-qualified calls; one atomic group). The moved set may not call what stays; plan with query_deps."
+   {:name "edit_move_forms"
+    :description "Move forms to another namespace, NEW or EXISTING — the general relocation refactor. Callers EVERYWHERE (prod + tests) are rewritten to alias-qualified calls and gain the require; moved defs are publicized (module visibility is the boundary); the target gets only the requires the moved code uses; dependency direction is analyzed (a two-way split refuses — a real cycle). export: true marks moved vars ^:export for a deep target with outside callers. One atomic group, verified."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :forms {:type "array" :items {:type "string"}}
-                               :to {:type "string"} :prompt {:type "string"}}
+                               :to {:type "string"}
+                               :export {:type "boolean"}
+                               :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}])
 (def flow-tools
   "Session-flow tool descriptors: turns, tests, done-points, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
@@ -1168,13 +1170,15 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_extract_ns" (text! (-> (api/extract-ns! session (sym :ns)
+      "edit_move_forms" (text! (-> (api/move-forms! session (sym :ns)
                                                      (mapv symbol (:forms a))
                                                      (symbol (:to a))
+                                                     :export (:export a)
                                                      :prompt (:prompt a)
                                                      :agent (:agent a))
-                                    (select-keys [:error :conflict :extracted-to
-                                                  :moved :rewrote :test :group])
+                                    (select-keys [:error :conflict :moved-to
+                                                  :moved :rewrote :callers
+                                                  :test :group])
                                     (summarize (:verbose a))))
       "change_signature" (text! (-> (api/change-signature! session (sym :ns)
                                                            (sym :name)

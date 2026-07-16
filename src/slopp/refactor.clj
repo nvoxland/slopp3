@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index] [clojure.string :as str]))
+            [slopp.index :as index] [clojure.string :as str] [clojure.set :as set]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -602,3 +602,250 @@
       {:error (str "no form named " form-name " in " ns-sym)})
     (catch Exception ex
       {:error (str "text replace failed: " (ex-message ex))})))
+(defn- require-specs
+  "`ns-sym`'s :require clauses as [{:lib sym :alias sym|nil :refers #{sym}
+  :spec str}] — the planner's resolution context (aliases to rewrite through,
+  specs to copy into a move target verbatim)."
+  [store ns-sym]
+  (let [decl (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
+                      (when (and (seq? s) (= 'ns (first s))) s))
+                   (store/elements store ns-sym))]
+    (vec (for [clause (drop 2 (or decl ()))
+               :when  (and (seq? clause) (= :require (first clause)))
+               spec   (rest clause)
+               :let   [[lib alias refers]
+                       (cond
+                         (vector? spec) [(first spec)
+                                         (second (drop-while #(not= :as %) spec))
+                                         (set (second (drop-while #(not= :refer %) spec)))]
+                         (symbol? spec) [spec nil #{}])]
+               :when  lib]
+           {:lib lib :alias alias :refers (or refers #{})
+            :spec (pr-str spec)}))))
+(defn- alias-for
+  "The alias a namespace should call `to-ns` by: its existing alias when
+  already required, else the last segment, else the last two joined —
+  nil when both collide with other libs (the caller refuses)."
+  [specs to-ns]
+  (or (some #(when (= (:lib %) to-ns) (or (:alias %) to-ns)) specs)
+      (let [taken (set (keep :alias specs))
+            segs  (clojure.string/split (str to-ns) #"\.")
+            c1    (symbol (last segs))
+            c2    (symbol (clojure.string/join "." (take-last 2 segs)))]
+        (cond (not (taken c1)) c1
+              (not (taken c2)) c2
+              :else nil))))
+(defn- private-form?
+  "Is this def form private (defn- operator or ^:private on the name)?"
+  [node]
+  (let [s (try (n/sexpr node) (catch Exception _ nil))]
+    (and (seq? s)
+         (or (= 'defn- (first s))
+             (boolean (:private (meta (second s))))))))
+(defn- export-mark
+  "The def form with `^:export` on its name symbol — the deliberate widening
+  a deep-ns move needs when callers live outside the subtree."
+  [node]
+  (let [kids (n/children node)
+        op?  (fn [k] (and (= :token (n/tag k)) (symbol? (n/sexpr k))))
+        opi  (first (keep-indexed #(when (op? %2) %1) kids))
+        nami (first (keep-indexed (fn [i k] (when (and (> i opi) (op? k)) i))
+                                  kids))]
+    (if nami
+      (n/replace-children
+       node
+       (map-indexed (fn [i k]
+                      (if (= i nami)
+                        (n/meta-node (n/keyword-node :export) k)
+                        k))
+                    kids))
+      node)))
+(defn move-plan
+  "PLAN moving `moved-names` from `from-ns` into `to-ns` (new or existing) —
+  pure analysis over a store value; the executor applies it atomically.
+  Returns {:error msg} with teaching for the impossible cases, else
+  {:new-ns? :new-src|:append :to-require-adds :rewrites {fid {:ns :name :node
+  :src}} :require-adds {ns spec-str} :module-rows :removals :moved}.
+  Direction rules: stay→moved gives from-ns a require on to-ns; moved→stay
+  gives to-ns a require back and QUALIFIES bare refs to PUBLIC stay-behinds
+  (private callees refuse — move them too or make them public); both at once
+  is a real cycle and refuses. Moved defs are publicized (module-grain
+  visibility replaces var privacy); opts {:export true} marks them ^:export
+  for a deep target with outside callers. Known limits (compile-gated, they
+  fail honestly): :refer'd moved names refuse up front; java :import
+  clauses aren't copied; a local shadowing a qualified stay-callee inside a
+  moved form would mis-qualify."
+  [store from-ns moved-names to-ns opts]
+  (let [moved    (set (map symbol moved-names))
+        missing  (remove #(store/form-named store from-ns %) moved)
+        to-ns    (symbol (str to-ns))
+        from-ns  (symbol (str from-ns))
+        new-ns?  (not (contains? (:namespaces store) to-ns))
+        analyze* (fn [nsx] (:var-usages (index/analyze (render/render-ns store nsx))))
+        rows     (analyze* from-ns)
+        moved-rows (filter #(moved (:from-var %)) rows)
+        stay-rows  (filter #(and (:from-var %) (not (moved (:from-var %)))) rows)
+        stay->moved (set (keep #(when (and (= from-ns (:to %)) (moved (:name %)))
+                                  (:from-var %))
+                               stay-rows))
+        moved->stay (set (keep #(when (and (= from-ns (:to %))
+                                           (not (moved (:name %))))
+                                  (:name %))
+                               moved-rows))
+        private-callees (filter #(private-form?
+                                  (:node (store/form-named store from-ns %)))
+                                (sort moved->stay))
+        other-nses (remove #{from-ns} (sort (keys (:namespaces store))))
+        refer-hits (for [nsx other-nses
+                         spec (require-specs store nsx)
+                         :when (and (= (:lib spec) from-ns)
+                                    (seq (clojure.set/intersection (:refers spec) moved)))]
+                     [nsx (sort (clojure.set/intersection (:refers spec) moved))])
+        collisions (when-not new-ns?
+                     (filter #(store/form-named store to-ns %) (sort moved)))]
+    (cond
+      (seq missing)
+      {:error (str "no such forms in " from-ns ": " (vec missing))}
+
+      (= from-ns to-ns)
+      {:error "from and to are the same namespace"}
+
+      (seq collisions)
+      {:error (str to-ns " already defines " (vec collisions)
+                   " — rename first or pick another home")}
+
+      (and (seq stay->moved) (seq moved->stay))
+      {:error (str "two-way split: " (vec (sort stay->moved))
+                   " (staying) call the moved set, while the moved set calls "
+                   (vec (sort moved->stay)) " (staying) — a real cycle; move"
+                   " one of those groups too, or split differently")}
+
+      (seq private-callees)
+      {:error (str "the moved set calls PRIVATE stay-behinds "
+                   (vec private-callees)
+                   " — move these too or make them public first")}
+
+      (seq refer-hits)
+      {:error (str "moved names are :refer'd — rewrite those requires to"
+                   " alias-qualified first: "
+                   (clojure.string/join "; "
+                                        (map (fn [[nsx names]]
+                                               (str nsx " refers " (vec names)))
+                                             refer-hits)))}
+
+      :else
+      (let [ext-usages  (into {}
+                              (keep (fn [nsx]
+                                      (let [hits (filter #(and (= from-ns (:to %))
+                                                               (moved (:name %))
+                                                               (:from-var %))
+                                                         (analyze* nsx))]
+                                        (when (seq hits)
+                                          [nsx (set (map :from-var hits))]))))
+                              other-nses)
+            need-alias  (cond-> (set (keys ext-usages))
+                          (seq stay->moved) (conj from-ns))
+            alias-of    (into {}
+                              (map (fn [nsx] [nsx (alias-for (require-specs store nsx) to-ns)]))
+                              need-alias)
+            no-alias    (sort (keep (fn [[nsx a]] (when (nil? a) nsx)) alias-of))
+            ;; requires the MOVED code needs, copied verbatim from from-ns
+            from-specs  (require-specs store from-ns)
+            needed-libs (->> moved-rows (map :to) distinct
+                             (remove #{from-ns to-ns 'clojure.core nil}) sort)
+            need-specs  (mapv (fn [lib]
+                                {:lib lib
+                                 :spec (or (some #(when (= (:lib %) lib) (:spec %))
+                                                 from-specs)
+                                           (pr-str lib))})
+                              needed-libs)
+            from-alias  (when (seq moved->stay)
+                          (alias-for (if new-ns? [] (require-specs store to-ns)) from-ns))
+            to-specs    (cond-> need-specs
+                          from-alias (conj {:lib from-ns
+                                            :spec (str "[" from-ns " :as " from-alias "]")}))
+            ;; transform the moved nodes: public, maybe exported, stay refs qualified
+            qualify     (fn [node]
+                          (if (seq moved->stay)
+                            (rewrite-symbols node
+                                             (fn [s] (when (and (nil? (namespace s))
+                                                                (moved->stay s))
+                                                       (symbol (str from-alias) (str s)))))
+                            node))
+            moved-nodes (vec (for [e (store/forms store from-ns)
+                                   :when (moved (:name e))]
+                               (-> (:node e) publicize qualify
+                                   (cond-> (:export opts) export-mark))))
+            ;; rewrites: from-ns stay forms (bare→alias) + external (alias→alias)
+            from-alias* (get alias-of from-ns)
+            from-rw     (when (seq stay->moved)
+                          (for [e (store/forms store from-ns)
+                                :when (and (:name e) (stay->moved (:name e)))
+                                :let [node' (rewrite-symbols
+                                             (:node e)
+                                             (fn [s] (when (and (nil? (namespace s)) (moved s))
+                                                       (symbol (str from-alias*) (str s)))))]
+                                :when (not= (n/string node') (n/string (:node e)))]
+                            [(:id e) {:ns from-ns :name (:name e) :node node'
+                                      :src (n/string node')}]))
+            ext-rw      (for [[nsx _] ext-usages
+                              :let [prefixes (into #{from-ns}
+                                                   (keep #(when (= (:lib %) from-ns) (:alias %)))
+                                                   (require-specs store nsx))
+                                    a (get alias-of nsx)]
+                              e (store/forms store nsx)
+                              :when (:name e)
+                              :let [node' (rewrite-symbols
+                                           (:node e)
+                                           (fn [s]
+                                             (when (and (some? (namespace s))
+                                                        (prefixes (symbol (namespace s)))
+                                                        (moved (symbol (name s))))
+                                               (if (= nsx to-ns)
+                                                 (symbol (name s))
+                                                 (symbol (str a) (name s))))))]
+                              :when (not= (n/string node') (n/string (:node e)))]
+                          [(:id e) {:ns nsx :name (:name e) :node node'
+                                    :src (n/string node')}])
+            require-adds (into {}
+                               (for [nsx (sort need-alias)
+                                     :when (not= nsx to-ns)
+                                     :let [specs (require-specs store nsx)]
+                                     :when (not-any? #(= (:lib %) to-ns) specs)]
+                                 [nsx (str "[" to-ns " :as " (get alias-of nsx) "]")]))
+            module-rows (vec (concat
+                              (for [[nsx fs] ext-usages, f fs]
+                                {:from-ns nsx :from-var f :to to-ns})
+                              (when (seq stay->moved)
+                                (for [f (sort stay->moved)]
+                                  {:from-ns from-ns :from-var f :to to-ns}))
+                              (when (seq moved->stay)
+                                (for [nm (sort moved->stay)]
+                                  {:from-ns to-ns :from-var (first (sort moved))
+                                   :to from-ns :name nm}))))]
+        (if (seq no-alias)
+          {:error (str "no usable alias for " to-ns " in " (vec no-alias)
+                       " — their existing aliases collide; rename those first")}
+          (cond-> {:new-ns? new-ns?
+                   :moved (vec (sort moved))
+                   :rewrites (into {} (concat from-rw ext-rw))
+                   :require-adds require-adds
+                   :module-rows module-rows
+                   :removals (vec (sort moved))}
+            new-ns?
+            (assoc :new-src
+                   (str "(ns " to-ns
+                        (when (seq to-specs)
+                          (str "\n  (:require "
+                               (clojure.string/join "\n            "
+                                                    (sort (map :spec to-specs)))
+                               ")"))
+                        ")\n\n"
+                        (clojure.string/join "\n\n" (map n/string moved-nodes))
+                        "\n"))
+
+            (not new-ns?)
+            (assoc :append moved-nodes
+                   :to-require-adds
+                   (let [have (set (map :lib (require-specs store to-ns)))]
+                     (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))

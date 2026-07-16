@@ -2624,6 +2624,157 @@
                        :test     summary
                        :affected (or affected :all)})))))))))
 
+(defn- add-require-node
+  "Candidate-store helper: add require `spec-str` to `nsx`'s ns form,
+  returning the updated store (unchanged when the spec can't land — the
+  compile gate downstream reports honestly)."
+  [st nsx spec-str & {:keys [prompt group agent]}]
+  (let [decl (store/form-named st nsx nsx)
+        r    (when decl (edit/add-require-source (n/string (:node decl)) spec-str))]
+    (if (or (nil? r) (:error r))
+      st
+      (or (first (store/replace-node st nsx nsx
+                                     (first (n/children (p/parse-string-all (:src r))))
+                                     :prompt prompt :group group :agent agent))
+          st))))
+(defn move-forms!
+  "Move `form-names` from `from-ns` into `to-ns` — NEW or EXISTING — the
+  general relocation refactor (clj-surgeon's :extract!, slopp-grade, v2).
+  Callers EVERYWHERE (production + tests) are rewritten to alias-qualified
+  calls and gain the require; the moved defs are publicized (module-grain
+  visibility replaces var privacy); the target gets only the requires the
+  moved code uses. Dependency direction is analyzed: stay→moved adds the
+  require back to from-ns, moved→stay qualifies stay refs instead, a
+  two-way split refuses (real cycle). Cross-module edges the move's own
+  rewires necessitate are AUTO-DECLARED (the move's prompt rides each
+  :module-edge delta — the move IS the declared intent), refusing only a
+  cycle-closer; `:export true` marks moved vars ^:export when the deep
+  target must stay callable from outside its subtree. One atomic group +
+  changeset, compile-gated, verified across every touched namespace."
+  [session from-ns form-names to-ns & {:keys [prompt agent export]}]
+  (let [st   (:store @session)
+        plan (refactor/move-plan st from-ns form-names to-ns {:export export})]
+    (if (:error plan)
+      (select-keys plan [:error])
+      (let [manifest (edit/modules-manifest st)
+            rows     (map (fn [r]
+                            (assoc r :to-export
+                                   (if (= (symbol (str to-ns)) (:to r))
+                                     (when export true)
+                                     (edit/export-level st (:to r) (:name r)))))
+                          (:module-rows plan))
+            ;; edges the move's rewires necessitate are part of its intent
+            edges    (when manifest
+                       (->> rows
+                            (map (fn [r] [(edit/module-of (:from-ns r))
+                                          (edit/module-of (:to r))]))
+                            (remove (fn [[a b]] (= a b)))
+                            (remove (fn [[a b]] (contains? (get manifest a #{}) b)))
+                            distinct vec))
+            cyclic   (seq (filter (fn [[a b]] (store/module-path manifest b a))
+                                  edges))
+            manifest' (reduce (fn [m [a b]] (update m a (fnil conj #{}) b))
+                              manifest edges)
+            viols    (edit/module-violations manifest' rows)
+            refusal  (cond
+                       cyclic
+                       (str "the move would close a module dependency cycle ("
+                            (str/join ", " (map (fn [[a b]] (str a " → " b))
+                                                cyclic))
+                            ") — move the shared piece the other way, or"
+                            " restructure the callers first")
+
+                       viols
+                       (str (str/join "; " (map :error viols))
+                            (when (and (not export)
+                                       (every? #(= :visibility (:rule %)) viols))
+                              " — or pass export: true to hoist the moved vars")))]
+        (if refusal
+          {:error refusal}
+          (let [[gid st-g] (store/alloc-id st "g")
+                ;; 0. the auto-declared edges, each carrying the move's why
+                st0 (reduce (fn [s [a b]]
+                              (first (store/record-module-edge
+                                      s a b :add
+                                      :prompt (or prompt (str "move-forms: " from-ns " → " to-ns))
+                                      :agent agent)))
+                            st-g edges)
+                ;; 1. the target: ingest new, or append + requires to existing
+                st1 (if (:new-ns? plan)
+                      (store/ingest st0 to-ns (:new-src plan) :agent agent)
+                      (let [st* (reduce (fn [s node]
+                                          (or (first (store/append-form
+                                                      s to-ns node
+                                                      :prompt prompt :group gid
+                                                      :agent agent))
+                                              s))
+                                        st0 (:append plan))]
+                        (reduce (fn [s spec]
+                                  (add-require-node s to-ns spec
+                                                    :prompt prompt :group gid
+                                                    :agent agent))
+                                st* (:to-require-adds plan))))
+                ;; 2. callers gain [to-ns :as alias]
+                st2 (reduce (fn [s [nsx spec]]
+                              (add-require-node s nsx spec
+                                                :prompt prompt :group gid
+                                                :agent agent))
+                            st1 (:require-adds plan))
+                ;; 3. every rewritten caller, ONE changeset (multi-ns)
+                [st3 _] (if (seq (:rewrites plan))
+                          (store/apply-changeset
+                           st2 :move-forms from-ns
+                           (into {} (map (fn [[fid m]] [fid (:node m)]))
+                                 (:rewrites plan))
+                           :prompt prompt :agent agent)
+                          [st2 nil])
+                ;; 4. the moved forms leave home
+                st4 (reduce (fn [s nm]
+                              (or (first (store/remove-form s from-ns nm
+                                                            :prompt prompt
+                                                            :group gid :agent agent))
+                                  s))
+                            st3 (:removals plan))
+                touched (vec (distinct
+                              (into [from-ns to-ns]
+                                    (concat (map :ns (vals (:rewrites plan)))
+                                            (keys (:require-adds plan))))))
+                ;; defs before callers (X2): target forms, then decls, then rewrites
+                ordered (distinct
+                         (concat (map :id (store/forms st4 to-ns))
+                                 (keep #(:id (store/form-named st4 % %))
+                                       (keys (:require-adds plan)))
+                                 (keys (:rewrites plan))))
+                load-err (:err (hot-load-all! session st4 ordered))]
+            (if load-err
+              (do (fresh-image! session)
+                  {:error (str "move failed to compile: " load-err)})
+              (if-not (try-commit! session st st4 touched)
+                {:conflict {:reason "store changed during move — retry"}}
+                (do (doseq [nm (:removals plan)]
+                      (repl/eval! (:image @session)
+                                  (format "(ns-unmap '%s '%s)" from-ns nm)))
+                    (let [moved-q (into (set (map #(symbol (str from-ns) (str %))
+                                                  (:moved plan)))
+                                        (map #(symbol (str to-ns) (str %)))
+                                        (:moved plan))
+                          summary (run-verification!
+                                   session touched nil
+                                   :edited (into moved-q
+                                                 (map (fn [[_ m]]
+                                                        (symbol (str (:ns m)) (str (:name m)))))
+                                                 (:rewrites plan)))]
+                      (commit-appended! session
+                                        #(store/record-verification
+                                          % touched summary)
+                                        [])
+                      (cond-> {:moved-to to-ns
+                               :moved (:moved plan)
+                               :rewrote (count (:rewrites plan))
+                               :callers (vec (sort (distinct (map :ns (vals (:rewrites plan))))))
+                               :group gid
+                               :test summary}
+                        (seq edges) (assoc :edges-declared edges))))))))))))
 (defn ns-rename!
   "Rename a WHOLE namespace: its ns decl, every require clause, and every
   fully-qualified reference across the store; the namespaces map rekeys; the
@@ -2713,146 +2864,6 @@
               {:renamed {:old old :new new :forms (count changeset)}
                :delta (:id delta)
                :test summary})))))))
-
-(defn extract-ns!
-  "clj-surgeon's :extract!, slopp-grade: move `form-names` from `from-ns`
-  into BRAND-NEW `new-ns` — new ns created with from-ns's requires copied
-  (over-include is safe), remaining callers REWRITTEN to alias-qualified
-  calls, the require added, moved forms removed — one atomic group,
-  compile-gated, verified across both namespaces.
-  Guards: the moved set may not call what stays behind (move those too), and
-  nothing outside `from-ns` may reference the moved forms (v1)."
-  [session from-ns form-names new-ns & {:keys [prompt agent]}]
-  (let [st     (:store @session)
-        moved  (set (map symbol form-names))
-        missing (remove #(store/form-named st from-ns %) moved)]
-    (cond
-      (get-in st [:namespaces new-ns])
-      {:error (str new-ns " already exists")}
-
-      (seq missing)
-      {:error (str "no such forms in " from-ns ": " (vec missing))}
-
-      :else
-      (let [adj      (callee-adjacency st)
-            moved-q  (set (map #(symbol (str from-ns) (str %)) moved))
-            ;; moved forms calling what STAYS
-            stays    (for [m moved-q
-                           c (get adj m [])
-                           :when (and (= (str from-ns) (namespace c))
-                                      (not (moved-q c))
-                                      (store/form-named st from-ns
-                                                        (symbol (name c))))]
-                       (symbol (name c)))
-            ;; anything OUTSIDE from-ns referencing the moved forms
-            external (for [[q cs] adj
-                           :when (not= (str from-ns) (namespace q))
-                           c cs
-                           :when (moved-q c)]
-                       q)]
-        (cond
-          (seq stays)
-          {:error (str "moved forms still call what stays behind — move these "
-                       "too or keep them: " (vec (distinct stays)))}
-
-          (seq external)
-          {:error (str "referenced outside " from-ns " (v1 limit): "
-                       (vec (distinct external)))}
-
-          :else
-          (let [alias*   (symbol (last (clojure.string/split (str new-ns) #"\.")))
-                ns-decl  (store/form-named st from-ns from-ns)
-                requires (let [sx (n/sexpr (:node ns-decl))
-                               reqs (rest (first (filter #(and (seq? %)
-                                                               (= :require (first %)))
-                                                         sx)))]
-                           reqs)
-                new-src  (str "(ns " new-ns
-                              (when (seq requires)
-                                (str "
-  (:require "
-                                     (clojure.string/join "
-            "
-                                                          (map pr-str requires))
-                                     ")"))
-                              ")
-
-"
-                              (clojure.string/join "
-
-"
-                                                   (for [f (store/forms st from-ns)
-                                                         :when (moved (:name f))]
-                                                     ;; cross-ns callers need PUBLIC vars
-                                                     (n/string (refactor/publicize (:node f)))))
-                              "
-")
-                [gid st0] (store/alloc-id st "g")
-                st1 (store/ingest st0 new-ns new-src :agent agent)
-                ;; rewrite remaining callers: bare moved names → alias/name
-                mapper (fn [sym]
-                         (when (and (nil? (namespace sym)) (moved sym))
-                           (symbol (str alias*) (str sym))))
-                rewrites (into {}
-                               (for [f (store/forms st1 from-ns)
-                                     :when (and (:name f)
-                                                (not (moved (:name f)))
-                                                (not= from-ns (:name f)))
-                                     :let [node' (refactor/rewrite-symbols
-                                                  (:node f) mapper)]
-                                     :when (not= (n/string node')
-                                                 (n/string (:node f)))]
-                                 [(:id f) node']))
-                ;; require the new ns from from-ns
-                req-r (edit/add-require-source (n/string (:node ns-decl))
-                                               (str "[" new-ns " :as " alias* "]"))
-                st2 (if (:error req-r)
-                      st1
-                      (or (first (store/replace-node st1 from-ns from-ns
-                                                     (first (n/children
-                                                             (rewrite-clj.parser/parse-string-all
-                                                              (:src req-r))))
-                                                     :prompt prompt :group gid
-                                                     :agent agent))
-                          st1))
-                [st3 _] (if (seq rewrites)
-                          (store/apply-changeset st2 :extract-ns from-ns rewrites
-                                                 :prompt prompt :agent agent)
-                          [st2 nil])
-                st4 (reduce (fn [st* nm]
-                              (or (first (store/remove-form st* from-ns nm
-                                                            :prompt prompt
-                                                            :group gid :agent agent))
-                                  st*))
-                            st3 moved)
-                ;; new-ns forms FIRST (its ns form stamps *loaded-libs* before any
-                ;; survivor requires it); including them also puts the new ns in
-                ;; hot-load-all!'s replay set, so the heal path survives
-                load-err (:err (hot-load-all!
-                                session st4
-                                (concat (map :id (store/forms st4 new-ns))
-                                        [(:id ns-decl)] (keys rewrites))))]
-            (if load-err
-              (do (fresh-image! session)
-                  {:error (str "extract-ns failed to compile: " load-err)})
-              (if-not (try-commit! session st st4 [from-ns new-ns])
-                {:conflict {:reason "store changed during extract-ns — retry"}}
-                (do (doseq [nm moved]
-                      (repl/eval! (:image @session)
-                                  (format "(ns-unmap '%s '%s)" from-ns nm)))
-                    (let [summary (run-verification! session [from-ns new-ns] nil
-                                                     :edited (into moved-q
-                                                                   (map #(symbol (str new-ns) (str %)))
-                                                                   moved))]
-                      (commit-appended! session
-                                        #(store/record-verification
-                                          % [from-ns new-ns] summary)
-                                        [])
-                      {:extracted-to new-ns
-                       :moved (vec (sort moved))
-                       :rewrote (count rewrites)
-                       :group gid
-                       :test summary}))))))))))
 
 (defn- merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
