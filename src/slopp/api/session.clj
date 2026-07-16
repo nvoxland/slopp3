@@ -1,8 +1,9 @@
 (ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store]))
 
-(def ^:dynamic *pre-commit-hook*
+(def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
-  simulate a concurrent competitor deterministically. Never set in production."
+  simulate a concurrent competitor deterministically. Never set in production.
+  Exported to the contention specs that bind it; package-private otherwise."
   nil)
 (declare affected-tests commit-appended! diagnosed-run! fresh-image! green? hot-load-all! image-with-deps! implicate load-trace persist-trace! rebased-write! refresh-cache! reload-signature-res reload-signature? rename-in-trace run-verification! session-identity shape-episode-reds! start-spare! stub-missing-test-vars! suspicious-red? test-ns? test-nses-reaching traced-run! try-commit! with-ms)
 (defn start-spare!

@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [clojure.edn :as edn] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient]))
 
 (declare run-verification! forms-changed-since query-outline
          hot-load-all! fresh-image! reap-idle-images!
@@ -175,8 +175,8 @@
                                          (or (contains? stale t)
                                              (seq (set/intersection forms stale)))))
                                tm)))
-                (do (session/persist-trace! session)
-                    {:synced (count changed)})))))))))
+                (session/persist-trace! session)
+                {:synced (count changed)}))))))))
 
 (defn ingest!
   "The batch write for BRAND-NEW namespaces (W1, user decision): land a whole
@@ -1671,16 +1671,6 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
-(defn- modules-config-entry
-  "The module manifest PROJECTED as a structured-config entry — how the
-  edge fold becomes a `modules` file in git commits and builds (read-only
-  transparency; writes go through module_dep)."
-  [store]
-  (when (seq (:modules store))
-    {:format :manifest
-     :values (into (sorted-map)
-                   (map (fn [[m ds]] [m (clojure.string/join " " (sort ds))]))
-                   (:modules store))}))
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
@@ -1750,10 +1740,10 @@
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
-                       (or (seq (:config st)) (modules-config-entry st))
+                       (or (seq (:config st)) (modules/modules-config-entry st))
                             (assoc :config (cond-> (:config st)
-                                             (modules-config-entry st)
-                                             (assoc "modules" (modules-config-entry st)))))))))))))
+                                             (modules/modules-config-entry st)
+                                             (assoc "modules" (modules/modules-config-entry st)))))))))))))
 
 ^:reads (defn query-commits
   "Milestones, newest first:
@@ -2017,8 +2007,8 @@
           (if-not (session/try-commit! session st st' (vec touched-nses))
             {:conflict {:reason "store changed during rename — retry"}}
             (do
-              (do (swap! session update :test-map session/rename-in-trace qold qnew)
-                     (session/persist-trace! session))
+              (swap! session update :test-map session/rename-in-trace qold qnew)
+              (session/persist-trace! session)
               (repl/eval! (:image @session)
                           (format "(ns-unmap '%s '%s)" ns-sym old-name))
               (let [summary (session/run-verification! session ns-sym affected
@@ -2421,30 +2411,30 @@
     (if (= nm (:branch @session))
       {:switched nm :note "already on it"}
       (if-let [target (branch/load-line session nm)]
-        (do (let [adopted (:image target)
-                  booted  (when-not adopted
-                            (branch/boot-line-image! session (:store target)))]
-              (if (:error booted)
-                booted
-                (do (swap! session
-                           (fn [s]
-                             (-> s
-                                 (update :lines assoc (:branch s)
-                                         {:store     (:store s)
-                                          :conn      (:db s)
-                                          :image     (:image s)
-                                          :last-used (System/currentTimeMillis)})
-                                 (update :lines dissoc nm)
-                                 (assoc :branch nm
-                                        :db (:conn target)
-                                        :store (:store target)
-                                        :data-version (some-> (:conn target)
-                                                              db/data-version)
-                                        :image (or adopted (:image booted))
-                                        :test-map {}))))
-                    (cond-> {:switched nm}
-                      adopted       (assoc :adopted true)
-                      (not adopted) (assoc :booted true))))))
+        (let [adopted (:image target)
+              booted  (when-not adopted
+                        (branch/boot-line-image! session (:store target)))]
+          (if (:error booted)
+            booted
+            (do (swap! session
+                       (fn [s]
+                         (-> s
+                             (update :lines assoc (:branch s)
+                                     {:store     (:store s)
+                                      :conn      (:db s)
+                                      :image     (:image s)
+                                      :last-used (System/currentTimeMillis)})
+                             (update :lines dissoc nm)
+                             (assoc :branch nm
+                                    :db (:conn target)
+                                    :store (:store target)
+                                    :data-version (some-> (:conn target)
+                                                          db/data-version)
+                                    :image (or adopted (:image booted))
+                                    :test-map {}))))
+                (cond-> {:switched nm}
+                  adopted       (assoc :adopted true)
+                  (not adopted) (assoc :booted true)))))
         {:error (str "no branch named " nm)}))))
 
 (defn branch-merge!
@@ -2584,8 +2574,8 @@
       (io/make-parents file)
       (spit file text)))
   (doseq [[path entry] (cond-> (:config st)
-                               (modules-config-entry st)
-                               (assoc "modules" (modules-config-entry st)))]
+                               (modules/modules-config-entry st)
+                               (assoc "modules" (modules/modules-config-entry st)))]
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file (store/render-config entry))))
@@ -2849,47 +2839,6 @@
     (if (seq h)
       {:path (str path) :versions h}
       {:error (str path " has never been tracked")})))
-(defn- production-manifest
-  "Module dependency edges from PRODUCTION namespaces only — the
-  architecture VIEW's graph. A `-test` namespace folds into its subject
-  module (module-of strips `-test`), so its fixture deps would manufacture
-  cycles that don't exist in production; excluding them tells the truth.
-  Every production module is a key (isolated ones → layer 0). The stored
-  manifest still carries the test edges — this derivation is for
-  layers/cycles, not for enforcement."
-  [store rows]
-  (let [prod? #(not (str/ends-with? (str %) "-test"))
-        base  (into {} (map (fn [n] [(edit/module-of n) #{}]))
-                    (filter prod? (keys (:namespaces store))))]
-    (reduce (fn [m {:keys [from-ns to]}]
-              (if (prod? from-ns)
-                (let [a (edit/module-of from-ns) b (edit/module-of to)]
-                  (if (= a b) m (update m a (fnil conj #{}) b)))
-                m))
-            base rows)))
-(defn- module-usage-rows
-  "Every store-internal, kondo-resolved var-usage row ({:from-ns :from-var
-  :to :to-export}) — ONE pass over the store shared by the debt view and
-  the drift (declared-but-unused) view."
-  [store]
-  (let [nses (set (keys (:namespaces store)))]
-    (vec (for [nsx (sort nses)
-               u   (:var-usages (index/analyze (render/render-ns store nsx)))
-               :when (contains? nses (:to u))]
-           {:from-ns nsx :from-var (:from-var u) :to (:to u)
-            :to-export (edit/export-level store (:to u) (:name u))}))))
-(defn- module-debt
-  "Whole-store module violations under the store's CURRENT manifest —
-  compact rows, G13-capped — the debt a manifest change reveals (per-write
-  gates block NEW violations; the advisory shows what already stands).
-  Pass precomputed `rows` (module-usage-rows) to share the kondo pass."
-  ([store] (module-debt store (module-usage-rows store)))
-  ([store rows]
-   (when-let [manifest (edit/modules-manifest store)]
-     (let [vs (edit/module-violations manifest rows)]
-       (when vs
-         {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
-          :count (count vs)})))))
 (defn config-file!
   "Structured config files: the store holds SEMANTIC key/values per path
   (per-key delta history, like forms); the projection serializes them into
@@ -3054,13 +3003,6 @@
            :note  (str "no examples — pass :code (a driver expression) to observe"
                        " real calls and get value-true assertions instead of holes")})))
     (edit/missing-form-error (:store @session) ns-sym nm)))
-(defn- snip
-  "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
-  MANY prose fields and must never give back the tokens they save; the
-  full text stays one query away (report {contains}, query_history)."
-  [s n]
-  (let [s (str s)]
-    (if (<= (count s) n) s (str (subs s 0 n) "…"))))
 (defn remember-observation!
   "Persist what an observation SAW (up to two {:args :ret} captures) under
   store meta observed/<ns>/<name> — interface cards surface them as
@@ -3075,48 +3017,6 @@
                       (pr-str (vec (take 2 calls))))
         (catch Exception _ nil))))
   nil)
-^:reads (defn form-card
-  "The INTERFACE view of a form (opacity with a warranty): signature,
-  doc line, effect marker, the recorded WHY (last ask), and the warranty
-  (covering tests from the trace map) — what a CALLER needs, at ~10x less
-  than source. Trusting it is mechanical, not hopeful: every edit re-runs
-  the covering tests, so a violated contract turns red with :implicated."
-  [session ns-sym nm]
-  (when-let [e (store/form-named (:store @session) ns-sym nm)]
-    (let [q       (symbol (str ns-sym) (str nm))
-          s       (try (n/sexpr (:node e)) (catch Exception _ nil))
-          body    (when (seq? s) s)
-          doc     (some #(when (string? %) %) (take 3 (drop 2 (or body ()))))
-          sig     (or (some #(when (vector? %) %) (drop 1 (or body ())))
-                      (let [arities (keep #(when (and (seq? %) (vector? (first %)))
-                                             (first %))
-                                          (drop 2 (or body ())))]
-                        (when (seq arities) (vec arities))))
-          why     (->> (store/deltas (:store @session))
-                       reverse
-                       (some #(when (and (:prompt %)
-                                         (or (= (:id e) (:form-id %))
-                                             (some #{(:id e)} (or (:form-ids %) []))))
-                                (:prompt %))))
-          covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
-                               (:test-map @session)))
-          examples (when-let [conn (:db @session)]
-                     (try
-                       (when-let [raw (db/get-meta conn (str "observed/" ns-sym "/" nm))]
-                         (->> (edn/read-string raw)
-                              (take 2)
-                              (mapv (fn [{:keys [args ret threw]}]
-                                      (snip (str "(" nm " " (str/join " " args)
-                                                 ") → " (or ret threw))
-                                            90)))
-                              not-empty))
-                       (catch Exception _ nil)))]
-      (cond-> {:form q :warranty {:covered covered}}
-        sig  (assoc :sig sig)
-        doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
-        (str/ends-with? (str nm) "!") (assoc :effectful true)
-        why  (assoc :why (snip why 90))
-        examples (assoc :examples examples)))))
 ^:reads (defn session-brief
   "THE one-call orientation, task-shaped (knowledge-differential stance):
   breadth stays CHEAP — namespace FAMILIES (≥5 same-prefix siblings) roll
@@ -3144,7 +3044,7 @@
         ms       (->> (query-commits session)
                       (take 5)
                       (mapv #(-> (select-keys % [:commit :description :at :status])
-                                 (update :description snip 110))))
+                                 (update :description orient/snip 110))))
         last-done (let [d (last (filter #(= :done (:op %)) (store/deltas st)))]
                     (when (and d (or (= :red (get-in d [:findings :test-status]))
                                      (pos? (get-in d [:findings :lint-errors] 0))))
@@ -3172,7 +3072,7 @@
                         (sort-by (comp - first))
                         (map second)
                         (take 5)
-                        (keep #(form-card session (symbol (namespace %))
+                        (keep #(orient/form-card session (symbol (namespace %))
                                           (symbol (name %))))
                         vec
                         not-empty))]
@@ -3188,37 +3088,6 @@
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
       relevant   (assoc :relevant relevant))))
-(defn- fit-report
-  "G13 at the gate boundary — by AGGREGATION, never amputation: an
-  over-budget report first trims asks to 1/row, then ROLLS CHANGES UP by
-  namespace ({:ns :forms :ops :asks}) — the information survives at a
-  coarser grain and report {contains} expands any group. Amputation
-  (take 20 of the rollup) is the last resort for pathological stores.
-  (eval9: the take-20 amputation CAUSED the handoff fan-out — agents went
-  hunting for what the report dropped.)"
-  [r]
-  (let [fits? #(<= (count (pr-str %)) 6500)]
-    (if (fits? r)
-      r
-      (let [slim (update r :changes
-                         (fn [cs] (mapv #(update % :asks (comp vec (partial take 1))) cs)))]
-        (if (fits? slim)
-          (assoc slim :note "asks trimmed to 1/row — report {contains} narrows")
-          (let [rolled (->> (:changes slim)
-                            (group-by :ns)
-                            (mapv (fn [[nsx rows]]
-                                    {:ns nsx :forms (count rows)
-                                     :ops (vec (distinct (mapcat :ops rows)))
-                                     :asks (vec (take 1 (distinct (mapcat :asks rows))))}))
-                            (sort-by (comp str :ns)))
-                slim2  (assoc slim :changes (vec rolled)
-                              :note "changes rolled up by namespace — report {contains <ns or word>} expands a group")]
-            (if (fits? slim2)
-              slim2
-              (-> slim2
-                  (update :changes #(vec (take 20 %)))
-                  (assoc :note (str "rolled up by namespace, showing 20 of "
-                                    (count rolled) " — {contains} narrows"))))))))))
 ^:reads (defn report
   "The handoff/summary composite (ratio push): milestones, net form-level
   changes with their recorded ASKS, and the last verification state — the
@@ -3246,7 +3115,7 @@
                                :form (let [e (store/form-by-id st fid)]
                                        (or (:name e) fid))
                                :ops (vec (distinct (map :op es)))
-                               :asks (vec (take 3 (distinct (map #(snip % 140) (keep :ask es)))))}))
+                               :asks (vec (take 3 (distinct (map #(orient/snip % 140) (keep :ask es)))))}))
                        (filter (fn [row]
                                  (or (nil? contains)
                                      (some #(str/includes? (str %) (str contains))
@@ -3261,9 +3130,9 @@
                                                         (str contains)))))
                        (take 20)
                        (mapv #(-> (select-keys % [:commit :description :at :status])
-                                  (update :description snip 110))))
+                                  (update :description orient/snip 110))))
         verify*   (->> deltas (filter #(= :verify (:op %))) last)]
-    (fit-report
+    (orient/fit-report
      {:milestones ms
       :changes changes
       :suite (when verify*
@@ -3302,7 +3171,7 @@
                           (recur nxt (into seen nxt) (into acc nxt) (inc d))))))
           shown   (vec (take limit reached))
           cards   (into []
-                        (keep (fn [q] (form-card session
+                        (keep (fn [q] (orient/form-card session
                                                  (symbol (namespace q))
                                                  (symbol (name q)))))
                         shown)
@@ -3327,44 +3196,6 @@
                :cards cards}
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
-(defn module-surface
-  "What module `m` OFFERS: the public defns/defmacros/defs of its depth<=2
-  namespaces plus every deeper var widened by :export (with its level) —
-  compact rows {:ns :name :sig :doc :export?}, -test namespaces and
-  ^:private vars excluded. Plus :deps (its declared edges) and :consumers
-  (modules declaring an edge to it). The cheap browse before calling into
-  a module."
-  [session m]
-  (let [st       (:store @session)
-        m        (str m)
-        manifest (or (edit/modules-manifest st) {})
-        nses     (filter #(= m (edit/module-of %)) (keys (:namespaces st)))
-        rows     (for [nsx  (sort nses)
-                       :when (not (str/ends-with? (str nsx) "-test"))
-                       :let [deep? (> (count (str/split (str nsx) #"\.")) 2)]
-                       e    (store/forms st nsx)
-                       :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                       :when (and (seq? s)
-                                  (contains? '#{defn defmacro def} (first s))
-                                  (symbol? (second s))
-                                  (not (:private (meta (second s))))
-                                  (or (not deep?)
-                                      (:export (meta (second s)))))
-                       :let [doc (first (filter string? (take 2 (drop 2 s))))
-                             sig (first (filter vector? s))
-                             ex  (:export (meta (second s)))]]
-                   (cond-> {:ns nsx :name (second s)}
-                     sig             (assoc :sig sig)
-                     doc             (assoc :doc (first (str/split-lines doc)))
-                     (and deep? ex)  (assoc :export (if (true? ex) true (str ex)))))]
-    (if (empty? nses)
-      {:error (str "no namespaces in module " m
-                   " — query_depends {modules true} lists the modules")}
-      {:module    m
-       :surface   (vec rows)
-       :deps      (vec (sort (get manifest m #{})))
-       :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
-                                   manifest)))})))
 ^:reads (defn query-depends
   "The generic dependency front door: what depends on `on` (`:direction
   :dependents`, the default) or what `on` depends on (`:direction
@@ -3378,9 +3209,9 @@
   (let [st (:store @session)]
     (if modules
       (if (seq (str on))
-        (assoc (module-surface session on) :kind :module-surface)
+        (assoc (modules/module-surface session on) :kind :module-surface)
         (let [manifest (or (edit/modules-manifest st) {})
-              rows     (module-usage-rows st)
+              rows     (modules/module-usage-rows st)
               actual   (into #{}
                              (comp (map (fn [{:keys [from-ns to]}]
                                           [(edit/module-of from-ns)
@@ -3393,13 +3224,13 @@
                               [m d]))
               ;; layers/cycles reflect PRODUCTION architecture (test fixtures excluded);
               ;; :manifest below stays the DECLARED/enforced set
-              graph    (store/module-layers (production-manifest st rows))]
+              graph    (store/module-layers (modules/production-manifest st rows))]
           (cond-> {:kind :modules
                    :manifest (into (sorted-map)
                                    (map (fn [[m ds]] [m (vec (sort ds))]))
                                    manifest)
                    :layers (:layers graph)
-                   :debt (module-debt st rows)}
+                   :debt (modules/module-debt st rows)}
             (seq (:cycles graph))
             (assoc :cycles (:cycles graph))
 
@@ -3491,8 +3322,8 @@
                    [])]
           (cond-> {:from from :to to :action action
                    :deps (vec (sort (get-in st' [:modules from])))}
-            (module-debt st')
-            (assoc :violations (module-debt st')
+            (modules/module-debt st')
+            (assoc :violations (modules/module-debt st')
                    :note (str "existing debt under this manifest — writes"
                               " touching these forms stay blocked until the"
                               " edge is declared or the call restructured"))))))))

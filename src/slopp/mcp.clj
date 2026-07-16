@@ -730,7 +730,8 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
      (text! (api/query-branches session)))
    "restart"
    (fn [session _a _sym]
-     (do (api/restart! session) (text! "restarted")))
+     (api/restart! session)
+     (text! "restarted"))
    "build"
    (fn [session a _sym]
      (text! (api/build! session (:dir a)

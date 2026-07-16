@@ -145,3 +145,17 @@
     (is (nil? (:error p)) (pr-str (:error p)))
     (is (re-find #"\(defn \^:export peek\*" (:new-src p)) (:new-src p))
     (is (re-find #"\^:reads" (:new-src p)) "the effect tag survives the move")))
+(deftest plan-exports-meta-wrapped-names
+  ;; (def ^:dynamic *hook* ...) — the NAME is a :meta node, not a :token;
+  ;; export-mark must stack the export onto it, not silently skip (the
+  ;; pre-commit hook moved unexported this way and left standing debt).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'mh.core
+                             (str "(ns mh.core)\n\n"
+                                  "(def ^:dynamic *hook* \"H.\" nil)\n\n"
+                                  "(defn fire \"F.\" [] *hook*)\n")))
+        p  (refactor/move-plan st 'mh.core '[*hook*] 'mh.core.impl
+                               {:export "mh.watchers"})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"\{:export \"mh\.watchers\"\}" (:new-src p)) (:new-src p))
+    (is (re-find #"\^:dynamic" (:new-src p)) "the dynamic marker survives")))

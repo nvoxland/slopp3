@@ -658,12 +658,14 @@
   "The def form with an export marker on its name symbol — `level` true
   gives `^:export` (world surface); a prefix string gives
   `^{:export \"prefix\"}` (that subtree only) — the deliberate widening a
-  deep-ns move needs when callers live outside the subtree."
+  deep-ns move needs when callers live outside the subtree. The name may
+  itself be meta-wrapped (`^:dynamic *hook*`) — the marker stacks on top."
   [node level]
   (let [kids (n/children node)
         op?  (fn [k] (and (= :token (n/tag k)) (symbol? (n/sexpr k))))
+        nameish? (fn [k] (or (op? k) (= :meta (n/tag k))))
         opi  (first (keep-indexed #(when (op? %2) %1) kids))
-        nami (first (keep-indexed (fn [i k] (when (and (> i opi) (op? k)) i))
+        nami (first (keep-indexed (fn [i k] (when (and (> i opi) (nameish? k)) i))
                                   kids))
         mark (if (true? level)
                (n/keyword-node :export)
