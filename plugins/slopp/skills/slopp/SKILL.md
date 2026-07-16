@@ -98,6 +98,13 @@ measurably bleed tokens.
 that don't exist yet — it lands as a REAL red (`:red-first` names the
 missing vars, stubbed in-image as failing); implement them to go green.
 
+**Dead surface fails the gate:** a public `defn`/`def` nothing in the
+store calls is an ERROR at `done` and refuses milestones (globally).
+Deliberate? Mark the NAME: `(defn ^:unused-ok f ...)` — external surface,
+string-eval'd or runtime-resolved entries. The dial polices itself: a
+marker on a var that IS called fails with "remove the flag". Fixture
+namespaces in tests follow the same rule (and edits must KEEP the marker).
+
 **Tiers are not your problem:** `done` runs everything your changes
 impact in EVERY tier — impacted `^:isolated` tests run in the external
 JVM automatically (a large slice defers to the milestone and rides

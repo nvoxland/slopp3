@@ -1454,3 +1454,15 @@ stance "raw REPL eval may observe but never redefines" extends to the
 store value: observation of an immutable pointer, never mutation.
 Repeatedly-asked query_store questions are evidence for the next canned
 tool.
+
+The unused-public gate (2026-07-16, user decision): dead public surface
+fails verification instead of riding as an ignorable advisory. done →
+ERROR-grade lint + findings for touched namespaces; commit_point →
+GLOBAL whole-store sweep (standing dead surface refuses the milestone
+regardless of whose episode left it — episode-scoping provably leaked).
+The escape is `^:unused-ok` on the name, and it is self-policing: a
+stale marker (var now called) fails symmetrically, so the dial never
+rots. Known blind spot the dial exists for: string-eval'd and
+runtime-resolved entries (rt/observe, rt/traced-run, mcp/call-main!)
+are kondo-invisible by nature. Kondo's unused-private-var already
+covers privates per-namespace.
