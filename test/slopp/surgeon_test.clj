@@ -187,3 +187,22 @@
         (testing "behavior intact"
           (is (= [6] (api/query-eval sess "(mve.a/g 3)")))))
       (finally (api/close! sess)))))
+(deftest ^:isolated fix-declares-prunes-phantom-names
+  ;; a declare naming a var NOT defined in this ns (moved away by an earlier
+  ;; move-forms) is a PHANTOM: it mints an unbound var, so a typo'd unqualified
+  ;; call resolves silently instead of failing loudly. It must never BLOCK
+  ;; cleanup of the declare around it.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ph.core
+                   (str "(ns ph.core)\n"
+                        "(declare helper gone-away)\n"
+                        "(defn caller [x] (helper x))\n"
+                        "(defn helper [x] (inc x))\n"))
+      (let [r (api/fix-declares! sess 'ph.core :agent "t")]
+        (is (nil? (:error r)) (pr-str r))
+        (let [src (api/query-source sess 'ph.core)]
+          (is (not (re-find #"gone-away" src)) "the phantom name is gone")
+          (is (not (re-find #"\(declare" src))
+              "helper was reorderable, so the whole declare goes")))
+      (finally (api/close! sess)))))

@@ -524,7 +524,13 @@
                         (persist-trace! session)
                         summary))]
         (cond-> summary
-          (seq pending) (assoc :isolated-pending (vec (sort pending))))))))
+          (seq pending)
+          (assoc :isolated-pending
+                 (cond-> {:count (count pending)
+                          :tests (vec (take 5 (sort pending)))}
+                   (> (count pending) 5)
+                   (assoc :note (str "first 5 shown — the done-point / merge gate"
+                                     " runs them all in the external tier")))))))))
 (defn diagnosed-run!
   "Run tests. Reds cross-check on a fresh image ONLY when staleness is
   plausible (D5.1: reload signatures, unexplained flips, missing provenance);
@@ -556,23 +562,27 @@
   episode-red shaper (direction over repetition); `:boundary? true` (the
   done-point) bypasses compression and resets the ledger."
   [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
-  (shape-episode-reds!
-   session
-   (implicate
-    (if (nil? affected)
-      (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                      :include-integration? include-integration?)
-      (reduce (fn [acc [tns tsyms]]
-                (merge-with (fn [a b]
-                              (cond (number? a) (+ a b)
-                                    (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                    :else (or b a)))
-                            acc
-                            (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                            :edited edited :fresh fresh
-                                            :include-integration? include-integration?)))
-              {}
-              (group-by (comp symbol namespace) affected)))
-    (:test-map @session)
-    edited)
-   affected default-ns boundary?))
+  (cond-> (shape-episode-reds!
+           session
+           (implicate
+            (if (nil? affected)
+              (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                              :include-integration? include-integration?)
+              (reduce (fn [acc [tns tsyms]]
+                        (merge-with (fn [a b]
+                                      (cond (number? a) (+ a b)
+                                            (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                            :else (or b a)))
+                                    acc
+                                    (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                                    :edited edited :fresh fresh
+                                                    :include-integration? include-integration?)))
+                      {}
+                      (group-by (comp symbol namespace) affected)))
+            (:test-map @session)
+            edited)
+           affected default-ns boundary?)
+    ;; the done-point runs the isolated tier for REAL right after this, and
+    ;; reports its own cap in :findings — an in-image deferral note there is
+    ;; noise about an implementation detail
+    boundary? (dissoc :isolated-pending)))

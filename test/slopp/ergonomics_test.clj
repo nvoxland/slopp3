@@ -362,6 +362,6 @@
                    (str "(ns ir.test (:require [clojure.test :refer [deftest is]]))\n"
                         "(deftest fast (is true))\n"))
       (let [r (api/add-form! sess 'ir.test "(deftest ^:isolated slow (is true))")]
-        (is (some #{'slow} (:isolated-pending (:test r)))
+        (is (some #{'slow} (:tests (:isolated-pending (:test r))))
             (str "slow must be deferred, not run in-image: " (pr-str (:test r)))))
       (finally (api/close! sess)))))

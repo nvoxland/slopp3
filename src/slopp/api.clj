@@ -25,12 +25,6 @@
             [slopp.build :as build]
             [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.branch :as branch] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs]))
 
-(declare run-verification! forms-changed-since query-outline
-         hot-load-all! fresh-image! reap-idle-images!
-         content-ops delta-fids episode-boundary episode-span
-         query-changes edit-group! fix-declares! status-at status-after
-         human-time render-form-history-text)
-
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
   timer calls this periodically; callable directly). Returns {:reaped n}."
@@ -1453,8 +1447,10 @@
                                   (get adj (symbol (str ns-sym) (str nm)) []))]
                 (cond
                   (nil? def-idx)
-                  {:name nm :decl (:id d) :action :skip
-                   :reason "declared but never defined here"}
+                  {:name nm :decl (:id d) :action :phantom
+                   :reason (str "declared but defined nowhere here — an earlier"
+                                " move lifted it out; the name mints an unbound"
+                                " var, so it is dropped, never kept")}
 
                   (or (nil? first-caller) (< def-idx first-caller))
                   {:name nm :decl (:id d) :action :ok}   ; already fine

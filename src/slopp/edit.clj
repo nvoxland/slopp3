@@ -526,6 +526,18 @@
                        {:form (:form f) :type (:type f) :message (:message f)}))}
 
       :else nil)))
+(defn declare-node
+  "Build a `(declare …)` form NODE for `names`, optionally carrying the
+  `^{:auto-declare \"<why>\"}` marker (a pipeline-owned declare says why it
+  exists — markers-carry-their-why). Built with the RAW parser on purpose:
+  `parse-form` BANS hand-written declares (D5), and the pipeline's own
+  inserts/rewrites must not trip the gate they enforce on agents."
+  [names & {:keys [why]}]
+  (first (filter n/sexpr-able?
+                 (n/children
+                  (p/parse-string-all
+                   (str (when why (str "^{:auto-declare \"" why "\"}\n"))
+                        "(declare " (str/join " " (map str names)) ")"))))))
 (defn resolve-cold-load
   "AUTO-AVOID-DECLARE: make `store`'s `ns-sym` cold-load WITHOUT the agent ever
   writing (declare …). Returns {:store <fixed> …} or nil (already cold-loads).
@@ -543,11 +555,7 @@
       (if cycle
         (let [names  (mapv #(symbol (name %)) cycle)
               why    (str "mutual recursion: " (str/join ", " (map str names)))
-              decl   (first (filter n/sexpr-able?
-                                    (n/children
-                                     (p/parse-string-all
-                                      (str "^{:auto-declare \"" why "\"}\n"
-                                           "(declare " (str/join " " (map str names)) ")")))))
+              decl   (declare-node names :why why)
               nameset (set names)
               anchor (some #(when (nameset (:name %)) (:name %))
                            (store/forms store ns-sym))
