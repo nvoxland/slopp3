@@ -86,3 +86,38 @@
     (let [st2 (store/ingest st 'sr.user
                             "(ns sr.user (:require [sr.core :as c]))\n(defn u [x] (c/dead x))\n")]
       (is (seq (refs/refs-to st2 'sr.core/dead))))))
+(deftest walk-pruned-is-the-one-quote-aware-traversal
+  (let [collect (fn [x] (vec (refs/walk-pruned
+                              (fn [n] (when (and (symbol? n) (namespace n)) [n]))
+                              x)))]
+    (testing "yields qualified symbols, prunes quoted subtrees"
+      (is (= '[a.b/c d.e/f]
+             (collect '(defn g [] (a.b/c (quote x.y/z)) (when true d.e/f)))))
+      (is (= '[]  (collect '(quote (a.b/c d.e/f)))))
+      (is (= '[m.n/k m.n/v] (collect '{m.n/k m.n/v}))
+          "maps: keys and vals both walked"))
+    (testing "callers see SEQ nodes too (carrier-position extraction)"
+      (is (= '[(query-call s (quote a.b/f))]
+             (vec (refs/walk-pruned
+                   (fn [n] (when (and (seq? n) (= 'query-call (first n))) [n]))
+                   '(defn g [s] (query-call s (quote a.b/f))))))))
+    (testing "and :tag hints on nodes"
+      (is (= '[Foo]
+             (vec (refs/walk-pruned
+                   (fn [n] (when-let [t (:tag (meta n))] [t]))
+                   '(defn g [^Foo x] x))))))))
+(deftest refs-memoizes-on-the-immutable-store-value
+  ;; refs is O(store) — repeatedly rebuilding the whole graph to answer
+  ;; refs-to / unused / review on the SAME store value is waste. Memoize
+  ;; on value identity (immutable store → a new value only on a write):
+  ;; same value returns the identical vector; a changed store rebuilds.
+  (let [st  (store/ingest (store/empty-store) 'mm.core
+                          "(ns mm.core (:require [clojure.string :as s]))\n(defn f [x] (s/trim x))\n")
+        a   (refs/refs st)
+        b   (refs/refs st)]
+    (is (identical? a b) "same store value → cached, not rebuilt")
+    (let [st2 (store/ingest st 'mm.two
+                            "(ns mm.two (:require [mm.core :as c]))\n(defn g [x] (c/f x))\n")
+          c   (refs/refs st2)]
+      (is (not (identical? a c)) "a changed store rebuilds")
+      (is (some #(= 'mm.core (:to-ns %)) c) "and reflects the new reference"))))

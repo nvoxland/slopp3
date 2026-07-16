@@ -8,17 +8,23 @@
             [slopp.index :as index]
             [slopp.render :as render]
             [slopp.store :as store] [clojure.string :as str]))
+(defn ^:export walk-pruned
+  "THE quote-aware traversal: depth-first over sexpr `x`, PRUNING quoted
+  subtrees (a quoted symbol is data, never a reference). Returns the
+  concat of `(f node)` over every SURVIVING node — collections and atoms
+  alike — so one traversal serves every extractor: qualified symbols,
+  seq-head inspection (carrier positions), `:tag` hints. Callers `keep`/
+  `first`/`distinct` the stream. (Four hand-rolled copies of this walk
+  preceded it.)"
+  [f x]
+  (when-not (and (seq? x) (= 'quote (first x)))
+    (concat (f x)
+            (when (coll? x) (mapcat #(walk-pruned f %) x)))))
 (defn quote-pruned-qualified-syms
-  "Every namespace-qualified symbol in sexpr `x`, skipping quoted subtrees —
-  a quoted symbol is data and never resolves, so it isn't a call."
+  "Every namespace-qualified symbol in sexpr `x`, quote-pruned — the
+  un-required-call producer's extractor over `walk-pruned`."
   [x]
-  (cond
-    (and (seq? x) (= 'quote (first x))) nil
-    (symbol? x) (when (namespace x) [x])
-    (map-entry? x) (concat (quote-pruned-qualified-syms (key x))
-                           (quote-pruned-qualified-syms (val x)))
-    (coll? x) (mapcat quote-pruned-qualified-syms x)
-    :else nil))
+  (walk-pruned (fn [n] (when (and (symbol? n) (namespace n)) [n])) x))
 (defn- static-refs
   "kondo-resolved var usages PLUS syntactically-qualified references into
   store namespaces kondo can't resolve (un-required — the gate-hole class),
@@ -69,20 +75,15 @@
     (for [nsx (sort nses)
           e   (store/forms st nsx)
           :when (:name e)
-          s ((fn walk [f]
-               (cond
-                 (and (seq? f) (= 'quote (first f))) nil
-                 (seq? f)
-                 (concat
-                  (when (and (symbol? (first f)) (carrier? (name (first f))))
-                    (for [a (rest f)
-                          :when (and (seq? a) (= 'quote (first a))
-                                     (symbol? (second a))
-                                     (namespace (second a)))]
-                      (second a)))
-                  (mapcat walk f))
-                 (coll? f) (mapcat walk f)
-                 :else nil))
+          s (walk-pruned
+             (fn [f]
+               (when (and (seq? f) (symbol? (first f))
+                          (carrier? (name (first f))))
+                 (for [a (rest f)
+                       :when (and (seq? a) (= 'quote (first a))
+                                  (symbol? (second a))
+                                  (namespace (second a)))]
+                   (second a))))
              (try (n/sexpr (:node e)) (catch Exception _ nil)))
           :let [to (symbol (namespace s))]
           :when (contains? known to)]
@@ -123,23 +124,37 @@
   carrier self-ref was keeping dead forms alive)."
   [rs]
   (remove #(and (:from-form %) (= (:from-form %) (:to-form %))) rs))
-(defn ^:export refs
+(def ^:private refs-memo
+  "Memoize-LAST of the whole-store graph, keyed on store-value IDENTITY:
+  the store is immutable, so a new value appears only on a write — same
+  value → same graph, by construction (no content hashing needed). Holds
+  one [store records] pair; a benign race under concurrent lines costs at
+  most a rebuild, never a wrong answer. `refs` is O(store); this collapses
+  the several whole-graph calls per done/milestone to one build."
+  (atom nil))
+^:reads (defn ^:export refs
   "EVERY reference in the store as canonical records — THE single source
   of truth for 'who references what'. Producers normalize here (kondo
   statics including un-required qualified calls, carrier positions,
   marker declarations); consumers — gates, unused, review, moves — query
-  this and never re-integrate sources.
+  this and never re-integrate sources. Self-references excluded.
   Record: {:from-form fid|nil :from-ns sym|:external :from-var sym|nil
-           :to-ns sym :to-name sym :via :static|:carrier|:declared
-           [:marker :entry-point|:unused-ok]}
-  Derived (rides the memoized kondo cache), never stored: references are
-  an index of source, and the journal owes them no consistency."
+           :to-ns sym :to-name sym :to-form fid|nil
+           :via :static|:carrier|:declared [:arity n] [:marker kw]}
+  Derived (never stored — refs are an index of source), memoized on the
+  immutable store value so repeated whole-graph queries within an
+  operation are free."
   [st]
-  (let [known (set (keys (:namespaces st)))]
-    (vec (drop-self
-          (concat (static-refs st known (sort known))
-                  (carrier-refs st known (sort known))
-                  (declared-refs st known (sort known)))))))
+  (let [c @refs-memo]
+    (if (identical? st (first c))
+      (second c)
+      (let [known (set (keys (:namespaces st)))
+            v (vec (drop-self
+                    (concat (static-refs st known (sort known))
+                            (carrier-refs st known (sort known))
+                            (declared-refs st known (sort known)))))]
+        (reset! refs-memo [st v])
+        v))))
 (defn ^:export ns-refs
   "The graph SLICE for one namespace's outbound references — the same
   canonical records `refs` yields, produced for `nsx` alone (the write
@@ -167,7 +182,7 @@
           :to-name   (symbol (name f))
           :to-form   nil
           :via       :observed})))
-(defn ^:export refs-to
+^:reads (defn ^:export refs-to
   "Every reference TO `qsym` (an ns/name symbol) — the blast-radius/liveness
   question, answered from THE graph."
   [st qsym]

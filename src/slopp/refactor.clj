@@ -728,7 +728,8 @@
   "The (:import ...) clause text the moved `nodes` need from `ns-sym`'s
   declaration — entries filtered to the SIMPLE class names the moved code
   references (static calls `C/member`, ctors `C.`, bare `C`, `^C` type
-  hints), grouped and sorted; nil when nothing matches."
+  hints, via refs/walk-pruned), grouped and sorted; nil when nothing
+  matches."
   [store ns-sym nodes]
   (let [decl    (some #(let [s (try (n/sexpr (:node %)) (catch Exception _ nil))]
                          (when (and (seq? s) (= 'ns (first s))) s))
@@ -741,18 +742,14 @@
                     (symbol? spec) (let [parts (str/split (str spec) #"\.")]
                                      {:pkg (symbol (str/join "." (butlast parts)))
                                       :classes #{(last parts)}})))
-        syms    (fn syms [f]
-                  (let [hint (when-let [t (:tag (meta f))]
-                               (when (symbol? t) [t]))]
-                    (cond
-                      (and (seq? f) (= 'quote (first f))) nil
-                      (symbol? f) (into [f] hint)
-                      (map-entry? f) (concat (syms (key f)) (syms (val f)))
-                      (coll? f) (concat hint (mapcat syms f))
-                      :else nil)))
         used    (set
                  (for [node nodes
-                       s (syms (try (n/sexpr node) (catch Exception _ nil)))
+                       s (refs/walk-pruned
+                          (fn [f]
+                            (concat (when (symbol? f) [f])
+                                    (when-let [t (:tag (meta f))]
+                                      (when (symbol? t) [t]))))
+                          (try (n/sexpr node) (catch Exception _ nil)))
                        :let [nm (name s) nsp (namespace s)]
                        c [(when (and nsp (Character/isUpperCase (char (first nsp))))
                             nsp)
