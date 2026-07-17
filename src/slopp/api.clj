@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.schema :as schema] [slopp.api.attrs :as attrs]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.schema :as schema] [slopp.api.attrs :as attrs] [slopp.api.breakage :as breakage]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2630,6 +2630,10 @@
       ;; forms, so it needs no history/CRDT handling of its own. Advisory only —
       ;; heuristic, never flips test-status.
       key-typos (attrs/near-duplicate-keys st* changed)
+      ;; contract-narrowing advisory (Spec-ulation): a boundary fn whose fixed
+      ;; arities shrank vs the last-done baseline may break external callers a
+      ;; slice can't see. Advisory — internal callers already turn the tests red.
+      breaking  (breakage/breaking-changes st* changed)
       missing-doc (vec (sort (distinct
                               (keep (fn [fid]
                                       (when-let [e (store/form-by-id st* fid)]
@@ -2647,6 +2651,7 @@
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq schema-drift) (assoc :schema-drift schema-drift)
     (seq key-typos)   (assoc :key-typos key-typos)
+    (seq breaking)    (assoc :breaking-changes breaking)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
         cid (let [v (volatile! nil)]
