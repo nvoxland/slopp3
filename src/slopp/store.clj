@@ -53,8 +53,16 @@
   (gen-id store prefix))
 
 (def ^:private def-heads
-  "Head symbols whose second element names the form."
-  '#{def defn defn- defmacro defmulti defmethod defrecord deftype
+  "Head symbols whose second element names the form.
+
+  `defmethod` is deliberately NOT here, though it looks like it belongs: its
+  second element is the multimethod it REGISTERS ONTO, not a name it defines.
+  Including it made every method in a namespace share the multi's name — three
+  forms called `area`, of which `form-named` returns the first — so methods were
+  unreachable by every name-keyed tool and `refs/cold-load-order` dropped them
+  from the load order entirely. Its siblings `extend-type`/`extend-protocol` were
+  never here; it was the odd one out. See `form-symbols`."
+  '#{def defn defn- defmacro defmulti defrecord deftype
      defprotocol defonce deftest ns})
 
 (defn form-symbol
@@ -82,36 +90,6 @@
                            (n/children (p/parse-string-all source))))
             form-symbol)))
 
-(defn ingest
-  "Parse `source` into `ns-sym`'s ordered elements, assigning a fresh id to each
-  form, and append an `:ingest` delta. Returns the new store."
-  [store ns-sym source & {:keys [agent]}]
-  (let [nodes (n/children (p/parse-string-all source))]
-    (loop [store store, nodes nodes, elements []]
-      (if-let [node (first nodes)]
-        (if (n/sexpr-able? node)
-          (let [[id store] (gen-id store "f")]
-            (recur store (rest nodes)
-                   (conj elements {:id id :kind :form
-                                   :name (form-symbol node) :node node})))
-          (recur store (rest nodes)
-                 (conj elements {:kind :sep :node node})))
-        (let [[did store] (gen-id store "d")]
-          (-> store
-              (assoc-in [:namespaces ns-sym :elements] elements)
-              (update :deltas conj
-                      (cond-> {:id did :parent nil :op :ingest :ns ns-sym
-                               :at (now-ms)
-                               :form-ids (into [] (keep :id) elements)
-                               ;; per-version content (C3/C4): history must be
-                               ;; reconstructible from the log alone
-                               :sources  (into {}
-                                               (keep (fn [e]
-                                                       (when (:id e)
-                                                         [(:id e) (n/string (:node e))])))
-                                               elements)}
-                        agent (assoc :agent agent)))))))))
-
 (defn elements
   "All elements of `ns-sym` in order (forms + separators)."
   [store ns-sym]
@@ -123,9 +101,20 @@
   (filterv #(= :form (:kind %)) (elements store ns-sym)))
 
 (defn form-named
-  "The form in `ns-sym` defining symbol `nm`, or nil."
+  "The form in `ns-sym` defining symbol `nm`, or nil.
+
+  Matches any of the form's `:names` — so `->R` and `map->R` reach the
+  `(defrecord R …)` that defines them, and a protocol's method vars reach their
+  `defprotocol`. Falls back to `:name` for entries written before #128.
+
+  Also matches a form ID, which is what makes registrations addressable:
+  `defmethod`/`extend-type` define nothing, so an id is their only handle. This
+  is also what makes the id-fallback round-trip — `qform` has always LABELLED
+  unnamed forms `ns/f4`, and until now `form-named` could not fetch one back."
   [store ns-sym nm]
-  (first (filter #(= nm (:name %)) (forms store ns-sym))))
+  (let [fs (forms store ns-sym)]
+    (or (first (filter #(or (contains? (:names %) nm) (= nm (:name %))) fs))
+        (first (filter #(= (str nm) (:id %)) fs)))))
 
 (defn form-by-id
   "The form anywhere in the store with the given id, or nil."
@@ -136,72 +125,6 @@
        first))
 
 (defn deltas [store] (:deltas store))
-
-(defn replace-node
-  "Replace the CST node of the form named `nm` in `ns-sym`, keeping its stable id
-  (C2/O1 whole-form replace); append a `:replace` delta carrying `prompt`.
-  Returns [store' delta], or nil if no such form."
-  [store ns-sym nm node & {:keys [prompt op group agent] :or {op :replace}}]
-  (let [elems (get-in store [:namespaces ns-sym :elements])
-        idx   (first (keep-indexed
-                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
-                      elems))]
-    (when idx
-      (let [elem     (nth elems idx)
-            new-elem (assoc elem :node node :name (form-symbol node))
-            [did store] (gen-id store "d")
-            delta    (cond-> {:id did :parent (:id (last (:deltas store)))
-                              :op op :ns ns-sym :form-id (:id elem) :prompt prompt
-                              :at (now-ms)
-                              :sources {(:id elem) (n/string node)}}
-                       group (assoc :group group)
-                       agent (assoc :agent agent))]
-        [(-> store
-             (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
-             (update :deltas conj delta))
-         delta]))))
-
-(defn append-form
-  "Add a new form to `ns-sym` with a fresh id; ONE `:add` delta. Default:
-  appended at the tail (newline-separated). `:before <form-name>` anchors it
-  immediately before that form instead — the delta records the anchor's
-  form-ID so foreign replay converges on the same position. Returns
-  [store' delta]; nil when the namespace — or the named anchor — doesn't
-  exist."
-  [store ns-sym node & {:keys [prompt group agent before]}]
-  (when-let [elems (get-in store [:namespaces ns-sym :elements])]
-    (let [anchor-idx (when before
-                       (first (keep-indexed
-                               (fn [i e] (when (and (= :form (:kind e))
-                                                    (= before (:name e))) i))
-                               elems)))]
-      (when (or (nil? before) anchor-idx)
-        (let [needs-nl?    (and (nil? anchor-idx)
-                                (seq elems)
-                                (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
-              [fid store]  (gen-id store "f")
-              [did store'] (gen-id store "d")
-              form-elem    {:id fid :kind :form :name (form-symbol node) :node node}
-              new-elems    (if anchor-idx
-                             (into (conj (subvec elems 0 anchor-idx)
-                                         form-elem
-                                         {:kind :sep :node (n/newlines 1)})
-                                   (subvec elems anchor-idx))
-                             (cond-> elems
-                               needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                               true      (conj form-elem
-                                               {:kind :sep :node (n/newlines 1)})))
-              delta        (cond-> {:id did :parent (:id (last (:deltas store)))
-                                    :op :add :ns ns-sym :form-id fid :prompt prompt
-                                    :at (now-ms)
-                                    :sources {fid (n/string node)}}
-                             anchor-idx (assoc :before (:id (nth elems anchor-idx)))
-                             group (assoc :group group)
-                             agent (assoc :agent agent))]
-          [(-> store'
-               (assoc-in [:namespaces ns-sym :elements] new-elems)
-               (update :deltas conj delta))
-           delta])))))
 
 (defn remove-form
   "Remove the form named `nm` from `ns-sym` (plus its immediately following
@@ -316,33 +239,6 @@
   (some (fn [[ns-sym {:keys [elements]}]]
           (when (some #(= id (:id %)) elements) ns-sym))
         (:namespaces store)))
-
-(defn apply-changeset
-  "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
-  possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
-  `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
-  [store' delta]."
-  [store op ns-sym changeset & {:keys [prompt extra agent]}]
-  (let [[did store'] (gen-id store "d")
-        delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
-                              :op op :ns ns-sym :at (now-ms)
-                              :form-ids (vec (sort (keys changeset)))
-                              :sources  (into {} (map (fn [[fid node]]
-                                                        [fid (n/string node)]))
-                                              changeset)
-                              :prompt prompt}
-                       agent (assoc :agent agent))
-                     extra)
-        store' (reduce-kv
-                (fn [st ns-key {:keys [elements]}]
-                  (assoc-in st [:namespaces ns-key :elements]
-                            (mapv (fn [e]
-                                    (if-let [node (get changeset (:id e))]
-                                      (assoc e :node node :name (form-symbol node))
-                                      e))
-                                  elements)))
-                store' (:namespaces store'))]
-    [(update store' :deltas conj delta) delta]))
 
 (defn reorder-to
   "Reorder `ns-sym`'s forms to match `name-order` (a vector of form names,
@@ -480,137 +376,6 @@
                                         (concat (when (:form-id d) [(:form-id d)])
                                                 (:form-ids d))))))))
 
-(defn replay-delta
-  "Apply a FOREIGN delta from the SAME journal (linear history — ids are
-  authoritative, nothing remaps) onto a trailing cached store. Returns the
-  advanced store, or nil when this op needs a full reload (e.g. :ingest —
-  the elements table has the writer's exact trivia; rebuild from there)."
-  [store d]
-  (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
-    (case (:op d)
-      (:verify :done :merge :turn-begin :turn-end :commit)
-      (with-d store)
-
-      ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure
-      :deps-add    (with-d (-> store
-                               (assoc-in [:deps (:lib d)] (:coord d))
-                               (assoc-in [:dep-ns (:lib d)] (set (:namespaces d)))))
-      :deps-remove (with-d (-> store
-                               (update :deps dissoc (:lib d))
-                               (update :dep-ns dissoc (:lib d))))
-      :deps-pure   (with-d (update store :dep-pure
-                                   (fnil (if (:pure d) conj disj) #{}) (:sym d)))
-      :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
-      :file-remove (with-d (update store :files dissoc (:path d)))
-
-      :config-put
-      (with-d (-> store
-                  (assoc-in [:config (:path d) :format] (:format d))
-                  (assoc-in [:config (:path d) :values (:key d)] (:value d))))
-
-      :module-edge
-      (with-d
-        (if (= :remove (:action d))
-          (let [deps (disj (get-in store [:modules (:from d)] #{}) (:to d))]
-            (if (empty? deps)
-              (update store :modules dissoc (:from d))
-              (assoc-in store [:modules (:from d)] deps)))
-          (update-in store [:modules (:from d)] (fnil conj #{}) (:to d))))
-
-      :config-unset
-      (with-d
-        (let [st (update-in store [:config (:path d) :values] dissoc (:key d))]
-          (if (empty? (get-in st [:config (:path d) :values]))
-            (update st :config dissoc (:path d))
-            st)))
-
-      :trivia
-      (with-d
-        (update-in store [:namespaces (:ns d) :elements]
-                   (fn [elems]
-                     (let [end   (or (when (:before d)
-                                       (first (keep-indexed
-                                               (fn [i e] (when (= (:before d) (:id e)) i))
-                                               elems)))
-                                     (count elems))
-                           start (loop [i end]
-                                   (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
-                                     (recur (dec i))
-                                     i))
-                           seps  (mapv (fn [nd] {:kind :sep :node nd})
-                                       (n/children (p/parse-string-all (:text d))))]
-                       (into (into (subvec elems 0 start) seps)
-                             (subvec elems end))))))
-
-      (:replace :rename :normalize)
-      (with-d
-        (reduce-kv
-         (fn [st fid src]
-           (let [ns-sym (ns-of-form-id st fid)]
-             (if-not ns-sym
-               st                                  ; unknown form: ignore
-               (update-in st [:namespaces ns-sym :elements]
-                          (fn [elems]
-                            (mapv (fn [e]
-                                    (if (= fid (:id e))
-                                      (let [node (p/parse-string src)]
-                                        (assoc e :node node
-                                               :name (form-symbol node)))
-                                      e))
-                                  elems))))))
-         store (:sources d)))
-
-      :add
-      (let [ns-sym (:ns d)
-            fid    (:form-id d)
-            src    (get (:sources d) fid)]
-        (if-not (get-in store [:namespaces ns-sym])
-          nil                                     ; ns unknown → full reload
-          (with-d
-            (update-in store [:namespaces ns-sym :elements]
-                       (fn [elems]
-                         (let [node       (p/parse-string src)
-                               form-elem  {:id fid :kind :form
-                                           :name (form-symbol node) :node node}
-                               ;; anchored add (:before = anchor form-id):
-                               ;; same position as the writer; gone → append
-                               anchor-idx (when (:before d)
-                                            (first (keep-indexed
-                                                    (fn [i e] (when (= (:before d) (:id e)) i))
-                                                    elems)))]
-                           (if anchor-idx
-                             (into (conj (subvec elems 0 anchor-idx)
-                                         form-elem
-                                         {:kind :sep :node (n/newlines 1)})
-                                   (subvec elems anchor-idx))
-                             (let [needs-nl? (and (seq elems)
-                                                  (not (str/ends-with?
-                                                        (n/string (:node (peek elems)))
-                                                        "\n")))]
-                               (cond-> elems
-                                 needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                                 true      (conj form-elem
-                                                 {:kind :sep
-                                                  :node (n/newlines 1)}))))))))))
-
-      :delete
-      (let [ns-sym (:ns d)
-            fid    (:form-id d)]
-        (with-d
-          (update-in store [:namespaces ns-sym :elements]
-                     (fn [elems]
-                       (if-let [idx (first (keep-indexed
-                                            (fn [i e] (when (= fid (:id e)) i))
-                                            elems))]
-                         (let [drop-next? (and (< (inc idx) (count elems))
-                                               (= :sep (:kind (nth elems (inc idx)))))]
-                           (into (subvec elems 0 idx)
-                                 (subvec elems (+ idx (if drop-next? 2 1)))))
-                         elems)))))
-
-      ;; :ingest / :move / anything unknown → full reload
-      nil)))
-
 (defn sources-at
   "The {form-id source-text} content view as of delta `at-id` (inclusive;
   nil = before any delta). Reconstructed from the log — powers episode
@@ -634,8 +399,6 @@
     (update store :deltas conj
             {:id did :parent parent :op :verify :ns ns-sym :at (now-ms)
              :result result})))
-
-;; --- Phase 4 m2: the CRDT merge -------------------------------------------
 
 (defn suffix-touched
   "Form ids touched by content deltas in a delta seq."
@@ -933,3 +696,304 @@
                               (sort-by key values)))
     (throw (ex-info (str "no serializer for config format " format)
                     {:entry entry}))))
+(defn form-symbols
+  "EVERY symbol a top-level form defines — a set, possibly empty.
+
+  `form-symbol` answers \"what is this form CALLED\" (the primary name, for
+  labels); this answers \"what does it DEFINE\", which is the question addressing
+  actually asks, and the two differ for most of Clojure's def forms:
+
+  - **registrations define nothing** — `(defmethod area :square …)` and
+    `(extend-type String P …)` return `#{}`. `area` is the defmethod's TARGET,
+    not its name. Naming it `area` put three forms called `area` in one
+    namespace, where `form-named` returns the FIRST — so the methods were
+    unreachable by every name-keyed tool and `refs/cold-load-order` silently
+    dropped them from the load order. No compound name can fix that: `:` is
+    legal in a symbol, so `(defn area:square …)` is a real fn a user can write,
+    and so is every other ASCII-punctuation spelling. The name space is flat and
+    user-owned.
+  - **some definitions define several** — `(defrecord R [x])` also defines `->R`
+    and `map->R`; `(deftype T [x])` also defines `->T`; `(defprotocol P (m …))`
+    also defines each method var. Those were real public vars with NO form:
+    invisible to `form-named`, to `:covered`, and to the unused-public gate.
+
+  Syntactic, per head — deliberately not kondo. This runs per form on every
+  ingest and replay, where a kondo pass would cost ~285ms on a large namespace."
+  [node]
+  (if (= :meta (n/tag node))
+    (some-> (last (filter n/sexpr-able? (n/children node))) form-symbols)
+    (let [s (when (and (n/sexpr-able? node) (= :list (n/tag node))) (n/sexpr node))
+          [head nm] (when (seq? s) s)]
+      (if-not (and (seq s) (symbol? head) (symbol? nm))
+        #{}
+        (case head
+          (def defn defn- defmacro defmulti defonce deftest ns) #{nm}
+          defrecord #{nm (symbol (str "->" nm)) (symbol (str "map->" nm))}
+          deftype   #{nm (symbol (str "->" nm))}
+          defprotocol (into #{nm}
+                            (keep (fn [x] (when (and (seq? x) (symbol? (first x)))
+                                            (first x))))
+                            (drop 2 s))
+          #{})))))
+(defn replay-delta
+  "Apply a FOREIGN delta from the SAME journal (linear history — ids are
+  authoritative, nothing remaps) onto a trailing cached store. Returns the
+  advanced store, or nil when this op needs a full reload (e.g. :ingest —
+  the elements table has the writer's exact trivia; rebuild from there)."
+  [store d]
+  (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
+    (case (:op d)
+      (:verify :done :merge :turn-begin :turn-end :commit)
+      (with-d store)
+
+      ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure
+      :deps-add    (with-d (-> store
+                               (assoc-in [:deps (:lib d)] (:coord d))
+                               (assoc-in [:dep-ns (:lib d)] (set (:namespaces d)))))
+      :deps-remove (with-d (-> store
+                               (update :deps dissoc (:lib d))
+                               (update :dep-ns dissoc (:lib d))))
+      :deps-pure   (with-d (update store :dep-pure
+                                   (fnil (if (:pure d) conj disj) #{}) (:sym d)))
+      :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
+      :file-remove (with-d (update store :files dissoc (:path d)))
+
+      :config-put
+      (with-d (-> store
+                  (assoc-in [:config (:path d) :format] (:format d))
+                  (assoc-in [:config (:path d) :values (:key d)] (:value d))))
+
+      :module-edge
+      (with-d
+        (if (= :remove (:action d))
+          (let [deps (disj (get-in store [:modules (:from d)] #{}) (:to d))]
+            (if (empty? deps)
+              (update store :modules dissoc (:from d))
+              (assoc-in store [:modules (:from d)] deps)))
+          (update-in store [:modules (:from d)] (fnil conj #{}) (:to d))))
+
+      :config-unset
+      (with-d
+        (let [st (update-in store [:config (:path d) :values] dissoc (:key d))]
+          (if (empty? (get-in st [:config (:path d) :values]))
+            (update st :config dissoc (:path d))
+            st)))
+
+      :trivia
+      (with-d
+        (update-in store [:namespaces (:ns d) :elements]
+                   (fn [elems]
+                     (let [end   (or (when (:before d)
+                                       (first (keep-indexed
+                                               (fn [i e] (when (= (:before d) (:id e)) i))
+                                               elems)))
+                                     (count elems))
+                           start (loop [i end]
+                                   (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
+                                     (recur (dec i))
+                                     i))
+                           seps  (mapv (fn [nd] {:kind :sep :node nd})
+                                       (n/children (p/parse-string-all (:text d))))]
+                       (into (into (subvec elems 0 start) seps)
+                             (subvec elems end))))))
+
+      (:replace :rename :normalize)
+      (with-d
+        (reduce-kv
+         (fn [st fid src]
+           (let [ns-sym (ns-of-form-id st fid)]
+             (if-not ns-sym
+               st                                  ; unknown form: ignore
+               (update-in st [:namespaces ns-sym :elements]
+                          (fn [elems]
+                            (mapv (fn [e]
+                                    (if (= fid (:id e))
+                                      (let [node (p/parse-string src)]
+                                        (assoc e :node node
+                                               :name (form-symbol node)
+                                               :names (form-symbols node)))
+                                      e))
+                                  elems))))))
+         store (:sources d)))
+
+      :add
+      (let [ns-sym (:ns d)
+            fid    (:form-id d)
+            src    (get (:sources d) fid)]
+        (if-not (get-in store [:namespaces ns-sym])
+          nil                                     ; ns unknown → full reload
+          (with-d
+            (update-in store [:namespaces ns-sym :elements]
+                       (fn [elems]
+                         (let [node       (p/parse-string src)
+                               form-elem  {:id fid :kind :form
+                                           :name (form-symbol node)
+                                           :names (form-symbols node) :node node}
+                               ;; anchored add (:before = anchor form-id):
+                               ;; same position as the writer; gone → append
+                               anchor-idx (when (:before d)
+                                            (first (keep-indexed
+                                                    (fn [i e] (when (= (:before d) (:id e)) i))
+                                                    elems)))]
+                           (if anchor-idx
+                             (into (conj (subvec elems 0 anchor-idx)
+                                         form-elem
+                                         {:kind :sep :node (n/newlines 1)})
+                                   (subvec elems anchor-idx))
+                             (let [needs-nl? (and (seq elems)
+                                                  (not (str/ends-with?
+                                                        (n/string (:node (peek elems)))
+                                                        "\n")))]
+                               (cond-> elems
+                                 needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                                 true      (conj form-elem
+                                                 {:kind :sep
+                                                  :node (n/newlines 1)}))))))))))
+
+      :delete
+      (let [ns-sym (:ns d)
+            fid    (:form-id d)]
+        (with-d
+          (update-in store [:namespaces ns-sym :elements]
+                     (fn [elems]
+                       (if-let [idx (first (keep-indexed
+                                            (fn [i e] (when (= fid (:id e)) i))
+                                            elems))]
+                         (let [drop-next? (and (< (inc idx) (count elems))
+                                               (= :sep (:kind (nth elems (inc idx)))))]
+                           (into (subvec elems 0 idx)
+                                 (subvec elems (+ idx (if drop-next? 2 1)))))
+                         elems)))))
+
+      ;; :ingest / :move / anything unknown → full reload
+      nil)))
+
+(defn apply-changeset
+  "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
+  possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
+  `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
+  [store' delta]."
+  [store op ns-sym changeset & {:keys [prompt extra agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
+                              :op op :ns ns-sym :at (now-ms)
+                              :form-ids (vec (sort (keys changeset)))
+                              :sources  (into {} (map (fn [[fid node]]
+                                                        [fid (n/string node)]))
+                                              changeset)
+                              :prompt prompt}
+                       agent (assoc :agent agent))
+                     extra)
+        store' (reduce-kv
+                (fn [st ns-key {:keys [elements]}]
+                  (assoc-in st [:namespaces ns-key :elements]
+                            (mapv (fn [e]
+                                    (if-let [node (get changeset (:id e))]
+                                      (assoc e :node node :name (form-symbol node)
+                                     :names (form-symbols node))
+                                      e))
+                                  elements)))
+                store' (:namespaces store'))]
+    [(update store' :deltas conj delta) delta]))
+
+(defn append-form
+  "Add a new form to `ns-sym` with a fresh id; ONE `:add` delta. Default:
+  appended at the tail (newline-separated). `:before <form-name>` anchors it
+  immediately before that form instead — the delta records the anchor's
+  form-ID so foreign replay converges on the same position. Returns
+  [store' delta]; nil when the namespace — or the named anchor — doesn't
+  exist."
+  [store ns-sym node & {:keys [prompt group agent before]}]
+  (when-let [elems (get-in store [:namespaces ns-sym :elements])]
+    (let [anchor-idx (when before
+                       (first (keep-indexed
+                               (fn [i e] (when (and (= :form (:kind e))
+                                                    (= before (:name e))) i))
+                               elems)))]
+      (when (or (nil? before) anchor-idx)
+        (let [needs-nl?    (and (nil? anchor-idx)
+                                (seq elems)
+                                (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
+              [fid store]  (gen-id store "f")
+              [did store'] (gen-id store "d")
+              form-elem    {:id fid :kind :form :name (form-symbol node)
+                      :names (form-symbols node) :node node}
+              new-elems    (if anchor-idx
+                             (into (conj (subvec elems 0 anchor-idx)
+                                         form-elem
+                                         {:kind :sep :node (n/newlines 1)})
+                                   (subvec elems anchor-idx))
+                             (cond-> elems
+                               needs-nl? (conj {:kind :sep :node (n/newlines 1)})
+                               true      (conj form-elem
+                                               {:kind :sep :node (n/newlines 1)})))
+              delta        (cond-> {:id did :parent (:id (last (:deltas store)))
+                                    :op :add :ns ns-sym :form-id fid :prompt prompt
+                                    :at (now-ms)
+                                    :sources {fid (n/string node)}}
+                             anchor-idx (assoc :before (:id (nth elems anchor-idx)))
+                             group (assoc :group group)
+                             agent (assoc :agent agent))]
+          [(-> store'
+               (assoc-in [:namespaces ns-sym :elements] new-elems)
+               (update :deltas conj delta))
+           delta])))))
+
+(defn replace-node
+  "Replace the CST node of the form named `nm` in `ns-sym`, keeping its stable id
+  (C2/O1 whole-form replace); append a `:replace` delta carrying `prompt`.
+  Returns [store' delta], or nil if no such form."
+  [store ns-sym nm node & {:keys [prompt op group agent] :or {op :replace}}]
+  (let [elems (get-in store [:namespaces ns-sym :elements])
+        idx   (first (keep-indexed
+                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
+                      elems))]
+    (when idx
+      (let [elem     (nth elems idx)
+            new-elem (assoc elem :node node :name (form-symbol node)
+                             :names (form-symbols node))
+            [did store] (gen-id store "d")
+            delta    (cond-> {:id did :parent (:id (last (:deltas store)))
+                              :op op :ns ns-sym :form-id (:id elem) :prompt prompt
+                              :at (now-ms)
+                              :sources {(:id elem) (n/string node)}}
+                       group (assoc :group group)
+                       agent (assoc :agent agent))]
+        [(-> store
+             (assoc-in [:namespaces ns-sym :elements] (assoc elems idx new-elem))
+             (update :deltas conj delta))
+         delta]))))
+
+(defn ingest
+  "Parse `source` into `ns-sym`'s ordered elements, assigning a fresh id to each
+  form, and append an `:ingest` delta. Returns the new store."
+  [store ns-sym source & {:keys [agent]}]
+  (let [nodes (n/children (p/parse-string-all source))]
+    (loop [store store, nodes nodes, elements []]
+      (if-let [node (first nodes)]
+        (if (n/sexpr-able? node)
+          (let [[id store] (gen-id store "f")]
+            (recur store (rest nodes)
+                   (conj elements {:id id :kind :form
+                                   :name (form-symbol node)
+                         :names (form-symbols node) :node node})))
+          (recur store (rest nodes)
+                 (conj elements {:kind :sep :node node})))
+        (let [[did store] (gen-id store "d")]
+          (-> store
+              (assoc-in [:namespaces ns-sym :elements] elements)
+              (update :deltas conj
+                      (cond-> {:id did :parent nil :op :ingest :ns ns-sym
+                               :at (now-ms)
+                               :form-ids (into [] (keep :id) elements)
+                               ;; per-version content (C3/C4): history must be
+                               ;; reconstructible from the log alone
+                               :sources  (into {}
+                                               (keep (fn [e]
+                                                       (when (:id e)
+                                                         [(:id e) (n/string (:node e))])))
+                                               elements)}
+                        agent (assoc :agent agent)))))))))
+
+;; --- Phase 4 m2: the CRDT merge -------------------------------------------
+

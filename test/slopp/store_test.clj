@@ -62,3 +62,62 @@
         (is (= n (count (filter #(= :move (:op %))
                                 (drop (count (:deltas base)) (:deltas st)))))
             "each move is one :move delta")))))
+(deftest form-symbols-reports-what-a-form-actually-defines
+  ;; The store's premise was "one form ↔ one name", via form-symbol's (second s).
+  ;; Probed against kondo 2026-07-17, it is wrong in BOTH directions:
+  ;;
+  ;;   (defmethod area :square ..)  defines NOTHING — `area` is its TARGET, and
+  ;;                                forcing it into that name put three forms
+  ;;                                named `area` in one ns. form-named returns
+  ;;                                the FIRST, so the methods were unreachable by
+  ;;                                every name-keyed tool, and
+  ;;                                refs/cold-load-order silently DROPPED them.
+  ;;   (defrecord R [x] ..)         defines R, ->R AND map->R — so ->R/map->R
+  ;;                                were real public vars with no form: invisible
+  ;;                                to form-named, :covered and the unused gate.
+  ;;
+  ;; No compound name can fix the first half: `:` is legal in a symbol, so
+  ;; (defn area:square ..) is a real fn a user can write — and every ASCII
+  ;; punctuation separator is likewise legal. The name space is flat and
+  ;; user-owned; you cannot reserve a corner of it. The fix is to stop inventing
+  ;; names for forms that define none.
+  (let [syms #(store/form-symbols (p/parse-string %))]
+    (testing "definitions — one name each"
+      (is (= '#{f}    (syms "(defn f \"F.\" [x] x)")))
+      (is (= '#{area} (syms "(defmulti area :shape)"))))
+    (testing "REGISTRATIONS define nothing — the collision was invented, not inherent"
+      (is (= #{} (syms "(defmethod area :square [s] (:side s))")))
+      (is (= #{} (syms "(extend-type String P (m [_] 1))"))))
+    (testing "and some definitions define SEVERAL — these vars had no form at all"
+      (is (= '#{R ->R map->R} (syms "(defrecord R [x])")))
+      (is (= '#{T ->T}        (syms "(deftype T [x])")))
+      (is (= '#{P m n}        (syms "(defprotocol P \"P.\" (m [_] \"M.\") (n [_] \"N.\"))"))))
+    (testing "metadata is seen through, as form-symbol already does"
+      (is (= '#{f} (syms "^:unsafe (defn f \"F.\" [x] x)"))))))
+(deftest names-address-a-form-and-registrations-collide-with-nothing
+  ;; The payoff of form-symbols. Two bugs, both live before #128:
+  ;;  1. ingest of a defmulti + 2 defmethods produced THREE forms named `area`.
+  ;;     form-named returns the first, so the methods were unreachable — and the
+  ;;     EDIT layer refuses duplicate names outright, so ingest was admitting a
+  ;;     state the rest of slopp considered illegal.
+  ;;  2. `dm.core/f4` printed in output (qform's (or (:name e) (:id e))) and
+  ;;     query_source {name "f4"} could not fetch it back, because form-named
+  ;;     filtered on :name. The id-fallback labelled forms it could not address.
+  (let [dm (store/ingest (store/empty-store) 'dm.core
+                         (str "(ns dm.core)\n\n(defmulti area :shape)\n\n"
+                              "(defmethod area :square [s] 1)\n\n"
+                              "(defmethod area :circle [c] 2)\n"))
+        rc (store/ingest (store/empty-store) 'r.core
+                         "(ns r.core)\n\n(defrecord R [x])\n")]
+    (testing "the defmulti keeps `area` — it IS area, and callers reference it"
+      (is (= '#{area} (:names (store/form-named dm 'dm.core 'area)))))
+    (testing "the methods define nothing, so there is nothing to collide"
+      (is (= ['#{dm.core} '#{area} #{} #{}]
+             (mapv :names (store/forms dm 'dm.core)))))
+    (testing "a registration is addressable by its form id — its only handle"
+      (let [m (nth (store/forms dm 'dm.core) 2)]
+        (is (= (:id m) (:id (store/form-named dm 'dm.core (symbol (:id m))))))))
+    (testing "->R and map->R reach R's form — they are real public vars"
+      (let [r (store/form-named rc 'r.core 'R)]
+        (is (= (:id r) (:id (store/form-named rc 'r.core '->R))))
+        (is (= (:id r) (:id (store/form-named rc 'r.core 'map->R))))))))
