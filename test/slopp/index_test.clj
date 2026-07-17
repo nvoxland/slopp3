@@ -91,3 +91,26 @@
         (index/lint s)
         (is (identical? before (get @@#'index/kondo-cache s))
             "same cached kondo result object — no recompute")))))
+^:unsafe (deftest lint-findings-refresh-when-a-dependency-moves
+  ;; The memo key must cover what the findings actually depend on. kondo reads
+  ;; CROSS-NS facts (arities, var existence) from .clj-kondo/.cache, which other
+  ;; lints rewrite — so findings are NOT a function of this source alone.
+  ;; Measured 2026-07-16: :analysis IS cache-independent, only :findings aren't.
+  ;;
+  ;; This is the false-GREEN half and the reason it matters: a stale caller's
+  ;; source is BY DEFINITION unchanged, so it is exactly the case the memo
+  ;; blinds — and lint-refusals' :carried gate exists to catch stale callers.
+  (.mkdirs (java.io.File. ".clj-kondo"))   ; kondo caches cross-ns facts only if it has somewhere to put them
+  (let [dep1 "(ns memo.dep)\n(defn f [x] x)\n"
+        dep2 "(ns memo.dep)\n(defn f ([x] x) ([x y] x))\n"
+        use  "(ns memo.use (:require [memo.dep :as d]))\n(defn g [] (d/f 1 2))\n"]
+    (index/lint dep1)
+    (testing "a real cross-ns arity error is found (this is the gate working)"
+      (is (= [:invalid-arity] (mapv :type (index/lint use)))))
+    (index/lint dep2)
+    (testing "the dependency grew the arity — the SAME caller source is now fine"
+      (is (= [] (mapv :type (index/lint use)))
+          "stale replay: the memo answered from before the callee moved"))
+    (testing "and it flips back — this is not a one-way latch"
+      (index/lint dep1)
+      (is (= [:invalid-arity] (mapv :type (index/lint use)))))))
