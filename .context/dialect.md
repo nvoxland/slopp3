@@ -1,4 +1,32 @@
-# Dialect & effects
+# Dialect
+
+## The lint gate's cross-ns facts live in a cache slopp OWNS (#134)
+
+kondo resolves its cache from the **process cwd** unless told otherwise, so
+every cross-namespace finding (arity, var existence) used to exist only where a
+`.clj-kondo/` happened to sit beside the process. slopp's own repo has one; a
+user's project does not. Probed 2026-07-17 from such a cwd: the same source
+yields `[:invalid-arity]` against a cache and **`[]`** without one — so a call
+into another namespace with the wrong arity was **accepted, silently**.
+
+`index/kondo-cache-dir` (an atom `api/open!` points at `<dir>/.slopp/kondo-cache`,
+or an owned temp dir for a dirless session) fixes it. Notes that matter:
+
+- **Which gate.** `rebased-write!` passes `lint-refusals` `ns-syms` `[ns-sym]` —
+  the WRITTEN ns alone. So `:carried` = new errors in unwritten forms **of that
+  ns**, and same-ns arity needs no cache. The cache is what makes calls OUT of
+  the linted ns checkable, landing in `:refuse`. A stale caller in an untouched
+  dependent ns is linted by neither gate (`done!` lints only CHANGED nses) —
+  that class is caught by the tests at runtime.
+- **A slopp-owned dir is self-sufficient**: linting a namespace teaches it,
+  which is how any kondo cache fills. `.slopp/` is gitignored, so it never
+  ships.
+- **`lint`'s reuse condition includes `:cache-dir`** — a different cache is a
+  different world; replaying findings across one is the same
+  key-omits-an-input bug as the memo (`.ideas/kondo-memo-key-omits-the-project-cache.md`).
+- The atom is process-global: two sessions on different stores in one process
+  share the last opener's dir. `lint` re-passes on a dir change, so it stays
+  correct, just unmemoized across them. & effects
 
 ## The gate (`slopp.edit`)
 
