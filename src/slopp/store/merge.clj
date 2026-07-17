@@ -137,6 +137,13 @@
                         idmap (inc merged) conflicts notes changed new-nses
                         (conj applied (:id d)))
 
+                  :module-tier
+                  ;; per-module purity tier: theirs applies (register, last-writer-
+                  ;; wins), mirroring :deps-pure — no divergence conflict surfaced (D9)
+                  (done (assoc-in st [:module-tiers (:module d)] (:tier d))
+                        idmap (inc merged) conflicts notes changed new-nses
+                        (conj applied (:id d)))
+
                   :ingest
                   (let [ns-sym (:ns d)]
                     (if (get-in st [:namespaces ns-sym])

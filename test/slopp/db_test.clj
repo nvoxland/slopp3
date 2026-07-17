@@ -61,3 +61,16 @@
             (is (nil? (:error r)))
             (is (= [6] (api/query-eval sess2 "(demo/add 2 3)")))))
         (finally (api/close! sess2))))))
+
+(deftest ^:isolated module-tiers-survive-persist-and-reload
+  (testing "declared purity tiers reconstruct through persist! -> load-store"
+    (let [dir     (temp-dir)
+          conn    (db/open! dir)
+          [s1 d1] (store/record-module-tier (store/empty-store) "app.core" :pure
+                                             :prompt "core is pure")]
+      (db/persist! conn s1 d1)
+      (.close conn)
+      (let [conn2  (db/open! dir)
+            loaded (db/load-store conn2)]
+        (is (= {"app.core" :pure} (:module-tiers loaded)))
+        (.close conn2)))))

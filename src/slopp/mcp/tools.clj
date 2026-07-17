@@ -334,6 +334,13 @@
                                :remove {:type "boolean"}
                                :prompt {:type "string"}}
                   :required ["from" "to"]}}
+   {:name "module_purity"
+    :description "Declare a module's purity TIER for the functional-core gate (D9): :pure (may reach NO effect, incl. an opaque-dep read), :reads (reads ok, no mutation), :effects (unrestricted — the periphery). modules are the first two ns segments; :effects or undeclared = ungated. Say WHY in prompt. Read tiers: query_depends {modules true}."
+    :inputSchema {:type "object"
+                  :properties {:module {:type "string"}
+                               :tier {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["module" "tier"]}}
    {:name "deps_add"
     :description "Add an external dependency (hot to the live classpath, no restart). lib like \"org.clojure/data.json\"; version string or full coord map."
     :inputSchema {:type "object"
