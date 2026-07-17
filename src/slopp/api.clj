@@ -3373,7 +3373,7 @@
   everything (no aliases in eval context). Returns {:result v :ms n} or
   {:error msg}."
   [session code & {:keys [timeout-ms] :or {timeout-ms 10000}}]
-  (let [parsed (edit/parse-form (str code))]
+  (let [parsed (edit/parse-one (str code))]
     (if (:error parsed)
       {:error (str "query_store takes ONE (fn [store] ...) form — "
                    (:error parsed))}

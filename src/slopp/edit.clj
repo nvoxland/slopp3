@@ -70,36 +70,6 @@
                       " form ^:unsafe only if you truly own the obligation"))))
         :else nil))))
 
-(defn parse-form
-  "Parse `source` as exactly ONE dialect-legal top-level form (the D3/D4 gate
-  every write shares). Returns {:node node} or {:error msg} — including for
-  unparseable/unbalanced source (F3: never throws). Hand-written `(declare …)`
-  is refused here (the EDIT path only): the pipeline OWNS ordering — it reorders
-  definitions above their callers, or inserts a marked declare itself for a
-  genuine cycle, so the agent never writes one. Imports (`dialect-scan`) keep
-  their declares."
-  [source]
-  (try
-    (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
-      (if (not= 1 (count forms))
-        {:error (str "expected exactly one top-level form, got " (count forms))}
-        (let [node (first forms)
-              s    (n/sexpr node)]
-          (cond
-            (and (seq? s) (= 'declare (first s)))
-            {:error (str "(declare …) is managed for you — slopp orders forms"
-                         " itself: write your forms in any order (definitions are"
-                         " reordered above their callers), and a genuine"
-                         " mutual-recursion cycle gets a marked declare inserted"
-                         " automatically. Drop the declare and write the real forms.")}
-
-            (dialect-check node)
-            {:error (dialect-check node)}
-
-            :else {:node node}))))
-    (catch Exception e
-      {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
-
 ^:unsafe (def ^:private observe-banned
   "query-eval may observe anything (including calling effectful fns) but never
   (re)define code — that would bypass the delta/provenance pipeline (T5)."
@@ -114,16 +84,30 @@
   `!`-enders (the effect convention), def-family and redefinition forms,
   java interop (method calls, constructors — arbitrary IO hides there),
   and an explicit denylist of IO/eval/binding entry points. Pure analysis
-  needs none of those."
+  needs none of those.
+
+  This list is SELF-SUFFICIENT on purpose. The RESOLVERS
+  (requiring-resolve/resolve/ns-resolve/find-var) are the subtle ones: they
+  are an arbitrary-code escape — `((requiring-resolve 'clojure.java.shell/sh)
+  \"rm\" \"-rf\" \"/\")` is not an effect name, and the dangerous target is a
+  QUOTED symbol, which `walk-pruned` prunes, so nothing else here would ever
+  see it. They were historically blocked only as a side effect of query_store
+  parsing through `parse-form` (the D3 DIALECT gate), whose list exists for a
+  different reason entirely — keeping STORED code statically analyzable. A
+  security property must not rest on a coincidence in someone else's list, so
+  the sandbox now names them itself; see orientation-test/
+  sandbox-refuses-resolver-escapes, which fails if that stops being true."
   [x]
   (let [deny (set (str/split (str "spit slurp eval read-string load-string"
                                   " load-file load require use import intern"
+                                  ;; resolvers = arbitrary-code escape (above)
+                                  " requiring-resolve resolve ns-resolve find-var"
                                   " in-ns remove-ns ns-unmap alter-var-root"
                                   " set! with-redefs with-redefs-fn"
                                   " push-thread-bindings future future-call"
                                   " agent send send-off pmap pcalls promise"
                                   " proxy reify deftype defrecord definterface"
-                                  " gen-class new def defn defn- defmacro"
+                                  " gen-class definline new def defn defn- defmacro"
                                   " defmethod defmulti defonce defprotocol"
                                   " extend extend-type extend-protocol binding"
                                   " shutdown-agents add-watch remove-watch")
@@ -325,30 +309,6 @@
                  (if near
                    (str " — nearest: " (str/join ", " near))
                    (str " — query_source {ns " ns-sym "} lists what exists")))}))
-(defn replace-form
-  "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
-  named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
-  Returns {:store :delta :warnings} (warnings = D6 `!`-effect violations of the
-  resulting namespace) or {:error msg}."
-  [store ns-sym form-name new-source & {:keys [prompt agent]}]
-  (let [{:keys [node error]} (parse-form new-source)]
-    (cond
-      error {:error error}
-
-      (isolation-refusal (require-aliases store ns-sym) node)
-      {:error (isolation-refusal (require-aliases store ns-sym) node)}
-
-      :else
-      (if-let [[store' delta] (store/replace-node store ns-sym form-name node
-                                                  :prompt prompt :agent agent)]
-        (if-let [merr (modules/module-refusal store' ns-sym
-                                      (or (store/form-symbol node) form-name))]
-          {:error merr}
-          {:store    store'
-           :delta    delta
-           :warnings (ns-warnings store' ns-sym)})
-        (missing-form-error store ns-sym form-name)))))
-
 (defn hot-load-form!
   "Hot-reload one form (from a store VALUE — commit only on success, S1) into
   the image, padded with newlines to its VFS row and attributed to its VFS
@@ -438,24 +398,6 @@
     (if-let [a (anchor-error store err)]
       (assoc a :error clean)
       {:error clean})))
-(defn apply-replace!
-  "Pipeline through hot-reload over `system` {:store store :image handle}:
-  `replace-form`, then redefine the form in the live image (D5) — a form that
-  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
-  {:system {:store ...} :delta :warnings} or {:error msg}."
-  [system ns-sym form-name new-source & {:keys [prompt]}]
-  (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
-    (cond
-      (:error r) r
-
-      :else
-      (if-let [err (hot-load-form! (:image system) (:store r)
-                                   (:form-id (:delta r)))]
-        (compile-error (:store r) err "form failed to compile: ")
-        {:system   (assoc system :store (:store r))
-         :delta    (:delta r)
-         :warnings (:warnings r)}))))
-
 (defn cold-load-errors
   "The cold-load half of the compile gate: nil when every ns in `ns-syms`
   renders to a namespace a FRESH load can resolve top-to-bottom; else one
@@ -571,3 +513,92 @@
                                         :agent agent)]
           (when (and (pos? n) (nil? (cold-load-errors st' [ns-sym])))
             {:store st' :moved n}))))))
+(defn parse-one
+  "Parse `source` as exactly ONE top-level form — the RAW parse, NO gate.
+  Returns {:node node} or {:error msg}; never throws (F3).
+
+  `parse-form` layers the dialect gate (D3/D4 + D7's declare ban) on top of
+  this, for the WRITE paths. Read-only callers that carry their OWN gate use
+  this directly — notably `query_store`, whose sandbox is
+  `pure-eval-refusal`. The dialect denylist exists to keep STORED code
+  statically analyzable; a throwaway analysis query is not stored and nothing
+  analyzes it, so borrowing that list there refused the right things for the
+  wrong reason (and with nonsense teaching about carriers), and would refuse
+  MORE for no reason as D3 grows."
+  [source]
+  (try
+    (let [forms (filter n/sexpr-able? (n/children (p/parse-string-all source)))]
+      (if (not= 1 (count forms))
+        {:error (str "expected exactly one top-level form, got " (count forms))}
+        {:node (first forms)}))
+    (catch Exception e
+      {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
+(defn parse-form
+  "Parse `source` as exactly ONE dialect-legal top-level form (the gate every
+  WRITE shares): `parse-one` for the raw parse, then D3/D4 via `dialect-check`,
+  plus D7 — hand-written `(declare …)` is refused here (the EDIT path only):
+  the pipeline OWNS ordering — it reorders definitions above their callers, or
+  inserts a marked declare itself for a genuine cycle, so the agent never
+  writes one. Imports (`dialect-scan`) keep their declares.
+  Returns {:node node} or {:error msg} — never throws (F3)."
+  [source]
+  (let [r (parse-one source)]
+    (if (:error r)
+      r
+      (try
+        (let [node (:node r)
+              s    (n/sexpr node)]
+          (if (and (seq? s) (= 'declare (first s)))
+            {:error (str "(declare …) is managed for you — slopp orders forms"
+                         " itself: write your forms in any order (definitions are"
+                         " reordered above their callers), and a genuine"
+                         " mutual-recursion cycle gets a marked declare inserted"
+                         " automatically. Drop the declare and write the real forms.")}
+            (if-let [err (dialect-check node)]
+              {:error err}
+              {:node node})))
+        (catch Exception e
+          {:error (str "unparseable source (unbalanced?): " (ex-message e))})))))
+
+(defn replace-form
+  "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
+  named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
+  Returns {:store :delta :warnings} (warnings = D6 `!`-effect violations of the
+  resulting namespace) or {:error msg}."
+  [store ns-sym form-name new-source & {:keys [prompt agent]}]
+  (let [{:keys [node error]} (parse-form new-source)]
+    (cond
+      error {:error error}
+
+      (isolation-refusal (require-aliases store ns-sym) node)
+      {:error (isolation-refusal (require-aliases store ns-sym) node)}
+
+      :else
+      (if-let [[store' delta] (store/replace-node store ns-sym form-name node
+                                                  :prompt prompt :agent agent)]
+        (if-let [merr (modules/module-refusal store' ns-sym
+                                      (or (store/form-symbol node) form-name))]
+          {:error merr}
+          {:store    store'
+           :delta    delta
+           :warnings (ns-warnings store' ns-sym)})
+        (missing-form-error store ns-sym form-name)))))
+
+(defn apply-replace!
+  "Pipeline through hot-reload over `system` {:store store :image handle}:
+  `replace-form`, then redefine the form in the live image (D5) — a form that
+  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
+  {:system {:store ...} :delta :warnings} or {:error msg}."
+  [system ns-sym form-name new-source & {:keys [prompt]}]
+  (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
+    (cond
+      (:error r) r
+
+      :else
+      (if-let [err (hot-load-form! (:image system) (:store r)
+                                   (:form-id (:delta r)))]
+        (compile-error (:store r) err "form failed to compile: ")
+        {:system   (assoc system :store (:store r))
+         :delta    (:delta r)
+         :warnings (:warnings r)}))))
+

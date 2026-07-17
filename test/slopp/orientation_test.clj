@@ -1,6 +1,6 @@
 (ns slopp.orientation-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.edit :as edit]))
 
 (deftest ^:isolated outline-and-namespaces                        ; T2
   (let [sess (api/open!)]
@@ -348,6 +348,18 @@
         (is (:error (api/query-store
                      sess "(fn [store] (slopp.db/append! nil store nil))")))
         (is (:error (api/query-store sess "(fn [store] (eval '(+ 1 2)))"))))
+
+      (testing "the SANDBOX is the sole gate — refusals teach it, not the dialect"
+        ;; query_store parses RAW (edit/parse-one). The D3 dialect denylist
+        ;; exists to keep STORED code analyzable; borrowing it here refused the
+        ;; right things for the WRONG reason — it answered a throwaway analysis
+        ;; query with advice about reference carriers and ^:unsafe.
+        (doseq [code ["(fn [store] (read-string \"#=(println :x)\"))"
+                      "(fn [store] ((requiring-resolve 'clojure.core/inc) 1))"]]
+          (let [msg (str (:error (api/query-store sess code)))]
+            (is (re-find #"(?i)read-only" msg) (str code " => " msg))
+            (is (not (re-find #"(?i)dialect|carrier|late-ref" msg))
+                (str "store-code advice leaked into an analysis query: " msg)))))
       (testing "runaway code times out instead of wedging the server"
         (is (re-find #"timed out"
                      (str (:error (api/query-store
@@ -391,3 +403,38 @@
       (is (= [[[:a 1] "s"]] (api/query-call sess 'qc.core/pair [:a 1] "s"))
           "data args ride pr-str")
       (finally (api/close! sess)))))
+^:unsafe
+(deftest sandbox-refuses-resolver-escapes
+  ;; query_store's sandbox is `edit/pure-eval-refusal`. It must stand ALONE.
+  ;; Until now the ONLY thing blocking ((requiring-resolve 'clojure.java.shell/sh)
+  ;; "rm" "-rf" "/") was the D3 DIALECT gate — a denylist maintained for a
+  ;; DIFFERENT purpose (keeping STORED code statically analyzable), which
+  ;; query_store inherited by parsing through `parse-form`. The sandbox never
+  ;; saw the escape: a resolver is not an effect name, and `walk-pruned` PRUNES
+  ;; the QUOTED target symbol, so the deny-ns check never reaches it.
+  ;; A security property must not rest on a coincidence in another list: if the
+  ;; resolvers ever move out of D3 (they live there per the reference-CARRIER
+  ;; decision, so they easily could), the sandbox would open silently. This
+  ;; test is what fails if that happens.
+  ;; (^:unsafe because the test MENTIONS the resolvers — same standing as
+  ;;  `edit/banned-syms`, which is ^:unsafe for exactly that reason.)
+  (testing "every resolver is refused by the sandbox itself"
+    (doseq [code ['(fn [store] ((requiring-resolve 'clojure.java.shell/sh) "ls"))
+                  '(fn [store] ((resolve 'clojure.core/spit) "/tmp/x" "y"))
+                  '(fn [store] ((ns-resolve 'clojure.core 'spit) "/tmp/x" "y"))
+                  '(fn [store] ((find-var 'clojure.core/spit) "/tmp/x" "y"))
+                  '(fn [store] (definline sneaky [x] x))]]
+      (is (edit/pure-eval-refusal code)
+          (str "the sandbox must refuse on its own: " (pr-str code)))))
+
+  (testing "the refusal teaches the SANDBOX reason, not the dialect's carrier advice"
+    (let [msg (str (edit/pure-eval-refusal '(fn [store] ((requiring-resolve 'x/y)))))]
+      (is (re-find #"(?i)read-only" msg) msg)
+      (is (not (re-find #"(?i)carrier|late-ref" msg))
+          (str "store-code advice is nonsense for a throwaway query: " msg))))
+
+  (testing "ordinary analysis still passes"
+    (is (nil? (edit/pure-eval-refusal
+               '(fn [store] (map :name (slopp.store/forms store 'x))))))
+    (is (nil? (edit/pure-eval-refusal
+               '(fn [store] (rewrite-clj.node/sexpr (:node (first store)))))))))
