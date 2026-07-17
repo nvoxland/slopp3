@@ -175,21 +175,45 @@
   [requires]
   (let [known @ns-source-hash]
     (mapv known (sort requires))))
+(def kondo-cache-dir
+  "Where kondo keeps its CROSS-NS facts (arities, var existence), or nil for
+  kondo's own default.
+
+  The default is the killer, which is why this exists: kondo resolves its cache
+  from the PROCESS CWD. Probed 2026-07-17 from a cwd with no `.clj-kondo/` —
+  exactly a user project's situation — the same source that yields
+  `[:invalid-arity]` against this repo's cache yields `[]`. So every cross-ns
+  finding worked only because slopp's own repo happens to have a `.clj-kondo/`
+  beside it, and a user's `:carried` stale-caller gate silently did nothing,
+  failing toward 'no findings'.
+
+  `api/open!` points this at the store's own `.slopp/` so the facts live with
+  the code they describe. A slopp-owned dir is self-sufficient — linting a
+  namespace teaches it, which is how any kondo cache fills."
+  (atom nil))
 ^:reads (defn- kondo-pass
   "ONE real kondo run over `source`, stored. Also records what this pass just
-  taught kondo's `.clj-kondo/.cache` about `source`'s OWN namespace — that
-  side effect is what dependents' fingerprints read, so it must be tracked
-  wherever a pass actually happens."
+  taught kondo's cache about `source`'s OWN namespace — that side effect is
+  what dependents' fingerprints read, so it must be tracked wherever a pass
+  actually happens.
+
+  Runs against `kondo-cache-dir` when set (#134). Unset means kondo resolves
+  the cache from the process CWD, which is how cross-ns findings came to
+  depend on a `.clj-kondo/` happening to sit next to the process."
   [source]
-  (let [r (with-in-str source
-            (kondo/run! {:lint ["-"] :config {:output {:analysis true}}}))
+  (let [dir (some-> @kondo-cache-dir str)
+        r (with-in-str source
+            (kondo/run! (cond-> {:lint ["-"] :config {:output {:analysis true}}}
+                          dir (assoc :cache-dir dir))))
         a (:analysis r)
         requires (into #{} (map :to) (:namespace-usages a))
         own      (-> a :namespace-definitions first :name)
         v {:analysis a
            :ns       own
            :requires requires
-           ;; the cross-ns state these FINDINGS are true under
+           ;; the cross-ns state these FINDINGS are true under: WHICH cache,
+           ;; and what it knew about this source's requires
+           :cache-dir dir
            :fp       (deps-fp requires)
            :findings (->> (:findings r)
                           (filter #(#{:warning :error} (:level %)))
@@ -220,34 +244,27 @@
   (:analysis (run-kondo source)))
 
 ^:reads (defn lint
-  "clj-kondo FINDINGS for `source` (warnings + errors: [{:level :type
-  :message :row :col} ...]).
+  "clj-kondo FINDINGS for `source` (warnings + errors: [{:level :type :message
+  :row :col}]).
 
-  Memoized, but on MORE than the source — findings are not a function of the
-  source alone. kondo reads cross-ns facts (arities, var existence) from
-  `.clj-kondo/.cache` and every pass rewrites it, so a cached entry is reusable
-  only while both still hold:
+  Findings are NOT a function of `source` alone — kondo reads cross-ns facts
+  (arities, var existence) from its cache, which other lints rewrite. So the
+  memoized entry is only reusable while the world it was computed under still
+  holds, which is three things:
+  - the same CACHE (`:cache-dir`) — a different cache is a different world
+    (#134);
+  - the same knowledge of this source's requires (`:fp` vs `deps-fp`);
+  - a disk cache still reflecting this source's own namespace — a memo HIT
+    skips the pass, and the pass is the side effect that teaches the cache.
 
-  1. **`:fp`** — what kondo knows about the namespaces this source REQUIRES is
-     unchanged. Otherwise we replay a finding from before a callee moved, or
-     miss one that just became true. That is precisely the stale-caller case
-     `edit/lint-refusals` exists to catch, and a stale caller's source is BY
-     DEFINITION unchanged — so a source-only key blinds exactly the case the
-     gate is for. (Its own docstring is the argument: two `invalid-arity`
-     findings once dismissed as noise were real ArityExceptions in shipped
-     handlers.)
-  2. **the disk cache still reflects this source's own namespace** — a memo hit
-     skips the pass, and the pass is what teaches the cache. Without this,
-     reverting a namespace to a previously-linted source leaves every dependent
-     linted against the newer, wrong view forever.
-
-  Re-linting an unchanged base is still free in the common path: a write's base
-  IS the previous write's cand, which is exactly what the disk cache holds, and
-  `lint-refusals` lints base before cand."
+  Any mismatch re-passes. `analyze` deliberately keeps the source-only key:
+  `:analysis` is cache-INDEPENDENT (measured 2026-07-16) and `edit.refs`
+  maps it over EVERY namespace."
   [source]
   (let [ent (run-kondo source)]
     (:findings
-     (if (and (= (:fp ent) (deps-fp (:requires ent)))
+     (if (and (= (:cache-dir ent) (some-> @kondo-cache-dir str))
+              (= (:fp ent) (deps-fp (:requires ent)))
               (= (get @ns-source-hash (:ns ent)) (hash source)))
        ent
        (kondo-pass source)))))

@@ -90,6 +90,20 @@
                         :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                         :branch-image-ttl-ms ttl
                         :warm-spare? (boolean warm-spare?)})]
+     ;; #134: kondo's cross-ns cache follows the STORE, not the process cwd.
+     ;; Unset, kondo resolves it from cwd — so cross-ns findings existed only
+     ;; where a .clj-kondo/ happened to sit beside the process, and a user
+     ;; project's :carried stale-caller gate silently found nothing. A dirless
+     ;; session gets an owned temp dir rather than inheriting whatever is there.
+     ;; The atom is process-global: two sessions on different stores in ONE
+     ;; process share the last opener's dir, which `index/lint` handles by
+     ;; re-passing on a dir change — correct, just not memoized across them.
+     (reset! index/kondo-cache-dir
+             (if dir
+               (str (io/file dir ".slopp" "kondo-cache"))
+               (str (java.nio.file.Files/createTempDirectory
+                     "slopp-kondo"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))))
      (session/start-spare! session)
      ;; m4: parked branch images retire after sitting idle for the TTL
      (let [t      (java.util.Timer. "slopp-branch-reaper" true)

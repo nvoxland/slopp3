@@ -100,7 +100,14 @@
   ;; This is the false-GREEN half and the reason it matters: a stale caller's
   ;; source is BY DEFINITION unchanged, so it is exactly the case the memo
   ;; blinds — and lint-refusals' :carried gate exists to catch stale callers.
-  (.mkdirs (java.io.File. ".clj-kondo"))   ; kondo caches cross-ns facts only if it has somewhere to put them
+  ;; NOTE (#134): this line used to read (.mkdirs (java.io.File. ".clj-kondo"))
+  ;; — "kondo caches cross-ns facts only if it has somewhere to put them". That
+  ;; workaround WAS the bug's fingerprint: kondo resolved its cache from the
+  ;; process cwd, so this test had to manufacture one. slopp now names its own
+  ;; cache dir and the crutch is gone.
+  (reset! index/kondo-cache-dir
+          (str (java.nio.file.Files/createTempDirectory
+                "kondo-memo" (make-array java.nio.file.attribute.FileAttribute 0))))   ; kondo caches cross-ns facts only if it has somewhere to put them
   (let [dep1 "(ns memo.dep)\n(defn f [x] x)\n"
         dep2 "(ns memo.dep)\n(defn f ([x] x) ([x y] x))\n"
         use  "(ns memo.use (:require [memo.dep :as d]))\n(defn g [] (d/f 1 2))\n"]
@@ -114,3 +121,36 @@
     (testing "and it flips back — this is not a one-way latch"
       (index/lint dep1)
       (is (= [:invalid-arity] (mapv :type (index/lint use)))))))
+^:unsafe (deftest cross-ns-lint-uses-the-cache-dir-slopp-owns
+  ;; kondo resolves its cache from the PROCESS CWD unless told otherwise, so
+  ;; every cross-ns finding (arity, var existence) worked only where a
+  ;; .clj-kondo/ happened to sit next to the process. Probed 2026-07-17 from an
+  ;; image whose cwd is a temp dir — exactly a user project's situation:
+  ;;   default cwd cache  -> []                 (no finding at all)
+  ;;   explicit cache-dir -> [:invalid-arity]
+  ;; So a user project's :carried stale-caller gate silently did NOTHING, and
+  ;; it failed toward "no findings" — the direction that never announces itself.
+  ;; The fingerprint was already in this file: the test below had to
+  ;; (.mkdirs ".clj-kondo") to work at all.
+  (let [fresh (fn [] (str (java.nio.file.Files/createTempDirectory
+                           "kondo-owned"
+                           (make-array java.nio.file.attribute.FileAttribute 0))))
+        a     (fresh)
+        b     (fresh)
+        prev  @index/kondo-cache-dir
+        use   "(ns owned.use (:require [owned.dep :as d]))\n(defn g \"G.\" [] (d/f 1 2 3))\n"]
+    (try
+      (reset! index/kondo-cache-dir a)
+      (index/lint "(ns owned.dep)\n(defn f \"F.\" [x] x)\n")
+      (testing "kondo wrote its cross-ns facts into the dir WE named"
+        (is (seq (.list (java.io.File. a)))
+            "empty — the cache-dir was ignored and the facts went to the cwd"))
+      (testing "…and the caller's lint reads them back, with no .clj-kondo anywhere"
+        (is (= [:invalid-arity] (mapv :type (index/lint use)))))
+      (testing "pointing at a DIFFERENT cache re-passes — the memo must not
+                answer with findings computed against another world, which is
+                the same key-omits-an-input bug the fingerprint fixed"
+        (reset! index/kondo-cache-dir b)
+        (is (= [] (mapv :type (index/lint use)))
+            "stale replay: answered from the cache dir we just left"))
+      (finally (reset! index/kondo-cache-dir prev)))))
