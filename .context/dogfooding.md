@@ -408,18 +408,37 @@ isolated-test-run!, review-scan, commit-point!, build!) — each its own cluster
    behind a declare that stays behind — declares are anonymous, never moved),
    which is what the planner was compensating for; the right answer is to
    REORDER, not to mint.
-6. **`query_store` refuses `read-string` citing D3** — my first read ("the
-   dialect gate is over-applied to read-only analysis") was WRONG and is
-   corrected here: `read-string` really can execute code via `#=()`, so
-   refusing it in a read-only sandbox is CORRECT. The actual problems are
-   (a) the REASON is misreported — blamed on the dialect (whose rationale is
-   analyzability of STORED code) rather than sandbox safety, and it names no
-   alternative (`rewrite-clj.node/sexpr`), unlike slopp's other refusals; and
-   (b) the coupling is a LATENT bug — it only lands correctly because D3's
-   bans happen to equal the sandbox's needs, and we are actively planning to
-   GROW D3 with analyzability-motivated bans (`^:dynamic` defs, computed
-   dispatch) that would then silently weaken read-only analysis for no reason.
-   query_store needs its OWN sandbox-safety list.
+6. **`query_store` refuses `read-string` citing D3** — FIXED 2026-07-16, after
+   I got it wrong TWICE. Worth keeping as a worked example of how a friction
+   note should be interrogated rather than believed.
+   - **First read (wrong):** "the dialect gate is over-applied to read-only
+     analysis." No — `read-string` really executes via `#=()`, so refusing it
+     in a sandbox is CORRECT.
+   - **Second read (also wrong):** "query_store reuses D3's list; give it its
+     own." It ALREADY had its own (`edit/pure-eval-refusal`, which already
+     banned `read-string`). D3 just fired FIRST, because `query-store` parsed
+     through `parse-form`.
+   - **The actual finding, proven with a probe:** the coupling was
+     LOAD-BEARING. D3's resolver ban was the ONLY thing blocking
+     `((requiring-resolve 'clojure.java.shell/sh) …)` — the sandbox never saw
+     it, because a resolver is not an effect name and `walk-pruned` PRUNES the
+     quoted target symbol. So a SECURITY property rested on a coincidence in a
+     list maintained for stored-code ANALYZABILITY, with no test guarding it
+     (`pure-eval-refusal` had `:covered-by []`). If the resolvers ever moved
+     out of D3 — plausible, they live there per the reference-CARRIER decision
+     — the sandbox would have opened SILENTLY.
+   - **Fix (all 3 steps):** `pure-eval-refusal` absorbs the resolvers +
+     `definline` and says why; `orientation-test/sandbox-refuses-resolver-escapes`
+     tests it INDEPENDENT of D3 (that test is what fails if the coupling
+     returns); `edit/parse-one` is the raw parse (`parse-form` = `parse-one` +
+     gate) and `query_store` uses it, so the sandbox is the sole gate and the
+     teaching is right. Bonus irony: the guard test needs `^:unsafe` because it
+     MENTIONS the resolvers — same standing as `edit/banned-syms` itself.
+   - **Lesson:** two wrong diagnoses in a row, both fixed by reading the code
+     instead of trusting the error message. The error message named D3, so I
+     believed the coupling was the whole story; the real question was "what
+     would still be blocked if I removed it?" — and that took a probe, not a
+     theory.
 7. **My own regression, caught by dogfooding:** the new `:isolated-pending`
    dumped ~200 test names into every whole-project `done`. Compressed to
    count+sample and suppressed at the boundary. Mid-episode responses must

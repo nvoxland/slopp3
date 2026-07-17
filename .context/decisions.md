@@ -47,6 +47,17 @@ the change here (same commit).
   mutation + external writes), NOT reads/non-determinism. Open question F7:
   stdout (`println`) is currently unflagged — matches Clojure convention, but
   needs an explicit scope call.
+- **D7 — Hand-written `(declare …)` is banned; the pipeline owns form order**
+  (2026-07-16). A same-ns forward ref is resolved by REORDERING definitions
+  above their callers (Kahn over THE reference graph); a genuine cycle gets a
+  MARKED `^{:auto-declare "<why>"}` declare the pipeline inserts itself. So a
+  hand-written declare is always redundant → refused with teaching. Lives in
+  `parse-form`, NOT `dialect-check`, so it binds the EDIT path only: imports
+  (`dialect-scan`) keep their declares, and the pipeline's own inserts (raw
+  parser, via `edit/declare-node`) don't trip the gate they enforce. Unlike
+  D3/D4 this isn't an analysis defeater — it's the first prune of a human
+  convenience the pipeline can fully own (`.ideas/dialect-prunes-human-conveniences.md`).
+  Mechanics: `.context/verification.md` S1b + `.context/dialect.md`.
 
 ## C — storage core
 

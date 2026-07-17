@@ -11,7 +11,7 @@ The check —
 - **D3 denylist** (analysis defeaters): `eval`, `alter-var-root`, `binding`,
   `gen-class`, `definline`, `read-string`. Extensible — the list is a sample,
   grow it deliberately (and record here).
-- **D5 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
+- **D7 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
   pipeline OWNS form ordering and declares (auto-avoid-declare). A same-ns
   forward ref is resolved by reordering definitions above their callers, or —
   for a genuine cycle — by inserting a MARKED `^{:auto-declare "<why>"}
@@ -39,6 +39,22 @@ CST (which can represent anything).
 
 Note: the D3 bans apply to *authored* store code. The host and `slopp.rt`
 legitimately use `alter-var-root`/`binding` as instrumentation machinery.
+
+**The dialect gate is for STORED code only — it is not a sandbox** (fixed
+2026-07-16). `query_store` used to parse through `parse-form` and so inherited
+D3/D4, which refused the right things for the WRONG reason: it answered a
+throwaway analysis query with advice about reference carriers and `^:unsafe`.
+Worse, the coupling was load-bearing — D3's resolver ban was the ONLY thing
+blocking `((requiring-resolve 'clojure.java.shell/sh) …)`, because the sandbox
+(`edit/pure-eval-refusal`) never saw it: a resolver isn't an effect name, and
+`refs/walk-pruned` PRUNES the quoted target symbol. A security property must
+not rest on a list maintained for a different purpose — if the resolvers ever
+moved out of D3 (they live there per the reference-carrier decision), the
+sandbox would have opened silently. Now: `edit/parse-one` is the RAW parse and
+`parse-form` = `parse-one` + the gate; `query_store` uses `parse-one` and
+`pure-eval-refusal` names the resolvers itself. Guarded by
+`orientation-test/sandbox-refuses-resolver-escapes`, which tests the sandbox
+INDEPENDENT of D3 — that test is what fails if the coupling comes back.
 
 ## The `^:unsafe` escape hatch (P4-deps M2)
 
