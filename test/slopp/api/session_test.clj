@@ -82,3 +82,47 @@
     (testing "ONE untraced form makes the whole answer nil — the caller falls back"
       (is (nil? (session/impacted-isolated sess st [gid])))
       (is (nil? (session/impacted-isolated sess st [fid gid]))))))
+(deftest affected-tests-consults-every-name-and-refuses-opaque-bodies
+  ;; Two consequences of D8 land here. (1) Evidence arrives keyed by the VAR
+  ;; that ran — a test calling protocol method m records p.core/m — but the
+  ;; form DEFINING m is the defprotocol, primary name P. Looking up only P
+  ;; missed all of it. (2) defrecord/deftype method bodies and defmethod
+  ;; bodies run where the tracer cannot fully see them (inline bodies compile
+  ;; to class methods; the external tier records methods at multi grain), so
+  ;; their evidence is PARTIAL — and narrowing on partial evidence is the
+  ;; false-green shape. Those forms never narrow: nil means the caller falls
+  ;; back to the closure, exactly as if the trace were silent.
+  ;;
+  ;; The test-map mirrors what instrument! actually writes: a dispatched call
+  ;; records the multi ALWAYS, plus the method's form key when known — so
+  ;; method evidence without multi evidence cannot occur. Form ids are derived,
+  ;; not hardcoded: ids are store-global, and an earlier draft of this test
+  ;; hardcoded f2 — which was a form in the OTHER namespace.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'p.core
+                             (str "(ns p.core)\n\n"
+                                  "(defprotocol P \"P.\" (m [_] \"M.\") (n [_] \"N.\"))\n\n"
+                                  "(defrecord R [x] P (m [_] 1) (n [_] 2))\n"))
+               (store/ingest 'dm.core
+                             (str "(ns dm.core)\n\n(defmulti area :shape)\n\n"
+                                  "(defmethod area :square [s] 1)\n")))
+        meth-id (symbol (:id (first (filter #(nil? (:name %))
+                                            (store/forms st 'dm.core)))))
+        sess (atom {:store st
+                    :test-map {'p.t/proto-t  #{'p.core/m}
+                               'p.t/ctor-t   #{'p.core/->R}
+                               'dm.t/multi-t #{'dm.core/area}
+                               'dm.t/meth-t  #{'dm.core/area
+                                               (symbol "dm.core" (str meth-id))}}})]
+    (testing "a defprotocol form is found by evidence on ANY of its method vars"
+      (is (= '[p.t/proto-t] (session/affected-tests sess 'p.core 'P))))
+    (testing "a defrecord form NEVER narrows — its method bodies are invisible
+              to the tracer, so ->R evidence alone would under-select"
+      (is (nil? (session/affected-tests sess 'p.core 'R))))
+    (testing "a defmethod form never narrows — the external tier records it at
+              multi grain, and partial evidence must not select"
+      (is (nil? (session/affected-tests sess 'dm.core meth-id))))
+    (testing "the defmulti itself narrows: every dispatched call records it, in
+              both tiers, so its evidence is complete"
+      (is (= '[dm.t/meth-t dm.t/multi-t]
+             (vec (sort (session/affected-tests sess 'dm.core 'area))))))))

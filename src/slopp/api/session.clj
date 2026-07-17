@@ -378,16 +378,37 @@
 (defn affected-tests
   "Which tests must re-run after editing `ns-sym/nm`: the tests observed (via
   tracing) to exercise that form — or the form itself if it IS a test. nil =
-  no trace information; run everything (conservative)."
+  no usable trace information; run everything (conservative).
+
+  Form-aware (#129): evidence is matched against EVERY name the form defines
+  (`store/form-trace-keys`) — a test calling protocol method `m` recorded
+  `ns/m`, though the form's primary name is `P`; `->R` evidence belongs to
+  `R`'s form. And a `method-carrying?` form (defmethod, defrecord/deftype,
+  extend-*) NEVER narrows: its bodies run where the tracer cannot fully see
+  them, so its evidence is structurally partial, and narrowing on partial
+  evidence is how a false green happens. nil sends the caller to the same
+  closure fallback a silent trace does."
   [session ns-sym nm]
   (let [qform (symbol (str ns-sym) (str nm))
         tmap  (:test-map @session)]
     (if (contains? tmap qform)
       [qform]
-      (let [hits (->> tmap
-                      (keep (fn [[t forms]] (when (contains? forms qform) t)))
-                      sort vec)]
-        (when (seq hits) hits)))))
+      (let [e (store/form-named (:store @session) ns-sym nm)]
+        (cond
+          (nil? e)
+          (let [hits (->> tmap
+                          (keep (fn [[t forms]] (when (contains? forms qform) t)))
+                          sort vec)]
+            (when (seq hits) hits))
+
+          (store/method-carrying? e) nil
+
+          :else
+          (let [ks   (store/form-trace-keys ns-sym e)
+                hits (->> tmap
+                          (keep (fn [[t forms]] (when (some forms ks) t)))
+                          distinct sort vec)]
+            (when (seq hits) hits)))))))
 (defn implicate
   "Rock 2: annotate each failure with the just-changed forms that failing
   test actually exercises (trace map ∩ edited) — the correlation agents

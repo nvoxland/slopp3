@@ -36,8 +36,11 @@
                                          (or (= (:id e) (:form-id %))
                                              (some #{(:id e)} (or (:form-ids %) []))))
                                 (:prompt %))))
-          covered (count (keep (fn [[t fs]] (when (contains? fs q) t))
-                               (:test-map @session)))
+          covered (let [ks (store/form-trace-keys ns-sym e)]
+                    ;; any name the form defines can carry its evidence (#129):
+                    ;; a defprotocol's card counts tests that called m or n
+                    (count (keep (fn [[t fs]] (when (some fs ks) t))
+                                 (:test-map @session))))
           examples (when-let [conn (:db @session)]
                      (try
                        (when-let [raw (db/get-meta conn (str "observed/" ns-sym "/" nm))]

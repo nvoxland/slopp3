@@ -81,3 +81,57 @@
         (finally (rt/restore! outer-orig))))
     (testing "…and the outer restore hands it back to what enclosed us"
       (is (identical? enclosing @rt/touched-sink)))))
+^:unsafe (deftest instrument-sees-multimethod-calls
+  ;; MultiFn is ifn? but NOT fn? (probed 2026-07-17), so instrumentable? skips
+  ;; it — and wrapping the VAR with a plain fn would break it for real:
+  ;; defmethod macroexpands to (.addMethod multifn ...), which needs the var to
+  ;; still hold a MultiFn. So multimethods were structurally invisible to the
+  ;; trace, and a test exercising one produced no evidence for it.
+  ;;
+  ;; The wrap goes on the METHOD TABLE instead: each entry is a plain fn we can
+  ;; wrap and delegate. Dispatch still runs the real dispatch fn and the real
+  ;; hierarchy/prefers — only the resolved method is ours.
+  (let [n  (create-ns 'rt-probe.mm)
+        mf (clojure.lang.MultiFn. "area" :shape :default
+                                  #'clojure.core/global-hierarchy)
+        sq (fn [s] (* (:side s) (:side s)))]
+    (.addMethod mf :square sq)
+    (intern n 'area mf)
+    (let [touched   (atom #{})
+          originals (rt/instrument! ['rt-probe.mm] touched)]
+      (try
+        (testing "a dispatched call returns its value AND records the multi"
+          (is (= 4 (mf {:shape :square :side 2})))
+          (is (contains? @touched 'rt-probe.mm/area) (pr-str @touched)))
+        (testing "the var still holds the MultiFn — defmethod/get-method survive"
+          (is (instance? clojure.lang.MultiFn @(ns-resolve n 'area))))
+        (finally (rt/restore! originals))))
+    (testing "restore! puts the ORIGINAL method fns back in the table"
+      (is (identical? sq (get (.getMethodTable mf) :square))))))
+^:unsafe (deftest instrument-attributes-methods-when-told-how
+  ;; A method's form has no name (D8 — registrations define nothing), so its
+  ;; trace key is its form id, ns/f2-style. The tracer cannot derive that from
+  ;; the runtime MultiFn — only the store knows which dispatch value lives in
+  ;; which form — so the mapping arrives as data: {multi-qsym {dispatch form-key}}.
+  ;; A dispatched call then records BOTH the multi and the method's own form,
+  ;; and a dispatch value the map does not know still records the multi alone.
+  (let [n  (create-ns 'rt-probe.attr)
+        mf (clojure.lang.MultiFn. "area" :shape :default
+                                  #'clojure.core/global-hierarchy)]
+    (.addMethod mf :square (fn [_s] 4))
+    (.addMethod mf :circle (fn [_c] 3))
+    (intern n 'area mf)
+    (let [touched   (atom #{})
+          originals (rt/instrument! ['rt-probe.attr] touched
+                                    {'rt-probe.attr/area {:square 'rt-probe.attr/f7}})]
+      (try
+        (is (= 4 (mf {:shape :square})))
+        (testing "the known dispatch records multi AND method form"
+          (is (contains? @touched 'rt-probe.attr/area))
+          (is (contains? @touched 'rt-probe.attr/f7)))
+        (reset! touched #{})
+        (is (= 3 (mf {:shape :circle})))
+        (testing "an unknown dispatch still records the multi — never less than C1"
+          (is (contains? @touched 'rt-probe.attr/area))
+          (is (not-any? #{'rt-probe.attr/f7} @touched)))
+        (finally (rt/restore! originals))))))

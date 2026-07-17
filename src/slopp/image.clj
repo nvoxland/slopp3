@@ -53,6 +53,11 @@
   may be a collection — whole-project verification in ONE eval (F-3c1).
   Returns {:summary {...} :trace {test-sym #{form-sym ...}}}.
 
+  Ships the closure's defmethod registrations along (#129,
+  `store/method-registrations`) so a dispatched call records the METHOD's own
+  form key, not just the multi's — the store is the only thing that knows
+  which dispatch value lives in which form.
+
   Also drains what rt itself did in the child onto whoever is tracing US (#126)
   — this call is where `slopp.rt/traced-run` actually executes, so it is the
   only place that evidence can come from."
@@ -60,11 +65,13 @@
   (let [targets (if (coll? test-ns)                 ; F-3c1: union of closures
                   (into #{} (mapcat #(store/ns-closure store %)) test-ns)
                   (store/ns-closure store test-ns))
+        methods (vec (mapcat #(store/method-registrations store %) targets))
         result  (first (repl/eval! handle
-                                   (format "(slopp.rt/traced-run '%s '%s '%s %s)"
+                                   (format "(slopp.rt/traced-run '%s '%s '%s %s '%s)"
                                            (if (coll? test-ns) (vec test-ns) test-ns)
                                            (vec (sort targets))
                                            (pr-str (some-> only vec))
-                                           (boolean skip-integration?))))]
+                                           (boolean skip-integration?)
+                                           (pr-str methods))))]
     (drain-child-rt! handle)
     result))

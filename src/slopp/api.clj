@@ -3358,7 +3358,9 @@
                          s        (try (n/sexpr (:node e)) (catch Exception _ nil))
                          skip?    (and (seq? s) (contains? '#{deftest ns} (first s)))
                          test?    (str/ends-with? (str nsx) "-test")
-                         traced   (count (keep (fn [[t fs]] (when (contains? fs q) t)) tmap))
+                         traced   (let [ks (store/form-trace-keys nsx e)]
+                                    ;; any name the form defines carries evidence (#129)
+                                    (count (keep (fn [[t fs]] (when (some fs ks) t)) tmap)))
                          callers  (get blast q 0)
                          loc      (count (str/split-lines (n/string (:node e))))
                          lints    (get lint-by-form q 0)
@@ -3459,13 +3461,16 @@
   [session ns-sym nm]
   (if (nil? (store/form-named (:store @session) ns-sym nm))
     (edit/missing-form-error (:store @session) ns-sym nm)
-    (let [qsym    (symbol (str ns-sym) (str nm))
+    (let [
           sym     (query-symbol session ns-sym nm)
           callers (vec (query-references session ns-sym nm))
           tmap    (:test-map @session)
-          tests   (->> tmap
-                       (keep (fn [[t forms]] (when (contains? forms qsym) t)))
-                       sort vec)
+          tests   (let [e  (store/form-named (:store @session) ns-sym nm)
+                        ks (store/form-trace-keys ns-sym e)]
+                    ;; evidence can arrive under any name the form defines (#129)
+                    (->> tmap
+                         (keep (fn [[t forms]] (when (some forms ks) t)))
+                         distinct sort vec))
           why     (last (query-lineage session ns-sym nm))]
       (cond-> {:ns ns-sym :name nm :source (:source sym)}
         (:effectful? sym) (assoc :effectful? true)

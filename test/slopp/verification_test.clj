@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -344,4 +344,40 @@
           (testing "rt that ran in the CHILD is attributed to the caller's test"
             (is (contains? @touched 'slopp.rt/traced-run) (pr-str @touched)))
           (finally (rt/restore! originals))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated multimethod-tests-trace-to-the-method-forms
+  ;; The whole point of the C-wave: a test exercising ONE method of a
+  ;; multimethod produces evidence for THAT method's form (keyed by id — D8:
+  ;; registrations define no name) plus the defmulti, and NOT for sibling
+  ;; methods. Before this, MultiFns were structurally invisible (ifn? but not
+  ;; fn?) and a multimethod-heavy project got zero narrowing evidence.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'shapes.core
+                   (str "(ns shapes.core)\n\n"
+                        "(defmulti area :shape)\n\n"
+                        "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
+                        "(defmethod area :circle [c] (* 3 (:r c) (:r c)))\n"))
+      (api/ingest! sess 'shapes.core-test
+                   (str "(ns shapes.core-test (:require [shapes.core :as c]\n"
+                        "                               [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest square-t (is (= 4 (c/area {:shape :square :side 2}))))\n\n"
+                        "(deftest circle-t (is (= 12 (c/area {:shape :circle :r 2}))))\n"))
+      (let [r (api/test-run! sess 'shapes.core-test)
+            _ (is (= 2 (:pass r)) (pr-str r))
+            st    (:store @sess)
+            forms (store/forms st 'shapes.core)
+            fkey  (fn [e] (symbol "shapes.core" (str (or (:name e) (:id e)))))
+            [sq-form ci-form] (filter #(nil? (:name %)) forms)
+            tmap  (:test-map @sess)
+            sq-trace (tmap 'shapes.core-test/square-t)
+            ci-trace (tmap 'shapes.core-test/circle-t)]
+        (testing "each test records the defmulti it dispatched through"
+          (is (contains? sq-trace 'shapes.core/area) (pr-str sq-trace))
+          (is (contains? ci-trace 'shapes.core/area)))
+        (testing "…and exactly ITS method's form, not the sibling's"
+          (is (contains? sq-trace (fkey sq-form)) (pr-str sq-trace))
+          (is (not (contains? sq-trace (fkey ci-form))))
+          (is (contains? ci-trace (fkey ci-form)) (pr-str ci-trace))
+          (is (not (contains? ci-trace (fkey sq-form))))))
       (finally (api/close! sess)))))

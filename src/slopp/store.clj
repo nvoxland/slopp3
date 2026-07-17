@@ -997,3 +997,40 @@
 
 ;; --- Phase 4 m2: the CRDT merge -------------------------------------------
 
+(defn method-registrations
+  "The defmethod registrations of `ns-sym`, as tracer attribution rows:
+  [form-ns multi-sym dispatch-sexpr form-key]. `dispatch-sexpr` is the SOURCE
+  expression — the image evals it where defmethod itself did (only the runtime
+  value can key a method table: source says `String`, the table holds
+  java.lang.String). `form-key` is the method form's trace key — its id, since
+  registrations define no name (D8)."
+  [store ns-sym]
+  (vec (for [e (forms store ns-sym)
+             :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+             :when (and (seq? s) (= 'defmethod (first s))
+                        (symbol? (second s)) (> (count s) 2))]
+         [ns-sym (second s) (nth s 2)
+          (symbol (str ns-sym) (str (or (:name e) (:id e))))])))
+(defn method-carrying?
+  "Does this form carry executable bodies OUTSIDE any var the tracer can wrap?
+  defmethod bodies live in a method table (recorded at multi grain by the
+  external tier); defrecord/deftype inline bodies compile to class methods
+  (never recorded); extend-* register into protocol tables. Runtime evidence
+  for such a form is structurally PARTIAL, and narrowing on partial evidence
+  under-selects — so `affected-tests` treats these as if the trace were silent."
+  [e]
+  (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+    (boolean (and (seq? s)
+                  ('#{defmethod defrecord deftype extend-type extend-protocol
+                      extend}
+                   (first s))))))
+(defn form-trace-keys
+  "Every qualified symbol under which runtime evidence for this form can
+  appear: each name it defines (a test calling protocol method `m` records
+  `ns/m`, though the form's primary name is `P`) plus its primary-name-or-id
+  (the key `qform`-style readers construct, and the only key a nameless
+  registration has)."
+  [ns-sym e]
+  (into #{(symbol (str ns-sym) (str (or (:name e) (:id e))))}
+        (map #(symbol (str ns-sym) (str %)))
+        (:names e)))

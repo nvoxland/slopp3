@@ -81,15 +81,22 @@
   earlier run's set."
   (atom nil))
 ^:unsafe (defn restore!
-  "Put back the originals `instrument!` returned, and hand the `touched-sink`
-  back to whatever run was collecting before it (nil at the outermost). Call
-  from a `finally` — an image whose vars stay wrapped reports every later run
-  through a stale closure, and a sink left pointing at a finished run's atom
-  would attribute later child-image calls to a test that already ended."
+  "Put back what `instrument!` wrapped — var roots AND multimethod table
+  entries — and hand the `touched-sink` back to whatever run was collecting
+  before it (nil at the outermost). Call from a `finally` — an image whose vars
+  stay wrapped reports every later run through a stale closure, and a sink left
+  pointing at a finished run's atom would attribute later child-image calls to
+  a test that already ended.
+
+  A method a test itself registered mid-run (a defmethod in a test body) is not
+  in the originals and survives restore — the same tolerance var wrapping has
+  always had for vars a test defines."
   [originals]
   (reset! touched-sink (::prev-sink (meta originals)))
-  (doseq [[v orig] originals]
-    (alter-var-root v (constantly orig))))
+  (doseq [[v orig] (:vars originals)]
+    (alter-var-root v (constantly orig)))
+  (doseq [[^clojure.lang.MultiFn mf k orig] (:methods originals)]
+    (.addMethod mf k orig)))
 ^:unsafe ^:reads (defn instrument!
   "Wrap every instrumentable fn var of `target-nses` so each call conjes its
   qualified symbol onto `touched` (an atom holding a set). Returns the
@@ -102,6 +109,16 @@
   external tier (the only tier that executes ^:isolated tests). The wrapping
   itself must never be copied — a second tracer is a second truth.
 
+  MULTIMETHODS are wrapped at their METHOD TABLE (#129): a MultiFn is `ifn?`
+  but not `fn?`, and replacing the var with a plain fn would break defmethod
+  (it macroexpands to `.addMethod` on the var's value). Each table entry is a
+  plain fn, so each is wrapped to record the MULTI's qualified sym — dispatch
+  itself (dispatch fn, hierarchy, prefers) stays untouched. `attr`
+  ({multi-qsym {dispatch-val form-qsym}}, optional) additionally records the
+  METHOD's own form key when the dispatch value is known — the in-image tier
+  derives it from the store; without it a method call still honestly records
+  the multi.
+
   Also publishes `touched` as the `touched-sink` (#126) so rt calls made in a
   CHILD image — where no wrapper of ours can reach — reach the test being
   traced right now. Calls NEST (testmain instruments once around the whole
@@ -109,21 +126,36 @@
   displaces rides home on the returned map's metadata and `restore!` puts it
   back. Clearing it to nil instead would silently stop the drain for every
   later test in the shard."
-  [target-nses touched]
-  (let [prev      @touched-sink
-        originals (atom {})]
-    (reset! touched-sink touched)
-    (doseq [n target-nses
-            v (vals (ns-interns n))
-            :when (instrumentable? v)]
-      (let [orig @v
-            qs   (qualified v)]
-        (swap! originals assoc v orig)
-        (alter-var-root v (fn [_]
-                            (fn [& args]
-                              (swap! touched conj qs)
-                              (apply orig args))))))
-    (with-meta @originals {::prev-sink prev})))
+  ([target-nses touched] (instrument! target-nses touched nil))
+  ([target-nses touched attr]
+   (let [prev      @touched-sink
+         vars      (atom {})
+         methods   (atom [])]
+     (reset! touched-sink touched)
+     (doseq [n target-nses
+             v (vals (ns-interns n))]
+       (cond
+         (instrumentable? v)
+         (let [orig @v
+               qs   (qualified v)]
+           (swap! vars assoc v orig)
+           (alter-var-root v (fn [_]
+                               (fn [& args]
+                                 (swap! touched conj qs)
+                                 (apply orig args)))))
+
+         (and (bound? v) (instance? clojure.lang.MultiFn @v))
+         (let [^clojure.lang.MultiFn mf @v
+               qs (qualified v)]
+           (doseq [[k orig] (.getMethodTable mf)]
+             (let [form-key (get-in attr [qs k])]
+               (swap! methods conj [mf k orig])
+               (.addMethod mf k
+                           (fn [& args]
+                             (swap! touched conj qs)
+                             (when form-key (swap! touched conj form-key))
+                             (apply orig args))))))))
+     (with-meta {:vars @vars :methods @methods} {::prev-sink prev}))))
 ^:unsafe ^:reads (defn ^:entry-point traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
   recording which fn vars of `target-nses` each test touches. `test-ns` may be
@@ -138,15 +170,33 @@
   external tier's trace runner wraps cognitect's runner with the same seam
   (#121) — two runners, one tracer.
 
+  `methods` ([[form-ns multi-sym dispatch-sexpr form-key] ...], optional) is
+  the store's defmethod attribution (#129): each dispatch sexpr is evaled HERE
+  — in the image, where defmethod itself evaled it — because only the runtime
+  value keys a method table (source says String, the table holds
+  java.lang.String). A row that fails to resolve or eval is skipped: the
+  method then records its multi alone, which is less precise, never wrong.
+  Stale injected rt (an older jar) has no `methods` param and silently drops
+  the extra arg — same degradation.
+
   Failure details are captured by rebinding clojure.test's dynamic `report`
   multimethod (F1) — without this they'd be printed to the image's stdout and
   lost. Bounded: ≤20 entries, values truncated to 400 chars."
-  [test-ns target-nses only & [skip-integration?]]
+  [test-ns target-nses only & [skip-integration? methods]]
   (let [test-nses (if (coll? test-ns) test-ns [test-ns]) ; F-3c1: whole project
         touched   (atom #{})
         current   (atom nil)
         failures  (atom [])
-        originals (instrument! target-nses touched)]
+        attr      (reduce (fn [m [form-ns multi-sym dispatch form-key]]
+                            (try
+                              (let [v (ns-resolve form-ns multi-sym)]
+                                (if (and v (instance? clojure.lang.MultiFn @v))
+                                  (assoc-in m [(qualified v) (eval dispatch)]
+                                            form-key)
+                                  m))
+                              (catch Throwable _ m)))
+                          {} methods)
+        originals (instrument! target-nses touched attr)]
     (try
       (let [tvars    (cond->> (mapcat #(filter (comp :test meta)
                                                (vals (ns-interns %)))
