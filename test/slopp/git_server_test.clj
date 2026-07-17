@@ -16,10 +16,6 @@
 (defn- temp-dir [nm]
   (str (Files/createTempDirectory nm (make-array FileAttribute 0))))
 
-(defn- free-port []
-  (with-open [s (java.net.ServerSocket. 0)]
-    (.getLocalPort s)))
-
 (def seed
   (str "(ns gs.core (:require [clojure.test :refer [deftest is]]))\n"
        "\n"
@@ -40,10 +36,12 @@
   (mapv #(.getFullMessage %) (-> g (.log) (.call))))
 
 (deftest ^:isolated clone-fetch-and-branches-over-smart-http
+  ;; 0 = the OS assigns a genuinely-free loopback port ATOMICALLY (#136), and
+  ;; srv's :port/:url are the only ones that can be trusted — a port chosen
+  ;; before binding is a guess another shard can win.
   (let [dir  (temp-dir "slopp-git-server")
         sess (api/open! {:dir dir})
-        port (free-port)
-        srv  (server/start-server! port {:dir dir})]
+        srv  (server/start-server! 0 {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
       (api/commit-point! sess "v1: f ships" :agent "alice")
@@ -51,7 +49,7 @@
                          :prompt "flip" :agent "alice")
       (api/commit-point! sess "v2: flipped" :agent "alice")
       (let [clone-dir (temp-dir "slopp-git-clone")]
-        (with-open [g (clone! port clone-dir)]
+        (with-open [g (clone! (:port srv) clone-dir)]
           (testing "the clone IS the store's rendered source, newest milestone"
             (is (= (api/query-source sess 'gs.core)
                    (slurp (io/file clone-dir "src" "gs" "core.clj"))))
@@ -82,7 +80,7 @@
                            :prompt "feature work" :agent "bob")
         (api/commit-point! sess "feature: tweak" :agent "bob")
         (let [refs (-> (Git/lsRemoteRepository)
-                       (.setRemote (clone-url port))
+                       (.setRemote (:url srv))
                        (.setHeads true)
                        (.call))]
           (is (contains? (set (map #(.getName %) refs))
@@ -94,12 +92,11 @@
 (deftest ^:isolated empty-store-clones-as-empty-repo
   (let [dir  (temp-dir "slopp-git-empty")
         sess (api/open! {:dir dir})
-        port (free-port)
-        srv  (server/start-server! port {:dir dir})]
+        srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
     (try
       (api/ingest! sess 'gs.core seed)   ; content but NO milestones yet
       (let [clone-dir (temp-dir "slopp-git-empty-clone")]
-        (with-open [g (clone! port clone-dir)]
+        (with-open [g (clone! (:port srv) clone-dir)]
           (is (nil? (-> g (.getRepository) (.resolve "HEAD"))))))
       (finally
         (server/stop-server! srv)
@@ -112,9 +109,11 @@
   ;; the last milestone; tools diff origin/main..origin/wip/main
   (let [dir  (temp-dir "slopp-git-wip")
         sess (api/open! {:dir dir})
-        port (free-port)
-        srv  (server/start-server! port {:dir dir})
-        url  (clone-url port)
+        
+        ;; 0 = OS-assigned, atomic; srv's :port/:url are the only trustworthy
+        ;; ones — a port chosen before binding is a guess a shard can win (#136)
+        srv  (server/start-server! 0 {:dir dir})
+        url  (:url srv)
         heads (fn []
                 (into {} (map (fn [r] [(.getName r) (.name (.getObjectId r))]))
                       (-> (Git/lsRemoteRepository) (.setRemote url)
@@ -132,7 +131,7 @@
           (is (some? wip1))
           (is (not= wip1 (get h1 "refs/heads/main"))))
         (let [clone-dir (temp-dir "slopp-wip-clone")]
-          (with-open [g (clone! port clone-dir)]
+          (with-open [g (clone! (:port srv) clone-dir)]
             (let [repo (.getRepository g)
                   wc   (with-open [rw (org.eclipse.jgit.revwalk.RevWalk. repo)]
                          (.parseCommit rw (.resolve repo
@@ -165,13 +164,12 @@
   ;; so any push is refused (edits arrive through slopp's write tools, not push).
   (let [dir  (temp-dir "slopp-git-ro")
         sess (api/open! {:dir dir})
-        port (free-port)
-        srv  (server/start-server! port {:dir dir})]
+        srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
     (try
       (api/ingest! sess 'gs.core seed)
       (api/commit-point! sess "v1" :agent "alice")
       (let [clone-dir (temp-dir "slopp-ro-clone")]
-        (with-open [g (clone! port clone-dir)]
+        (with-open [g (clone! (:port srv) clone-dir)]
           (spit (io/file clone-dir "src" "gs" "core.clj")
                 (str (slurp (io/file clone-dir "src" "gs" "core.clj"))
                      "\n(defn extra [x] x)\n"))
@@ -203,13 +201,12 @@
     (when git-bin
       (let [dir  (temp-dir "slopp-git-cli")
             sess (api/open! {:dir dir})
-            port (free-port)
-            srv  (server/start-server! port {:dir dir})]
+            srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
         (try
           (api/ingest! sess 'gs.core seed)
           (api/commit-point! sess "v1: f ships" :agent "alice")
           (let [clone-dir (str (temp-dir "slopp-git-cli-clone") "/clone")
-                res (sh/sh "git" "clone" (clone-url port) clone-dir)]
+                res (sh/sh "git" "clone" (:url srv) clone-dir)]
             (is (zero? (:exit res)) (:err res))
             (is (= (api/query-source sess 'gs.core)
                    (slurp (io/file clone-dir "src" "gs" "core.clj"))))
@@ -218,3 +215,46 @@
           (finally
             (server/stop-server! srv)
             (api/close! sess)))))))
+(deftest ^:isolated the-served-port-is-the-bound-one-not-the-requested-one
+  ;; THE flake (observed once on a milestone gate 2026-07-16). Two bugs stacked:
+  ;;
+  ;; 1. free-port did (ServerSocket. 0), read the port, and CLOSED it — so the
+  ;;    port was only ever a GUESS by the time anyone bound it. Worse, probed
+  ;;    2026-07-17: that socket binds the WILDCARD 0.0.0.0, which does NOT
+  ;;    conflict with 127.0.0.1:<port>. So free-port would happily hand back a
+  ;;    port another shard's HttpServer was ACTIVELY SERVING.
+  ;; 2. bind-localhost! then hits BindException and relocates to an ephemeral
+  ;;    port — SILENTLY, and rightly so: a shared derived port must never block
+  ;;    startup. But the test kept its stale `port` and cloned the abandoned
+  ;;    one, reaching the other shard's server, or nothing once that shard
+  ;;    stopped: TransportException "connection failed".
+  ;;
+  ;; start-server!'s docstring already carried the answer — "the actual bound
+  ;; port is returned as :port" — and git-embedded-test already read it.
+  ;;
+  ;; No race needed to pin it: hold the LOOPBACK port, exactly as a rival
+  ;; shard's running server does, and the divergence is deterministic.
+  (let [dir  (temp-dir "slopp-git-port")
+        sess (api/open! {:dir dir})]
+    (try
+      (api/ingest! sess 'gs.core seed)
+      (api/commit-point! sess "v1" :agent "alice")
+      (let [hostage (java.net.ServerSocket.
+                     0 50 (java.net.InetAddress/getByName "127.0.0.1"))]
+        (try
+          (let [taken (.getLocalPort hostage)
+                srv   (server/start-server! taken {:dir dir})]
+            (try
+              (testing "the requested port was taken, so the server RELOCATED"
+                (is (not= taken (:port srv))
+                    "bind-localhost! must relocate rather than fail startup"))
+              (testing "…and a clone against the BOUND port works. Trusting the
+                        REQUESTED port is what produced the flake — that is the
+                        port nothing is serving."
+                (let [clone-dir (temp-dir "slopp-port-clone")]
+                  (with-open [g (clone! (:port srv) clone-dir)]
+                    (is (some? (.getRepository g)))
+                    (is (.exists (io/file clone-dir "src"))))))
+              (finally (server/stop-server! srv))))
+          (finally (.close hostage))))
+      (finally (api/close! sess)))))

@@ -8,17 +8,13 @@
             [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.server :as server])
+            [slopp.git :as git] [slopp.git.server :as server] [clojure.java.io :as io])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
 
 (defn- temp-dir [nm]
   (str (Files/createTempDirectory nm (make-array FileAttribute 0))))
-
-(defn- free-port []
-  (with-open [s (java.net.ServerSocket. 0)]
-    (.getLocalPort s)))
 
 (def seed
   (str "(ns gc.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -71,9 +67,15 @@
   ;; projection reads the journals from disk on every advertisement
   (let [dir   (temp-dir "slopp-git-foreign")
         sess1 (api/open! {:dir dir})
-        port  (free-port)
-        url   (str "http://127.0.0.1:" port "/slopp.git")
-        srv   (server/start-server! port {:dir dir})
+        
+        
+        ;; 0 = the OS assigns a genuinely-free loopback port ATOMICALLY (#136).
+        ;; free-port guessed one BEFORE binding, and its wildcard socket never
+        ;; conflicted with 127.0.0.1 — so it could hand back a port another
+        ;; shard's server was serving. bind-localhost! then relocated silently
+        ;; and the caller talked to the abandoned port.
+        srv   (server/start-server! 0 {:dir dir})
+        url   (:url srv)
         tip   (fn []
                 (some #(when (= "refs/heads/main" (.getName %))
                          (.name (.getObjectId %)))
@@ -95,7 +97,7 @@
           (is (not= tip1 tip2))
           (let [clone-dir (temp-dir "slopp-git-foreign-clone")]
             (with-open [g (-> (Git/cloneRepository) (.setURI url)
-                              (.setDirectory (clojure.java.io/file clone-dir))
+                              (.setDirectory (io/file clone-dir))
                               (.call))]
               (is (str/starts-with?
                    (.getFullMessage (first (-> g (.log) (.call))))
