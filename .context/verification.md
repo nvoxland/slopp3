@@ -32,28 +32,52 @@ The oracle must never return a false verdict. Everything here serves that.
    - clojure.test's `:actual` for an `is` failure is the failed predicate
      form, e.g. `(not (= 5 -1))` — keep it; it's more informative than the
      bare value.
-   - **Sampling limits (accepted).** All of these follow from ONE choice —
-     `instrumentable?` gates on `(fn? @v)`, so the tracer sees **vars holding
-     fns, and nothing else**:
-     - **multimethods are invisible** — `MultiFn` is `ifn?` but NOT `fn?`
-       (probed live). `defmethod` bodies aren't vars at all, nor are
-       `defrecord`/`deftype` methods, `letfn`, or lambdas.
+   - **Polymorphism (C-wave, 2026-07-17): observed where possible, refused
+     where not.** The tracer's unit is the var (`instrumentable?` gates on
+     `(fn? @v)`), and each construct lands differently:
+     - **multimethods ARE observed** — at the METHOD TABLE. A `MultiFn` is
+       `ifn?` but not `fn?`, and replacing the var would break `defmethod`
+       (it macroexpands to `.addMethod` on the var's value), so `instrument!`
+       wraps each table entry: every dispatched call records the MULTI's qsym
+       (both tiers), plus the METHOD's own form key in-image —
+       `store/method-registrations` ships `[multi dispatch-sexpr form-key]`
+       rows and `traced-run` evals each dispatch sexpr in the image, where
+       `defmethod` itself evaled it (source says `String`; the table holds
+       `java.lang.String`). External tier records multi-grain only.
+     - **protocol calls on INLINE impls bypass the var** — found red: the
+       method vars are wrapped, but a protocol call site's inline cache hits
+       the interface directly when the target implements it inline (the
+       common case). Evidence through the var exists only for extend-based
+       dispatch. `defrecord`/`deftype` method bodies are class methods —
+       never observable by any var wrap. Constructor evidence (`->R`,
+       `map->R` — plain fns) flows to the record's form via D8 names.
      - **callable data is invisible** — `(def valid? #{:a :b})` is `ifn?`, not
        `fn?`, so `api.deps/native-incompatible-deps` reads `:covered 0`
        honestly and forever.
      - **value-captured references** (`(def g (comp f inc))`) bypass the var.
      - macros are excluded by `(not (:macro m))`; unexercised paths are
        unobserved.
-     **Why this matters more than it looks:** it is a property of the CODE, not
-     the tests — and slopp's own store has **zero** defmulti/defprotocol/
-     defrecord/deftype (searched 2026-07-17; 2 `reify`s for Java interop). So
-     dogfooding cannot surface this class of bug, and any project written in
-     ordinary polymorphic Clojure has it. It fails QUIETLY: a form reachable
-     ONLY through dispatch reads 0 and falls back safely, but a form on both a
-     traced and an untraced path gets a partial count and narrows to it.
-     Fixing it means recording at the form's ENTRY instead of the var (see
-     `.ideas/` — Cloverage's mechanism, slopp's form IDs), which would also
-     dissolve the value-capture limit.
+     **The narrowing rule that makes the partial evidence safe:**
+     `store/method-carrying?` (defmethod, defrecord/deftype, extend-*,
+     defprotocol) forms NEVER narrow — `session/affected-tests` returns nil
+     for them, the same closure fallback a silent trace gets. Partial
+     evidence must not select: a form on both a traced and an untraced path
+     gets a small count and narrows to it, which is the false-green shape.
+     Editing a defMULTI narrows (every dispatched call records it, both
+     tiers); editing a defMETHOD falls back (the external tier records it at
+     multi grain only). Ops are hardened to match: deleting or
+     dispatch-changing a defmethod `remove-method`s the old registration in
+     the image — `ns-unmap` was a no-op and the deleted method KEPT
+     ANSWERING, the green-when-red direction nothing cross-checks.
+     **Static tracking is separate and now sees method bodies**: kondo
+     resolves defmethod/defrecord/extend-* body usages but reports them with
+     nil `:from-var`, and every edge builder dropped them — a defn called
+     only from a method body read as unused-public. `static-refs` now
+     attributes those to the OWNING FORM by rendered span
+     (`render/owner-form`); `cold-load-order` ignores nil-from-var edges (its
+     Kahn is name-keyed), and the gate still catches method-before-multi
+     because `forward-refs` reads kondo rows directly — pinned in
+     `slopp.coldload-gate-test/registrations-and-the-cold-load-gate`.
 2. **The trace map (session `:test-map`).** Flat
    `{qualified-test-sym #{qualified-form-sym}}`, merged in on every traced
    run, carried across renames (`rename-in-trace`). Powers **affected-test

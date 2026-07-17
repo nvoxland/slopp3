@@ -1722,7 +1722,13 @@ facto behaviour, but it rules out idiomatic Clojure and fixes nothing for
   form was dropped entirely). Not a regression; not fixed.
 - The unused-public gate and `review_scan` filter heads to `#{defn def}`, so a
   dead `defmulti` is invisible to `done!` AND `commit_point`. Separate, unfixed.
-- The tracer still cannot see method bodies (`MultiFn` is `ifn?`, not `fn?`), so
-  `:covered` for a multimethod is 0 — honest, and safe (0 falls back to running
-  the closure). Form-entry instrumentation is downstream of this decision, not a
-  prerequisite: recording a form you cannot name buys nothing.
+- ~~The tracer still cannot see method bodies~~ **RESOLVED same day (C-wave):**
+  `instrument!` wraps the MultiFn's METHOD TABLE — every dispatched call records
+  the multi (both tiers) plus the method's form key in-image. The narrowing rule
+  is in `store/method-carrying?`: defmethod/defrecord/deftype/extend-*/defprotocol
+  forms never narrow (their evidence is structurally partial — including
+  defprotocol, whose inline-impl call sites bypass the wrapped var via the
+  protocol inline cache; found red). Static tracking sees method bodies too:
+  nil-`:from-var` kondo usages attribute to the owning form by rendered span.
+  Still true: defrecord/deftype method BODIES are unobservable at runtime, and
+  callable data (`(def valid? #{...})`) reads `:covered 0` forever.
