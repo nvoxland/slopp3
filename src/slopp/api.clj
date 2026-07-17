@@ -3638,3 +3638,14 @@
                 (if (:error r)
                   r
                   (merge r (assoc nsr :forms (count steps))))))))))))
+
+(defn query-vocabulary
+  "Browse the store's domain-keyword vocabulary — namespaced keys, most-used
+   first — so you REUSE an established key (`:user/email`) instead of coining a
+   near-duplicate the key-hygiene advisory would flag. Optional `ns` narrows to a
+   keyword namespace (exact or dotted-child, e.g. \"user\" → :user/* and
+   :user.address/*). Derived from the forms, so it reflects the current branch/
+   revision exactly."
+  [session & {:keys [ns]}]
+  (let [attrs (attrs/vocabulary (:store @session) :ns-prefix ns)]
+    {:count (count attrs) :attributes attrs}))

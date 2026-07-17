@@ -665,3 +665,19 @@
                        {:ns "sa" :name "f" :source "(defn f \"D.\" [x] (inc x))"}))]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated query-vocabulary-rides-the-wire
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "voc"
+             :source (str "(ns voc)\n"
+                          "(defn a [m] {:user/email (:x m)})\n"
+                          "(defn b [m] {:user/email (:y m) :order/id 1})\n")})
+      (let [r (edn/read-string (call sess "query_vocabulary" {}))]
+        (is (= 2 (:count r)) (pr-str r))
+        (is (= {:kw :user/email :uses 2} (first (:attributes r))) (pr-str r)))
+      (testing "ns narrows by keyword namespace"
+        (let [r (edn/read-string (call sess "query_vocabulary" {:ns "order"}))]
+          (is (= [:order/id] (mapv :kw (:attributes r))) (pr-str r))))
+      (finally (api/close! sess)))))

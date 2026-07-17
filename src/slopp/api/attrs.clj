@@ -1,6 +1,6 @@
 (ns slopp.api.attrs
   (:require [rewrite-clj.node :as n]
-            [slopp.store :as store]))
+            [slopp.store :as store] [clojure.string :as str]))
 
 (defn form-keywords
   "The set of NAMESPACED domain keywords a form `node` uses. Unqualified keys
@@ -96,3 +96,21 @@
                                 established)]
                :when nbr]
            {:used k :suggest nbr :seen (get established nbr)}))))
+
+(defn vocabulary
+  "The store's domain-keyword vocabulary, most-used first: `[{:kw :uses} …]`. The
+   discoverability surface behind key hygiene — an agent browses the established
+   vocabulary and REUSES `:user/email` instead of inventing a near-duplicate.
+   Optional `ns-prefix` (string) keeps only keywords whose namespace equals it or
+   is a dotted child (`user` → `:user/*` and `:user.address/*`). Derived from
+   `keyword-inventory`."
+  [store & {:keys [ns-prefix]}]
+  (->> (keyword-inventory store)
+       (keep (fn [[kw fids]]
+               (when (or (nil? ns-prefix)
+                         (let [ns (namespace kw)]
+                           (or (= ns ns-prefix)
+                               (str/starts-with? ns (str ns-prefix ".")))))
+                 {:kw kw :uses (count fids)})))
+       (sort-by (juxt (comp - :uses) (comp str :kw)))
+       vec))

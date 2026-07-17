@@ -63,3 +63,17 @@
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest vocabulary-lists-domain-keys-most-used-first
+  (let [s (store/ingest (store/empty-store) 'app.core
+                        (str "(ns app.core)\n"
+                             "(defn a [m] {:user/email (:x m) :user/name 1})\n"
+                             "(defn b [m] {:user/email (:y m) :order/id 2})\n"
+                             "(defn c [m] {:user.address/city (:z m)})\n"))]
+    (testing "most-used first, with usage counts"
+      (is (= {:kw :user/email :uses 2} (first (attrs/vocabulary s)))))
+    (testing "ns-prefix filters by keyword namespace (exact or dotted-prefix)"
+      (is (= #{:user/email :user/name :user.address/city}
+             (set (map :kw (attrs/vocabulary s :ns-prefix "user"))))))
+    (testing "an exact namespace does not match an unrelated one"
+      (is (= #{:order/id} (set (map :kw (attrs/vocabulary s :ns-prefix "order"))))))))
