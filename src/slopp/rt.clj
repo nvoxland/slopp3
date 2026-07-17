@@ -17,7 +17,11 @@
        (let [m (meta v)]
          (and (not (:macro m)) (not (:test m))))))
 
-(defn- qualified [v]
+(defn qualified
+  "A var's fully-qualified symbol — the key shape of every trace map, both
+  tiers (#121). Public so the external trace runner keys tests identically to
+  the in-image tracer instead of re-deriving it."
+  [v]
   (let [m (meta v)]
     (symbol (str (ns-name (:ns m))) (str (:name m)))))
 
@@ -62,25 +66,19 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
-^:unsafe ^:reads (defn traced-run
-  "Run `test-ns`'s test vars (all of them, or just those named in `only`),
-  recording which fn vars of `target-nses` each test touches. `test-ns` may be
-  a collection of namespaces — the whole project verifies in ONE run, paying
-  instrumentation once (F-3c1). Instrumentation is temporary — originals are
-  restored in a finally. Returns
-  {:summary {:test .. :pass .. :fail .. :error .. :type :summary
-             :failures [{:test :type :message :expected :actual} ...]}  ; when red
-   :trace   {qualified-test-sym #{qualified-form-sym ...}}}
+^:unsafe ^:reads (defn instrument!
+  "Wrap every instrumentable fn var of `target-nses` so each call conjes its
+  qualified symbol onto `touched` (an atom holding a set). Returns the
+  originals map — hand it to `restore!` from a `finally`; instrumentation is
+  ALWAYS temporary.
 
-  Failure details are captured by rebinding clojure.test's dynamic `report`
-  multimethod (F1) — without this they'd be printed to the image's stdout and
-  lost. Bounded: ≤20 entries, values truncated to 400 chars."
-  [test-ns target-nses only & [skip-integration?]]
-  (let [test-nses (if (coll? test-ns) test-ns [test-ns]) ; F-3c1: whole project
-        touched   (atom #{})
-        originals (atom {})
-        current   (atom nil)
-        failures  (atom [])]
+  THE one instrumentation mechanism (#121). Two runners ride it and they
+  genuinely differ: `traced-run` wraps its own per-var loop for the in-image
+  tier; the built project's trace runner wraps cognitect's runner for the
+  external tier (the only tier that executes ^:isolated tests). The wrapping
+  itself must never be copied — a second tracer is a second truth."
+  [target-nses touched]
+  (let [originals (atom {})]
     (doseq [n target-nses
             v (vals (ns-interns n))
             :when (instrumentable? v)]
@@ -91,17 +89,51 @@
                             (fn [& args]
                               (swap! touched conj qs)
                               (apply orig args))))))
+    @originals))
+
+^:unsafe (defn restore!
+  "Put back the originals `instrument!` returned. Call from a `finally` — an
+  image whose vars stay wrapped reports every later run through a stale
+  closure."
+  [originals]
+  (doseq [[v orig] originals]
+    (alter-var-root v (constantly orig))))
+
+^:unsafe ^:reads (defn traced-run
+  "Run `test-ns`'s test vars (all of them, or just those named in `only`),
+  recording which fn vars of `target-nses` each test touches. `test-ns` may be
+  a collection of namespaces — the whole project verifies in ONE run, paying
+  instrumentation once (F-3c1). Instrumentation is temporary — originals are
+  restored in a finally. Returns
+  {:summary {:test .. :pass .. :fail .. :error .. :type :summary
+             :failures [{:test :type :message :expected :actual} ...]}  ; when red
+   :trace   {qualified-test-sym #{qualified-form-sym ...}}}
+
+  The IN-IMAGE tier. Wraps its own per-var loop with `instrument!`; the
+  external tier's trace runner wraps cognitect's runner with the same seam
+  (#121) — two runners, one tracer.
+
+  Failure details are captured by rebinding clojure.test's dynamic `report`
+  multimethod (F1) — without this they'd be printed to the image's stdout and
+  lost. Bounded: ≤20 entries, values truncated to 400 chars."
+  [test-ns target-nses only & [skip-integration?]]
+  (let [test-nses (if (coll? test-ns) test-ns [test-ns]) ; F-3c1: whole project
+        touched   (atom #{})
+        current   (atom nil)
+        failures  (atom [])
+        originals (instrument! target-nses touched)]
     (try
       (let [tvars    (cond->> (mapcat #(filter (comp :test meta)
                                                (vals (ns-interns %)))
                                       test-nses)
                        ;; M5: the fast per-write path skips ^:integration tests
                        ;; (external-system tests — a DB dep shouldn't fire on
-                       ;; every edit); checkpoint/commit/test_run include them
+                       ;; every edit); done/commit/test_run include them
                        skip-integration? (remove (comp :integration meta))
                        ;; ^:isolated tests spawn their own images/JVMs — they
-                       ;; NEVER run in-image (recursion); only the external
-                       ;; isolated runner (fresh -M:test JVM) executes them
+                       ;; NEVER run in-image (recursion). Unconditional BY
+                       ;; DESIGN, not an oversight: the external trace runner
+                       ;; is where they run, and it traces them there (#121).
                        true (remove (comp :isolated meta))
                        only (filter (comp (set only) :name meta)))
             counters (ref t/*initial-report-counters*)
@@ -130,6 +162,5 @@
                     (seq @failures) (assoc :failures @failures))
          :trace   trace})
       (finally
-        (doseq [[v orig] @originals]
-          (alter-var-root v (constantly orig)))))))
+        (restore! originals)))))
 

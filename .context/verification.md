@@ -8,6 +8,23 @@ The oracle must never return a false verdict. Everything here serves that.
    Temporarily wraps fn vars of the store namespaces (alter-var-root,
    restored in `finally`), runs each test var individually, returns
    `{:summary {... :failures [...]} :trace {test-sym #{form-sym}}}`.
+   - **`rt/instrument!` + `restore!` are THE instrumentation seam** — ONE
+     tracer, two runners. `traced-run` wraps its own per-var loop with it
+     (in-image); `slopp.testmain` wraps cognitect's runner with it (external,
+     item 7). The runners genuinely differ; the wrapping must never be copied,
+     because a second tracer is a second truth.
+   - `traced-run` drops `^:isolated` tests **unconditionally, by design** —
+     they spawn images and would recurse in-image. That is not an oversight to
+     "fix": the external tier is where they run, and it traces them there.
+   - **Two copies of `slopp.rt` exist** and each has its own consumer: the
+     KERNEL FILE (`src/slopp/rt.clj`, shipped in the uberjar) is what
+     `repl/inject-rt!` evals into every image; the STORE namespace is what
+     `build!` renders and what slopp's own image actually loads (it wins —
+     it loads after the injection). They must agree on **public surface and
+     behaviour, not bytes**: `render-ns` drops inter-form blank lines and the
+     store copy legitimately carries `^:entry-point` markers the file has no
+     use for. Nothing enforces this; they HAVE drifted
+     (`.ideas/rt-is-duplicated-file-and-store.md`). Change both.
    - Failure details (F1) are captured by rebinding clojure.test's dynamic
      `report` multimethod — **`:test` counting stays in `test-var` itself;
      the custom report must inc `:pass/:fail/:error` counters**. Bounded:
@@ -104,6 +121,34 @@ The oracle must never return a false verdict. Everything here serves that.
    and a red run returns `:failing [{:test :detail}]` blocks parsed from the
    output (`parse-test-failures`) — targeted red/green loops without
    rebuilding by hand (Q2).
+   **The external tier TRACES (#121, 2026-07-16).** It is the only tier that
+   ever runs an `^:isolated` test, so it is the only place their test→form
+   evidence can come from — before this, 69% of slopp's own suite (257/370
+   deftests) produced ZERO runtime evidence and `slopp.api/done!` itself read
+   `:warranty {:covered 0}`. `slopp.testmain` is the built project's entry
+   point: it rides rt's `instrument!`/`restore!` seam — **the SAME tracer as
+   in-image, never a second copy** — tracks the current test by delegating
+   `clojure.test/report`, and **WRAPS `cognitect.test-runner/test` rather than
+   replacing it**. That wrapping is load-bearing: `parse-test-summary`,
+   `parse-test-failures`, `failing-test-rollup` and `failure-themes` all parse
+   cognitect's OUTPUT FORMAT and the commit gate rides them, so the verdict
+   path must stay cognitect's. The trace goes to a FILE per shard beside the
+   build (never stdout — those parsers regex the whole joined output of every
+   shard, so a trace on stdout is a false-match surface on the oracle's own
+   path); `testrun/read-traces` globs + `merge-with into` (shards are
+   concurrent JVMs in ONE dir) and `session/absorb-trace!` merges it into the
+   same `:test-map` the in-image tier feeds. Silent — it surfaces as honest
+   `:warranty` and narrowing, not as output. Routing is conditional on the
+   store PROVIDING `slopp.testmain`, so a store without it (any user project;
+   every throwaway test store) builds byte-identically to before and stays on
+   plain cognitect.
+   **Sampling limit (accepted, same family as rt's):** instrumentation observes
+   only the RUNNER's JVM. An `^:isolated` test that spawns a child image and
+   works THERE traces what it calls in-process but not what runs in the child —
+   `image/test-run` traces, the `rt/traced-run` it evals in the child does not.
+   The tracer cannot trace itself through a subprocess. Don't paper over this
+   with static reach (at depth 3–4 across 370 tests everything is "covered");
+   a declared `^{:covers …}` marker is the only honest filler.
    **The skip is REPORTED, not silent (`traced-run!`, 2026-07-16).**
    `slopp.rt/traced-run` has dropped `^:isolated` tests unconditionally since
    d980 (`true (remove (comp :isolated meta))`) — they have never executed
