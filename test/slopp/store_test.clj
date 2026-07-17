@@ -1,6 +1,6 @@
 (ns slopp.store-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [rewrite-clj.parser :as p]))
+            [slopp.store :as store] [rewrite-clj.parser :as p] [rewrite-clj.node :as n]))
 
 (def src "(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n")
 
@@ -121,3 +121,16 @@
       (let [r (store/form-named rc 'r.core 'R)]
         (is (= (:id r) (:id (store/form-named rc 'r.core '->R))))
         (is (= (:id r) (:id (store/form-named rc 'r.core 'map->R))))))))
+(deftest appended-forms-are-blank-line-separated
+  (let [base   (store/ingest (store/empty-store) 't.core
+                             "(ns t.core)\n\n(defn a [] 1)\n")
+        [s-b d-b] (store/append-form base 't.core (p/parse-string "(defn b [] 2)"))
+        [s-c _]   (store/append-form s-b 't.core (p/parse-string "(defn c [] 3)") :before 'b)
+        render (fn [st] (apply str (map (comp n/string :node)
+                                        (get-in st [:namespaces 't.core :elements]))))]
+    (testing "a tail-appended form gets a blank line before it (top-level convention)"
+      (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn b [] 2)\n" (render s-b))))
+    (testing "an anchored insert is blank-line separated on both sides"
+      (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn c [] 3)\n\n(defn b [] 2)\n" (render s-c))))
+    (testing "journal replay of the :add renders identically to the live append"
+      (is (= (render s-b) (render (store/replay-delta base d-b)))))))

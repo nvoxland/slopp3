@@ -739,6 +739,58 @@
                                             (first x))))
                             (drop 2 s))
           #{})))))
+(defn apply-changeset
+  "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
+  possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
+  `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
+  [store' delta]."
+  [store op ns-sym changeset & {:keys [prompt extra agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
+                              :op op :ns ns-sym :at (now-ms)
+                              :form-ids (vec (sort (keys changeset)))
+                              :sources  (into {} (map (fn [[fid node]]
+                                                        [fid (n/string node)]))
+                                              changeset)
+                              :prompt prompt}
+                       agent (assoc :agent agent))
+                     extra)
+        store' (reduce-kv
+                (fn [st ns-key {:keys [elements]}]
+                  (assoc-in st [:namespaces ns-key :elements]
+                            (mapv (fn [e]
+                                    (if-let [node (get changeset (:id e))]
+                                      (assoc e :node node :name (form-symbol node)
+                                     :names (form-symbols node))
+                                      e))
+                                  elements)))
+                store' (:namespaces store'))]
+    [(update store' :deltas conj delta) delta]))
+
+(defn- place-form
+  "Splice `form-elem` into `elems` — before `anchor-idx` (nil = the tail) —
+  separated from its neighbours by one blank line, the top-level-form
+  convention. Trailing whitespace-only trivia is absorbed first so a tail
+  append neither doubles nor drops the gap; a trailing COMMENT is preserved.
+  SHARED by `append-form` (live write) and `replay-delta`'s `:add` (journal
+  replay) so a fresh append and a reopen/foreign-sync render byte-identically."
+  [elems form-elem anchor-idx]
+  (if anchor-idx
+    (into (conj (subvec elems 0 anchor-idx)
+                form-elem
+                {:kind :sep :node (n/newlines 2)})
+          (subvec elems anchor-idx))
+    (let [core (loop [es elems]
+                 (if (and (seq es) (= :sep (:kind (peek es)))
+                          (str/blank? (n/string (:node (peek es)))))
+                   (recur (pop es))
+                   es))
+          lead (when (seq core)
+                 {:kind :sep
+                  :node (n/newlines
+                         (if (str/ends-with? (n/string (:node (peek core))) "\n") 1 2))})]
+      (-> (cond-> core lead (conj lead))
+          (conj form-elem {:kind :sep :node (n/newlines 1)})))))
 (defn replay-delta
   "Apply a FOREIGN delta from the SAME journal (linear history — ids are
   authoritative, nothing remaps) onto a trailing cached store. Returns the
@@ -839,20 +891,7 @@
                                             (first (keep-indexed
                                                     (fn [i e] (when (= (:before d) (:id e)) i))
                                                     elems)))]
-                           (if anchor-idx
-                             (into (conj (subvec elems 0 anchor-idx)
-                                         form-elem
-                                         {:kind :sep :node (n/newlines 1)})
-                                   (subvec elems anchor-idx))
-                             (let [needs-nl? (and (seq elems)
-                                                  (not (str/ends-with?
-                                                        (n/string (:node (peek elems)))
-                                                        "\n")))]
-                               (cond-> elems
-                                 needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                                 true      (conj form-elem
-                                                 {:kind :sep
-                                                  :node (n/newlines 1)}))))))))))
+                           (place-form elems form-elem anchor-idx)))))))
 
       :delete
       (let [ns-sym (:ns d)
@@ -872,37 +911,9 @@
       ;; :ingest / :move / anything unknown → full reload
       nil)))
 
-(defn apply-changeset
-  "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
-  possibly across namespaces — as ONE delta. `changeset` = {form-id new-node}.
-  `extra` is merged into the delta (e.g. {:old .. :new ..}). Returns
-  [store' delta]."
-  [store op ns-sym changeset & {:keys [prompt extra agent]}]
-  (let [[did store'] (gen-id store "d")
-        delta (merge (cond-> {:id did :parent (:id (last (:deltas store)))
-                              :op op :ns ns-sym :at (now-ms)
-                              :form-ids (vec (sort (keys changeset)))
-                              :sources  (into {} (map (fn [[fid node]]
-                                                        [fid (n/string node)]))
-                                              changeset)
-                              :prompt prompt}
-                       agent (assoc :agent agent))
-                     extra)
-        store' (reduce-kv
-                (fn [st ns-key {:keys [elements]}]
-                  (assoc-in st [:namespaces ns-key :elements]
-                            (mapv (fn [e]
-                                    (if-let [node (get changeset (:id e))]
-                                      (assoc e :node node :name (form-symbol node)
-                                     :names (form-symbols node))
-                                      e))
-                                  elements)))
-                store' (:namespaces store'))]
-    [(update store' :deltas conj delta) delta]))
-
 (defn append-form
   "Add a new form to `ns-sym` with a fresh id; ONE `:add` delta. Default:
-  appended at the tail (newline-separated). `:before <form-name>` anchors it
+  appended at the tail (blank-line separated). `:before <form-name>` anchors it
   immediately before that form instead — the delta records the anchor's
   form-ID so foreign replay converges on the same position. Returns
   [store' delta]; nil when the namespace — or the named anchor — doesn't
@@ -915,22 +926,11 @@
                                                     (= before (:name e))) i))
                                elems)))]
       (when (or (nil? before) anchor-idx)
-        (let [needs-nl?    (and (nil? anchor-idx)
-                                (seq elems)
-                                (not (str/ends-with? (n/string (:node (peek elems))) "\n")))
-              [fid store]  (gen-id store "f")
+        (let [[fid store]  (gen-id store "f")
               [did store'] (gen-id store "d")
               form-elem    {:id fid :kind :form :name (form-symbol node)
                       :names (form-symbols node) :node node}
-              new-elems    (if anchor-idx
-                             (into (conj (subvec elems 0 anchor-idx)
-                                         form-elem
-                                         {:kind :sep :node (n/newlines 1)})
-                                   (subvec elems anchor-idx))
-                             (cond-> elems
-                               needs-nl? (conj {:kind :sep :node (n/newlines 1)})
-                               true      (conj form-elem
-                                               {:kind :sep :node (n/newlines 1)})))
+              new-elems    (place-form elems form-elem anchor-idx)
               delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                     :op :add :ns ns-sym :form-id fid :prompt prompt
                                     :at (now-ms)
