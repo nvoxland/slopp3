@@ -84,16 +84,26 @@ The oracle must never return a false verdict. Everything here serves that.
    selection**: edit form F → run only tests whose set contains F (or F
    itself if F is a test). No trace info → conservative full-ns run
    (`:affected :all`).
-   **BOTH tiers select from it (#127, 2026-07-17).** `done!` routes the
-   external tier through `session/impacted-isolated` → `isolated-among`, the
-   same evidence the in-image half uses, and only falls back to
-   `test-nses-reaching` (the require-closure) when the trace is SILENT. Three
-   answers, and the difference is load-bearing: **nil** = silent, fall back;
-   **[]** = evidence names tests, none isolated, nothing to run; **[syms]** =
-   run exactly these. Until #127 the tier re-derived the closure — which
-   selects a **median 43 of 46** isolated test namespaces (measured over every
-   source ns), so the cap of 4 fired and **84.6% of changes deferred**: the
-   evidence was computed four lines above and discarded.
+   **BOTH tiers select from it (#127), PER FORM (#132, 2026-07-17).**
+   `session/impacted-tests` decides each changed form independently: evidence
+   where it exists, the form's own namespace-reach (`test-nses-reaching` of
+   ITS ns, expanded to test vars) where it does not. Never nil — [] means
+   nothing reaches. Equally sound: the closure intersection distributes over
+   ns unions, so an untraced form selects exactly what the global fallback
+   selected FOR IT, while traced forms keep their narrow sets.
+   Two fossils died to get here:
+   - **#127**: the isolated tier re-derived the require-closure — median **43
+     of 46** isolated test nses, cap of 4, **84.6% of changes deferred** —
+     while the evidence sat computed four lines above.
+   - **#132**: the all-or-nothing collapse — `(when (not-any? nil? per) …)` —
+     discarded ALL evidence when ONE changed form was untraced. Measured on
+     the journal: **54.4% of real episodes** touched a form the tracer can
+     never see (43.2% an NS form — `ns_add_require` edits one; 28% a data
+     def), so the collapse was the rule, not the corner.
+   Found while pinning #132: `add-require!`/`remove-require!` never accepted
+   `:agent`, so their deltas were agent-nil and **never entered any episode**
+   — an ns_add_require was invisible to `done`'s lint/normalize/verification
+   entirely. Fixed at both the api and the MCP wire.
    **The cap is on TESTS (40), not namespaces**, because `isolated-test-run!`'s
    `:only` and `:nses` do NOT compose — the sharded branch calls
    `run-shard!` with the ns group and never passes `only`, so passing both
