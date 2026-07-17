@@ -352,3 +352,21 @@
                                :prompt "pure helper")]
           (is (nil? (:error r)))))
       (finally (api/close! sess)))))
+
+(deftest gate-refusal-composes-module-and-tier-gates
+  (testing "it catches a purity-tier violation (tier gate is registered)"
+    (let [[t _] (store/record-module-tier
+                 (store/ingest (store/empty-store) 'app.core
+                               "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n")
+                 "app.core" :pure)]
+      (is (re-find #"functional-core" (str (modules/gate-refusal t 'app.core 'tick!))))))
+  (testing "it catches a module-visibility violation (module gate is registered)"
+    (let [base (store/ingest (store/empty-store) 'a.b.impl
+                             "(ns a.b.impl)\n\n(defn hidden \"H.\" [x] x)\n")
+          cand (store/ingest base 'x.y
+                             "(ns x.y)\n\n(defn f \"F.\" [v] (a.b.impl/hidden v))\n")]
+      (is (re-find #"package-private" (str (modules/gate-refusal cand 'x.y 'f))))))
+  (testing "clean form → nil"
+    (let [cand (store/ingest (store/empty-store) 'app.core
+                             "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n")]
+      (is (nil? (modules/gate-refusal cand 'app.core 'add))))))

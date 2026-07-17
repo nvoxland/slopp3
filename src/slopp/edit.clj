@@ -576,8 +576,7 @@
       :else
       (if-let [[store' delta] (store/replace-node store ns-sym form-name node
                                                   :prompt prompt :agent agent)]
-        (if-let [merr (or (modules/module-refusal store' ns-sym (or (store/form-symbol node) form-name))
-                        (modules/tier-refusal store' ns-sym (or (store/form-symbol node) form-name)))]
+        (if-let [merr (modules/gate-refusal store' ns-sym (or (store/form-symbol node) form-name))]
           {:error merr}
           {:store    store'
            :delta    delta

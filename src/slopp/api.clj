@@ -1087,8 +1087,7 @@
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     (if-let [merr (when nm (or (edit.modules/module-refusal st' ns-sym nm)
-                                  (edit.modules/tier-refusal st' ns-sym nm)))]
+                     (if-let [merr (when nm (edit.modules/gate-refusal st' ns-sym nm))]
                        {:error merr}
                        {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
@@ -1191,8 +1190,7 @@
                                                       :prompt prompt :group gid
                                                       :agent agent)]
                    (let [nm' (store/form-symbol node)]
-                     (if-let [merr (or (edit.modules/module-refusal st' ns (or nm' name))
-                             (edit.modules/tier-refusal st' ns (or nm' name)))]
+                     (if-let [merr (edit.modules/gate-refusal st' ns (or nm' name))]
                        {:error merr}
                        {:store st' :delta d
                         :hot (if (and nm' (not= nm' name))
@@ -1214,8 +1212,7 @@
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
                                                      :agent agent :before before)]
-                   (if-let [merr (when nm (or (edit.modules/module-refusal st' ns nm)
-                                   (edit.modules/tier-refusal st' ns nm)))]
+                   (if-let [merr (when nm (edit.modules/gate-refusal st' ns nm))]
                      {:error merr}
                      {:store st' :delta d :hot [:load (:form-id d)]})
                    {:error (str "no namespace " ns " (ingest it first)")})))

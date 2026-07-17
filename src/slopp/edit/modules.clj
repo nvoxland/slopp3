@@ -198,3 +198,19 @@
                        (true? (:export (meta (second s))))))
           {:var (symbol (str ns-sym) (str (second s)))
            :missing-doc true})))))
+
+(def per-form-write-gates
+  "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
+  (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
+  (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
+  the stale fns, the composed-def trap — and so the reference graph sees them.
+  Register a new per-form write gate HERE, not at the N write sites."
+  [#'module-refusal #'tier-refusal])
+
+(defn ^:export gate-refusal
+  "Run every per-form write gate over the CANDIDATE store (the rule-registry
+  seed, D9): first refusal wins, nil when all are clean. Adding a per-form
+  write gate means adding it to `per-form-write-gates`, not hand-wiring the N
+  write sites (replace-form, add-form!, the two group steps)."
+  [candidate ns-sym form-name]
+  (some (fn [gate] (gate candidate ns-sym form-name)) per-form-write-gates))
