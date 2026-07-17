@@ -789,9 +789,12 @@ a file-oriented concept, and surfacing it would re-anchor the agent to the
 auto-reordered and `done!` running `fix-declares!` internally (declare
 hygiene for any cycle-declare that outlives its need), there is no reason for
 an agent to ever reach for it. `api/fix-declares!` stays as the internal
-cleanup. Friction found + logged: the edit tools' INLINE `:test` summary ran
-an `^:isolated` test in-image and reported a false green (the isolated run
-was red) — inline impacted-runs must not trust `^:isolated` results.
+cleanup. Friction found + logged: the edit tools' INLINE `:test` summary
+reported a green that SILENTLY omitted the `^:isolated` test just written
+(the isolated run was red). [Corrected 2026-07-16: I first recorded this as
+"ran it in-image and false-greened" — wrong. `slopp.rt/traced-run` has
+dropped `^:isolated` unconditionally since d980; they never ran in-image. The
+bug was the SILENT skip, not the execution. See `.context/verification.md` §7.]
 
 S1b ✅ **Update 2 — full declare ownership (2026-07-16, same day): cycles
 auto-declare, hand-written declares are banned.** Update 1 above left ONE case

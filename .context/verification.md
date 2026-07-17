@@ -104,18 +104,25 @@ The oracle must never return a false verdict. Everything here serves that.
    and a red run returns `:failing [{:test :detail}]` blocks parsed from the
    output (`parse-test-failures`) — targeted red/green loops without
    rebuilding by hand (Q2).
-   **The in-image runner ENFORCES this tier split (`traced-run!`, fixed
-   2026-07-16).** It was a documented-but-unenforced invariant: `traced-run!`
-   handed every deftest in scope to the in-image runner, so an `^:isolated`
-   test that entered the impacted set — most easily the just-added/edited test
-   var itself, or any test in a whole-ns fallback run — executed in-image and
-   FALSE-GREENED (its result is only meaningful in a fresh image). Now
-   `traced-run!` partitions the scope with `session/test-var-tiers` and runs
-   ONLY the in-image tier, attaching the deferred ones as `:isolated-pending`
-   on the summary (when every impacted test is isolated it skips the in-image
-   run entirely — no `[]`-means-all hazard). They run for real here at the
-   done-point / merge gate. So a per-write `:test` never claims green on an
-   isolated test's behalf.
+   **The skip is REPORTED, not silent (`traced-run!`, 2026-07-16).**
+   `slopp.rt/traced-run` has dropped `^:isolated` tests unconditionally since
+   d980 (`true (remove (comp :isolated meta))`) — they have never executed
+   in-image, and that half was never broken. What WAS broken: the skip was
+   SILENT. An `^:isolated` test entering the impacted set — most easily the
+   just-added/edited test var itself, or any test in a whole-ns fallback run —
+   was dropped, and the summary reported the OTHER tests' green with no
+   mention that the one you just wrote never ran. (Repro: adding an
+   `^:isolated` deftest returned `:test {:ran 2 :pass 5 :status :green}` — two
+   unrelated tests; the new one was dropped, and the isolated run was red.)
+   Now `traced-run!` partitions the scope with `session/test-var-tiers` and
+   attaches the deferred ones as `:isolated-pending` on the summary (compressed
+   to count+sample; suppressed at the done boundary, which runs them for real).
+   So a per-write `:test` never claims green while quietly dropping the test
+   the agent is working on.
+   NOTE the redundancy: `traced-run!`'s tier filter duplicates rt's own —
+   belt-and-braces, since only the REPORTING was missing. Worth collapsing if
+   this area is touched again (the reporting needs the partition; the filtering
+   does not).
 8. **The isolation gate (Q7, `edit/isolation-refusal`).** Every replace/add
    path refuses an UNTAGGED deftest that calls a spawning var
    (`edit/spawning-vars`, resolved through the ns's require aliases via

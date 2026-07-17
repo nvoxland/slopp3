@@ -443,6 +443,18 @@ isolated-test-run!, review-scan, commit-point!, build!) — each its own cluster
    dumped ~200 test names into every whole-project `done`. Compressed to
    count+sample and suppressed at the boundary. Mid-episode responses must
    report DIRECTION, not enumerate standing state — the recurring lesson.
+7b. **And I mis-diagnosed that same fix — corrected 2026-07-16.** I wrote that
+   `^:isolated` tests "executed in-image and false-greened". They did NOT:
+   `slopp.rt/traced-run` has dropped them unconditionally since **d980**
+   (`query_history` on the form proves it). The real bug was that the skip was
+   **SILENT** — the summary reported OTHER tests' green while quietly dropping
+   the test the agent had just written. The fix is right in effect (report
+   `:isolated-pending`), but the tier-filtering half duplicates rt and the
+   "`[]`-means-all hazard" I guarded against doesn't exist. Third wrong
+   diagnosis in one session (export dial, query_store ×2, this) — every one
+   fixed by reading the code or the history instead of theorising from an
+   error message. `query_history {ns name}` answers "was it always like this?"
+   in one call and I keep not asking it.
 8. **Test namespaces are FEATURE-named** (`slopp.history-test`,
    `slopp.episode-test`), not subject-named, so the module test-fold assigns
    them to phantom modules (`slopp.history` doesn't exist) and they can't see
