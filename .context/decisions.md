@@ -831,6 +831,29 @@ reports it by form-id; the edit tools only take a name). Phantoms are now
 (`.ideas/move-forms-mints-unmanaged-declares.md`) — it is the last declare
 writer outside the pipeline.
 
+S1b ✅ **Update 4 — the pipeline is now the ONLY declare writer (2026-07-16).**
+`refactor/move-plan` was minting its own UNMARKED `(declare …)` for the moved
+set, UNCONDITIONALLY on `(> (count moved) 1)` — at both emission sites
+(`:new-src` for a new target, `:append` for an existing one). That was the
+FACTORY for the phantom debt Update 3 cleaned: a move plants a declare naming
+what it moved; a later move lifts one of those vars out; the name becomes a
+phantom (declared here, defined nowhere, minting an unbound var). Both sites
+removed; `move-forms!` now calls `edit/resolve-cold-load` on the target — the
+same single call `fix-declares!` makes. `edit/declare-node` (which carries the
+`^{:auto-declare "<why>"}` marker) is now the ONLY declare builder in the
+store; the sweep for construction outside it is clean.
+Worth recording because it corrected a wrong assumption: a moved subsequence
+CAN carry a forward ref. Moved nodes keep source order and the source ns
+cold-loads, so I reasoned a subsequence must be ordered too — but a source may
+order caller-before-callee behind a declare that STAYS BEHIND (declares are
+anonymous, never part of the moved set). The planner's declare compensated for
+exactly that; the right answer is to REORDER, which resolve-cold-load does.
+Also fixed: the agent-facing `mcp.tools/cheat-sheet` still taught the banned
+rule ("define callees first; (declare x) for cycles"). Consequence noted:
+with the `fix_declares` tool removed, hygiene is LAZY (done sweeps only the
+episode's changed namespaces) — 2 legitimate legacy declares (slopp.render,
+slopp.repl, zero phantoms) persist until those nses are next touched.
+
 R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
 `slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp

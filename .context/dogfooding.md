@@ -400,10 +400,26 @@ isolated-test-run!, review-scan, commit-point!, build!) — each its own cluster
 4. **TWO ordering algorithms** (Kahn topo sort vs fix-declares!'s conservative
    mover). FIXED — one algorithm; fix-declares! delegates.
 5. **`move-forms!` mints its own UNMARKED declares** — the source of (1)/(3).
-   Self-heals at the next done now, but it's debt we create then clean. OPEN.
-6. **`query_store` applies the D3 dialect denylist to read-only ad-hoc
-   analysis** — `read-string` refused in a pure query over an immutable store
-   value. The gate is for STORED code; a one-shot analysis query isn't that.
+   FIXED same day: `refactor/move-plan` emitted one UNCONDITIONALLY for any
+   `(> (count moved) 1)`; both sites removed, `move-forms!` now calls
+   `resolve-cold-load` on the target. `edit/declare-node` is the only declare
+   builder left in the store. Correction to my own reasoning: a moved
+   subsequence CAN have a forward ref (the source may order caller-before-callee
+   behind a declare that stays behind — declares are anonymous, never moved),
+   which is what the planner was compensating for; the right answer is to
+   REORDER, not to mint.
+6. **`query_store` refuses `read-string` citing D3** — my first read ("the
+   dialect gate is over-applied to read-only analysis") was WRONG and is
+   corrected here: `read-string` really can execute code via `#=()`, so
+   refusing it in a read-only sandbox is CORRECT. The actual problems are
+   (a) the REASON is misreported — blamed on the dialect (whose rationale is
+   analyzability of STORED code) rather than sandbox safety, and it names no
+   alternative (`rewrite-clj.node/sexpr`), unlike slopp's other refusals; and
+   (b) the coupling is a LATENT bug — it only lands correctly because D3's
+   bans happen to equal the sandbox's needs, and we are actively planning to
+   GROW D3 with analyzability-motivated bans (`^:dynamic` defs, computed
+   dispatch) that would then silently weaken read-only analysis for no reason.
+   query_store needs its OWN sandbox-safety list.
 7. **My own regression, caught by dogfooding:** the new `:isolated-pending`
    dumped ~200 test names into every whole-project `done`. Compressed to
    count+sample and suppressed at the boundary. Mid-episode responses must
