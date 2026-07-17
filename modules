@@ -56,5 +56,5 @@ slopp.trace: slopp.api
 slopp.trivia: slopp.render slopp.store
 slopp.turn: slopp.db slopp.store
 slopp.unsafe: slopp.api slopp.edit slopp.store
-slopp.verification: slopp.api slopp.repl slopp.rt slopp.testmain
+slopp.verification: slopp.api slopp.repl slopp.rt slopp.store slopp.testmain
 slopp.warm-spare: slopp.api
