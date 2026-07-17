@@ -96,6 +96,9 @@
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                         (pr-str (:dep-pure store #{}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:module-tiers store {}))])
      (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                          ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                         (pr-str (:files store {}))])
@@ -156,6 +159,9 @@
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:dep-pure store #{}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:module-tiers store {}))])
         (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
                             ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                            (pr-str (:files store {}))])
@@ -317,7 +323,11 @@
                              :meta/v edn/read-string) {})
      :dep-pure   (or (some-> (jdbc/execute-one!
                               conn ["SELECT v FROM meta WHERE k = 'dep-pure'"])
-                             :meta/v edn/read-string) #{})}))
+                             :meta/v edn/read-string) #{})
+     ;; absent = {} (no tiers declared); tiers are opt-in tightening (D9)
+     :module-tiers (or (some-> (jdbc/execute-one!
+                                conn ["SELECT v FROM meta WHERE k = 'module-tiers'"])
+                               :meta/v edn/read-string) {})}))
 ^:reads (defn get-meta
   "Read a meta row's value (nil when absent) — the k/v side-table for
   config the journal doesn't track (e.g. `git-remote`, `git-base-sha`)."

@@ -134,3 +134,25 @@
       (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn c [] 3)\n\n(defn b [] 2)\n" (render s-c))))
     (testing "journal replay of the :add renders identically to the live append"
       (is (= (render s-b) (render (store/replay-delta base d-b)))))))
+
+(deftest module-tier-delta-model
+  (let [s0 (store/empty-store)]
+    (testing "a fresh store declares no module tiers"
+      (is (= {} (:module-tiers s0))))
+    (let [[s1 d1] (store/record-module-tier s0 "app.core" :pure
+                                            :agent "a" :prompt "keep the core pure")]
+      (testing "record-module-tier appends a :module-tier delta and folds the tier"
+        (is (= :module-tier (:op d1)))
+        (is (= "app.core" (:module d1)))
+        (is (= :pure (:tier d1)))
+        (is (= '*session* (:ns d1)))
+        (is (= "keep the core pure" (:prompt d1)))
+        (is (= {"app.core" :pure} (:module-tiers s1))))
+      (testing "replay reconstructs :module-tiers (foreign-sync stays cheap)"
+        (let [replayed (store/replay-delta s0 d1)]
+          (is (some? replayed))
+          (is (= {"app.core" :pure} (:module-tiers replayed)))))
+      (testing "re-declaring a module overwrites its tier (per-module register)"
+        (let [[s2 d2] (store/record-module-tier s1 "app.core" :effects)]
+          (is (= {"app.core" :effects} (:module-tiers s2)))
+          (is (= {"app.core" :effects} (:module-tiers (store/replay-delta s1 d2)))))))))

@@ -278,3 +278,77 @@
       (let [cand (store/ingest base 'x.z
                                "(ns x.z)\n\n(defn g \"G.\" [] 'a.b.impl/hidden)\n")]
         (is (nil? (modules/module-refusal cand 'x.z 'g)))))))
+
+(deftest module-tiers-merge-clean
+  (testing "tiers declared on either side land on the merged store"
+    (let [base       (store/empty-store)
+          [ours _]   (store/record-module-tier base "a.util" :effects)
+          [theirs _] (store/record-module-tier base "a.core" :pure)
+          {:keys [store]} (merge/merge-logs ours theirs :from "fork")]
+      (is (= :pure (get-in store [:module-tiers "a.core"])))
+      (is (= :effects (get-in store [:module-tiers "a.util"]))))))
+
+(deftest purity-tier-gate
+  (let [pure-src "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n"
+        eff-src  "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n"]
+    (testing "an undeclared module (:effects default) gates nothing"
+      (let [cand (store/ingest (store/empty-store) 'app.core eff-src)]
+        (is (nil? (modules/tier-refusal cand 'app.core 'tick!)))))
+    (testing ":pure refuses a form that reaches a mutation, with teaching"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core eff-src)
+                   "app.core" :pure)]
+        (is (re-find #":pure" (str (modules/tier-refusal t 'app.core 'tick!))))
+        (is (re-find #"functional-core"
+                     (str (modules/tier-refusal t 'app.core 'tick!))))))
+    (testing ":pure allows a pure form"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core pure-src)
+                   "app.core" :pure)]
+        (is (nil? (modules/tier-refusal t 'app.core 'add)))))
+    (testing ":effects is unrestricted"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core eff-src)
+                   "app.core" :effects)]
+        (is (nil? (modules/tier-refusal t 'app.core 'tick!)))))
+    (testing ":reads refuses a mutation-reaching form"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core eff-src)
+                   "app.core" :reads)]
+        (is (re-find #":reads" (str (modules/tier-refusal t 'app.core 'tick!))))))))
+
+(deftest ^:isolated module-purity-verb
+  (let [sess (api/open!)]
+    (try
+      (testing "declares a tier, folded onto the store"
+        (let [r (api/module-tier! sess "app.core" :pure :prompt "keep core pure")]
+          (is (= :pure (:tier r)))
+          (is (= "app.core" (:module r)))
+          (is (= :pure (get-in @sess [:store :module-tiers "app.core"])))))
+      (testing "rejects a bogus tier"
+        (is (:error (api/module-tier! sess "app.core" :bogus))))
+      (testing "rejects a non-module string"
+        (is (:error (api/module-tier! sess "app.core.impl" :pure))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated purity-gate-refuses-effectful-writes
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pcore "(ns pcore)\n\n(defn add \"A.\" [x y] (+ x y))\n")
+      (api/module-tier! sess "pcore" :pure :prompt "core stays pure")
+      (testing "an effectful ADD into a :pure module is hard-refused with teaching"
+        (let [r (api/add-form! sess 'pcore "(defn tick! \"T.\" [a] (swap! a inc))"
+                               :prompt "sneak in a mutation")]
+          (is (re-find #"functional-core" (str (:error r))))
+          (is (nil? (store/form-named (:store @sess) 'pcore 'tick!))
+              "the refused form never landed")))
+      (testing "REPLACING a pure form with an effectful body is refused"
+        (let [r (api/edit-replace! sess 'pcore 'add
+                                   "(defn add \"A.\" [x y] (swap! x + y))"
+                                   :prompt "turn add effectful")]
+          (is (re-find #"functional-core" (str (:error r))))))
+      (testing "a pure edit into the same module lands"
+        (let [r (api/add-form! sess 'pcore "(defn sub \"S.\" [x y] (- x y))"
+                               :prompt "pure helper")]
+          (is (nil? (:error r)))))
+      (finally (api/close! sess)))))

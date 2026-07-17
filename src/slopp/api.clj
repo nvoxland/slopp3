@@ -1087,7 +1087,8 @@
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     (if-let [merr (when nm (edit.modules/module-refusal st' ns-sym nm))]
+                     (if-let [merr (when nm (or (edit.modules/module-refusal st' ns-sym nm)
+                                  (edit.modules/tier-refusal st' ns-sym nm)))]
                        {:error merr}
                        {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
@@ -1190,7 +1191,8 @@
                                                       :prompt prompt :group gid
                                                       :agent agent)]
                    (let [nm' (store/form-symbol node)]
-                     (if-let [merr (edit.modules/module-refusal st' ns (or nm' name))]
+                     (if-let [merr (or (edit.modules/module-refusal st' ns (or nm' name))
+                             (edit.modules/tier-refusal st' ns (or nm' name)))]
                        {:error merr}
                        {:store st' :delta d
                         :hot (if (and nm' (not= nm' name))
@@ -1212,7 +1214,8 @@
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
                                                      :agent agent :before before)]
-                   (if-let [merr (when nm (edit.modules/module-refusal st' ns nm))]
+                   (if-let [merr (when nm (or (edit.modules/module-refusal st' ns nm)
+                                   (edit.modules/tier-refusal st' ns nm)))]
                      {:error merr}
                      {:store st' :delta d :hot [:load (:form-id d)]})
                    {:error (str "no namespace " ns " (ingest it first)")})))
@@ -3302,6 +3305,35 @@
           {:error (str "nothing named " on
                        " — `on` is a namespace, var (ns/name), or :keyword;"
                        " modules true reads the module manifest")})))))
+(defn module-tier!
+  "Declare a module's purity TIER — the functional-core gate's dial (D9):
+  :pure (no effect may be reached, incl. an opaque-dep read), :reads (reads OK,
+  no mutation), :effects (unrestricted — the periphery). One :module-tier delta
+  carrying its why (:prompt); last write per module wins. Declaring :effects
+  (or never declaring) leaves a module ungated. Read tiers via query_depends
+  {modules true}."
+  [session module tier & {:keys [prompt agent]}]
+  (let [module (str module)
+        tier   (keyword tier)
+        modish (re-matches #"[^.\s]+(\.[^.\s]+)?" module)]
+    (cond
+      (not modish)
+      {:error (str "modules are the first TWO segments of a namespace"
+                   " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
+                   (pr-str module))}
+
+      (not (#{:pure :reads :effects} tier))
+      {:error (str "tier must be :pure, :reads, or :effects — got " (pr-str tier))}
+
+      :else
+      (let [st' (session/commit-appended!
+                 session
+                 #(first (store/record-module-tier % module tier
+                                                   :prompt prompt :agent agent))
+                 [])]
+        {:module module :tier tier
+         :tiers (:module-tiers st')}))))
+
 (defn module-dep!
   "Declare or retract ONE module dependency edge — the semantic verb behind
   the module manifest (there is no file to edit): each call is one

@@ -123,6 +123,33 @@
 
                      :else nil))))
          seq)))
+(defn ^:export tier-refusal
+  "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
+  form whose effect-reachability exceeds its module's declared purity tier.
+  `:pure` rejects ANY effect (incl. an opaque-dep read); `:reads` rejects a
+  reach to a MUTATION (an in-process/external write or a `!`-named callee) but
+  allows reads; `:effects` — or an undeclared module — is unrestricted. Built on
+  index/effectful-vars over the candidate ns's analysis, so it inherits D6's
+  single-ns, bang-name-propagating soundness (a cross-ns effect is seen only
+  when the callee is `!`-named). Returns a teaching string, or nil when clean."
+  [candidate ns-sym form-name]
+  (let [tier (get (:module-tiers candidate) (module-of ns-sym) :effects)]
+    (when (not= tier :effects)
+      (let [analysis (index/analyze (render/render-ns candidate ns-sym))
+            dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
+            eff      (if (= tier :pure)
+                       (index/effectful-vars analysis dep-nses (:dep-pure candidate))
+                       (index/effectful-vars analysis nil nil))
+            vnode    (symbol (str ns-sym) (str form-name))]
+        (when (contains? eff vnode)
+          (str ns-sym "/" form-name " reaches "
+               (if (= tier :pure) "an effect" "a mutation")
+               " but module " (module-of ns-sym) " is declared :" (name tier)
+               " (functional-core gate) — move the effect to a periphery"
+               " namespace, or loosen the tier with module_purity {module \""
+               (module-of ns-sym) "\" tier :"
+               (if (= tier :pure) "reads" "effects") "} (say why)"))))))
+
 (defn ^:export module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):
   applies the module rules to `form-name`'s outbound references from THE

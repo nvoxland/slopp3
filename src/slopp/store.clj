@@ -15,15 +15,20 @@
             [rewrite-clj.node :as n]
             [slopp.semver :as semver]))
 
-(defn empty-store []
+(defn empty-store
+  "A fresh store value — the empty starting point every session builds on."
+  []
   ;; :dep-ns   lib → #{namespaces the dep provides} (M4 surface, for M3's
   ;;           external-call effect boundary)
   ;; :dep-pure #{qualified syms} the user has asserted pure (narrows M3)
   ;; :modules  module → #{declared dep modules} — fold of :module-edge
   ;;           deltas; {} from birth (enforcement always on), nil only in
   ;;           stores loaded from a pre-module db (open! adopts them)
+  ;; :module-tiers module → purity tier (:pure/:reads/:effects) — fold of
+  ;;           :module-tier deltas; a module absent from the map is :effects
+  ;;           (unrestricted), so tiers are opt-in tightening (D9)
   {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}
-   :modules {}})
+   :modules {} :module-tiers {}})
 
 (defn now-ms
   "Epoch ms — the store's clock (public for the deep store packages)."
@@ -633,6 +638,25 @@
 
                   :else cur))
               nil upto))))
+(defn record-module-tier
+  "Declare a module's purity TIER (:pure/:reads/:effects) — the per-module
+  register behind the functional-core gate (D9): one :module-tier delta
+  carrying its why (:prompt); last write per module wins. A module absent
+  from :module-tiers (or declared :effects) is unrestricted. Returns
+  [store' delta]."
+  [store module tier & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        module (str module)
+        delta  (cond-> {:id did :parent (:id (last (:deltas store)))
+                        :op :module-tier :ns '*session* :at (now-ms)
+                        :module module :tier tier}
+                 prompt (assoc :prompt prompt)
+                 agent  (assoc :agent agent))]
+    [(-> store'
+         (assoc-in [:module-tiers module] tier)
+         (update :deltas conj delta))
+     delta]))
+
 (defn record-module-edge
   "Declare (or retract) ONE module dependency edge — the CRDT grain of the
   module manifest: concurrent edge declarations touch disjoint state and
@@ -811,6 +835,8 @@
                                (update :dep-ns dissoc (:lib d))))
       :deps-pure   (with-d (update store :dep-pure
                                    (fnil (if (:pure d) conj disj) #{}) (:sym d)))
+
+      :module-tier (with-d (assoc-in store [:module-tiers (:module d)] (:tier d)))
       :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
       :file-remove (with-d (update store :files dissoc (:path d)))
 

@@ -615,3 +615,30 @@
         (is (re-find #"noSuchStaticThing" r) "a match-ready snippet rides")
         (is (not (re-find #"\.clj:\d" r)) "no file:line in the wire text"))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated module-purity-rides-the-wire
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create"
+            {:ns "wcore" :source "(ns wcore)\n(defn add \"A.\" [x y] (+ x y))\n"})
+      (testing "module_purity declares a tier on the wire"
+        (let [r (call sess "module_purity" {:module "wcore" :tier "pure"
+                                            :prompt "core stays pure"})]
+          (is (re-find #":pure" r) r)
+          (is (not (re-find #":error" r)) r)))
+      (testing "an effectful write into the pure module is refused on the wire"
+        (let [r (call sess "edit_add_form"
+                      {:ns "wcore" :source "(defn tick! \"T.\" [a] (swap! a inc))"
+                       :prompt "mutation"})]
+          (is (re-find #"functional-core" r) r)))
+      (finally (api/close! sess)))))
+
+(deftest boundary-leak-tolerates-non-keyword-keyed-maps
+  ;; a sorted-map with STRING keys: (contains? v :row)/(get v :row) compares the
+  ;; probe keyword against the string keys via the tree comparator and throws
+  ;; "String cannot be cast to Keyword" — boundary-leak must not (D9 found it in
+  ;; module_purity's :tiers result).
+  (is (nil? (#'mcp/boundary-leak {:tiers (into (sorted-map) {"a.b" :pure})})))
+  ;; and it still catches a genuine coordinate leak
+  (is (re-find #"row/col" (str (#'mcp/boundary-leak {:row 5 :col 2}))))
+  (is (re-find #"\.clj" (str (#'mcp/boundary-leak {:at "foo.clj:42"})))))
