@@ -450,7 +450,9 @@ WRITE:   work like a REPL: small individual writes, each verifies and returns
          edit_extract {ns from form name} · edit_move {ns name before}
          ns_create {ns requires?|source?}  <- NEW namespace: scaffold+grow, or whole source at once
          ns_add_require / ns_remove_require  <- never hand-edit the ns form
-RULES:   every write must compile (define callees first; (declare x) for cycles)
+RULES:   every write must compile -- but form ORDER is not your job: write
+         forms in any order; the pipeline moves definitions above their
+         callers and mints any (declare) itself. Yours are refused.
          red-first TDD = write the failing test FIRST (missing fns land as
          :red-first stubs and fail honestly), then implement
 READ RESULTS: {:ok true ...} terse green · :failures = why (expected/actual)

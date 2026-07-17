@@ -1987,6 +1987,19 @@
                                                             :group gid :agent agent))
                                   s))
                             st3 (:removals plan))
+                ;; the PIPELINE owns ordering. The planner no longer mints a
+                ;; declare for the moved set: a source ns may have ordered
+                ;; caller-before-callee behind a declare that STAYS BEHIND, so
+                ;; the target can land with a forward ref — resolve-cold-load
+                ;; reorders it (or inserts the pipeline's own MARKED declare
+                ;; for a genuine cycle). Same one call fix-declares! makes.
+                st4 (if-let [rz (edit/resolve-cold-load
+                                 st4 to-ns
+                                 :prompt (or prompt (str "move-forms: " from-ns
+                                                         " → " to-ns))
+                                 :agent agent)]
+                      (:store rz)
+                      st4)
                 touched (vec (distinct
                               (into [from-ns to-ns]
                                     (concat (map :ns (vals (:rewrites plan)))

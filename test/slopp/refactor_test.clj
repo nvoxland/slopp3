@@ -80,7 +80,8 @@
             p   (refactor/move-plan st2 'mv.core '[util mid] 'mv.extra {})]
         (is (nil? (:error p)) (pr-str (:error p)))
         (is (not (:new-ns? p)))
-        (is (= 3 (count (:append p))) "a declare + the publicized nodes")
+        (is (= 2 (count (:append p)))
+          "just the publicized nodes — the planner mints no declare")
         (is (= ["[clojure.string :as str]"] (:to-require-adds p))
             "the existing target gains only what the moved forms need")))
     (testing "a name collision in the target refuses"
@@ -117,10 +118,19 @@
       (is (re-find #"\(ground x\)" moved-src)
           (str "qualified ref must go bare: " moved-src))
       (is (not (re-find #"base/ground" moved-src))))))
-(deftest plan-declares-moved-names-against-forward-refs
-  ;; the source ns may order callers before definitions (declare-then-use);
-  ;; the moved set keeps its relative order, so the new home needs its own
-  ;; (declare ...) — over-declaring is harmless, missing one won't compile.
+(deftest plan-mints-no-declare-ordering-is-the-pipelines
+  ;; A source ns may order callers before definitions behind a declare that
+  ;; STAYS BEHIND (it's anonymous, never in the moved set), so the moved set
+  ;; CAN land with a forward ref. The planner used to mint its own
+  ;; (declare ...) for that, reasoning "over-declaring is harmless". It is
+  ;; NOT harmless: a later move that lifts one of those names out leaves a
+  ;; PHANTOM — declared here, defined nowhere, minting an unbound var so a
+  ;; typo'd unqualified call resolves silently. That is exactly how
+  ;; slopp.api's own 17-name declare rotted (7 phantoms).
+  ;; Ordering belongs to the pipeline: move-forms! calls resolve-cold-load on
+  ;; the target, which REORDERS (no declare at all) or inserts its own MARKED
+  ;; declare for a genuine cycle. See surgeon-test/
+  ;; move-forms-leaves-ordering-to-the-pipeline for the end-to-end proof.
   (let [st (-> (store/empty-store)
                (store/ingest 'fw.core
                              (str "(ns fw.core)\n\n(declare helper)\n\n"
@@ -129,9 +139,10 @@
         p  (refactor/move-plan st 'fw.core '[run helper] 'fw.moved {})]
     (is (nil? (:error p)) (pr-str (:error p)))
     (let [src (:new-src p)]
-      (is (re-find #"\(declare helper run\)" src) src)
-      (is (< (.indexOf ^String src "(declare") (.indexOf ^String src "(defn run"))
-          "the declare precedes the first definition"))))
+      (is (not (re-find #"\(declare" src))
+          (str "the planner must mint NO declare:\n" src))
+      (is (re-find #"defn run" src) src)
+      (is (re-find #"defn helper" src) src))))
 (deftest plan-publicizes-meta-wrapped-privates
   ;; effect-tagged forms (^:reads / ^:unsafe on the WHOLE defn) wrap the
   ;; list in a :meta node — publicize/export-mark must transform the defn

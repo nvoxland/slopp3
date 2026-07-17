@@ -208,3 +208,39 @@
           (is (not (re-find #"\(declare" src))
               "helper was reorderable, so the whole declare goes")))
       (finally (api/close! sess)))))
+(deftest ^:isolated move-forms-leaves-ordering-to-the-pipeline
+  ;; the planner used to mint an UNMARKED (declare …) for ANY multi-form move,
+  ;; whether or not a forward ref existed. That is the source of phantom-declare
+  ;; debt: a later move lifts one of those names out and it becomes a phantom
+  ;; (declared here, defined nowhere, minting an unbound var). Ordering is the
+  ;; pipeline's job — and moved nodes keep source order, so a valid subsequence
+  ;; of a loading ns cannot even have an internal forward ref.
+  (let [sess (api/open!)]
+    (try
+      (testing "an ordinary multi-form move needs NO declare at all"
+        (api/ingest! sess 'mv.core
+                     (str "(ns mv.core)\n"
+                          "(defn a [] 1)\n"
+                          "(defn b [] 2)\n"
+                          "(defn keep-me [] (a))\n"))
+        (let [r (api/move-forms! sess 'mv.core ["a" "b"] 'mv.target
+                                 :prompt "m" :agent "t")]
+          (is (nil? (:error r)) (pr-str r))
+          (let [src (api/query-source sess 'mv.target)]
+            (is (not (re-find #"\(declare" src))
+                (str "a and b never reference each other:\n" src)))))
+
+      (testing "a moved CYCLE gets the pipeline's own MARKED declare"
+        (api/ingest! sess 'mv.rec
+                     (str "(ns mv.rec)\n"
+                          "(declare pong)\n"
+                          "(defn ping [n] (pong n))\n"
+                          "(defn pong [n] (ping n))\n"))
+        (let [r (api/move-forms! sess 'mv.rec ["ping" "pong"] 'mv.rectarget
+                                 :prompt "m" :agent "t")]
+          (is (nil? (:error r)) (pr-str r))
+          (let [src (api/query-source sess 'mv.rectarget)]
+            (is (re-find #"\(declare" src) "a real cycle still needs one")
+            (is (re-find #":auto-declare" src)
+                (str "and it must be the PIPELINE's, saying why:\n" src)))))
+      (finally (api/close! sess)))))

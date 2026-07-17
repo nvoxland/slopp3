@@ -977,20 +977,12 @@
                         ")\n\n"
                         ;; the source ns may order callers before definitions
                         ;; (declare-then-use) — the moved set carries its own
-                        (when (> (count moved) 1)
-                          (str "(declare " (clojure.string/join " " (sort moved))
-                               ")\n\n"))
+                        
                         (clojure.string/join "\n\n" (map n/string moved-nodes))
                         "\n"))
 
             (not new-ns?)
-            (assoc :append (if (> (count moved) 1)
-                             (into [(p/parse-string
-                                     (str "(declare "
-                                          (clojure.string/join " " (sort moved))
-                                          ")"))]
-                                   moved-nodes)
-                             moved-nodes)
+            (assoc :append moved-nodes
                    :to-require-adds
                    (let [have (set (map :lib (require-specs store to-ns)))]
                      (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))
