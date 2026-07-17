@@ -8,8 +8,8 @@
   forms it touched, replacing @examples' co-location with runtime observation.
 
   Known sampling limits (accepted, per the design): value-captured references
-  (e.g. `(def g (comp f inc))`) bypass the var and aren't observed; multimethods
-  and macros are not instrumented."
+  (e.g. `(def g (comp f inc))`) bypass the var and aren't observed; macros are
+  not instrumented. Multimethods ARE observed — at their method table (#129)."
   (:require [clojure.test :as t]))
 
 (defn- instrumentable? [v]
