@@ -954,6 +954,24 @@
   [session ns-sym nm new-source & {:keys [prompt agent]}]
   (let [t0 (System/nanoTime)
         pf       (edit/parse-form new-source)
+        ;; a replaced defmethod leaves its OLD dispatch registered unless the
+        ;; replacement re-registers the same [multi dispatch] (#131): hot-load
+        ;; evals the new form, but nothing removes the old method, so the image
+        ;; answers BOTH dispatches while the store says one — green-when-red.
+        old-s    (when-let [e (store/form-named (:store @session) ns-sym nm)]
+                   (try (n/sexpr (:node e)) (catch Exception _ nil)))
+        new-s    (when-not (:error pf)
+                   (try (n/sexpr (:node pf)) (catch Exception _ nil)))
+        unregister
+        (when (and (seq? old-s) (= 'defmethod (first old-s)) (> (count old-s) 2)
+                   (not (and (seq? new-s) (= 'defmethod (first new-s))
+                             (= (second old-s) (second new-s))
+                             (= (nth old-s 2) (nth new-s 2)))))
+          (format "(when-let [v (ns-resolve '%s '%s)]
+                     (when (instance? clojure.lang.MultiFn @v)
+                       (remove-method @v
+                         (binding [*ns* (find-ns '%s)] (eval '%s)))))"
+                  ns-sym (second old-s) ns-sym (pr-str (nth old-s 2))))
         new-name (when-not (:error pf) (store/form-symbol (:node pf)))
         stranded (when (and new-name (not= new-name (symbol (str nm)))
                             (store/form-named (:store @session) ns-sym nm))
@@ -994,6 +1012,8 @@
                 _        (when (and new-nm (not= new-nm nm))
                            (repl/eval! (:image @session)
                                        (format "(ns-unmap '%s '%s)" ns-sym nm)))
+                _        (when unregister
+                           (repl/eval! (:image @session) unregister))
                 summary  (session/run-verification! session ns-sym affected
                                             :edited edited)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))]
@@ -1090,9 +1110,27 @@
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
   image, verification (tests that exercised it will go red — the honest signal
-  if it was still referenced), provenance."
+  if it was still referenced), provenance.
+
+  A defmethod needs more than ns-unmap (#131): its name is its form id and its
+  registration lives in the MULTI's method table, so ns-unmap is a no-op and
+  the deleted method KEPT ANSWERING — tests stayed green after the delete, and
+  green-when-red is the direction the staleness diagnostics never cross-check.
+  The dispatch value is evaled in the form's own namespace, exactly where
+  defmethod evaled it; if that fails the eval is skipped and the stale method
+  survives until restart — conservative, and only reachable from a dispatch
+  expression that itself no longer evaluates."
   [session ns-sym nm & {:keys [prompt agent]}]
-  (let [r (session/rebased-write!
+  (let [victim  (store/form-named (:store @session) ns-sym nm)
+        vsexpr  (when victim (try (n/sexpr (:node victim)) (catch Exception _ nil)))
+        unregister
+        (when (and (seq? vsexpr) (= 'defmethod (first vsexpr)) (> (count vsexpr) 2))
+          (format "(when-let [v (ns-resolve '%s '%s)]
+                     (when (instance? clojure.lang.MultiFn @v)
+                       (remove-method @v
+                         (binding [*ns* (find-ns '%s)] (eval '%s)))))"
+                  ns-sym (second vsexpr) ns-sym (pr-str (nth vsexpr 2))))
+        r (session/rebased-write!
            session
            (fn [base]
              (if-let [[st' d] (store/remove-form base ns-sym nm
@@ -1107,6 +1145,7 @@
       r
       (let [affected (session/affected-tests session ns-sym nm)]
             (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
+            (when unregister (repl/eval! (:image @session) unregister))
             (let [summary (session/run-verification! session ns-sym affected
                                              :edited #{(symbol (str ns-sym) (str nm))})]
               (session/commit-appended! session

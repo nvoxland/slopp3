@@ -114,8 +114,14 @@
                                'dm.t/multi-t #{'dm.core/area}
                                'dm.t/meth-t  #{'dm.core/area
                                                (symbol "dm.core" (str meth-id))}}})]
-    (testing "a defprotocol form is found by evidence on ANY of its method vars"
-      (is (= '[p.t/proto-t] (session/affected-tests sess 'p.core 'P))))
+    (testing "a defprotocol form NEVER narrows — found red (2026-07-17): its
+              method vars ARE wrapped, but a protocol call site's inline cache
+              hits the interface DIRECTLY for inline impls (the common case),
+              bypassing the var. Evidence through the var exists only for
+              extend-based dispatch, so it is partial, and partial must not
+              select. The synthetic p.core/m evidence here is exactly the kind
+              a real run might NOT produce."
+      (is (nil? (session/affected-tests sess 'p.core 'P))))
     (testing "a defrecord form NEVER narrows — its method bodies are invisible
               to the tracer, so ->R evidence alone would under-select"
       (is (nil? (session/affected-tests sess 'p.core 'R))))

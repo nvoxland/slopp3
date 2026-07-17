@@ -129,14 +129,18 @@
 (defn remove-form
   "Remove the form named `nm` from `ns-sym` (plus its immediately following
   separator, so no doubled blank line remains); ONE `:delete` delta. Returns
-  [store' delta], or nil if no such form."
+  [store' delta], or nil if no such form.
+
+  `nm` may be a name the form defines OR its form id — names win, matching
+  `form-named` (#131): an id is a registration's only handle, and the delete
+  path addresses defmethods that way."
   [store ns-sym nm & {:keys [prompt group agent]}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
-        ;; a STRING nm removes by form id (anonymous forms, e.g. declares)
-        hit?  (if (string? nm)
-                (fn [e] (= nm (:id e)))
-                (fn [e] (and (= :form (:kind e)) (= nm (:name e)))))
-        idx   (first (keep-indexed (fn [i e] (when (hit? e) i)) elems))]
+        by-name (fn [e] (and (= :form (:kind e)) (= nm (:name e))))
+        by-id   (fn [e] (and (= :form (:kind e)) (= (str nm) (:id e))))
+        idx   (or (when-not (string? nm)
+                    (first (keep-indexed (fn [i e] (when (by-name e) i)) elems)))
+                  (first (keep-indexed (fn [i e] (when (by-id e) i)) elems)))]
     (when idx
       (let [fid          (:id (nth elems idx))
             drop-next?   (and (< (inc idx) (count elems))
@@ -942,12 +946,19 @@
 (defn replace-node
   "Replace the CST node of the form named `nm` in `ns-sym`, keeping its stable id
   (C2/O1 whole-form replace); append a `:replace` delta carrying `prompt`.
-  Returns [store' delta], or nil if no such form."
+  Returns [store' delta], or nil if no such form.
+
+  `nm` may be a name the form defines OR its form id — names win, matching
+  `form-named` (#131): an id is a registration's only handle, and editing a
+  defmethod addresses it that way."
   [store ns-sym nm node & {:keys [prompt op group agent] :or {op :replace}}]
   (let [elems (get-in store [:namespaces ns-sym :elements])
-        idx   (first (keep-indexed
-                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
-                      elems))]
+        idx   (or (first (keep-indexed
+                          (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
+                          elems))
+                  (first (keep-indexed
+                          (fn [i e] (when (and (= :form (:kind e)) (= (str nm) (:id e))) i))
+                          elems)))]
     (when idx
       (let [elem     (nth elems idx)
             new-elem (assoc elem :node node :name (form-symbol node)
@@ -1015,14 +1026,22 @@
   "Does this form carry executable bodies OUTSIDE any var the tracer can wrap?
   defmethod bodies live in a method table (recorded at multi grain by the
   external tier); defrecord/deftype inline bodies compile to class methods
-  (never recorded); extend-* register into protocol tables. Runtime evidence
-  for such a form is structurally PARTIAL, and narrowing on partial evidence
-  under-selects — so `affected-tests` treats these as if the trace were silent."
+  (never recorded); extend-* register into protocol tables.
+
+  defprotocol is here for the INVERSE reason (found red, 2026-07-17): its
+  method vars ARE wrapped, but a protocol call site compiles an inline cache
+  that hits the interface DIRECTLY when the target implements it inline — the
+  common case — so the var never fires and the evidence under-counts. Evidence
+  through the var exists only for extend-based dispatch.
+
+  Runtime evidence for all of these is structurally PARTIAL, and narrowing on
+  partial evidence under-selects — so `affected-tests` treats them as if the
+  trace were silent."
   [e]
   (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
     (boolean (and (seq? s)
                   ('#{defmethod defrecord deftype extend-type extend-protocol
-                      extend}
+                      extend defprotocol}
                    (first s))))))
 (defn form-trace-keys
   "Every qualified symbol under which runtime evidence for this form can

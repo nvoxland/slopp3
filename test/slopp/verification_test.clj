@@ -381,3 +381,40 @@
           (is (contains? ci-trace (fkey ci-form)) (pr-str ci-trace))
           (is (not (contains? ci-trace (fkey sq-form))))))
       (finally (api/close! sess)))))
+(deftest ^:isolated protocols-and-records-track-through-their-vars
+  ;; The other half of the polymorphism wave — and it PINS A LIMIT found red
+  ;; (2026-07-17): protocol method vars ARE wrapped, but a protocol call site
+  ;; compiles an inline cache that hits the interface DIRECTLY when the target
+  ;; implements it inline (the common case). g/perim on an inline-implementing
+  ;; record NEVER fires the var, so the defprotocol form gets NO runtime
+  ;; evidence — an earlier version of this test asserted it would, and the
+  ;; oracle said no. Constructors are plain fns, so ->Sq evidence flows to Sq's
+  ;; form (D8 names), and everything method-carrying refuses to narrow.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'geo.core
+                   (str "(ns geo.core)\n\n"
+                        "(defprotocol P \"Perimeter.\" (perim [x] \"P.\"))\n\n"
+                        "(defrecord Sq [side]\n  P\n  (perim [_] (* 4 side)))\n"))
+      (api/ingest! sess 'geo.core-test
+                   (str "(ns geo.core-test (:require [geo.core :as g]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest perim-t (is (= 8 (g/perim (g/->Sq 2)))))\n"))
+      (is (= 1 (:pass (api/test-run! sess 'geo.core-test))))
+      (testing "the defrecord form owns its constructors' evidence (D8 names)"
+        (let [b (api/query-brief sess 'geo.core 'Sq)]
+          (is (= '[geo.core-test/perim-t] (:covered-by b)) (pr-str b))))
+      (testing "the defprotocol form has NO evidence — the inline cache bypassed
+                its wrapped var. If this ever flips to covered, the tracer
+                started seeing direct interface dispatch: update the narrowing
+                rule in store/method-carrying? before trusting it"
+        (let [b (api/query-brief sess 'geo.core 'P)]
+          (is (nil? (:covered-by b)) (pr-str (:covered-by b)))))
+      (testing "editing the record falls back to run-everything and says so —
+                ->Sq evidence alone would under-select"
+        (let [r (api/edit-replace! sess 'geo.core 'Sq
+                                   "(defrecord Sq [side]\n  P\n  (perim [_] (+ side side side side)))"
+                                   :prompt "same perimeter, different arithmetic")]
+          (is (= :all (:affected r)) (pr-str (select-keys r [:affected])))
+          (is (:untested r) "the per-write path admits it could not cover this")))
+      (finally (api/close! sess)))))

@@ -1,6 +1,6 @@
 (ns slopp.api.modules-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store]))
+            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs]))
 
 (deftest ^:isolated the-module-surface-is-browsable
   (let [sess (api/open!)]
@@ -118,3 +118,23 @@
                                   "(defn dead \"D.\" [x] x)\n")))]
     (is (= '[cs.core/dead cs.core/loops]
            (:unused (modules/unused-report st '[cs.core]))))))
+(deftest method-bodies-feed-the-reference-graph
+  ;; kondo RESOLVES the usages inside defmethod/defrecord/extend-* bodies —
+  ;; aliases and all — but reports them with nil :from-var (the body is not a
+  ;; var), and every edge builder filtered on :from-var. So a defn called only
+  ;; from a method body read as unused-public (an error-grade gate at done!),
+  ;; its blast radius was empty, and the module gates never saw the call.
+  ;; The fix attributes those usages to the OWNING FORM via its rendered span.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'g.core
+                             (str "(ns g.core)\n\n"
+                                  "(defn helper \"H.\" [x] (inc x))\n\n"
+                                  "(defmulti area :shape)\n\n"
+                                  "(defmethod area :square [s] (helper (:side s)))\n")))]
+    (testing "a defn called ONLY from a defmethod body is NOT unused"
+      (is (= [] (:unused (modules/unused-report st '[g.core])))
+          (pr-str (modules/unused-report st '[g.core]))))
+    (testing "the edge is attributed to the method's FORM (it has no var)"
+      (let [rs (refs/refs-to st 'g.core/helper)
+            m  (first (filter #(nil? (:name %)) (store/forms st 'g.core)))]
+        (is (= [(:id m)] (mapv :from-form rs)) (pr-str rs))))))

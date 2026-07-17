@@ -1,6 +1,6 @@
 (ns slopp.addelete-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.store :as store]))
 
 (def target
   (str "(ns adm\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -48,4 +48,54 @@
           (is (= [nil] (api/query-eval sess "(resolve 'adm/triple)"))))
         (testing "remaining tests still verify green"
           (is (= 1 (:pass (:test r))))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated deleting-a-defmethod-unregisters-it
+  ;; ns-unmap was the delete path's only image effect — a no-op for a
+  ;; defmethod, whose name is its form id and whose registration lives in the
+  ;; MULTI's method table. So the deleted method KEPT ANSWERING in the image:
+  ;; tests exercising it stayed green after the delete, and green-when-red is
+  ;; the one direction the D5.1 staleness diagnostics never cross-check
+  ;; (suspicious-red? fires on reds). The delete must remove-method.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dmz
+                   (str "(ns dmz)\n\n(defmulti area :shape)\n\n"
+                        "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
+                        "(defmethod area :default [_] :unknown)\n"))
+      (let [meth-id (->> (store/forms (:store @sess) 'dmz)
+                         (filter #(nil? (:name %)))
+                         first :id)
+            _ (is (= [4] (api/query-eval sess "(dmz/area {:shape :square :side 2})")))
+            r (api/delete-form! sess 'dmz (symbol meth-id) :prompt "drop :square")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the method is gone from the SOURCE"
+          (is (not (re-find #":square" (api/query-source sess 'dmz)))))
+        (testing "…and gone from the IMAGE — dispatch falls to :default"
+          (is (= [:unknown]
+                 (api/query-eval sess "(dmz/area {:shape :square :side 2})")))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated replacing-a-defmethods-dispatch-unregisters-the-old
+  ;; Hot-load of the replacement evals the NEW defmethod — registering :sq —
+  ;; but nothing removed :square, so the image answered BOTH dispatches while
+  ;; the store said only :sq exists. Tests exercising the old dispatch stayed
+  ;; green: the same green-when-red direction as the delete case, reached
+  ;; through replace. The old dispatch must be unregistered when it changes.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dmr
+                   (str "(ns dmr)\n\n(defmulti area :shape)\n\n"
+                        "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
+                        "(defmethod area :default [_] :unknown)\n"))
+      (let [meth-id (->> (store/forms (:store @sess) 'dmr)
+                         (filter #(nil? (:name %)))
+                         first :id)
+            r (api/edit-replace! sess 'dmr (symbol meth-id)
+                                 "(defmethod area :sq [s] (* (:side s) (:side s)))"
+                                 :prompt "rename the dispatch")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the new dispatch answers"
+          (is (= [4] (api/query-eval sess "(dmr/area {:shape :sq :side 2})"))))
+        (testing "the OLD dispatch no longer does — store and image agree"
+          (is (= [:unknown]
+                 (api/query-eval sess "(dmr/area {:shape :square :side 2})")))))
       (finally (api/close! sess)))))

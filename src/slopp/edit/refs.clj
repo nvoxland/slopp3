@@ -28,13 +28,22 @@
 (defn- static-refs
   "kondo-resolved var usages PLUS syntactically-qualified references into
   store namespaces kondo can't resolve (un-required — the gate-hole class),
-  normalized to canonical records. Self-references excluded."
+  normalized to canonical records. Self-references excluded.
+
+  Usages kondo resolves but cannot attribute to a var — defmethod bodies,
+  defrecord/deftype method bodies, extend-* bodies, top-level calls — arrive
+  with nil :from-var and were silently DROPPED (#129): a defn called only from
+  a defmethod body read as unused-public, and blast radius/module gates never
+  saw the call. They are attributed to the OWNING FORM by its rendered span
+  (`render/owner-form` over the same render kondo analyzed), with :from-var
+  the owner's primary name — nil for a registration, which is the truth."
   [st known nses]
   (mapcat
    (fn [nsx]
      (let [fid-of (into {} (keep (fn [e] (when (:name e) [(:name e) (:id e)])))
                         (store/forms st nsx))
-           kondo  (for [u (:var-usages (index/analyze (render/render-ns st nsx)))
+           usages (:var-usages (index/analyze (render/render-ns st nsx)))
+           kondo  (for [u usages
                         :when (and (:name u) (:from-var u)
                                    (contains? known (:to u))
                                    (not (and (= nsx (:to u))
@@ -47,7 +56,25 @@
                               :to-form   (:id (store/form-named st (:to u) (:name u)))
                               :via       :static}
                       (:arity u) (assoc :arity (:arity u))))
-           seen   (set (map (juxt :from-var :to-ns :to-name) kondo))
+           bodied (for [u usages
+                        :when (and (:name u) (nil? (:from-var u))
+                                   (contains? known (:to u))
+                                   (:row u))
+                        :let [owner (render/owner-form st nsx (:row u) (:col u))]
+                        :when (and owner
+                                   (not (and (= nsx (:to u))
+                                             (some? (:name owner))
+                                             (= (:name owner) (:name u)))))]
+                    (cond-> {:from-form (:id owner)
+                             :from-ns   nsx
+                             :from-var  (:name owner)
+                             :to-ns     (:to u)
+                             :to-name   (:name u)
+                             :to-form   (:id (store/form-named st (:to u) (:name u)))
+                             :via       :static}
+                      (:arity u) (assoc :arity (:arity u))))
+           seen   (set (map (juxt :from-var :to-ns :to-name)
+                            (concat kondo bodied)))
            unreq  (for [e (store/forms st nsx)
                         :when (:name e)
                         s (distinct (quote-pruned-qualified-syms
@@ -64,7 +91,7 @@
                      :to-name   (symbol (name s))
                      :to-form   (:id (store/form-named st to (symbol (name s))))
                      :via       :static})]
-       (concat kondo unreq)))
+       (concat kondo bodied unreq)))
    (sort nses)))
 (defn- carrier-refs
   "Quoted symbols in DESIGNATED CARRIER positions (query-call / invoke! /

@@ -123,3 +123,27 @@
                                  :prompt "declared forward use" :agent "t")]
         (is (nil? (:error r)) (pr-str r)))
       (finally (api/close! sess)))))
+(deftest registrations-and-the-cold-load-gate
+  ;; Registrations are ANONYMOUS (D8), and the reorder machinery is name-keyed:
+  ;; cold-load-order's :order drops them, reorder-to cannot move them. That is
+  ;; SAFE only because of two facts pinned here, found by probing (2026-07-17):
+  ;; the gate's forward-ref scan reads kondo rows directly, so it sees a
+  ;; defmethod body's reference to its multi (nil :from-var and all); and
+  ;; resolve-cold-load re-checks its own output, so a reorder that left a
+  ;; method above its multi cannot land — it degrades to the explicit refusal.
+  ;; If either fact rots, a multimethod ns could silently load wrong.
+  (let [good (store/ingest (store/empty-store) 'cl.ok
+                           (str "(ns cl.ok)\n\n(defmulti area :shape)\n\n"
+                                "(defmethod area :square [s] 1)\n"))
+        bad  (store/ingest (store/empty-store) 'cl.bad
+                           (str "(ns cl.bad)\n\n(defmethod area :square [s] 1)\n\n"
+                                "(defmulti area :shape)\n"))]
+    (testing "a well-ordered multimethod ns cold-loads — no false refusal"
+      (is (nil? (edit/cold-load-errors good '[cl.ok]))))
+    (testing "a method ABOVE its multi is a forward ref the gate SEES —
+              the method body's usage arrives without a :from-var, and the
+              scan must not filter it out"
+      (is (some? (edit/cold-load-errors bad '[cl.bad]))))
+    (testing "auto-reorder cannot fix it (registrations are not orderable by
+              name) and must say so, not return a still-broken store"
+      (is (nil? (edit/resolve-cold-load bad 'cl.bad))))))
