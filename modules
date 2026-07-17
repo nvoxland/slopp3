@@ -40,7 +40,7 @@ slopp.modules: slopp.api slopp.edit slopp.store
 slopp.multiproc: slopp.api slopp.render slopp.store
 slopp.normalize: slopp.api slopp.store
 slopp.observe: slopp.api
-slopp.orientation: slopp.api
+slopp.orientation: slopp.api slopp.edit
 slopp.phase4: slopp.api slopp.http slopp.store
 slopp.refactor: slopp.edit slopp.index slopp.render slopp.store
 slopp.rename: slopp.api slopp.store
