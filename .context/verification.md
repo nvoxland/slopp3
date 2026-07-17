@@ -32,9 +32,28 @@ The oracle must never return a false verdict. Everything here serves that.
    - clojure.test's `:actual` for an `is` failure is the failed predicate
      form, e.g. `(not (= 5 -1))` — keep it; it's more informative than the
      bare value.
-   - **Sampling limits (accepted):** value-captured references
-     (`(def g (comp f inc))`) bypass var wrapping; multimethods and macros
-     are not instrumented; unexercised paths are unobserved.
+   - **Sampling limits (accepted).** All of these follow from ONE choice —
+     `instrumentable?` gates on `(fn? @v)`, so the tracer sees **vars holding
+     fns, and nothing else**:
+     - **multimethods are invisible** — `MultiFn` is `ifn?` but NOT `fn?`
+       (probed live). `defmethod` bodies aren't vars at all, nor are
+       `defrecord`/`deftype` methods, `letfn`, or lambdas.
+     - **callable data is invisible** — `(def valid? #{:a :b})` is `ifn?`, not
+       `fn?`, so `api.deps/native-incompatible-deps` reads `:covered 0`
+       honestly and forever.
+     - **value-captured references** (`(def g (comp f inc))`) bypass the var.
+     - macros are excluded by `(not (:macro m))`; unexercised paths are
+       unobserved.
+     **Why this matters more than it looks:** it is a property of the CODE, not
+     the tests — and slopp's own store has **zero** defmulti/defprotocol/
+     defrecord/deftype (searched 2026-07-17; 2 `reify`s for Java interop). So
+     dogfooding cannot surface this class of bug, and any project written in
+     ordinary polymorphic Clojure has it. It fails QUIETLY: a form reachable
+     ONLY through dispatch reads 0 and falls back safely, but a form on both a
+     traced and an untraced path gets a partial count and narrows to it.
+     Fixing it means recording at the form's ENTRY instead of the var (see
+     `.ideas/` — Cloverage's mechanism, slopp's form IDs), which would also
+     dissolve the value-capture limit.
 2. **The trace map (session `:test-map`).** Flat
    `{qualified-test-sym #{qualified-form-sym}}`, merged in on every traced
    run, carried across renames (`rename-in-trace`). Powers **affected-test
@@ -142,13 +161,41 @@ The oracle must never return a false verdict. Everything here serves that.
    store PROVIDING `slopp.testmain`, so a store without it (any user project;
    every throwaway test store) builds byte-identically to before and stays on
    plain cognitect.
-   **Sampling limit (accepted, same family as rt's):** instrumentation observes
-   only the RUNNER's JVM. An `^:isolated` test that spawns a child image and
-   works THERE traces what it calls in-process but not what runs in the child —
-   `image/test-run` traces, the `rt/traced-run` it evals in the child does not.
-   The tracer cannot trace itself through a subprocess. Don't paper over this
-   with static reach (at depth 3–4 across 370 tests everything is "covered");
-   a declared `^{:covers …}` marker is the only honest filler.
+   **The child image REPORTS BACK (#126, 2026-07-17) — the subprocess limit is
+   CLOSED, not accepted.** It used to read "the tracer cannot trace itself
+   through a subprocess". It can, because slopp.rt is the ONLY slopp code that
+   executes in a child (`repl/inject-rt!` is the sole place slopp code is evaled
+   in; the child otherwise loads its own store). So:
+   - `inject-rt!` calls `rt/self-instrument!`, wrapping rt against
+     `rt/self-touched`. **The timing is the mechanism:** a fn already on the
+     stack cannot record its own entry, so wrapping from inside `traced-run`
+     would miss `traced-run` — which is exactly why it read `:covered 0`.
+     `self-instrument!` records ITSELF explicitly for the same reason; nothing
+     else can see the installer.
+   - `image/traced-test-run` calls `image/drain-child-rt!`, which moves
+     `rt/drain-self!`'s syms onto `rt/touched-sink` — the atom `instrument!`
+     publishes for whichever run is collecting. No sink (the MCP server's own
+     images, overwhelmingly) means no round-trip at all.
+   - `instrument!` calls NEST — testmain wraps the whole external run,
+     individual tests wrap again inside it — so the displaced sink rides home on
+     the originals map's metadata and `restore!` hands it back. Clearing it to
+     nil stops the drain for every later test in the shard, SILENTLY.
+   - Feature-detected via `resolve` at both ends: a lagging uberjar's rt predates
+     the seam, and `io/resource` reads whichever `slopp/rt.clj` is on the READING
+     process's classpath. A missing drain must degrade to no evidence, never an
+     error.
+
+   **Measured, full suite, before → after:** `rt/traced-run` **0 → 214**;
+   `rt/instrument!`/`restore!`/`qualified` **1 → 218**. The **1** was the
+   dangerous one: zero means "no information" and falls back to the whole
+   closure, while a partial count narrows to one test and calls it green. It
+   was 1 because a probe test called it directly in-process — **adding a test
+   is what made it unsafe to narrow on.**
+
+   A declared `^{:covers …}` marker is NOT needed and should not be added: it
+   would drift, and the evidence is now measured. Static reach is not a filler
+   either — at depth 3–4 across 376 tests everything is "covered" (p90 = 227
+   tests, measured 2026-07-17).
    **The skip is REPORTED, not silent (`traced-run!`, 2026-07-16).**
    `slopp.rt/traced-run` has dropped `^:isolated` tests unconditionally since
    d980 (`true (remove (comp :isolated meta))`) — they have never executed

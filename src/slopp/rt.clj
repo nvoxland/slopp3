@@ -66,6 +66,29 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
+(def touched-sink
+  "The atom `instrument!` is currently collecting into, or nil.
+
+  THE child-image drain's handle. rt runs in TWO processes: a runner wraps its
+  own vars, but code that runner evals into a CHILD image executes where no
+  wrapper can reach. `image/traced-test-run` receives those child-side rt calls
+  in its response and needs somewhere to put them — the atom belonging to the
+  test being traced RIGHT NOW. Only the tracer knows which atom that is, so the
+  tracer publishes it.
+
+  nil outside a traced run, and that matters: the MCP server evals into images
+  constantly with nothing instrumented, and those calls must never land in some
+  earlier run's set."
+  (atom nil))
+
+(def self-touched
+  "What rt's OWN fns have been called since the last drain (#126).
+
+  Separate from any run's `touched` because it outlives them: it is installed
+  ONCE per image (`inject-rt!` → `self-instrument!`) and drained per eval,
+  whereas a run's atom is born and restored inside a single `traced-run`."
+  (atom #{}))
+
 ^:unsafe ^:reads (defn instrument!
   "Wrap every instrumentable fn var of `target-nses` so each call conjes its
   qualified symbol onto `touched` (an atom holding a set). Returns the
@@ -76,9 +99,19 @@
   genuinely differ: `traced-run` wraps its own per-var loop for the in-image
   tier; the built project's trace runner wraps cognitect's runner for the
   external tier (the only tier that executes ^:isolated tests). The wrapping
-  itself must never be copied — a second tracer is a second truth."
+  itself must never be copied — a second tracer is a second truth.
+
+  Also publishes `touched` as the `touched-sink` (#126) so rt calls made in a
+  CHILD image — where no wrapper of ours can reach — reach the test being
+  traced right now. Calls NEST (testmain instruments once around the whole
+  external run; individual tests instrument again inside it), so the sink it
+  displaces rides home on the returned map's metadata and `restore!` puts it
+  back. Clearing it to nil instead would silently stop the drain for every
+  later test in the shard."
   [target-nses touched]
-  (let [originals (atom {})]
+  (let [prev      @touched-sink
+        originals (atom {})]
+    (reset! touched-sink touched)
     (doseq [n target-nses
             v (vals (ns-interns n))
             :when (instrumentable? v)]
@@ -89,15 +122,59 @@
                             (fn [& args]
                               (swap! touched conj qs)
                               (apply orig args))))))
-    @originals))
+    (with-meta @originals {::prev-sink prev})))
 
 ^:unsafe (defn restore!
-  "Put back the originals `instrument!` returned. Call from a `finally` — an
-  image whose vars stay wrapped reports every later run through a stale
-  closure."
+  "Put back the originals `instrument!` returned, and hand the `touched-sink`
+  back to whatever run was collecting before it (nil at the outermost). Call
+  from a `finally` — an image whose vars stay wrapped reports every later run
+  through a stale closure, and a sink left pointing at a finished run's atom
+  would attribute later child-image calls to a test that already ended."
   [originals]
+  (reset! touched-sink (::prev-sink (meta originals)))
   (doseq [[v orig] originals]
     (alter-var-root v (constantly orig))))
+
+^:unsafe (defn self-instrument!
+  "Wrap rt's OWN fn vars against `self-touched`. Returns the originals map for
+  `restore!`, exactly like `instrument!` — it IS `instrument!`, aimed at rt.
+
+  Called once per image by `repl/inject-rt!`, and the timing is the whole
+  point: a fn already on the stack cannot record its own entry, so wrapping
+  from inside `traced-run` would miss `traced-run`. Installing at injection —
+  before anything calls in — is what makes the child's entry points visible.
+
+  Only meaningful in a CHILD image, where rt is the sole slopp code running and
+  nothing else wraps it. In slopp's own image the store's rt loads over the
+  injected copy and takes these wrappers with it, which is harmless: that tier
+  instruments rt directly through `traced-run`'s target-nses.
+
+  Records ITSELF explicitly, because nothing else can: the installer is on the
+  stack when the wrap goes on, so no wrapper ever catches its entry — the same
+  self-reference that made `traced-run` read 0 covering tests. Left implicit it
+  reads as covered by the single test calling it directly, and a PARTIAL count
+  is worse than none: zero means 'no information' and falls back to running the
+  whole closure, one narrows to one test and calls the result green."
+  []
+  (let [originals (instrument! ['slopp.rt] self-touched)]
+    (swap! self-touched conj 'slopp.rt/self-instrument!)
+    originals))
+
+(defn drain-self!
+  "Take and clear what rt has recorded about itself since the last drain.
+
+  The runner calls this over the eval it was already making (`traced-run`,
+  `observe`), so the child's rt calls ride home for free — no extra round-trip.
+  It CLEARS because those calls belong to the test being traced right now; left
+  in place they would re-report against whichever test is traced next.
+
+  Records itself, and that is honest: `drain-self!` really does run in the
+  child on the parent test's behalf, so a change to it really does reach every
+  test that drove a child image."
+  []
+  (let [s @self-touched]
+    (reset! self-touched #{})
+    s))
 
 ^:unsafe ^:reads (defn traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
