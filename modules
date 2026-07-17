@@ -30,7 +30,7 @@ slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
 slopp.http: slopp.api slopp.mcp
-slopp.image: slopp.render slopp.repl slopp.store
+slopp.image: slopp.render slopp.repl slopp.rt slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.store
 slopp.mcp: slopp.api slopp.db slopp.git slopp.store slopp.sync
@@ -56,5 +56,5 @@ slopp.trace: slopp.api
 slopp.trivia: slopp.render slopp.store
 slopp.turn: slopp.db slopp.store
 slopp.unsafe: slopp.api slopp.edit slopp.store
-slopp.verification: slopp.api slopp.repl slopp.testmain
+slopp.verification: slopp.api slopp.repl slopp.rt slopp.testmain
 slopp.warm-spare: slopp.api
