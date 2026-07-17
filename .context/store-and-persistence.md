@@ -84,6 +84,18 @@
 - `element-offsets` = each element's [row col] start within the rendered
   source. This is the bridge from clj-kondo positions to store elements —
   rename correctness depends on it.
+- **Appended forms are blank-line separated** (`store/place-form`): a tail
+  append or a `:before` insert places the new form with one blank line between
+  it and its neighbours (the top-level convention), absorbing trailing
+  whitespace-only trivia first so the gap is neither doubled nor dropped (a
+  trailing COMMENT is preserved). INGESTED seps are untouched — only NEW forms
+  follow the convention, so existing projections never reflow. `place-form` is
+  SHARED by `append-form` (live write) and `replay-delta`'s `:add` (journal
+  replay); the two MUST agree or a reopen / foreign-sync would render
+  differently from the write that produced it
+  (`multiproc-test/incremental-sync-replays-the-suffix-exactly` is the guard).
+  Before this, appends used a single `\n` — the dogfooding papercut where added
+  forms jammed together (`ideas/git-bridge-friction.md` 1b).
 
 ## Gotchas
 
