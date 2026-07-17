@@ -245,7 +245,7 @@
     :inputSchema {:type "object"
                   :properties {:note {:type "string"}}}}
    {:name "done"
-    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary. Affected tests run in EVERY tier — impacted ^:isolated tests included, automatically, narrowed to the tests the trace actually observed touching what you changed. You never choose tiers. Two things still defer to the milestone gate and ride findings as :isolated-pending: a change with no trace evidence yet (a brand-new form nothing has exercised), and a change to something so central the evidence names most of the suite."
+    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary. Affected tests run in EVERY tier — impacted ^:isolated tests included, automatically. Selection is per form: trace evidence where it exists, the form's own namespace-reach where it does not (a brand-new form runs its slice). You never choose tiers. One thing defers to the milestone gate, riding findings as :isolated-pending: a change whose reach exceeds the cap — something so central it names most of the suite."
     :inputSchema {:type "object"
                   :properties {:label {:type "string"}}}}
    {:name "commit_point"
