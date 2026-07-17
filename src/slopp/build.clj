@@ -48,13 +48,23 @@
   linking) — manifest deps flow to the native classpath via `-Spath -A:native`;
   with `test?`, adds a `:test` alias putting `test/` on an extra-path AND
   carrying the cognitect test-runner, so `clojure -M:test` runs the project's
-  suite out of the box (the isolated runner builds+runs exactly this). With an
-  EMPTY manifest and no test/native aliases the
+  suite out of the box (the isolated runner builds+runs exactly this).
+
+  With `trace?`, BOTH test aliases enter through `slopp.testmain` — the trace
+  runner that WRAPS cognitect — so the external tier yields a form trace
+  (#121, the only tier that runs ^:isolated tests). Cognitect stays in
+  :extra-deps: the runner resolves it there and delegates, leaving the output
+  the summary parsers read untouched. Both aliases and not one, because `done`
+  runs :test-run narrowed while `commit_point` runs :test full — tracing only
+  one entry leaves a hole exactly where the gate is.
+
+  With an EMPTY manifest and no test/native aliases the
   output is byte-identical to the pre-manifest version (the build! `ours?`
   byte-identity guard relies on this)."
   ([native?] (deps-edn native? {}))
   ([native? deps] (deps-edn native? deps false))
-  ([native? deps test?]
+  ([native? deps test?] (deps-edn native? deps test? false))
+  ([native? deps test? trace?]
    ;; bind *print-namespace-maps* OFF: it defaults true at a REPL, false in a
    ;; script — leaving it would make output non-deterministic (the git
    ;; projection + build! ours? guard both depend on byte-stable output).
@@ -62,6 +72,7 @@
                     (str " :deps " (binding [*print-namespace-maps* false]
                                      (pr-str deps)))
                     "")
+         main-ns  (if trace? "slopp.testmain" "cognitect.test-runner")
          ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
          ;; aliases-map `{` (matching the historical single-:native layout), the
          ;; rest are 2-space-indented — order is deterministic (test, native).
@@ -70,7 +81,7 @@
                                        "  {:extra-paths [\"test\"]\n"
                                        "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
                                        "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
-                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"\n"
+                                       "   :main-opts   [\"-m\" \"" main-ns "\"\n"
                                        "                 \"-d\" \"test\" \"-d\" \"src\" \"-r\" \".*\"]}")
                                   ;; :test-run = same runner WITHOUT the baked -r
                                   ;; regex: -n/-v args actually narrow (the baked
@@ -79,7 +90,7 @@
                                        "  {:extra-paths [\"test\"]\n"
                                        "   :extra-deps  {io.github.cognitect-labs/test-runner\n"
                                        "                 {:git/tag \"v0.5.1\" :git/sha \"dfb30dd\"}}\n"
-                                       "   :main-opts   [\"-m\" \"cognitect.test-runner\"\n"
+                                       "   :main-opts   [\"-m\" \"" main-ns "\"\n"
                                        "                 \"-d\" \"test\" \"-d\" \"src\"]}"))
                     native? (conj (str ":native\n"
                                        "  {:extra-paths [\"classes\"]\n"
