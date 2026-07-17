@@ -431,8 +431,48 @@ isolated-test-run!, review-scan, commit-point!, build!) — each its own cluster
    and would force exports for tests alone. Renaming them `slopp.api.*-test`
    would fold them correctly. OPEN — worth doing before more splitting.
 
-### The ergonomics gap worth a feature
-Every public var in a deep namespace needs its own `^:export`. For a deep ns
-that IS a public surface, that's a marker per var (6 here; ~78 for the whole
-split). An **ns-level export** ("this deep namespace is public surface") would
-say it once. Consider before splitting the big public clusters.
+### The "ns-level export dial" gap — RETRACTED, it wasn't real
+I first recorded this as "an ergonomics gap worth a feature": every public var
+in a deep ns needs its own `^:export`, so the full split means "~78 identical
+markers", and an ns-level dial would say it once. Interrogated (user: "what is
+the overall point — to avoid putting ^:export on all the functions?"), it
+collapses. Recording the retraction because a finding here IS a roadmap input,
+and a disproven one sends the next agent to build the wrong thing.
+
+- **The ceremony never existed.** I typed ZERO of those 6 markers. `export:
+  true` was passed ONCE to `edit_move_forms`; `refactor/move-plan` applied
+  `export-mark` to every moved node. "Say it once" is already implemented — at
+  the tool. I complained about work I never did.
+- **The arithmetic inverts on the motivating case.** A deep ns is MIXED.
+  Measured `slopp.api.branch`: 6 exported API vars + 6 helpers. An ns-level
+  `^:export` exports the helpers too, so it needs per-var opt-outs:
+  **1 + 6 = 7 markers vs 6 today.** The feature makes its own motivating case
+  worse. (The count only wins on a ns that is ~all public surface — none
+  measured.)
+- **The residual is thin and self-correcting.** A public fn added later must
+  carry `^:export` by hand (`edit_add_form` has no export flag); forget it and
+  the module gate refuses WITH teaching. Each marker honestly asserts "this IS
+  public surface" — signal, not noise.
+
+Two research findings kept, in case it's ever revisited:
+- **`export-level` ALREADY reads ns-form metadata** — verified live:
+  `(export-level st 'zz.core.deep 'zz.core.deep)` → `"zz"`, because
+  `(second '(ns ^{:export "zz"} zz.core.deep ...))` is the name symbol carrying
+  meta, structurally identical to `(defn ^:export f ...)`, and the ns form is
+  already a store form named by the ns symbol. No new reader would be needed;
+  the work is the level-combination rule in `module-violations`' inline
+  `visible?` predicate + two readers that bypass `export-level`
+  (`api.modules/module-surface`, `edit.modules/missing-doc-warning` hand-roll
+  `(:export (meta (second s)))` — `module-surface` under-reporting a module's
+  surface is what browsing agents trust).
+- **`publicize` is not a bug.** `move-plan` publicizes every moved form, so
+  those 6 helpers are public `defn`s called only from their own ns. That is
+  coherent with "module-grain visibility replaces var privacy": the depth-3
+  package-private rule already makes them unreachable outside `slopp.api.*`.
+  The ONLY thing that would leak them is an ns-level `^:export` — the feature
+  being closed. The move pulled a cleanly downward-closed cluster; it did well.
+
+**Lesson (the recurring one).** This is fast-cold-truth again: a plausible
+ergonomic complaint, recorded mid-flow as a "gap", that measurement kills. The
+tell was that I never checked who does the work I was complaining about. Before
+a friction note becomes a feature, name the call that costs you and count it.
