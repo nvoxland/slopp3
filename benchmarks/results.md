@@ -634,3 +634,6 @@ path. Result vs the OLD atomic-group flow: calculator 750 vs 741
 427 vs 573 (−25%), wordstats 511 vs 678 (−25%). The REPL flow is now
 cheaper than batching except under mid-refactor red, where it is at
 parity while reporting strictly more state.
+| 2026-07-16 | 2c8d1bf | calculator | 3 | 12 | 389 | 755 | 750 |
+| 2026-07-16 | 2c8d1bf | inventory | 1 | 7 | 104 | 345 | 427 |
+| 2026-07-16 | 2c8d1bf | wordstats | 1 | 8 | 119 | 427 | 511 |
