@@ -2,7 +2,7 @@
   (:require [clojure.java.shell :as sh]
             [clojure.set :as set]
             [clojure.string :as str]
-            [slopp.repl :as repl]))
+            [slopp.repl :as repl] [slopp.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn]))
 
 (defn ^{:export "slopp.verification"} parse-test-summary
   "Parse a clojure.test runner's terminal summary into
@@ -96,3 +96,23 @@
   (apply sh/sh (concat [repl/clojure-bin (str "-M" alias)]
                        (mapcat #(vector "-n" (str %)) grp)
                        [:dir dir])))
+(defn ^{:export "slopp.verification"} read-traces
+  "Merge the form traces this run's shards wrote into the built `dir` (#121):
+  {qualified-test-sym #{qualified-form-sym ...}}, or **nil** when none were
+  written.
+
+  nil, not {}: 'the external tier traced nothing' and 'the external tier did
+  not trace' are different claims, and only the second is true of a store
+  whose build carries no trace runner. An empty map would absorb as evidence.
+
+  `merge-with into` because the run is round-robin SHARDED across concurrent
+  JVMs in one dir — each shard emits a partial map, and a test seen by two of
+  them must union its forms rather than have half of them dropped."
+  [dir]
+  (let [fs (->> (.listFiles (io/file dir))
+                (filter #(str/starts-with? (.getName ^java.io.File %)
+                                           testmain/trace-file-prefix)))]
+    (when (seq fs)
+      (->> fs
+           (map #(edn/read-string (slurp %)))
+           (apply merge-with into)))))

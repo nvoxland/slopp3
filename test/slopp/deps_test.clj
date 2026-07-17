@@ -264,3 +264,26 @@
         (testing "deps_list answers over MCP"
           (is (re-find #"data\.json" (call "deps_list" {})))))
       (finally (api/close! sess)))))
+(deftest ^:isolated build-deps-edn-trace-alias
+  ;; #121: the external tier is the ONLY tier that runs ^:isolated tests, so it
+  ;; is the only place their trace can come from. When the store carries the
+  ;; trace runner, both test aliases route through it instead of straight to
+  ;; cognitect — it WRAPS cognitect, so the output the summary parsers read is
+  ;; unchanged.
+  (testing "without the trace runner nothing changes — cognitect direct"
+    (let [s (build/deps-edn false {} true false)]
+      (is (re-find #"\"-m\" \"cognitect\.test-runner\"" s))
+      (is (not (re-find #"slopp\.testmain" s))))
+    (testing "and the no-trace form is byte-identical to the 3-arg one"
+      (is (= (build/deps-edn false {} true)
+             (build/deps-edn false {} true false)))))
+  (testing "with the trace runner BOTH aliases route through it"
+    (let [s (build/deps-edn false {} true true)]
+      (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" s))
+          "cognitect is delegated to, never invoked directly")
+      (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" s)))
+          ":test AND :test-run — a trace from only one tier-entry has a hole")
+      (testing "cognitect stays on the classpath — the runner resolves it there"
+        (is (re-find #"io\.github\.cognitect-labs/test-runner" s)))
+      (testing ":test keeps its baked -r .* and :test-run still omits it (Q13)"
+        (is (re-find #"\"-r\" \"\.\*\"" s))))))

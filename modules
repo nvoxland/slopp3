@@ -1,5 +1,5 @@
 slopp.addelete: slopp.api
-slopp.api: slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store
+slopp.api: slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store slopp.testmain
 slopp.bench: slopp.api slopp.render slopp.store
 slopp.benchmark: slopp.api slopp.mcp
 slopp.branch: slopp.api
@@ -51,9 +51,10 @@ slopp.subform-plan: slopp.refactor slopp.store
 slopp.surgeon: slopp.api
 slopp.sync: slopp.api slopp.boot slopp.db slopp.git slopp.store
 slopp.sync-plan: slopp.sync
+slopp.testmain: slopp.rt
 slopp.trace: slopp.api
 slopp.trivia: slopp.render slopp.store
 slopp.turn: slopp.db slopp.store
 slopp.unsafe: slopp.api slopp.edit slopp.store
-slopp.verification: slopp.api slopp.repl
+slopp.verification: slopp.api slopp.repl slopp.testmain
 slopp.warm-spare: slopp.api

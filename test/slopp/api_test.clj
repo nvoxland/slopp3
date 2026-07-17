@@ -149,3 +149,32 @@
         (is (= :green (:status r)) (pr-str r))
         (is (= 1 (:ran r)) (pr-str r)))
       (finally (api/close! sess)))))
+(deftest ^:isolated build-routes-tests-through-the-trace-runner-when-present
+  ;; #121: the external tier can only trace if the built project carries the
+  ;; trace runner. PRESENCE in the store is the condition — a store without it
+  ;; must still build a deps.edn that runs, so it stays on plain cognitect.
+  (let [sess (api/open!)
+        tmp  #(str (java.nio.file.Files/createTempDirectory
+                    % (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (api/ingest! sess 'tb.core
+                   (str "(ns tb.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      (testing "no trace runner in the store — the build stays on cognitect"
+        (let [dir (tmp "slopp-trace-build")]
+          (api/build! sess dir)
+          (let [d (slurp (java.io.File. dir "deps.edn"))]
+            (is (re-find #"\"-m\" \"cognitect\.test-runner\"" d))
+            (is (not (re-find #"slopp\.testmain" d))))))
+      (testing "the store provides one — both aliases route through it"
+        (api/create-ns! sess 'slopp.testmain
+                        :source (str "(ns slopp.testmain \"Stub: presence is the"
+                                     " condition build! reads.\")\n"
+                                     "(defn -main [& _args] nil)\n"))
+        (let [dir (tmp "slopp-trace-build2")]
+          (api/build! sess dir)
+          (let [d (slurp (java.io.File. dir "deps.edn"))]
+            (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" d))) d)
+            (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" d))))))
+      (finally (api/close! sess)))))

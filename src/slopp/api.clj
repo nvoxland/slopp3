@@ -2159,8 +2159,10 @@
         incompat (when main (seq (filter api.deps/native-incompatible-deps (keys deps))))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
-        ours?    #(contains? #{(build/deps-edn false deps has-tests?)
-                               (build/deps-edn true deps has-tests?)}
+        traced?  (boolean (and has-tests?
+                               (get-in st [:namespaces 'slopp.testmain])))
+        ours?    #(contains? #{(build/deps-edn false deps has-tests? traced?)
+                               (build/deps-edn true deps has-tests? traced?)}
                              (slurp de))
         entry-ns (some-> main namespace symbol)]
     (cond
@@ -2207,7 +2209,7 @@
       (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
             (do (when has-tests? (.mkdirs (io/file target "test")))
-                (spit de (build/deps-edn (boolean main) deps has-tests?))))
+                (spit de (build/deps-edn (boolean main) deps has-tests? traced?))))
           (cond-> {:built (str target)}
             main
             (assoc :native
@@ -2268,7 +2270,13 @@
   ~8 nses where boot overhead beats the gain); an explicit N overrides
   (1 forces serial). A single :ns/:only run never shards. Returns {:isolated
   true :status :ran :assertions :failures :errors :exit} plus :failing +
-  :all-failing {file [tests]} + :themes (clustered causes) when red."
+  :all-failing {file [tests]} + :themes (clustered causes) when red.
+
+  Also ABSORBS the run's form trace (#121) when the build carried the trace
+  runner: this is the only tier that ever executes an ^:isolated test, so it
+  is the only place their test→form evidence can come from. Silent — the
+  trace lands in the session's test-map (and persists), surfacing later as
+  honest `:warranty` and affected-test narrowing, not as output here."
   [session & {:keys [alias ns only affected parallel nses]}]
   (let [aff (when affected (affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
@@ -2302,71 +2310,78 @@
             b   (build! session dir)]
         (if (:error b)
           b
-          (if (seq shard-nses)
-            (let [shards (->> (map-indexed vector shard-nses)
-                              (group-by #(mod (first %) par))
-                              vals
-                              (mapv #(mapv second %)))
-                  runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
-                               shards)
-                  outs0  (mapv deref runs)
-                  ;; a shard with NO parseable summary is a JVM-level death
-                  ;; (fork pressure, OOM) — test failures PARSE. Retry those
-                  ;; shards once, SERIALLY, off the concurrent storm.
-                  dead?  (fn [o] (nil? (testrun/parse-test-summary
-                                        (str (:out o) "\n" (:err o)))))
-                  outs   (mapv (fn [grp o]
-                                 (if (dead? o) (testrun/run-shard! alias dir grp) o))
-                               shards outs0)
-                  retries (count (filter dead? outs0))
-                  out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
-                  sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
-              (if (some nil? sums)
-                (cond-> {:isolated true :exit (apply max (map :exit outs))
-                         :status :error
-                         :shards (count shards)
-                         :output (->> (str/split-lines out)
-                                      (remove str/blank?)
-                                      (take-last 12) (str/join "\n"))}
-                  (pos? retries) (assoc :shard-retries retries))
-                (let [merged {:ran        (reduce + (map :ran sums))
-                              :assertions (reduce + (map :assertions sums))
-                              :failures   (reduce + (map :failures sums))
-                              :errors     (reduce + (map :errors sums))}
-                      red?   (pos? (+ (:failures merged) (:errors merged)))]
-                  (cond-> (merge {:isolated true
-                                  :exit (apply max (map :exit outs))
-                                  :shards (count shards)
-                                  :status (if red? :red :green)}
-                                 merged
-                                 (when aff {:affected aff})
-                                 (when (pos? retries) {:shard-retries retries}))
-                    red? (assoc :failing (testrun/parse-test-failures out)
-                                :all-failing (testrun/failing-test-rollup out))
-                    (and red? (seq (testrun/failure-themes out)))
-                    (assoc :themes (testrun/failure-themes out))))))
-            (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
-                         ns         (conj "-n" (str ns))
-                         (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
-                         aff        (into (mapcat #(vector "-n" (str %))
-                                                  (:selected aff)))
-                         (seq only) (into (mapcat #(vector "-v" (str %)) only)))
-                  r    (apply sh/sh (concat args [:dir dir]))
-                  out  (str (:out r) "\n" (:err r))
-                  s    (testrun/parse-test-summary out)]
-              (merge {:isolated true :exit (:exit r)}
-                     (when aff {:affected aff})
-                     (cond
-                       (nil? s)           {:status :error
-                                           :output (->> (str/split-lines out)
-                                                        (remove str/blank?)
-                                                        (take-last 8) (str/join "\n"))}
-                       (= :red (:status s)) (cond-> (assoc s
-                                                           :failing (testrun/parse-test-failures out)
-                                                           :all-failing (testrun/failing-test-rollup out))
-                                              (seq (testrun/failure-themes out))
-                                              (assoc :themes (testrun/failure-themes out)))
-                       :else s)))))))))
+          (let [result
+                (if (seq shard-nses)
+                  (let [shards (->> (map-indexed vector shard-nses)
+                                    (group-by #(mod (first %) par))
+                                    vals
+                                    (mapv #(mapv second %)))
+                        runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
+                                     shards)
+                        outs0  (mapv deref runs)
+                        ;; a shard with NO parseable summary is a JVM-level death
+                        ;; (fork pressure, OOM) — test failures PARSE. Retry those
+                        ;; shards once, SERIALLY, off the concurrent storm.
+                        dead?  (fn [o] (nil? (testrun/parse-test-summary
+                                              (str (:out o) "\n" (:err o)))))
+                        outs   (mapv (fn [grp o]
+                                       (if (dead? o) (testrun/run-shard! alias dir grp) o))
+                                     shards outs0)
+                        retries (count (filter dead? outs0))
+                        out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
+                        sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
+                    (if (some nil? sums)
+                      (cond-> {:isolated true :exit (apply max (map :exit outs))
+                               :status :error
+                               :shards (count shards)
+                               :output (->> (str/split-lines out)
+                                            (remove str/blank?)
+                                            (take-last 12) (str/join "\n"))}
+                        (pos? retries) (assoc :shard-retries retries))
+                      (let [merged {:ran        (reduce + (map :ran sums))
+                                    :assertions (reduce + (map :assertions sums))
+                                    :failures   (reduce + (map :failures sums))
+                                    :errors     (reduce + (map :errors sums))}
+                            red?   (pos? (+ (:failures merged) (:errors merged)))]
+                        (cond-> (merge {:isolated true
+                                        :exit (apply max (map :exit outs))
+                                        :shards (count shards)
+                                        :status (if red? :red :green)}
+                                       merged
+                                       (when aff {:affected aff})
+                                       (when (pos? retries) {:shard-retries retries}))
+                          red? (assoc :failing (testrun/parse-test-failures out)
+                                      :all-failing (testrun/failing-test-rollup out))
+                          (and red? (seq (testrun/failure-themes out)))
+                          (assoc :themes (testrun/failure-themes out))))))
+                  (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
+                               ns         (conj "-n" (str ns))
+                               (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
+                               aff        (into (mapcat #(vector "-n" (str %))
+                                                        (:selected aff)))
+                               (seq only) (into (mapcat #(vector "-v" (str %)) only)))
+                        r    (apply sh/sh (concat args [:dir dir]))
+                        out  (str (:out r) "\n" (:err r))
+                        s    (testrun/parse-test-summary out)]
+                    (merge {:isolated true :exit (:exit r)}
+                           (when aff {:affected aff})
+                           (cond
+                             (nil? s)           {:status :error
+                                                 :output (->> (str/split-lines out)
+                                                              (remove str/blank?)
+                                                              (take-last 8) (str/join "\n"))}
+                             (= :red (:status s)) (cond-> (assoc s
+                                                                 :failing (testrun/parse-test-failures out)
+                                                                 :all-failing (testrun/failing-test-rollup out))
+                                                    (seq (testrun/failure-themes out))
+                                                    (assoc :themes (testrun/failure-themes out)))
+                             :else s))))]
+            ;; #121: ONE absorb point for BOTH branches — the external tier is
+            ;; the only place an ^:isolated test ever runs, so a trace missed
+            ;; here is missed forever. nil when the build carried no runner, so
+            ;; untraced stores behave exactly as before.
+            (session/absorb-trace! session (testrun/read-traces dir))
+            result))))))
 (defn done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
   the episode boundary and runs the automatic done-processing — normalize

@@ -586,3 +586,17 @@
     ;; reports its own cap in :findings — an in-image deferral note there is
     ;; noise about an implementation detail
     boundary? (dissoc :isolated-pending)))
+(defn absorb-trace!
+  "Merge an EXTERNAL-tier trace (#121) into the session's test-map and persist
+  it (Q3), exactly as `traced-run!` does for the in-image tier — one test-map,
+  one shape, whichever tier observed it. No-op on nil/empty: `read-traces`
+  returns nil when the build carried no trace runner, and 'not traced' must
+  never overwrite what another tier observed.
+
+  Plain `merge`, not `merge-with into`: a fresh run of a test is the
+  AUTHORITATIVE current set for that test — unioning would accumulate forms it
+  no longer touches and quietly rot the narrowing."
+  [session trace]
+  (when (seq trace)
+    (swap! session update :test-map merge trace)
+    (persist-trace! session)))

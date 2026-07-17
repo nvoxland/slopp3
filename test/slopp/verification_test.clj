@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -268,4 +268,59 @@
              (is (= 2 (:shard-retries r)))
              (is (every? (fn [[_ n]] (= 2 n)) @tries)
                  "each dead shard retried exactly once"))))
+      (finally (api/close! sess)))))
+(deftest external-traces-merge-across-shards
+  ;; #121: a sharded isolated run is N concurrent JVMs in ONE built dir, each
+  ;; writing its own trace file. Reading the trace back = glob + merge.
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-trace-merge"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+        put (fn [suffix m]
+              (spit (java.io.File. dir (str testmain/trace-file-prefix suffix ".edn"))
+                    (pr-str m)))]
+    (testing "no trace files — nil, never an empty-map claim of 'traced nothing'"
+      (is (nil? (testrun/read-traces dir))))
+    (put "a" '{a.core-test/one #{a.core/f a.core/g}})
+    (put "b" '{a.core-test/two #{a.core/h}})
+    (testing "every shard's trace is present"
+      (is (= '{a.core-test/one #{a.core/f a.core/g}
+               a.core-test/two #{a.core/h}}
+             (testrun/read-traces dir))))
+    (testing "a test seen by two shards UNIONS — a plain merge would drop half"
+      (put "c" '{a.core-test/one #{a.core/z}})
+      (is (= '#{a.core/f a.core/g a.core/z}
+             (get (testrun/read-traces dir) 'a.core-test/one))))
+    (testing "unrelated files in the built dir are ignored"
+      (spit (java.io.File. dir "deps.edn") "{:paths [\"src\"]}")
+      (is (= 2 (count (testrun/read-traces dir)))))))
+(deftest ^:isolated external-tier-trace-absorbs-into-the-session
+  ;; #121: ^:isolated tests only ever run out-of-process, so the external tier
+  ;; is the ONLY place their form trace can come from. This drives the pipe
+  ;; end to end — build routes through the store's runner, the runner writes a
+  ;; trace beside the build, isolated-test-run! reads it back and absorbs it —
+  ;; with a STUB runner, so it tests the wiring rather than the tracer.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'tt.core
+                   (str "(ns tt.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f [x] (inc x))\n"
+                        "(deftest f-t (is (= 2 (f 1))))\n"))
+      ;; a runner that writes a known trace, then hands off to the real
+      ;; cognitect main — exactly the delegate-don't-replace shape.
+      (api/create-ns! sess 'slopp.testmain
+                      :source (str "(ns slopp.testmain\n"
+                                   "  \"Stub trace runner (test).\"\n"
+                                   "  (:require [clojure.java.io :as io]))\n"
+                                   "(def trace-file-prefix \"slopp-trace-\")\n"
+                                   "^:unsafe (defn -main [& args]\n"
+                                   "  (spit (io/file (str trace-file-prefix \"stub.edn\"))\n"
+                                   "        (pr-str '{tt.core-test/f-t #{tt.core/f}}))\n"
+                                   "  (apply (requiring-resolve 'cognitect.test-runner/-main) args))\n"))
+      (let [r (api/isolated-test-run! sess)]
+        (is (= :green (:status r)) (pr-str r))
+        (testing "the verdict path is untouched — the runner WRAPS cognitect"
+          (is (= 1 (:ran r)) (pr-str r))))
+      (testing "the trace the external tier observed lands in the session"
+        (is (= '#{tt.core/f} (get (:test-map @sess) 'tt.core-test/f-t))
+            (pr-str (:test-map @sess))))
       (finally (api/close! sess)))))
