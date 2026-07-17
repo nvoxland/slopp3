@@ -199,13 +199,51 @@
           {:var (symbol (str ns-sym) (str (second s)))
            :missing-doc true})))))
 
+(defn ^:export schema-refusal
+  "The opt-in per-form BOUNDARY-SCHEMA gate over the CANDIDATE store (D9/D2):
+   when the store opts in (config file `gates`, key `require-boundary-schemas`
+   set to `true`; OFF by default so nothing retro-breaks — the permissive-default,
+   no-adoption-step lesson), a MODULE-EXTERNAL `defn` whose FIRST arg is a
+   destructured MAP but which carries no :=> :malli/schema is refused: the one
+   boundary a narrow-context caller can't infer the shape of. Structural only
+   (rewrite-clj node inspection, no malli server-side), and the schema it demands
+   is exactly the :=> shape the done-point oracle-check generatively verifies — so
+   requiring it can never mean requiring a drift-prone marker. Returns a teaching
+   string, or nil when clean / opted-out."
+  [candidate ns-sym form-name]
+  (when (= "true" (get-in candidate [:config "gates" :values "require-boundary-schemas"]))
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [form (try (n/sexpr (:node e)) (catch Exception _ nil))]
+        (when (and (seq? form) (= 'defn (first form)))
+          (let [nm       (second form)
+                nmeta    (meta nm)
+                body     (drop 2 form)
+                body     (cond->> body (string? (first body)) rest)
+                body     (cond->> body (map? (first body)) rest)
+                arglist  (cond (vector? (first body)) (first body)
+                               (seq? (first body))    (first (first body)))
+                map-arg?  (and (vector? arglist) (map? (first arglist)))
+                public?   (not (:private nmeta))
+                external? (or (= (str ns-sym) (module-of ns-sym))
+                              (boolean (export-level candidate ns-sym form-name)))
+                sch       (:malli/schema nmeta)
+                has-sch?  (and (vector? sch) (= :=> (first sch)))]
+            (when (and public? external? map-arg? (not has-sch?))
+              (str ns-sym "/" form-name " is a module-external fn taking a"
+                   " destructured map but declares no :=> :malli/schema — the"
+                   " boundary contract a narrow-context caller can't infer. Add"
+                   " ^{:malli/schema [:=> [:cat ArgSchema] RetSchema]} to the name"
+                   " (the done-point oracle-check then verifies it generatively),"
+                   " or opt out with config_file: path `gates` key"
+                   " `require-boundary-schemas` unset true"))))))))
+
 (def per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
   (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
   the stale fns, the composed-def trap — and so the reference graph sees them.
   Register a new per-form write gate HERE, not at the N write sites."
-  [#'module-refusal #'tier-refusal])
+  [#'module-refusal #'tier-refusal #'schema-refusal])
 
 (defn ^:export gate-refusal
   "Run every per-form write gate over the CANDIDATE store (the rule-registry

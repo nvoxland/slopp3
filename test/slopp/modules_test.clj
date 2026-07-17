@@ -370,3 +370,57 @@
     (let [cand (store/ingest (store/empty-store) 'app.core
                              "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n")]
       (is (nil? (modules/gate-refusal cand 'app.core 'add))))))
+
+(deftest schema-required-gate
+  (let [ext-noschema  "(ns app.core)\n\n(defn handle \"H.\" [{:keys [x]}] x)\n"
+        ext-schema    "(ns app.core)\n\n(defn ^{:malli/schema [:=> [:cat [:map [:x :int]]] :int]} handle \"H.\" [{:keys [x]}] x)\n"
+        no-map-arg    "(ns app.core)\n\n(defn handle \"H.\" [x] x)\n"
+        private-fn    "(ns app.core)\n\n(defn- handle \"H.\" [{:keys [x]}] x)\n"
+        deep-noexport "(ns app.core.impl)\n\n(defn handle \"H.\" [{:keys [x]}] x)\n"
+        on (fn [src ns]
+             (first (store/record-config-put
+                     (store/ingest (store/empty-store) ns src)
+                     "gates" :manifest "require-boundary-schemas" "true")))]
+    (testing "OFF by default (opt-in, permissive default) → never fires"
+      (let [s (store/ingest (store/empty-store) 'app.core ext-noschema)]
+        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+    (testing "ON: a module-external map-arg fn lacking a :=> schema is refused, with teaching"
+      (let [s (on ext-noschema 'app.core)]
+        (is (re-find #":malli/schema" (str (modules/schema-refusal s 'app.core 'handle))))))
+    (testing "ON: the same fn WITH a :=> schema passes"
+      (let [s (on ext-schema 'app.core)]
+        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+    (testing "ON: a non-map first arg is not a boundary-contract case"
+      (let [s (on no-map-arg 'app.core)]
+        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+    (testing "ON: a private fn is not module-external"
+      (let [s (on private-fn 'app.core)]
+        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+    (testing "ON: a deep, non-exported fn is package-private, not a module boundary"
+      (let [s (on deep-noexport 'app.core.impl)]
+        (is (nil? (modules/schema-refusal s 'app.core.impl 'handle)))))))
+
+(deftest ^:isolated schema-require-gate-refuses-boundary-writes
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sg.core "(ns sg.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (testing "OFF by default: a module-external map-arg fn with no schema lands"
+        (let [r (api/add-form! sess 'sg.core "(defn handle \"H.\" [{:keys [x]}] x)"
+                               :prompt "no gate yet")]
+          (is (nil? (:error r)) (pr-str r))))
+      (api/config-file! sess "gates" :key "require-boundary-schemas" :value "true"
+                        :prompt "require boundary schemas")
+      (testing "enabling does NOT retro-break the already-landed boundary fn"
+        (is (some? (store/form-named (:store @sess) 'sg.core 'handle))))
+      (testing "ON: a NEW module-external map-arg fn lacking a :=> schema is hard-refused"
+        (let [r (api/add-form! sess 'sg.core "(defn accept \"A.\" [{:keys [y]}] y)"
+                               :prompt "boundary fn, no schema")]
+          (is (re-find #":malli/schema" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'sg.core 'accept))
+              "the refused form never landed")))
+      (testing "ON: the same boundary fn WITH a :=> schema lands"
+        (let [r (api/add-form! sess 'sg.core
+                               "(defn ^{:malli/schema [:=> [:cat [:map [:y :int]]] :int]} accept \"A.\" [{:keys [y]}] y)"
+                               :prompt "boundary fn, with schema")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))
