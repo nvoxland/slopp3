@@ -22,14 +22,28 @@
             ["/opt/homebrew/bin" "/usr/local/bin" "/usr/bin"])
       "clojure"))
 
+(def inherent-deps
+  "Dependencies slopp-the-tool provides to EVERY owned image for its OWN
+  features — nREPL (the image's REPL server) and malli (image-side schema
+  generative-check). NOT the project manifest (`deps_add`): never in
+  `deps_list`, never removable, versioned centrally HERE so an upgrade reaches
+  existing installs with no per-store migration, and merged into every image's
+  `-Sdeps` AFTER the manifest so slopp controls their versions. Image-tier ONLY
+  — the server/boot JVM runs on the kernel deps (root deps.edn); slopp code that
+  uses these must run in the image (feature-detected, like `slopp.rt`)."
+  '{nrepl/nrepl   {:mvn/version "1.3.1"}
+    metosin/malli {:mvn/version "0.17.0"}})
+
 (defn- default-cmd
   "The target image launch command: Clojure + nREPL, plus the store's external
   dependency manifest (`deps`, lib→coord) merged into `-Sdeps` so store code
-  that requires those libs compiles (trust Tier 1). nREPL is always kept."
+  that requires those libs compiles (trust Tier 1). `inherent-deps` (nREPL,
+  malli) are merged LAST so slopp-the-tool's own image deps are always present
+  at slopp's versions — regardless of the project manifest."
   ([] (default-cmd nil))
   ([deps]
    [clojure-bin "-Sdeps"
-    (pr-str {:deps (merge {'nrepl/nrepl {:mvn/version "1.3.1"}} deps)})
+    (pr-str {:deps (merge deps inherent-deps)})
     "-M" "-m" "nrepl.cmdline"]))
 
 (defn- temp-dir []
