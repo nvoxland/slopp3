@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.schema :as schema]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.schema :as schema] [slopp.api.attrs :as attrs]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2624,6 +2624,12 @@
                                                       (symbol (str (store/ns-of-form-id st* fid))
                                                               (str (or (:name e) (:id e))))))
                                                   changed)))
+      ;; near-duplicate-key ADVISORY (open-map guardrail): a namespaced key a
+      ;; changed form introduces that is one Damerau edit from an established
+      ;; same-namespace key is a likely typo (silent nil-pun). Derived from the
+      ;; forms, so it needs no history/CRDT handling of its own. Advisory only —
+      ;; heuristic, never flips test-status.
+      key-typos (attrs/near-duplicate-keys st* changed)
       missing-doc (vec (sort (distinct
                               (keep (fn [fid]
                                       (when-let [e (store/form-by-id st* fid)]
@@ -2640,6 +2646,7 @@
     (:pending iso)    (assoc :isolated-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq schema-drift) (assoc :schema-drift schema-drift)
+    (seq key-typos)   (assoc :key-typos key-typos)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
         cid (let [v (volatile! nil)]
