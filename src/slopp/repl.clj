@@ -48,13 +48,34 @@
           (recur))
         (throw (ex-info "owned image ended before reporting a port" {}))))))
 
-(declare eval!)
+^:unsafe (defn eval!
+  "Eval `code` in the image; returns a vector of returned values, read as data
+  when readable and left as the raw printed string otherwise (so evals that
+  return unreadable objects — namespaces, functions — don't blow up)."
+  [{:keys [client session]} code]
+  (->> (nrepl/message client {:op "eval" :code code :session session})
+       (keep :value)
+       (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
 (defn- inject-rt!
   "Load slopp's runtime support (slopp.rt — traced test execution) into the
-  image, then return to `user`. Every owned image carries it."
+  image, wrap rt against itself (#126), then return to `user`. Every owned image
+  carries it.
+
+  The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
+  whichever slopp/rt.clj is on the READING process's classpath, and that differs
+  by caller: the isolated runner is a built project, so it gets the store's
+  rendered rt; the MCP server runs from the uberjar, so it gets whatever rt that
+  jar was built with — which lags the store by design. Calling a var the older
+  copy lacks would break every image the moment the jar fell behind.
+
+  The timing is the point: wrapping here — before anything calls in — is what
+  makes rt's own entry points visible. `traced-run` cannot wrap itself from the
+  inside; it is already on the stack by then, which is exactly why it measured
+  zero covering tests while 213 exercised it."
   [handle]
   (eval! handle (slurp (io/resource "slopp/rt.clj")))
+  (eval! handle "(when-let [f (resolve 'slopp.rt/self-instrument!)] (f))")
   (eval! handle "(in-ns 'user)")
   handle)
 
@@ -76,15 +97,6 @@
          session (nrepl/new-session client)]
      (inject-rt! {:process proc :port port :conn conn :client client
                   :session session :reader rdr :dir dir}))))
-
-^:unsafe (defn eval!
-  "Eval `code` in the image; returns a vector of returned values, read as data
-  when readable and left as the raw printed string otherwise (so evals that
-  return unreadable objects — namespaces, functions — don't blow up)."
-  [{:keys [client session]} code]
-  (->> (nrepl/message client {:op "eval" :code code :session session})
-       (keep :value)
-       (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
 ^:unsafe (defn eval-checked!
   "Like `eval!` but surfaces evaluation errors instead of silently dropping

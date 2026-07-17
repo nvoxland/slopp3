@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -323,4 +323,25 @@
       (testing "the trace the external tier observed lands in the session"
         (is (= '#{tt.core/f} (get (:test-map @sess) 'tt.core-test/f-t))
             (pr-str (:test-map @sess))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated child-image-rt-calls-reach-the-callers-trace
+  ;; THE child-JVM blind spot (#126). Driving a child image runs slopp.rt THERE,
+  ;; where the caller's var-wrapping cannot reach. Measured on the live store
+  ;; 2026-07-17: slopp.rt/traced-run read 0 covering tests while 213 exercised it
+  ;; through image/traced-test-run — and instrument! read 1. The 1 is the
+  ;; dangerous one: 0 means "no information" and falls back to running the whole
+  ;; closure, while 1 narrows to a single test and calls the result green.
+  ;;
+  ;; Stand in for the external runner's tracer: publish a sink the way testmain's
+  ;; instrument! does around every isolated test, then drive a child image.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'vdemo target)
+      (let [touched   (atom #{})
+            originals (rt/instrument! [] touched)]
+        (try
+          (api/test-run! sess 'vdemo)
+          (testing "rt that ran in the CHILD is attributed to the caller's test"
+            (is (contains? @touched 'slopp.rt/traced-run) (pr-str @touched)))
+          (finally (rt/restore! originals))))
       (finally (api/close! sess)))))
