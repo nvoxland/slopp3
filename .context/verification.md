@@ -60,6 +60,29 @@ The oracle must never return a false verdict. Everything here serves that.
    selection**: edit form F → run only tests whose set contains F (or F
    itself if F is a test). No trace info → conservative full-ns run
    (`:affected :all`).
+   **BOTH tiers select from it (#127, 2026-07-17).** `done!` routes the
+   external tier through `session/impacted-isolated` → `isolated-among`, the
+   same evidence the in-image half uses, and only falls back to
+   `test-nses-reaching` (the require-closure) when the trace is SILENT. Three
+   answers, and the difference is load-bearing: **nil** = silent, fall back;
+   **[]** = evidence names tests, none isolated, nothing to run; **[syms]** =
+   run exactly these. Until #127 the tier re-derived the closure — which
+   selects a **median 43 of 46** isolated test namespaces (measured over every
+   source ns), so the cap of 4 fired and **84.6% of changes deferred**: the
+   evidence was computed four lines above and discarded.
+   **The cap is on TESTS (40), not namespaces**, because `isolated-test-run!`'s
+   `:only` and `:nses` do NOT compose — the sharded branch calls
+   `run-shard!` with the ns group and never passes `only`, so passing both
+   would silently run whole namespaces. A `:only` run is one serial JVM
+   (`full-set` is nil ⇒ `par` = 1). Measured: p50 = 12 covering tests, a cap of
+   40 fits ~71% of forms, and the tail (p90 = 218) is the core-form case that
+   honestly wants the whole suite.
+   **Do not "improve" this with static reach.** Measured on this store: static
+   transitive selects p50 = 49 tests vs the trace's 11, and kondo reports
+   `defmethod`/`defrecord`/`extend-type` bodies with nil `:from-var` — every
+   edge-builder drops them — so it under-approximates through dispatch. The
+   RTS literature agrees (STARTS 68.5% reduction with a 3.19% safety violation
+   vs Ekstazi's 84.2%); both are class-grain, this is form-grain.
    **Persisted across sessions (Q3):** every traced run writes the map to
    store meta (`persist-trace!`); `open!` loads it back pruned to
    still-existing tests/forms (`load-trace`), so a fresh session — or a CLI
