@@ -1677,3 +1677,52 @@ framework/dependency/HTTP complexity. The reference-carrier phase-2
 "per-library carrier adapters for framework config" is part of the deferred
 set. Don't build framework/HTTP support speculatively — revisit when the
 project explicitly turns to it.
+
+## D8 — a form defines a SET of names (2026-07-17, user decision)
+
+**Decision:** the store's form identity is `:names`, a set of every symbol the
+form defines — possibly empty. `:name` stays as the primary name for labels.
+`form-named` matches any of `:names`, or a form ID.
+
+**Why:** the previous premise — one form ↔ one name, via `form-symbol`'s
+`(second s)` — is wrong in both directions, probed against kondo:
+
+- **Registrations define nothing.** `(defmethod area :square …)` names its
+  TARGET. `defmethod` sat in `def-heads` beside its own siblings
+  `extend-type`/`extend-protocol`, which were never there. Result: three forms
+  named `area` in one ns; `form-named` returns the first; the methods were
+  unreachable by every name-keyed tool; `refs/cold-load-order` silently DROPPED
+  forms including the defmulti; `static-refs` resolved `:from-form` last-wins
+  against `:to-form` first-wins. Meanwhile `api/add-form!` already refuses
+  duplicate names, so **ingest was admitting a state the edit layer considers
+  illegal**.
+- **Some definitions define several.** `defrecord` → `R`, `->R`, `map->R`;
+  `deftype` → `T`, `->T`; `defprotocol` → `P` + each method var. Those were real
+  public vars with **no form** — invisible to `form-named`, `:covered`, and the
+  unused-public gate. Broken today, independently of multimethods.
+
+**Rejected — a compound name (`area:square`):** `:` is legal inside a Clojure
+symbol, so `(defn area:square [x] x)` is a real fn a user can write (probed: it
+evaluates). Every ASCII-punctuation separator is likewise legal. The name space
+is flat and user-owned — you cannot reserve a corner of it. Any scheme encoding
+structure into a flat name has this bug.
+
+**Rejected — refuse `defmulti` at the gate:** honest and close to today's de
+facto behaviour, but it rules out idiomatic Clojure and fixes nothing for
+`defrecord`/`defprotocol`.
+
+**Consequences / still open:**
+- Registrations are addressable only by form ID. That is their only handle, and
+  the ID match also fixes `qform`'s label/address asymmetry.
+- **Latent ID/name collision:** a user could write `(defn f4 …)` while some
+  form's id is `f4`. `form-named` prefers names, so the name wins; `qform` has
+  labelled forms `ns/f4` all along, so this predates D8. Not fixed.
+- `cold-load-order` does not order anonymous forms, so a forward reference from
+  inside a `defmethod` body is not auto-resolved (it was not before either — the
+  form was dropped entirely). Not a regression; not fixed.
+- The unused-public gate and `review_scan` filter heads to `#{defn def}`, so a
+  dead `defmulti` is invisible to `done!` AND `commit_point`. Separate, unfixed.
+- The tracer still cannot see method bodies (`MultiFn` is `ifn?`, not `fn?`), so
+  `:covered` for a multimethod is 0 — honest, and safe (0 falls back to running
+  the closure). Form-entry instrumentation is downstream of this decision, not a
+  prerequisite: recording a form you cannot name buys nothing.

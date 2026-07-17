@@ -2,12 +2,51 @@
 
 ## In-memory model (`slopp.store` — pure functions over values)
 
-- A namespace = ordered vector of **elements**: `{:id :kind :form :name :node}`
-  for semantic forms, `{:kind :sep :node}` for whitespace/comment trivia kept
-  only so rendering is lossless. `:node` is a rewrite-clj CST node.
-- `:name` is derived from `def-heads` (`def/defn/.../deftest/ns`); nil for
-  anonymous top-levels. **`deftest` is a named form on purpose** (tests are
-  addressable/editable).
+- A namespace = ordered vector of **elements**:
+  `{:id :kind :form :name :names :node}` for semantic forms, `{:kind :sep :node}`
+  for whitespace/comment trivia kept only so rendering is lossless. `:node` is a
+  rewrite-clj CST node.
+- **A form defines a SET of names (`:names`, via `form-symbols`) — #128.**
+  `:name` (via `form-symbol` + `def-heads`) is the PRIMARY name, for labels;
+  `:names` is what addressing uses. They differ for most def forms, and the old
+  one-form-↔-one-name premise was wrong in BOTH directions:
+
+  | form | `:name` | `:names` |
+  |---|---|---|
+  | `(defn f …)` / `(defmulti area …)` | `f` / `area` | `#{f}` / `#{area}` |
+  | `(defmethod area :square …)` | **nil** | **`#{}`** |
+  | `(extend-type String P …)` | nil | `#{}` |
+  | `(defprotocol P (m …) (n …))` | `P` | `#{P m n}` |
+  | `(defrecord R [x])` | `R` | `#{R ->R map->R}` |
+  | `(deftype T [x])` | `T` | `#{T ->T}` |
+
+  **`defmethod` is NOT a def-head.** Its second element is the multimethod it
+  REGISTERS ONTO, not a name it defines — it is a registration, like
+  `extend-type`/`extend-protocol`, which were never in the set. Including it put
+  three forms named `area` in one ns, and everything downstream broke silently:
+  `form-named` returns the FIRST (so methods were unreachable by every
+  name-keyed tool); `refs/cold-load-order` **DROPPED** forms, the defmulti among
+  them (`{:order ["f0" "f3"]}` for a 4-form ns); `static-refs` resolved
+  `:from-form` last-wins against `:to-form` first-wins in adjacent lines. Note
+  the edit layer ALREADY refuses duplicate names (`api/add-form!`, twice), so
+  ingest was the only door and it admitted a state the rest of slopp considers
+  illegal.
+  **No compound name (`area:square`) could have worked**: `:` is legal in a
+  symbol, so `(defn area:square …)` is a real fn a user can write — and every
+  other ASCII-punctuation spelling is legal too (probed). The name space is flat
+  and user-owned; you cannot reserve a corner of it.
+- **`form-named` matches any of `:names`, or a form ID.** The id match is what
+  makes registrations addressable (they define nothing, so an id is their only
+  handle) and it fixes a live round-trip bug: `qform` has always LABELLED
+  unnamed forms `ns/f4`, and `form-named` could not fetch one back.
+- `form-symbols` is **syntactic, per head — deliberately not kondo**: it runs per
+  form on every ingest and replay, where a kondo pass costs ~285ms on a large ns.
+  Every writer of `:name` must write `:names` too — there are six, all in
+  `slopp.store` (`ingest`, `replace-node`, `append-form`, `apply-changeset`,
+  `replay-delta` ×2). **Missing `replay-delta` is the sharp one**: the store
+  rebuilds from the journal on `open!`, so `->R` would stop being addressable
+  after a reopen.
+- **`deftest` is a named form on purpose** (tests are addressable/editable).
 - Ids: `"f<n>"` forms, `"d<n>"` deltas, single monotonic counter (`:next-id`).
   The DB has a UNIQUE constraint on delta ids as a collision backstop.
 - Deltas: `{:id :parent :op :ns :prompt ...}` — ops today: `:ingest`,
