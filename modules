@@ -32,7 +32,7 @@ slopp.history: slopp.api slopp.mcp slopp.store
 slopp.http: slopp.api slopp.mcp
 slopp.image: slopp.render slopp.repl slopp.rt slopp.store
 slopp.integration-tier: slopp.api
-slopp.lintgate: slopp.edit slopp.store
+slopp.lintgate: slopp.edit slopp.index slopp.store
 slopp.mcp: slopp.api slopp.db slopp.git slopp.store slopp.sync
 slopp.merge: slopp.render slopp.store
 slopp.mine: slopp.db
