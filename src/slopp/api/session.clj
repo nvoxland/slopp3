@@ -600,3 +600,54 @@
   (when (seq trace)
     (swap! session update :test-map merge trace)
     (persist-trace! session)))
+(defn isolated-among
+  "Of qualified test syms `tests`, those tagged ^:isolated — the ones only the
+  EXTERNAL tier can execute.
+
+  The routing half of affected-test selection (#127). `affected-tests` names the
+  tests a change reaches; this says which of them the in-image runner had to
+  defer, so `done!` can hand exactly those to the external tier instead of
+  re-deriving a set from the require-closure. That closure selects a median 43
+  of 46 isolated test namespaces (measured over every source ns 2026-07-17) —
+  it is not narrowing, it is 'everything' with rounding.
+
+  Empty is NOT the same as a silent trace: it means the evidence names tests and
+  none of them are isolated, so the external tier has nothing to do. A silent
+  trace is `affected-tests` returning nil, and that must still fall back to the
+  closure."
+  [store tests]
+  (vec (sort (mapcat (fn [[nsx syms]]
+                       (let [iso (set (:isolated (test-var-tiers store nsx)))]
+                         (filter #(iso (symbol (name %))) syms)))
+                     (group-by (comp symbol namespace) tests)))))
+(defn impacted-isolated
+  "The ^:isolated test vars the trace says the episode's `changed` form-ids
+  reach, for the done-point to route to the external tier (#127).
+
+  THREE answers, and the difference is the whole point:
+  - **nil** — the trace is silent about at least one changed form. The caller
+    MUST fall back to the require-closure; absence of evidence is not evidence.
+  - **[]** — the evidence speaks and no ^:isolated test is impacted. There is
+    genuinely nothing for the external tier to do.
+  - **[syms]** — run exactly these.
+
+  Collapses all-or-nothing on a single nil, matching `done!`'s in-image half:
+  one untraced form means the reached set is unknown, not smaller.
+
+  Until #127 done! ignored this and re-derived the set from
+  `test-nses-reaching` — the require-closure, which selects a median 43 of 46
+  isolated test namespaces (measured over every source ns 2026-07-17). That is
+  not narrowing, and the cap of 4 then deferred 84.6% of changes."
+  [session store changed]
+  (let [qsyms (into #{}
+                    (keep (fn [fid]
+                            (when-let [e (store/form-by-id store fid)]
+                              (symbol (str (store/ns-of-form-id store fid))
+                                      (str (or (:name e) (:id e)))))))
+                    changed)
+        per   (map (fn [q] (affected-tests session
+                                           (symbol (namespace q))
+                                           (symbol (name q))))
+                   qsyms)]
+    (when (not-any? nil? per)
+      (isolated-among store (distinct (apply concat per))))))

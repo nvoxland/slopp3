@@ -538,3 +538,33 @@
                           (re-find #"remove" (str (:message %))))
                     (:lint r)))))
       (finally (api/close! sess)))))
+(deftest ^:isolated done-runs-the-traced-isolated-slice
+  ;; The complement of done-caps-the-isolated-slice-and-reports. THAT one's tests
+  ;; have never run, so the trace is silent and it proves the closure fallback
+  ;; still defers honestly. This one HAS evidence, and proves done routes it —
+  ;; rather than re-deriving the require-closure, which selects a median 43 of 46
+  ;; isolated test namespaces (measured 2026-07-17), blows the cap, and gives up.
+  ;;
+  ;; Five test nses reach hub.core/f by require-closure. Exactly one has ever
+  ;; touched it. Before #127 done deferred all five and ran nothing.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n" :agent "t")
+      (doseq [i (range 5)]
+        (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
+                     (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
+                          "                            [clojure.test :refer [deftest is]]))\n\n"
+                          "(deftest ^:isolated t" i " (is (= 1 (core/f 1))))\n")
+                     :agent "t"))
+      (api/done! sess :label "setup" :agent "t")
+      (swap! sess assoc :test-map {'hub.core.u0-test/t0 #{'hub.core/f}})
+      (api/edit-replace! sess 'hub.core 'f "(defn f \"F.\" [x] (identity x))"
+                         :prompt "traced edit" :agent "t")
+      (let [r (api/done! sess :label "traced edit" :agent "t")]
+        (is (nil? (get-in r [:findings :isolated-pending]))
+            (str "the traced slice fits the cap — nothing should defer: "
+                 (pr-str (:findings r))))
+        (is (= 1 (:ran (:isolated r)))
+            (str "exactly the one test the evidence names, not all five: "
+                 (pr-str (:isolated r)))))
+      (finally (api/close! sess)))))

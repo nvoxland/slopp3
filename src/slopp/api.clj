@@ -2522,19 +2522,48 @@
             s))
         ;; the tier is an implementation detail: ^:isolated tests the episode's
         ;; changes reach run in the EXTERNAL tier here — capped, and a deferral
-        ;; is REPORTED (isolated-pending), never silent
+        ;; is REPORTED (isolated-pending), never silent.
+        ;;
+        ;; #127: selected from THE TRACE, like the in-image half above, instead
+        ;; of re-derived from the require-closure. That closure selects a median
+        ;; 43 of 46 isolated test nses (measured over every source ns
+        ;; 2026-07-17) — it never narrowed, it just always blew the cap, so 84.6%
+        ;; of changes deferred and the tier effectively never ran here. The
+        ;; evidence was already computed a few lines up and thrown away.
         iso (when (and isolated? (seq changed))
               (let [st*      (:store @session)
-                    ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
-                    iso-nses (session/isolated-test-nses
-                              st* (session/test-nses-reaching st* ch-nses))]
-                (when (seq iso-nses)
-                  (if (<= (count iso-nses) 4)
-                    (isolated-test-run! session :nses iso-nses)
-                    {:pending (cond-> {:count (count iso-nses)
-                                       :nses  (vec (take 5 (sort iso-nses)))}
-                                (> (count iso-nses) 5)
-                                (assoc :note "first 5 shown — the milestone gate runs them all"))}))))
+                    iso-only (session/impacted-isolated session st* changed)]
+                (cond
+                  ;; the trace NAMES the impacted isolated tests — run exactly
+                  ;; those. A :only run is one serial JVM (it never shards), so
+                  ;; the cap is on TESTS: p50 is 12 covering tests and a cap of
+                  ;; 40 fits ~71% of forms, while the tail (p90 = 218) is the
+                  ;; core-form case that honestly wants the whole suite anyway.
+                  (seq iso-only)
+                  (if (<= (count iso-only) 40)
+                    (isolated-test-run! session :only iso-only)
+                    {:pending {:count (count iso-only)
+                               :tests (vec (take 5 iso-only))
+                               :note  "first 5 shown — the milestone gate runs them all"}})
+
+                  ;; evidence, and none of the impacted tests are isolated:
+                  ;; nothing for the external tier to do. NOT the same as silence.
+                  (some? iso-only) nil
+
+                  ;; the trace is silent about some changed form — fall back to
+                  ;; the PROVABLE closure, ns-grain, capped. Sound, and the only
+                  ;; honest answer when there is no evidence to narrow on.
+                  :else
+                  (let [ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
+                        iso-nses (session/isolated-test-nses
+                                  st* (session/test-nses-reaching st* ch-nses))]
+                    (when (seq iso-nses)
+                      (if (<= (count iso-nses) 4)
+                        (isolated-test-run! session :nses iso-nses)
+                        {:pending (cond-> {:count (count iso-nses)
+                                           :nses  (vec (take 5 (sort iso-nses)))}
+                                    (> (count iso-nses) 5)
+                                    (assoc :note "first 5 shown — the milestone gate runs them all"))}))))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
                        failures    (+ (:fail summary 0) (:error summary 0)
                                       (:failures iso 0) (:errors iso 0))
