@@ -477,25 +477,43 @@
             (pr-str (:findings r))))
       (finally (api/close! sess)))))
 (deftest ^:isolated done-caps-the-isolated-slice-and-reports
-  ;; a hub edit can reach MANY isolated test namespaces — above the cap the
-  ;; done-point doesn't silently run for minutes OR silently skip: it
-  ;; reports :isolated-pending in findings and the milestone gate carries it.
+  ;; The cap is on TESTS (40) and it still exists for the honest reason: a
+  ;; :only run is one serial JVM, and a change whose reach is most of the
+  ;; suite belongs to the milestone gate. What CHANGED (#132): a fresh, small
+  ;; slice used to defer too — the trace was silent about brand-new forms, one
+  ;; silent form collapsed all narrowing, and the ns-grain closure blew a cap
+  ;; of 4 on 84.6% of source namespaces. Per-form expansion means the small
+  ;; case now RUNS and only a genuinely-wide reach defers.
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n"
                    :agent "t")
       ;; deep test nses: hub.core.uN-test folds into module hub.core, so the
       ;; fixture needs no edge ceremony
-      (doseq [i (range 5)]
+      (doseq [i (range 2)]
         (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
                      (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
                           "                            [clojure.test :refer [deftest is]]))\n\n"
                           "(deftest ^:isolated t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
-      (let [r (api/done! sess :label "hub edit" :agent "t")]
-        (is (nil? (:isolated r)) "above the cap, nothing runs")
-        (is (= 5 (get-in r [:findings :isolated-pending :count]))
-            (pr-str (:findings r))))
+      (testing "a small fresh slice RUNS — brand-new tests are their own reach"
+        (let [r (api/done! sess :label "small hub" :agent "t")]
+          (is (nil? (get-in r [:findings :isolated-pending])) (pr-str (:findings r)))
+          (is (= 2 (:ran (:isolated r))) (pr-str (:isolated r)))))
+      ;; now push the reach over the cap: one ns, 41 isolated tests
+      (api/ingest! sess 'hub.core.wide-test
+                   (apply str
+                          "(ns hub.core.wide-test (:require [hub.core :as core]\n"
+                          "                          [clojure.test :refer [deftest is]]))\n\n"
+                          (for [i (range 41)]
+                            (str "(deftest ^:isolated w" i " (is (= 1 (core/f 1))))\n\n")))
+                   :agent "t")
+      (testing "over the cap: defers to the milestone gate, REPORTED as tests"
+        (let [r (api/done! sess :label "wide hub" :agent "t")]
+          (is (nil? (:isolated r)) "above the cap, nothing runs")
+          (is (<= 41 (get-in r [:findings :isolated-pending :count]))
+              (pr-str (:findings r)))
+          (is (seq (get-in r [:findings :isolated-pending :tests])))))
       (finally (api/close! sess)))))
 (deftest ^:isolated unused-publics-gate-the-done
   ;; unused public surface FAILS the done gate (error-grade lint + findings)
@@ -567,4 +585,46 @@
         (is (= 1 (:ran (:isolated r)))
             (str "exactly the one test the evidence names, not all five: "
                  (pr-str (:isolated r)))))
+      (finally (api/close! sess)))))
+(deftest ^:isolated one-untraced-form-no-longer-collapses-narrowing
+  ;; THE headline of #132, measured before it was fixed: 54.4% of real
+  ;; episodes touched a form the tracer can never see — 43.2% an NS form,
+  ;; which is what ns_add_require edits — and ONE such form discarded the
+  ;; evidence for every other form in the episode. Adding a require to a leaf
+  ;; namespace reverted the whole done to closure runs.
+  ;;
+  ;; The pin: an episode editing a TRACED fn in one ns and the NS FORM of an
+  ;; unrelated leaf runs the traced fn's test and the leaf's reach — and NOT
+  ;; the unrelated test in the first ns, which the collapse used to drag in.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pfa.core
+                   "(ns pfa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
+                   :agent "t")
+      (api/ingest! sess 'pfb.core "(ns pfb.core)\n\n(defn h \"H.\" [x] x)\n"
+                   :agent "t")
+      (api/ingest! sess 'pfa.core-test
+                   (str "(ns pfa.core-test (:require [pfa.core :as a]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest f-t (is (= 1 (a/f 1))))\n\n"
+                        "(deftest g-t (is (= 1 (a/g 1))))\n")
+                   :agent "t")
+      (api/ingest! sess 'pfb.core-test
+                   (str "(ns pfb.core-test (:require [pfb.core :as b]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest h-t (is (= 1 (b/h 1))))\n")
+                   :agent "t")
+      ;; boundary: runs everything fresh, which BUILDS the per-test evidence
+      (api/done! sess :label "setup" :agent "t")
+      ;; the mixed episode — a traced edit plus the 43.2% case
+      (api/edit-replace! sess 'pfa.core 'f "(defn f \"F.\" [x] (identity x))"
+                         :prompt "traced edit" :agent "t")
+      (api/add-require! sess 'pfb.core "[clojure.string :as str]"
+                        :prompt "the untraceable ns-form touch" :agent "t")
+      (let [r (api/done! sess :label "mixed" :agent "t")]
+        (testing "f's test and pfb's reach run; g-t is NOT dragged in"
+          (is (= 2 (:test (:test r))) (pr-str (:test r))))
+        (testing "green, with no isolated-pending noise"
+          (is (= :green (get-in r [:findings :test-status])))
+          (is (nil? (get-in r [:findings :isolated-pending])))))
       (finally (api/close! sess)))))

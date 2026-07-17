@@ -403,7 +403,8 @@
                                                 :source (:source a)
                                                 :agent (:agent a)))
       "ns_add_require" (text! (-> (api/add-require! session (sym :ns) (:require a)
-                                                      :prompt (:prompt a))
+                                                      :prompt (:prompt a)
+                                                      :agent (:agent a))
                                     (select-keys [:error :warnings :existing-warnings
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
@@ -566,7 +567,8 @@
                                                     :mentions :hint])
                                       (summarize (:verbose a)))))
       "ns_remove_require" (text! (-> (api/remove-require! session (sym :ns) (sym :lib)
-                                                         :prompt (:prompt a))
+                                                         :prompt (:prompt a)
+                                                         :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
       "rename_sweep" (let [{:keys [from to]} a]

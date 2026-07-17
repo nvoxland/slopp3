@@ -641,34 +641,47 @@
                        (let [iso (set (:isolated (test-var-tiers store nsx)))]
                          (filter #(iso (symbol (name %))) syms)))
                      (group-by (comp symbol namespace) tests)))))
-(defn impacted-isolated
-  "The ^:isolated test vars the trace says the episode's `changed` form-ids
-  reach, for the done-point to route to the external tier (#127).
+(defn impacted-tests
+  "Every test var the changed form-ids can affect, decided PER FORM (#132):
+  a form with trace evidence contributes exactly its observed tests; a form
+  without contributes every test in the namespaces whose require-closure
+  reaches ITS namespace. Never nil — [] means nothing reaches.
 
-  THREE answers, and the difference is the whole point:
-  - **nil** — the trace is silent about at least one changed form. The caller
-    MUST fall back to the require-closure; absence of evidence is not evidence.
-  - **[]** — the evidence speaks and no ^:isolated test is impacted. There is
-    genuinely nothing for the external tier to do.
-  - **[syms]** — run exactly these.
+  Replaces the all-or-nothing collapse, where ONE untraced form discarded
+  every other form's evidence and reverted the whole done to closure runs.
+  Measured on the journal (2026-07-17): 54.4% of real episodes touched a form
+  the tracer can never see — 43.2% an NS FORM (ns_add_require edits one),
+  28% a data def — so the collapse was the common case, not the corner.
 
-  Collapses all-or-nothing on a single nil, matching `done!`'s in-image half:
-  one untraced form means the reached set is unknown, not smaller.
-
-  Until #127 done! ignored this and re-derived the set from
-  `test-nses-reaching` — the require-closure, which selects a median 43 of 46
-  isolated test namespaces (measured over every source ns 2026-07-17). That is
-  not narrowing, and the cap of 4 then deferred 84.6% of changes."
+  Equally sound: `test-nses-reaching` over a union of namespaces IS the union
+  of the per-namespace calls (the closure intersection distributes), so the
+  untraced forms select exactly what the global fallback selected for them,
+  while traced forms keep their narrow sets instead of being dragged along."
   [session store changed]
-  (let [qsyms (into #{}
-                    (keep (fn [fid]
-                            (when-let [e (store/form-by-id store fid)]
-                              (symbol (str (store/ns-of-form-id store fid))
-                                      (str (or (:name e) (:id e)))))))
-                    changed)
-        per   (map (fn [q] (affected-tests session
-                                           (symbol (namespace q))
-                                           (symbol (name q))))
-                   qsyms)]
-    (when (not-any? nil? per)
-      (isolated-among store (distinct (apply concat per))))))
+  (let [reach (memoize
+               (fn [ns-sym]
+                 (vec (for [tns (test-nses-reaching store [ns-sym])
+                            :let [tiers (test-var-tiers store tns)]
+                            nm (concat (:image tiers) (:isolated tiers))]
+                        (symbol (str tns) (str nm))))))]
+    (vec (sort (distinct
+                (mapcat (fn [fid]
+                          (if-let [e (store/form-by-id store fid)]
+                            (let [ns-sym (store/ns-of-form-id store fid)]
+                              (or (affected-tests session ns-sym
+                                                  (or (:name e) (symbol (:id e))))
+                                  (reach ns-sym)))
+                            []))
+                        changed))))))
+(defn impacted-isolated
+  "The ^:isolated test vars the changed form-ids can affect, for the
+  done-point to route to the external tier — `impacted-tests` filtered to the
+  tier only the external runner can execute.
+
+  Never nil (#132): an untraced form expands to its own namespace's reach
+  instead of collapsing the whole answer, so [] genuinely means no isolated
+  test can be affected. The #127 version returned nil on ANY untraced form and
+  done! fell back to the require-closure of everything — which selects a
+  median 43 of 46 isolated test namespaces and deferred 84.6% of changes."
+  [session store changed]
+  (isolated-among store (impacted-tests session store changed)))

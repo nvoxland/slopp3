@@ -1347,26 +1347,35 @@
 
 (defn add-require!
   "F5: add one require clause to `ns-sym`'s ns form — structural edit through
-  the normal replace pipeline (delta, hot-reload, verification)."
-  [session ns-sym require-str & {:keys [prompt]}]
+  the normal replace pipeline (delta, hot-reload, verification).
+
+  Forwards `:agent` (#132): without it the delta landed agent-nil and the edit
+  never entered ANY agent's episode — `done` never linted, normalized, or
+  verified an ns_add_require at the boundary. Found by the collapse fix's own
+  e2e: the ns-form change it staged simply never arrived."
+  [session ns-sym require-str & {:keys [prompt agent]}]
   (if-let [f (store/form-named (:store @session) ns-sym ns-sym)]
     (let [r (edit/add-require-source (n/string (:node f)) require-str)]
       (if (:error r)
         r
         (edit-replace! session ns-sym ns-sym (:src r)
-                       :prompt (or prompt (str "add require " require-str)))))
+                       :prompt (or prompt (str "add require " require-str))
+                       :agent agent)))
     {:error (str "no namespace " ns-sym " (create it first)")}))
 
 (defn remove-require!
   "Symmetric counterpart of add-require!: structurally remove `lib`'s require
-  spec from `ns-sym`'s ns form, through the normal replace pipeline."
-  [session ns-sym lib & {:keys [prompt]}]
+  spec from `ns-sym`'s ns form, through the normal replace pipeline.
+  Forwards `:agent` (#132) for the same reason add-require! does — an
+  agent-nil delta never enters any episode."
+  [session ns-sym lib & {:keys [prompt agent]}]
   (if-let [f (store/form-named (:store @session) ns-sym ns-sym)]
     (let [r (edit/remove-require-source (n/string (:node f)) lib)]
       (if (:error r)
         r
         (edit-replace! session ns-sym ns-sym (:src r)
-                       :prompt (or prompt (str "remove require " lib)))))
+                       :prompt (or prompt (str "remove require " lib))
+                       :agent agent)))
     {:error (str "no namespace " ns-sym)}))
 
 (defn move-form!
@@ -2539,12 +2548,13 @@
                                          (symbol (str (store/ns-of-form-id st* fid))
                                                  (str (or (:name e) (:id e)))))))
                                changed)
-                per      (map (fn [q] (session/affected-tests session
-                                                      (symbol (namespace q))
-                                                      (symbol (name q))))
-                              qsyms)
-                affected (when (not-any? nil? per)
-                           (vec (sort (distinct (apply concat per)))))
+                
+                affected ;; PER FORM (#132): evidence where it exists, that form's own
+                ;; namespace-reach where it doesn't. The old all-or-nothing
+                ;; collapse — one nil discarding every other form's evidence —
+                ;; fired on 54.4% of real episodes (43.2% via ns forms alone:
+                ;; ns_add_require edits a form the tracer can never see).
+                (session/impacted-tests session st* changed)
                 changed-nses (vec (distinct (keep #(store/ns-of-form-id st* %)
                                                   changed)))
                 ;; with no trace coverage the fallback must still REACH the
@@ -2572,37 +2582,19 @@
         iso (when (and isolated? (seq changed))
               (let [st*      (:store @session)
                     iso-only (session/impacted-isolated session st* changed)]
-                (cond
-                  ;; the trace NAMES the impacted isolated tests — run exactly
-                  ;; those. A :only run is one serial JVM (it never shards), so
-                  ;; the cap is on TESTS: p50 is 12 covering tests and a cap of
-                  ;; 40 fits ~71% of forms, while the tail (p90 = 218) is the
-                  ;; core-form case that honestly wants the whole suite anyway.
-                  (seq iso-only)
+                ;; #132: impacted-isolated is never silent — an untraced form expands
+                ;; to its own namespace's reach — so the old closure fallback is
+                ;; gone with the collapse that needed it. Run exactly the named
+                ;; tests. A :only run is one serial JVM (it never shards), so the
+                ;; cap is on TESTS: p50 is 12 covering tests and a cap of 40 fits
+                ;; ~71% of forms, while the tail (p90 = 218) is the core-form
+                ;; case that honestly wants the whole suite anyway.
+                (when (seq iso-only)
                   (if (<= (count iso-only) 40)
                     (isolated-test-run! session :only iso-only)
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
-                               :note  "first 5 shown — the milestone gate runs them all"}})
-
-                  ;; evidence, and none of the impacted tests are isolated:
-                  ;; nothing for the external tier to do. NOT the same as silence.
-                  (some? iso-only) nil
-
-                  ;; the trace is silent about some changed form — fall back to
-                  ;; the PROVABLE closure, ns-grain, capped. Sound, and the only
-                  ;; honest answer when there is no evidence to narrow on.
-                  :else
-                  (let [ch-nses  (distinct (keep #(store/ns-of-form-id st* %) changed))
-                        iso-nses (session/isolated-test-nses
-                                  st* (session/test-nses-reaching st* ch-nses))]
-                    (when (seq iso-nses)
-                      (if (<= (count iso-nses) 4)
-                        (isolated-test-run! session :nses iso-nses)
-                        {:pending (cond-> {:count (count iso-nses)
-                                           :nses  (vec (take 5 (sort iso-nses)))}
-                                    (> (count iso-nses) 5)
-                                    (assoc :note "first 5 shown — the milestone gate runs them all"))}))))))
+                               :note  "first 5 shown — the milestone gate runs them all"}}))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
                        failures    (+ (:fail summary 0) (:error summary 0)
                                       (:failures iso 0) (:errors iso 0))

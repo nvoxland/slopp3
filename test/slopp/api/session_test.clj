@@ -57,15 +57,12 @@
     (testing "an all-in-image set routes nowhere: there is nothing for the
               external tier to do, which is NOT the same as a silent trace"
       (is (empty? (session/isolated-among st '[z.core-test/fast-t]))))))
-(deftest impacted-isolated-routes-the-traced-tests-and-admits-silence
-  ;; done!'s isolated tier selected by require-closure until #127 — median 43 of
-  ;; 46 isolated test nses (measured over every source ns 2026-07-17), which
-  ;; blows the cap of 4 and defers 84.6% of the time. The trace already knows.
-  ;;
-  ;; The three-way answer matters more than the narrowing. nil and [] are NOT
-  ;; the same: nil means the evidence is silent about some changed form and the
-  ;; caller MUST fall back to the closure; [] means the evidence speaks and no
-  ;; isolated test is impacted, so there is genuinely nothing to run.
+(deftest impacted-isolated-expands-untraced-forms-per-form
+  ;; #127 gave the isolated tier trace-narrowing but kept the all-or-nothing
+  ;; collapse: ONE untraced form made the answer nil and done! fell back to the
+  ;; require-closure of EVERYTHING. #132 dissolves the silence per form: an
+  ;; untraced form contributes its own namespace's reach, so the answer is
+  ;; never nil — [] genuinely means no isolated test can be affected.
   (let [st   (-> (store/empty-store)
                  (store/ingest 'z.core "(ns z.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n")
                  (store/ingest 'z.core-test
@@ -73,15 +70,18 @@
                                     "                          [clojure.test :refer [deftest is]]))\n\n"
                                     "(deftest fast-t (is (= 1 (c/f 1))))\n\n"
                                     "(deftest ^:isolated slow-t (is (= 2 (c/f 2))))\n")))
-        sess (atom {:test-map {'z.core-test/fast-t #{'z.core/f}
+        sess (atom {:store st
+                    :test-map {'z.core-test/fast-t #{'z.core/f}
                                'z.core-test/slow-t #{'z.core/f}}})
         fid  (:id (store/form-named st 'z.core 'f))
         gid  (:id (store/form-named st 'z.core 'g))]
     (testing "traced: only the ^:isolated half routes out — fast-t already ran in-image"
       (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [fid]))))
-    (testing "ONE untraced form makes the whole answer nil — the caller falls back"
-      (is (nil? (session/impacted-isolated sess st [gid])))
-      (is (nil? (session/impacted-isolated sess st [fid gid]))))))
+    (testing "an UNTRACED form expands to its namespace's reach instead of
+              collapsing the whole answer to nil"
+      (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [gid]))))
+    (testing "mixed: the union, still never nil"
+      (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [fid gid]))))))
 (deftest affected-tests-consults-every-name-and-refuses-opaque-bodies
   ;; Two consequences of D8 land here. (1) Evidence arrives keyed by the VAR
   ;; that ran — a test calling protocol method m records p.core/m — but the
@@ -132,3 +132,46 @@
               both tiers, so its evidence is complete"
       (is (= '[dm.t/meth-t dm.t/multi-t]
              (vec (sort (session/affected-tests sess 'dm.core 'area))))))))
+(deftest impacted-tests-falls-back-per-form-not-globally
+  ;; THE collapse (measured 2026-07-17): done! discarded ALL narrowing when ONE
+  ;; changed form had no trace evidence — (when (not-any? nil? per) ...). An ns
+  ;; form can never be traced and ns_add_require edits one, so 54.4% of real
+  ;; episodes (43.2% via ns forms alone) reverted to whole-closure runs, and
+  ;; the evidence for every OTHER form in the episode was thrown away.
+  ;;
+  ;; Per-form is equally sound and far less pessimistic: an untraced form
+  ;; contributes every test whose require-closure reaches ITS namespace — the
+  ;; same tests the global fallback would run FOR THAT FORM, since
+  ;; test-nses-reaching over a union of nses is the union of the per-ns calls —
+  ;; while a traced form keeps contributing exactly its observed tests.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'pf.a "(ns pf.a)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n")
+               (store/ingest 'pf.b "(ns pf.b)\n\n(defn h \"H.\" [x] x)\n")
+               (store/ingest 'pf.a-test
+                             (str "(ns pf.a-test (:require [pf.a :as a]\n"
+                                  "                        [clojure.test :refer [deftest is]]))\n\n"
+                                  "(deftest f-t (is (= 1 (a/f 1))))\n\n"
+                                  "(deftest g-t (is (= 1 (a/g 1))))\n"))
+               (store/ingest 'pf.b-test
+                             (str "(ns pf.b-test (:require [pf.b :as b]\n"
+                                  "                        [clojure.test :refer [deftest is]]))\n\n"
+                                  "(deftest h-t (is (= 1 (b/h 1))))\n")))
+        sess (atom {:store st
+                    :test-map {'pf.a-test/f-t #{'pf.a/f}
+                               'pf.a-test/g-t #{'pf.a/g}
+                               'pf.b-test/h-t #{'pf.b/h}}})
+        fid  (fn [nsx nm] (:id (store/form-named st nsx nm)))]
+    (testing "all-traced: exactly the evidence, nothing else"
+      (is (= '[pf.a-test/f-t]
+             (session/impacted-tests sess st [(fid 'pf.a 'f)]))))
+    (testing "an untraced form (pf.b's NS FORM — the 43.2% case) expands to the
+              tests reaching ITS namespace only"
+      (is (= '[pf.b-test/h-t]
+             (session/impacted-tests sess st [(fid 'pf.b 'pf.b)]))))
+    (testing "mixed episode: the traced form KEEPS its narrow set — g-t, whose
+              subject was not touched, is not dragged in by pf.b's ns form"
+      (is (= '[pf.a-test/f-t pf.b-test/h-t]
+             (session/impacted-tests sess st [(fid 'pf.a 'f) (fid 'pf.b 'pf.b)]))))
+    (testing "a deleted fid is skipped, not an error"
+      (is (= '[pf.a-test/f-t]
+             (session/impacted-tests sess st [(fid 'pf.a 'f) "f999"]))))))
