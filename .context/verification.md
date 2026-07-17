@@ -24,7 +24,7 @@ The oracle must never return a false verdict. Everything here serves that.
      behaviour, not bytes**: `render-ns` drops inter-form blank lines and the
      store copy legitimately carries `^:entry-point` markers the file has no
      use for. Nothing enforces this; they HAVE drifted
-     (`.ideas/rt-is-duplicated-file-and-store.md`). Change both.
+     (`ideas/rt-is-duplicated-file-and-store.md`). Change both.
    - Failure details (F1) are captured by rebinding clojure.test's dynamic
      `report` multimethod — **`:test` counting stays in `test-var` itself;
      the custom report must inc `:pass/:fail/:error` counters**. Bounded:

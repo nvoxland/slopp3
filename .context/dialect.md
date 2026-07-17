@@ -23,7 +23,7 @@ or an owned temp dir for a dirless session) fixes it. Notes that matter:
   ships.
 - **`lint`'s reuse condition includes `:cache-dir`** — a different cache is a
   different world; replaying findings across one is the same
-  key-omits-an-input bug as the memo (`.ideas/kondo-memo-key-omits-the-project-cache.md`).
+  key-omits-an-input bug as the memo (`ideas/kondo-memo-key-omits-the-project-cache.md`).
 - The atom is process-global: two sessions on different stores in one process
   share the last opener's dir. `lint` re-passes on a dir change, so it stays
   correct, just unmemoized across them. & effects

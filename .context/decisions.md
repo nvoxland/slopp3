@@ -56,7 +56,7 @@ the change here (same commit).
   (`dialect-scan`) keep their declares, and the pipeline's own inserts (raw
   parser, via `edit/declare-node`) don't trip the gate they enforce. Unlike
   D3/D4 this isn't an analysis defeater — it's the first prune of a human
-  convenience the pipeline can fully own (`.ideas/dialect-prunes-human-conveniences.md`).
+  convenience the pipeline can fully own (`ideas/dialect-prunes-human-conveniences.md`).
   Mechanics: `.context/verification.md` S1b + `.context/dialect.md`.
 
 ## C — storage core
@@ -842,7 +842,7 @@ and no tool could address the anonymous declare to fix it (`query_search`
 reports it by form-id; the edit tools only take a name). Phantoms are now
 `:phantom`: dead, never a reason to keep a declare. Root cause still open:
 `move-forms!` mints its own unmarked declares
-(`.ideas/move-forms-mints-unmanaged-declares.md`) — it is the last declare
+(`ideas/move-forms-mints-unmanaged-declares.md`) — it is the last declare
 writer outside the pipeline.
 
 S1b ✅ **Update 4 — the pipeline is now the ONLY declare writer (2026-07-16).**
@@ -1595,7 +1595,7 @@ eval-injected — rt/observe, rt/traced-run, mcp/call-main! migrated from
 unverifiable). KEYWORDS REJECTED as the replacement: a keyword names a
 table slot, not a var — statically worse than a string. unused-report and
 review_scan read carriers and declarations; a naked quoted symbol stays
-data. Phase 2 (parked with .ideas/): the dialect LINT that detects
+data. Phase 2 (parked with ideas/): the dialect LINT that detects
 var-shaped strings / naked requiring-resolve outside carriers and teaches
 the sanctioned form; per-library carrier adapters (kondo-hook style) for
 framework config; the unified reference graph builds over these so

@@ -103,7 +103,7 @@
   the wire (opaque ids fail unsafe; a mistyped name fails loudly) — short
   handles were built and deleted same-day as unconsumed surface; the
   version-locked variant that WOULD earn its keep is parked in
-  `.ideas/version-locked-references.md`. Convert at the boundary, one
+  `ideas/version-locked-references.md`. Convert at the boundary, one
   place.
 
 ## Layer map (bottom-up)
