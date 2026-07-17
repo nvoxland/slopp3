@@ -398,7 +398,29 @@
                 (symbol v)
                 (throw (ex-info (str "missing required argument :"
                                      (clojure.core/name k) " for " name)
-                                {}))))]
+                                {}))))
+        ;; source args are passed raw (not through `sym`), so a misnamed key
+        ;; (`new_source` for `source`) silently became nil and fell through to a
+        ;; confusing "got 0 forms" parse error. `src` validates a required source
+        ;; the way `sym` validates a symbol — and names the alias it caught.
+        src (fn [k]
+              (let [v (get a k)]
+                (if (and v (not (str/blank? (str v))))
+                  v
+                  (let [alt (some (fn [k2]
+                                    (when (and (not= k2 k)
+                                               (not (str/blank? (str (get a k2)))))
+                                      k2))
+                                  [:new_source :new-source :new_src :newsource :src :source-code])]
+                    (throw (ex-info (str "missing required argument :"
+                                         (clojure.core/name k) " for " name
+                                         (if alt
+                                           (str " — you passed :" (clojure.core/name alt)
+                                                "; the form source goes in :"
+                                                (clojure.core/name k))
+                                           " (the form source text)")
+                                         ".")
+                                    {}))))))]
     (if-let [h (tail-handlers! name)]
       (h session a sym)
       (case name
@@ -540,14 +562,14 @@
                                  r))
       "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
       "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
-                                                       (:source a) :prompt (:prompt a)
+                                                       (src :source) :prompt (:prompt a)
                                                        :agent (:agent a))
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta
                                                   :red-first :carried-errors :note])
                                     (summarize (:verbose a))))
-      "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (:source a)
+      "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (src :source)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
@@ -692,7 +714,7 @@
                                     (summarize (:verbose a))))
       "change_signature" (text! (-> (api/change-signature! session (sym :ns)
                                                            (sym :name)
-                                                           (:source a) (:calls a)
+                                                           (src :source) (:calls a)
                                                            :prompt (:prompt a)
                                                            :agent (:agent a))
                                     (select-keys [:error :step :group :rewrote :manual

@@ -642,3 +642,26 @@
   ;; and it still catches a genuine coordinate leak
   (is (re-find #"row/col" (str (#'mcp/boundary-leak {:row 5 :col 2}))))
   (is (re-find #"\.clj" (str (#'mcp/boundary-leak {:at "foo.clj:42"})))))
+
+(deftest ^:isolated source-arg-friction
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
+      (testing "a misnamed new_source names the real :source param, not a paren/parse error"
+        (let [r (call sess "edit_replace_form"
+                      {:ns "sa" :name "f" :new_source "(defn f [x] (inc x))"})]
+          (is (re-find #"missing required argument :source" r))
+          (is (re-find #"new_source" r))
+          (is (not (re-find #"got 0" r)))))
+      (testing "a genuinely missing source is a clear message too"
+        (let [r (call sess "edit_replace_form" {:ns "sa" :name "f"})]
+          (is (re-find #"missing required argument :source" r))))
+      (testing "edit_add_form guards its source arg the same way"
+        (let [r (call sess "edit_add_form" {:ns "sa" :new_source "(defn g [x] x)"})]
+          (is (re-find #"missing required argument :source" r))))
+      (testing "a correctly-named source still lands"
+        (let [r (edn/read-string
+                 (call sess "edit_replace_form"
+                       {:ns "sa" :name "f" :source "(defn f \"D.\" [x] (inc x))"}))]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))
