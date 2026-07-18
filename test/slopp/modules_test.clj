@@ -512,3 +512,13 @@
                    (store/ingest (store/empty-store) 'app.core rand-src)
                    "app.core" :reads)]
         (is (nil? (modules/tier-refusal t 'app.core 'roll)))))))
+
+(deftest rule-severity-coerces-and-validates
+  (let [s0   (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
+        with (fn [v] (first (store/record-config-put s0 "rules" :manifest "schema-refusal" v)))]
+    (testing "a leading colon is tolerated — ':off' and 'off' both disable"
+      (is (= :off (modules/rule-severity (with ":off") 'schema-refusal :refuse)))
+      (is (= :off (modules/rule-severity (with "off") 'schema-refusal :refuse))))
+    (testing "an unknown/empty severity falls back to the default, not a junk keyword"
+      (is (= :refuse (modules/rule-severity (with "garbage") 'schema-refusal :refuse)))
+      (is (= :refuse (modules/rule-severity (with "") 'schema-refusal :refuse))))))

@@ -33,15 +33,16 @@
 
 (defn node-boundary?
   "True when a `defn` `form` (sexpr) in `ns-sym` is reachable from OUTSIDE its
-   module — a public defn in a module-root ns (<= 2 segments), or an `^:export`
-   defn in a deeper ns. Node-based (reads the sexpr's own metadata), so it judges
-   an OLD form version too — which is what lets visibility NARROWING be detected."
+   module — a public defn in a module-root ns (<= 2 segments), or a defn with any
+   truthy `^:export` in a deeper ns. Node-based (reads the sexpr's own metadata),
+   so it judges an OLD form version too — which is what lets visibility NARROWING
+   be detected. `:export` truthiness matches `edit.modules/export-level` (any
+   truthy value = exported), so the boundary gates all agree."
   [ns-sym form]
   (and (seq? form) (= 'defn (first form))
        (not (:private (meta (second form))))
        (or (= (str ns-sym) (edit.modules/module-of ns-sym))
-           (let [x (:export (meta (second form)))]
-             (or (true? x) (string? x) (symbol? x))))))
+           (boolean (:export (meta (second form)))))))
 
 (defn- arg-map-keys
   "The set of keys of a defn's `:=>` `:malli/schema` FIRST arg when that arg is a

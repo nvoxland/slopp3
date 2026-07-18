@@ -3644,9 +3644,17 @@
    EFFECTIVE per-store severity (the `rules` config override else the default),
    how to discharge it, and what it means. The one place to see what's enforced
    and at what grade — dial any rule with `config_file {path \"rules\" key <rule>
-   value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`)."
+   value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`). WRITE-gate (`:form`)
+   severity is reported HONESTLY as `:off`|`:refuse`: the write path today honors
+   only `:off` (skip) vs run-and-refuse, so a write gate dialed `:advisory`/`:error`
+   still refuses — reporting it as `:refuse` avoids the misleading 'non-blocking'.
+   Done-grain rules keep the full `:off`/`:advisory`/`:error` range."
   [session]
   (let [st (:store @session)]
-    (mapv (fn [{:keys [rule severity] :as r}]
-            (assoc r :severity (edit.modules/rule-severity st rule severity)))
+    (mapv (fn [{:keys [rule grain severity] :as r}]
+            (let [eff (edit.modules/rule-severity st rule severity)]
+              (assoc r :severity
+                     (if (= grain :form)
+                       (if (= :off eff) :off :refuse)
+                       eff))))
           rules/rule-catalog)))

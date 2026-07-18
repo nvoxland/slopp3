@@ -256,13 +256,16 @@
    <severity>}` — else `default`. `rule-key` is coerced via `name`, so a write
    gate's var name (`'schema-refusal`), a done-advisory `:key`, or a plain string
    all work. Severities: `:refuse`/`:error` (blocking), `:advisory` (surfaced,
-   non-blocking), `:off` (skipped). This is the dial that makes the hard-refuse
-   program project-tunable — a rule a project can't live with becomes `:off` or
-   `:advisory` rather than a wall its agents fight. Rides the store `:config`
-   (config_file), so it projects into git."
+   non-blocking), `:off` (skipped). The stored value is a string; a leading colon
+   is tolerated (`\":off\"` == `\"off\"`) and an UNKNOWN value falls back to
+   `default` — a mistyped severity must not silently mint a junk keyword that
+   leaves the rule enabled-but-unrecognized. This is the dial that makes the
+   hard-refuse program project-tunable; it rides the store `:config`, so it
+   projects into git."
   [store rule-key default]
   (if-let [v (get-in store [:config "rules" :values (name rule-key)])]
-    (keyword v)
+    (let [k (keyword (str/replace (str v) #"^:+" ""))]
+      (if (#{:off :advisory :error :refuse} k) k default))
     default))
 
 (defn ^:export namespaced-keys-refusal

@@ -82,3 +82,10 @@
           (is (= [{:form 'bc2.core.impl/widget :visibility-narrowed true}]
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest node-boundary-any-truthy-export
+  (testing "any truthy :export makes a deep-ns fn a boundary (aligns with export-level)"
+    (is (true?  (breakage/node-boundary? 'app.core.impl '(defn ^{:export :yes} f [x] x))))
+    (is (true?  (breakage/node-boundary? 'app.core.impl '(defn ^{:export 42} f [x] x))))
+    (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export false} f [x] x))))
+    (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export nil} f [x] x))))))

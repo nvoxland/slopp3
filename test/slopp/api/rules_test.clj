@@ -61,3 +61,24 @@
     (testing "every registered done advisory is cataloged (drift guard)"
       (is (empty? (set/difference done-keys cataloged))
           (str "uncataloged done advisories: " (set/difference done-keys cataloged))))))
+
+(deftest ^:isolated query-rules-reports-write-gate-severity-honestly
+  (let [sess (api/open!)]
+    (try
+      (testing "a write gate dialed :advisory reports :refuse — the write path only honors :off"
+        (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
+                          :prompt "attempt to soften a write gate")
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (api/query-rules sess)))]
+          (is (= :form (:grain sr)) (pr-str sr))
+          (is (= :refuse (:severity sr)) (pr-str sr))))
+      (testing ":off on a write gate is honored and reported"
+        (api/config-file! sess "rules" :key "schema-refusal" :value "off"
+                          :prompt "turn it off")
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (api/query-rules sess)))]
+          (is (= :off (:severity sr)) (pr-str sr))))
+      (testing "a done advisory keeps its full severity range"
+        (api/config-file! sess "rules" :key "key-typos" :value "error"
+                          :prompt "escalate an advisory")
+        (let [kt (first (filter #(= :key-typos (:rule %)) (api/query-rules sess)))]
+          (is (= :error (:severity kt)) (pr-str kt))))
+      (finally (api/close! sess)))))

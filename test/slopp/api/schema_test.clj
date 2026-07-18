@@ -81,3 +81,15 @@
               (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest analyzer-pure-excludes-nondeterminism
+  (let [src (str "(ns app.nd)\n\n"
+                 "(defn ^{:malli/schema [:=> [:cat :int] :int]} roll \"D.\" [x] (+ x (rand-int 6)))\n\n"
+                 "(defn ^{:malli/schema [:=> [:cat :int] :int]} pure1 \"D.\" [x] (inc x))\n")
+        s (store/ingest (store/empty-store) 'app.nd src)]
+    (testing "a non-deterministic fn is NOT analyzer-pure (unsafe to generatively call)"
+      (is (false? (schema/analyzer-pure? s 'app.nd/roll)))
+      (is (true?  (schema/analyzer-pure? s 'app.nd/pure1))))
+    (testing "so it is excluded from schema-candidates — the oracle-check can't flake on it"
+      (is (= [{:form 'app.nd/pure1 :schema [:=> [:cat :int] :int]}]
+             (schema/schema-candidates s '#{app.nd/roll app.nd/pure1}))))))
