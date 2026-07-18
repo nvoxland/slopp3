@@ -269,3 +269,25 @@
        ent
        (kondo-pass source)))))
 
+(def nondeterministic-leaves
+  "Core primitives whose result is NOT a function of the args — randomness and
+   external reads. These are NOT `!`-effects (D6 scopes `!` to MODIFICATION, and
+   reads/non-determinism deliberately take no bang), but they break REFERENTIAL
+   TRANSPARENCY, so the `:pure` tier — the strictest, RT core — forbids reaching
+   them. Interop non-determinism (`System/currentTimeMillis`, `.nextInt`) is out of
+   scope: the analyzer sees core vars, not interop — the same gap D6 has."
+  '#{clojure.core/rand clojure.core/rand-int clojure.core/rand-nth
+     clojure.core/random-uuid clojure.core/shuffle
+     clojure.core/slurp clojure.core/line-seq clojure.core/read-line})
+
+(defn nondeterministic-vars
+  "Set of user var nodes that transitively reach a `nondeterministic-leaves`
+   anchor — randomness or an external read — over the call graph (monotonic
+   fixpoint, cycle-safe; mirrors `effectful-vars`). What the `:pure` tier adds on
+   top of the effect check to enforce referential transparency."
+  [analysis]
+  (let [edges   (call-graph analysis)
+        anchor? (fn [t] (contains? nondeterministic-leaves t))]
+    (loop [nd (set (for [[n ts] edges :when (some anchor? ts)] n))]
+      (let [nd' (into nd (for [[n ts] edges :when (some nd ts)] n))]
+        (if (= nd nd') nd (recur nd'))))))

@@ -125,13 +125,16 @@
          seq)))
 (defn ^:export tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
-  form whose effect-reachability exceeds its module's declared purity tier.
-  `:pure` rejects ANY effect (incl. an opaque-dep read); `:reads` rejects a
-  reach to a MUTATION (an in-process/external write or a `!`-named callee) but
-  allows reads; `:effects` — or an undeclared module — is unrestricted. Built on
-  index/effectful-vars over the candidate ns's analysis, so it inherits D6's
-  single-ns, bang-name-propagating soundness (a cross-ns effect is seen only
-  when the callee is `!`-named). Returns a teaching string, or nil when clean."
+   form whose reachability exceeds its module's declared purity tier.
+   `:pure` rejects ANY effect (incl. an opaque-dep read) AND any NON-DETERMINISM
+   (rand/slurp — a pure core must be referentially transparent, not merely
+   mutation-free); `:reads` rejects a reach to a MUTATION (an in-process/external
+   write or a `!`-named callee) but allows reads and non-determinism; `:effects`
+   — or an undeclared module — is unrestricted. Built on index/effectful-vars +
+   index/nondeterministic-vars over the candidate ns's analysis, so it inherits
+   D6's single-ns, bang-name-propagating soundness (a cross-ns effect is seen only
+   when the callee is `!`-named; interop non-determinism is out of scope).
+   Returns a teaching string, or nil when clean."
   [candidate ns-sym form-name]
   (let [tier (get (:module-tiers candidate) (module-of ns-sym) :effects)]
     (when (not= tier :effects)
@@ -140,15 +143,25 @@
             eff      (if (= tier :pure)
                        (index/effectful-vars analysis dep-nses (:dep-pure candidate))
                        (index/effectful-vars analysis nil nil))
+            nondet   (when (= tier :pure) (index/nondeterministic-vars analysis))
             vnode    (symbol (str ns-sym) (str form-name))]
-        (when (contains? eff vnode)
+        (cond
+          (contains? eff vnode)
           (str ns-sym "/" form-name " reaches "
                (if (= tier :pure) "an effect" "a mutation")
                " but module " (module-of ns-sym) " is declared :" (name tier)
                " (functional-core gate) — move the effect to a periphery"
                " namespace, or loosen the tier with module_purity {module \""
                (module-of ns-sym) "\" tier :"
-               (if (= tier :pure) "reads" "effects") "} (say why)"))))))
+               (if (= tier :pure) "reads" "effects") "} (say why)")
+
+          (and nondet (contains? nondet vnode))
+          (str ns-sym "/" form-name " reaches non-determinism (rand/slurp) but"
+               " module " (module-of ns-sym) " is declared :pure — a pure core"
+               " must be referentially transparent (deterministic in its args);"
+               " move the non-determinism to a periphery namespace, or loosen the"
+               " tier with module_purity {module \"" (module-of ns-sym)
+               "\" tier :reads} (say why)"))))))
 
 (defn ^:export module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):

@@ -493,3 +493,22 @@
                                :prompt "namespaced keys")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest pure-tier-forbids-nondeterminism
+  (let [rand-src "(ns app.core)\n\n(defn roll \"R.\" [] (rand-int 6))\n"
+        pure-src "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n"]
+    (testing ":pure refuses a form reaching non-determinism (rand), with teaching"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core rand-src)
+                   "app.core" :pure)]
+        (is (re-find #"(?i)determinis" (str (modules/tier-refusal t 'app.core 'roll))))))
+    (testing ":pure still allows a referentially-transparent form"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core pure-src)
+                   "app.core" :pure)]
+        (is (nil? (modules/tier-refusal t 'app.core 'add)))))
+    (testing ":reads tolerates non-determinism (rand is not a mutation)"
+      (let [[t _] (store/record-module-tier
+                   (store/ingest (store/empty-store) 'app.core rand-src)
+                   "app.core" :reads)]
+        (is (nil? (modules/tier-refusal t 'app.core 'roll)))))))
