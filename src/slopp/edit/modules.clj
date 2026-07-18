@@ -123,6 +123,31 @@
 
                      :else nil))))
          seq)))
+(defn ^:export module-external?
+  "The single boundary predicate the write gates and the breakage classifier
+   share: true when a `defn` `form` (sexpr) in `ns-sym` is reachable from OUTSIDE
+   its module — public (not `defn-`/`^:private`) in a module-root ns (<= 2
+   segments), or any truthy `^:export` in a deeper ns. Node-based (reads the
+   sexpr's own metadata), so it judges an old/candidate form version too."
+  [ns-sym form]
+  (and (seq? form) (= 'defn (first form))
+       (not (:private (meta (second form))))
+       (or (= (str ns-sym) (module-of ns-sym))
+           (boolean (:export (meta (second form)))))))
+
+(defn ^:export fn-arglists
+  "The arg-vectors of EVERY arity of a `defn` sexpr — single-arity `[params]` and
+   each multi-arity `([params] …)`. Skips the docstring and attr-map. The shared
+   all-arities extraction (so a boundary shape in a LATER arity isn't missed —
+   review #6)."
+  [form]
+  (let [body (drop 2 form)
+        body (cond->> body (string? (first body)) rest)
+        body (cond->> body (map? (first body)) rest)]
+    (if (vector? (first body))
+      [(first body)]
+      (vec (keep #(when (and (seq? %) (vector? (first %))) (first %)) body)))))
+
 (defn ^:export tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
    form whose reachability exceeds its module's declared purity tier.
@@ -213,42 +238,30 @@
            :missing-doc true})))))
 
 (defn ^:export schema-refusal
-  "The opt-in per-form BOUNDARY-SCHEMA gate over the CANDIDATE store (D9/D2):
-   when the store opts in (config file `gates`, key `require-boundary-schemas`
-   set to `true`; OFF by default so nothing retro-breaks — the permissive-default,
-   no-adoption-step lesson), a MODULE-EXTERNAL `defn` whose FIRST arg is a
-   destructured MAP but which carries no :=> :malli/schema is refused: the one
-   boundary a narrow-context caller can't infer the shape of. Structural only
-   (rewrite-clj node inspection, no malli server-side), and the schema it demands
-   is exactly the :=> shape the done-point oracle-check generatively verifies — so
-   requiring it can never mean requiring a drift-prone marker. Returns a teaching
-   string, or nil when clean / opted-out."
+  "The opt-in per-form BOUNDARY-SCHEMA gate over the CANDIDATE store (D9/D2): when
+   the store opts in (config file `gates`, key `require-boundary-schemas` = `true`;
+   OFF by default so nothing retro-breaks), a MODULE-EXTERNAL `defn` any of whose
+   arities takes a destructured MAP first arg but which carries no :=> :malli/schema
+   is refused: the one boundary a narrow-context caller can't infer the shape of.
+   Structural only (rewrite-clj node inspection, no malli server-side), and the
+   schema it demands is exactly the :=> shape the done-point oracle-check
+   generatively verifies. Shares `module-external?` + `fn-arglists` with the other
+   boundary gates. Returns a teaching string, or nil when clean / opted-out."
   [candidate ns-sym form-name]
   (when (= "true" (get-in candidate [:config "gates" :values "require-boundary-schemas"]))
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
-      (let [form (try (n/sexpr (:node e)) (catch Exception _ nil))]
-        (when (and (seq? form) (= 'defn (first form)))
-          (let [nm       (second form)
-                nmeta    (meta nm)
-                body     (drop 2 form)
-                body     (cond->> body (string? (first body)) rest)
-                body     (cond->> body (map? (first body)) rest)
-                arglist  (cond (vector? (first body)) (first body)
-                               (seq? (first body))    (first (first body)))
-                map-arg?  (and (vector? arglist) (map? (first arglist)))
-                public?   (not (:private nmeta))
-                external? (or (= (str ns-sym) (module-of ns-sym))
-                              (boolean (export-level candidate ns-sym form-name)))
-                sch       (:malli/schema nmeta)
-                has-sch?  (and (vector? sch) (= :=> (first sch)))]
-            (when (and public? external? map-arg? (not has-sch?))
-              (str ns-sym "/" form-name " is a module-external fn taking a"
-                   " destructured map but declares no :=> :malli/schema — the"
-                   " boundary contract a narrow-context caller can't infer. Add"
-                   " ^{:malli/schema [:=> [:cat ArgSchema] RetSchema]} to the name"
-                   " (the done-point oracle-check then verifies it generatively),"
-                   " or opt out with config_file: path `gates` key"
-                   " `require-boundary-schemas` unset true"))))))))
+      (let [form     (try (n/sexpr (:node e)) (catch Exception _ nil))
+            map-arg? (boolean (some #(map? (first %)) (fn-arglists form)))
+            sch      (:malli/schema (meta (second form)))
+            has-sch? (and (vector? sch) (= :=> (first sch)))]
+        (when (and (module-external? ns-sym form) map-arg? (not has-sch?))
+          (str ns-sym "/" form-name " is a module-external fn taking a"
+               " destructured map but declares no :=> :malli/schema — the"
+               " boundary contract a narrow-context caller can't infer. Add"
+               " ^{:malli/schema [:=> [:cat ArgSchema] RetSchema]} to the name"
+               " (the done-point oracle-check then verifies it generatively),"
+               " or opt out with config_file: path `gates` key"
+               " `require-boundary-schemas` unset true"))))))
 
 (defn ^:export rule-severity
   "The effective severity of rule `rule-key` for this store: a per-store OVERRIDE
@@ -269,37 +282,26 @@
     default))
 
 (defn ^:export namespaced-keys-refusal
-  "The opt-in NAMESPACED-BOUNDARY-KEYS gate over the CANDIDATE store (D9): when
-   the store opts in (config file `gates`, key `require-namespaced-keys` = `true`;
-   OFF by default), a MODULE-EXTERNAL `defn` whose FIRST arg destructures
+  "The opt-in NAMESPACED-BOUNDARY-KEYS gate over the CANDIDATE store (D9): when the
+   store opts in (config file `gates`, key `require-namespaced-keys` = `true`; OFF
+   by default), a MODULE-EXTERNAL `defn` any of whose arities destructures
    UNQUALIFIED `:keys` (`{:keys [id]}`) is refused — a boundary map should carry
    namespaced domain keys (`{:some.ns/keys [id]}`), self-documenting at the use
-   site and safe against the silent nil-pun. Structural only. Returns a teaching
-   string, or nil when clean / opted-out. (Boundary + arglist detection mirrors
-   `schema-refusal`; a shared helper could DRY them.)"
+   site and safe against the silent nil-pun. Structural only; shares
+   `module-external?` + `fn-arglists` with the other boundary gates. Returns a
+   teaching string, or nil when clean / opted-out."
   [candidate ns-sym form-name]
   (when (= "true" (get-in candidate [:config "gates" :values "require-namespaced-keys"]))
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
-      (let [form (try (n/sexpr (:node e)) (catch Exception _ nil))]
-        (when (and (seq? form) (= 'defn (first form)))
-          (let [nm        (second form)
-                nmeta     (meta nm)
-                body      (drop 2 form)
-                body      (cond->> body (string? (first body)) rest)
-                body      (cond->> body (map? (first body)) rest)
-                arglist   (cond (vector? (first body)) (first body)
-                                (seq? (first body))    (first (first body)))
-                param     (first arglist)
-                bare?     (and (map? param) (contains? param :keys))
-                public?   (not (:private nmeta))
-                external? (or (= (str ns-sym) (module-of ns-sym))
-                              (boolean (export-level candidate ns-sym form-name)))]
-            (when (and public? external? bare?)
-              (str ns-sym "/" form-name " destructures unqualified :keys at a"
-                   " module boundary, but this store requires namespaced domain"
-                   " keys — use {:some.ns/keys [...]} (self-documenting at the use"
-                   " site, safe against the nil-pun), or opt out with config_file:"
-                   " path `gates` key `require-namespaced-keys` unset true"))))))))
+      (let [form  (try (n/sexpr (:node e)) (catch Exception _ nil))
+            bare? (boolean (some #(and (map? (first %)) (contains? (first %) :keys))
+                                 (fn-arglists form)))]
+        (when (and (module-external? ns-sym form) bare?)
+          (str ns-sym "/" form-name " destructures unqualified :keys at a"
+               " module boundary, but this store requires namespaced domain"
+               " keys — use {:some.ns/keys [...]} (self-documenting at the use"
+               " site, safe against the nil-pun), or opt out with config_file:"
+               " path `gates` key `require-namespaced-keys` unset true"))))))
 
 (def per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a

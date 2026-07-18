@@ -522,3 +522,18 @@
     (testing "an unknown/empty severity falls back to the default, not a junk keyword"
       (is (= :refuse (modules/rule-severity (with "garbage") 'schema-refusal :refuse)))
       (is (= :refuse (modules/rule-severity (with "") 'schema-refusal :refuse))))))
+
+(deftest gates-inspect-all-arities
+  (let [multi "(ns app.core)\n\n(defn handle \"H.\" ([x] x) ([{:keys [id]} y] id))\n"
+        on (fn [k]
+             (first (store/record-config-put
+                     (store/ingest (store/empty-store) 'app.core multi)
+                     "gates" :manifest k "true")))]
+    (testing "namespaced-keys gate catches bare :keys in a LATER arity"
+      (is (re-find #"namespaced"
+                   (str (modules/namespaced-keys-refusal (on "require-namespaced-keys")
+                                                         'app.core 'handle)))))
+    (testing "schema gate catches a map first-arg in a LATER arity"
+      (is (re-find #":malli/schema"
+                   (str (modules/schema-refusal (on "require-boundary-schemas")
+                                                'app.core 'handle)))))))
