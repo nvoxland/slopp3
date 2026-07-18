@@ -253,7 +253,7 @@
   (let [sess (api/open!)]
     (try
       (let [call (fn [tool args]
-                   (get-in (slopp.mcp/handle
+                   (get-in (slopp.mcp/handle!
                             sess {:id 1 :method "tools/call"
                                   :params {:name tool :arguments args}})
                            [:result :content 0 :text]))]

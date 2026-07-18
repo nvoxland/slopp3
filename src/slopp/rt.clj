@@ -66,7 +66,7 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
-(def touched-sink
+(def ^:ambient-ok touched-sink
   "The atom `instrument!` is currently collecting into, or nil.
 
   THE child-image drain's handle. rt runs in TWO processes: a runner wraps its
@@ -238,7 +238,7 @@
          :trace   trace})
       (finally
         (restore! originals)))))
-(def self-touched
+(def ^:ambient-ok self-touched
   "What rt's OWN fns have been called since the last drain (#126).
 
   Separate from any run's `touched` because it outlives them: it is installed

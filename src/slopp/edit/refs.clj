@@ -151,7 +151,7 @@
   carrier self-ref was keeping dead forms alive)."
   [rs]
   (remove #(and (:from-form %) (= (:from-form %) (:to-form %))) rs))
-(def ^:private refs-memo
+(def ^:private ^:ambient-ok refs-memo
   "Memoize-LAST of the whole-store graph, keyed on store-value IDENTITY:
   the store is immutable, so a new value appears only on a write — same
   value → same graph, by construction (no content hashing needed). Holds

@@ -30,12 +30,14 @@
       (set (remove str/blank? (str/split (str/trim (:out r)) #":")))
       (throw (ex-info (str "classpath resolution failed: " (:err r)) {})))))
 
-(def ^:private jars-cache
+(def ^:private ^:ambient-ok jars-cache
   "coord -> resolved jar paths. A deliberate process-local memo: resolving a
   Maven coordinate shells out and is slow, and the answer for a given coord is
   immutable. Private and never read as state — nothing branches on what is in
   it, so it stays invisible to a slice-limited reader, which is what the
-  ambient-state advisory is protecting against."
+  ambient-state rule protects against. `^:ambient-ok` records that decision in
+  the code, and self-polices: if this ever stops being an atom the marker
+  itself becomes a finding."
   (atom {}))
 
 ^:reads (defn dep-jars
@@ -84,7 +86,7 @@
                    (:local/root coord)
                    (pr-str coord))))
 
-(def ^:private surface-cache
+(def ^:private ^:ambient-ok surface-cache
   "Process-level memo, coord-key → surface — content-addressed, so identical
   across stores and runs (Unison-style). Complements the db `dep_surface`
   cache (which survives restart)."

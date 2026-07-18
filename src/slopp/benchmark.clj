@@ -94,7 +94,7 @@
   [session {:keys [tool args]}]
   (let [in   (json/generate-string {:jsonrpc "2.0" :id 1 :method "tools/call"
                                     :params {:name tool :arguments args}})
-        resp (mcp/handle session (json/parse-string in true))
+        resp (mcp/handle! session (json/parse-string in true))
         out  (json/generate-string resp)]
     {:in (count in) :out (count out)
      :text (get-in resp [:result :content 0 :text])}))
@@ -102,7 +102,7 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-benchmark" (make-array FileAttribute 0))))
 
-(defn run-app
+(defn run-app!
   "Run one app's script in a fresh durable session; returns the measurements."
   [{:keys [name steps test-ns]}]
   (let [session (api/open! {:dir (temp-dir) :warm-spare? true})]
@@ -149,7 +149,7 @@
   [& _]
   (let [rows (doall
               (for [app apps]
-                (let [r (assoc (run-app app) :v (:v app))]
+                (let [r (assoc (run-app! app) :v (:v app))]
                   (println (format "%-12s v%d  %5dms  in:%d out:%d tokens"
                                    (:app r) (:v r) (:wall-ms r)
                                    (:tok-in r) (:tok-out r)))

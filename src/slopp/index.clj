@@ -23,7 +23,7 @@
      clojure.core/assoc! clojure.core/dissoc! clojure.core/pop!
      clojure.core/spit clojure.core/delete-file})
 
-(def ^:private kondo-cache
+(def ^:private ^:ambient-ok kondo-cache
   "source-string -> {:analysis :findings} memo (bounded). ONE kondo pass
   per unique rendered ns feeds both analyze and lint — every write used
   to run kondo several times over identical source (pre/post warnings,
@@ -164,7 +164,7 @@
             :col     (:col u)
             :form    (:from-var u)
             :def-row (first d)}))))
-(def ^:private ns-source-hash
+(def ^:private ^:ambient-ok ns-source-hash
   "ns-sym -> hash of the last source we fed kondo for it.
 
   clj-kondo reads CROSS-NS facts (arities, var existence) from
@@ -184,7 +184,7 @@
   [requires]
   (let [known @ns-source-hash]
     (mapv known (sort requires))))
-(def kondo-cache-dir
+(def ^:ambient-ok kondo-cache-dir
   "Where kondo keeps its CROSS-NS facts (arities, var existence), or nil for
   kondo's own default.
 

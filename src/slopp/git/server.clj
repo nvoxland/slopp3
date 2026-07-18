@@ -65,7 +65,7 @@
       (.setBiDirectionalPipe false)
       (.upload in os nil))))
 
-(defn ^:export git-handler
+(defn ^:export git-handler!
   "The smart-HTTP router: `GET …/info/refs` advertises, `POST
   …/git-upload-pack` serves the pack, everything else 404s — the two requests
   a clone or fetch makes, and nothing more.
@@ -131,7 +131,7 @@
                 :server server
                 :port   actual
                 :url    (str "http://127.0.0.1:" actual "/slopp.git")}]
-    (.createContext server "/slopp.git" (git-handler srv))
+    (.createContext server "/slopp.git" (git-handler! srv))
     (.start server)
     srv))
 

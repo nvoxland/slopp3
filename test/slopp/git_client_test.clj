@@ -15,9 +15,9 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-git-client" (make-array FileAttribute 0))))
 
-(defn- rm-rf [f]
+(defn- rm-rf! [f]
   (let [f (io/file f)]
-    (when (.isDirectory f) (run! rm-rf (.listFiles f)))
+    (when (.isDirectory f) (run! rm-rf! (.listFiles f)))
     (.delete f)))
 
 (def seed
@@ -77,8 +77,8 @@
           (finally (git/close-ctx! ctx))))
       (finally
         (api/close! sess)
-        (rm-rf dir)
-        (rm-rf (io/file bare))))))
+        (rm-rf! dir)
+        (rm-rf! (io/file bare))))))
 
 (deftest ^:isolated push-refuses-when-nothing-projected
   ;; no milestone → no refs/heads/main → an honest error, not an NPE
@@ -90,8 +90,8 @@
         (is (:error r)))
       (finally
         (git/close-ctx! ctx)
-        (rm-rf dir)
-        (rm-rf (io/file bare))))))
+        (rm-rf! dir)
+        (rm-rf! (io/file bare))))))
 (deftest ^:isolated dead-remotes-time-out
   ;; a half-dead HTTPS connection froze the server's serve thread for 40+
   ;; minutes mid-commit_point: JGit transports carried NO timeout, so one
@@ -110,5 +110,5 @@
         (is (:threw r) (pr-str r)))
       (finally
         (git/close-ctx! ctx)
-        (rm-rf dir)
+        (rm-rf! dir)
         (.close srv)))))

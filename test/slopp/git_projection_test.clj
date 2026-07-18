@@ -21,9 +21,9 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-git-test" (make-array FileAttribute 0))))
 
-(defn- rm-rf [f]
+(defn- rm-rf! [f]
   (let [f (io/file f)]
-    (when (.isDirectory f) (run! rm-rf (.listFiles f)))
+    (when (.isDirectory f) (run! rm-rf! (.listFiles f)))
     (.delete f)))
 
 (def seed
@@ -67,7 +67,7 @@
         (try
           (db/persist! conn st2 d)
           (is (= d (first (db/deltas-after conn 0))))
-          (finally (.close conn) (rm-rf dir)))))))
+          (finally (.close conn) (rm-rf! dir)))))))
 
 (deftest ^:isolated commit-point-snapshots-the-rendered-tree
   (let [sess (api/open!)]

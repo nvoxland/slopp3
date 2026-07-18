@@ -69,11 +69,15 @@
 
 (defn- ambient-def?
   "True when `node` is a top-level `(def name (atom|ref|agent|volatile! …))` —
-   ambient MUTABLE state a slice-limited editor can't track."
+   ambient MUTABLE state a slice-limited editor can't track.
+
+   Reads the LAST element, not index 2: `(def x \"doc\" (atom {}))` puts the
+   docstring there, so an index-2 lookup silently missed every DOCUMENTED
+   global — which is to say, every one someone had bothered to justify."
   [node]
   (let [s (try (n/sexpr node) (catch Exception _ nil))]
-    (boolean (and (seq? s) (= 'def (first s))
-                  (let [v (nth s 2 nil)]
+    (boolean (and (seq? s) (= 'def (first s)) (>= (count s) 3)
+                  (let [v (last s)]
                     (and (seq? v)
                          (contains? '#{atom ref agent volatile!} (first v))))))))
 
@@ -96,15 +100,31 @@
 
 (defn ambient-state-check
   "Done-advisory: changed forms that are ambient MUTABLE state — a global
-   `(def _ (atom/ref/agent/volatile! …))`. Advisory (sometimes a legit cache), but
-   a global for LOGIC is spooky action a slice-limited editor can't track — pass
-   state in instead."
+   `(def _ (atom/ref/agent/volatile! …))`. A global for LOGIC is spooky action a
+   slice-limited editor can't track — pass state in instead.
+
+   `^:ambient-ok` on the NAME discharges it, for the case that is genuinely
+   deliberate (a memo whose answer is immutable, a process-local cache). The
+   marker POLICES ITSELF, exactly as `^:unused-ok` does: a marker on a def that
+   is NOT ambient state is itself a finding, so the flag can never drift into
+   decoration once whatever justified it is gone."
   [_session st* changed]
   (vec (keep (fn [fid]
                (when-let [e (store/form-by-id st* fid)]
-                 (when (ambient-def? (:node e))
-                   {:form (symbol (str (store/ns-of-form-id st* fid))
-                                  (str (or (:name e) (:id e))))})))
+                 (let [ambient? (ambient-def? (:node e))
+                       marked?  (let [s (try (n/sexpr (:node e))
+                                             (catch Exception _ nil))]
+                                  (boolean (and (seq? s) (= 'def (first s))
+                                                (symbol? (second s))
+                                                (:ambient-ok (meta (second s))))))
+                       q        (symbol (str (store/ns-of-form-id st* fid))
+                                        (str (or (:name e) (:id e))))]
+                   (cond
+                     (and ambient? (not marked?)) {:form q}
+                     (and marked? (not ambient?))
+                     {:form q :stale-marker true
+                      :teach (str q " carries ^:ambient-ok but is not ambient"
+                                  " state — remove the flag")}))))
              changed)))
 
 (defn bare-throw-check

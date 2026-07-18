@@ -8,33 +8,33 @@
 (deftest ^:isolated protocol-handshake
   (let [sess (atom {})]
     (testing "initialize returns serverInfo named slopp"
-      (let [r (mcp/handle sess {:jsonrpc "2.0" :id 1 :method "initialize" :params {}})]
+      (let [r (mcp/handle! sess {:jsonrpc "2.0" :id 1 :method "initialize" :params {}})]
         (is (= "slopp" (get-in r [:result :serverInfo :name])))
         (is (contains? (:result r) :protocolVersion))))
     (testing "tools/list returns schemas with MCP-legal names"
-      (let [tools (get-in (mcp/handle sess {:id 2 :method "tools/list"}) [:result :tools])]
+      (let [tools (get-in (mcp/handle! sess {:id 2 :method "tools/list"}) [:result :tools])]
         (is (seq tools))
         (is (every? #(re-matches #"[a-zA-Z0-9_-]+" (:name %)) tools))
         (is (contains? (set (map :name tools)) "query_source"))
         (is (contains? (set (map :name tools)) "edit_replace_form"))))
     (testing "notifications (no id) produce no response"
-      (is (nil? (mcp/handle sess {:method "notifications/initialized"}))))
+      (is (nil? (mcp/handle! sess {:method "notifications/initialized"}))))
     (testing "unknown method -> JSON-RPC error"
-      (is (= -32601 (get-in (mcp/handle sess {:id 9 :method "bogus"}) [:error :code]))))))
+      (is (= -32601 (get-in (mcp/handle! sess {:id 9 :method "bogus"}) [:error :code]))))))
 
-(defn- call [sess tool args]
-  (get-in (mcp/handle sess {:id 1 :method "tools/call"
+(defn- call! [sess tool args]
+  (get-in (mcp/handle! sess {:id 1 :method "tools/call"
                             :params {:name tool :arguments args}})
           [:result :content 0 :text]))
 
 (deftest ^:isolated tools-call-end-to-end
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
+      (call! sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
       (testing "query_source (VFS read)"
-        (is (re-find #"defn add" (call sess "query_source" {:ns "demo" :full true}))))
+        (is (re-find #"defn add" (call! sess "query_source" {:ns "demo" :full true}))))
       (testing "query_eval hits the oracle"
-        (is (re-find #"\b5\b" (call sess "query_eval" {:code "(demo/add 2 3)"}))))
+        (is (re-find #"\b5\b" (call! sess "query_eval" {:code "(demo/add 2 3)"}))))
       (testing "edit_replace_form over the wire (JSON round-trip) hot-reloads"
         (let [wire-req (json/generate-string
                         {:jsonrpc "2.0" :id 4 :method "tools/call"
@@ -42,91 +42,91 @@
                                   :arguments {:ns "demo" :name "add"
                                               :source "(defn add [x y] (* x y))"
                                               :prompt "mul"}}})
-              resp (mcp/handle sess (json/parse-string wire-req true))
+              resp (mcp/handle! sess (json/parse-string wire-req true))
               wire-resp (json/parse-string (json/generate-string resp) true)]
           (is (nil? (:error wire-resp)))
-          (is (re-find #"\b6\b" (call sess "query_eval" {:code "(demo/add 2 3)"})))))
+          (is (re-find #"\b6\b" (call! sess "query_eval" {:code "(demo/add 2 3)"})))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated help-and-hints                                ; item 3: weak-model guidance
   (let [sess (api/open!)]
     (try
       (testing "the help tool exists (agents invented the name twice)"
-        (let [h (call sess "help" {})]
+        (let [h (call! sess "help" {})]
           (is (re-find #"edit_replace_form" h))
           (is (re-find #"query_project" h))))
-      (call sess "ns_create" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (call! sess "ns_create" {:ns "hint" :source "(ns hint (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
       (testing "redundant test_runs earn a hint; a write resets the counter"
-        (call sess "test_run" {:ns "hint"})
-        (call sess "test_run" {:ns "hint"})
-        (let [r3 (call sess "test_run" {:ns "hint"})]
+        (call! sess "test_run" {:ns "hint"})
+        (call! sess "test_run" {:ns "hint"})
+        (let [r3 (call! sess "test_run" {:ns "hint"})]
           (is (re-find #"rarely needed" r3)))
-        (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] (identity x))"})
-        (is (not (re-find #"rarely needed" (call sess "test_run" {:ns "hint"})))))
+        (call! sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] (identity x))"})
+        (is (not (re-find #"rarely needed" (call! sess "test_run" {:ns "hint"})))))
       (testing "a hint fires ONCE per session — a fresh streak stays quiet"
-        (call sess "test_run" {:ns "hint"})
-        (call sess "test_run" {:ns "hint"})
-        (let [r6 (call sess "test_run" {:ns "hint"})]
+        (call! sess "test_run" {:ns "hint"})
+        (call! sess "test_run" {:ns "hint"})
+        (let [r6 (call! sess "test_run" {:ns "hint"})]
           (is (not (re-find #"rarely needed" r6)))))
       (testing "a write between test_run and done keeps done QUIET (spot-check flow)"
-        (call sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] x)"})
-        (is (not (re-find #"pre-flight" (call sess "done" {:label "quiet"})))))
+        (call! sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] x)"})
+        (is (not (re-find #"pre-flight" (call! sess "done" {:label "quiet"})))))
       (testing "an ISOLATED run before done stays quiet — it is the milestone gate"
-        (call sess "test_run" {:ns "hint" :isolated true})
-        (is (not (re-find #"pre-flight" (call sess "done" {:label "gated"})))))
+        (call! sess "test_run" {:ns "hint" :isolated true})
+        (is (not (re-find #"pre-flight" (call! sess "done" {:label "gated"})))))
       (testing "an in-image test_run immediately before done earns the redundancy hint"
-        (call sess "test_run" {:ns "hint"})
-        (is (re-find #"pre-flight" (call sess "done" {:label "noisy"}))))
+        (call! sess "test_run" {:ns "hint"})
+        (is (re-find #"pre-flight" (call! sess "done" {:label "noisy"}))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated rename-arg-forgiveness                        ; from the symmetric eval
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
+      (call! sess "ns_create" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
       (testing "the aliases every eval run guessed first now just work"
-        (let [r (edn/read-string (call sess "edit_rename"
+        (let [r (edn/read-string (call! sess "edit_rename"
                                        {:ns "ra" :name "f" :to "h"}))]
           (is (nil? (:error r)))))
       (testing "missing args produce a clear message, not a raw conversion error"
         (is (re-find #"needs :old and :new"
-                     (call sess "edit_rename" {:ns "ra"})))
+                     (call! sess "edit_rename" {:ns "ra"})))
         (is (re-find #"missing required argument :ns"
-                     (call sess "query_source" {}))))
+                     (call! sess "query_source" {}))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated write-op-arg-forgiveness                      ; eval round 2
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
+      (call! sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
       (testing "edit_extract accepts :source for :form; missing gets a real message"
-        (let [r (edn/read-string (call sess "edit_extract"
+        (let [r (edn/read-string (call! sess "edit_extract"
                                        {:ns "wa" :from "f" :name "doubled"
                                         :source "(+ x x 1)"}))]
           (is (nil? (:error r))))
-        (is (re-find #"needs :form" (call sess "edit_extract"
+        (is (re-find #"needs :form" (call! sess "edit_extract"
                                           {:ns "wa" :from "f" :name "z"}))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated green-responses-are-terse                     ; B1
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
-      (call sess "test_run" {:ns "b1"})
+      (call! sess "ns_create" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
+      (call! sess "test_run" {:ns "b1"})
       (testing "a quiet green edit returns the terse shape"
-        (let [r (edn/read-string (call sess "edit_replace_form"
+        (let [r (edn/read-string (call! sess "edit_replace_form"
                                        {:ns "b1" :name "f"
                                         :source "(defn f [x] (identity x))"}))]
           (is (true? (:ok r)))
           (is (nil? (:failures r)))
           (is (< (count (pr-str r)) 120) (pr-str r))))
       (testing ":verbose true forces the full shape"
-        (let [r (edn/read-string (call sess "edit_replace_form"
+        (let [r (edn/read-string (call! sess "edit_replace_form"
                                        {:ns "b1" :name "f"
                                         :source "(defn f [x] x)" :verbose true}))]
           (is (map? (:delta r)))
           (is (map? (:test r)))))
       (testing "a red edit returns full detail incl. :failures"
-        (let [r (edn/read-string (call sess "edit_replace_form"
+        (let [r (edn/read-string (call! sess "edit_replace_form"
                                        {:ns "b1" :name "f"
                                         :source "(defn f [x] (inc x))"}))]
           (is (seq (get-in r [:test :failures])))))
@@ -177,7 +177,7 @@
       (spit (io/file dir ".slopp" "pending-intent")
             "{\"session-id\":\"sess-abc123\",\"prompt\":\"add a widget feature\"}")
       (let [r (edn/read-string
-               (call sess "ns_create" {:ns "pi.core"
+               (call! sess "ns_create" {:ns "pi.core"
                                        :source "(ns pi.core)\n(defn f [] 1)\n"}))]
         (is (nil? (:error r)) (pr-str r)))
       (is (false? (.exists (io/file dir ".slopp" "pending-intent"))))
@@ -190,8 +190,8 @@
       (testing "the turn carries the verbatim prompt"
         (is (seq (api/query-search-history sess "add a widget feature"))))
       (testing "with no pending intent and no turn, the gate still refuses"
-        (call sess "turn_end" {})
-        (let [r (call sess "edit_add_form" {:ns "pi.core"
+        (call! sess "turn_end" {})
+        (let [r (call! sess "edit_add_form" {:ns "pi.core"
                                             :source "(defn g [] 2)"})]
           (is (re-find #"no open turn" r))))
       (finally (api/close! sess)))))
@@ -206,53 +206,53 @@
         sb  (api/open! {:dir dir})]
     (try
       (is (not= (:agent-id @sa) (:agent-id @sb)))
-      (call sa "ns_create" {:ns "iso.a" :source "(ns iso.a)\n(defn fa [] 1)\n"})
-      (call sb "ns_create" {:ns "iso.b" :source "(ns iso.b)\n(defn fb [] 2)\n"})
-      (let [r (edn/read-string (call sb "episode_revert" {}))]
+      (call! sa "ns_create" {:ns "iso.a" :source "(ns iso.a)\n(defn fa [] 1)\n"})
+      (call! sb "ns_create" {:ns "iso.b" :source "(ns iso.b)\n(defn fb [] 2)\n"})
+      (let [r (edn/read-string (call! sb "episode_revert" {}))]
         (is (nil? (:error r)) (pr-str r)))
       (testing "B's work is gone, A's survives"
-        (is (not (re-find #"defn fb" (call sb "query_source" {:targets [{:ns "iso.b" :name "fb"}]}))))
-        (is (re-find #"defn fa" (call sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
+        (is (not (re-find #"defn fb" (call! sb "query_source" {:targets [{:ns "iso.b" :name "fb"}]}))))
+        (is (re-find #"defn fa" (call! sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
       (finally (api/close! sa) (api/close! sb)))))
 (deftest ^:isolated terse-results-carry-forms
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "tf.core" :source "(ns tf.core)\n(defn f [x] x)\n"})
+      (call! sess "ns_create" {:ns "tf.core" :source "(ns tf.core)\n(defn f [x] x)\n"})
       (testing "replace names its form"
         (is (re-find #":forms \[\"tf.core/f\"\]"
-                     (call sess "edit_replace_form" {:ns "tf.core" :name "f"
+                     (call! sess "edit_replace_form" {:ns "tf.core" :name "f"
                                                      :source "(defn f [x] (identity x))"}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated trimmed-responses-spool-the-full-version
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "sp.core" :source "(ns sp.core)\n(defn f [] 1)\n"})
+      (call! sess "ns_create" {:ns "sp.core" :source "(ns sp.core)\n(defn f [] 1)\n"})
       (testing "a response over the size gate is trimmed and retrievable"
-        (let [r  (call sess "query_eval" {:code "(apply str (repeat 9000 \"x\"))"})
+        (let [r  (call! sess "query_eval" {:code "(apply str (repeat 9000 \"x\"))"})
               id (second (re-find #"query_detail \{:id \"(r\d+)\"\}" r))]
           (is (some? id) r)
-          (let [full (call sess "query_detail" {:id id})]
+          (let [full (call! sess "query_detail" {:id id})]
             (is (>= (count full) 8000))
             (is (not (re-find #"query_detail \{:id" full))))))
       (testing "giant failure strings never reach the agent whole
                 (upstream capture truncates actuals; the text! heuristic
                 covers the other fields)"
-        (let [r (call sess "ns_create"
+        (let [r (call! sess "ns_create"
                       {:ns "sp.red"
                        :source "(ns sp.red (:require [clojure.test :refer [deftest is]]))\n(deftest big-t (is (= \"a\" (apply str (repeat 3000 \"z\")))))\n"})]
           (is (re-find #"fail 1" r))
           (is (not (re-find #"z{1000}" r)))))
       (testing "an unknown id is an honest error"
-        (is (re-find #"no spooled response" (call sess "query_detail" {:id "r999"}))))
+        (is (re-find #"no spooled response" (call! sess "query_detail" {:id "r999"}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated untested-writes-stay-terse-and-honest
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "ut.core" :source "(ns ut.core)\n(defn f [x] x)\n(defn g [x] x)\n"})
-      (call sess "ns_create" {:ns "ut.core-test" :source "(ns ut.core-test (:require [clojure.test :refer [deftest is]] [ut.core :as c]))\n(deftest f-t (is (= 1 (c/f 1))))\n"})
-      (call sess "test_run" {:ns "ut.core-test"})
+      (call! sess "ns_create" {:ns "ut.core" :source "(ns ut.core)\n(defn f [x] x)\n(defn g [x] x)\n"})
+      (call! sess "ns_create" {:ns "ut.core-test" :source "(ns ut.core-test (:require [clojure.test :refer [deftest is]] [ut.core :as c]))\n(deftest f-t (is (= 1 (c/f 1))))\n"})
+      (call! sess "test_run" {:ns "ut.core-test"})
       (testing "an untested green write is terse — flagged, no source echo"
-        (let [r (call sess "edit_replace_form" {:ns "ut.core" :name "g"
+        (let [r (call! sess "edit_replace_form" {:ns "ut.core" :name "g"
                                                 :source "(defn g [x] (identity x))"})]
           (is (re-find #":ok true" r) r)
           (is (re-find #":untested true" r) r)
@@ -260,30 +260,30 @@
           (testing "…and a zero-test verification names its emptiness (Q8)"
             (is (re-find #":coverage :none" r) r))))
       (testing "a new deftest is not 'untested' — it IS a test"
-        (call sess "edit_add_form" {:ns "ut.core-test"
+        (call! sess "edit_add_form" {:ns "ut.core-test"
                                     :source "(deftest g-t (is (= 2 (c/g 2))))"})
-        (let [r (call sess "edit_replace_form" {:ns "ut.core-test" :name "g-t"
+        (let [r (call! sess "edit_replace_form" {:ns "ut.core-test" :name "g-t"
                                                 :source "(deftest g-t (is (= 3 (c/g 3))))"})]
           (is (not (re-find #":untested" r)) r)))
       (finally (api/close! sess)))))
 (deftest ^:isolated rename-names-leftover-prose-mentions
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "pm.core"
              :source (str "(ns pm.core)\n"
                           "(defn bulk-rate [n] (if (>= n 10) 0.1 0.0))\n"
                           "(defn describe\n  \"Applies the bulk-rate tier.\"\n  [n]\n"
                           "  (str \"bulk-rate applies: \" (bulk-rate n)))\n")})
       (testing "the rename result points at docstring/string mentions of the old name (Q11)"
-        (let [r (call sess "edit_rename" {:ns "pm.core" :old "bulk-rate" :new "volume-rate"})]
+        (let [r (call! sess "edit_rename" {:ns "pm.core" :old "bulk-rate" :new "volume-rate"})]
           (is (re-find #":mentions" r) r)
           (is (re-find #":ns pm.core, :form describe" r) r)))
       (testing "a clean rename carries no :mentions"
-        (call sess "edit_replace_form"
+        (call! sess "edit_replace_form"
               {:ns "pm.core" :name "describe"
                :source "(defn describe [n] (str \"tier: \" (volume-rate n)))"})
-        (let [r (call sess "edit_rename" {:ns "pm.core" :old "volume-rate" :new "tier-rate"})]
+        (let [r (call! sess "edit_rename" {:ns "pm.core" :old "volume-rate" :new "tier-rate"})]
           (is (not (re-find #":mentions" r)) r)))
       (finally (api/close! sess)))))
 (deftest ^:isolated milestones-publish-themselves
@@ -294,9 +294,9 @@
                     "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn ^:unused-ok f [x] x)\n"})
+      (call! sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn ^:unused-ok f [x] x)\n"})
       (testing "a milestone mirrors into LOCAL git as slopp/<store-branch> (user decision 2026-07-14)"
-        (let [r (call sess "commit_point" {:description "first"})]
+        (let [r (call! sess "commit_point" {:description "first"})]
           (is (re-find #":published" r) r)
           (is (re-find #"slopp/main" r) r))
         (let [head (:out (sh/sh "git" "-C" dir "rev-parse" "refs/heads/slopp/main"))]
@@ -312,10 +312,10 @@
                     "commit" "--allow-empty" "-m" "root")
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn ^:unused-ok f [x] x)\n"})
-      (call sess "commit_point" {:description "first"})
+      (call! sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn ^:unused-ok f [x] x)\n"})
+      (call! sess "commit_point" {:description "first"})
       (testing "query_commits carries the alignment PROOF against the local mirror (Q12)"
-        (let [r (call sess "query_commits" {})]
+        (let [r (call! sess "query_commits" {})]
           (is (re-find #":aligned true" r) r)
           (is (re-find #":branch-head" r) r)
           (is (re-find #"no worktree" r) r)))
@@ -323,80 +323,80 @@
 (deftest ^:isolated whole-ns-source-is-outline-by-default
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "gt.core" :source "(ns gt.core)\n(defn f [x] (* x 2))\n(defn g [x] (+ x 1))\n"})
+      (call! sess "ns_create" {:ns "gt.core" :source "(ns gt.core)\n(defn f [x] (* x 2))\n(defn g [x] (+ x 1))\n"})
       (testing "a bare {ns} read returns the outline + the way in, NOT the dump"
-        (let [r (call sess "query_source" {:ns "gt.core"})]
+        (let [r (call! sess "query_source" {:ns "gt.core"})]
           (is (not (re-find #"\(\* x 2\)" r)) r)
           (is (re-find #"f" r) r)
           (is (re-find #"full" r) r)))
       (testing "named targets stay a cheap direct read"
         (is (re-find #"\(\* x 2\)"
-                     (call sess "query_source" {:targets [{:ns "gt.core" :name "f"}]}))))
+                     (call! sess "query_source" {:targets [{:ns "gt.core" :name "f"}]}))))
       (testing "full: true is the explicit whole-namespace dump"
-        (is (re-find #"\(\* x 2\)" (call sess "query_source" {:ns "gt.core" :full true}))))
+        (is (re-find #"\(\* x 2\)" (call! sess "query_source" {:ns "gt.core" :full true}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated rename-sweep-is-one-intent
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "sw.zone"
              :source (str "(ns sw.zone (:require [clojure.test :refer [deftest is]]))\n"
                           "(def zone-fees {1 500, 2 900})\n"
                           "(defn zone-fee \"The zone fee table lookup.\" [z] (get zone-fees z 0))\n"
                           "(deftest zone-t (is (= 500 (zone-fee 1))))\n")})
-      (call sess "module_dep" {:from "sw.core" :to "sw.zone" :prompt "fixture edge"})
-      (call sess "ns_create"
+      (call! sess "module_dep" {:from "sw.core" :to "sw.zone" :prompt "fixture edge"})
+      (call! sess "ns_create"
             {:ns "sw.core"
              :source (str "(ns sw.core (:require [clojure.test :refer [deftest is]] [sw.zone :as zone]))\n"
                           "(defn total \"Base plus the zone fee.\" [z] (+ 100 (zone/zone-fee z)))\n"
                           "(deftest total-t (is (= 600 (total 1))))\n")})
       (testing "one call sweeps namespaces, vars, keys, and prose (Q14)"
-        (let [r (call sess "rename_sweep" {:from "zone" :to "region"})]
+        (let [r (call! sess "rename_sweep" {:from "zone" :to "region"})]
           (is (re-find #":renamed-namespaces" r) r)
           (is (not (re-find #":error" r)) r)))
       (testing "the sweep is total"
-        (is (= "[]" (call sess "query_search" {:pattern "zone"}))))
+        (is (= "[]" (call! sess "query_search" {:pattern "zone"}))))
       (testing "behavior survives under the new names"
-        (is (re-find #"600" (call sess "query_eval" {:code "(sw.core/total 1)"})))
-        (is (re-find #"500" (call sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
+        (is (re-find #"600" (call! sess "query_eval" {:code "(sw.core/total 1)"})))
+        (is (re-find #"500" (call! sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated repeated-reads-are-free
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "tk.core"
              :source (apply str "(ns tk.core)\n"
                             (for [i (range 1 6)]
                               (str "(defn f" i " [x] (+ x " i "))\n")))})
       (testing "an identical re-read returns an :unchanged stub, not the payload (told-tracking)"
-        (let [a (call sess "query_source" {:ns "tk.core"})
-              b (call sess "query_source" {:ns "tk.core"})]
+        (let [a (call! sess "query_source" {:ns "tk.core"})
+              b (call! sess "query_source" {:ns "tk.core"})]
           (is (re-find #":outline" a) a)
           (is (re-find #":unchanged true" b) b)
           (is (< (count b) (count a)))))
       (testing "a body edit leaves the OUTLINE honestly unchanged"
-        (call sess "edit_replace_form" {:ns "tk.core" :name "f1"
+        (call! sess "edit_replace_form" {:ns "tk.core" :name "f1"
                                         :source "(defn f1 [x] (* x 9))"})
-        (is (re-find #":unchanged true" (call sess "query_source" {:ns "tk.core"}))))
+        (is (re-find #":unchanged true" (call! sess "query_source" {:ns "tk.core"}))))
       (testing "a change the view can SEE invalidates it"
-        (call sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
-        (is (re-find #":outline" (call sess "query_source" {:ns "tk.core"}))))
+        (call! sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
+        (is (re-find #":outline" (call! sess "query_source" {:ns "tk.core"}))))
       (finally (api/close! sess)))))
 (deftest ^:isolated usage-smells-hint-once
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "sm.a" :source "(ns sm.a)\n(defn f [x] x)\n(defn g [x] x)\n"})
-      (call sess "ns_create" {:ns "sm.b" :source "(ns sm.b)\n(defn h [x] x)\n"})
+      (call! sess "ns_create" {:ns "sm.a" :source "(ns sm.a)\n(defn f [x] x)\n(defn g [x] x)\n"})
+      (call! sess "ns_create" {:ns "sm.b" :source "(ns sm.b)\n(defn h [x] x)\n"})
       (testing "a second whole-namespace dump earns the slice hint, ONCE"
-        (call sess "query_source" {:ns "sm.a" :full true})
-        (let [r2 (call sess "query_source" {:ns "sm.b" :full true})]
+        (call! sess "query_source" {:ns "sm.a" :full true})
+        (let [r2 (call! sess "query_source" {:ns "sm.b" :full true})]
           (is (re-find #"query_slice" r2) r2))
-        (call sess "ns_create" {:ns "sm.c" :source "(ns sm.c)\n(defn i [x] x)\n"})
-        (let [r3 (call sess "query_source" {:ns "sm.c" :full true})]
+        (call! sess "ns_create" {:ns "sm.c" :source "(ns sm.c)\n(defn i [x] x)\n"})
+        (let [r3 (call! sess "query_source" {:ns "sm.c" :full true})]
           (is (not (re-find #"query_slice" r3)) r3)))
       (testing "a rename streak earns the sweep hint"
-        (call sess "edit_rename" {:ns "sm.a" :old "f" :new "f2"})
-        (let [r (call sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
+        (call! sess "edit_rename" {:ns "sm.a" :old "f" :new "f2"})
+        (let [r (call! sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
           (is (re-find #"rename_sweep" r) r)))
       (finally (api/close! sess)))))
 (deftest ^:isolated one-off-pushes-keep-the-default-remote
@@ -432,10 +432,10 @@
         _    (sh/sh "git" "init" "--bare" bare)
         sess (api/open! {:dir dir})]
     (try
-      (call sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn ^:unused-ok f [x] x)\n"})
-      (call sess "commit_point" {:description "first"})
+      (call! sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn ^:unused-ok f [x] x)\n"})
+      (call! sess "commit_point" {:description "first"})
       (testing "git_push mirrors local slopp/* to the remote (and saves the first url)"
-        (let [r (call sess "git_push" {:branches ["main"] :url bare})]
+        (let [r (call! sess "git_push" {:branches ["main"] :url bare})]
           (is (re-find #":mirrored" r) r))
         (is (re-find #"refs/heads/slopp/main"
                      (:out (sh/sh "git" "ls-remote" "--heads" bare))))
@@ -448,8 +448,8 @@
           (is (some? (sync/maybe-auto-import! dir2)) "marker must accept slopp/main")
           (let [s2 (api/open! {:dir dir2})]
             (try
-              (call s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn ^:unused-ok g [x] x)\n"})
-              (let [r (call s2 "git_pull" {:branches ["main"] :url bare})]
+              (call! s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn ^:unused-ok g [x] x)\n"})
+              (let [r (call! s2 "git_pull" {:branches ["main"] :url bare})]
                 (is (re-find #":pulled" r) r)
                 (is (re-find #"slopp/main" r) r))
               (finally (api/close! s2))))))
@@ -462,12 +462,12 @@
             _    (sh/sh "git" "init" "--bare" bare2)
             s3   (api/open! {:dir d2})]
         (try
-          (call s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn ^:unused-ok f [x] x)\n"})
-          (let [r (call s3 "commit_point" {:description "no git here"})]
+          (call! s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn ^:unused-ok f [x] x)\n"})
+          (let [r (call! s3 "commit_point" {:description "no git here"})]
             (is (re-find #":commit" r) r)
             (is (not (re-find #":published" r)) r))
-          (is (re-find #"url" (call s3 "git_push" {})) "no remote: helpful error names :url")
-          (let [r (call s3 "git_push" {:url bare2})]
+          (is (re-find #"url" (call! s3 "git_push" {})) "no remote: helpful error names :url")
+          (let [r (call! s3 "git_push" {:url bare2})]
             (is (re-find #":pushed" r) r))
           (is (re-find #"refs/heads/slopp/main"
                        (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
@@ -477,14 +477,14 @@
   ;; an agent would never have seen WHY its spec landed red
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "rw.core"
+      (call! sess "ns_create" {:ns "rw.core"
                               :source "(ns rw.core)\n(defn seed \"S.\" [x] x)\n"})
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "rw.core-test"
              :source (str "(ns rw.core-test (:require [rw.core :as c]\n"
                           "                           [clojure.test :refer [deftest is]]))\n"
                           "(deftest seed-t (is (= 1 (c/seed 1))))\n")})
-      (let [r (call sess "edit_add_form"
+      (let [r (call! sess "edit_add_form"
                     {:ns "rw.core-test"
                      :source "(deftest dbl-t (is (= 4 (c/dbl 2))))"
                      :prompt "red first over the wire"})]
@@ -496,7 +496,7 @@
   ;; as potentially mutating and prompt — even for query_source
   (let [sess (api/open!)]
     (try
-      (let [tools   (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+      (let [tools   (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                             [:result :tools])
             by-name (into {} (map (juxt :name identity)) tools)]
         (is (true? (get-in by-name ["query_source" :annotations :readOnlyHint])))
@@ -511,7 +511,7 @@
   (let [sess (api/open!)]
     (try
       (let [names (into #{} (map :name)
-                        (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                        (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                                 [:result :tools]))]
         (is (contains? names "done"))
         (is (not (contains? names "edit_group"))
@@ -521,32 +521,32 @@
 (deftest ^:isolated test-run-wire-guards-the-whole-suite
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "tg.core"
+      (call! sess "ns_create" {:ns "tg.core"
                               :source (str "(ns tg.core (:require [clojure.test :refer [deftest is]]))\n"
                                            "(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n")})
       (testing "bare test_run gives GUIDANCE, does not silently run everything"
-        (let [r (call sess "test_run" {})]
+        (let [r (call! sess "test_run" {})]
           (is (re-find #":guidance" r) r)
           (is (re-find #"done runs the affected" r))
           (is (not (re-find #":pass" r)) "no suite actually ran")))
       (testing "a named spot-check runs"
-        (is (re-find #":pass" (call sess "test_run" {:ns "tg.core"}))))
+        (is (re-find #":pass" (call! sess "test_run" {:ns "tg.core"}))))
       (testing "all:true runs the in-image suite AND warns done covers it"
-        (let [r (call sess "test_run" {:all true})]
+        (let [r (call! sess "test_run" {:all true})]
           (is (re-find #":pass" r) r)
           (is (re-find #"rarely needed" r))))
       (finally (api/close! sess)))))
 (deftest ^:isolated review-scan-is-on-the-wire-and-read-only
   (let [sess (api/open!)]
     (try
-      (let [tools   (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+      (let [tools   (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                             [:result :tools])
             by-name (into {} (map (juxt :name identity)) tools)]
         (is (contains? by-name "review_scan"))
         (is (true? (get-in by-name ["review_scan" :annotations :readOnlyHint]))
             "a review tool must not prompt in plan mode"))
-      (call sess "ns_create" {:ns "rw.io" :source "(ns rw.io)\n(defn zap! [x] (spit \"/dev/null\" x))\n"})
-      (let [r (call sess "review_scan" {})]
+      (call! sess "ns_create" {:ns "rw.io" :source "(ns rw.io)\n(defn zap! [x] (spit \"/dev/null\" x))\n"})
+      (let [r (call! sess "review_scan" {})]
         (is (re-find #":flagged" r) r)
         (is (re-find #"rw.io/zap!" r) "the effectful undocumented fn is flagged"))
       (finally (api/close! sess)))))
@@ -557,12 +557,12 @@
   ;; registry drifts from what it last advertised.
   (let [sess (atom {})]
     (testing "the capability is declared"
-      (is (true? (get-in (mcp/handle sess {:id 1 :method "initialize"})
+      (is (true? (get-in (mcp/handle! sess {:id 1 :method "initialize"})
                          [:result :capabilities :tools :listChanged]))))
     (testing "no baseline advertised → nothing to invalidate"
       (is (nil? (#'mcp/tools-note! sess))))
     (testing "tools/list records the advertised baseline"
-      (mcp/handle sess {:id 2 :method "tools/list"})
+      (mcp/handle! sess {:id 2 :method "tools/list"})
       (is (some? (:slopp.mcp/tools-hash @sess)))
       (is (nil? (#'mcp/tools-note! sess)) "freshly advertised → current"))
     (testing "a drifted registry emits the notification, once"
@@ -607,8 +607,8 @@
   ;; the audit would throw otherwise, so this pins the compile-error path.
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "wce.core" :source "(ns wce.core)\n(defn f [x] x)\n"})
-      (let [r (call sess "edit_replace_form"
+      (call! sess "ns_create" {:ns "wce.core" :source "(ns wce.core)\n(defn f [x] x)\n"})
+      (let [r (call! sess "edit_replace_form"
                     {:ns "wce.core" :name "f"
                      :source "(defn f [x] (String/noSuchStaticThing x))"})]
         (is (re-find #"wce\.core/f" r) "the owning form is named")
@@ -619,15 +619,15 @@
 (deftest ^:isolated module-purity-rides-the-wire
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "wcore" :source "(ns wcore)\n(defn add \"A.\" [x y] (+ x y))\n"})
       (testing "module_purity declares a tier on the wire"
-        (let [r (call sess "module_purity" {:module "wcore" :tier "pure"
+        (let [r (call! sess "module_purity" {:module "wcore" :tier "pure"
                                             :prompt "core stays pure"})]
           (is (re-find #":pure" r) r)
           (is (not (re-find #":error" r)) r)))
       (testing "an effectful write into the pure module is refused on the wire"
-        (let [r (call sess "edit_add_form"
+        (let [r (call! sess "edit_add_form"
                       {:ns "wcore" :source "(defn tick! \"T.\" [a] (swap! a inc))"
                        :prompt "mutation"})]
           (is (re-find #"functional-core" r) r)))
@@ -646,22 +646,22 @@
 (deftest ^:isolated source-arg-friction
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
+      (call! sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
       (testing "a misnamed new_source names the real :source param, not a paren/parse error"
-        (let [r (call sess "edit_replace_form"
+        (let [r (call! sess "edit_replace_form"
                       {:ns "sa" :name "f" :new_source "(defn f [x] (inc x))"})]
           (is (re-find #"missing required argument :source" r))
           (is (re-find #"new_source" r))
           (is (not (re-find #"got 0" r)))))
       (testing "a genuinely missing source is a clear message too"
-        (let [r (call sess "edit_replace_form" {:ns "sa" :name "f"})]
+        (let [r (call! sess "edit_replace_form" {:ns "sa" :name "f"})]
           (is (re-find #"missing required argument :source" r))))
       (testing "edit_add_form guards its source arg the same way"
-        (let [r (call sess "edit_add_form" {:ns "sa" :new_source "(defn g [x] x)"})]
+        (let [r (call! sess "edit_add_form" {:ns "sa" :new_source "(defn g [x] x)"})]
           (is (re-find #"missing required argument :source" r))))
       (testing "a correctly-named source still lands"
         (let [r (edn/read-string
-                 (call sess "edit_replace_form"
+                 (call! sess "edit_replace_form"
                        {:ns "sa" :name "f" :source "(defn f \"D.\" [x] (inc x))"}))]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
@@ -669,23 +669,23 @@
 (deftest ^:isolated query-vocabulary-rides-the-wire
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create"
+      (call! sess "ns_create"
             {:ns "voc"
              :source (str "(ns voc)\n"
                           "(defn a [m] {:user/email (:x m)})\n"
                           "(defn b [m] {:user/email (:y m) :order/id 1})\n")})
-      (let [r (edn/read-string (call sess "query_vocabulary" {}))]
+      (let [r (edn/read-string (call! sess "query_vocabulary" {}))]
         (is (= 2 (:count r)) (pr-str r))
         (is (= {:kw :user/email :uses 2} (first (:attributes r))) (pr-str r)))
       (testing "ns narrows by keyword namespace"
-        (let [r (edn/read-string (call sess "query_vocabulary" {:ns "order"}))]
+        (let [r (edn/read-string (call! sess "query_vocabulary" {:ns "order"}))]
           (is (= [:order/id] (mapv :kw (:attributes r))) (pr-str r))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated query-rules-rides-the-wire
   (let [sess (api/open!)]
     (try
-      (let [rs (edn/read-string (call sess "query_rules" {}))]
+      (let [rs (edn/read-string (call! sess "query_rules" {}))]
         (is (>= (count rs) 9) (pr-str rs))
         (is (contains? (set (map :rule rs)) :schema-drift) (pr-str rs))
         (is (= :refuse (:severity (first (filter #(= :schema-refusal (:rule %)) rs))))
@@ -693,7 +693,7 @@
       (testing "a per-store severity override is reflected"
         (api/config-file! sess "rules" :key "schema-drift" :value "advisory"
                           :prompt "dial schema-drift down")
-        (let [rs (edn/read-string (call sess "query_rules" {}))
+        (let [rs (edn/read-string (call! sess "query_rules" {}))
               drift (first (filter #(= :schema-drift (:rule %)) rs))]
           (is (= :advisory (:severity drift)) (pr-str drift))))
       (finally (api/close! sess)))))
@@ -701,10 +701,10 @@
 (deftest ^:isolated query-rule-telemetry-rides-the-wire
   (let [sess (api/open!)]
     (try
-      (call sess "ns_create" {:ns "tl" :source "(ns tl)\n(defn seed \"S.\" [x] x)\n"})
-      (call sess "edit_add_form" {:ns "tl" :source "(defn bare [x] x)" :prompt "undocumented public"})
-      (call sess "done" {:label "d"})
-      (let [t (edn/read-string (call sess "query_rule_telemetry" {}))]
+      (call! sess "ns_create" {:ns "tl" :source "(ns tl)\n(defn seed \"S.\" [x] x)\n"})
+      (call! sess "edit_add_form" {:ns "tl" :source "(defn bare [x] x)" :prompt "undocumented public"})
+      (call! sess "done" {:label "d"})
+      (let [t (edn/read-string (call! sess "query_rule_telemetry" {}))]
         (is (map? (:fire-rate t)) (pr-str t))
         (is (>= (get-in t [:window :dones]) 1) (pr-str t))
         (is (every? #(contains? (:escape-markers t) %) [:unsafe :reads :unused-ok]) (pr-str t))
@@ -721,7 +721,7 @@
   (let [sess (api/open!)]
     (try
       (let [by-name (into {} (map (juxt :name identity))
-                          (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                          (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                                   [:result :tools]))]
         (is (contains? by-name "cleanup"))
         (is (not (contains? by-name "fix_declares"))
@@ -734,9 +734,9 @@
                         "(defn a [] (b))\n\n"
                         "(defn b [] 2)\n"))
       (testing "calling it retires a declare the pipeline can satisfy by ordering"
-        (is (re-find #"1" (call sess "cleanup" {:ns "fd.wire"})))
+        (is (re-find #"1" (call! sess "cleanup" {:ns "fd.wire"})))
         (is (not (re-find #"declare"
-                          (call sess "query_source" {:ns "fd.wire" :full true})))))
+                          (call! sess "query_source" {:ns "fd.wire" :full true})))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated undo-is-reachable-over-the-wire
@@ -745,18 +745,18 @@
   (let [sess (api/open!)]
     (try
       (let [by-name (into {} (map (juxt :name identity))
-                          (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                          (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                                   [:result :tools]))]
         (is (contains? by-name "undo"))
         (is (nil? (get-in by-name ["undo" :annotations]))
             "it writes — no read-only claim"))
-      (call sess "ns_create" {:ns "un.wire"
+      (call! sess "ns_create" {:ns "un.wire"
                               :source "(ns un.wire)\n(defn keep-me [] 1)\n"})
-      (call sess "edit_add_form" {:ns "un.wire" :source "(defn oops [] 2)"
+      (call! sess "edit_add_form" {:ns "un.wire" :source "(defn oops [] 2)"
                                   :prompt "a write that turns out wrong"})
       (testing "one call takes the bad write back"
-        (is (re-find #"1" (call sess "undo" {:prompt "that was wrong"})))
-        (let [src (call sess "query_source" {:ns "un.wire" :full true})]
+        (is (re-find #"1" (call! sess "undo" {:prompt "that was wrong"})))
+        (let [src (call! sess "query_source" {:ns "un.wire" :full true})]
           (is (not (re-find #"oops" src)))
           (is (re-find #"keep-me" src) "unrelated work survives")))
       (finally (api/close! sess)))))
@@ -770,7 +770,7 @@
   (let [sess (api/open!)]
     (try
       (doseq [spelling ["pure" ":pure"]]
-        (let [r (call sess "module_purity" {:module "mp.core" :tier spelling
+        (let [r (call! sess "module_purity" {:module "mp.core" :tier spelling
                                             :prompt "a pure core"})]
           (is (not (re-find #"tier must be" r)) (str spelling " → " r))
           (is (re-find #":pure" r) (str spelling " → " r))))

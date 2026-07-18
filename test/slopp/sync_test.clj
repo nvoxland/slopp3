@@ -21,9 +21,9 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-sync-test" (make-array FileAttribute 0))))
 
-(defn- rm-rf [f]
+(defn- rm-rf! [f]
   (let [f (io/file f)]
-    (when (.isDirectory f) (run! rm-rf (.listFiles f)))
+    (when (.isDirectory f) (run! rm-rf! (.listFiles f)))
     (.delete f)))
 
 (defn- bare-repo! [dir]
@@ -98,9 +98,9 @@
             (finally (api/close! sb)))))
       (finally
         (api/close! sess)
-        (rm-rf dir-a)
-        (rm-rf (.getParentFile (io/file dir-b)))
-        (rm-rf (.getParentFile (io/file bare)))))))
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))
 
 (deftest ^:isolated pull-absorbs-remote-changes-bidirectionally
   ;; A pushes v1 → B clones → A pushes v2 → B pulls (absorbs, chains via the
@@ -170,9 +170,9 @@
             (finally (api/close! sb)))))
       (finally
         (api/close! sa)
-        (rm-rf dir-a)
-        (rm-rf (.getParentFile (io/file dir-b)))
-        (rm-rf (.getParentFile (io/file bare)))))))
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))
 
 (deftest ^:isolated pull-conflicts-quarantine-and-block-push
   ;; Both sides edit the same form → the ns is quarantined (git-style
@@ -227,9 +227,9 @@
           (finally (api/close! sb))))
       (finally
         (api/close! sa)
-        (rm-rf dir-a)
-        (rm-rf (.getParentFile (io/file dir-b)))
-        (rm-rf (.getParentFile (io/file bare)))))))
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))
 
 (deftest ^:isolated clone-guards
   (testing "an empty remote (no main) is an honest error"
@@ -238,13 +238,13 @@
       (try
         (is (:error (sync/clone! bare dir)))
         (finally
-          (rm-rf (.getParentFile (io/file bare)))
-          (rm-rf (.getParentFile (io/file dir)))))))
+          (rm-rf! (.getParentFile (io/file bare)))
+          (rm-rf! (.getParentFile (io/file dir)))))))
   (testing "an unreachable remote is an honest error, not a stack trace"
     (let [dir (str (temp-dir) "/x")]
       (try
         (is (:error (sync/clone! "/nowhere/does-not-exist.git" dir)))
-        (finally (rm-rf (.getParentFile (io/file dir)))))))
+        (finally (rm-rf! (.getParentFile (io/file dir)))))))
   (testing "an existing NON-EMPTY store refuses to be clobbered"
     (let [dir  (temp-dir)
           sess (api/open! {:dir dir})]
@@ -252,12 +252,12 @@
         (api/ingest! sess 'cg.core "(ns cg.core)\n(defn f [] 1)\n")
         (api/close! sess)
         (is (:error (sync/clone! "ignored" dir)))
-        (finally (rm-rf dir)))))
+        (finally (rm-rf! dir)))))
   (testing "push with no url and no saved remote is an honest error"
     (let [dir (temp-dir)]
       (try
         (is (:error (sync/push! dir)))
-        (finally (rm-rf dir))))))
+        (finally (rm-rf! dir))))))
 (defn- human-commit!
   "Plumbing-commit one file onto `branch` of the BARE repo at `dir` (the
   'human owns this branch with regular git' side of mixed ownership).
@@ -327,8 +327,8 @@
             (is (nil? (get (:files (:store @sess)) "NOTES.md"))))))
       (finally
         (api/close! sess)
-        (rm-rf dir)
-        (rm-rf (.getParentFile (io/file bare)))))))
+        (rm-rf! dir)
+        (rm-rf! (.getParentFile (io/file bare)))))))
 (deftest ^:isolated local-repo-push-guards-the-checked-out-branch
   ;; pushing INTO the working repo's own .git is the local mixed workflow —
   ;; but never onto the branch a working tree has checked out (JGit would
@@ -350,8 +350,8 @@
             (is (nil? (:error r)) (pr-str r))))
         (finally
           (api/close! sess)
-          (rm-rf dir)
-          (rm-rf work))))))
+          (rm-rf! dir)
+          (rm-rf! work))))))
 (deftest ^:isolated import-into-a-main-checkout
   ;; THE onboarding flow: git clone (main checked out, human files on disk) →
   ;; slopp import . → the store comes from the slopp BRANCH of the same local
@@ -398,11 +398,11 @@
                     (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp/main"))))
                     (finally (.close local)))))
               (finally (api/close! sw)))))
-        (rm-rf work))
+        (rm-rf! work))
       (finally
         (api/close! sess)
-        (rm-rf seed-d)
-        (rm-rf (.getParentFile (io/file origin)))))))
+        (rm-rf! seed-d)
+        (rm-rf! (.getParentFile (io/file origin)))))))
 (deftest ^:isolated import-tolerates-the-servers-empty-store
   ;; the plugin's MCP server auto-creates an EMPTY store when it serves a
   ;; fresh clone; import must treat that as a fresh dir, not refuse it
@@ -424,11 +424,11 @@
         (let [r (sync/import! work)]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:namespaces r))))
-        (rm-rf work))
+        (rm-rf! work))
       (finally
         (api/close! sess)
-        (rm-rf seed-d)
-        (rm-rf (.getParentFile (io/file origin)))))))
+        (rm-rf! seed-d)
+        (rm-rf! (.getParentFile (io/file origin)))))))
 (deftest ^:isolated auto-import-on-serve
   ;; the server auto-imports a fresh clone of a slopp-published repo: the
   ;; slopp BRANCH is the marker; plain git repos are never auto-ingested
@@ -450,14 +450,14 @@
             (is (= 1 (:namespaces r)) (pr-str r))))
         (testing "a second serve is a no-op (store no longer empty)"
           (is (nil? (sync/maybe-auto-import! work))))
-        (rm-rf work))
+        (rm-rf! work))
       (testing "a git repo WITHOUT a slopp branch is never auto-ingested"
         (let [plain (str (temp-dir) "/plain")]
           (-> (org.eclipse.jgit.api.Git/init)
               (.setDirectory (io/file plain)) (.call) (.close))
           (is (nil? (sync/maybe-auto-import! plain)))
-          (rm-rf plain)))
+          (rm-rf! plain)))
       (finally
         (api/close! sess)
-        (rm-rf seed-d)
-        (rm-rf (.getParentFile (io/file origin)))))))
+        (rm-rf! seed-d)
+        (rm-rf! (.getParentFile (io/file origin)))))))

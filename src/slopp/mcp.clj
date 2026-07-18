@@ -53,7 +53,7 @@
                                        f)))
                                  f [:expected :actual :message]))
                        fs)))))
-(def ^:private strict-boundary?
+(def ^:private ^:ambient-ok strict-boundary?
   "When true, the response boundary (text!) THROWS on any file/line
   coordinate leak — the invariant 'agents never think in files' made
   mechanical. On across the wire test suite (a fixture flips it), off in
@@ -374,7 +374,7 @@
        :note "identical to what this session already received"}
       (do (swap! session assoc-in [::told k] h)
           payload))))
-(defn- call-tool [session {:keys [name arguments]}]
+(defn- call-tool! [session {:keys [name arguments]}]
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
   (when (and (:require-turns? @session)
@@ -756,7 +756,7 @@
   (let [session (api/open! {:dir (str dir)})]
     (swap! session assoc :require-turns? true)
     (try
-      (try (call-tool session {:name tool :arguments arguments})
+      (try (call-tool! session {:name tool :arguments arguments})
            (catch Exception e
              (assoc (text! (str "error: " (ex-message e))) :isError true)))
       (finally (api/close! session)))))
@@ -774,7 +774,7 @@
     (println (clojure.string/join "\n" (map :text (:content r))))
     (flush)
     (System/exit (if (:isError r) 1 0))))
-^:unsafe (defn handle
+^:unsafe (defn handle!
   "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees
   the message); protocol errors become JSON-RPC errors."
@@ -792,7 +792,7 @@
                                                         (:name params)
                                                         (:arguments params))
                                     *spool-session* session]
-                            (try (call-tool session params)
+                            (try (call-tool! session params)
                                  (catch Exception e
                                    (assoc (text! (str "error: " (ex-message e)))
                                           :isError true))))}
@@ -817,7 +817,7 @@
   "Newline-delimited-JSON stdio loop over `in-reader`/`out-writer`."
   [session in-reader out-writer]
   (doseq [line (line-seq in-reader) :when (not (str/blank? line))]
-    (when-let [resp (handle session (json/parse-string line true))]
+    (when-let [resp (handle! session (json/parse-string line true))]
       (.write out-writer (str (json/generate-string resp) "\n"))
       (.flush out-writer))
     ;; a live reload may have changed the tool registry — tell the client
