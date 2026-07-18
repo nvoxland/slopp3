@@ -9,7 +9,7 @@
   oracle, D5). The dialect requires the `!` in a var's name to match its computed
   effectfulness; mismatches are reported for the edit pipeline to flag/auto-fix."
   (:require [clojure.string :as str]
-            [clj-kondo.core :as kondo]))
+            [clj-kondo.core :as kondo] [rewrite-clj.parser :as p] [rewrite-clj.node :as n]))
 
 (def effectful-leaves
   "Fixed anchor set: core primitives that modify in-process or external state
@@ -38,21 +38,25 @@
   (symbol (str ns) (str nm)))
 
 (defn call-graph
-  "Map of caller-node -> #{callee-node}, over user vars, for CALL usages ONLY.
-   Top-level usages (`:from-var` nil) are skipped, and so are CARRIER references —
-   a `#'var` or a bare var-as-value, which kondo records with NO `:arity` (a call
-   carries the arg count). Effects propagate through CALLS, not through holding a
-   var in data: this is what lets a registry carry `#'some-bang!` without the
-   holder being flagged effectful (the carrier-taint). Reference-tracking for
-   visibility/renames is a separate path (edit.refs); this graph is for effects."
+  "Map of caller-node -> #{callee-node} for effect propagation. An edge is added
+   for a usage UNLESS it's a `#'var` CARRIER — a non-call reference (kondo marks a
+   call with `:arity`) whose position is a var-quote (`:var-quotes`). So a var HELD
+   in data (a rule registry carrying `#'some-bang!`) doesn't taint its holder, but
+   a CALL `(f …)`, a bare ALIAS `(def g f)`, and a higher-order value-arg
+   `(map f xs)` all propagate (conservative — those are callable-as-`f`). Top-level
+   usages (`:from-var` nil) are skipped. Reference-tracking for visibility/renames
+   is a separate path (`edit.refs`)."
   [analysis]
-  (reduce (fn [m u]
-            (if (and (:from-var u) (contains? u :arity))
-              (update m (node (:from u) (:from-var u))
-                      (fnil conj #{}) (node (:to u) (:name u)))
-              m))
-          {}
-          (:var-usages analysis)))
+  (let [vq (or (:var-quotes analysis) #{})]
+    (reduce (fn [m u]
+              (if (and (:from-var u)
+                       (or (contains? u :arity)
+                           (not (contains? vq [(:name-row u) (:name-col u)]))))
+                (update m (node (:from u) (:from-var u))
+                        (fnil conj #{}) (node (:to u) (:name u)))
+                m))
+            {}
+            (:var-usages analysis))))
 
 (defn- bang-target?
   "A call target whose NAME is bang-marked counts as an effectful anchor (D6:
@@ -241,13 +245,6 @@
   [source]
   (or (get @kondo-cache source)
       (kondo-pass source)))
-^:reads (defn analyze
-  "clj-kondo's `:analysis` ({:var-definitions :var-usages
-  :namespace-definitions :namespace-usages}) for `source`, from the shared
-  memoized kondo pass (run-kondo) that also feeds `lint`."
-  [source]
-  (:analysis (run-kondo source)))
-
 ^:reads (defn lint
   "clj-kondo FINDINGS for `source` (warnings + errors: [{:level :type :message
   :row :col}]).
@@ -296,3 +293,31 @@
     (loop [nd (set (for [[n ts] edges :when (some anchor? ts)] n))]
       (let [nd' (into nd (for [[n ts] edges :when (some nd ts)] n))]
         (if (= nd nd') nd (recur nd'))))))
+
+(defn var-quote-positions
+  "The positions `[row col]` of the SYMBOL inside every `#'var` var-quote in
+   `source` — these align with kondo's `:name-row`/`:name-col` for the usage. Lets
+   `call-graph` exclude a var HELD as a carrier (a `#'var` in data, e.g. a rule
+   registry) from effect propagation while KEEPING a bare value reference — an
+   alias `(def g effectful-fn)` or a higher-order arg `(map effectful-fn xs)` — which
+   is callable-as-the-var and must stay conservatively effectful."
+  [source]
+  (let [root (try (p/parse-string-all source) (catch Exception _ nil))]
+    (if-not root
+      #{}
+      (into #{}
+            (comp (filter #(= :var (n/tag %)))
+                  (keep (fn [vq]
+                          (let [m (meta (first (n/children vq)))]
+                            (when (and (:row m) (:col m)) [(:row m) (:col m)])))))
+            (tree-seq n/inner? n/children root)))))
+^:reads (defn analyze
+  "clj-kondo's `:analysis` ({:var-definitions :var-usages
+  :namespace-definitions :namespace-usages}) for `source`, from the shared
+  memoized kondo pass (run-kondo) that also feeds `lint`, plus `:var-quotes`
+  (the `#'var` carrier positions) so the effect `call-graph` can tell a var HELD
+  in data from a var CALLED."
+  [source]
+  (assoc (:analysis (run-kondo source))
+         :var-quotes (var-quote-positions source)))
+

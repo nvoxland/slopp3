@@ -159,10 +159,13 @@
   (let [src (str "(ns app.core)\n"
                  "(defn leaf! [a] (swap! a inc))\n"
                  "(def registry [#'leaf!])\n"
+                 "(def aliased leaf!)\n"
                  "(defn caller [a] (leaf! a))\n")
         an  (slopp.index/analyze src)
         eff (slopp.index/effectful-vars an)]
     (testing "a fn that CALLS an effect is effectful"
       (is (contains? eff 'app.core/caller)))
-    (testing "a def that merely CARRIES #'effect in data is NOT effectful"
-      (is (not (contains? eff 'app.core/registry))))))
+    (testing "a #'var CARRIER held in data is NOT effectful (it's not invoked)"
+      (is (not (contains? eff 'app.core/registry))))
+    (testing "but a BARE value alias (def aliased leaf!) IS — it is callable-as-leaf!"
+      (is (contains? eff 'app.core/aliased)))))
