@@ -30,7 +30,13 @@
       (set (remove str/blank? (str/split (str/trim (:out r)) #":")))
       (throw (ex-info (str "classpath resolution failed: " (:err r)) {})))))
 
-(def ^:private jars-cache (atom {}))
+(def ^:private jars-cache
+  "coord -> resolved jar paths. A deliberate process-local memo: resolving a
+  Maven coordinate shells out and is slow, and the answer for a given coord is
+  immutable. Private and never read as state — nothing branches on what is in
+  it, so it stays invisible to a slice-limited reader, which is what the
+  ambient-state advisory is protecting against."
+  (atom {}))
 
 ^:reads (defn dep-jars
   "The classpath entries contributed by `lib`@`coord` ALONE — its own jar plus
