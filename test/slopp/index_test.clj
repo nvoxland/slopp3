@@ -154,3 +154,15 @@
         (is (= [] (mapv :type (index/lint use)))
             "stale replay: answered from the cache dir we just left"))
       (finally (reset! index/kondo-cache-dir prev)))))
+
+(deftest carrier-refs-do-not-propagate-effects
+  (let [src (str "(ns app.core)\n"
+                 "(defn leaf! [a] (swap! a inc))\n"
+                 "(def registry [#'leaf!])\n"
+                 "(defn caller [a] (leaf! a))\n")
+        an  (slopp.index/analyze src)
+        eff (slopp.index/effectful-vars an)]
+    (testing "a fn that CALLS an effect is effectful"
+      (is (contains? eff 'app.core/caller)))
+    (testing "a def that merely CARRIES #'effect in data is NOT effectful"
+      (is (not (contains? eff 'app.core/registry))))))
