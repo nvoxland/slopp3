@@ -3638,3 +3638,15 @@
   [session & {:keys [ns]}]
   (let [attrs (attrs/vocabulary (:store @session) :ns-prefix ns)]
     {:count (count attrs) :attributes attrs}))
+
+(defn query-rules
+  "The D9 enforcement catalog for THIS store: every rule with its grain, its
+   EFFECTIVE per-store severity (the `rules` config override else the default),
+   how to discharge it, and what it means. The one place to see what's enforced
+   and at what grade — dial any rule with `config_file {path \"rules\" key <rule>
+   value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`)."
+  [session]
+  (let [st (:store @session)]
+    (mapv (fn [{:keys [rule severity] :as r}]
+            (assoc r :severity (edit.modules/rule-severity st rule severity)))
+          rules/rule-catalog)))

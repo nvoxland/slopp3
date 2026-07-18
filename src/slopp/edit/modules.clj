@@ -307,6 +307,13 @@
   per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`."
   [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal])
 
+(defn ^:export write-gate-names
+  "The keyword rule-names of the registered per-form write gates (from the var
+   metadata) — the enumeration the unified rule catalog + its drift-guard use
+   without reaching the package-private `per-form-write-gates`."
+  []
+  (mapv #(keyword (:name (meta %))) per-form-write-gates))
+
 (defn ^:export gate-refusal
   "Run every per-form write gate over the CANDIDATE store (the rule-registry
    seed, D9): first refusal wins, nil when all are clean. Adding a per-form

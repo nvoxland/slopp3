@@ -681,3 +681,19 @@
         (let [r (edn/read-string (call sess "query_vocabulary" {:ns "order"}))]
           (is (= [:order/id] (mapv :kw (:attributes r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated query-rules-rides-the-wire
+  (let [sess (api/open!)]
+    (try
+      (let [rs (edn/read-string (call sess "query_rules" {}))]
+        (is (= 7 (count rs)) (pr-str rs))
+        (is (contains? (set (map :rule rs)) :schema-drift) (pr-str rs))
+        (is (= :refuse (:severity (first (filter #(= :schema-refusal (:rule %)) rs))))
+            (pr-str rs)))
+      (testing "a per-store severity override is reflected"
+        (api/config-file! sess "rules" :key "schema-drift" :value "advisory"
+                          :prompt "dial schema-drift down")
+        (let [rs (edn/read-string (call sess "query_rules" {}))
+              drift (first (filter #(= :schema-drift (:rule %)) rs))]
+          (is (= :advisory (:severity drift)) (pr-str drift))))
+      (finally (api/close! sess)))))

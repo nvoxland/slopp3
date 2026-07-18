@@ -85,7 +85,10 @@
     :inputSchema {:type "object" :properties {}}}
    {:name "query_vocabulary"
     :description "Browse the store's domain-keyword VOCABULARY (namespaced keys, most-used first) BEFORE coining new ones, so you REUSE an established key like :user/email instead of inventing a near-duplicate the key-hygiene advisory flags at done. Optional ns narrows to a keyword namespace (exact or dotted-child; e.g. `user` matches :user/* and :user.address/*)."
-    :inputSchema {:type "object" :properties {:ns {:type "string"}}}}])
+    :inputSchema {:type "object" :properties {:ns {:type "string"}}}}
+   {:name "query_rules"
+    :description "The ENFORCEMENT CATALOG for this store: every D9 rule (write gates + done-time advisories) with its grain, its EFFECTIVE per-store severity, how to discharge it, and what it means. See what's gated and at what grade. Dial any rule with config_file {path rules key <rule> value <severity>} — off / advisory / error / refuse."
+    :inputSchema {:type "object" :properties {}}}])
 
 (def history-tools
   "Provenance tool descriptors: history, time-travel, change queries. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
@@ -430,7 +433,7 @@
     "query_brief" "query_slice" "query_depends" "query_eval"
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
-    "review_scan" "query_store" "query_call" "query_vocabulary"
+    "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 
 (def tools
