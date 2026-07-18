@@ -576,11 +576,14 @@
       :else
       (if-let [[store' delta] (store/replace-node store ns-sym form-name node
                                                   :prompt prompt :agent agent)]
-        (if-let [merr (modules/gate-refusal store' ns-sym (or (store/form-symbol node) form-name))]
-          {:error merr}
-          {:store    store'
-           :delta    delta
-           :warnings (ns-warnings store' ns-sym)})
+        (let [{:keys [refuse advisories]}
+              (modules/gate-check store' ns-sym (or (store/form-symbol node) form-name))]
+          (if refuse
+            {:error refuse}
+            (cond-> {:store    store'
+                     :delta    delta
+                     :warnings (ns-warnings store' ns-sym)}
+              (seq advisories) (assoc :advisories advisories))))
         (missing-form-error store ns-sym form-name)))))
 
 (defn apply-replace!

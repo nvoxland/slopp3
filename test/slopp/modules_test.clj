@@ -537,3 +537,37 @@
       (is (re-find #":malli/schema"
                    (str (modules/schema-refusal (on "require-boundary-schemas")
                                                 'app.core 'handle)))))))
+
+(deftest write-gate-advisory-severity
+  (let [[t _] (store/record-module-tier
+               (store/ingest (store/empty-store) 'app.core
+                             "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n")
+               "app.core" :pure)
+        adv (first (store/record-config-put t "rules" :manifest "tier-refusal" "advisory"))]
+    (testing "an :advisory-dialed write gate does NOT block"
+      (is (nil? (modules/gate-refusal adv 'app.core 'tick!)))
+      (is (nil? (:refuse (modules/gate-check adv 'app.core 'tick!)))))
+    (testing "but its teaching surfaces via gate-check :advisories (warn-but-proceed)"
+      (is (re-find #"functional-core"
+                   (str (first (:advisories (modules/gate-check adv 'app.core 'tick!)))))))
+    (testing "a refuse-grade gate blocks and is not an advisory"
+      (let [gc (modules/gate-check t 'app.core 'tick!)]
+        (is (re-find #"functional-core" (str (:refuse gc))))
+        (is (empty? (:advisories gc)))))))
+
+(deftest ^:isolated advisory-write-gate-warns-but-proceeds
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'aw.core "(ns aw.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
+                        :prompt "require namespaced boundary keys")
+      (api/config-file! sess "rules" :key "namespaced-keys-refusal" :value "advisory"
+                        :prompt "but only advise, don't block")
+      (let [r (api/add-form! sess 'aw.core "(defn accept \"A.\" [{:keys [id]}] id)"
+                             :prompt "bare keys — should warn, not block")]
+        (testing "the write LANDS (advisory, not blocked)"
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'aw.core 'accept))))
+        (testing "and the gate's teaching rides the result's :advisories"
+          (is (re-find #"namespaced" (str (first (:advisories r)))) (pr-str r))))
+      (finally (api/close! sess)))))

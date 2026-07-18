@@ -65,12 +65,12 @@
 (deftest ^:isolated query-rules-reports-write-gate-severity-honestly
   (let [sess (api/open!)]
     (try
-      (testing "a write gate dialed :advisory reports :refuse — the write path only honors :off"
+      (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
         (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
-                          :prompt "attempt to soften a write gate")
+                          :prompt "soften a write gate to advisory")
         (let [sr (first (filter #(= :schema-refusal (:rule %)) (api/query-rules sess)))]
           (is (= :form (:grain sr)) (pr-str sr))
-          (is (= :refuse (:severity sr)) (pr-str sr))))
+          (is (= :advisory (:severity sr)) (pr-str sr))))
       (testing ":off on a write gate is honored and reported"
         (api/config-file! sess "rules" :key "schema-refusal" :value "off"
                           :prompt "turn it off")

@@ -1101,7 +1101,9 @@
                     summary  (session/run-verification! session ns-sym affected
                                                 :edited edited)
                     all-w    (edit/ns-warnings (:store @session) ns-sym)
-                    existing (count (filter (comp pre-warned :var) all-w))]
+                    existing (count (filter (comp pre-warned :var) all-w))
+                    advisories (when nm (:advisories (edit.modules/gate-check
+                                                      (:store @session) ns-sym nm)))]
                 (session/commit-appended! session
                                   #(store/record-verification % ns-sym summary)
                                   [])
@@ -1118,7 +1120,8 @@
                                                         " stubbed in-image as failing"
                                                         " (red-first); implement them to"
                                                         " go green."))
-                    (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
+                    (:carried-errors r) (assoc :carried-errors (:carried-errors r))
+                    (seq advisories)    (assoc :advisories advisories))
                   t0)))))))
 
 (defn delete-form!
@@ -3645,16 +3648,16 @@
    how to discharge it, and what it means. The one place to see what's enforced
    and at what grade — dial any rule with `config_file {path \"rules\" key <rule>
    value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`). WRITE-gate (`:form`)
-   severity is reported HONESTLY as `:off`|`:refuse`: the write path today honors
-   only `:off` (skip) vs run-and-refuse, so a write gate dialed `:advisory`/`:error`
-   still refuses — reporting it as `:refuse` avoids the misleading 'non-blocking'.
-   Done-grain rules keep the full `:off`/`:advisory`/`:error` range."
+   severity is one of `:off` (skip), `:advisory` (warn-but-proceed — the teaching
+   rides the write result's `:advisories`), or `:refuse` (block); `:error` has no
+   write-gate meaning and reports as `:refuse`. Done-grain rules keep the full
+   `:off`/`:advisory`/`:error` range."
   [session]
   (let [st (:store @session)]
     (mapv (fn [{:keys [rule grain severity] :as r}]
             (let [eff (edit.modules/rule-severity st rule severity)]
               (assoc r :severity
                      (if (= grain :form)
-                       (if (= :off eff) :off :refuse)
+                       (case eff (:off :advisory) eff :refuse)
                        eff))))
           rules/rule-catalog)))

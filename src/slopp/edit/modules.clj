@@ -319,17 +319,31 @@
   []
   (mapv #(keyword (:name (meta %))) per-form-write-gates))
 
-(defn ^:export gate-refusal
-  "Run every per-form write gate over the CANDIDATE store (the rule-registry
-   seed, D9): first refusal wins, nil when all are clean. Adding a per-form
-   write gate means adding it to `per-form-write-gates`, not hand-wiring the N
-   write sites (replace-form, add-form!, the two group steps). Each gate's
-   per-store `rule-severity` is consulted: `:off` SKIPS it (a project dials a
-   gate it can't live with off — the mechanism that makes hard-refuse adoptable);
-   any other severity runs it (hard-refuse on a non-nil teaching string).
-   Advisory-downgrade for write gates awaits a write-time warning channel."
+(defn ^:export gate-check
+  "Run every per-form write gate over the CANDIDATE store ONCE, bucketed by each
+   gate's effective per-store `rule-severity`: returns `{:refuse <first
+   refuse-grade teaching, or nil> :advisories [<advisory-grade teachings>]}`. A
+   gate dialed `:off` is skipped; `:refuse`/`:error` (and the default) BLOCK;
+   `:advisory` is non-blocking and its teaching rides the write result (the
+   dial's warn-but-proceed mode). `gate-refusal` is the blocking view."
   [candidate ns-sym form-name]
-  (some (fn [gate]
-          (when (not= :off (rule-severity candidate (:name (meta gate)) :refuse))
-            (gate candidate ns-sym form-name)))
-        per-form-write-gates))
+  (reduce (fn [acc gate]
+            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)]
+              (if (= :off sev)
+                acc
+                (if-let [t (gate candidate ns-sym form-name)]
+                  (if (= :advisory sev)
+                    (update acc :advisories conj t)
+                    (cond-> acc (nil? (:refuse acc)) (assoc :refuse t)))
+                  acc))))
+          {:refuse nil :advisories []}
+          per-form-write-gates))
+
+(defn ^:export gate-refusal
+  "The BLOCKING view of `gate-check`: the first refuse-grade per-form write-gate
+   teaching over the CANDIDATE store, or nil. A gate dialed `:off` is skipped and
+   an `:advisory` gate is non-blocking (its teaching rides `gate-check`'s
+   `:advisories` onto the write result). Register a new per-form write gate in
+   `per-form-write-gates`, not at the N write sites."
+  [candidate ns-sym form-name]
+  (:refuse (gate-check candidate ns-sym form-name)))
