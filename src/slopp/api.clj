@@ -2629,7 +2629,7 @@
                                     changed))))]
   (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
                               (or (pos? failures) iso-red?
-                                  (rules/status-affecting-fired? advisories)) :red
+                                  (rules/status-affecting-fired? st* advisories)) :red
                               :else                           :green)
            :failures    failures
            :lint-errors lint-errors}

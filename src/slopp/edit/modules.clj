@@ -237,6 +237,21 @@
                    " or opt out with config_file: path `gates` key"
                    " `require-boundary-schemas` unset true"))))))))
 
+(defn ^:export rule-severity
+  "The effective severity of rule `rule-key` for this store: a per-store OVERRIDE
+   from the `rules` config file — `config_file {path \"rules\" key <rule> value
+   <severity>}` — else `default`. `rule-key` is coerced via `name`, so a write
+   gate's var name (`'schema-refusal`), a done-advisory `:key`, or a plain string
+   all work. Severities: `:refuse`/`:error` (blocking), `:advisory` (surfaced,
+   non-blocking), `:off` (skipped). This is the dial that makes the hard-refuse
+   program project-tunable — a rule a project can't live with becomes `:off` or
+   `:advisory` rather than a wall its agents fight. Rides the store `:config`
+   (config_file), so it projects into git."
+  [store rule-key default]
+  (if-let [v (get-in store [:config "rules" :values (name rule-key)])]
+    (keyword v)
+    default))
+
 (def per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
@@ -247,8 +262,15 @@
 
 (defn ^:export gate-refusal
   "Run every per-form write gate over the CANDIDATE store (the rule-registry
-  seed, D9): first refusal wins, nil when all are clean. Adding a per-form
-  write gate means adding it to `per-form-write-gates`, not hand-wiring the N
-  write sites (replace-form, add-form!, the two group steps)."
+   seed, D9): first refusal wins, nil when all are clean. Adding a per-form
+   write gate means adding it to `per-form-write-gates`, not hand-wiring the N
+   write sites (replace-form, add-form!, the two group steps). Each gate's
+   per-store `rule-severity` is consulted: `:off` SKIPS it (a project dials a
+   gate it can't live with off — the mechanism that makes hard-refuse adoptable);
+   any other severity runs it (hard-refuse on a non-nil teaching string).
+   Advisory-downgrade for write gates awaits a write-time warning channel."
   [candidate ns-sym form-name]
-  (some (fn [gate] (gate candidate ns-sym form-name)) per-form-write-gates))
+  (some (fn [gate]
+          (when (not= :off (rule-severity candidate (:name (meta gate)) :refuse))
+            (gate candidate ns-sym form-name)))
+        per-form-write-gates))

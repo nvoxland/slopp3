@@ -424,3 +424,30 @@
                                :prompt "boundary fn, with schema")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest rule-severity-reads-per-store-config
+  (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
+    (testing "no override → the passed default"
+      (is (= :refuse (modules/rule-severity s0 'module-refusal :refuse)))
+      (is (= :advisory (modules/rule-severity s0 :key-typos :advisory))))
+    (testing "the rules config file overrides per rule; the key coerces symbol/keyword/string"
+      (let [s (first (store/record-config-put s0 "rules" :manifest "schema-refusal" "off"))]
+        (is (= :off (modules/rule-severity s 'schema-refusal :refuse)))
+        (is (= :off (modules/rule-severity s :schema-refusal :refuse)))
+        (is (= :off (modules/rule-severity s "schema-refusal" :refuse)))
+        (testing "an un-overridden rule keeps its default"
+          (is (= :refuse (modules/rule-severity s 'module-refusal :refuse))))))))
+
+(deftest gate-refusal-honors-off-severity
+  (let [[t _] (store/record-module-tier
+               (store/ingest (store/empty-store) 'app.core
+                             "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n")
+               "app.core" :pure)]
+    (testing "the tier gate fires by default"
+      (is (re-find #"functional-core" (str (modules/gate-refusal t 'app.core 'tick!)))))
+    (testing "dialing tier-refusal :off in the rules config skips it (per-store severity)"
+      (let [off (first (store/record-config-put t "rules" :manifest "tier-refusal" "off"))]
+        (is (nil? (modules/gate-refusal off 'app.core 'tick!)))))
+    (testing "an unrelated rule dialed :off leaves the tier gate firing"
+      (let [other (first (store/record-config-put t "rules" :manifest "schema-refusal" "off"))]
+        (is (re-find #"functional-core" (str (modules/gate-refusal other 'app.core 'tick!))))))))

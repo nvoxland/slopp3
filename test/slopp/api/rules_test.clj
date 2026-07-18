@@ -1,6 +1,6 @@
 (ns slopp.api.rules-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules]))
+            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -11,7 +11,39 @@
       (is (= :error (:severity (first (filter #(= :schema-drift (:key %)) rules/done-advisories)))))
       (is (= :advisory (:severity (first (filter #(= :key-typos (:key %)) rules/done-advisories)))))))
   (testing "status-affecting-fired? — only an :error-severity advisory with results flips it"
-    (is (true?  (rules/status-affecting-fired? {:schema-drift [{:form 'a/b}]})))
-    (is (false? (rules/status-affecting-fired? {:key-typos [{:used :a/b}]})))
-    (is (false? (rules/status-affecting-fired? {:breaking-changes [{:form 'a/b}]})))
-    (is (false? (rules/status-affecting-fired? {})))))
+    (let [s0 (store/empty-store)]
+      (is (true?  (rules/status-affecting-fired? s0 {:schema-drift [{:form 'a/b}]})))
+      (is (false? (rules/status-affecting-fired? s0 {:key-typos [{:used :a/b}]})))
+      (is (false? (rules/status-affecting-fired? s0 {:breaking-changes [{:form 'a/b}]})))
+      (is (false? (rules/status-affecting-fired? s0 {})))
+      (testing "a per-store severity override retunes it (dial up key-typos, down schema-drift)"
+        (let [drift-off (first (store/record-config-put s0 "rules" :manifest "schema-drift" "advisory"))
+              typos-err (first (store/record-config-put s0 "rules" :manifest "key-typos" "error"))]
+          (is (false? (rules/status-affecting-fired? drift-off {:schema-drift [{:form 'a/b}]})))
+          (is (true?  (rules/status-affecting-fired? typos-err {:key-typos [{:used :a/b}]}))))))))
+
+(deftest ^:isolated per-store-severity-config-retunes-done
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sv.core
+                   (str "(ns sv.core)\n"
+                        "(defn a [m] {:user/email (:x m)})\n"
+                        "(defn b [m] {:user/email (:y m)})\n"
+                        "(defn handle \"H.\" ([x] x) ([x y] (+ x y)))\n"))
+      (api/done! sess :label "baseline")
+      (api/config-file! sess "rules" :key "key-typos" :value "off"
+                        :prompt "silence typos for this project")
+      (api/config-file! sess "rules" :key "breaking-changes" :value "error"
+                        :prompt "make a boundary break BLOCK here")
+      (testing ":off silences an advisory end-to-end"
+        (api/add-form! sess 'sv.core "(defn c [m] {:user/emial (:z m)})"
+                       :prompt "typo — but the advisory is dialed off")
+        (let [r (api/done! sess :label "typo-off")]
+          (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
+      (testing ":error escalates an advisory to flip test-status red"
+        (api/edit-replace! sess 'sv.core 'handle "(defn handle \"H.\" [x] x)"
+                           :prompt "narrow away the 2-arity")
+        (let [r (api/done! sess :label "narrow")]
+          (is (seq (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
+          (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))
