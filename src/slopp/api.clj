@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.schema :as schema] [slopp.api.attrs :as attrs] [slopp.api.breakage :as breakage]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2614,26 +2614,11 @@
                      (:failures iso 0) (:errors iso 0))
       iso-red?    (contains? #{:red :error} (:status iso))
       st*         (:store @session)
-      ;; generative schema oracle-check (D9/D2): a :=> :malli/schema on a
-      ;; changed, analyzer-pure form is run against its live impl in the image
-      ;; (malli is inherent there). A schema that lies is a RED finding, not a
-      ;; silent drift — schemas stay optional, but writing one gets it verified.
-      schema-drift (schema/drift! (:image @session) st*
-                                  (into #{} (keep (fn [fid]
-                                                    (when-let [e (store/form-by-id st* fid)]
-                                                      (symbol (str (store/ns-of-form-id st* fid))
-                                                              (str (or (:name e) (:id e))))))
-                                                  changed)))
-      ;; near-duplicate-key ADVISORY (open-map guardrail): a namespaced key a
-      ;; changed form introduces that is one Damerau edit from an established
-      ;; same-namespace key is a likely typo (silent nil-pun). Derived from the
-      ;; forms, so it needs no history/CRDT handling of its own. Advisory only —
-      ;; heuristic, never flips test-status.
-      key-typos (attrs/near-duplicate-keys st* changed)
-      ;; contract-narrowing advisory (Spec-ulation): a boundary fn whose fixed
-      ;; arities shrank vs the last-done baseline may break external callers a
-      ;; slice can't see. Advisory — internal callers already turn the tests red.
-      breaking  (breakage/breaking-changes st* changed)
+      ;; the done-time advisory REGISTRY (D9 rule-registry, done grain): schema
+      ;; drift (status-affecting), key typos + contract breakage (advisory). A
+      ;; new done finding registers in slopp.api.rules/done-advisories — ONE
+      ;; entry — not by hand-wiring a binding, a clause, and a status term here.
+      advisories  (rules/run-done-advisories! session st* changed)
       missing-doc (vec (sort (distinct
                               (keep (fn [fid]
                                       (when-let [e (store/form-by-id st* fid)]
@@ -2643,15 +2628,14 @@
                                                (:name e)))))
                                     changed))))]
   (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
-                              (or (pos? failures) iso-red? (seq schema-drift)) :red
+                              (or (pos? failures) iso-red?
+                                  (rules/status-affecting-fired? advisories)) :red
                               :else                           :green)
            :failures    failures
            :lint-errors lint-errors}
     (:pending iso)    (assoc :isolated-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
-    (seq schema-drift) (assoc :schema-drift schema-drift)
-    (seq key-typos)   (assoc :key-typos key-typos)
-    (seq breaking)    (assoc :breaking-changes breaking)
+    (seq advisories)  (merge advisories)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
         cid (let [v (volatile! nil)]
