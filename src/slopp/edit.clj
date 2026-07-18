@@ -22,9 +22,14 @@
   the reference-carrier decision: mentions of var names in strings or
   quoted symbols are INERT data, so the gate blocks the moment they could
   BECOME a var — carriers (store/late-ref) or ^:unsafe are the sanctioned
-  paths."
+  paths. The METADATA MUTATORS (alter-meta!, reset-meta!) are here because
+  slopp reads markers (^:export, ^:unsafe, ^:reads, :malli/schema) straight
+  off the STORED node — metadata must be SOURCE-only truth, so mutating a
+  reference's metadata at runtime (invisible to analysis) is refused;
+  with-meta/vary-meta return NEW values and are unaffected."
   '#{eval alter-var-root binding gen-class definline read-string
-     requiring-resolve resolve ns-resolve find-var intern})
+     requiring-resolve resolve ns-resolve find-var intern
+     alter-meta! reset-meta!})
 
 (defn- all-symbols [node]
   (filter symbol? (tree-seq coll? seq (n/sexpr node))))
@@ -62,12 +67,20 @@
         (some banned-syms (all-symbols node))
         (let [hit (first (filter banned-syms (all-symbols node)))]
           (str "dialect (D3): denylisted symbol used — " hit
-               (when (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
-                      (name hit))
+               (cond
+                 (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
+                  (name hit))
                  (str " — references resolve through CARRIERS:"
                       " (store/late-ref 'ns/name) for load-cycle late binding,"
                       " #'ns/name for in-process references in data; mark the"
-                      " form ^:unsafe only if you truly own the obligation"))))
+                      " form ^:unsafe only if you truly own the obligation")
+                 (#{"alter-meta!" "reset-meta!"} (name hit))
+                 (str " — metadata is SOURCE-only truth in slopp: markers"
+                      " (^:export, ^:unsafe, ^:reads, :malli/schema) are read"
+                      " straight off the stored form, so write the metadata ON"
+                      " the form itself; runtime metadata mutation is invisible"
+                      " to analysis. with-meta/vary-meta return new values; mark"
+                      " the form ^:unsafe only if you truly own the obligation"))))
         :else nil))))
 
 ^:unsafe (def ^:private observe-banned
