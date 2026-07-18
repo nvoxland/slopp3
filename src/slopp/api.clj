@@ -3141,7 +3141,8 @@
                                    (map (fn [[m ds]] [m (vec (sort ds))]))
                                    manifest)
                    :layers (:layers graph)
-                   :debt (modules/module-debt st rows)}
+                   :debt (modules/module-debt st rows)
+                   :purity (modules/purity-standing st)}
             (seq (:cycles graph))
             (assoc :cycles (:cycles graph))
 
@@ -3344,6 +3345,11 @@
                               (not (:entry-point (meta (second s))))
                               (not= '-main nm))
                          untested (and (not test?)
+                                       ;; a plain (def x <data>) has no invocation to
+                                       ;; trace, so it can never acquire evidence —
+                                       ;; flagging it is a finding nobody can discharge.
+                                       ;; defn/defmulti stay flaggable: they are callable.
+                                       (not (and (seq? s) (= 'def (first s))))
                                        (zero? traced)
                                        (not (contains? covered-static q)))
                          flags    (cond-> []
@@ -3369,7 +3375,23 @@
              :forms    (reduce + 0 (map #(count (filter :name (store/forms st %))) nses))
              :flagged  (count rows)
              :top      (vec (take limit ranked))
-             :totals   (into (sorted-map) (frequencies (mapcat :flags rows)))}
+             :totals   (into (sorted-map) (frequencies (mapcat :flags rows)))
+             ;; the SHAPE of form sizes, not just how many cross 50 loc:
+             ;; decomposing a god-form ADDS forms, so the :large count can
+             ;; rise while the codebase genuinely improves. Max and median
+             ;; move the right way.
+             :loc      (let [sized (for [nsx nses
+                                        e (store/forms st nsx)
+                                        :when (:name e)]
+                                    [(symbol (str nsx) (str (:name e)))
+                                     (count (str/split-lines (n/string (:node e))))])
+                             ls    (sort (map second sized))
+                             n     (count ls)]
+                         (when (pos? n)
+                           {:max     (last ls)
+                            :largest (first (last (sort-by second sized)))
+                            :p95     (nth ls (min (dec n) (int (* 0.95 n))))
+                            :median  (nth ls (quot n 2))}))}
       (> (count rows) limit) (assoc :omitted (- (count rows) limit)))))
 ^:unsafe (defn query-store
   "The STORE-VALUE oracle: evaluate one read-only `(fn [store] ...)` over

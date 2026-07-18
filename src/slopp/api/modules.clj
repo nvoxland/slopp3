@@ -132,3 +132,34 @@
                               rows)))
      :stale  (vec (sort (keep #(when (and (:real? %) (:unused-ok? %)) (:q %))
                               rows)))}))
+
+(defn purity-standing
+  "Where every module STANDS on the functional-core gate — the write-time
+  purity check read back as a report over existing code.
+
+  Returns `{:declared {module tier} :could-tighten {module {:declared d
+  :supports s}}}`. `:could-tighten` names modules whose current forms would
+  satisfy a STRICTER tier than they claim, which is the whole worklist for
+  adopting the gate on a codebase that predates it. A module is judged by its
+  weakest production namespace, since the tier binds all of them.
+
+  Test namespaces are excluded: they exercise effects on purpose and would
+  veto every module."
+  [store]
+  (let [rank   {:pure 0 :reads 1 :effects 2}
+        prod   (remove #(str/ends-with? (str %) "-test")
+                       (keys (:namespaces store)))
+        tiers  (:module-tiers store)
+        by-mod (group-by modules/module-of prod)]
+    {:declared (into (sorted-map) tiers)
+     :could-tighten
+     (into (sorted-map)
+           (keep (fn [[m ns-list]]
+                   (let [declared (get tiers m :effects)
+                         supports (last (sort-by rank
+                                                 (map #(:supports
+                                                        (modules/tier-report store %))
+                                                      ns-list)))]
+                     (when (< (rank supports) (rank declared))
+                       [m {:declared declared :supports supports}]))))
+           by-mod)}))

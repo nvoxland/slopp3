@@ -138,3 +138,30 @@
       (let [rs (refs/refs-to st 'g.core/helper)
             m  (first (filter #(nil? (:name %)) (store/forms st 'g.core)))]
         (is (= [(:id m)] (mapv :from-form rs)) (pr-str rs))))))
+
+(deftest ^:isolated module-graph-reports-purity-standing
+  ;; The gates slopp enforces on a WRITE should also be readable as a REPORT
+  ;; over existing code — otherwise a modernization pass has to reconstruct
+  ;; them by hand. query_depends {modules true} is where someone asking "what
+  ;; is this architecture" already looks, so purity standing belongs there:
+  ;; what is declared, and which modules could carry a stricter tier than they
+  ;; currently claim.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pm.core "(ns pm.core)\n(defn add [x y] (+ x y))\n")
+      (api/ingest! sess 'pm.edge
+                   "(ns pm.edge)\n(defn roll [] (rand))\n")
+      (let [r (api/query-depends sess nil :modules true)]
+        (testing "a module whose code is clean is reported as tightenable"
+          (is (= :pure (get-in r [:purity :could-tighten "pm.core" :supports]))
+              (pr-str (:purity r))))
+        (testing "a module reaching non-determinism is NOT offered :pure"
+          (is (not= :pure
+                    (get-in r [:purity :could-tighten "pm.edge" :supports]))
+              (pr-str (:purity r)))))
+      (testing "once declared, it is reported as declared and no longer offered"
+        (api/module-tier! sess "pm.core" :pure :prompt "clean core")
+        (let [r (api/query-depends sess nil :modules true)]
+          (is (= :pure (get-in r [:purity :declared "pm.core"])) (pr-str r))
+          (is (nil? (get-in r [:purity :could-tighten "pm.core"])) (pr-str r))))
+      (finally (api/close! sess)))))

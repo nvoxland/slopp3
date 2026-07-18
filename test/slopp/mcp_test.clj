@@ -775,3 +775,44 @@
           (is (not (re-find #"tier must be" r)) (str spelling " → " r))
           (is (re-find #":pure" r) (str spelling " → " r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated review-scan-reports-a-size-distribution-not-just-a-count
+  ;; ":large 3" is honest but misleading as a progress signal: DECOMPOSING a
+  ;; god-form ADDS forms, so the count can rise while the codebase improves —
+  ;; it did, 50 -> 54, during this sweep. Large forms are a distribution to
+  ;; flatten, not a quantity to minimize, so report the shape.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rs.core
+                   (str "(ns rs.core)\n\n"
+                        "(defn small [x] (inc x))\n\n"
+                        "(defn big [x]\n"
+                        (apply str (repeat 60 "  (println x)\n"))
+                        "  x)\n"))
+      (let [r (api/review-scan sess)]
+        (is (= 'rs.core/big (get-in r [:loc :largest])) (pr-str (:loc r)))
+        (is (>= (get-in r [:loc :max]) 60) (pr-str (:loc r)))
+        (testing "the median is the honest counterweight to the max"
+          (is (< (get-in r [:loc :median]) (get-in r [:loc :max]))
+              (pr-str (:loc r)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated untested-does-not-flag-plain-defs
+  ;; :untested means "no runtime evidence reaches this form". A plain (def x
+  ;; <data>) has no invocation to trace, so it can NEVER acquire evidence —
+  ;; flagging it is a finding no one can ever discharge, which is worse than
+  ;; not flagging it: it pads the number the sweep is trying to drive to zero.
+  ;; defn/defmulti stay flaggable; they are callable.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ut.core
+                   (str "(ns ut.core)\n\n"
+                        "(def threshold 42)\n\n"
+                        "(defn untouched [x] (+ x threshold))\n"))
+      (let [flags (into {} (map (juxt :form :flags))
+                        (:top (api/review-scan sess :ns 'ut.core :limit 50)))]
+        (is (not (contains? (set (get flags 'ut.core/threshold)) :untested))
+            (str "a plain def cannot be traced: " (pr-str flags)))
+        (is (contains? (set (get flags 'ut.core/untouched)) :untested)
+            (str "a callable fn with no evidence still flags: " (pr-str flags))))
+      (finally (api/close! sess)))))

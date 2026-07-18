@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.api :as api]))
 
 (def wf ".github/workflows/test.yml")
 
@@ -65,3 +65,33 @@
           (is (nil? (get-in s4 [:config mf]))))))
     (testing "unknown formats refuse to render"
       (is (thrown? Exception (store/render-config {:format :yaml :values {"a" "b"}}))))))
+
+(deftest ^:isolated file-api-round-trip-and-refusals
+  ;; The store layer is covered above; the API layer was not — and it is the
+  ;; layer the file_put/file_get/file_remove wire tools actually call, so its
+  ;; validation and session plumbing had no test at all.
+  (let [sess (api/open!)]
+    (try
+      (testing "put lands and reports what it wrote"
+        (let [r (api/file-put! sess "README.md" "# hello\n" :prompt "seed")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= {:path "README.md" :bytes 8} r))))
+      (testing "get reads it back"
+        (is (= {:path "README.md" :content "# hello\n"}
+               (api/file-get sess "README.md"))))
+      (testing "put overwrites, and :at still sees the old content"
+        (let [before (:id (last (:deltas (:store @sess))))]
+          (api/file-put! sess "README.md" "# v2\n" :prompt "revise")
+          (is (= "# v2\n" (:content (api/file-get sess "README.md"))))
+          (is (= "# hello\n" (:content (api/file-get sess "README.md" :at before)))
+              "time travel through the files manifest")))
+      (testing "remove drops it, and reading it back is an error not a nil"
+        (is (= {:removed "README.md"} (api/file-remove! sess "README.md")))
+        (is (re-find #"not on the files manifest"
+                     (str (:error (api/file-get sess "README.md"))))))
+      (testing "the refusals are data, not throws"
+        (is (re-find #"needs a :path" (str (:error (api/file-put! sess "" "x")))))
+        (is (re-find #"needs :content" (str (:error (api/file-put! sess "a.txt" nil)))))
+        (is (re-find #"not on the files manifest"
+                     (str (:error (api/file-remove! sess "nope.txt"))))))
+      (finally (api/close! sess)))))
