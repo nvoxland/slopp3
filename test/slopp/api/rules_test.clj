@@ -148,3 +148,33 @@
         (testing "a plain def is untouched either way"
           (is (not (contains? hits 'am.core/plain)) (pr-str hits))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated every-advisory-fires-on-its-own-fixture
+  ;; A rule that has stopped firing is INDISTINGUISHABLE from a clean codebase.
+  ;; ambient-state read a def's value at index 2 — where a docstring sits — and
+  ;; so never once fired on a documented global: it reported a single finding
+  ;; for its entire life and looked healthy while nine accumulated unseen.
+  ;;
+  ;; The registry now carries a positive fixture per rule and this test is the
+  ;; guarantee. The point is that NOBODY has to remember to validate a
+  ;; zero-findings sweep against a known-dirty input by hand — a broken check
+  ;; turns the suite red instead of quietly reporting all-clear.
+  (doseq [{:keys [key check fires-on selftest-note]} rules/done-advisories]
+    (if fires-on
+      (let [sess (api/open!)]
+        (try
+          (api/ingest! sess 'rf.core fires-on)
+          (let [st   (:store @sess)
+                ;; the fixture's LAST form is "the change"; anything before it is
+                ;; established baseline. key-typos compares a new key against
+                ;; keys already in the store, so it cannot fire on a fixture
+                ;; where everything is new.
+                fids [(:id (last (store/forms st 'rf.core)))]]
+            (is (seq (check nil st fids))
+                (str key " did not fire on its own :fires-on fixture — either"
+                     " the check is broken or the fixture stopped exercising"
+                     " it. Both are silent failures in production.")))
+          (finally (api/close! sess))))
+      (is (string? selftest-note)
+          (str key " has neither a :fires-on fixture nor a :selftest-note"
+               " explaining why it cannot have one")))))

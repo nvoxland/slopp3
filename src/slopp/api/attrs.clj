@@ -2,6 +2,35 @@
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store] [clojure.string :as str]))
 
+(defn destructured-keywords
+  "The keywords a form READS by map destructuring: `{:keys [a]}` reads `:a`,
+   `{:user/keys [id]}` reads `:user/id`.
+
+   These appear NOWHERE as keyword tokens in the source — the key is computed
+   from the directive's namespace plus the symbol's NAME — so every text scan
+   is blind to them. That blindness made `query-flow` return a silently
+   incomplete blast radius, omitting precisely the module-boundary fns that
+   destructure a key, and it is the same gap that let a textual keyword rename
+   ship code which compiled and read nil.
+
+   Covers `:keys`/`:strs`/`:syms` and their namespaced forms. Guarded: an
+   unreadable node yields the empty set."
+  [node]
+  (try
+    (->> (n/sexpr node)
+         (tree-seq coll? seq)
+         (filter map?)
+         (mapcat (fn [m]
+                   (for [[k v] m
+                         :when (and (keyword? k)
+                                    (#{"keys" "strs" "syms"} (name k))
+                                    (vector? v))
+                         s     v
+                         :when (symbol? s)]
+                     (keyword (namespace k) (name s)))))
+         set)
+    (catch Exception _ #{})))
+
 (defn form-keywords
   "The set of NAMESPACED domain keywords a form `node` uses. Unqualified keys
    (`:x`, `:limit`) are excluded as too noisy, and destructuring directives
