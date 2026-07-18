@@ -99,3 +99,34 @@
           (is (= [:unknown]
                  (api/query-eval sess "(dmr/area {:shape :square :side 2})")))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated ambiguous-form-names-refuse-instead-of-guessing
+  ;; A legacy `(declare b)` and `(defn b …)` are TWO store elements answering
+  ;; to the same name. `store/form-named` returns the FIRST match, so a
+  ;; destructive write silently hit whichever happened to come first — that is
+  ;; how a live definition got deleted and 13 tests went red. A write that
+  ;; cannot tell which element you meant must refuse and show both.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'amb.core
+                   (str "(ns amb.core)\n\n"
+                        "(declare b)\n\n"
+                        "(defn b [] 2)\n\n"
+                        "(defn a [] (b))\n"))
+      (testing "delete refuses and names the candidates"
+        (let [r (api/delete-form! sess 'amb.core 'b)]
+          (is (re-find #"ambiguous" (str (:error r))) (pr-str r))
+          (is (= 2 (count (:candidates r))) (pr-str r))))
+      (testing "replace refuses too"
+        (let [r (api/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
+                                   :prompt "x")]
+          (is (re-find #"ambiguous" (str (:error r))) (pr-str r))))
+      (testing "the definition is untouched — nothing was guessed away"
+        (is (= [2] (api/query-eval sess "(amb.core/b)"))))
+      (testing "cleanup resolves the ambiguity, and then writes land normally"
+        (api/cleanup! sess 'amb.core :prompt "retire the legacy declare")
+        (let [r (api/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
+                                   :prompt "now unambiguous")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (= [3] (api/query-eval sess "(amb.core/b)"))))
+      (finally (api/close! sess)))))

@@ -39,3 +39,36 @@
         (is (:error (api/extract! sess 'ex.core 'pricey 'taxed-prices
                                   "(reduce + (taxed-prices tax items))"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated extract-addresses-a-subform-by-anchor
+  ;; Extract took the subform's FULL SOURCE TEXT, which made it useless for the
+  ;; case it is most needed: pulling a large intricate subform out of a
+  ;; god-form means transcribing it exactly into the argument, and that
+  ;; transcription is the whole risk. An anchor — the subform's head, the same
+  ;; idiom query_slice {match} and done's lint :at already use — points at it
+  ;; without quoting its body.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ax.core
+                   (str "(ns ax.core)\n\n"
+                        "(defn report [xs]\n"
+                        "  (let [total (reduce + xs)]\n"
+                        "    (let [labelled (map (fn [x] [x (* 100 (/ x total))]) xs)\n"
+                        "          sorted   (sort-by second labelled)]\n"
+                        "      (vec sorted))))\n"))
+      (testing "the anchor pulls out the whole subform it heads"
+        (let [r (api/extract! sess 'ax.core 'report 'percentages
+                              nil :at "(let [labelled"
+                              :prompt "lift the inner fold")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 'ax.core/percentages (get-in r [:extracted :new])))
+          (is (= '[total xs] (get-in r [:extracted :params])) (pr-str r))))
+      (testing "the code still computes the same thing"
+        (is (= [[1 (/ 100 6)] [2 (/ 200 6)] [3 50]]
+               (first (api/query-eval sess "(ax.core/report [1 2 3])")))))
+      (testing "an anchor matching nothing teaches, with the current source"
+        (let [r (api/extract! sess 'ax.core 'report 'nope
+                              nil :at "(let [nonexistent")]
+          (is (:error r))
+          (is (:source-now r) "the current text rides along — no re-read")))
+      (finally (api/close! sess)))))

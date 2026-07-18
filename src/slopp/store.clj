@@ -104,6 +104,22 @@
   [store ns-sym]
   (filterv #(= :form (:kind %)) (elements store ns-sym)))
 
+(defn forms-named
+  "EVERY form in `ns-sym` that answers to `nm` — the plural of `form-named`,
+  and the same matcher, so the two can never drift.
+
+  Normally 0 or 1. TWO means the namespace holds elements a NAME CANNOT TELL
+  APART — in practice a legacy `(declare x)` beside its `(defn x …)`, since a
+  declare defines the var (so it matches `:names`) while carrying no `:name`
+  of its own. Destructive writes must refuse that rather than resolve it by
+  position: picking the first match silently deletes the definition. See
+  `slopp.edit/ambiguous-form-error`."
+  [store ns-sym nm]
+  (let [fs      (forms store ns-sym)
+        by-name (filter #(or (contains? (:names %) nm) (= nm (:name %))) fs)]
+    (vec (or (seq by-name)
+             (filter #(= (str nm) (:id %)) fs)))))
+
 (defn form-named
   "The form in `ns-sym` defining symbol `nm`, or nil.
 
@@ -114,11 +130,12 @@
   Also matches a form ID, which is what makes registrations addressable:
   `defmethod`/`extend-type` define nothing, so an id is their only handle. This
   is also what makes the id-fallback round-trip — `qform` has always LABELLED
-  unnamed forms `ns/f4`, and until now `form-named` could not fetch one back."
+  unnamed forms `ns/f4`, and until now `form-named` could not fetch one back.
+
+  Returns the FIRST match, which reads may take. A DESTRUCTIVE write must not:
+  use `forms-named` and refuse when it returns more than one."
   [store ns-sym nm]
-  (let [fs (forms store ns-sym)]
-    (or (first (filter #(or (contains? (:names %) nm) (= nm (:name %))) fs))
-        (first (filter #(= (str nm) (:id %)) fs)))))
+  (first (forms-named store ns-sym nm)))
 
 (defn form-by-id
   "The form anywhere in the store with the given id, or nil."

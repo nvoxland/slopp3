@@ -148,6 +148,40 @@
       [(first body)]
       (vec (keep #(when (and (seq? %) (vector? (first %))) (first %)) body)))))
 
+(defn ^:export tier-report
+  "Which purity tier `ns-sym`'s CURRENT forms could support, and what blocks a
+  stricter one — `tier-refusal`'s gate run as a REPORT over existing code
+  instead of as a refusal on a write.
+
+  Declaring a tier is otherwise blind: `module_purity` accepts any tier and the
+  gate only bites on the NEXT write, so a wrong call lands on whoever edits
+  next rather than on whoever made it. This says where the code actually
+  stands before you assert anything about it.
+
+  Returns `{:tier <declared> :supports :pure|:reads|:effects :blocking {...}}`
+  — `:blocking :pure` lists this namespace's forms reaching an effect or
+  non-determinism, `:blocking :reads` those reaching a mutation.
+
+  A MIGRATION aid: the end state is these violations being refused at write
+  time, at which point a standing report has no one left to inform."
+  [store ns-sym]
+  (let [analysis (index/analyze (render/render-ns store ns-sym))
+        dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
+        eff-pure (index/effectful-vars analysis dep-nses (:dep-pure store))
+        eff-mut  (index/effectful-vars analysis nil nil)
+        nondet   (index/nondeterministic-vars analysis)
+        here?    #(= (str ns-sym) (namespace %))
+        blocking (fn [vs] (vec (sort (filter here? vs))))
+        b-pure   (blocking (into (set eff-pure) nondet))
+        b-reads  (blocking eff-mut)]
+    {:tier     (get (:module-tiers store) (module-of ns-sym) :effects)
+     :supports (cond (empty? b-pure)  :pure
+                     (empty? b-reads) :reads
+                     :else            :effects)
+     :blocking (cond-> {}
+                 (seq b-pure)  (assoc :pure b-pure)
+                 (seq b-reads) (assoc :reads b-reads))}))
+
 (defn ^:export tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
    form whose reachability exceeds its module's declared purity tier.

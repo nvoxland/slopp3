@@ -306,6 +306,49 @@
              " running it in-image would recurse. Tag it ^:isolated:"
              " (deftest ^:isolated " (second s) " …) — isolated tests run in"
              " the external suite (test_run {:isolated true})")))))
+(defn ambiguous-form-error
+  "nil when exactly one element of `ns-sym` bears on `nm`; otherwise the
+  refusal every destructive write shares — the sibling of
+  `missing-form-error`.
+
+  The hazard is a LEGACY hand-written `(declare nm)` sitting beside
+  `(defn nm …)`. Note these do NOT collide in `forms-named`: a declare carries
+  no `:name` and contributes no `:names`, so it is invisible to name
+  addressing entirely. That invisibility is the bug, not a tie — deleting `nm`
+  removes the DEFINITION, silently leaving an orphan declare that keeps the
+  var interned and unbound, and which no name-addressed tool can then reach.
+  So declares are found by reading their sexpr, not by name lookup.
+
+  A pipeline-owned `^{:auto-declare \"<why>\"}` declare is NOT a hazard and is
+  excluded: slopp inserts it deliberately for a genuine cycle, removes it once
+  the cycle breaks, and `fix-declares!` must keep being able to edit around
+  it. Refusing on those would break the very machinery that retires them."
+  [store ns-sym nm]
+  (let [named (store/forms-named store ns-sym nm)
+        decls (filter (fn [f]
+                        (and (nil? (:name f))
+                             ;; pipeline-owned declares are managed, not legacy
+                             (not (str/includes? (n/string (:node f))
+                                                 ":auto-declare"))
+                             (let [s (try (n/sexpr (:node f))
+                                          (catch Exception _ nil))]
+                               (and (seq? s)
+                                    (= 'declare (first s))
+                                    (contains? (set (rest s)) (symbol (str nm)))))))
+                      (store/forms store ns-sym))
+        cands (concat named decls)]
+    (when (< 1 (count cands))
+      {:error (str "ambiguous: " (count cands) " forms in " ns-sym
+                   " bear on " nm " (a legacy declare beside its definition)"
+                   " — deleting or replacing by name would hit the definition"
+                   " and strand the declare. cleanup {ns \"" ns-sym "\"}"
+                   " retires the declare and leaves exactly one")
+       :candidates (mapv (fn [f]
+                           (cond-> {:id (:id f)}
+                             (:name f)        (assoc :name (:name f))
+                             (nil? (:name f)) (assoc :kind :declare)))
+                         cands)})))
+
 (defn missing-form-error
   "Q9: a 'no form named X' that TEACHES — names near-miss forms in the ns (or
   points at query_outline) so the next call succeeds instead of guessing.
@@ -577,10 +620,16 @@
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
   Returns {:store :delta :warnings} (warnings = D6 `!`-effect violations of the
-  resulting namespace) or {:error msg}."
+  resulting namespace) or {:error msg}.
+
+  Refuses outright when `form-name` addresses TWO elements — the shared
+  chokepoint for that check, so every caller of the pure edit inherits it."
   [store ns-sym form-name new-source & {:keys [prompt agent]}]
-  (let [{:keys [node error]} (parse-form new-source)]
+  (let [ambiguous (ambiguous-form-error store ns-sym form-name)
+        {:keys [node error]} (parse-form new-source)]
     (cond
+      ambiguous ambiguous
+
       error {:error error}
 
       (isolation-refusal (require-aliases store ns-sym) node)

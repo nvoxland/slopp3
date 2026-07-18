@@ -273,3 +273,27 @@
       (testing "the code still runs"
         (is (= [2] (api/query-eval sess "(cu.core/a)"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-reports-what-purity-tier-a-namespace-could-support
+  ;; Declaring a tier was BLIND: module_purity accepts any tier and the gate
+  ;; only bites on the NEXT write, so a wrong call lands on whoever edits next
+  ;; rather than on whoever made it. cleanup reports the standing position
+  ;; instead — apply what is mechanical, report what is not. A migration aid:
+  ;; the end state is these violations being refused at write time.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pu.core
+                   (str "(ns pu.core)\n\n"
+                        "(defn add [x y] (+ x y))\n"))
+      (testing "a clean namespace could support :pure"
+        (let [r (api/cleanup! sess 'pu.core)]
+          (is (= :pure (get-in r [:purity :supports])) (pr-str r))
+          (is (empty? (get-in r [:purity :blocking])) (pr-str r))))
+      (api/add-form! sess 'pu.core "(defn roll [] (rand))"
+                     :prompt "non-determinism")
+      (testing "non-determinism blocks :pure, and the blocker is named"
+        (let [r (api/cleanup! sess 'pu.core)]
+          (is (= :reads (get-in r [:purity :supports])) (pr-str r))
+          (is (= '[pu.core/roll] (get-in r [:purity :blocking :pure]))
+              (pr-str r))))
+      (finally (api/close! sess)))))

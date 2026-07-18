@@ -213,12 +213,15 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name" "source" "calls"]}}
    {:name "edit_extract"
-    :description "Extract a unique subform into a new fn (params computed, call site rewritten, verified)."
+    :description "Extract a subform of `from` into a new fn (params computed from free locals, call site rewritten, verified). Address the subform EITHER by `form` (its exact source) OR by `at` — an ANCHOR, its first line or so, which need not parse on its own (\"(let [turn-brackets\"). Prefer `at` for anything large: quoting a big subform's whole body means transcribing the exact code you were trying not to touch. A non-unique anchor asks you to extend it; a missing one returns :source-now."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :from {:type "string"}
-                               :form {:type "string"} :name {:type "string"}
+                               :form {:type "string"}
+                               :at {:type "string"
+                                    :description "anchor: the subform's head; resolves to the smallest complete form containing it"}
+                               :name {:type "string"}
                                :prompt {:type "string"}}
-                  :required ["ns" "from" "form" "name"]}}
+                  :required ["ns" "from" "name"]}}
    {:name "undo"
     :description "Walk back your OWN recent writes — the cheap, reach-for-it-immediately undo. deltas: n (default 1) undoes your last n writes; to: \"d123\" undoes everything of yours after that delta. Addressed by DELTA, not by name, so it also restores a form you DELETED — the case edit_revert structurally cannot reach (no name left to look up). Forms another agent also wrote in the span are skipped and reported. One atomic verified group. Reach for this the moment a write turns out wrong; use episode_revert only to scrap a whole episode."
     :inputSchema {:type "object"
@@ -247,7 +250,7 @@
                                :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}
    {:name "cleanup"
-    :description "Run the done-point's TIDY over one namespace on demand: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, and retire legacy or stale (declare …)s and phantom names. You should rarely need this — the write pipeline keeps ordering and declares right from your FIRST write, and done runs the same tidy over everything you touched. Reach for it on INGESTED code that predates those invariants, or when a legacy declare blocks you mid-episode (two elements then share a name, which the name-addressed edit tools cannot resolve)."
+    :description "Tidy ONE namespace the way the done-point does, and report what tidying cannot fix. APPLIES: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, retire legacy or stale (declare …)s and phantom names. REPORTS :purity — which tier (:pure/:reads/:effects) this namespace's current forms could support and which forms block a stricter one, so module_purity is an informed call rather than a blind assertion that only bites on the next write. You rarely need the APPLY half: the pipeline keeps ordering and declares right from your FIRST write, and done runs the same tidy over what you touched. Reach for it on INGESTED code, when a legacy declare blocks you mid-episode, or to see where a namespace stands before declaring a tier."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :prompt {:type "string"}}

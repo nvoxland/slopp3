@@ -1084,6 +1084,10 @@
   image, verification (tests that exercised it will go red — the honest signal
   if it was still referenced), provenance.
 
+  Refuses when `nm` addresses TWO elements (a legacy `(declare nm)` beside its
+  definition): resolving by position deletes whichever happens to come first,
+  which is silent destruction of live code.
+
   A defmethod needs more than ns-unmap (#131): its name is its form id and its
   registration lives in the MULTI's method table, so ns-unmap is a no-op and
   the deleted method KEPT ANSWERING — tests stayed green after the delete, and
@@ -1093,37 +1097,39 @@
   survives until restart — conservative, and only reachable from a dispatch
   expression that itself no longer evaluates."
   [session ns-sym nm & {:keys [prompt agent]}]
-  (let [victim  (store/form-named (:store @session) ns-sym nm)
-        vsexpr  (when victim (try (n/sexpr (:node victim)) (catch Exception _ nil)))
-        unregister
-        (when (and (seq? vsexpr) (= 'defmethod (first vsexpr)) (> (count vsexpr) 2))
-          (format "(when-let [v (ns-resolve '%s '%s)]
+  (or
+   (edit/ambiguous-form-error (:store @session) ns-sym nm)
+   (let [victim  (store/form-named (:store @session) ns-sym nm)
+         vsexpr  (when victim (try (n/sexpr (:node victim)) (catch Exception _ nil)))
+         unregister
+         (when (and (seq? vsexpr) (= 'defmethod (first vsexpr)) (> (count vsexpr) 2))
+           (format "(when-let [v (ns-resolve '%s '%s)]
                      (when (instance? clojure.lang.MultiFn @v)
                        (remove-method @v
                          (binding [*ns* (find-ns '%s)] (eval '%s)))))"
-                  ns-sym (second vsexpr) ns-sym (pr-str (nth vsexpr 2))))
-        r (session/rebased-write!
-           session
-           (fn [base]
-             (if-let [[st' d] (store/remove-form base ns-sym nm
-                                                 :prompt prompt :agent agent)]
-               {:store st' :delta d}
-               (edit/missing-form-error base ns-sym nm)))
-           (fn [base] (:node (store/form-named base ns-sym nm)))
-           (symbol (str ns-sym) (str nm))
-           ns-sym
-           :load? false)]
-    (if (or (:error r) (:conflict r))
-      r
-      (let [affected (session/affected-tests session ns-sym nm)]
-            (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
-            (when unregister (repl/eval! (:image @session) unregister))
-            (let [summary (session/run-verification! session ns-sym affected
-                                             :edited #{(symbol (str ns-sym) (str nm))})]
-              (session/commit-appended! session
-                                #(store/record-verification % ns-sym summary)
-                                [])
-              {:delta (:delta r) :test summary :affected (or affected :all)})))))
+                   ns-sym (second vsexpr) ns-sym (pr-str (nth vsexpr 2))))
+         r (session/rebased-write!
+            session
+            (fn [base]
+              (if-let [[st' d] (store/remove-form base ns-sym nm
+                                                  :prompt prompt :agent agent)]
+                {:store st' :delta d}
+                (edit/missing-form-error base ns-sym nm)))
+            (fn [base] (:node (store/form-named base ns-sym nm)))
+            (symbol (str ns-sym) (str nm))
+            ns-sym
+            :load? false)]
+     (if (or (:error r) (:conflict r))
+       r
+       (let [affected (session/affected-tests session ns-sym nm)]
+         (repl/eval! (:image @session) (format "(ns-unmap '%s '%s)" ns-sym nm))
+         (when unregister (repl/eval! (:image @session) unregister))
+         (let [summary (session/run-verification! session ns-sym affected
+                                                  :edited #{(symbol (str ns-sym) (str nm))})]
+           (session/commit-appended! session
+                                     #(store/record-verification % ns-sym summary)
+                                     [])
+           {:delta (:delta r) :test summary :affected (or affected :all)}))))))
 
 (defn- apply-group-step
   "Apply one edit-group step to a store VALUE. Returns {:store :delta :hot ...}
@@ -1528,7 +1534,8 @@
         (cond-> {:ns         ns-sym
                  :normalized (count rewrites)
                  :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
-                 :declares   (:removed d 0)}
+                 :declares   (:removed d 0)
+                 :purity     (edit.modules/tier-report (:store @session) ns-sym)}
           (:conflict d) (assoc :conflict (:conflict d))
           (:test d)     (assoc :test (:test d)))))))
 
@@ -1951,9 +1958,9 @@
   the index's local analysis), the new fn lands BEFORE `from` (compile order),
   and the subform becomes the call. One atomic intent: three grouped deltas
   (add, move, replace), compile-checked before commit, verified once."
-  [session ns-sym from new-name subform-src & {:keys [prompt]}]
+  [session ns-sym from new-name subform-src & {:keys [prompt at]}]
   (let [st   (:store @session)
-        plan (refactor/extract-plan st ns-sym from subform-src new-name)]
+        plan (refactor/extract-plan st ns-sym from subform-src new-name :at at)]
     (cond
       (:error plan) plan
 

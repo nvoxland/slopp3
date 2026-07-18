@@ -421,17 +421,59 @@
     (catch Exception ex
       {:error (str "subform edit failed: " (ex-message ex))})))
 
+(defn anchor-subform-src
+  "The source of the unique subform of `form-src` that the ANCHOR heads — the
+  smallest complete form containing the anchor's single occurrence.
+
+  Lets a caller point at a large subform by its first line instead of quoting
+  its whole body, which is the difference between a mechanical extraction and
+  a hand transcription of the exact code you were trying not to touch. The
+  anchor need not parse on its own (`\"(let [turn-brackets\"` is the intended
+  shape); whitespace runs are equivalent, so re-indentation does not break it.
+
+  Returns {:src s}, or {:error msg :source-now form-src}."
+  [form-src anchor what]
+  (let [hits (fuzzy-spans form-src anchor)]
+    (cond
+      (empty? hits)
+      {:error (str "anchor not found in " what
+                   " — :source-now is its CURRENT text; correct the anchor"
+                   " against it and resend, no read needed")
+       :source-now form-src}
+
+      (< 1 (count hits))
+      {:error (str "anchor occurs " (count hits) " times in " what
+                   " — extend it (usually one more line) until it is unique")
+       :source-now form-src}
+
+      :else
+      (if-let [cand (->> (iterate z/next (z/of-string form-src))
+                         (take-while (complement z/end?))
+                         (map z/node)
+                         (filter n/sexpr-able?)
+                         (map n/string)
+                         (filter #(seq (fuzzy-spans % anchor)))
+                         (sort-by count)
+                         first)]
+        {:src cand}
+        {:error (str "no complete form in " what " contains that anchor")
+         :source-now form-src}))))
+
 (defn extract-plan
   "Plan extracting the unique occurrence of `subform-src` inside `from-name`
   into a new fn `new-name`: params = the free locals (bound outside the
   subform, used inside), in first-use order. Pair matches (P1) are refused —
   a pair is not an expression. Returns
   {:new-defn-src :new-from-src :params} or {:error msg}."
-  [store ns-sym from-name subform-src new-name]
+  [store ns-sym from-name subform-src new-name & {:keys [at]}]
   (try
     (if-let [e (store/form-named store ns-sym from-name)]
       (let [form-src (n/string (:node e))
-            found    (find-unique-subform form-src subform-src from-name)]
+            resolved (when at (anchor-subform-src form-src at from-name))
+            target   (if at (:src resolved) subform-src)
+            found    (if (and at (:error resolved))
+                       resolved
+                       (find-unique-subform form-src target from-name))]
         (cond
           (:error found)    found
           (:end-zloc found) {:error (str "cannot extract a pair — extract "

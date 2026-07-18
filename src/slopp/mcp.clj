@@ -642,13 +642,19 @@
                                                   :prompt (:prompt a)
                                                   :agent (:agent a)))
       "edit_extract" (let [subform (or (:form a) (:source a) (:subform a))]
-                            (when-not subform
-                              (throw (ex-info "edit_extract needs :form (the exact subform source; aliases :source/:subform accepted)" {})))
-                            (text! (-> (api/extract! session (sym :ns) (sym :from)
-                                                    (sym :name) subform
-                                                    :prompt (:prompt a))
-                                      (select-keys [:error :extracted :group :test :affected])
-                                      (summarize (:verbose a)))))
+                       (if-not (or subform (:at a))
+                         (text! {:error (str "edit_extract needs :form (the exact subform"
+                                             " source; aliases :source/:subform accepted)"
+                                             " or — better for anything large — :at, an"
+                                             " ANCHOR: the subform's first line, which"
+                                             " need not parse on its own")})
+                         (text! (-> (api/extract! session (sym :ns) (sym :from)
+                                                  (sym :name) subform
+                                                  :at (:at a)
+                                                  :prompt (:prompt a))
+                                    (select-keys [:error :source-now :extracted
+                                                  :group :test :affected])
+                                    (summarize (:verbose a))))))
       "done" (text! (api/done! session :label (:label a)
                                                   :agent (:agent a)))
       "commit_point" (text! (let [r (api/commit-point! session (:description a)
