@@ -38,11 +38,16 @@
   (symbol (str ns) (str nm)))
 
 (defn call-graph
-  "Map of caller-node -> #{callee-node}, over user vars (top-level usages, whose
-  `:from-var` is nil, are skipped)."
+  "Map of caller-node -> #{callee-node}, over user vars, for CALL usages ONLY.
+   Top-level usages (`:from-var` nil) are skipped, and so are CARRIER references —
+   a `#'var` or a bare var-as-value, which kondo records with NO `:arity` (a call
+   carries the arg count). Effects propagate through CALLS, not through holding a
+   var in data: this is what lets a registry carry `#'some-bang!` without the
+   holder being flagged effectful (the carrier-taint). Reference-tracking for
+   visibility/renames is a separate path (edit.refs); this graph is for effects."
   [analysis]
   (reduce (fn [m u]
-            (if (:from-var u)
+            (if (and (:from-var u) (contains? u :arity))
               (update m (node (:from u) (:from-var u))
                       (fnil conj #{}) (node (:to u) (:name u)))
               m))

@@ -30,7 +30,6 @@
   [_session st* changed]
   (breakage/breaking-changes st* changed))
 
-^:reads
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -39,9 +38,8 @@
    real failure) or `:advisory` (a heuristic that never does). A NEW done-time
    finding registers HERE, in ONE entry, instead of hand-wiring a binding, a
    cond-> clause, and a status term into `done!`. Checks are held as VARS so a
-   hot-reload is picked up and the reference graph sees them. `^:reads`: this def
-   is inert data — it CARRIES an effectful check ref but never invokes it (that's
-   `run-done-advisories!`), so it is not itself a mutation."
+   hot-reload is picked up and the reference graph sees them — and a carried
+   `#'var` is NOT a call, so the analyzer no longer taints this data def effectful."
   [{:key :schema-drift     :severity :error    :check #'schema-drift-check!}
    {:key :key-typos        :severity :advisory :check #'key-typos-check}
    {:key :breaking-changes :severity :advisory :check #'breaking-check}])
@@ -60,16 +58,13 @@
                     (when (seq r) [key r])))))
         done-advisories))
 
-^:reads
 (defn status-affecting-fired?
   "True when an advisory whose EFFECTIVE severity is `:error` produced findings —
    a real failure that should flip `test-status` red. Effective severity is the
    per-store override (`edit.modules/rule-severity`) else the registry default, so
    a project can dial `key-typos` up to `:error` or `schema-drift` down to
    `:advisory`. `:advisory`/`:off` never flip status. Args: the store (for the
-   config) and the `{:key findings}` map from `run-done-advisories!`. `^:reads`:
-   reads the registry + store config (carrier-taint from the
-   `#'schema-drift-check!` ref); it invokes nothing."
+   config) and the `{:key findings}` map from `run-done-advisories!`."
   [store advisories]
   (boolean (some (fn [{:keys [key severity]}]
                    (and (= :error (edit.modules/rule-severity store key severity))
