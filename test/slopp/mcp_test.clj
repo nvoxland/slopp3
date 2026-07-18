@@ -710,3 +710,68 @@
         (is (every? #(contains? (:escape-markers t) %) [:unsafe :reads :unused-ok]) (pr-str t))
         (is (contains? t :dials) (pr-str t)))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-is-reachable-over-the-wire
+  ;; The done-point tidy has to be callable for ONE namespace, because a legacy
+  ;; declare is otherwise unaddressable: it and the defn share a name, so
+  ;; edit_delete_form / edit_replace_form cannot resolve it. Exposed as a
+  ;; general `cleanup` rather than a declare-specific tool on purpose —
+  ;; declares are auto-managed, and the tool surface should not teach an agent
+  ;; that it owns them.
+  (let [sess (api/open!)]
+    (try
+      (let [by-name (into {} (map (juxt :name identity))
+                          (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                                  [:result :tools]))]
+        (is (contains? by-name "cleanup"))
+        (is (not (contains? by-name "fix_declares"))
+            "superseded — one general tidy, not a declare-specific tool")
+        (is (nil? (get-in by-name ["cleanup" :annotations]))
+            "it writes — no read-only claim"))
+      (api/ingest! sess 'fd.wire
+                   (str "(ns fd.wire)\n\n"
+                        "(declare b)\n\n"
+                        "(defn a [] (b))\n\n"
+                        "(defn b [] 2)\n"))
+      (testing "calling it retires a declare the pipeline can satisfy by ordering"
+        (is (re-find #"1" (call sess "cleanup" {:ns "fd.wire"})))
+        (is (not (re-find #"declare"
+                          (call sess "query_source" {:ns "fd.wire" :full true})))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated undo-is-reachable-over-the-wire
+  ;; undo must be on the wire to do its job: it is only reached for reflexively
+  ;; if it is one call away the moment a write turns out wrong.
+  (let [sess (api/open!)]
+    (try
+      (let [by-name (into {} (map (juxt :name identity))
+                          (get-in (mcp/handle sess {:id 2 :method "tools/list"})
+                                  [:result :tools]))]
+        (is (contains? by-name "undo"))
+        (is (nil? (get-in by-name ["undo" :annotations]))
+            "it writes — no read-only claim"))
+      (call sess "ns_create" {:ns "un.wire"
+                              :source "(ns un.wire)\n(defn keep-me [] 1)\n"})
+      (call sess "edit_add_form" {:ns "un.wire" :source "(defn oops [] 2)"
+                                  :prompt "a write that turns out wrong"})
+      (testing "one call takes the bad write back"
+        (is (re-find #"1" (call sess "undo" {:prompt "that was wrong"})))
+        (let [src (call sess "query_source" {:ns "un.wire" :full true})]
+          (is (not (re-find #"oops" src)))
+          (is (re-find #"keep-me" src) "unrelated work survives")))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated module-purity-accepts-the-spelling-the-docs-use
+  ;; Every surface writes the tier WITH the colon — the tool description says
+  ;; ":pure (may reach NO effect…)", the skill says `tier :pure`, and
+  ;; query_depends reports :pure back. So an agent naturally sends ":pure",
+  ;; which (keyword ":pure") turned into ::pure and got refused. Both
+  ;; spellings must land on the same tier.
+  (let [sess (api/open!)]
+    (try
+      (doseq [spelling ["pure" ":pure"]]
+        (let [r (call sess "module_purity" {:module "mp.core" :tier spelling
+                                            :prompt "a pure core"})]
+          (is (not (re-find #"tier must be" r)) (str spelling " → " r))
+          (is (re-find #":pure" r) (str spelling " → " r))))
+      (finally (api/close! sess)))))

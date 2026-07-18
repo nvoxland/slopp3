@@ -51,7 +51,7 @@
 
 (defn- read-port
   "Block reading the subprocess's merged output until it announces its port."
-  [^Process proc ^BufferedReader rdr timeout-ms]
+  [^BufferedReader rdr timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
       (when (> (System/currentTimeMillis) deadline)
@@ -105,7 +105,7 @@
                (.directory (io/file dir)))
          proc (.start pb)
          rdr  (io/reader (.getInputStream proc))
-         port (read-port proc rdr timeout-ms)
+         port (read-port rdr timeout-ms)
          conn (nrepl/connect :port port)
          client (nrepl/client conn 30000)
          session (nrepl/new-session client)]

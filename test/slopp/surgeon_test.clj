@@ -244,3 +244,32 @@
             (is (re-find #":auto-declare" src)
                 (str "and it must be the PIPELINE's, saying why:\n" src)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-runs-the-done-points-tidy-on-demand
+  ;; The tidy the done-point applies, callable for one namespace. Code written
+  ;; through slopp never needs it — the pipeline owns ordering and declares
+  ;; from the first write — but INGESTED code predates those invariants, and
+  ;; a legacy declare is otherwise unaddressable (two elements share a name,
+  ;; so the name-addressed edit tools cannot reach it).
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'cu.core
+                   (str "(ns cu.core)\n\n"
+                        "(declare b)\n\n"
+                        "(defn a [] (b))\n\n"
+                        "(defn b [] 2)\n"))
+      (let [r (api/cleanup! sess 'cu.core :agent "t" :prompt "tidy the import")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= 1 (:declares r)) "the legacy declare is retired"))
+      (let [src (api/query-source sess 'cu.core)]
+        (is (not (re-find #"declare" src)))
+        (is (< (.indexOf src "(defn b") (.indexOf src "(defn a"))
+            "the definition is reordered above its caller instead"))
+      (testing "it is idempotent — a tidy namespace reports no work"
+        (let [r (api/cleanup! sess 'cu.core :agent "t")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (zero? (:declares r)))
+          (is (zero? (:normalized r)))))
+      (testing "the code still runs"
+        (is (= [2] (api/query-eval sess "(cu.core/a)"))))
+      (finally (api/close! sess)))))

@@ -3,7 +3,7 @@
   slopp store and (b) a conventional files project (via build!). Fresh eval
   agents then get IDENTICAL starting codebases for the modify-and-extend task.
   Run: clojure -M -m slopp.evalseed <template-dir>   (see .context/dogfooding.md)"
-  (:require [slopp.api :as api]))
+  (:require [slopp.api :as api] [clojure.java.io :as io] [clojure.string :as str]))
 
 (def model-src
   (str "(ns tasker.model\n  (:require [clojure.test :refer [deftest is]]))\n\n"

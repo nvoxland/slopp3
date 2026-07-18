@@ -628,3 +628,44 @@
           (is (= :green (get-in r [:findings :test-status])))
           (is (nil? (get-in r [:findings :isolated-pending])))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated undo-walks-back-by-delta-not-by-name
+  ;; The hole undo! fills. edit_revert is NAME-addressed, so it cannot undo a
+  ;; DELETE — the name is gone, so query-form-history returns nil and you get
+  ;; "no form named". episode_revert reaches it but is all-or-nothing: it costs
+  ;; you every unrelated good change in the episode. undo is DELTA-addressed,
+  ;; which is the coordinate system in which a deleted form still exists.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'un.core
+                   (str "(ns un.core)\n\n"
+                        "(defn a [] 1)\n\n"
+                        "(defn b [] 2)\n"))
+      (api/edit-replace! sess 'un.core 'a "(defn a [] 99)"
+                         :prompt "bad edit" :agent "u")
+      (testing "the default undoes the single last write"
+        (let [r (api/undo! sess :agent "u" :prompt "undo the bad edit")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 1 (:reverted r))))
+        (is (re-find #"\(defn a \[\] 1\)" (api/query-source sess 'un.core))))
+      (testing "undo restores a DELETED form — the case edit_revert cannot reach"
+        (api/delete-form! sess 'un.core 'b :prompt "bad delete" :agent "u")
+        (is (:error (api/revert-form! sess 'un.core 'b))
+            "name-addressed revert has no name left to look up")
+        (let [r (api/undo! sess :agent "u" :prompt "undo the bad delete")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 1 (:reverted r))))
+        (is (re-find #"\(defn b \[\] 2\)" (api/query-source sess 'un.core))))
+      (testing "a chain that went off the rails comes back in one call"
+        (api/edit-replace! sess 'un.core 'a "(defn a [] 7)" :prompt "w1" :agent "u")
+        (api/edit-replace! sess 'un.core 'b "(defn b [] 8)" :prompt "w2" :agent "u")
+        (api/add-form! sess 'un.core "(defn c [] 9)" :prompt "w3" :agent "u")
+        (let [r (api/undo! sess :deltas 3 :agent "u"
+                           :prompt "that whole line of work was wrong")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 3 (:reverted r))))
+        (let [src (api/query-source sess 'un.core)]
+          (is (re-find #"\(defn a \[\] 1\)" src))
+          (is (re-find #"\(defn b \[\] 2\)" src))
+          (is (not (re-find #"defn c" src)))))
+      (finally (api/close! sess)))))

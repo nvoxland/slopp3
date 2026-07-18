@@ -304,10 +304,10 @@
                 (cond-> m p (assoc :absorbed p)))
               {:error "git_pull needs a durable session (a store dir)"})))
    "git_conflicts"
-   (fn [session a _sym]
+   (fn [session _a _sym]
      (text! (if-let [dir (:dir @session)]
-                           {:conflicts (sync/conflicts dir)}
-                           {:error "git_conflicts needs a durable session"})))
+              {:conflicts (sync/conflicts dir)}
+              {:error "git_conflicts needs a durable session"})))
    "git_resolve"
    (fn [session a _sym]
      (text! (if-let [dir (:dir @session)]
@@ -705,6 +705,14 @@
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
+      "cleanup" (text! (api/cleanup! session (sym :ns)
+                                     :prompt (:prompt a)
+                                     :agent (:agent a)))
+      "undo" (text! (api/undo! session
+                               :deltas (:deltas a)
+                               :to (:to a)
+                               :prompt (:prompt a)
+                               :agent (:agent a)))
       "edit_move_forms" (text! (-> (api/move-forms! session (sym :ns)
                                                      (mapv symbol (:forms a))
                                                      (symbol (:to a))

@@ -7,7 +7,7 @@
   (:require [rewrite-clj.node :as n]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store] [clojure.string :as str]))
+            [slopp.store :as store]))
 (defn ^:export walk-pruned
   "THE quote-aware traversal: depth-first over sexpr `x`, PRUNING quoted
   subtrees (a quoted symbol is data, never a reference). Returns the

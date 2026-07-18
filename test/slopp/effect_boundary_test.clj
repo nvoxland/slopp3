@@ -3,11 +3,9 @@
   EFFECTFUL by default (worst-case — Koka io-top / gradual 'unknown = top'),
   because slopp can't see the dep's body. Narrowable by marking the dep var
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
-  (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit]
-            [slopp.store :as store])
+            [slopp.edit :as edit])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

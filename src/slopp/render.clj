@@ -45,22 +45,6 @@
   [ns-sym]
   (str (if (test-ns? ns-sym) "test/" "src/") (ns-path ns-sym)))
 
-(declare element-offsets)
-
-(defn owner-form
-  "The form element whose rendered span contains position [row col], or nil —
-  the bridge from linter/index positions to form addressing."
-  [store ns-sym row col]
-  (let [elems   (store/elements store ns-sym)
-        offsets (element-offsets store ns-sym)
-        idx     (dec (count (take-while (fn [[er ec]]
-                                          (or (< er row)
-                                              (and (= er row) (<= ec col))))
-                                        offsets)))]
-    (when-not (neg? idx)
-      (let [e (nth elems idx)]
-        (when (= :form (:kind e)) e)))))
-
 (defn element-offsets
   "Start position [row col] (1-based) of each of `ns-sym`'s elements within the
   rendered source — the bridge from index positions (clj-kondo rows/cols against
@@ -77,3 +61,18 @@
                  (+ col (count s)))
                (conj acc [row col])))
       acc)))
+
+(defn owner-form
+  "The form element whose rendered span contains position [row col], or nil —
+  the bridge from linter/index positions to form addressing."
+  [store ns-sym row col]
+  (let [elems   (store/elements store ns-sym)
+        offsets (element-offsets store ns-sym)
+        idx     (dec (count (take-while (fn [[er ec]]
+                                          (or (< er row)
+                                              (and (= er row) (<= ec col))))
+                                        offsets)))]
+    (when-not (neg? idx)
+      (let [e (nth elems idx)]
+        (when (= :form (:kind e)) e)))))
+

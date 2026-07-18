@@ -27,21 +27,15 @@
             [slopp.build :as build]
             [slopp.db :as db]
             [slopp.render :as render] [slopp.store :as store])
-  (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
-           [java.net InetSocketAddress]
-           [java.nio.charset StandardCharsets]
+  (:import [java.nio.charset StandardCharsets]
            [java.time Instant ZoneOffset]
-           [java.util.zip GZIPInputStream]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
            [org.eclipse.jgit.internal.storage.dfs DfsRepositoryDescription
-            InMemoryRepository InMemoryRepository$Builder]
-           [org.eclipse.jgit.lib CommitBuilder Constants FileMode NullProgressMonitor
+            InMemoryRepository$Builder]
+           [org.eclipse.jgit.lib CommitBuilder Constants FileMode
             ObjectId ObjectInserter PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevWalk]
            [org.eclipse.jgit.revwalk.filter RevFilter]
-           [org.eclipse.jgit.transport PacketLineOut PushResult
-            RefAdvertiser$PacketLineOutRefAdvertiser RefSpec RemoteRefUpdate
-            Transport UploadPack URIish UsernamePasswordCredentialsProvider]
            [org.eclipse.jgit.treewalk TreeWalk]
            [org.eclipse.jgit.util FS]))
 

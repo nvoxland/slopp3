@@ -444,49 +444,7 @@
   one row per agent-work-unit between done-points, the readable long-term
   view. All rows carry `:at` (local date-time)."
   [session & {:keys [ns contains limit collapse format] :or {limit 20}}]
-  (let [render-text
-        (fn [rows]
-          (clojure.string/join
-           "\n"
-           (mapcat
-            (fn [row]
-              (cond
-                (:turn row)
-                (let [t (:turn row)]
-                  (cons (str "TURN [" (:agent t) (when (:user t)
-                                                   (str " for " (:user t)))
-                             "] " (or (some-> (:intent t)
-                                              (clojure.string/split-lines)
-                                              first)
-                                      "(no intent)")
-                             (when (:open? t) "  (open)")
-                             (when (:at t) (str "  @ " (:at t))))
-                        (map (fn [e]
-                               (str "  episode " (:agent e)
-                                    (when (:label e) (str " \"" (:label e) "\""))
-                                    ": " (:ops e) " ops, " (:forms e) " forms"
-                                    (when (:open? e) " (open)")
-                                    (when (:at e) (str "  @ " (:at e)))))
-                             (:episodes t))))
-                (:episode row)
-                (let [e (:episode row)]
-                  [(str "episode " (or (:agent e) "-")
-                        (when (:label e) (str " \"" (:label e) "\""))
-                        ": " (:ops e) " ops, " (:forms e) " forms"
-                        (when (:open? e) " (open)")
-                        (when (:at e) (str "  @ " (:at e))))])
-                (:commit row)
-                (let [c (:commit row)]
-                  [(str "COMMIT \"" (:description c) "\""
-                        (when (:agent c) (str " [" (:agent c) "]"))
-                        (when (= :red (:status c)) "  (RED)")
-                        (when (:at c) (str "  @ " (:at c))))])
-                :else
-                [(str (:id row) " " (:op row)
-                      (when (:agent row) (str " [" (:agent row) "]"))
-                      (when (:prompt row) (str " — " (:prompt row)))
-                      (when (:at row) (str "  @ " (:at row))))]))
-            rows)))
+  (let [
         rows
         (if collapse
           (let [ds       (store/deltas (:store @session))
@@ -647,9 +605,8 @@
                                                :agent :form-id :form-ids :old
                                                :new :before])
                          (:at d) (assoc :at (history/human-time (:at d))))))))]
-    (if (= "text" (some-> format name))
-      (render-text rows)
-      rows)))
+    (cond-> rows
+      (= "text" (some-> format name)) history/render-history-text)))
 
 (defn query-outline
   "A namespace's shape at a glance (orientation, T2): every defined var with
@@ -847,14 +804,12 @@
                             :let [r (:result d)]]
                         {:delta (:id d)
                          :fail  (+ (:fail r 0) (:error r 0))}))]
-    (let [result {:agent agent
-                  :since (or boundary :log-start)
-                  :steps (mapv #(select-keys % [:id :op :ns :prompt]) mine)
-                  :forms forms
-                  :verification-arc arc}]
-      (if (= "text" (some-> format name))
-        (history/render-changes-text result)
-        result))))
+    (cond-> {:agent agent
+             :since (or boundary :log-start)
+             :steps (mapv #(select-keys % [:id :op :ns :prompt]) mine)
+             :forms forms
+             :verification-arc arc}
+      (= "text" (some-> format name)) history/render-changes-text)))
 
 (defn- callee-adjacency
   "qsym → sorted vector of STORE-INTERNAL callee qsyms, across every ns."
@@ -1525,6 +1480,58 @@
                                         #(store/record-verification % ns-sym summary) [])
               {:removed (count decls) :test summary})))))))
 
+(defn cleanup!
+  "Run the done-point's TIDY over one namespace, on demand: normalize every
+  form (conservative, behavior-preserving rewrites), then declare hygiene via
+  `fix-declares!` — definitions reordered above their callers, a legacy or
+  stale `(declare …)` retired, phantom names pruned. One verified pass.
+
+  You should rarely need this. The write pipeline owns ordering and declares
+  from the FIRST write, and `done` runs the same tidy over everything you
+  touched — so code written through slopp arrives clean. Reach for it on code
+  that predates those invariants (an ingested file-based namespace), or when a
+  legacy declare is blocking you mid-episode: two elements then share a name,
+  which the name-addressed edit tools cannot resolve.
+
+  Returns `{:ns :normalized n :rewrites [{:form :applied}] :declares n}`, or
+  `{:error …}` — nothing is committed unless the tidied namespace compiles."
+  [session ns-sym & {:keys [prompt agent]}]
+  (let [st       (:store @session)
+        rewrites (vec (for [f (store/forms st ns-sym)
+                            :let [{:keys [node applied]}
+                                  (normalize/normalize-form (:node f))]
+                            :when (seq applied)]
+                        {:form-id (:id f)
+                         :form    (symbol (str ns-sym) (str (or (:name f) (:id f))))
+                         :node    node
+                         :applied applied}))
+        normed   (when (seq rewrites)
+                   (let [changeset (into {} (map (juxt :form-id :node)) rewrites)
+                         [st' _]   (store/apply-changeset
+                                    st :normalize ns-sym changeset
+                                    :prompt (or prompt "cleanup: normalize")
+                                    :agent agent)]
+                     (if-let [err (:err (session/hot-load-all! session st'
+                                                               (keys changeset)))]
+                       {:error (str "cleanup: normalization would not compile — "
+                                    err)}
+                       (if-not (session/try-commit! session st st' [ns-sym])
+                         {:conflict {:reason "store changed during cleanup — retry"}}
+                         {:ok true}))))]
+    (cond
+      (:error normed)    normed
+      (:conflict normed) normed
+      :else
+      (let [d (fix-declares! session ns-sym
+                             :prompt (or prompt "cleanup: declare hygiene")
+                             :agent agent)]
+        (cond-> {:ns         ns-sym
+                 :normalized (count rewrites)
+                 :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
+                 :declares   (:removed d 0)}
+          (:conflict d) (assoc :conflict (:conflict d))
+          (:test d)     (assoc :test (:test d)))))))
+
 (defn query-status-at
   "was-green-at: the project's verification state that GOVERNED delta `at`
   (a delta id, or a commit-point id → its target) — the last `:verify` at or
@@ -1764,39 +1771,84 @@
                                      (str "revert to " (:delta target)))
                          :agent agent))))))
 
+(defn undo!
+  "Walk back your own recent writes — the reach-for-it-without-thinking undo.
+  Addressed by DELTA, not by name: `:deltas n` (default 1) undoes your last `n`
+  content writes, `:to \"d123\"` undoes everything of yours after that delta.
+  One atomic verified group, recorded as honest provenance rather than erased.
+
+  Delta addressing is the point. `revert-form!` looks a form up by name, so it
+  can never undo a DELETE — there is no name left to find. The log still holds
+  the source, so undo puts it back. Forms another agent also wrote in the span
+  are SKIPPED and reported in `:skipped-shared`, never stomped, which is what
+  makes this safe to reach for while others are working.
+
+  Returns `{:reverted n :undid [delta-ids] :skipped-shared [...]}`."
+  [session & {:keys [deltas to agent prompt]}]
+  (let [st     (:store @session)
+        all    (store/deltas st)
+        mine?  (fn [d] (and (contains? content-ops (:op d))
+                            (or (nil? agent) (= agent (:agent d)))))
+        target (if to
+                 (first (filter mine? (rest (drop-while #(not= to (:id %)) all))))
+                 (first (take-last (max 1 (or deltas 1)) (filter mine? all))))]
+    (if-not target
+      {:reverted 0
+       :note (if to
+               (str "nothing of yours after " to)
+               "no writes of yours to undo")}
+      (let [from    (:id target)
+            changes (query-changes session :agent agent :from from)
+            span    (drop-while #(not= from (:id %)) all)
+            others  (into #{}
+                          (mapcat delta-fids)
+                          (filter #(and (contains? content-ops (:op %))
+                                        (not= agent (:agent %)))
+                                  span))
+            {:keys [steps shared]} (history/revert-steps changes others)]
+        (cond
+          (empty? (:forms changes))
+          {:reverted 0 :note (str "nothing of yours changed since " from)}
+
+          (empty? steps)
+          {:reverted 0 :skipped-shared shared
+           :note "every changed form is shared with other agents"}
+
+          :else
+          (let [r (edit-group! session steps
+                               :prompt (or prompt (str "undo back to " from))
+                               :agent agent)]
+            (if (:error r)
+              r
+              (assoc r
+                     :reverted (count steps)
+                     :undid (mapv :id (filter mine? span))
+                     :skipped-shared shared))))))))
+
 (defn revert-episode!
   "Scrap the agent's episode: roll every form it changed since its last
   done back to the boundary state — as ONE atomic verified group
   (honest provenance, not history erasure). Forms that OTHER agents also
   touched since the boundary are SKIPPED and reported in :skipped-shared,
-  never stomped."
+  never stomped.
+
+  This is the whole-episode grain. To walk back one write, or a short chain
+  that went off the rails, without losing the rest of the episode, use
+  `undo!` — same inverse, addressed by delta."
   [session & {:keys [agent prompt]}]
-  (let [changes  (query-changes session :agent agent)
-        others   (into #{}
-                       (mapcat delta-fids)
-                       (filter #(and (contains? content-ops (:op %))
-                                     (not= agent (:agent %)))
-                               (episode-span (:store @session) agent)))
-        {shared true mine false} (group-by #(contains? others (:form-id %))
-                                           (:forms changes))
-        steps    (vec (keep (fn [{:keys [form status was]}]
-                              (when (namespace form)   ; anonymous forms: skip
-                                (let [ns-sym (symbol (namespace form))
-                                      nm     (symbol (name form))]
-                                  (case status
-                                    :modified {:action :replace :ns ns-sym
-                                               :name nm :source was}
-                                    :added    {:action :delete :ns ns-sym
-                                               :name nm}
-                                    :deleted  {:action :add :ns ns-sym
-                                               :source was}))))
-                            mine))]
+  (let [changes (query-changes session :agent agent)
+        others  (into #{}
+                      (mapcat delta-fids)
+                      (filter #(and (contains? content-ops (:op %))
+                                    (not= agent (:agent %)))
+                              (episode-span (:store @session) agent)))
+        {:keys [steps shared]} (history/revert-steps changes others)]
     (cond
       (empty? (:forms changes))
       {:reverted 0 :note "episode is empty — already at the last done"}
 
       (empty? steps)
-      {:reverted 0 :skipped-shared (mapv :form shared)
+      {:reverted 0 :skipped-shared shared
        :note "every changed form is shared with other agents"}
 
       :else
@@ -1809,7 +1861,7 @@
           r
           (assoc r
                  :reverted (count steps)
-                 :skipped-shared (mapv :form shared)))))))
+                 :skipped-shared shared))))))
 
 (defn rename!
   "Rename `ns-sym/old-name` to `new-name` everywhere: ONE coordinated delta over
@@ -2273,8 +2325,8 @@
       (io/make-parents file)
       (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
-            (do (when has-tests? (.mkdirs (io/file target "test")))
-                (spit de (build/deps-edn (boolean main) deps has-tests? traced?))))
+            (when has-tests? (.mkdirs (io/file target "test")))
+            (spit de (build/deps-edn (boolean main) deps has-tests? traced?)))
           (cond-> {:built (str target)}
             main
             (assoc :native
@@ -3321,7 +3373,10 @@
   {modules true}."
   [session module tier & {:keys [prompt agent]}]
   (let [module (str module)
-        tier   (keyword tier)
+        ;; every surface — this docstring, the tool description, query_depends'
+        ;; output — spells tiers WITH the colon, so accept that spelling too
+        ;; rather than turning ":pure" into ::pure and refusing it
+        tier   (keyword (str/replace (name (or tier "")) #"^:" ""))
         modish (re-matches #"[^.\s]+(\.[^.\s]+)?" module)]
     (cond
       (not modish)
