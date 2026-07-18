@@ -75,3 +75,34 @@
                    (and (= :error (edit.modules/rule-severity store key severity))
                         (seq (get advisories key))))
                  done-advisories)))
+
+(def rule-catalog
+  "The unified DECLARATIVE catalog of every D9 rule across both grains — each a
+   `{:rule :grain :severity :escape :teach}` map (`:severity` is the DEFAULT; the
+   effective one is the per-store `rule-severity` override). The single place that
+   describes the program's enforcement surface; `query_rules` projects it with
+   each rule's effective severity. Execution still runs through the two registries
+   (`edit.modules/per-form-write-gates`, `done-advisories`); the
+   `catalog-covers-every-registered-rule` test guards that this never drifts
+   behind them."
+  [{:rule :module-refusal :grain :form :severity :refuse
+    :escape "declare the edge (module_dep) or respect visibility (^:export / restructure)"
+    :teach "a cross-module call needs a declared edge and must respect recursive visibility"}
+   {:rule :tier-refusal :grain :form :severity :refuse
+    :escape "module_purity {module tier :reads/:effects}, or move the effect/non-determinism to a periphery ns"
+    :teach "a form's effect or non-determinism exceeds its module's declared purity tier"}
+   {:rule :schema-refusal :grain :form :severity :refuse
+    :escape "add a :=> :malli/schema, or config_file {path gates key require-boundary-schemas unset true}"
+    :teach "a module-external map-arg fn must carry a :=> :malli/schema (when the store opts in)"}
+   {:rule :namespaced-keys-refusal :grain :form :severity :refuse
+    :escape "use {:some.ns/keys [...]}, or config_file {path gates key require-namespaced-keys unset true}"
+    :teach "a module-external fn must use namespaced boundary keys (when the store opts in)"}
+   {:rule :schema-drift :grain :done :severity :error
+    :escape "fix the schema or the impl so they agree"
+    :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}
+   {:rule :key-typos :grain :done :severity :advisory
+    :escape "reuse the established key (query_vocabulary), or accept the new one"
+    :teach "a new namespaced key is one Damerau edit from an established same-namespace key"}
+   {:rule :breaking-changes :grain :done :severity :advisory
+    :escape "restore the arity/key/visibility, or rename for a clean break"
+    :teach "a module-external fn's contract narrowed (arity/schema-key/visibility) vs the last-done baseline"}])
