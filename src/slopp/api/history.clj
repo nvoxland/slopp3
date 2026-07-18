@@ -157,3 +157,78 @@
                          (if (= at-id (:id d)) (reduced acc) acc)))
                      [] (store/deltas store))]
     (last (filter #(= :verify (:op %)) upto))))
+
+(defn revert-steps
+  "Pure: turn a `query-changes` result into the edit-group steps that put every
+  form back the way it was, holding back any form another agent also touched.
+  `others` is the set of form-ids those agents wrote in the span — those are
+  never stomped. Returns `{:steps [...] :shared [qualified-form ...]}`.
+
+  The inverse of an `:added` form is a delete, of a `:modified` form a replace
+  with its prior source, and of a `:deleted` form an ADD of the source the log
+  still holds — which is why delta-addressed undo reaches a deleted form at all
+  and name-addressed revert cannot."
+  [changes others]
+  (let [{shared true mine false} (group-by #(contains? others (:form-id %))
+                                           (:forms changes))]
+    {:shared (mapv :form shared)
+     :steps  (vec (keep (fn [{:keys [form status was]}]
+                          (when (namespace form)   ; anonymous forms: skip
+                            (let [ns-sym (symbol (namespace form))
+                                  nm     (symbol (name form))]
+                              (case status
+                                :modified {:action :replace :ns ns-sym
+                                           :name nm :source was}
+                                :added    {:action :delete :ns ns-sym
+                                           :name nm}
+                                :deleted  {:action :add :ns ns-sym
+                                           :source was}))))
+                        mine))}))
+
+(defn render-history-text
+  "query-history rows as a human story, one line per row — TURN headers with
+  their nested episodes, episode summaries, COMMIT lines, and raw delta rows.
+  The text sibling of `render-changes-text`: pure rows-in, string-out, so the
+  rendering is testable by value and `query-history` keeps only its query."
+  [rows]
+  (clojure.string/join
+   "\n"
+   (mapcat
+    (fn [row]
+      (cond
+        (:turn row)
+        (let [t (:turn row)]
+          (cons (str "TURN [" (:agent t) (when (:user t)
+                                           (str " for " (:user t)))
+                     "] " (or (some-> (:intent t)
+                                      (clojure.string/split-lines)
+                                      first)
+                              "(no intent)")
+                     (when (:open? t) "  (open)")
+                     (when (:at t) (str "  @ " (:at t))))
+                (map (fn [e]
+                       (str "  episode " (:agent e)
+                            (when (:label e) (str " \"" (:label e) "\""))
+                            ": " (:ops e) " ops, " (:forms e) " forms"
+                            (when (:open? e) " (open)")
+                            (when (:at e) (str "  @ " (:at e)))))
+                     (:episodes t))))
+        (:episode row)
+        (let [e (:episode row)]
+          [(str "episode " (or (:agent e) "-")
+                (when (:label e) (str " \"" (:label e) "\""))
+                ": " (:ops e) " ops, " (:forms e) " forms"
+                (when (:open? e) " (open)")
+                (when (:at e) (str "  @ " (:at e))))])
+        (:commit row)
+        (let [c (:commit row)]
+          [(str "COMMIT \"" (:description c) "\""
+                (when (:agent c) (str " [" (:agent c) "]"))
+                (when (= :red (:status c)) "  (RED)")
+                (when (:at c) (str "  @ " (:at c))))])
+        :else
+        [(str (:id row) " " (:op row)
+              (when (:agent row) (str " [" (:agent row) "]"))
+              (when (:prompt row) (str " — " (:prompt row)))
+              (when (:at row) (str "  @ " (:at row))))]))
+    rows)))

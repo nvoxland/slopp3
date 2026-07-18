@@ -1,8 +1,6 @@
 (ns slopp.api.modules
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.index :as index]
-            [slopp.render :as render]
             [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs]))
 
 (defn modules-config-entry

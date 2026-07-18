@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io]))
 
 (def seed
   (str "(ns cl.core)\n"

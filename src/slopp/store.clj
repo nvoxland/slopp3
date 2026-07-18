@@ -12,8 +12,7 @@
   needs globally-unique ids (uuid / lamport)."
   (:require [clojure.string :as str]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n]
-            [slopp.semver :as semver]))
+            [rewrite-clj.node :as n]))
 
 (defn empty-store
   "A fresh store value — the empty starting point every session builds on."

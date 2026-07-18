@@ -219,8 +219,14 @@
                                :form {:type "string"} :name {:type "string"}
                                :prompt {:type "string"}}
                   :required ["ns" "from" "form" "name"]}}
+   {:name "undo"
+    :description "Walk back your OWN recent writes — the cheap, reach-for-it-immediately undo. deltas: n (default 1) undoes your last n writes; to: \"d123\" undoes everything of yours after that delta. Addressed by DELTA, not by name, so it also restores a form you DELETED — the case edit_revert structurally cannot reach (no name left to look up). Forms another agent also wrote in the span are skipped and reported. One atomic verified group. Reach for this the moment a write turns out wrong; use episode_revert only to scrap a whole episode."
+    :inputSchema {:type "object"
+                  :properties {:deltas {:type "integer"}
+                               :to {:type "string"}
+                               :prompt {:type "string"}}}}
    {:name "episode_revert"
-    :description "Roll back everything YOU changed since your last done (other sessions' forms skipped, reported)."
+    :description "Roll back everything YOU changed since your last done (other sessions' forms skipped, reported). To walk back just one write, or a short chain, without losing the rest of the episode, use undo."
     :inputSchema {:type "object"
                   :properties {:prompt {:type "string"}}}}
    
@@ -239,7 +245,13 @@
                                :export {:type ["boolean" "string"]
                                         :description "true = world surface; a namespace-prefix string = visible to that subtree only"}
                                :prompt {:type "string"}}
-                  :required ["ns" "forms" "to"]}}])
+                  :required ["ns" "forms" "to"]}}
+   {:name "cleanup"
+    :description "Run the done-point's TIDY over one namespace on demand: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, and retire legacy or stale (declare …)s and phantom names. You should rarely need this — the write pipeline keeps ordering and declares right from your FIRST write, and done runs the same tidy over everything you touched. Reach for it on INGESTED code that predates those invariants, or when a legacy declare blocks you mid-episode (two elements then share a name, which the name-addressed edit tools cannot resolve)."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns"]}}])
 
 (def flow-tools
   "Session-flow tool descriptors: turns, tests, done-points, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"

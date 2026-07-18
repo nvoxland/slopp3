@@ -9,7 +9,7 @@
             [slopp.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch])
+            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
