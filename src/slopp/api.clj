@@ -1411,9 +1411,71 @@
                  ;; was added). That is exactly this tool's job.
                  :advisories (let [st* (:store @session)]
                                (rules/run-done-advisories!
-                                session st* (mapv :id (store/forms st* ns-sym))))}
+                                session st* (mapv :id (store/forms st* ns-sym))))
+                 ;; the rest of the enforcement surface, replayed over EXISTING
+                 ;; code: kondo lint, dead public surface, undocumented public
+                 ;; surface, and the per-form WRITE gates (module / tier /
+                 ;; schema / namespaced-keys). Each normally fires only as code
+                 ;; is written, so a form predating a rule was never subject to
+                 ;; it. Reported, never auto-applied — every one needs judgment.
+                 :lint       (vec (done/anchored-lint
+                                   session (mapv :id (store/forms (:store @session) ns-sym))))
+                 :unused     (vec (:unused (modules/unused-report
+                                            (:store @session) [ns-sym])))
+                 :undocumented
+                 (let [st* (:store @session)]
+                   (vec (keep #(:var (edit.modules/missing-doc-warning st* ns-sym (:name %)))
+                              (filter :name (store/forms st* ns-sym)))))
+                 :gates
+                 (let [st* (:store @session)]
+                   (vec (for [f (store/forms st* ns-sym)
+                              :when (:name f)
+                              :let [g (edit.modules/gate-check st* ns-sym (:name f))
+                                    hits (remove nil? (cons (:refuse g) (:advisories g)))]
+                              :when (seq hits)]
+                          {:form (symbol (str ns-sym) (str (:name f)))
+                           :teach (vec hits)})))}
           (:conflict d) (assoc :conflict (:conflict d))
           (:test d)     (assoc :test (:test d)))))))
+
+(defn cleanup-all!
+  "Run `cleanup!` over EVERY namespace in the store — the MIGRATION surface.
+
+  Per-namespace is the wrong grain for a migration, because you do not know
+  which namespaces predate a rule. Two cases need this: adopting slopp on an
+  existing codebase (nothing in it was ever subject to any gate), and landing
+  a slopp upgrade that ADDS a rule (every existing form predates it).
+
+  Applies the tidy everywhere it is needed, and aggregates what tidying cannot
+  fix. Returns `{:namespaces n :normalized n :declares n :findings [{:ns …}]}`
+  — `:findings` carries only namespaces with something to report, each with
+  whichever of `:lint :unused :undocumented :gates :advisories` fired, so a
+  clean store returns an empty vector rather than 100 empty rows.
+
+  Reports; it never auto-fixes a finding. Dead surface, a missing docstring, a
+  gate violation and an ambient atom each need a human decision — and the last
+  is often correct as written."
+  [session & {:keys [prompt agent]}]
+  (let [nses (sort (keys (:namespaces (:store @session))))
+        rs   (mapv #(cleanup! session %
+                              :prompt (or prompt "cleanup-all: migration sweep")
+                              :agent agent)
+                   nses)]
+    (if-let [bad (first (filter :error rs))]
+      bad
+      {:namespaces (count rs)
+       :normalized (reduce + 0 (map #(:normalized % 0) rs))
+       :declares   (reduce + 0 (map #(:declares % 0) rs))
+       :findings
+       (vec (keep (fn [r]
+                    (let [hit (cond-> {}
+                                (seq (:lint r))         (assoc :lint (:lint r))
+                                (seq (:unused r))       (assoc :unused (:unused r))
+                                (seq (:undocumented r)) (assoc :undocumented (:undocumented r))
+                                (seq (:gates r))        (assoc :gates (:gates r))
+                                (seq (:advisories r))   (assoc :advisories (:advisories r)))]
+                      (when (seq hit) (assoc hit :ns (:ns r)))))
+                  rs))})))
 
 (defn query-status-at
   "was-green-at: the project's verification state that GOVERNED delta `at`

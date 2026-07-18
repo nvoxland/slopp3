@@ -711,9 +711,13 @@
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "cleanup" (text! (api/cleanup! session (sym :ns)
-                                     :prompt (:prompt a)
-                                     :agent (:agent a)))
+      "cleanup" (text! (if (:all a)
+                        (api/cleanup-all! session
+                                          :prompt (:prompt a)
+                                          :agent (:agent a))
+                        (api/cleanup! session (sym :ns)
+                                      :prompt (:prompt a)
+                                      :agent (:agent a))))
       "undo" (text! (api/undo! session
                                :deltas (:deltas a)
                                :to (:to a)

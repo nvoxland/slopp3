@@ -196,7 +196,13 @@
    Returns a teaching string, or nil when clean."
   [candidate ns-sym form-name]
   (let [tier (get (:module-tiers candidate) (module-of ns-sym) :effects)]
-    (when (not= tier :effects)
+    (when ;; A TEST namespace belongs to its module (x.y-test → x.y), but the tier
+    ;; is a claim about the functional CORE, not about the code that drives
+    ;; it: tests set up sessions, do IO and exercise effects by design.
+    ;; Gating them makes declaring a module :pure silently strand its own
+    ;; test namespace — caught by cleanup {all true} on slopp's own store,
+    ;; where :pure on slopp.normalize had already stranded its tests.
+    (and (not= tier :effects) (not (render/test-ns? ns-sym)))
       (let [analysis (index/analyze (render/render-ns candidate ns-sym))
             dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
             eff      (if (= tier :pure)

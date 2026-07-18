@@ -250,11 +250,12 @@
                                :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}
    {:name "cleanup"
-    :description "Bring ONE namespace up to current standards — the whole namespace, regardless of what you touched. APPLIES: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, retire legacy or stale (declare …)s and phantom names. REPORTS what tidying cannot fix: :purity (which tier this namespace's forms could support and what blocks a stricter one) and :advisories (the done-time rules — ambient-state, bare-throw, key-typos, schema-drift — re-run over EVERY form). Those advisories normally only see an episode's changes, so they have never checked code that PREDATES the rule; this is how you find it. Reach for it on INGESTED code, before declaring a purity tier, or when a legacy declare blocks you mid-episode."
+    :description "Bring a namespace up to current standards — the WHOLE namespace, regardless of what you touched. Pass `all: true` instead of `ns` to sweep the ENTIRE store: that is the migration surface for adopting slopp on an existing codebase, or for landing a slopp upgrade that adds a rule every existing form predates. APPLIES: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, retire legacy or stale (declare …)s and phantom names. REPORTS everything slopp can check on a WRITE, replayed over EXISTING code — :lint, :unused (dead public surface), :undocumented, :gates (module / tier / schema / namespaced-keys write gates), :advisories (ambient-state, bare-throw, key-typos, schema-drift) and :purity (which tier the namespace could support). Those all normally fire only as code is written, so a form predating a rule was never subject to it. Findings are REPORTED, never auto-fixed — each needs a judgment call."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
-                               :prompt {:type "string"}}
-                  :required ["ns"]}}])
+                               :all {:type "boolean"
+                                     :description "sweep every namespace in the store (migration mode); omit ns"}
+                               :prompt {:type "string"}}}}])
 
 (def flow-tools
   "Session-flow tool descriptors: turns, tests, done-points, milestones, build. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"

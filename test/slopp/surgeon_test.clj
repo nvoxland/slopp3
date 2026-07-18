@@ -322,3 +322,50 @@
         (let [r (api/cleanup! sess 'adv.clean)]
           (is (empty? (:advisories r)) (pr-str (:advisories r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-reports-every-gate-not-just-the-advisories
+  ;; Everything slopp can check on a WRITE, checkable over EXISTING code. The
+  ;; write gates (module/tier/schema/namespaced-keys) fire per write, so code
+  ;; that predates a gate was never subject to it; lint, dead public surface
+  ;; and missing docstrings ride done and so only ever saw touched forms.
+  ;; cleanup is the migration surface, so it reports all of them.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'gap.core
+                   (str "(ns gap.core)\n\n"
+                        "(defn documented\n  \"Has one.\"\n  [x] (inc x))\n\n"
+                        "(defn nodoc [x] (do (inc x)))\n"))
+      (let [r (api/cleanup! sess 'gap.core :prompt "survey")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "dead public surface is reported"
+          (is (contains? (set (:unused r)) 'gap.core/documented) (pr-str r)))
+        (testing "undocumented public surface is reported"
+          (is (contains? (set (:undocumented r)) 'gap.core/nodoc) (pr-str r)))
+        (testing "the write gates are replayed over existing forms"
+          (is (contains? r :gates) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-all-sweeps-the-whole-store
+  ;; THE migration surface: adopting slopp on an existing codebase, or landing
+  ;; a slopp upgrade that adds a rule, means every namespace needs the tidy
+  ;; applied and the whole enforcement surface replayed. Per-namespace is the
+  ;; wrong grain for that — you do not know which namespaces predate the rule.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'swa.core
+                   (str "(ns swa.core)\n\n"
+                        "(defn a [x] (do (inc x)))\n"))
+      (api/ingest! sess 'swb.core
+                   (str "(ns swb.core)\n\n"
+                        "(def cache (atom {}))\n\n"
+                        "(defn b [k] (get @cache k))\n"))
+      (let [r (api/cleanup-all! sess :prompt "migration sweep")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= 2 (:namespaces r)) (pr-str r))
+        (testing "findings are attributed to their namespace"
+          (is (contains? (set (map :ns (:findings r))) 'swb.core)
+              (str "the ambient atom must surface: " (pr-str (:findings r)))))
+        (testing "a namespace with nothing to report is not listed as a finding"
+          (is (every? (fn [f] (seq (dissoc f :ns))) (:findings r))
+              (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

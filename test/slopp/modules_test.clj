@@ -571,3 +571,27 @@
         (testing "and the gate's teaching rides the result's :advisories"
           (is (re-find #"namespaced" (str (first (:advisories r)))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated purity-gate-exempts-test-namespaces
+  ;; A test namespace belongs to its module (x.y-test → x.y), so declaring a
+  ;; module :pure was silently making its TESTS unwritable — they set up
+  ;; sessions and exercise effects by design, which is the whole job. The tier
+  ;; is a claim about the functional CORE, not about the code that drives it.
+  ;; Found by cleanup {all true} on slopp's own store, where declaring
+  ;; slopp.normalize :pure had already stranded slopp.normalize-test.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'pt.core "(ns pt.core)\n(defn add [x y] (+ x y))\n")
+      (api/module-tier! sess "pt.core" :pure :prompt "a pure core")
+      (testing "an effectful write to the production namespace is still refused"
+        (let [r (api/add-form! sess 'pt.core "(defn slurp! [f] (slurp f))"
+                               :prompt "effect into a pure core")]
+          (is (re-find #"declared :pure" (str (:error r))) (pr-str r))))
+      (testing "the module's TEST namespace may reach effects"
+        (api/ingest! sess 'pt.core-test "(ns pt.core-test)\n")
+        (let [r (api/add-form! sess 'pt.core-test
+                               "(defn setup! [f] (slurp f))"
+                               :prompt "a test fixture doing IO")]
+          (is (nil? (:error r))
+              (str "tests exercise effects by design: " (pr-str r)))))
+      (finally (api/close! sess)))))
