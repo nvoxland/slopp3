@@ -297,3 +297,28 @@
           (is (= '[pu.core/roll] (get-in r [:purity :blocking :pure]))
               (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated cleanup-reports-done-advisories-for-the-whole-namespace
+  ;; Done-time advisories run over the forms of an EPISODE, so they already
+  ;; fired for anything written through slopp since the rule existed. What they
+  ;; have never seen is code that PREDATES the rule — ingested code, or forms
+  ;; written before the advisory was added. That is a migration concern, and
+  ;; cleanup is where migration concerns live: apply what is mechanical, report
+  ;; what is not. Reports the whole namespace, regardless of what was touched.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'adv.core
+                   (str "(ns adv.core)\n\n"
+                        "(def cache (atom {}))\n\n"
+                        "(defn lookup [k] (get @cache k))\n"))
+      (let [r (api/cleanup! sess 'adv.core :prompt "survey ingested code")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= '[adv.core/cache]
+               (mapv :form (get-in r [:advisories :ambient-state])))
+            (str "a global atom that no episode ever touched: "
+                 (pr-str (:advisories r)))))
+      (testing "a clean namespace reports no advisories"
+        (api/ingest! sess 'adv.clean "(ns adv.clean)\n(defn add [x y] (+ x y))\n")
+        (let [r (api/cleanup! sess 'adv.clean)]
+          (is (empty? (:advisories r)) (pr-str (:advisories r)))))
+      (finally (api/close! sess)))))

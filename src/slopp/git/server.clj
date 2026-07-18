@@ -101,12 +101,18 @@
 
 (defn ^:export bind-localhost!
   "HttpServer on 127.0.0.1:port, falling back to an ephemeral port if that
-  one is taken (so a shared derived port never blocks startup)."
+  one is taken (so a shared derived port never blocks startup).
+
+  Only an ephemeral request that ITSELF cannot bind is fatal — there is no
+  further fallback — and it throws `ex-info` carrying the port, so a caller
+  reading `ex-data` learns what was attempted rather than parsing a message."
   ^HttpServer [port]
   (try
     (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)
-    (catch java.net.BindException _
-      (when (zero? (int port)) (throw (java.net.BindException. "no port free")))
+    (catch java.net.BindException e
+      (when (zero? (int port))
+        (throw (ex-info "no port free on 127.0.0.1"
+                        {:port (int port) :host "127.0.0.1"} e)))
       (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0))))
 
 (defn ^:export start-server!

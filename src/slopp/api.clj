@@ -1403,7 +1403,15 @@
                  :normalized (count rewrites)
                  :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
                  :declares   (:removed d 0)
-                 :purity     (edit.modules/tier-report (:store @session) ns-sym)}
+                 :purity     (edit.modules/tier-report (:store @session) ns-sym)
+                 ;; the done-time advisories, re-run over the WHOLE namespace.
+                 ;; They already fired for anything written through slopp since
+                 ;; the rule existed — what they have never seen is code that
+                 ;; PREDATES the rule (ingested, or written before the advisory
+                 ;; was added). That is exactly this tool's job.
+                 :advisories (let [st* (:store @session)]
+                               (rules/run-done-advisories!
+                                session st* (mapv :id (store/forms st* ns-sym))))}
           (:conflict d) (assoc :conflict (:conflict d))
           (:test d)     (assoc :test (:test d)))))))
 
