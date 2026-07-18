@@ -2886,21 +2886,39 @@
 (defn query-flow
   "Rock 4: where a FIELD flows — every form using keyword `kw` (\":rush?\"),
   with the using lines. The cross-namespace thread an agent otherwise
-  re-derives by reading each layer. Boundary-guarded textual scan over
-  rendered forms — keyword-precise enough in practice; revisit with kondo
-  keyword analysis if demand shows false hits."
+  re-derives by reading each layer.
+
+  Two kinds of use, because a keyword can be referenced without appearing:
+  a literal occurrence (boundary-guarded textual scan over rendered forms),
+  and a DESTRUCTURING — `{:user/keys [id]}` reads `:user/id` while containing
+  no such token. Missing the second made this answer silently incomplete at
+  exactly the module-boundary fns that destructure a handle's keys."
   [session kw]
-  (let [k   (str/replace (str kw) #"^:" "")
-        pat (re-pattern (str "(?<![\\w.:-]):" (java.util.regex.Pattern/quote k)
-                             "(?![\\w?!*+<>=-])"))
-        st  (:store @session)]
+  (let [k      (str/replace (str kw) #"^:" "")
+        target (keyword k)
+        pat    (re-pattern (str "(?<![\\w.:-]):" (java.util.regex.Pattern/quote k)
+                                "(?![\\w?!*+<>=-])"))
+        ;; the directive that would destructure this key: :keys when
+        ;; unqualified, :some.ns/keys when namespaced
+        dpat   (re-pattern (str "(?<![\\w.:-])"
+                                (java.util.regex.Pattern/quote
+                                 (str ":" (some-> (namespace target) (str "/")) "keys"))
+                                "(?![\\w-])"))
+        st     (:store @session)]
     (->> (for [nsx (sort (keys (:namespaces st)))
                e   (store/forms st nsx)
-               :let [lines (filterv #(re-find pat %)
-                                    (str/split-lines (n/string (:node e))))]
+               :let [src   (n/string (:node e))
+                     lines (filterv #(re-find pat %) (str/split-lines src))
+                     destr (and (empty? lines)
+                                (contains? (attrs/destructured-keywords (:node e))
+                                           target))
+                     lines (if destr
+                             (filterv #(re-find dpat %) (str/split-lines src))
+                             lines)]
                :when (seq lines)]
-           {:ns nsx :form (or (:name e) (:id e))
-            :lines (mapv str/trim (take 3 lines))})
+           (cond-> {:ns nsx :form (or (:name e) (:id e))
+                    :lines (mapv str/trim (take 3 lines))}
+             destr (assoc :via :destructuring)))
          vec)))
 (defn query-impact
   "Rock 4: the blast radius of reshaping `ns-sym/nm`, answered from THE

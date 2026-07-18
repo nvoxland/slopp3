@@ -144,18 +144,37 @@
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
-   :check} entries. `:check` is `(session store changed) -> findings-seq` (empty
-   when clean); `:severity` is `:error` (its findings flip `test-status` red — a
-   real failure) or `:advisory` (a heuristic that never does). A NEW done-time
-   finding registers HERE, in ONE entry, instead of hand-wiring a binding, a
-   cond-> clause, and a status term into `done!`. Checks are held as VARS so a
-   hot-reload is picked up and the reference graph sees them — and a carried
-   `#'var` is NOT a call, so the analyzer no longer taints this data def effectful."
-  [{:key :schema-drift     :severity :error    :check #'schema-drift-check!}
-   {:key :key-typos        :severity :advisory :check #'key-typos-check}
-   {:key :breaking-changes :severity :advisory :check #'breaking-check}
-   {:key :ambient-state    :severity :advisory :check #'ambient-state-check}
-   {:key :bare-throw       :severity :advisory :check #'bare-throw-check}])
+   :check :fires-on} entries. `:check` is `(session store changed) ->
+   findings-seq` (empty when clean); `:severity` is `:error` (its findings flip
+   `test-status` red — a real failure) or `:advisory` (a heuristic that never
+   does). A NEW done-time finding registers HERE, in ONE entry, instead of
+   hand-wiring a binding, a cond-> clause, and a status term into `done!`.
+   Checks are held as VARS so a hot-reload is picked up and the reference graph
+   sees them — and a carried `#'var` is NOT a call, so the analyzer no longer
+   taints this data def effectful.
+
+   `:fires-on` is a source string the check MUST report a finding for, enforced
+   by `rules-test/every-advisory-fires-on-its-own-fixture`. A rule that stops
+   firing is otherwise indistinguishable from a clean codebase: `ambient-state`
+   read a def's value at index 2 — where a DOCSTRING sits — and so never once
+   fired on a documented global, looking healthy for its entire life while
+   nine of them accumulated. A rule with no automatic fixture must say why in
+   `:selftest-note` rather than silently omitting one."
+  [{:key :schema-drift     :severity :error    :check #'schema-drift-check!
+    :selftest-note "generative mg/check against a live impl — needs a booted image, covered by api.schema-test/drift-flags-a-lying-schema"}
+   {:key :key-typos        :severity :advisory :check #'key-typos-check
+    ;; an ESTABLISHED key must be used by >= 2 unchanged forms before a
+    ;; near-duplicate counts as a typo rather than a new coinage
+    :fires-on (str "(ns rf.core)\n"
+                   "(defn one [] {:rf/status 1})\n"
+                   "(defn two [] {:rf/status 2})\n"
+                   "(defn typo [] {:rf/staus 3})\n")}
+   {:key :breaking-changes :severity :advisory :check #'breaking-check
+    :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
+   {:key :ambient-state    :severity :advisory :check #'ambient-state-check
+    :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+   {:key :bare-throw       :severity :advisory :check #'bare-throw-check
+    :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}])
 
 (defn run-done-advisories!
   "Run every registered done-advisory `:check` over the episode's changes —

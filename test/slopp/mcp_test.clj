@@ -816,3 +816,35 @@
         (is (contains? (set (get flags 'ut.core/untouched)) :untested)
             (str "a callable fn with no evidence still flags: " (pr-str flags))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-zero-test-verification-is-unverified-not-green
+  ;; The single most expensive dishonesty in the response shape. A write whose
+  ;; verification ran NOTHING reported :status :green with :coverage :none
+  ;; beside it — two fields saying opposite things, and :green is the one an
+  ;; agent acts on. A rename_sweep across 11 forms reported green having run
+  ;; zero tests, which is how it shipped code that read nil at runtime.
+  ;;
+  ;; Green must mean "tests ran and passed". Nothing ran is UNVERIFIED — the
+  ;; agent's cue to write a test or name one, rather than a habit of running
+  ;; test_run manually after every write because the status cannot be trusted.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'uv.core "(ns uv.core)\n")
+      (let [r (call! sess "edit_add_form"
+                     {:ns "uv.core" :source "(defn ^:unused-ok f [x] (inc x))"
+                      :prompt "no covering test exists"})]
+        (is (re-find #":status :unverified" r) r)
+        (is (not (re-find #":status :green" r)) r)
+        (is (re-find #":coverage :none" r) r))
+      (testing "a run that DID execute tests still reports green"
+        (api/ingest! sess 'uv.core-test
+                     (str "(ns uv.core-test\n"
+                          "  (:require [clojure.test :refer [deftest is]]\n"
+                          "            [uv.core :as c]))\n\n"
+                          "(deftest t (is (= 2 (c/f 1))))\n"))
+        (let [r (call! sess "edit_replace_form"
+                       {:ns "uv.core" :name "f"
+                        :source "(defn ^:unused-ok f [x] (inc x))"
+                        :prompt "touch it so its test runs"})]
+          (is (not (re-find #":unverified" r)) r)))
+      (finally (api/close! sess)))))

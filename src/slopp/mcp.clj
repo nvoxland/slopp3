@@ -134,7 +134,12 @@
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
-                                              :status (if (red? t) :red (:status t :green))
+                                              ;; a run that executed NOTHING is unverified, not green — green must
+                                              ;; mean tests ran and passed, or an agent learns to distrust
+                                              ;; the status and re-run them by hand
+                                              :status (cond (red? t)            :red
+                                                            (zero? (:test t 0)) :unverified
+                                                            :else               (:status t :green))
                                               :scope (:scope t)}
                                        (:staleness-detected t)  (assoc :staleness-healed true)
                                        (zero? (:test t 0))      (assoc :coverage :none)

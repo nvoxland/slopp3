@@ -77,3 +77,32 @@
              (set (map :kw (attrs/vocabulary s :ns-prefix "user"))))))
     (testing "an exact namespace does not match an unrelated one"
       (is (= #{:order/id} (set (map :kw (attrs/vocabulary s :ns-prefix "order"))))))))
+
+(deftest ^:isolated keyword-blast-radius-includes-destructuring
+  ;; query_depends on a keyword was a TEXT scan, so it missed every consumer
+  ;; that reads the key by destructuring — the key appears nowhere as a token,
+  ;; it is computed from the directive's namespace plus the symbol's name.
+  ;; Measured on the real store: :slopp.git/map-conn reported 6 rows and
+  ;; omitted close-ctx!, ensure-projected!, project-journal! and
+  ;; push-to-remote!, i.e. exactly the module-boundary fns someone asking the
+  ;; question cares most about. It did not say "partial"; it looked complete.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'kb.core
+                   (str "(ns kb.core)\n\n"
+                        "(defn mk [] {:kb/conn 1 :plain 2})\n\n"
+                        "(defn literal [m] (:kb/conn m))\n\n"
+                        "(defn destructured [{:kb/keys [conn]}] conn)\n\n"
+                        "(defn bare [{:keys [plain]}] plain)\n"))
+      (let [forms (set (map :form (:rows (api/query-depends sess ":kb/conn"))))]
+        (testing "literal readers are found, as before"
+          (is (contains? forms 'literal) (pr-str forms)))
+        (testing "and so is the destructuring consumer"
+          (is (contains? forms 'destructured)
+              (str "a destructured key is still a reference: " (pr-str forms))))
+        (testing "an unrelated key's destructuring is not swept in"
+          (is (not (contains? forms 'bare)) (pr-str forms))))
+      (testing "unqualified keys resolve too"
+        (let [forms (set (map :form (:rows (api/query-depends sess ":plain"))))]
+          (is (contains? forms 'bare) (pr-str forms))))
+      (finally (api/close! sess)))))
