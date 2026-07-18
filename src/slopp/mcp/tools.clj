@@ -88,7 +88,10 @@
     :inputSchema {:type "object" :properties {:ns {:type "string"}}}}
    {:name "query_rules"
     :description "The ENFORCEMENT CATALOG for this store: every D9 rule (write gates + done-time advisories) with its grain, its EFFECTIVE per-store severity, how to discharge it, and what it means. See what's gated and at what grade. Dial any rule with config_file {path rules key <rule> value <severity>} — off / advisory / error / refuse."
-    :inputSchema {:type "object" :properties {}}}])
+    :inputSchema {:type "object" :properties {}}}
+   {:name "query_rule_telemetry"
+    :description "The D9 rules' FIRE-RATE + DISCHARGE signal for this store — the demand signal the severity dial is set by. Per rule: how often it fires (dones/instances), whether findings get :discharged (fixed) or :persisted (keep recurring = ignored/friction); plus escape-marker density (agents opting out via ^:unsafe/^:reads/^:unused-ok) and the current dials. Read-only history analysis over the delta log. Optional since (a delta/commit id from query_commits) windows it."
+    :inputSchema {:type "object" :properties {:since {:type "string"}}}}])
 
 (def history-tools
   "Provenance tool descriptors: history, time-travel, change queries. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
@@ -433,7 +436,7 @@
     "query_brief" "query_slice" "query_depends" "query_eval"
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
-    "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules"
+    "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules" "query_rule_telemetry"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 
 (def tools
