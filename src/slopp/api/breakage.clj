@@ -9,15 +9,11 @@
   "The set of FIXED param-counts a `defn` sexpr accepts, e.g. `#{1 2}`. nil when
    `form` is not a `defn` or ANY of its arities is variadic — variadic
    subsumption (does `[a & r]` still accept an old `[a b]` call?) is subtle, so
-   v1 DEFERS it rather than risk a false breakage flag."
+   v1 DEFERS it rather than risk a false breakage flag. Arg-vectors come from the
+   shared `edit.modules/fn-arglists`."
   [form]
   (when (and (seq? form) (= 'defn (first form)))
-    (let [body (drop 2 form)
-          body (cond->> body (string? (first body)) rest)
-          body (cond->> body (map? (first body)) rest)
-          avs  (if (vector? (first body))
-                 [(first body)]
-                 (keep #(when (and (seq? %) (vector? (first %))) (first %)) body))]
+    (let [avs (edit.modules/fn-arglists form)]
       (when (and (seq avs) (not-any? #(some #{'&} %) avs))
         (into #{} (map count) avs)))))
 
@@ -33,16 +29,12 @@
 
 (defn node-boundary?
   "True when a `defn` `form` (sexpr) in `ns-sym` is reachable from OUTSIDE its
-   module — a public defn in a module-root ns (<= 2 segments), or a defn with any
-   truthy `^:export` in a deeper ns. Node-based (reads the sexpr's own metadata),
-   so it judges an OLD form version too — which is what lets visibility NARROWING
-   be detected. `:export` truthiness matches `edit.modules/export-level` (any
-   truthy value = exported), so the boundary gates all agree."
+   module. Delegates to the shared `edit.modules/module-external?` (public in a
+   module-root ns, or any truthy `^:export` in a deeper ns) — ONE definition, so
+   the write gates and the breakage classifier can't diverge. Node-based, so it
+   judges the OLD form version too (how visibility narrowing is detected)."
   [ns-sym form]
-  (and (seq? form) (= 'defn (first form))
-       (not (:private (meta (second form))))
-       (or (= (str ns-sym) (edit.modules/module-of ns-sym))
-           (boolean (:export (meta (second form)))))))
+  (edit.modules/module-external? ns-sym form))
 
 (defn- arg-map-keys
   "The set of keys of a defn's `:=>` `:malli/schema` FIRST arg when that arg is a
