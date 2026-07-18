@@ -2,7 +2,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -47,26 +47,31 @@
    {:key :breaking-changes :severity :advisory :check #'breaking-check}])
 
 (defn run-done-advisories!
-  "Run every registered done-advisory `:check` over the episode's changes;
-   returns `{:key findings}` for the checks that FIRED (non-empty result), ready
+  "Run every registered done-advisory `:check` over the episode's changes —
+   EXCEPT those a project dialed `:off` (`edit.modules/rule-severity`) — and
+   return `{:key findings}` for the checks that FIRED (non-empty result), ready
    to merge into `done!`'s findings. `!` — `schema-drift-check!` evals in the
    image."
   [session st* changed]
   (into {}
-        (keep (fn [{:keys [key check]}]
-                (let [r (check session st* changed)]
-                  (when (seq r) [key r]))))
+        (keep (fn [{:keys [key severity check]}]
+                (when (not= :off (edit.modules/rule-severity st* key severity))
+                  (let [r (check session st* changed)]
+                    (when (seq r) [key r])))))
         done-advisories))
 
 ^:reads
 (defn status-affecting-fired?
-  "True when an `:error`-severity advisory produced findings — a real failure that
-   should flip `test-status` red — given the `{:key findings}` map from
-   `run-done-advisories!`. `:advisory` findings never flip status. `^:reads`: it
-   only reads the registry's `:key`/`:severity` (carrier-taint from the
-   `#'schema-drift-check!` ref makes the analyzer think it reaches an effect; it
-   invokes nothing)."
-  [advisories]
+  "True when an advisory whose EFFECTIVE severity is `:error` produced findings —
+   a real failure that should flip `test-status` red. Effective severity is the
+   per-store override (`edit.modules/rule-severity`) else the registry default, so
+   a project can dial `key-typos` up to `:error` or `schema-drift` down to
+   `:advisory`. `:advisory`/`:off` never flip status. Args: the store (for the
+   config) and the `{:key findings}` map from `run-done-advisories!`. `^:reads`:
+   reads the registry + store config (carrier-taint from the
+   `#'schema-drift-check!` ref); it invokes nothing."
+  [store advisories]
   (boolean (some (fn [{:keys [key severity]}]
-                   (and (= :error severity) (seq (get advisories key))))
+                   (and (= :error (edit.modules/rule-severity store key severity))
+                        (seq (get advisories key))))
                  done-advisories)))
