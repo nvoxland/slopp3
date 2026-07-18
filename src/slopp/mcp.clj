@@ -563,6 +563,7 @@
       "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
       "query_vocabulary" (text! (told! session name a (api/query-vocabulary session :ns (:ns a))))
       "query_rules" (text! (told! session name a (api/query-rules session)))
+      "query_rule_telemetry" (text! (told! session name a (api/query-rule-telemetry session :since (:since a))))
       "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (src :source) :prompt (:prompt a)
                                                        :agent (:agent a))

@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules] [slopp.api.telemetry :as telemetry]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -3661,3 +3661,14 @@
                        (case eff (:off :advisory) eff :refuse)
                        eff))))
           rules/rule-catalog)))
+
+(defn query-rule-telemetry
+  "The D9 rules' fire-rate + discharge signal for THIS store — the demand signal
+   the severity dial is set by: how often each rule fires (`:dones`/`:instances`),
+   whether its findings get `:discharged` (flagged once) or `:persisted` (keep
+   recurring — ignored / friction), the `:escape-markers` density (agents opting
+   out via `^:unsafe`/`^:reads`/`^:unused-ok`), and the current `:dials`. Read-only
+   analysis over the delta log — no instrumentation. `:since` (a delta or
+   commit-point id from `query_commits`) windows it."
+  [session & {:keys [since]}]
+  (telemetry/rule-telemetry (:store @session) :since since))

@@ -697,3 +697,16 @@
               drift (first (filter #(= :schema-drift (:rule %)) rs))]
           (is (= :advisory (:severity drift)) (pr-str drift))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated query-rule-telemetry-rides-the-wire
+  (let [sess (api/open!)]
+    (try
+      (call sess "ns_create" {:ns "tl" :source "(ns tl)\n(defn seed \"S.\" [x] x)\n"})
+      (call sess "edit_add_form" {:ns "tl" :source "(defn bare [x] x)" :prompt "undocumented public"})
+      (call sess "done" {:label "d"})
+      (let [t (edn/read-string (call sess "query_rule_telemetry" {}))]
+        (is (map? (:fire-rate t)) (pr-str t))
+        (is (>= (get-in t [:window :dones]) 1) (pr-str t))
+        (is (every? #(contains? (:escape-markers t) %) [:unsafe :reads :unused-ok]) (pr-str t))
+        (is (contains? t :dials) (pr-str t)))
+      (finally (api/close! sess)))))
