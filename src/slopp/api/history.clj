@@ -232,3 +232,149 @@
               (when (:prompt row) (str " — " (:prompt row)))
               (when (:at row) (str "  @ " (:at row))))]))
     rows)))
+
+(defn delta-fids [d]
+  (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
+
+(defn collapse-rows [ ds pos rows contains limit]
+  (let [turn-brackets
+                  (vec (mapcat (fn [[agent ms]]
+                                 (loop [ms ms, open nil, out []]
+                                   (if-let [m (first ms)]
+                                     (cond
+                                       (= :turn-begin (:op m))
+                                       (recur (rest ms) m out)
+                                       (and open (= :turn-end (:op m)))
+                                       (recur (rest ms) nil
+                                              (conj out {:agent agent
+                                                         :intent (:intent open)
+                                                         :user (:user open)
+                                                         :at (human-time (:at open))
+                                                         :from (:id open)
+                                                         :to (:id m)}))
+                                       :else (recur (rest ms) open out))
+                                     (if open
+                                       (conj out {:agent agent :open? true
+                                                  :intent (:intent open)
+                                                  :user (:user open)
+                                                  :at (human-time (:at open))
+                                                  :from (:id open)})
+                                       out))))
+                               (group-by :agent
+                                         (filter #(contains? #{:turn-begin :turn-end}
+                                                             (:op %))
+                                                 ds))))
+                  parent-of (fn [agent]
+                              (when-let [i (and agent
+                                                (clojure.string/last-index-of agent "/"))]
+                                (subs agent 0 i)))
+                  contains?* (fn [p c]        ; child's span inside parent's span
+                               (let [pf (get pos (get-in p [:episode :from]) 0)
+                                     pt (get pos (get-in p [:episode :to])
+                                             Long/MAX_VALUE)
+                                     cf (get pos (get-in c [:episode :from]) 0)]
+                                 (and (<= pf cf) (<= cf pt))))
+                  kids   (filter #(parent-of (get-in % [:episode :agent])) rows)
+                  tops   (remove #(parent-of (get-in % [:episode :agent])) rows)
+                  nested (mapv (fn [p]
+                                 (let [cs (filterv #(and (= (parent-of
+                                                             (get-in % [:episode :agent]))
+                                                            (get-in p [:episode :agent]))
+                                                         (contains?* p %))
+                                                   kids)]
+                                   (if (seq cs)
+                                     (update p :episode assoc :children
+                                             (mapv :episode cs))
+                                     p)))
+                               tops)
+            ;; orphans: children whose parent episode isn't in view
+                  claimed (into #{} (mapcat #(get-in % [:episode :children])) nested)
+                  orphans (remove #(claimed (:episode %)) kids)
+                  eps     (concat nested orphans)
+                  in-turn? (fn [t e]
+                             (let [ta (:agent t)
+                                   ea (get-in e [:episode :agent])]
+                               (and ea ta
+                                    (or (= ea ta)
+                                        (clojure.string/starts-with? ea (str ta "/")))
+                                    (<= (get pos (:from t) 0)
+                                        (get pos (get-in e [:episode :from]) 0))
+                                    (<= (get pos (get-in e [:episode :from]) 0)
+                                        (get pos (:to t) Long/MAX_VALUE)))))
+                  turns   (mapv (fn [t]
+                                  {:turn (assoc t :episodes
+                                                (mapv :episode
+                                                      (filter #(in-turn? t %) eps)))})
+                                turn-brackets)
+                  claimed-eps (into #{}
+                                    (mapcat #(get-in % [:turn :episodes]))
+                                    turns)
+                  eps     (remove #(claimed-eps (:episode %)) eps)
+                  ;; commit points: the MILESTONE grain above turns
+                  commits (vec (for [d ds :when (= :commit (:op d))]
+                                 {:commit
+                                  (cond-> {:id          (:id d)
+                                           :description (:description d)
+                                           :target      (:target d)
+                                           :at          (human-time (:at d))}
+                                    (:agent d)  (assoc :agent (:agent d))
+                                    (:status d) (assoc :status (:status d)))}))]
+              (->> (concat turns eps commits)
+                   (sort-by #(- (get pos (or (get-in % [:episode :to])
+                                             (get-in % [:episode :from])
+                                             (get-in % [:turn :to])
+                                             (get-in % [:turn :from])
+                                             (get-in % [:commit :id]))
+                                     0)))
+                   (filter #(or (nil? contains)
+                                ;; commits match their description; turns
+                                ;; match what the USER said (intent, user,
+                                ;; agent, contained episode labels);
+                                ;; episodes on label/agent
+                                (clojure.string/includes?
+                                 (cond
+                                   (:commit %)
+                                   (str (get-in % [:commit :description]) " "
+                                        (get-in % [:commit :agent]))
+                                   (:turn %)
+                                   (let [t (:turn %)]
+                                     (clojure.string/join
+                                      " " (concat [(:intent t) (:user t) (:agent t)]
+                                                  (map :label (:episodes t)))))
+                                   :else
+                                   (str (get-in % [:episode :label]) " "
+                                        (get-in % [:episode :agent])))
+                                 contains)))
+                   (take limit)
+                   vec)))
+
+(defn episode-rows [relevant]
+  (mapcat
+                          (fn [[agent ads]]
+                            (loop [ads ads, cur [], out []]
+                              (if-let [d (first ads)]
+                                (if (= :done (:op d))
+                                  (recur (rest ads) []
+                                         (if (seq cur)
+                                           (conj out {:episode
+                                                      (cond-> {:agent agent
+                                                               :label (:label d)
+                                                               :at    (human-time (:at d))
+                                                               :from  (:id (first cur))
+                                                               :to    (:id d)
+                                                               :ops   (count cur)
+                                                               :forms (count (distinct (mapcat delta-fids cur)))}
+                                                        (nil? agent) (dissoc :agent))})
+                                           out))
+                                  (recur (rest ads) (conj cur d) out))
+                                (if (seq cur)
+                                  (conj out {:episode
+                                             (cond-> {:agent agent
+                                                      :open? true
+                                                      :at    (human-time (:at (last cur)))
+                                                      :from  (:id (first cur))
+                                                      :ops   (count cur)
+                                                      :forms (count (distinct (mapcat delta-fids cur)))}
+                                               (nil? agent) (dissoc :agent))})
+                                  out))))
+                          (group-by :agent relevant)))
