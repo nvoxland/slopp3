@@ -7,7 +7,7 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store]))
 
-(def ^:private render-cache
+(def ^:private ^:ambient-ok render-cache
   "elements-vector -> rendered string (bounded). Every write renders the same
   immutable elements several times (warnings pre/post, offsets, analysis) —
   item 2: the repeats were measurable per-write wall."

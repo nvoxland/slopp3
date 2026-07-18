@@ -111,7 +111,7 @@
       (swap! sess assoc :require-turns? true)
       (api/ingest! sess 'cm.core seed)
       (let [call (fn [tool args]
-                   (get-in (slopp.mcp/handle sess
+                   (get-in (slopp.mcp/handle! sess
                                              {:id 1 :method "tools/call"
                                               :params {:name tool :arguments args}})
                            [:result :content 0 :text]))]

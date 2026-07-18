@@ -1,0 +1,4 @@
+ambient-state: error
+bare-throw: error
+breaking-changes: error
+key-typos: error

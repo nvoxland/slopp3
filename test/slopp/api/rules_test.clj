@@ -112,3 +112,39 @@
           (is (= '[as.core/boom] (mapv :form (get-in r [:findings :bare-throw])))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated ambient-ok-marks-a-deliberate-global-and-polices-itself
+  ;; ambient-state can only be BLOCKING if a legitimately-deliberate global has
+  ;; a way to say so — a memo whose answer is immutable is the standing
+  ;; counter-example. ^:ambient-ok is that escape, and it polices itself the
+  ;; same way ^:unused-ok does: a marker on a def that is NOT ambient state is
+  ;; itself a finding, so the flag can never drift into decoration.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'am.core
+                   (str "(ns am.core)\n\n"
+                        "(def plain 41)\n\n"
+                        "(def ^:ambient-ok memo (atom {}))\n\n"
+                        "(def ^:ambient-ok not-ambient 42)\n\n"
+                        "(def loose (atom {}))\n\n"
+                        ;; a docstring sits at index 2, so an index-2 lookup for
+                        ;; the value missed every DOCUMENTED global — i.e. every
+                        ;; one someone had bothered to justify
+                        "(def documented \"why\" (atom {}))\n"))
+      (let [st   (:store @sess)
+            fids (mapv :id (store/forms st 'am.core))
+            hits (set (map :form (rules/ambient-state-check nil st fids)))]
+        (testing "an unmarked global atom is still a finding"
+          (is (contains? hits 'am.core/loose) (pr-str hits)))
+        (testing "a DOCUMENTED global atom is a finding too"
+          (is (contains? hits 'am.core/documented)
+              (str "the docstring sits where the value lookup used to look: "
+                   (pr-str hits))))
+        (testing "^:ambient-ok discharges it"
+          (is (not (contains? hits 'am.core/memo)) (pr-str hits)))
+        (testing "a marker on something that isn't ambient state is a finding"
+          (is (contains? hits 'am.core/not-ambient)
+              (str "a stale flag must fail symmetrically: " (pr-str hits))))
+        (testing "a plain def is untouched either way"
+          (is (not (contains? hits 'am.core/plain)) (pr-str hits))))
+      (finally (api/close! sess)))))

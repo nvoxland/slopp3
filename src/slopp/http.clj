@@ -19,7 +19,7 @@
     (.sendResponseHeaders ex status (alength bytes))
     (doto (.getResponseBody ex) (.write bytes) (.close))))
 
-(defn- handler ^HttpHandler [f]
+(defn- handler! ^HttpHandler [f]
   (reify HttpHandler
     (handle [_ ex]
       (try
@@ -35,11 +35,11 @@
         calls   (atom [])
         server  (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
     (.createContext server "/call"
-                    (handler
+                    (handler!
                      (fn [^HttpExchange ex]
                        (let [raw  (slurp (.getRequestBody ex))
                              req  (json/parse-string raw true)
-                             resp (mcp/handle session
+                             resp (mcp/handle! session
                                               {:id 1 :method "tools/call"
                                                :params {:name (:name req)
                                                         :arguments (:arguments req)}})
@@ -52,14 +52,14 @@
     ;; Code, Codex) share this ONE session/store/image. Single JSON response
     ;; per POST (legal per the streamable-HTTP spec); notifications → 202.
     (.createContext server "/mcp"
-                    (handler
+                    (handler!
                      (fn [^HttpExchange ex]
                        (if (not= "POST" (.getRequestMethod ex))
                          (respond! ex 405 (json/generate-string
                                            {:error "POST JSON-RPC only"}))
                          (let [raw  (slurp (.getRequestBody ex))
                                req  (json/parse-string raw true)
-                               resp (mcp/handle session req)]
+                               resp (mcp/handle! session req)]
                            (when (= "tools/call" (:method req))
                              (swap! calls conj
                                     {:tool (get-in req [:params :name])
@@ -71,7 +71,7 @@
                                  (.close (.getResponseBody ex)))
                              (respond! ex 200 (json/generate-string resp))))))))
     (.createContext server "/metrics"
-                    (handler
+                    (handler!
                      (fn [^HttpExchange ex]
                        (respond! ex 200 (json/generate-string {:calls @calls})))))
     (.start server)

@@ -189,7 +189,7 @@
       (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
       (api/ingest! sess 'ep.core seed)          ; api-level stays ungated
       (let [call (fn [tool args]
-                   (get-in (slopp.mcp/handle sess
+                   (get-in (slopp.mcp/handle! sess
                                              {:id 1 :method "tools/call"
                                               :params {:name tool :arguments args}})
                            [:result :content 0 :text]))]
