@@ -142,7 +142,11 @@
                     date sha app v steps wall-ms tok-in tok-out)
             :append true))))
 
-(defn -main [& _]
+(defn -main "CLI: run every benchmark app, print a row per app, and append the results to
+  `benchmarks/results.md`. The tree is fileless, so this runs through the boot
+  kernel:
+  `clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main`"
+  [& _]
   (let [rows (doall
               (for [app apps]
                 (let [r (assoc (run-app app) :v (:v app))]

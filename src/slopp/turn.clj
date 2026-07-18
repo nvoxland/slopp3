@@ -32,7 +32,16 @@
               (binding [*out* *err*] (println "contention — giving up"))))))
       (finally (.close ^java.sql.Connection conn)))))
 
-^:unsafe (defn -main [dir kind agent & intent-words]
+^:unsafe (defn -main "CLI: append a turn marker to `dir`'s journal — the identity boundary an
+  agent's episodes hang off.
+
+  `begin`/`end` take the intent as trailing words. `hook-begin`/`hook-end` are
+  the Claude Code hook modes: the payload arrives as JSON on stdin, and
+  UserPromptSubmit carries the user's exact words in `:prompt`, so the turn
+  records what was actually asked rather than a paraphrase.
+
+  `clojure -M -m slopp.turn <dir> begin|end|hook-begin|hook-end <agent> [intent...]`"
+  [dir kind agent & intent-words]
   (case kind
     "begin"      (append-marker! dir :turn-begin agent
                                  (when (seq intent-words)

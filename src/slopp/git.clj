@@ -78,7 +78,11 @@
    :map-conn (ensure-map! (db/open! dir))
    :lock     (Object.)})
 
-(defn close-ctx! [{:keys [^Repository repo ^java.sql.Connection map-conn]}]
+(defn close-ctx! "Close a git context's in-memory JGit repo and its git_map connection, and
+  return nil. The repo is a rebuildable CACHE of the journal's milestones — the
+  store is the source of truth — so closing one loses nothing;
+  `ensure-projected!` rebuilds it on demand."
+  [{:keys [^Repository repo ^java.sql.Connection map-conn]}]
   (.close repo)
   (.close map-conn)
   nil)

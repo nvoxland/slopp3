@@ -274,7 +274,12 @@
       (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
-(defn -main [& [which dir]]
+(defn -main "CLI: seed an eval template — a known-green codebase as BOTH a slopp store
+  and a conventional files project, so eval agents start from identical
+  ground. `large` seeds the 12-namespace orders app; anything else is read as
+  a directory and seeds the tasker app.
+  `clojure -M -m slopp.evalseed [large|<dir>] [dir]`"
+  [& [which dir]]
   (case which
     "large" (do (seed-large! (or dir "eval-templates/orders"))
                 (println "seeded green: orders (12 ns)"))

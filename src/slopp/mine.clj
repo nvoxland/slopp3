@@ -40,7 +40,16 @@
                            (re-find (re-pattern (str "\\(" nm "[\\s)]")) src2))]
             fid2))))
 
-^:reads (defn mine-store [dir]
+^:reads (defn mine-store "Mine a store's delta log at `dir` for REFACTOR SHAPES the tools could have
+  done atomically — evidence for which refactors are worth building.
+
+  Two shapes today: a `:sig-change` (a fn's arglist changed) and an `:inline`
+  (a fn was deleted), each reported with `:with-caller-edits`, the count of
+  nearby edits to its callers. A high count means the agent hand-propagated a
+  change that `change_signature` or a move could have carried atomically.
+
+  Returns `{:dir :findings [...]}`. Read-only — opens the db and closes it."
+  [dir]
   (let [conn (db/open! dir)
         st   (try (db/load-store conn)
                   (finally (.close ^java.sql.Connection conn)))
@@ -62,6 +71,8 @@
                {:shape :inline :fn nm :with-caller-edits edits})]
     {:dir dir :findings (vec (concat sig inl))}))
 
-(defn -main [& dirs]
+(defn -main "CLI: print `mine-store` findings for each store dir given.
+  `clojure -M -m slopp.mine <dir>...`"
+  [& dirs]
   (doseq [d dirs]
     (prn (mine-store d))))

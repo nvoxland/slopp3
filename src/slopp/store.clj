@@ -145,7 +145,15 @@
        (filter #(= id (:id %)))
        first))
 
-(defn deltas [store] (:deltas store))
+(defn deltas
+  "The store's delta log, oldest first — the append-only record of every
+  change, and the coordinate system history and undo are addressed in.
+
+  Each entry carries at least `:id`, `:op`, and the agent and prompt behind
+  it; content ops also carry the form ids they touched. This is the raw log:
+  `query-history` tells the story, `query-changes` nets it per form."
+  [store]
+  (:deltas store))
 
 (defn remove-form
   "Remove the form named `nm` from `ns-sym` (plus its immediately following

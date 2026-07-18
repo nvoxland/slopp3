@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules] [slopp.api.telemetry :as telemetry]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules] [slopp.api.telemetry :as telemetry] [slopp.api.done :as done]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -134,7 +134,15 @@
        (adopt-modules! session :agent (or agent-id "slopp")))
      session)))
 
-(defn close! [session]
+(defn close! "Release everything the session owns and return nil: its image, a warm spare
+  still booting, the SQLite connection, every per-branch line's image and
+  connection, and the idle-image reaper timer.
+
+  Always call it — an owned image is a JVM subprocess, so a dropped session
+  leaks one. `(try … (finally (api/close! sess)))` is the shape every test and
+  entry point uses. Safe on a partially-built session: each resource is
+  released only if present."
+  [session]
   (repl/stop! (:image @session))
   (when-let [spare (:spare @session)]
     (repl/stop! @spare))                          ; reap even if still booting
@@ -394,9 +402,6 @@
           (history/render-form-history-text (symbol (str ns-sym) (str nm)) versions)
           versions)))))
 
-(defn- delta-fids [d]
-  (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
-
 (defn query-search-history
   "Delta-log search — the 'which prompts touched X' query. Case-insensitive
   substring match of `pattern` against each delta's prompt, done label,
@@ -421,7 +426,7 @@
                           (when (= fid (:form-id d)) (some-> (:name d) str))
                           (str fid)))
           touched (fn [d]
-                    (vec (for [fid (delta-fids d)]
+                    (vec (for [fid (history/delta-fids d)]
                            (symbol (str (or (store/ns-of-form-id st fid) (:ns d)))
                                    (form-name d fid)))))]
       (->> ds
@@ -435,7 +440,7 @@
                      (:description d) (assoc :description (:description d))
                      (:note d)        (assoc :note (:note d))
                      (ti (:id d))     (assoc :turn-intent (ti (:id d)))
-                     (seq (delta-fids d)) (assoc :forms (touched d)))))))))
+                     (seq (history/delta-fids d)) (assoc :forms (touched d)))))))))
 
 (defn query-history
   "The delta log as a story, newest first. Filters: `:ns`, `:contains`
@@ -454,145 +459,8 @@
                                       (= :done (:op %)))
                                  ds)
                 pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
-                rows     (mapcat
-                          (fn [[agent ads]]
-                            (loop [ads ads, cur [], out []]
-                              (if-let [d (first ads)]
-                                (if (= :done (:op d))
-                                  (recur (rest ads) []
-                                         (if (seq cur)
-                                           (conj out {:episode
-                                                      (cond-> {:agent agent
-                                                               :label (:label d)
-                                                               :at    (history/human-time (:at d))
-                                                               :from  (:id (first cur))
-                                                               :to    (:id d)
-                                                               :ops   (count cur)
-                                                               :forms (count (distinct (mapcat delta-fids cur)))}
-                                                        (nil? agent) (dissoc :agent))})
-                                           out))
-                                  (recur (rest ads) (conj cur d) out))
-                                (if (seq cur)
-                                  (conj out {:episode
-                                             (cond-> {:agent agent
-                                                      :open? true
-                                                      :at    (history/human-time (:at (last cur)))
-                                                      :from  (:id (first cur))
-                                                      :ops   (count cur)
-                                                      :forms (count (distinct (mapcat delta-fids cur)))}
-                                               (nil? agent) (dissoc :agent))})
-                                  out))))
-                          (group-by :agent relevant))]
-            (let [turn-brackets
-                  (vec (mapcat (fn [[agent ms]]
-                                 (loop [ms ms, open nil, out []]
-                                   (if-let [m (first ms)]
-                                     (cond
-                                       (= :turn-begin (:op m))
-                                       (recur (rest ms) m out)
-                                       (and open (= :turn-end (:op m)))
-                                       (recur (rest ms) nil
-                                              (conj out {:agent agent
-                                                         :intent (:intent open)
-                                                         :user (:user open)
-                                                         :at (history/human-time (:at open))
-                                                         :from (:id open)
-                                                         :to (:id m)}))
-                                       :else (recur (rest ms) open out))
-                                     (if open
-                                       (conj out {:agent agent :open? true
-                                                  :intent (:intent open)
-                                                  :user (:user open)
-                                                  :at (history/human-time (:at open))
-                                                  :from (:id open)})
-                                       out))))
-                               (group-by :agent
-                                         (filter #(contains? #{:turn-begin :turn-end}
-                                                             (:op %))
-                                                 ds))))
-                  parent-of (fn [agent]
-                              (when-let [i (and agent
-                                                (clojure.string/last-index-of agent "/"))]
-                                (subs agent 0 i)))
-                  contains?* (fn [p c]        ; child's span inside parent's span
-                               (let [pf (get pos (get-in p [:episode :from]) 0)
-                                     pt (get pos (get-in p [:episode :to])
-                                             Long/MAX_VALUE)
-                                     cf (get pos (get-in c [:episode :from]) 0)]
-                                 (and (<= pf cf) (<= cf pt))))
-                  kids   (filter #(parent-of (get-in % [:episode :agent])) rows)
-                  tops   (remove #(parent-of (get-in % [:episode :agent])) rows)
-                  nested (mapv (fn [p]
-                                 (let [cs (filterv #(and (= (parent-of
-                                                             (get-in % [:episode :agent]))
-                                                            (get-in p [:episode :agent]))
-                                                         (contains?* p %))
-                                                   kids)]
-                                   (if (seq cs)
-                                     (update p :episode assoc :children
-                                             (mapv :episode cs))
-                                     p)))
-                               tops)
-            ;; orphans: children whose parent episode isn't in view
-                  claimed (into #{} (mapcat #(get-in % [:episode :children])) nested)
-                  orphans (remove #(claimed (:episode %)) kids)
-                  eps     (concat nested orphans)
-                  in-turn? (fn [t e]
-                             (let [ta (:agent t)
-                                   ea (get-in e [:episode :agent])]
-                               (and ea ta
-                                    (or (= ea ta)
-                                        (clojure.string/starts-with? ea (str ta "/")))
-                                    (<= (get pos (:from t) 0)
-                                        (get pos (get-in e [:episode :from]) 0))
-                                    (<= (get pos (get-in e [:episode :from]) 0)
-                                        (get pos (:to t) Long/MAX_VALUE)))))
-                  turns   (mapv (fn [t]
-                                  {:turn (assoc t :episodes
-                                                (mapv :episode
-                                                      (filter #(in-turn? t %) eps)))})
-                                turn-brackets)
-                  claimed-eps (into #{}
-                                    (mapcat #(get-in % [:turn :episodes]))
-                                    turns)
-                  eps     (remove #(claimed-eps (:episode %)) eps)
-                  ;; commit points: the MILESTONE grain above turns
-                  commits (vec (for [d ds :when (= :commit (:op d))]
-                                 {:commit
-                                  (cond-> {:id          (:id d)
-                                           :description (:description d)
-                                           :target      (:target d)
-                                           :at          (history/human-time (:at d))}
-                                    (:agent d)  (assoc :agent (:agent d))
-                                    (:status d) (assoc :status (:status d)))}))]
-              (->> (concat turns eps commits)
-                   (sort-by #(- (get pos (or (get-in % [:episode :to])
-                                             (get-in % [:episode :from])
-                                             (get-in % [:turn :to])
-                                             (get-in % [:turn :from])
-                                             (get-in % [:commit :id]))
-                                     0)))
-                   (filter #(or (nil? contains)
-                                ;; commits match their description; turns
-                                ;; match what the USER said (intent, user,
-                                ;; agent, contained episode labels);
-                                ;; episodes on label/agent
-                                (clojure.string/includes?
-                                 (cond
-                                   (:commit %)
-                                   (str (get-in % [:commit :description]) " "
-                                        (get-in % [:commit :agent]))
-                                   (:turn %)
-                                   (let [t (:turn %)]
-                                     (clojure.string/join
-                                      " " (concat [(:intent t) (:user t) (:agent t)]
-                                                  (map :label (:episodes t)))))
-                                   :else
-                                   (str (get-in % [:episode :label]) " "
-                                        (get-in % [:episode :agent])))
-                                 contains)))
-                   (take limit)
-                   vec)))
+                rows     (history/episode-rows relevant)]
+            (history/collapse-rows  ds pos rows contains limit))
           (->> (store/deltas (:store @session))
                reverse
                (filter #(or (nil? ns) (= ns (:ns %))))
@@ -771,7 +639,7 @@
         mine     (filter #(and (contains? content-ops (:op %))
                                (or (nil? agent) (= agent (:agent %))))
                          span)
-        fids     (distinct (mapcat delta-fids mine))
+        fids     (distinct (mapcat history/delta-fids mine))
         was      (store/sources-at st boundary)
         del-info (into {}
                        (keep (fn [d]
@@ -1561,7 +1429,7 @@
   PAST point, without depending on the current store's membership."
   [store at-id]
   (reduce (fn [m d]
-            (let [m (reduce #(assoc %1 %2 (:ns d)) m (delta-fids d))]
+            (let [m (reduce #(assoc %1 %2 (:ns d)) m (history/delta-fids d))]
               (if (= at-id (:id d)) (reduced m) m)))
           {} (store/deltas store)))
 
@@ -1808,7 +1676,7 @@
             changes (query-changes session :agent agent :from from)
             span    (drop-while #(not= from (:id %)) all)
             others  (into #{}
-                          (mapcat delta-fids)
+                          (mapcat history/delta-fids)
                           (filter #(and (contains? content-ops (:op %))
                                         (not= agent (:agent %)))
                                   span))
@@ -1845,7 +1713,7 @@
   [session & {:keys [agent prompt]}]
   (let [changes (query-changes session :agent agent)
         others  (into #{}
-                      (mapcat delta-fids)
+                      (mapcat history/delta-fids)
                       (filter #(and (contains? content-ops (:op %))
                                     (not= agent (:agent %)))
                               (episode-span (:store @session) agent)))
@@ -2524,29 +2392,11 @@
         changed  (->> (episode-span st agent)
                       (filter #(and (contains? content-ops (:op %))
                                     (= agent (:agent %))))
-                      (mapcat delta-fids)
+                      (mapcat history/delta-fids)
                       distinct
                       (filter #(store/ns-of-form-id st %)))
-        rewrites (vec (for [fid changed
-                            :let [e (store/form-by-id st fid)
-                                  {:keys [node applied]} (normalize/normalize-form (:node e))]
-                            :when (seq applied)]
-                        {:form-id fid
-                         :form    (symbol (str (store/ns-of-form-id st fid))
-                                          (str (or (:name e) (:id e))))
-                         :node    node
-                         :applied applied}))
-        _        (when (seq rewrites)
-                   (let [changeset   (into {} (map (juxt :form-id :node)) rewrites)
-                         main-ns     (store/ns-of-form-id st (:form-id (first rewrites)))
-                         [st' _]     (store/apply-changeset st :normalize main-ns changeset
-                                                            :prompt (or label "done normalization")
-                                                            :agent agent)
-                         touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
-                     (when-let [err (:err (session/hot-load-all! session st' (keys changeset)))]
-                       (throw (ex-info (str "normalization failed to compile: " err) {})))
-                     (when-not (session/try-commit! session st st' (vec touched))
-                       (throw (ex-info "store changed during done — retry" {})))))
+        rewrites (done/normalize-rewrites changed st)
+        _        (done/apply-normalization! rewrites st label agent  session)
         ;; automatic declare hygiene: the pipeline OWNS declares (auto-inserted
         ;; for a genuine cycle); once the cycle breaks the declare is stale —
         ;; remove it here. SILENT: the agent never manages declares, so this
@@ -2559,44 +2409,13 @@
                          :agent agent))
         ;; kondo lint over every namespace touched since the last done-point —
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
-        lint (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
-                                              changed))
-                        :let [st*   (:store @session)
-                              src   (render/render-ns st* ns-sym)
-                              lines (vec (str/split-lines src))]
-                        f (index/lint src)]
-                    ;; anchors, not coordinates: the owning form + a
-                    ;; match-ready snippet; row/col never cross the wire
-                    (cond-> (-> f
-                                (dissoc :row :col)
-                                (assoc :ns ns-sym
-                                       :form (when-let [e (render/owner-form
-                                                           st* ns-sym
-                                                           (:row f) (:col f))]
-                                               (symbol (str ns-sym)
-                                                       (str (or (:name e) (:id e)))))))
-                      (get lines (dec (:row f 0)))
-                      (assoc :at (str/trim (nth lines (dec (:row f))))))))
+        lint (done/anchored-lint session  changed)
         ;; the unused-public GATE: unmarked dead surface — and stale
         ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
         unused-rep (let [st* (:store @session)]
                      (modules/unused-report
                       st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
-        lint (into lint
-                   (concat
-                    (for [q (:unused unused-rep)]
-                      {:level :error :type :unused-public
-                       :ns (symbol (namespace q)) :form q
-                       :message (str q " is public but NOTHING in the store"
-                                     " calls it — delete it, or mark the name"
-                                     " ^:unused-ok to declare it deliberate"
-                                     " (external surface, runtime-resolved"
-                                     " entry)")})
-                    (for [q (:stale unused-rep)]
-                      {:level :error :type :stale-unused-ok
-                       :ns (symbol (namespace q)) :form q
-                       :message (str q " carries ^:unused-ok but IS called now"
-                                     " — remove the flag")})))
+        lint (done/with-unused-gate lint unused-rep)
         ;; NEW warnings (on forms this episode touched) report in full;
         ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
         ;; re-listing them at every done buries real findings. Errors and
@@ -3734,3 +3553,4 @@
    commit-point id from `query_commits`) windows it."
   [session & {:keys [since]}]
   (telemetry/rule-telemetry (:store @session) :since since))
+

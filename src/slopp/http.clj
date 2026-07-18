@@ -77,12 +77,19 @@
     (.start server)
     {:server server :session session :calls calls}))
 
-(defn stop-server! [{:keys [^HttpServer server session]}]
+(defn stop-server! "Stop the HTTP transport and close the session it serves, returning nil.
+  Takes the map `start-server!` returned. Closing the session is the part that
+  matters — it reaps the owned image subprocess."
+  [{:keys [^HttpServer server session]}]
   (.stop server 0)
   (api/close! session)
   nil)
 
-(defn -main [& [port dir]]
+(defn -main "CLI: serve the HTTP transport on `port` (default 7357) over a session at
+  `dir`, and block. Enables `:require-turns?` — a real server refuses unrooted
+  writes, where an in-process test session does not.
+  `clojure -M -m slopp.http [port] [dir]`"
+  [& [port dir]]
   (let [{:keys [session]} (start-server! (Long/parseLong (or port "7357"))
                                          (cond-> {:warm-spare? true}
                                            dir (assoc :dir dir)))]
