@@ -51,7 +51,7 @@
               (is (some? (get-in r1 [:refs "main"]))))
             (testing "one mapping row per marker despite the race"
               (is (= 3 (:n (jdbc/execute-one!
-                            (:map-conn ctx1)
+                            (:slopp.git/map-conn ctx1)
                             ["SELECT COUNT(*) AS n FROM git_map"])))))
             (testing "re-projection on either side is a stable no-op"
               (is (= (get-in r1 [:refs "main"])

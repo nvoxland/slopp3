@@ -46,7 +46,7 @@
                   adv (RefAdvertiser$PacketLineOutRefAdvertiser. pck)]
               (.writeString pck (str "# service=" service "\n"))
               (.end pck)
-              (-> (doto (UploadPack. ^Repository (:repo ctx))
+              (-> (doto (UploadPack. ^Repository (:slopp.git/repo ctx))
                     (.setBiDirectionalPipe false))
                   (.sendAdvertisedRefs adv))))))))
 
@@ -61,7 +61,7 @@
   (.sendResponseHeaders ex 200 0)
   (with-open [in (request-body ex)
               os (.getResponseBody ex)]
-    (doto (UploadPack. ^Repository (:repo ctx))
+    (doto (UploadPack. ^Repository (:slopp.git/repo ctx))
       (.setBiDirectionalPipe false)
       (.upload in os nil))))
 

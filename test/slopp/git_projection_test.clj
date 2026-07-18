@@ -104,7 +104,7 @@
       (api/commit-point! sess "v2: flipped" :agent "alice")
       (let [ctx  (git/open-ctx! dir)
             tip  (get-in (git/ensure-projected! ctx) [:refs "main"])
-            info (commit-info (:repo ctx) tip)
+            info (commit-info (:slopp.git/repo ctx) tip)
             cd   (->> (store/deltas (:store @sess))
                       (filter #(= :commit (:op %))) last)]
         (is tip)
@@ -117,13 +117,13 @@
           (is (= (quot (:at cd) 1000) (quot (:at-ms info) 1000)))
           (is (= 1 (count (:parents info))))
           (is (str/starts-with?
-               (:message (commit-info (:repo ctx) (first (:parents info))))
+               (:message (commit-info (:slopp.git/repo ctx) (first (:parents info))))
                "v1: f ships")))
         (testing "blob bytes ARE the live render"
           (is (= (api/query-source sess 'gp.core)
-                 (blob-text (:repo ctx) tip "src/gp/core.clj"))))
+                 (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj"))))
         (testing "the clone is a runnable project (deps.edn present)"
-          (is (str/includes? (str (blob-text (:repo ctx) tip "deps.edn"))
+          (is (str/includes? (str (blob-text (:slopp.git/repo ctx) tip "deps.edn"))
                              ":paths")))
         (testing "re-projection is a no-op"
           (is (= tip (get-in (git/ensure-projected! ctx) [:refs "main"]))))
@@ -135,7 +135,7 @@
         (testing "rebuild from scratch (a fresh in-memory repo) mints IDENTICAL shas"
           (let [ctx2 (git/open-ctx! dir)]
             (try
-              (jdbc/execute! (:map-conn ctx2) ["DELETE FROM git_map"])
+              (jdbc/execute! (:slopp.git/map-conn ctx2) ["DELETE FROM git_map"])
               (is (= tip (get-in (git/ensure-projected! ctx2) [:refs "main"])))
               (finally (git/close-ctx! ctx2))))))
       (finally (api/close! sess)))))
@@ -158,10 +158,10 @@
             (is main-tip)
             (is feat-tip)
             (testing "the branch commit chains on main's milestone"
-              (is (= [main-tip] (:parents (commit-info (:repo ctx) feat-tip)))))
+              (is (= [main-tip] (:parents (commit-info (:slopp.git/repo ctx) feat-tip)))))
             (testing "ONE mapping row for the shared v1 marker (2 rows total)"
               (is (= 2 (:n (jdbc/execute-one!
-                            (:map-conn ctx)
+                            (:slopp.git/map-conn ctx)
                             ["SELECT COUNT(*) AS n FROM git_map"]))))))
           (finally (git/close-ctx! ctx))))
       (finally (api/close! sess)))))
@@ -180,11 +180,11 @@
         (let [ctx (git/open-ctx! dir)]
           (try
             (let [tip  (get-in (git/ensure-projected! ctx) [:refs "main"])
-                  info (commit-info (:repo ctx) tip)]
+                  info (commit-info (:slopp.git/repo ctx) tip)]
               (testing "the retroactive marker is the newest commit (journal order)"
                 (is (str/starts-with? (:message info) "v1.5 was actually here")))
               (testing "its tree is the OLD state — reconstructed, trivia-lossy"
-                (let [src (blob-text (:repo ctx) tip "src/gp/core.clj")]
+                (let [src (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj")]
                   (is (str/includes? (str src) "(+ x 10)"))
                   (is (not (str/includes? (str src) "(+ 10 x)")))
                   (is (not (str/includes? (str src) ";; top-level trivia")))))
@@ -206,7 +206,7 @@
         (let [ctx (git/open-ctx! dir)]
           (try
             (let [tip (get-in (git/ensure-projected! ctx) [:refs "main"])]
-              (is (str/includes? (:message (commit-info (:repo ctx) tip))
+              (is (str/includes? (:message (commit-info (:slopp.git/repo ctx) tip))
                                  "Slopp-Status: red")))
             (finally (git/close-ctx! ctx)))))
       (finally (api/close! sess)))))

@@ -102,7 +102,7 @@
         ctx (git/open-ctx! dir)]
     (try
       (let [url (str "http://127.0.0.1:" (.getLocalPort srv) "/dead.git")
-            f   (future (try (client/fetch-remote! (:repo ctx) url :timeout 2)
+            f   (future (try (client/fetch-remote! (:slopp.git/repo ctx) url :timeout 2)
                              (catch Exception e {:threw (str e)})))
             r   (deref f 20000 ::wedged)]
         (is (not= ::wedged r)

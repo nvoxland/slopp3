@@ -47,7 +47,7 @@
   objects so its grafted chain is complete. Fast-forward only — a diverged
   remote is an honest :error, never a force. Returns
   {:pushed sha :status s :remote-branch b} | {:error msg}."
-  [{:keys [^Repository repo map-conn] :as ctx} url
+  [{:slopp.git/keys [map-conn ^Repository repo] :as ctx} url
    & {:keys [token branch remote-branch timeout]
       :or {branch "main" timeout 30}}]
   (when-let [base (db/get-meta map-conn "git-base-sha")]

@@ -114,3 +114,71 @@
                      (str (api/query-eval sess "(resolve 'gv.core/beta)")))
             (pr-str (api/query-eval sess "(resolve 'gv.core/beta)"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated sweep-requalifies-keys-destructuring
+  ;; rename_sweep renames keyword LITERALS by text. A destructuring names its
+  ;; keys as SYMBOLS inside a :keys vector, so a text sweep left it reading the
+  ;; OLD unqualified key — code that compiles, passes the write gate, and reads
+  ;; nil at runtime. That is the worst failure mode a refactor tool can have,
+  ;; and it is what made namespacing a key a sixty-edit manual job.
+  ;;
+  ;; The fixture keys are deliberately nonsense (:zkey-one/:zkey-two): a sweep
+  ;; rewrites keyword text INSIDE STRING LITERALS too, so a fixture naming a
+  ;; real key gets rewritten by any later sweep of that key — the literal is
+  ;; changed but the {:keys [...]} inside the same string is not, leaving the
+  ;; fixture self-inconsistent. That happened here with :repo.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rq.core
+                   (str "(ns rq.core)\n\n"
+                        "(defn mk [] {:zkey-one 1 :zkey-two 2 :zkey-three 3})\n\n"
+                        "(defn only-one [{:keys [zkey-two]}] zkey-two)\n\n"
+                        "(defn mixed [{:keys [zkey-one zkey-two zkey-three]}]\n"
+                        "  [zkey-one zkey-two zkey-three])\n\n"
+                        "(defn direct [m] (:zkey-two m))\n"))
+      (let [r (api/rename-sweep! sess ":zkey-two" ":rq/zkey-two"
+                                 :prompt "namespace the key")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [src (api/query-source sess 'rq.core)]
+        (testing "a sole key becomes a qualified :keys entry"
+          (is (re-find #"\{:rq/keys \[zkey-two\]\}" src) src))
+        (testing "a MIXED destructuring splits — unrenamed keys stay bare"
+          (is (re-find #":keys \[zkey-one zkey-three\]" src) src)
+          (is (re-find #":rq/keys \[zkey-two\]" src) src))
+        (testing "literals and direct reads are renamed as before"
+          (is (re-find #":rq/zkey-two 2" src) src)
+          (is (re-find #"\(:rq/zkey-two m\)" src) src)))
+      (testing "and it actually still reads the value at runtime"
+        (is (= [2] (api/query-eval sess "(rq.core/only-one (rq.core/mk))")))
+        (is (= [[1 2 3]] (api/query-eval sess "(rq.core/mixed (rq.core/mk))"))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated sweep-preserves-type-hints-when-requalifying
+  ;; The first cut of requalify-keys rebuilt the :keys vector from `sexpr`,
+  ;; which silently DROPPED type hints — {:keys [^Repository repo]} became
+  ;; {:slopp.git/keys [repo]}, turning direct interop into reflection — and it
+  ;; crashed outright on some hinted vectors. Both are one mistake: a refactor
+  ;; must edit NODES, never round-trip through sexpr, or it discards
+  ;; everything sexpr does not model (hints, comments, reader tags).
+  ;;
+  ;; Fixture keys are deliberately nonsense — see the sibling test: a sweep
+  ;; rewrites keyword text inside STRING LITERALS, so a fixture naming a real
+  ;; key is corrupted by any later sweep of it.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'hint.core
+                   (str "(ns hint.core)\n\n"
+                        "(defn mk [] {:zhint-one \"c\" :zhint-two 1})\n\n"
+                        "(defn use-it [{:keys [^String zhint-one ^Long zhint-two]}]\n"
+                        "  [zhint-one zhint-two])\n"))
+      (let [r (api/rename-sweep! sess ":zhint-one" ":hint/zhint-one"
+                                 :prompt "namespace a hinted key")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [src (api/query-source sess 'hint.core)]
+        (testing "the MOVED symbol keeps its hint"
+          (is (re-find #":hint/keys \[\^String zhint-one\]" src) src))
+        (testing "the symbols left behind keep theirs"
+          (is (re-find #":keys \[\^Long zhint-two\]" src) src)))
+      (testing "and it still evaluates"
+        (is (= [["c" 1]] (api/query-eval sess "(hint.core/use-it (hint.core/mk))"))))
+      (finally (api/close! sess)))))

@@ -74,15 +74,15 @@
   connection (main store.db), and the per-process projection lock."
   [dir]
   {:dir      (str dir)
-   :repo     (open-repo! dir)
-   :map-conn (ensure-map! (db/open! dir))
-   :lock     (Object.)})
+   :slopp.git/repo     (open-repo! dir)
+   :slopp.git/map-conn (ensure-map! (db/open! dir))
+   :slopp.git/lock     (Object.)})
 
 (defn close-ctx! "Close a git context's in-memory JGit repo and its git_map connection, and
   return nil. The repo is a rebuildable CACHE of the journal's milestones — the
   store is the source of truth — so closing one loses nothing;
   `ensure-projected!` rebuilds it on demand."
-  [{:keys [^Repository repo ^java.sql.Connection map-conn]}]
+  [{:slopp.git/keys [^java.sql.Connection map-conn ^Repository repo]}]
   (.close repo)
   (.close map-conn)
   nil)
@@ -284,7 +284,7 @@
   concurrent projectors converge; never pinned in git_map, never a
   milestone parent, rejected on push. On a cloned store the baseline tip
   may be the graft base itself (no local milestone yet)."
-  [{:keys [^Repository repo]} line-name conn deltas tip-sha]
+  [{:slopp.git/keys [^Repository repo]} line-name conn deltas tip-sha]
   (let [ref-name (str "refs/heads/wip/" line-name)]
     (if (or (nil? tip-sha) (empty? deltas))
       (delete-ref! repo ref-name)          ; no baseline / nothing local yet
@@ -336,7 +336,7 @@
   only when its object is live in this repo; on a fresh repo the object is
   re-inserted deterministically (same sha). Returns the tip sha (= base when
   no markers) or nil."
-  [{:keys [repo map-conn]} line-label deltas & {:keys [base]}]
+  [{:slopp.git/keys [map-conn repo]} line-label deltas & {:keys [base]}]
   (reduce
    (fn [parent d]
      (if (= :commit (:op d))
@@ -377,7 +377,7 @@
   caller degrades. Reads the dbs directly (always-current, no session
   needed), deterministic and idempotent: safe to call before every refs
   advertisement. Returns {:refs {name sha-or-nil}}."
-  [{:keys [dir repo map-conn lock] :as ctx}]
+  [{:keys [dir] :slopp.git/keys [map-conn repo lock] :as ctx}]
   (locking lock
     (let [base     (db/get-meta map-conn "git-base-sha")
           main-ds  (db/deltas-after map-conn 0)

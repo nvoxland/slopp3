@@ -3584,12 +3584,33 @@
         (if (:error nsr)
           nsr
           (let [st    (:store @session)
+                ;; renaming a KEYWORD to a qualified one has a structural half the text
+                ;; pass cannot see: `{:keys [x]}` names its key as a SYMBOL, so a
+                ;; literal-only sweep leaves it reading the old unqualified key —
+                ;; compiles, gates clean, reads nil at runtime.
+                kw?     (and (str/starts-with? from ":")
+                             (str/starts-with? to ":"))
+                kname   (when kw? (last (str/split (subs from 1) #"/")))
+                to-ns   (when kw?
+                          (let [b (subs to 1)]
+                            (when (str/includes? b "/")
+                              (first (str/split b #"/")))))
+                rewrite (fn [src]
+                          (let [s (str/replace src pat to)]
+                            (if (and to-ns (str/includes? s ":keys")
+                                     (str/includes? s kname))
+                              (refactor/requalify-keys s kname to-ns)
+                              s)))
+                ;; select on the REWRITE, not the pattern: a form whose only
+                ;; occurrence is a :keys destructuring holds no keyword literal
                 steps (vec (for [nsx (store/ns-dependency-order st)
                                  e   (store/forms st nsx)
-                                 :let [src (n/string (:node e))]
-                                 :when (and (:name e) (re-find pat src))]
+                                 :when (:name e)
+                                 :let [src  (n/string (:node e))
+                                       src' (rewrite src)]
+                                 :when (not= src src')]
                              {:action :replace :ns nsx :name (:name e)
-                              :source (str/replace src pat to)}))]
+                              :source src'}))]
             (cond
               (and (empty? steps) (empty? (:renamed-namespaces nsr)))
               {:error (str "nothing named " from

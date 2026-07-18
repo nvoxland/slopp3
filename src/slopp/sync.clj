@@ -59,7 +59,7 @@
   [dir & {:keys [url token branch]}]
   (let [ctx (git/open-ctx! dir)]
     (try
-      (let [conn    (:map-conn ctx)
+      (let [conn    (:slopp.git/map-conn ctx)
             target  (resolve-remote dir (or url (db/get-meta conn "git-remote")))
             rbranch (str "slopp/" (or branch "main"))
             q       (db/quarantine-list conn)]
@@ -342,7 +342,7 @@
   becomes a chain node, so our next milestone parents on it and pushes stay
   fast-forward). Conflicts land in quarantine (push blocks until resolved)."
   [session ctx url mb tip agent]
-  (let [repo    (:repo ctx)
+  (let [repo    (:slopp.git/repo ctx)
         conn    (:db @session)
         treeM   (git/tree-at repo mb)
         treeT   (git/tree-at repo tip)
@@ -393,11 +393,11 @@
       (let [shared (get-in @session [:git-server :ctx])
             ctx    (or shared (git/open-ctx! dir))]
         (try
-          (let [url (resolve-remote dir (db/get-meta (:map-conn ctx) "git-remote"))]
+          (let [url (resolve-remote dir (db/get-meta (:slopp.git/map-conn ctx) "git-remote"))]
             (if (str/blank? (str url))
               {:error "no remote configured — git_push with :url (or clone) first"}
               (let [ours (get-in (git/ensure-projected! ctx) [:refs "main"])
-                    tip  (:tip (client/fetch-remote! (:repo ctx) url :token token
+                    tip  (:tip (client/fetch-remote! (:slopp.git/repo ctx) url :token token
                                               :branch (str "slopp/" (:branch @session "main"))))]
                 (cond
                   (nil? tip)   {:error (str "remote has no slopp/"
@@ -406,7 +406,7 @@
                   (nil? ours)  {:error "nothing to pull onto — no local milestones or clone base"}
                   (= tip ours) {:up-to-date true}
                   :else
-                  (let [mb (git/merge-base (:repo ctx) ours tip)]
+                  (let [mb (git/merge-base (:slopp.git/repo ctx) ours tip)]
                     (cond
                       (nil? mb)  {:error "unrelated histories — was the remote rewritten? re-clone"}
                       (= mb tip) {:up-to-date true}

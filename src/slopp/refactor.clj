@@ -1028,3 +1028,62 @@
                    :to-require-adds
                    (let [have (set (map :lib (require-specs store to-ns)))]
                      (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))
+
+(defn requalify-keys
+  "Rewrite `{:keys [x]}` destructuring to `{:to-ns/keys [x]}` for the single key
+  named `key-name`, leaving every other key in the vector where it is.
+
+  The half a textual keyword sweep cannot do. A map destructuring names its
+  keys as SYMBOLS inside a `:keys` vector, so renaming the keyword LITERAL
+  `:x` to `:to-ns/x` everywhere leaves `{:keys [x]}` still asking for the
+  unqualified `:x` — code that compiles, passes every gate, and reads nil at
+  runtime.
+
+  Rebuilds the destructuring map by MOVING the symbol's node, never by
+  round-tripping through `sexpr`: a rebuild from sexpr silently drops type
+  hints (`^Repository repo`), turning direct interop into reflection. Any
+  other entry — `:as`, `:or`, another `:ns/keys` — is carried through
+  untouched, and an existing `:to-ns/keys` absorbs the symbol so sweeping
+  several keys of one handle converges on a single entry.
+
+  Pure: source string in, source string out; untouched when nothing matches.
+  A `to-ns` of nil (renaming TOWARD an unqualified key) is a deliberate no-op."
+  [src key-name to-ns]
+  (if (str/blank? (str to-ns))
+    src
+    (let [qkeys (keyword (str to-ns) "keys")
+          sym   (symbol (str key-name))
+          sx    (fn [nd] (try (n/sexpr nd) (catch Exception _ ::none)))
+          kids  (fn [nd] (vec (filter n/sexpr-able? (n/children nd))))
+          vnode (fn [ns] (n/vector-node (interpose (n/spaces 1) ns)))
+          rebuild
+          (fn [mnode]
+            (let [pairs (vec (partition 2 (kids mnode)))
+                  pair  (fn [k] (first (filter #(= k (sx (first %))) pairs)))
+                  kp    (pair :keys)
+                  vec-n (second kp)]
+              (when (and kp (= :vector (n/tag vec-n)))
+                (let [vkids (kids vec-n)
+                      tgt   (first (filter #(= sym (sx %)) vkids))]
+                  (when tgt
+                    (let [kept   (vec (remove #(= % tgt) vkids))
+                          qp     (pair qkeys)
+                          others (remove #(or (= % kp) (= % qp)) pairs)
+                          qkept  (if qp (conj (kids (second qp)) tgt) [tgt])
+                          new    (concat
+                                  (when (seq kept)
+                                    [[(n/keyword-node :keys) (vnode kept)]])
+                                  [[(n/keyword-node qkeys) (vnode qkept)]]
+                                  others)]
+                      (n/map-node
+                       (interpose (n/spaces 1) (apply concat new)))))))))]
+      (loop [z (z/of-string src)]
+        (cond
+          (z/end? z) (z/root-string z)
+
+          (= :map (n/tag (z/node z)))
+          (if-let [m' (rebuild (z/node z))]
+            (recur (z/next (z/replace z m')))
+            (recur (z/next z)))
+
+          :else (recur (z/next z)))))))
