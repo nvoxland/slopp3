@@ -20,17 +20,19 @@
         sch))))
 
 (defn analyzer-pure?
-  "True when `qsym` reaches NO effect — the D6 M3 full boundary set (opaque-dep
-   READS included, like tier-refusal's :pure branch), because the generative
-   check CALLS the fn with generated inputs and a pure fn's call is
-   side-effect-free. Single-ns, bang-name-propagating soundness (a cross-ns
-   effect is seen only when the callee is `!`-named)."
+  "True when `qsym` reaches NO effect AND NO non-determinism — the D6 M3 full
+   boundary set (opaque-dep READS included) PLUS `index/nondeterministic-vars`
+   (`rand`/`slurp`). The generative check CALLS the fn with generated inputs, so
+   it must be REFERENTIALLY TRANSPARENT, not merely effect-free: a `rand`-using fn
+   would make `mg/check` flake (and schema-drift is `:error`, so a flake would red
+   a green `done`). Same RT bar as `tier-refusal`'s `:pure`."
   [store qsym]
   (let [ns-sym   (symbol (namespace qsym))
         analysis (index/analyze (render/render-ns store ns-sym))
         dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
-        eff      (index/effectful-vars analysis dep-nses (:dep-pure store))]
-    (not (contains? eff qsym))))
+        eff      (index/effectful-vars analysis dep-nses (:dep-pure store))
+        nondet   (index/nondeterministic-vars analysis)]
+    (not (or (contains? eff qsym) (contains? nondet qsym)))))
 
 (defn schema-candidates
   "CHANGED qsyms that are safe to generatively check: they carry a :=>
