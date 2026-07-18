@@ -42,3 +42,43 @@
           (is (nil? (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest node-boundary-and-schema-keys
+  (testing "node-boundary?: public defn in a root ns (<=2 segs), or ^:export in a deep ns"
+    (is (true?  (breakage/node-boundary? 'app.core '(defn f [x] x))))
+    (is (false? (breakage/node-boundary? 'app.core '(defn- f [x] x))))
+    (is (false? (breakage/node-boundary? 'app.core.impl '(defn f [x] x))))
+    (is (true?  (breakage/node-boundary? 'app.core.impl '(defn ^:export f [x] x)))))
+  (testing "removed-schema-keys: arg-map keys in the old :=> schema, gone from the new"
+    (is (= #{:b} (breakage/removed-schema-keys
+                  '(defn ^{:malli/schema [:=> [:cat [:map [:a :int] [:b :int]]] :int]} f [m] 1)
+                  '(defn ^{:malli/schema [:=> [:cat [:map [:a :int]]] :int]} f [m] 1))))
+    (testing "adding a key is accretion"
+      (is (empty? (breakage/removed-schema-keys
+                   '(defn ^{:malli/schema [:=> [:cat [:map [:a :int]]] :int]} f [m] 1)
+                   '(defn ^{:malli/schema [:=> [:cat [:map [:a :int] [:b :int]]] :int]} f [m] 1)))))
+    (testing "no :=> schema on either side → nothing"
+      (is (empty? (breakage/removed-schema-keys '(defn f [m] 1) '(defn f [m] 1)))))))
+
+(deftest ^:isolated done-flags-visibility-and-schema-key-narrowing
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'bc2.core
+                   "(ns bc2.core)\n(defn ^{:malli/schema [:=> [:cat [:map [:a :int] [:b :int]]] :int]} shaped \"S.\" [m] (:a m))\n")
+      (api/ingest! sess 'bc2.core.impl
+                   "(ns bc2.core.impl)\n(defn ^:export widget \"W.\" [x] x)\n")
+      (api/done! sess :label "baseline")
+      (testing "dropping a :=> arg-map key at a boundary is flagged"
+        (api/edit-replace! sess 'bc2.core 'shaped
+                           "(defn ^{:malli/schema [:=> [:cat [:map [:a :int]]] :int]} shaped \"S.\" [m] (:a m))"
+                           :prompt "drop the :b key")
+        (let [r (api/done! sess :label "drop-key")]
+          (is (= [{:form 'bc2.core/shaped :removed-keys [:b]}]
+                 (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
+      (testing "un-exporting a boundary fn (visibility narrowing) is flagged"
+        (api/edit-replace! sess 'bc2.core.impl 'widget "(defn widget \"W.\" [x] x)"
+                           :prompt "drop ^:export")
+        (let [r (api/done! sess :label "unexport")]
+          (is (= [{:form 'bc2.core.impl/widget :visibility-narrowed true}]
+                 (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

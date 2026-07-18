@@ -31,29 +31,50 @@
         n (fixed-arities new-form)]
     (if (and o n) (set/difference o n) #{})))
 
-(defn- boundary-fn?
-  "True when `form-name` in `ns-sym` is a public `defn` reachable from OUTSIDE its
-   module — the interface external callers (invisible from the editing slice) may
-   depend on. Public (not `defn-`/`^:private`) AND either in a module-root ns
-   (<= 2 segments) or `^:export` in a deeper ns. (Mirrors the boundary notion in
-   `edit.modules/schema-refusal`; a shared `module-external?` could DRY the two.)"
-  [store ns-sym form-name]
-  (when-let [e (store/form-named store (symbol (str ns-sym)) (symbol (str form-name)))]
-    (let [form (try (n/sexpr (:node e)) (catch Exception _ nil))]
-      (and (seq? form) (= 'defn (first form))
-           (not (:private (meta (second form))))
-           (or (= (str ns-sym) (edit.modules/module-of ns-sym))
-               (boolean (edit.modules/export-level store ns-sym form-name)))))))
+(defn node-boundary?
+  "True when a `defn` `form` (sexpr) in `ns-sym` is reachable from OUTSIDE its
+   module — a public defn in a module-root ns (<= 2 segments), or an `^:export`
+   defn in a deeper ns. Node-based (reads the sexpr's own metadata), so it judges
+   an OLD form version too — which is what lets visibility NARROWING be detected."
+  [ns-sym form]
+  (and (seq? form) (= 'defn (first form))
+       (not (:private (meta (second form))))
+       (or (= (str ns-sym) (edit.modules/module-of ns-sym))
+           (let [x (:export (meta (second form)))]
+             (or (true? x) (string? x) (symbol? x))))))
 
+(defn- arg-map-keys
+  "The set of keys of a defn's `:=>` `:malli/schema` FIRST arg when that arg is a
+   `:map` schema, else nil. `[:=> [:cat [:map [:a A] [:b B]]] R]` → `#{:a :b}`
+   (a `:map` properties map and per-key `:optional` opts are tolerated)."
+  [form]
+  (let [sch (:malli/schema (meta (second form)))]
+    (when (and (vector? sch) (= :=> (first sch)))
+      (let [cat  (second sch)
+            arg1 (when (and (vector? cat) (= :cat (first cat))) (second cat))]
+        (when (and (vector? arg1) (= :map (first arg1)))
+          (into #{} (keep #(when (vector? %) (first %)) (rest arg1))))))))
+
+(defn removed-schema-keys
+  "Arg-map keys present in `old-form`'s `:=>` schema but GONE from `new-form`'s — a
+   NARROWING of the accepted map (a caller still passing that key now fails
+   validation). Empty when either side lacks a `:map` arg schema (undeterminable)
+   or keys were only ADDED (accretion)."
+  [old-form new-form]
+  (let [o (arg-map-keys old-form)
+        n (arg-map-keys new-form)]
+    (if (and o n) (set/difference o n) #{})))
 (defn breaking-changes
-  "The episode's likely CONTRACT BREAKAGES: a CHANGED module-external `defn` whose
-   fixed-arity surface NARROWED vs its state at the last-done baseline (Hickey's
-   Spec-ulation — growth is safe, breakage must be visible). Returns
-   [{:form :removed-arities} …] — an ADVISORY (external callers a slice can't see
-   may break; internal callers already turn red via the tests). A form added this
-   episode has no baseline and is skipped; variadic/non-`defn` interfaces are not
-   judged. Baseline = `sources-at` the previous `:done` delta, so it fires once,
-   in the episode that narrows."
+  "The episode's likely CONTRACT BREAKAGES: a CHANGED `defn` that WAS
+   module-external at the last-done baseline and whose surface NARROWED — Hickey's
+   Spec-ulation (growth is safe, breakage must be visible to the external callers a
+   slice can't see). Three narrowings, each additive to the finding:
+   `:removed-arities` (a fixed arity dropped), `:removed-keys` (a `:=>` arg-map key
+   dropped), `:visibility-narrowed` (was a boundary, now private / unexported).
+   Returns `[{:form …} …]` — ADVISORY (internal callers already turn the tests
+   red). Filtered on the OLD form's boundary status via `node-boundary?`, so a
+   public→private narrowing is still seen. New forms (no baseline) and forms that
+   were never a boundary are skipped."
   [store changed-fids]
   (let [baseline (->> (store/deltas store)
                       (filter #(= :done (:op %)))
@@ -61,17 +82,23 @@
     (if-not baseline
       []
       (let [old-srcs (store/sources-at store baseline)]
-        (vec (for [fid   changed-fids
-                   :let  [e       (store/form-by-id store fid)
-                          ns-sym  (store/ns-of-form-id store fid)
-                          old-src (get old-srcs fid)]
-                   :when (and e ns-sym old-src (:name e)
-                              (boundary-fn? store ns-sym (:name e)))
-                   :let  [old-form (try (n/sexpr (p/parse-string old-src))
+        (vec (keep
+              (fn [fid]
+                (let [e       (store/form-by-id store fid)
+                      ns-sym  (store/ns-of-form-id store fid)
+                      old-src (get old-srcs fid)]
+                  (when (and e ns-sym old-src (:name e))
+                    (let [old-form (try (n/sexpr (p/parse-string old-src))
                                         (catch Exception _ nil))
-                          new-form (try (n/sexpr (:node e)) (catch Exception _ nil))
-                          removed  (when (and old-form new-form)
-                                     (removed-arities old-form new-form))]
-                   :when (seq removed)]
-               {:form (symbol (str ns-sym) (str (:name e)))
-                :removed-arities (vec (sort removed))}))))))
+                          new-form (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                      (when (and old-form new-form (node-boundary? ns-sym old-form))
+                        (let [rem-ar (removed-arities old-form new-form)
+                              rem-ks (removed-schema-keys old-form new-form)
+                              vis?   (not (node-boundary? ns-sym new-form))
+                              finding (cond-> {:form (symbol (str ns-sym) (str (:name e)))}
+                                        (seq rem-ar) (assoc :removed-arities (vec (sort rem-ar)))
+                                        (seq rem-ks) (assoc :removed-keys (vec (sort rem-ks)))
+                                        vis?         (assoc :visibility-narrowed true))]
+                          (when (> (count finding) 1) finding)))))))
+              changed-fids))))))
+
