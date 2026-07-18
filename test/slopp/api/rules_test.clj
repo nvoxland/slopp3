@@ -4,8 +4,8 @@
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
-    (is (= #{:schema-drift :key-typos :breaking-changes}
-           (set (map :key rules/done-advisories))))
+    (is (set/subset? #{:schema-drift :key-typos :breaking-changes}
+                     (set (map :key rules/done-advisories))))
     (is (every? (fn [r] (and (:severity r) (:check r))) rules/done-advisories))
     (testing "schema-drift is status-affecting (a lying schema is a real failure); the rest advise"
       (is (= :error (:severity (first (filter #(= :schema-drift (:key %)) rules/done-advisories)))))
@@ -81,4 +81,34 @@
                           :prompt "escalate an advisory")
         (let [kt (first (filter #(= :key-typos (:rule %)) (api/query-rules sess)))]
           (is (= :error (:severity kt)) (pr-str kt))))
+      (finally (api/close! sess)))))
+
+(deftest ambient-state-and-bare-throw-checks
+  (let [src (str "(ns app.core)\n"
+                 "(def cache (atom {}))\n"
+                 "(def limit 5)\n"
+                 "(defn handle [x] (throw (IllegalArgumentException. \"no\")))\n"
+                 "(defn ok [x] (throw (ex-info \"no\" {})))\n")
+        s   (store/ingest (store/empty-store) 'app.core src)
+        all (mapv #(:id (store/form-named s 'app.core %)) '[cache limit handle ok])]
+    (testing "ambient-state flags a global (def _ (atom …)), not a plain def"
+      (is (= '[app.core/cache] (mapv :form (rules/ambient-state-check nil s all)))))
+    (testing "bare-throw flags a boundary fn throwing a constructed non-ex-info exception"
+      (is (= '[app.core/handle] (mapv :form (rules/bare-throw-check nil s all)))))))
+
+(deftest ^:isolated done-surfaces-ambient-state-and-bare-throw
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (api/done! sess :label "baseline")
+      (api/add-form! sess 'as.core "(def cache (atom {}))" :prompt "a global atom")
+      (api/add-form! sess 'as.core "(defn boom \"B.\" [x] (throw (IllegalArgumentException. \"e\")))"
+                     :prompt "a bare throw at a boundary")
+      (let [r (api/done! sess :label "check")]
+        (testing "the ambient global atom is flagged"
+          (is (= '[as.core/cache] (mapv :form (get-in r [:findings :ambient-state])))
+              (pr-str (:findings r))))
+        (testing "the boundary bare throw is flagged"
+          (is (= '[as.core/boom] (mapv :form (get-in r [:findings :bare-throw])))
+              (pr-str (:findings r)))))
       (finally (api/close! sess)))))
