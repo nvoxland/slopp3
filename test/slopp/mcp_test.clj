@@ -686,7 +686,7 @@
   (let [sess (api/open!)]
     (try
       (let [rs (edn/read-string (call sess "query_rules" {}))]
-        (is (= 7 (count rs)) (pr-str rs))
+        (is (>= (count rs) 9) (pr-str rs))
         (is (contains? (set (map :rule rs)) :schema-drift) (pr-str rs))
         (is (= :refuse (:severity (first (filter #(= :schema-refusal (:rule %)) rs))))
             (pr-str rs)))
