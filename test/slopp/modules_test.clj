@@ -451,3 +451,45 @@
     (testing "an unrelated rule dialed :off leaves the tier gate firing"
       (let [other (first (store/record-config-put t "rules" :manifest "schema-refusal" "off"))]
         (is (re-find #"functional-core" (str (modules/gate-refusal other 'app.core 'tick!))))))))
+
+(deftest namespaced-keys-gate
+  (let [bare      "(ns app.core)\n\n(defn handle \"H.\" [{:keys [id]}] id)\n"
+        qualified "(ns app.core)\n\n(defn handle \"H.\" [{:user/keys [id]}] id)\n"
+        no-map    "(ns app.core)\n\n(defn handle \"H.\" [id] id)\n"
+        private   "(ns app.core)\n\n(defn- handle \"H.\" [{:keys [id]}] id)\n"
+        on (fn [src ns]
+             (first (store/record-config-put
+                     (store/ingest (store/empty-store) ns src)
+                     "gates" :manifest "require-namespaced-keys" "true")))]
+    (testing "OFF by default (opt-in) → never fires"
+      (let [s (store/ingest (store/empty-store) 'app.core bare)]
+        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+    (testing "ON: a module-external fn destructuring unqualified :keys is refused"
+      (let [s (on bare 'app.core)]
+        (is (re-find #"namespaced" (str (modules/namespaced-keys-refusal s 'app.core 'handle))))))
+    (testing "ON: namespaced :ns/keys passes"
+      (let [s (on qualified 'app.core)]
+        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+    (testing "ON: a non-map first arg is not a boundary-keys case"
+      (let [s (on no-map 'app.core)]
+        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+    (testing "ON: a private fn is not a module boundary"
+      (let [s (on private 'app.core)]
+        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))))
+
+(deftest ^:isolated namespaced-keys-gate-refuses-boundary-writes
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'nk.core "(ns nk.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
+                        :prompt "require namespaced boundary keys")
+      (testing "a boundary fn destructuring unqualified :keys is hard-refused"
+        (let [r (api/add-form! sess 'nk.core "(defn accept \"A.\" [{:keys [id]}] id)"
+                               :prompt "bare keys at the boundary")]
+          (is (re-find #"namespaced" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'nk.core 'accept)))))
+      (testing "the namespaced form lands"
+        (let [r (api/add-form! sess 'nk.core "(defn accept \"A.\" [{:acct/keys [id]}] id)"
+                               :prompt "namespaced keys")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))

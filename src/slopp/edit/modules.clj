@@ -252,13 +252,47 @@
     (keyword v)
     default))
 
+(defn ^:export namespaced-keys-refusal
+  "The opt-in NAMESPACED-BOUNDARY-KEYS gate over the CANDIDATE store (D9): when
+   the store opts in (config file `gates`, key `require-namespaced-keys` = `true`;
+   OFF by default), a MODULE-EXTERNAL `defn` whose FIRST arg destructures
+   UNQUALIFIED `:keys` (`{:keys [id]}`) is refused — a boundary map should carry
+   namespaced domain keys (`{:some.ns/keys [id]}`), self-documenting at the use
+   site and safe against the silent nil-pun. Structural only. Returns a teaching
+   string, or nil when clean / opted-out. (Boundary + arglist detection mirrors
+   `schema-refusal`; a shared helper could DRY them.)"
+  [candidate ns-sym form-name]
+  (when (= "true" (get-in candidate [:config "gates" :values "require-namespaced-keys"]))
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [form (try (n/sexpr (:node e)) (catch Exception _ nil))]
+        (when (and (seq? form) (= 'defn (first form)))
+          (let [nm        (second form)
+                nmeta     (meta nm)
+                body      (drop 2 form)
+                body      (cond->> body (string? (first body)) rest)
+                body      (cond->> body (map? (first body)) rest)
+                arglist   (cond (vector? (first body)) (first body)
+                                (seq? (first body))    (first (first body)))
+                param     (first arglist)
+                bare?     (and (map? param) (contains? param :keys))
+                public?   (not (:private nmeta))
+                external? (or (= (str ns-sym) (module-of ns-sym))
+                              (boolean (export-level candidate ns-sym form-name)))]
+            (when (and public? external? bare?)
+              (str ns-sym "/" form-name " destructures unqualified :keys at a"
+                   " module boundary, but this store requires namespaced domain"
+                   " keys — use {:some.ns/keys [...]} (self-documenting at the use"
+                   " site, safe against the nil-pun), or opt out with config_file:"
+                   " path `gates` key `require-namespaced-keys` unset true"))))))))
+
 (def per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
   (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
   the stale fns, the composed-def trap — and so the reference graph sees them.
-  Register a new per-form write gate HERE, not at the N write sites."
-  [#'module-refusal #'tier-refusal #'schema-refusal])
+  Register a new per-form write gate HERE, not at the N write sites. Each gate's
+  per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`."
+  [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal])
 
 (defn ^:export gate-refusal
   "Run every per-form write gate over the CANDIDATE store (the rule-registry
