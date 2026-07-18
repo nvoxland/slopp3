@@ -182,7 +182,7 @@
                  (seq b-pure)  (assoc :pure b-pure)
                  (seq b-reads) (assoc :reads b-reads))}))
 
-(defn ^:export tier-refusal
+(defn ^:export ^{:rule/applies-to :production} tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
    form whose reachability exceeds its module's declared purity tier.
    `:pure` rejects ANY effect (incl. an opaque-dep read) AND any NON-DETERMINISM
@@ -202,7 +202,10 @@
     ;; Gating them makes declaring a module :pure silently strand its own
     ;; test namespace — caught by cleanup {all true} on slopp's own store,
     ;; where :pure on slopp.normalize had already stranded its tests.
-    (and (not= tier :effects) (not (render/test-ns? ns-sym)))
+    ;; the test exemption now lives in the registry (^{:rule/applies-to
+    ;; :production}), read by gate-check — not restated here, where a REPORT
+    ;; of this same rule could not see it
+    (not= tier :effects)
       (let [analysis (index/analyze (render/render-ns candidate ns-sym))
             dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
             eff      (if (= tier :pure)
@@ -360,7 +363,7 @@
                " ^:foreign-keys; or opt out with config_file: path `gates` key"
                " `require-namespaced-keys` unset true"))))))
 
-(def per-form-write-gates
+(def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
   (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
@@ -385,8 +388,15 @@
    dial's warn-but-proceed mode). `gate-refusal` is the blocking view."
   [candidate ns-sym form-name]
   (reduce (fn [acc gate]
-            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)]
-              (if (= :off sev)
+            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)
+                  ;; a gate declares whether it applies to TEST namespaces.
+                  ;; Declared once, here, so a gate and any REPORT of the same
+                  ;; rule cannot disagree — they did: purity-standing excluded
+                  ;; tests while tier-refusal gated them, so the report
+                  ;; recommended a tier the gate would then punish.
+                  skip? (and (= :production (:rule/applies-to (meta gate) :all))
+                             (render/test-ns? ns-sym))]
+              (if (or (= :off sev) skip?)
                 acc
                 (if-let [t (gate candidate ns-sym form-name)]
                   (if (= :advisory sev)

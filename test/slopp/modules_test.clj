@@ -623,3 +623,30 @@
                                :prompt "stale marker")]
           (is (re-find #"remove the flag" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated rule-test-applicability-is-declared-not-rediscovered
+  ;; Whether a rule applies to TEST namespaces bit twice: a :pure tier silently
+  ;; stranded its own test namespace, and effect-naming flagged three test
+  ;; helpers. Each was fixed ad hoc. Worse, two surfaces answered the question
+  ;; DIFFERENTLY — purity-standing excluded tests when recommending a tier
+  ;; while tier-refusal gated them, so the report recommended a tier the gate
+  ;; would then punish, and nothing could see the contradiction.
+  ;;
+  ;; It is now declared on the gate itself via ^{:rule/applies-to :production},
+  ;; so there is ONE answer and both surfaces read it.
+  (testing "every write gate declares its applicability"
+    (doseq [g modules/per-form-write-gates]
+      (is (contains? #{:all :production} (:rule/applies-to (meta g) :all))
+          (str (:name (meta g)) " must declare :rule/applies-to :all or"
+               " :production — leaving it implicit is how two surfaces"
+               " disagreed about tests"))))
+  (testing "the purity gate is production-only, and says so in one place"
+    (is (= :production (:rule/applies-to (meta #'modules/tier-refusal)))))
+  (testing "and the report agrees with the gate by construction"
+    (let [sess (api/open!)]
+      (try
+        (api/ingest! sess 'ra.core "(ns ra.core)\n(defn add [x y] (+ x y))\n")
+        (api/ingest! sess 'ra.core-test "(ns ra.core-test)\n(defn setup! [f] (slurp f))\n")
+        (is (= :pure (:supports (modules/tier-report (:store @sess) 'ra.core)))
+            "the effectful TEST namespace must not veto the module's tier")
+        (finally (api/close! sess))))))

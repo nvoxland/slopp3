@@ -616,6 +616,46 @@
         (catch Exception e
           {:error (str "unparseable source (unbalanced?): " (ex-message e))})))))
 
+(defn contract-drift
+  "What replacing `old-node` with `new-node` changed that the author probably
+  did not mean to: `[{:kind :metadata-lost|:docstring-lost|:arity-changed
+  :detail …}]`, empty when the contract is intact.
+
+  Reported, never refused — dropping a hint, a docstring or an arity is
+  sometimes exactly the intent. The point is that it is never SILENT. A
+  refactor here once rebuilt a destructuring from `sexpr` and quietly dropped
+  `^Repository`, turning direct interop into reflection: it compiled, passed
+  every gate, and reported green. The only way to catch that was to re-read
+  the form afterwards, which is the agent doing the write result's job."
+  [old-node new-node]
+  (let [sx    (fn [nd] (try (n/sexpr nd) (catch Exception _ nil)))
+        hints (fn [nd]
+                ;; every ^Hint in the form's source, by the symbol it rides
+                (into {} (for [zl   (->> (iterate z/next (z/of-string (n/string nd)))
+                                         (take-while (complement z/end?)))
+                               :let [nd* (z/node zl)]
+                               :when (= :meta (n/tag nd*))
+                               ;; children include the whitespace between ^Hint and the symbol
+                               :let [[m v] (filter n/sexpr-able? (n/children nd*))]
+                               :when (symbol? (sx v))]
+                           [(sx v) (n/string m)])))
+        docs  (fn [nd] (let [s (sx nd)]
+                         (when (and (seq? s) (string? (nth s 2 nil))) (nth s 2))))
+        arits (fn [nd] (mapv count (modules/fn-arglists (sx nd))))
+        lost  (remove (fn [[sym _]] (contains? (hints new-node) sym))
+                      (hints old-node))]
+    (cond-> []
+      (seq lost)
+      (conj {:kind :metadata-lost
+             :detail (into {} (map (fn [[s m]] [s m])) lost)})
+
+      (and (docs old-node) (not (docs new-node)))
+      (conj {:kind :docstring-lost})
+
+      (not= (arits old-node) (arits new-node))
+      (conj {:kind :arity-changed
+             :detail {:was (arits old-node) :now (arits new-node)}}))))
+
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
@@ -636,17 +676,20 @@
       {:error (isolation-refusal (require-aliases store ns-sym) node)}
 
       :else
-      (if-let [[store' delta] (store/replace-node store ns-sym form-name node
-                                                  :prompt prompt :agent agent)]
-        (let [{:keys [refuse advisories]}
-              (modules/gate-check store' ns-sym (or (store/form-symbol node) form-name))]
-          (if refuse
-            {:error refuse}
-            (cond-> {:store    store'
-                     :delta    delta
-                     :warnings (ns-warnings store' ns-sym)}
-              (seq advisories) (assoc :advisories advisories))))
-        (missing-form-error store ns-sym form-name)))))
+      (let [old (:node (store/form-named store ns-sym form-name))]
+        (if-let [[store' delta] (store/replace-node store ns-sym form-name node
+                                                    :prompt prompt :agent agent)]
+          (let [{:keys [refuse advisories]}
+                (modules/gate-check store' ns-sym (or (store/form-symbol node) form-name))
+                drift (when old (contract-drift old node))]
+            (if refuse
+              {:error refuse}
+              (cond-> {:store    store'
+                       :delta    delta
+                       :warnings (ns-warnings store' ns-sym)}
+                (seq advisories) (assoc :advisories advisories)
+                (seq drift)      (assoc :drift drift))))
+          (missing-form-error store ns-sym form-name))))))
 
 (defn apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:

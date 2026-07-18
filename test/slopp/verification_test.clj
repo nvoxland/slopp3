@@ -418,3 +418,23 @@
           (is (= :all (:affected r)) (pr-str (select-keys r [:affected])))
           (is (:untested r) "the per-write path admits it could not cover this")))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated restart-recovers-from-a-broken-image-handle
+  ;; restart is the correctness backstop, and it had a bootstrapping
+  ;; dependency on the thing most likely to be broken: it stopped the current
+  ;; image (reading that handle) and could adopt a warm spare built under
+  ;; older code. When a rename changed the handle's SHAPE, every image-touching
+  ;; operation died — including undo AND restart — and only an out-of-process
+  ;; MCP restart recovered it. Twice.
+  ;;
+  ;; A repair tool must not require the thing it repairs to be healthy.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rr.core "(ns rr.core)\n(defn f [] 41)\n")
+      (is (= [41] (api/query-eval sess "(rr.core/f)")))
+      (testing "with a garbage image handle, restart still rebuilds"
+        (swap! sess assoc :image {:bogus true} :spare nil)
+        (is (some? (api/restart! sess)))
+        (is (= [41] (api/query-eval sess "(rr.core/f)"))
+            "the store reloads into a genuinely fresh image"))
+      (finally (api/close! sess)))))

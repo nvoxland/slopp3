@@ -863,6 +863,9 @@
                        :test     summary
                        :affected (or affected :all)}
                 (:image-healed r) (assoc :image-healed true)
+                ;; what this write changed BEYOND what was asked — a lost type
+                ;; hint, docstring or arity. Reported, never refused.
+                (seq (:drift r)) (assoc :drift (:drift r))
                 (pos? existing)   (assoc :existing-warnings existing)
                 untested          (assoc :untested true)
                 (:red-first r)    (assoc :red-first (:red-first r)
@@ -3570,7 +3573,7 @@
   dialect/isolation gates and the test run judge the result. eval9's
   measured loss (13.6k tokens / 37 calls / one restart for zone->region
   across 41 nses vs sed's one pass) is this op's demand signal."
-  [session from to & {:keys [prompt agent]}]
+  [session from to & {:keys [prompt agent dry-run]}]
   (let [from (str from)
         to   (str to)
         pat  (re-pattern (str "(?<![A-Za-z])"
@@ -3587,18 +3590,25 @@
       :else
       (let [nses (filterv #(re-find pat (str %))
                           (keys (:namespaces (:store @session))))
-            nsr  (reduce (fn [acc nsx]
-                           (if (:error acc)
-                             acc
-                             (let [new-ns (str/replace (str nsx) pat to)
-                                   r (ns-rename! session (str nsx) new-ns
-                                                 :prompt why :agent agent)]
-                               (if (:error r)
-                                 {:error (str "renaming " nsx ": " (:error r))}
-                                 (update acc :renamed-namespaces conj
-                                         [nsx (symbol new-ns)])))))
-                         {:renamed-namespaces []}
-                         (sort nses))]
+            ;; namespace renames WRITE, so a preview must not run them — it
+                     ;; reports what they would be instead
+                     nsr  (if dry-run
+                            {:renamed-namespaces
+                             (mapv (fn [nsx]
+                                     [nsx (symbol (str/replace (str nsx) pat to))])
+                                   (sort nses))}
+                            (reduce (fn [acc nsx]
+                                      (if (:error acc)
+                                        acc
+                                        (let [new-ns (str/replace (str nsx) pat to)
+                                              r (ns-rename! session (str nsx) new-ns
+                                                            :prompt why :agent agent)]
+                                          (if (:error r)
+                                            {:error (str "renaming " nsx ": " (:error r))}
+                                            (update acc :renamed-namespaces conj
+                                                    [nsx (symbol new-ns)])))))
+                                    {:renamed-namespaces []}
+                                    (sort nses)))]
         (if (:error nsr)
           nsr
           (let [st    (:store @session)
@@ -3633,6 +3643,28 @@
               (and (empty? steps) (empty? (:renamed-namespaces nsr)))
               {:error (str "nothing named " from
                            " in the store — query_search shows what exists")}
+
+              ;; PREVIEW: a sweep is store-wide and rewrites string literals as
+              ;; well as code. Sweeping prose is intended; rewriting a test
+              ;; FIXTURE is not, and does it silently. Separate the two so the
+              ;; string hits get an eye before anything lands.
+              dry-run
+              (let [classify (fn [{:keys [ns name]}]
+                               (let [src (n/string (:node (store/form-named
+                                                           (:store @session) ns name)))]
+                                 {:form (symbol (str ns) (str name))
+                                  :strings? (refactor/match-in-strings? src pat)}))
+                    rows     (mapv classify steps)]
+                (merge nsr
+                       {:dry-run true
+                        :forms (count steps)
+                        :in-code (filterv (complement :strings?) rows)
+                        :in-strings (filterv :strings? rows)}
+                       (when (some :strings? rows)
+                         {:note (str "string-literal hits REVIEW FIRST: a sweep"
+                                     " rewrites keyword text inside strings, so"
+                                     " a test fixture can be left"
+                                     " self-inconsistent")})))
 
               (empty? steps)
               (assoc nsr :forms 0)

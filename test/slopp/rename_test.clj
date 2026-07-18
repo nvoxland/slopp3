@@ -182,3 +182,40 @@
       (testing "and it still evaluates"
         (is (= [["c" 1]] (api/query-eval sess "(hint.core/use-it (hint.core/mk))"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated sweep-dry-run-separates-string-hits-from-code
+  ;; A sweep is store-wide and rewrites prose and STRING LITERALS as well as
+  ;; code. Sweeping prose is the documented intent — but a fixture string is
+  ;; not prose, and a :repo sweep silently rewrote the literal inside a test
+  ;; fixture without touching the {:keys [...]} in that same string, leaving
+  ;; the fixture self-inconsistent. It was caught only because done ran it.
+  ;;
+  ;; So the preview must SEPARATE string hits from code hits: those are the
+  ;; ones a human has to eyeball. Without it I priced every sweep by hand with
+  ;; query_store first, which is the tool's job, not mine.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dr.core
+                   (str "(ns dr.core)\n\n"
+                        "(defn real [] {:dr/target 1})\n\n"
+                        "(defn fixture []\n"
+                        "  \"a :dr/target inside a string — data, not prose\")\n"))
+      (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed" :dry-run true)]
+        (testing "nothing is written"
+          (is (:dry-run r) (pr-str r))
+          (is (re-find #":dr/target" (api/query-source sess 'dr.core))
+              "the store must be untouched by a preview"))
+        (testing "code hits and string hits are reported separately"
+          (is (= '[dr.core/real] (mapv :form (:in-code r))) (pr-str r))
+          (is (= '[dr.core/fixture] (mapv :form (:in-strings r))) (pr-str r))))
+      (testing "a preview does not rename NAMESPACES either — that phase writes"
+        (let [r (api/rename-sweep! sess "dr" "renamed" :dry-run true)]
+          (is (= '[[dr.core renamed.core]] (:renamed-namespaces r)) (pr-str r))
+          (is (contains? (set (keys (:namespaces (:store @sess)))) 'dr.core)
+              "the namespace must still exist after a preview")))
+      (testing "without dry-run it still writes"
+        (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed"
+                                   :prompt "for real")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (re-find #":dr/renamed" (api/query-source sess 'dr.core)))))
+      (finally (api/close! sess)))))

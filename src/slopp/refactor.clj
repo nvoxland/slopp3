@@ -1029,6 +1029,26 @@
                    (let [have (set (map :lib (require-specs store to-ns)))]
                      (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))
 
+(defn match-in-strings?
+  "True when `pat` matches inside a STRING LITERAL of `src` — as opposed to
+  matching code.
+
+  A sweep rewrites prose and string contents deliberately (a docs-team rename
+  means everything named that). But a string literal is not always prose: a
+  test FIXTURE is data, and rewriting a keyword inside one while leaving the
+  `{:keys [...]}` in that same string alone makes the fixture silently
+  self-inconsistent. Separating the two is what lets a preview say which hits
+  need a human eye."
+  [src pat]
+  (boolean
+   (some (fn [zl]
+           (let [nd (z/node zl)]
+             (and (= :token (n/tag nd))
+                  (string? (try (n/sexpr nd) (catch Exception _ nil)))
+                  (re-find pat (str (try (n/sexpr nd) (catch Exception _ "")))))))
+         (->> (iterate z/next (z/of-string src))
+              (take-while (complement z/end?))))))
+
 (defn requalify-keys
   "Rewrite `{:keys [x]}` destructuring to `{:to-ns/keys [x]}` for the single key
   named `key-name`, leaving every other key in the vector where it is.

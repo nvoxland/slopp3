@@ -365,3 +365,42 @@
         (is (some #{'slow} (:tests (:isolated-pending (:test r))))
             (str "slow must be deferred, not run in-image: " (pr-str (:test r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-write-reports-what-it-changed-that-you-did-not-name
+  ;; A refactor silently dropped ^Repository and ^java.sql.Connection from a
+  ;; destructuring, turning direct interop into reflection. It compiled, passed
+  ;; every gate, and reported green — I found it only because I happened to
+  ;; re-read the form. Re-reading after every write is compensation for the
+  ;; write result not saying what it did.
+  ;;
+  ;; A replacement that quietly changes the CONTRACT — losing type hints or a
+  ;; docstring, changing arity — should say so. Not refuse: each is a
+  ;; legitimate intentional edit. Just never silent.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dw.core
+                   (str "(ns dw.core)\n\n"
+                        "(defn f\n  \"Has a docstring.\"\n"
+                        "  [{:keys [^String a]} b] [a b])\n"))
+      (testing "losing a type hint is reported"
+        (let [r (api/edit-replace! sess 'dw.core 'f
+                                   "(defn f\n  \"Has a docstring.\"\n  [{:keys [a]} b] [a b])"
+                                   :prompt "drop the hint")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some #(= :metadata-lost (:kind %)) (:drift r)) (pr-str r))))
+      (testing "losing a docstring is reported"
+        (let [r (api/edit-replace! sess 'dw.core 'f
+                                   "(defn f [{:keys [a]} b] [a b])"
+                                   :prompt "drop the docstring")]
+          (is (some #(= :docstring-lost (:kind %)) (:drift r)) (pr-str r))))
+      (testing "changing arity is reported"
+        (let [r (api/edit-replace! sess 'dw.core 'f
+                                   "(defn f [{:keys [a]}] a)"
+                                   :prompt "drop an arg")]
+          (is (some #(= :arity-changed (:kind %)) (:drift r)) (pr-str r))))
+      (testing "an ordinary edit reports no drift at all"
+        (let [r (api/edit-replace! sess 'dw.core 'f
+                                   "(defn f [{:keys [a]}] (identity a))"
+                                   :prompt "same contract")]
+          (is (empty? (:drift r)) (pr-str r))))
+      (finally (api/close! sess)))))

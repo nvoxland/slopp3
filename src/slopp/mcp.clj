@@ -133,6 +133,9 @@
           (:renamed-namespaces r) (assoc :renamed-namespaces (:renamed-namespaces r))
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
+          ;; drift must survive the terse path — it exists precisely to be
+          ;; seen on a write the agent would otherwise call done with
+          (seq (:drift r)) (assoc :drift (:drift r))
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
                                               ;; a run that executed NOTHING is unverified, not green — green must
                                               ;; mean tests ran and passed, or an agent learns to distrust
