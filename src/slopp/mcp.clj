@@ -582,7 +582,7 @@
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys [:error :warnings :existing-warnings :hint :forms
                                                   :untested :image-healed :test :affected :delta
-                                                  :red-first :carried-errors :note])
+                                                  :red-first :carried-errors :note :advisories])
                                     (summarize (:verbose a))))
       "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (src :source)
                                                    :prompt (:prompt a)
@@ -590,7 +590,7 @@
                                                    :before (some-> (:before a) symbol))
                                     (select-keys [:error :warnings :existing-warnings :hint
                                                   :untested :image-healed :test :affected :delta
-                                                  :red-first :carried-errors :note])
+                                                  :red-first :carried-errors :note :advisories])
                                     (summarize (:verbose a))))
       "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
