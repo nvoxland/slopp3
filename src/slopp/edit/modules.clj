@@ -328,20 +328,37 @@
    UNQUALIFIED `:keys` (`{:keys [id]}`) is refused — a boundary map should carry
    namespaced domain keys (`{:some.ns/keys [id]}`), self-documenting at the use
    site and safe against the silent nil-pun. Structural only; shares
-   `module-external?` + `fn-arglists` with the other boundary gates. Returns a
-   teaching string, or nil when clean / opted-out."
+   `module-external?` + `fn-arglists` with the other boundary gates.
+
+   `^:foreign-keys` on the NAME discharges it, for the one case our own code
+   cannot fix: a fn destructuring a THIRD-PARTY map (clj-kondo analysis, a JDBC
+   row) whose keys are not ours to rename. Like `^:ambient-ok` and
+   `^:unused-ok` it POLICES ITSELF — a marker on a fn with no unqualified
+   boundary keys is refused with 'remove the flag', so it cannot decay into a
+   blanket opt-out sprinkled to silence the gate.
+
+   Returns a teaching string, or nil when clean / opted-out."
   [candidate ns-sym form-name]
   (when (= "true" (get-in candidate [:config "gates" :values "require-namespaced-keys"]))
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
-      (let [form  (try (n/sexpr (:node e)) (catch Exception _ nil))
-            bare? (boolean (some #(and (map? (first %)) (contains? (first %) :keys))
-                                 (fn-arglists form)))]
-        (when (and (module-external? ns-sym form) bare?)
+      (let [form    (try (n/sexpr (:node e)) (catch Exception _ nil))
+            bare?   (boolean (some #(and (map? (first %)) (contains? (first %) :keys))
+                                   (fn-arglists form)))
+            marked? (boolean (and (seq? form) (symbol? (second form))
+                                  (:foreign-keys (meta (second form)))))]
+        (cond
+          (and marked? (not bare?))
+          (str ns-sym "/" form-name " carries ^:foreign-keys but destructures"
+               " no unqualified boundary keys — remove the flag")
+
+          (and (module-external? ns-sym form) bare? (not marked?))
           (str ns-sym "/" form-name " destructures unqualified :keys at a"
                " module boundary, but this store requires namespaced domain"
                " keys — use {:some.ns/keys [...]} (self-documenting at the use"
-               " site, safe against the nil-pun), or opt out with config_file:"
-               " path `gates` key `require-namespaced-keys` unset true"))))))
+               " site, safe against the nil-pun). If the map is THIRD-PARTY and"
+               " its keys are not yours to rename, mark the name"
+               " ^:foreign-keys; or opt out with config_file: path `gates` key"
+               " `require-namespaced-keys` unset true"))))))
 
 (def per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a

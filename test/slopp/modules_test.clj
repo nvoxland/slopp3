@@ -595,3 +595,31 @@
           (is (nil? (:error r))
               (str "tests exercise effects by design: " (pr-str r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated foreign-keys-marks-a-third-party-map-and-polices-itself
+  ;; require-namespaced-keys cannot be satisfied by a fn that destructures
+  ;; SOMEONE ELSE'S map — slopp.build/arg-style takes clj-kondo's analysis, and
+  ;; we do not get to rename kondo's keys. ^:foreign-keys records that, and
+  ;; polices itself like ^:ambient-ok / ^:unused-ok: a marker on a fn that has
+  ;; no bare boundary keys is itself refused, so it cannot decay into a blanket
+  ;; opt-out someone sprinkles to silence the gate.
+  (let [sess (api/open!)]
+    (try
+      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
+      (api/ingest! sess 'fk.core "(ns fk.core)\n")
+      (testing "an unmarked bare-keys boundary fn is refused"
+        (let [r (api/add-form! sess 'fk.core
+                               "(defn takes-bare [{:keys [id]}] id)"
+                               :prompt "bare keys at a boundary")]
+          (is (re-find #"namespaced" (str (:error r))) (pr-str r))))
+      (testing "^:foreign-keys discharges it"
+        (let [r (api/add-form! sess 'fk.core
+                               "(defn ^:foreign-keys takes-foreign [{:keys [id]}] id)"
+                               :prompt "third-party map")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "a marker with nothing to excuse is refused — no blanket opt-out"
+        (let [r (api/add-form! sess 'fk.core
+                               "(defn ^:foreign-keys no-map [x] x)"
+                               :prompt "stale marker")]
+          (is (re-find #"remove the flag" (str (:error r))) (pr-str r))))
+      (finally (api/close! sess)))))
