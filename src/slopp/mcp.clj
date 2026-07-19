@@ -131,6 +131,12 @@
           (:renamed r)  (assoc :renamed (:renamed r))
           (:mentions r) (assoc :mentions (:mentions r))
           (:renamed-namespaces r) (assoc :renamed-namespaces (:renamed-namespaces r))
+          ;; a PREVIEW's payload is the whole point of asking for one —
+          ;; dropping it here made dry-run look like a silent no-op
+          (:dry-run r)    (assoc :dry-run true
+                                 :in-code (:in-code r)
+                                 :in-strings (:in-strings r))
+          (:note r)       (assoc :note (:note r))
           (:forms r)    (assoc :forms (:forms r))
           (:untested r) (assoc :untested true)
           ;; drift must survive the terse path — it exists precisely to be
@@ -620,10 +626,14 @@
                               (throw (ex-info "rename_sweep needs :from and :to (plain words/segments)" {})))
                             (text! (-> (api/rename-sweep! session from to
                                                          :prompt (:prompt a)
-                                                         :agent (:agent a))
+                                                         :agent (:agent a)
+                                                         :dry-run (or (:dry-run a) (:dry_run a)))
                                       (select-keys [:error :source-now :renamed-namespaces :forms
                                                     :group :warnings :existing-warnings
-                                                    :changed-nses :test :affected :deltas])
+                                                    :changed-nses :test :affected :deltas
+                                                    ;; a preview's whole payload — omitting
+                                                    ;; these made dry-run look like a no-op
+                                                    :dry-run :in-code :in-strings :note])
                                       (summarize (:verbose a)))))
       "edit_subform" (let [match (or (:match a) (:from a))
                                 src   (or (:source a) (:to a))]

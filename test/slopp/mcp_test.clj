@@ -899,3 +899,26 @@
           (is (contains? by-name "change_signature"))
           (is (contains? by-name "undo"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated dry-run-is-honored-over-the-wire
+  ;; A preview that silently performs the operation is far worse than no
+  ;; preview. api/rename-sweep! gained :dry-run, but the MCP tool schema and
+  ;; dispatch did not — and the layer IGNORES unknown arguments, so asking for
+  ;; a preview ran a real store-wide sweep. Caught only because I read the
+  ;; result and saw :deltas 5 where :in-code should have been.
+  ;;
+  ;; Silently dropping an unrecognised SAFETY flag turns it into a no-op with
+  ;; the opposite meaning of what was asked.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'dw.core "(ns dw.core)\n(defn f [] {:dw/target 1})\n")
+      (let [before (count (store/deltas (:store @sess)))
+            r      (call! sess "rename_sweep" {:from ":dw/target"
+                                               :to ":dw/renamed"
+                                               :dry-run true})]
+        (is (re-find #":dry-run true" r) r)
+        (is (= before (count (store/deltas (:store @sess))))
+            "a preview over the wire must append NO delta")
+        (is (re-find #":dw/target" (api/query-source sess 'dw.core))
+            "and must not rewrite anything"))
+      (finally (api/close! sess)))))
