@@ -275,3 +275,75 @@
           ;; nothing ready → the remainder is a dependency cycle
           {:order (into order (map nm->id) remaining)
            :cycle (vec (sort (map #(symbol (str nsx) (str %)) remaining)))})))))
+
+(def ^:private ^:ambient-ok kw-refs-memo
+  "Memoize-LAST of the whole-store KEYWORD graph, keyed on store-value
+  IDENTITY — the sibling of `refs-memo`, same rationale: the store is
+  immutable, so a new value appears only on a write, and a benign race under
+  concurrent lines costs at most a rebuild, never a wrong answer."
+  (atom nil))
+
+(defn- form-keyword-uses
+  "`[[kw via] …]` for one form's sexpr — every keyword it references, and HOW.
+
+  `:literal` is a keyword token. `:destructuring` is a `{:keys [x]}` /
+  `{:ns/keys [x]}` entry, which reads `:x` / `:ns/x` while containing no such
+  token — the key is computed from the directive's namespace plus the
+  symbol's NAME, so no text scan can see it.
+
+  The `:keys`/`:strs`/`:syms` directive keyword itself is NOT reported as a
+  literal use: `{:user/keys [id]}` references `:user/id`, not `:user/keys`.
+  Quoted data is pruned by the shared `walk-pruned`."
+  [s]
+  (distinct
+   (walk-pruned
+    (fn [x]
+      (cond
+        (and (keyword? x) (not (#{"keys" "strs" "syms"} (name x))))
+        [[x :literal]]
+
+        (map? x)
+        (for [[k v] x
+              :when (and (keyword? k) (#{"keys" "strs" "syms"} (name k))
+                         (vector? v))
+              sym   v
+              :when (symbol? sym)]
+          [(keyword (namespace k) (name sym)) :destructuring])))
+    s)))
+
+^:reads (defn ^:export keyword-refs
+  "EVERY keyword reference in the store as canonical records — the sibling of
+  `refs` for keys, and the single source for 'who reads this key'.
+  Record: `{:from-form fid :from-ns sym :from-var sym :kw kw
+            :via :literal|:destructuring}`.
+
+  A SIBLING index rather than rows in `refs`, because a keyword has no
+  defining form: it cannot carry `:to-form`, and forcing it into the var
+  record would let the keyword `:a.b/c` collide with a var `a.b/c` in every
+  var-oriented consumer (the unused gate, module gates, cold-load order).
+
+  Two ways a key is referenced, and only one is visible as text:
+
+  - `:literal` — the keyword appears as a token.
+  - `:destructuring` — `{:ns/keys [x]}` reads `:ns/x` while containing NO such
+    token; the key is computed from the directive's namespace plus the
+    symbol's NAME. Every text scan is blind to it, which made `query_depends`
+    on a keyword return a silently INCOMPLETE blast radius — measured on this
+    store, `:slopp.git/map-conn` reported six rows and omitted four
+    consumers, every one a module-boundary fn that destructures it.
+
+  Quote-pruned via the shared `walk-pruned`, and memoized on the immutable
+  store value exactly as `refs` is."
+  [st]
+  (let [c @kw-refs-memo]
+    (if (identical? st (first c))
+      (second c)
+      (let [v (vec (for [nsx  (sort (keys (:namespaces st)))
+                         e    (store/forms st nsx)
+                         :when (:name e)
+                         :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                         [kw via] (when s (form-keyword-uses s))]
+                     {:from-form (:id e) :from-ns nsx :from-var (:name e)
+                      :kw kw :via via}))]
+        (reset! kw-refs-memo [st v])
+        v))))

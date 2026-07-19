@@ -2942,38 +2942,33 @@
   with the using lines. The cross-namespace thread an agent otherwise
   re-derives by reading each layer.
 
-  Two kinds of use, because a keyword can be referenced without appearing:
-  a literal occurrence (boundary-guarded textual scan over rendered forms),
-  and a DESTRUCTURING — `{:user/keys [id]}` reads `:user/id` while containing
-  no such token. Missing the second made this answer silently incomplete at
-  exactly the module-boundary fns that destructure a handle's keys."
+  Reads `edit.refs/keyword-refs` — THE keyword graph — rather than scanning
+  text, so a key read by DESTRUCTURING is included: `{:user/keys [id]}` uses
+  `:user/id` while containing no such token, and a text scan silently omitted
+  exactly the module-boundary fns that destructure a handle. Rows from a
+  destructuring carry `:via :destructuring`."
   [session kw]
-  (let [k      (str/replace (str kw) #"^:" "")
-        target (keyword k)
-        pat    (re-pattern (str "(?<![\\w.:-]):" (java.util.regex.Pattern/quote k)
-                                "(?![\\w?!*+<>=-])"))
-        ;; the directive that would destructure this key: :keys when
-        ;; unqualified, :some.ns/keys when namespaced
+  (let [target (keyword (str/replace (str kw) #"^:" ""))
+        st     (:store @session)
         dpat   (re-pattern (str "(?<![\\w.:-])"
                                 (java.util.regex.Pattern/quote
                                  (str ":" (some-> (namespace target) (str "/")) "keys"))
                                 "(?![\\w-])"))
-        st     (:store @session)]
-    (->> (for [nsx (sort (keys (:namespaces st)))
-               e   (store/forms st nsx)
-               :let [src   (n/string (:node e))
-                     lines (filterv #(re-find pat %) (str/split-lines src))
-                     destr (and (empty? lines)
-                                (contains? (attrs/destructured-keywords (:node e))
-                                           target))
-                     lines (if destr
-                             (filterv #(re-find dpat %) (str/split-lines src))
-                             lines)]
-               :when (seq lines)]
-           (cond-> {:ns nsx :form (or (:name e) (:id e))
-                    :lines (mapv str/trim (take 3 lines))}
-             destr (assoc :via :destructuring)))
-         vec)))
+        lpat   (re-pattern (str "(?<![\\w.:-])"
+                                (java.util.regex.Pattern/quote (str target))
+                                "(?![\\w?!*+<>=-])"))]
+    (->> (refs/keyword-refs st)
+         (filter #(= target (:kw %)))
+         (sort-by (juxt (comp str :from-ns) (comp str :from-var)))
+         (mapv (fn [{:keys [from-ns from-var via]}]
+                 (let [src   (some-> (store/form-named st from-ns from-var)
+                                     :node n/string)
+                       pat   (if (= :destructuring via) dpat lpat)
+                       lines (when src
+                               (filterv #(re-find pat %) (str/split-lines src)))]
+                   (cond-> {:ns from-ns :form from-var
+                            :lines (mapv str/trim (take 3 lines))}
+                     (= :destructuring via) (assoc :via :destructuring))))))))
 (defn query-impact
   "Rock 4: the blast radius of reshaping `ns-sym/nm`, answered from THE
   reference graph — call sites grouped per caller form (:calls),

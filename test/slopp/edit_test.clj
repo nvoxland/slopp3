@@ -4,7 +4,7 @@
             [slopp.render :as render]
             [slopp.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit]))
+            [slopp.edit :as edit] [slopp.edit.refs :as refs]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 
@@ -137,3 +137,42 @@
                                   "form failed to compile: ")]
         (is (nil? (:form r)))
         (is (= "form failed to compile: something broke, no location" (:error r)))))))
+
+(deftest keyword-refs-see-literals-and-destructuring
+  ;; Keywords are the last "N point-fixes standing in for one abstraction".
+  ;; rename_sweep learned about destructuring, then query-flow learned it
+  ;; separately, and everything else stayed blind — because the reference
+  ;; GRAPH has never modelled a keyword at all.
+  ;;
+  ;; A key read via {:ns/keys [x]} appears NOWHERE as a token: it is computed
+  ;; from the directive's namespace plus the symbol's name. Measured on the
+  ;; real store, query_depends on :slopp.git/map-conn returned six rows and
+  ;; silently omitted four consumers — every module-boundary fn that
+  ;; destructures it.
+  ;;
+  ;; A SIBLING index rather than rows in `refs`: a keyword has no defining
+  ;; form, so it cannot carry :to-form, and forcing it into the var record
+  ;; would let the keyword :a.b/c collide with a var a.b/c in every
+  ;; var-oriented consumer.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'kr.core
+                             (str "(ns kr.core)\n\n"
+                                  "(defn mk [] {:kr/conn 1 :plain 2})\n\n"
+                                  "(defn literal [m] (:kr/conn m))\n\n"
+                                  "(defn destructured [{:kr/keys [conn]}] conn)\n\n"
+                                  "(defn bare [{:keys [plain]}] plain)\n\n"
+                                  "(defn quoted [] '(:kr/conn ignored))\n")))
+        by-kw (group-by :kw (refs/keyword-refs st))
+        froms (fn [kw] (set (map :from-var (get by-kw kw))))]
+    (testing "literal occurrences are edges, attributed to their form"
+      (is (contains? (froms :kr/conn) 'literal))
+      (is (contains? (froms :kr/conn) 'mk)))
+    (testing "a DESTRUCTURED key is an edge too — the whole point"
+      (is (contains? (froms :kr/conn) 'destructured)))
+    (testing "the edge says HOW, so a consumer can tell them apart"
+      (is (= #{:literal :destructuring}
+             (set (map :via (get by-kw :kr/conn))))))
+    (testing "an unqualified destructured key resolves unqualified"
+      (is (contains? (froms :plain) 'bare)))
+    (testing "quoted data is pruned, like every other producer"
+      (is (not (contains? (froms :kr/conn) 'quoted))))))
