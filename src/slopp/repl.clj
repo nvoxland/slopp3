@@ -93,7 +93,7 @@
   (eval! handle "(in-ns 'user)")
   handle)
 
-(defn start!
+(defn ^:live-handle start!
   "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
   for eval!/restart!/stop!."
   ([] (start! {}))
