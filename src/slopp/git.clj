@@ -69,7 +69,7 @@
                           PRIMARY KEY (delta_id, fingerprint))"])
   conn)
 
-(defn open-ctx!
+(defn ^:live-handle open-ctx!
   "The projection context over a slopp store dir: bare repo handle, git_map
   connection (main store.db), and the per-process projection lock."
   [dir]

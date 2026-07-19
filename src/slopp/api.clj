@@ -70,7 +70,7 @@
      [])
     {:modules (count edges)
      :edges   (reduce + 0 (map count (vals edges)))}))
-(defn open!
+(defn ^:live-handle open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
   keeps a spare image warming in the background so restarts are near-instant.
@@ -795,8 +795,9 @@
         ;; replacement re-registers the same [multi dispatch] (#131): hot-load
         ;; evals the new form, but nothing removes the old method, so the image
         ;; answers BOTH dispatches while the store says one — green-when-red.
-        old-s    (when-let [e (store/form-named (:store @session) ns-sym nm)]
-                   (try (n/sexpr (:node e)) (catch Exception _ nil)))
+        old-node (some-> (store/form-named (:store @session) ns-sym nm) :node)
+        old-s    (when old-node
+                   (try (n/sexpr old-node) (catch Exception _ nil)))
         new-s    (when-not (:error pf)
                    (try (n/sexpr (:node pf)) (catch Exception _ nil)))
         unregister
@@ -853,6 +854,17 @@
                            (repl/eval! (:image @session) unregister))
                 ;; no trace evidence → fall back to the tests that REACH this
                 ;; namespace, not to tests named after it (there are none)
+                ;; a ^:live-handle constructor changed shape: the map already in
+                ;; the session was built by the OLD code and no write can
+                ;; reach it. Rebuild BEFORE verification, which would
+                ;; otherwise be the first thing to read the stale handle —
+                ;; and discard the warm spare, which was built under the old
+                ;; code too (that is how it broke a second time).
+                handle-shift (when (and old-node (:node pf))
+                               (edit/live-handle-shape-change old-node (:node pf)))
+                _        (when handle-shift
+                           (swap! session assoc :spare nil)
+                           (session/fresh-image! session))
                 scope    (if affected
                            ns-sym
                            (or (seq (session/covering-test-nses
@@ -873,6 +885,11 @@
                 ;; what this write changed BEYOND what was asked — a lost type
                 ;; hint, docstring or arity. Reported, never refused.
                 (seq (:drift r)) (assoc :drift (:drift r))
+                ;; say WHY the image was replaced — a silent rebuild is a
+                ;; surprising cost, and the reason is the teaching
+                handle-shift (assoc :image-rebuilt
+                                    (assoc handle-shift
+                                           :reason :live-handle-shape-change))
                 (pos? existing)   (assoc :existing-warnings existing)
                 untested          (assoc :untested true)
                 (:red-first r)    (assoc :red-first (:red-first r)

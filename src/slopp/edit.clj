@@ -10,7 +10,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.index :as index]
-            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs]))
+            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -615,6 +615,40 @@
               {:node node})))
         (catch Exception e
           {:error (str "unparseable source (unbalanced?): " (ex-message e))})))))
+
+(defn live-handle-shape-change
+  "`{:added #{kw} :removed #{kw}}` when replacing `old-node` with `new-node`
+  changes the KEY SHAPE of a `^:live-handle` constructor — otherwise nil.
+
+  A `^:live-handle` fn returns a map the SESSION holds across calls
+  (`repl/start!`'s image, `git/open-ctx!`'s ctx, `api/open!`'s session). Those
+  are the one piece of state a write cannot reach: a cache keyed on its input
+  is safe by construction — every memo in this store is — but a handle is
+  keyed on NOTHING. It is a resource built once, under one version of the
+  code, and passed back forever after.
+
+  So a write can leave the STORE perfectly consistent (constructor and every
+  reader rewritten together) while the value already in memory still has the
+  old shape. New code, old value: the reader gets nil. That bricked this
+  session twice, unrecoverably, because `undo` and `restart` both work through
+  the handle they would have repaired.
+
+  Deliberately over-broad — it compares the form's whole keyword-literal set
+  rather than trying to identify the returned map, which is often nested
+  (`(inject-rt! {…})`). A false positive costs one image rebuild; a false
+  negative costs the session."
+  [old-node new-node]
+  (let [marked? (fn [nd]
+                  (let [s (store/form-sexpr nd)]
+                    (boolean (and (seq? s) (symbol? (second s))
+                                  (:live-handle (meta (second s)))))))
+        kws     (fn [nd]
+                  (set (filter keyword?
+                               (tree-seq coll? seq (store/form-sexpr nd)))))]
+    (when (or (marked? old-node) (marked? new-node))
+      (let [o (kws old-node) n (kws new-node)]
+        (when (not= o n)
+          {:added (set/difference n o) :removed (set/difference o n)})))))
 
 (defn contract-drift
   "What replacing `old-node` with `new-node` changed that the author probably

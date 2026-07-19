@@ -475,3 +475,46 @@
               (str "a multi-form refactor must not verify nothing: "
                    (pr-str (:test r))))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated live-handle-shape-change-rebuilds-the-image
+  ;; The one failure this project never guarded, and it bricked the session
+  ;; TWICE. slopp's own code lives in the store, so editing slopp.repl
+  ;; hot-reloads it into the process doing the editing. Renaming :client to
+  ;; :slopp.repl/client correctly rewrote start! AND every reader — the store
+  ;; was perfectly consistent — but the map already sitting in (:image @session)
+  ;; was built minutes earlier by the OLD start! and still held :client.
+  ;;
+  ;; New code, old value. eval! read nil and handed it to nREPL. And it was
+  ;; unrecoverable because undo and restart both work THROUGH eval!, which is
+  ;; the thing that had just broken.
+  ;;
+  ;; A cache keyed on its input is safe by construction; every memo in this
+  ;; store is. A HANDLE is keyed on nothing — a resource built once under one
+  ;; version of the code and passed back forever after.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'lh.core
+                   (str "(ns lh.core)\n\n"
+                        "(defn ^:live-handle mk [] {:conn 1 :port 2})\n"))
+      (testing "changing a live-handle's KEY SHAPE rebuilds the image"
+        (let [r (api/edit-replace! sess 'lh.core 'mk
+                                   "(defn ^:live-handle mk [] {:lh/conn 1 :port 2})"
+                                   :prompt "namespace a handle key")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :live-handle-shape-change (:reason (:image-rebuilt r)))
+              (str "a stale handle must be replaced BEFORE anything reads it: "
+                   (pr-str r)))))
+      (testing "the image still works afterwards"
+        (is (= [3] (api/query-eval sess "(+ 1 2)"))))
+      (testing "a body change with the SAME keys does not rebuild"
+        (let [r (api/edit-replace! sess 'lh.core 'mk
+                                   "(defn ^:live-handle mk [] {:lh/conn 9 :port 2})"
+                                   :prompt "same shape, different values")]
+          (is (nil? (:image-rebuilt r)) (pr-str r))))
+      (testing "an UNMARKED fn changing its keys does not rebuild — no handle"
+        (api/ingest! sess 'lh.plain "(ns lh.plain)\n(defn mk [] {:a 1})\n")
+        (let [r (api/edit-replace! sess 'lh.plain 'mk
+                                  "(defn mk [] {:b 1})"
+                                  :prompt "ordinary map, not a handle")]
+          (is (nil? (:image-rebuilt r)) (pr-str r))))
+      (finally (api/close! sess)))))
