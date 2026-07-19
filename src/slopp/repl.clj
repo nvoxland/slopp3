@@ -102,9 +102,13 @@
 
 (defn ^:live-handle start!
   "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
-  for eval!/restart!/stop!."
+  for eval!/restart!/stop!.
+
+  The OPTION map is a caller-built contract, so its keys are qualified —
+  unlike the handle this returns, whose keys are internal and read in the
+  body by `eval!`/`stop!` rather than destructured at any boundary."
   ([] (start! {}))
-  ([{:keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
+  ([{:slopp.repl/keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
    (let [cmd (or cmd (default-cmd deps))
          dir (or dir (temp-dir))
          pb  (doto (ProcessBuilder. ^java.util.List cmd)

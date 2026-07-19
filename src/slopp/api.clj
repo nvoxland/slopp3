@@ -80,7 +80,7 @@
   ([{:keys [dir warm-spare? branch-image-ttl-ms agent-id]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
-         image   (repl/start! {:deps (:deps store)})
+         image   (repl/start! {:slopp.repl/deps (:deps store)})
          ttl     (or branch-image-ttl-ms 600000)
          session (atom {:store store :image image :db conn
                         :data-version (some-> conn db/data-version)
@@ -862,9 +862,19 @@
                 ;; code too (that is how it broke a second time).
                 handle-shift (when (and old-node (:node pf))
                                (edit/live-handle-shape-change old-node (:node pf)))
-                _        (when handle-shift
-                           (swap! session assoc :spare nil)
-                           (session/fresh-image! session))
+                ;; The rebuild can FAIL mid-migration and that is normal: a shape
+                ;; change lands on the constructor BEFORE its callers are
+                ;; updated, so the fresh image may launch mis-configured (a
+                ;; renamed option key read as nil). Keep the working image and
+                ;; report it — the episode continues, and the next write once
+                ;; the callers catch up rebuilds cleanly. Throwing here would
+                ;; make a legitimate in-progress migration look like a broken
+                ;; write.
+                rebuild-err
+                (when handle-shift
+                  (swap! session assoc :spare nil)
+                  (try (session/fresh-image! session) nil
+                       (catch Throwable t (ex-message t))))
                 scope    (if affected
                            ns-sym
                            (or (seq (session/covering-test-nses
@@ -888,8 +898,15 @@
                 ;; say WHY the image was replaced — a silent rebuild is a
                 ;; surprising cost, and the reason is the teaching
                 handle-shift (assoc :image-rebuilt
-                                    (assoc handle-shift
-                                           :reason :live-handle-shape-change))
+                                    (cond-> (assoc handle-shift
+                                                   :reason :live-handle-shape-change)
+                                      rebuild-err
+                                      (assoc :rebuild-failed rebuild-err
+                                             :note (str "kept the working image — normal"
+                                                        " MID-MIGRATION, when the constructor"
+                                                        " has changed but its callers have"
+                                                        " not. Update them and the next write"
+                                                        " rebuilds cleanly."))))
                 (pos? existing)   (assoc :existing-warnings existing)
                 untested          (assoc :untested true)
                 (:red-first r)    (assoc :red-first (:red-first r)

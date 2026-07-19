@@ -788,12 +788,17 @@
 (defn render-config
   "Serialize a config entry {:format f :values {k v}} to its file text.
   Formats: :manifest (sorted `K: V` lines). Unknown format → ex-info —
-  new formats add a case here (the serializer is the whole contract)."
-  [{:keys [format values] :as entry}]
-  (case format
+  new formats add a case here (the serializer is the whole contract).
+
+  `entry` comes from the store's own `:config`; a caller never builds one, so
+  its keys are read here rather than destructured in the arglist. `:values`
+  in particular means something else entirely elsewhere (`eval-checked!`'s
+  return map), which is exactly why it should not read as a shared contract."
+  [entry]
+  (case (:format entry)
     :manifest (apply str (map (fn [[k v]] (str k ": " v "\n"))
-                              (sort-by key values)))
-    (throw (ex-info (str "no serializer for config format " format)
+                              (sort-by key (:values entry))))
+    (throw (ex-info (str "no serializer for config format " (:format entry))
                     {:entry entry}))))
 (defn form-symbols
   "EVERY symbol a top-level form defines — a set, possibly empty.

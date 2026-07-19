@@ -73,7 +73,7 @@
   "The projection context over a slopp store dir: bare repo handle, git_map
   connection (main store.db), and the per-process projection lock."
   [dir]
-  {:dir      (str dir)
+  {:slopp.git/dir      (str dir)
    :slopp.git/repo     (open-repo! dir)
    :slopp.git/map-conn (ensure-map! (db/open! dir))
    :slopp.git/lock     (Object.)})
@@ -377,7 +377,7 @@
   caller degrades. Reads the dbs directly (always-current, no session
   needed), deterministic and idempotent: safe to call before every refs
   advertisement. Returns {:refs {name sha-or-nil}}."
-  [{:keys [dir] :slopp.git/keys [map-conn repo lock] :as ctx}]
+  [{:slopp.git/keys [dir map-conn repo lock] :as ctx}]
   (locking lock
     (let [base     (db/get-meta map-conn "git-base-sha")
           main-ds  (db/deltas-after map-conn 0)

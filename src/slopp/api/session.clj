@@ -15,15 +15,16 @@
 (defn image-with-deps!
   "A ready owned image carrying `deps` (lib→coord) on its classpath: adopt the
   bare `spare` and hot-`add-libs` the manifest into it, falling back to a fresh
-  launch if the spare can't reconcile; or launch fresh with `:deps` when there
-  is no spare. The caller owns spare bookkeeping (nil-ing + rewarming)."
+  launch if the spare can't reconcile; or launch fresh with `:slopp.repl/deps`
+  when there is no spare. The caller owns spare bookkeeping (nil-ing +
+  rewarming)."
   [spare deps]
   (if spare
     (let [img @spare]
       (if (and (seq deps) (:err (repl/add-libs! img deps)))
-        (do (repl/stop! img) (repl/start! {:deps deps}))
+        (do (repl/stop! img) (repl/start! {:slopp.repl/deps deps}))
         img))
-    (repl/start! {:deps deps})))
+    (repl/start! {:slopp.repl/deps deps})))
 ^:reads
 (defn session-identity
   "The identity a fresh session starts with: explicit SLOPP_AGENT env (how

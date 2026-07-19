@@ -102,8 +102,12 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-benchmark" (make-array FileAttribute 0))))
 
-(defn run-app!
-  "Run one app's script in a fresh durable session; returns the measurements."
+(defn- run-app!
+  "Run one app's script in a fresh durable session; returns the measurements.
+
+  PRIVATE: `-main` is the only caller. It was public by accident, not design —
+  and public surface is what the boundary gates judge, so an accidental
+  `defn` makes an internal fixture shape look like a contract."
   [{:keys [name steps test-ns]}]
   (let [session (api/open! {:dir (temp-dir) :warm-spare? true})]
     (try

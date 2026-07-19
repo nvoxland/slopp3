@@ -135,11 +135,14 @@
     (.start server)
     srv))
 
-(defn ^:export stop-server! "Stop the git listener and close its context, returning nil. Takes the map
-  `start-server!` returned."
-  [{:keys [^HttpServer server ctx]}]
-  (.stop server 0)
-  (git/close-ctx! ctx)
+(defn ^:export stop-server!
+  "Stop the git listener and close its context, returning nil. Takes the map
+  `start-server!` returned — an opaque handle, so its keys are read here
+  rather than destructured in the arglist (they are not a contract the caller
+  builds)."
+  [srv]
+  (.stop ^HttpServer (:server srv) 0)
+  (git/close-ctx! (:ctx srv))
   nil)
 
 (defn ^:export -main "CLI: serve the read-only git listener for the store at `dir` (default cwd)
