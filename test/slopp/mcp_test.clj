@@ -922,3 +922,52 @@
         (is (re-find #":dw/target" (api/query-source sess 'dw.core))
             "and must not rewrite anything"))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-write-cannot-green-what-the-tier-never-ran
+  ;; Writing an ^:isolated deftest returned :status :green — a green earned by
+  ;; OTHER tests in the namespace, for a form the in-image tier structurally
+  ;; cannot run. traced-run! computes :isolated-pending correctly; summarize's
+  ;; terse path rebuilds :test from a fixed key list and dropped it, the same
+  ;; way :dry-run's payload and :drift were dropped before it.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-isogreen"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (api/open! {:dir dir})]
+    (try
+      ;; MIXED tiers: a fast test runs, an isolated one defers
+      (call! sess "ns_create" {:ns "iso.core" :source "(ns iso.core)\n(defn f [] 1)\n"})
+      (call! sess "ns_create"
+             {:ns "iso.core-test"
+              :source (str "(ns iso.core-test\n"
+                           "  (:require [clojure.test :refer [deftest is]]\n"
+                           "            [iso.core :as c]))\n"
+                           "(deftest quick-t (is (= 1 (c/f))))\n")})
+      (let [r (edn/read-string
+               (call! sess "edit_add_form"
+                      {:ns "iso.core-test"
+                       :prompt "an isolated spec"
+                       :source "(deftest ^:isolated slow-t (is (= 1 (c/f))))"}))
+            t (:test r)]
+        (testing "the deferral survives to the wire"
+          (is (some #{'slow-t} (:tests (:isolated-pending t))) (pr-str r)))
+        (testing "and the write does not claim green for what that tier never ran"
+          (is (= :partial (:status t)) (pr-str r))))
+      ;; ISOLATED ONLY: nothing can run in-image, which is design, not a bug
+      (call! sess "ns_create" {:ns "only.core" :source "(ns only.core)\n(defn g [] 1)\n"})
+      (call! sess "ns_create"
+             {:ns "only.core-test"
+              :source (str "(ns only.core-test\n"
+                           "  (:require [clojure.test :refer [deftest is]]\n"
+                           "            [only.core :as c]))\n"
+                           "(deftest ^:isolated slow-only-t (is (= 1 (c/g))))\n")})
+      (testing "all-isolated scope is named as design, not blamed on a scope bug"
+        (let [raw (call! sess "edit_replace_form"
+                         {:ns "only.core"
+                          :name "g"
+                          :prompt "touch a form only isolated tests cover"
+                          :source "(defn g [] (inc 0))"})
+              t   (try (:test (edn/read-string raw)) (catch Exception _ nil))]
+          (is (map? t) raw)
+          (is (= :unverified (:status t)) raw)
+          (is (= :all-impacted-isolated (:reason t)) raw)))
+      (finally (api/close! sess)))))

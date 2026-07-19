@@ -46,35 +46,39 @@
   humans keep main. Projects first; a cloned store fetches the remote's
   objects so its grafted chain is complete. Fast-forward only — a diverged
   remote is an honest :error, never a force. Returns
-  {:pushed sha :status s :remote-branch b} | {:error msg}."
-  [{:slopp.git/keys [map-conn ^Repository repo] :as ctx} url
+  {:pushed sha :status s :remote-branch b} | {:error msg}.
+
+  `ctx` is an OPAQUE handle from `git/open-ctx!` — see `git/close-ctx!`."
+  [ctx url
    & {:keys [token branch remote-branch timeout]
       :or {branch "main" timeout 30}}]
-  (when-let [base (db/get-meta map-conn "git-base-sha")]
-    (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
-      (fetch-remote! repo url :token token :timeout timeout)))
-  (git/ensure-projected! ctx)
-  (let [rbranch (or remote-branch branch)
-        src     (str "refs/heads/" branch)
-        dst     (str "refs/heads/" rbranch)
-        s       (str url)
-        uri     (URIish. ^String (if (re-find #"^[a-z+]+://" s)
-                                   s
-                                   (.getAbsolutePath (io/file s))))]
-    (if-let [tip (.resolve repo src)]
-      (with-open [tn (Transport/open repo uri)]
-        (.setTimeout tn (int timeout))   ; a dead socket must throw, not freeze
-        (when-let [creds (remote-credentials token)]
-          (.setCredentialsProvider tn creds))
-        (let [rru    (RemoteRefUpdate. repo src dst false nil nil)
-              ^PushResult res (.push tn NullProgressMonitor/INSTANCE [rru])
-              ^RemoteRefUpdate upd (first (.getRemoteUpdates res))
-              status (str (.getStatus upd))]
-          (if (contains? #{"OK" "UP_TO_DATE"} status)
-            {:pushed (.name tip) :status status :remote-branch rbranch}
-            {:error (str "push rejected (" status ")"
-                         (when-let [m (.getMessage upd)] (str ": " m))
-                         (when (= status "REJECTED_NONFASTFORWARD")
-                           " — the remote branch has history this store doesn't build on (pull first)"))})))
-      {:error (str "nothing to push — no " src
-                   " in the projection (no milestones yet?)")})))
+  (let [map-conn         (:slopp.git/map-conn ctx)
+        ^Repository repo (:slopp.git/repo ctx)]
+    (when-let [base (db/get-meta map-conn "git-base-sha")]
+      (when-not (.has (.getObjectDatabase repo) (ObjectId/fromString base))
+        (fetch-remote! repo url :token token :timeout timeout)))
+    (git/ensure-projected! ctx)
+    (let [rbranch (or remote-branch branch)
+          src     (str "refs/heads/" branch)
+          dst     (str "refs/heads/" rbranch)
+          s       (str url)
+          uri     (URIish. ^String (if (re-find #"^[a-z+]+://" s)
+                                     s
+                                     (.getAbsolutePath (io/file s))))]
+      (if-let [tip (.resolve repo src)]
+        (with-open [tn (Transport/open repo uri)]
+          (.setTimeout tn (int timeout))   ; a dead socket must throw, not freeze
+          (when-let [creds (remote-credentials token)]
+            (.setCredentialsProvider tn creds))
+          (let [rru    (RemoteRefUpdate. repo src dst false nil nil)
+                ^PushResult res (.push tn NullProgressMonitor/INSTANCE [rru])
+                ^RemoteRefUpdate upd (first (.getRemoteUpdates res))
+                status (str (.getStatus upd))]
+            (if (contains? #{"OK" "UP_TO_DATE"} status)
+              {:pushed (.name tip) :status status :remote-branch rbranch}
+              {:error (str "push rejected (" status ")"
+                           (when-let [m (.getMessage upd)] (str ": " m))
+                           (when (= status "REJECTED_NONFASTFORWARD")
+                             " — the remote branch has history this store doesn't build on (pull first)"))})))
+        {:error (str "nothing to push — no " src
+                     " in the projection (no milestones yet?)")}))))

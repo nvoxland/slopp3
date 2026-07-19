@@ -175,3 +175,28 @@
         (is (re-find #"2 maps"
                      (str (:error (refactor/keyed-replace-plan dup 'sp.core 'xs
                                                                {:k 1} "{}")))))))))
+
+(deftest cond-arrow-clauses-are-pair-slots
+  ;; cond-> is everywhere in this codebase and pair-slot? did not list it:
+  ;; adding one clause to a 60-line cond-> meant resending the whole form.
+  (testing "a cond-> test/expr pair is a legal two-form match"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [m a?] (cond-> m a? (assoc :a 1)))\n")
+                'sp.core 'h "a? (assoc :a 1)" "a? (assoc :a 2)")]
+      (is (nil? (:error plan)) (pr-str plan))))
+  (testing "and the replacement may SPLICE a further pair in"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [m a?] (cond-> m a? (assoc :a 1)))\n")
+                'sp.core 'h "a? (assoc :a 1)" "a? (assoc :a 1) (:b m) (assoc :b 2)")]
+      (is (nil? (:error plan)) (pr-str plan))))
+  (testing "cond->> pairs the same way"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [xs a?] (cond->> xs a? (map inc)))\n")
+                'sp.core 'h "a? (map inc)" "a? (map dec)")]
+      (is (nil? (:error plan)) (pr-str plan))))
+  (testing "but the THREADED value slot is still not a pair boundary"
+    (let [plan (refactor/subform-replace-plan
+                (st "(ns sp.core)\n(defn h [m a?] (cond-> m a? (assoc :a 1)))\n")
+                'sp.core 'h "m a?" "m (not a?)")]
+      (is (:error plan) (pr-str plan))
+      (is (re-find #"pair" (str (:error plan)))))))

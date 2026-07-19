@@ -96,7 +96,7 @@
         (testing "cross-ns callers included"
           (is (some #(= 'qb.b (:from-ns %)) (:callers b))))
         (testing "covering tests from the trace map"
-          (is (= ['qb.a/f-t] (:covered-by b))))
+          (is (= {:count 1 :tests ['qb.a/f-t]} (:covered-by b))))
         (testing "the recorded why is in the dossier"
           (is (= "prefer + for clarity" (get-in b [:why :prompt])))))
       (testing "unknown form is an honest error"
@@ -122,7 +122,7 @@
               (pr-str r))))
       (testing "query-impact reads the blast radius"
         (let [r (api/query-impact sess 'fl.b 'ship)]
-          (is (= ['fl.b/ship-t] (:covered-by r)) (pr-str r))
+          (is (= {:count 1 :tests ['fl.b/ship-t]} (:covered-by r)) (pr-str r))
           (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
       (finally (api/close! sess)))))

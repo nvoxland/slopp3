@@ -176,3 +176,20 @@
       (is (contains? (froms :plain) 'bare)))
     (testing "quoted data is pruned, like every other producer"
       (is (not (contains? (froms :kr/conn) 'quoted))))))
+
+(deftest denylist-hit-in-binding-position-explains-itself
+  ;; The gate matches symbol NAMES anywhere in the form, so a parameter named
+  ;; `binding` is refused though a local can no more invoke clojure.core/binding
+  ;; than a local named `map` invokes map. Fixing that properly needs scope
+  ;; tracking; until then the refusal must not read as "you used binding".
+  (let [check #(edit/dialect-check (:node (edit/parse-one %)))]
+    (testing "still refused — the gate is not weakened"
+      (let [e (check "(defn f [binding] (when (map? binding) binding))")]
+        (is (some? e) (pr-str e))
+        (testing "but it names the CAUSE and the one-word fix"
+          (is (re-find #"LOCAL" (str e)) (str e))
+          (is (re-find #"RENAME" (str e)) (str e)))))
+    (testing "a real call in a form that never binds the name says no such thing"
+      (let [e (check "(defn f [] (binding [*out* nil] (prn 1)))")]
+        (is (some? e) (pr-str e))
+        (is (not (re-find #"LOCAL" (str e))) (str e))))))

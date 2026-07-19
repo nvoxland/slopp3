@@ -403,7 +403,7 @@
       (is (= 1 (:pass (api/test-run! sess 'geo.core-test))))
       (testing "the defrecord form owns its constructors' evidence (D8 names)"
         (let [b (api/query-brief sess 'geo.core 'Sq)]
-          (is (= '[geo.core-test/perim-t] (:covered-by b)) (pr-str b))))
+          (is (= {:count 1 :tests '[geo.core-test/perim-t]} (:covered-by b)) (pr-str b))))
       (testing "the defprotocol form has NO evidence — the inline cache bypassed
                 its wrapped var. If this ever flips to covered, the tracer
                 started seeing direct interface dispatch: update the narrowing

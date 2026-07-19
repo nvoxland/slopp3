@@ -255,7 +255,10 @@
                         (even? idx)))
          :list   (let [head (some-> parent z/down safe-sexpr)]
                    (cond
-                     (= 'case head) (and (<= 2 idx) (even? idx))
+                     ;; (case e k1 v1 …) and (cond-> x t1 e1 …) both pair
+                     ;; from slot 2 — head, then the subject, then pairs
+                     (contains? '#{case cond-> cond->>} head)
+                     (and (<= 2 idx) (even? idx))
                      (= 'cond head) (odd? idx)
                      :else false))
          false)))))
@@ -344,7 +347,7 @@
             (cond
               (and pair? (empty? usable) (seq matches))
               {:error (str "a two-form match must land on a pair boundary of a "
-                           "map, binding vector, or case/cond clause — this span "
+                           "map, binding vector, or case/cond/cond-> clause — this span "
                            "crosses one in " what "; match the single value form "
                            "instead")}
 

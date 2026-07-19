@@ -114,7 +114,13 @@
   red that carries only :still-red names (episode compression) stays
   TERSE. Source echoes are stripped EVERYWHERE (Q1); :untested is a terse
   FLAG; a zero-test verification says :coverage :none (Q8); the :type
-  :summary tag is internal and never rides the wire."
+  :summary tag is internal and never rides the wire.
+
+  This path REBUILDS :test from a fixed key list, so anything the layers
+  below compute must be added here too or it silently never reaches the
+  agent. That has now happened three times — :dry-run's payload, :drift,
+  and :isolated-pending — each looking like a missing feature rather than
+  a dropped one. Adding a key below? Add it here in the same edit."
   [r verbose?]
   (let [strip (fn [d] (if (map? d) (dissoc d :source :sources :node) d))
         r     (cond-> r
@@ -146,9 +152,15 @@
                                               ;; a run that executed NOTHING is unverified, not green — green must
                                               ;; mean tests ran and passed, or an agent learns to distrust
                                               ;; the status and re-run them by hand
-                                              :status (cond (red? t)            :red
-                                                            (zero? (:test t 0)) :unverified
-                                                            :else               (:status t :green))
+                                              :status (cond
+                                                        (red? t)                    :red
+                                                        (zero? (:test t 0))         :unverified
+                                                        ;; impacted ^:isolated tests were DEFERRED — whatever
+                                                        ;; passed here, it wasn't those. Writing an ^:isolated
+                                                        ;; deftest reported :green off its neighbours in the same
+                                                        ;; namespace: a red-first spec reporting success.
+                                                        (seq (:isolated-pending t)) :partial
+                                                        :else                       (:status t :green))
                                               :scope (:scope t)}
                                        (:staleness-detected t)  (assoc :staleness-healed true)
                                        (zero? (:test t 0))      ;; name the CAUSE. "no test covers this yet" is the agent's to fix;
@@ -156,12 +168,21 @@
                                        ;; two is how an empty verification fallback hid, looking
                                        ;; like an ordinary untested form.
                                        (assoc :coverage :none
-                                              :reason (if (= :all (:affected r))
-                                                        :no-covering-tests
-                                                        :scope-ran-nothing))
+                                              :reason (cond
+                                                        ;; nothing ran because everything impacted is
+                                                        ;; ^:isolated — by DESIGN, and the done point
+                                                        ;; will run them. Not a gap, not a bug.
+                                                        (seq (:isolated-pending t)) :all-impacted-isolated
+                                                        (= :all (:affected r))      :no-covering-tests
+                                                        :else                       :scope-ran-nothing))
                                        (red? t)                 (assoc :fail (+ (:fail t 0) (:error t 0)))
                                        (seq (:still-red t))     (assoc :still-red (:still-red t))
-                                       (seq (:went-green t))    (assoc :went-green (:went-green t))))
+                                       (seq (:went-green t))    (assoc :went-green (:went-green t))
+                                       ;; WHICH tests are deferred, not merely that some are — a
+                                       ;; bare :partial an agent cannot act on becomes noise it
+                                       ;; learns to skip
+                                       (seq (:isolated-pending t))
+                                       (assoc :isolated-pending (:isolated-pending t))))
           (:affected r) (assoc :affected (let [a (:affected r)]
                                            (if (= :all a) :all (count a))))
           (:hint r) (assoc :hint (:hint r))

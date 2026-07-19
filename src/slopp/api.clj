@@ -70,12 +70,30 @@
      [])
     {:modules (count edges)
      :edges   (reduce + 0 (map count (vals edges)))}))
-(defn ^:live-handle open!
+(defn ^{:live-handle true
+        :malli/schema
+        [:=> [:cat [:? [:map
+                        [:dir {:optional true} [:maybe :some]]
+                        [:warm-spare? {:optional true} [:maybe :boolean]]
+                        [:branch-image-ttl-ms {:optional true} [:maybe :int]]
+                        [:agent-id {:optional true} [:maybe :string]]]]]
+         :any]}
+  open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
   when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
   keeps a spare image warming in the background so restarts are near-instant.
   `:agent-id` (default: session-identity) keys every delta/turn/episode this
-  session writes."
+  session writes.
+
+  The `:=>` schema is DOCUMENTATION, not a verified claim: this fn boots a
+  JVM, so `analyzer-pure?` excludes it from the generative oracle-check.
+
+  These option keys are still UNQUALIFIED, knowingly: 60 call sites pass
+  `{:dir …}`, and `:dir` means three different things across this store, so
+  no store-wide sweep can do it safely. Requalifying a boundary key needs a
+  TARGETED tool (the keys in maps passed as arg 1 to ONE fn) — until that
+  exists, `require-namespaced-keys` stays off with this as its only
+  violation."
   ([] (open! {}))
   ([{:keys [dir warm-spare? branch-image-ttl-ms agent-id]}]
    (let [conn    (when dir (db/open! dir))
@@ -3003,6 +3021,18 @@
                    (cond-> {:ns from-ns :form from-var
                             :lines (mapv str/trim (take 3 lines))}
                      (= :destructuring via) (assoc :via :destructuring))))))))
+(defn coverage-view
+  "The `:covered-by` shape both `query-impact` and `query-brief` report:
+   `{:count n :tests [first 8] :more k}`. Capped because a central form is
+   covered by HUNDREDS of tests — `slopp.api/open!` by 284 — and printing
+   them all pushed the keys the caller actually asked for past the response
+   trim, making a working answer read as a broken one. The remainder is
+   COUNTED, never silently dropped."
+  [test-syms]
+  (let [ts (vec test-syms)]
+    (cond-> {:count (count ts) :tests (vec (take 8 ts))}
+      (> (count ts) 8) (assoc :more (- (count ts) 8)))))
+
 (defn query-impact
   "Rock 4: the blast radius of reshaping `ns-sym/nm`, answered from THE
   reference graph — call sites grouped per caller form (:calls),
@@ -3010,7 +3040,8 @@
   reach those), CARRIER references (:carrier-refs — quoted-symbol
   positions; signature templates can't reach those either), outside-world
   declarations (:declared), and the tests runtime evidence says exercise
-  it (:covered-by — the graph's :observed records). change_signature's discovery as a READ: plan the edit before paying for it.
+  it (:covered-by — the graph's :observed records, as {:count :tests :more}:
+  capped at 8 with the remainder counted, since a central form has hundreds). change_signature's discovery as a READ: plan the edit before paying for it.
 
   When the form takes or is passed a MAP, `:shape` answers the other half —
   the keys it READS off its first argument (destructured, body, `:=>` schema,
@@ -3038,10 +3069,14 @@
                                 (for [r rs :when (= :carrier (:via r))]
                                   (symbol (str (:from-ns r)) (str (:from-var r)))))))
             marks   (vec (sort (keep :marker rs)))
-            tests   (->> (refs/observed-refs (:test-map @session))
+            all-ts  (->> (refs/observed-refs (:test-map @session))
                          (filter #(and (= ns-sym (:to-ns %)) (= nm (:to-name %))))
                          (map #(symbol (str (:from-ns %)) (str (:from-var %))))
                          sort vec)
+            ;; a central form is covered by HUNDREDS of tests. Printing them
+            ;; all pushed the keys actually asked for past the response
+            ;; trim — a working answer read as a broken one.
+            tests   (coverage-view all-ts)
             shp     (shape/shape-of st ns-sym nm callers)]
         (cond-> {:target qsym :callers callers :covered-by tests}
           (seq carried) (assoc :carrier-refs carried)
@@ -3644,7 +3679,7 @@
         (:reads? sym)     (assoc :reads? true)
         (:unsafe? sym)    (assoc :unsafe? true)
         (seq callers)     (assoc :callers callers)
-        (seq tests)       (assoc :covered-by tests)
+        (seq tests)       (assoc :covered-by (coverage-view tests))
         (and (seq tmap) (empty? tests) (not (:test? sym)))
         (assoc :untested true)
         (empty? tmap)     (assoc :coverage :unknown)

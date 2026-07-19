@@ -15,10 +15,19 @@
   Feature registers Clojure classes for build-time init), `--no-fallback`."
   (:require [clojure.string :as str]))
 
-(defn ^:foreign-keys arg-style
+(defn ^{:foreign-keys true
+        :malli/schema [:=> [:cat [:map
+                                  [:fixed-arities {:optional true} [:maybe [:set :int]]]
+                                  [:varargs-min-arity {:optional true} [:maybe :int]]]]
+                       [:enum :vector :apply]]}
+  arg-style
   "How the launcher hands CLI args to the entry fn, judged from its index
   var-definition: a single fixed arity of 1 (and no varargs) receives the
-  args as ONE vector; every other shape is `apply`'d, -main style."
+  args as ONE vector; every other shape is `apply`'d, -main style.
+
+  The arg is clj-kondo's var-definition map, hence `^:foreign-keys` — its
+  spelling is not ours to change. The `:=>` schema is generatively checked
+  (this fn is referentially transparent), so it states the real shape."
   [{:keys [fixed-arities varargs-min-arity]}]
   (if (and (nil? varargs-min-arity) (= #{1} (set fixed-arities)))
     :vector

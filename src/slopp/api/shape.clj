@@ -4,7 +4,7 @@
 
 (defn arities
   "`([arglist & body] ...)` for a `defn`/`defn-` sexpr — docstring and attr-map
-   skipped, single- and multi-arity handled alike. Anything else → nil."
+   skipped, single- and multi-arity handled alike. Anything else (a `def`, a macro, a reader-conditional) → nil."
   [form]
   (when (and (seq? form) (#{'defn 'defn-} (first form)))
     (let [tail (drop-while #(or (string? %) (map? %)) (drop 2 form))]

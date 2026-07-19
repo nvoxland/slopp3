@@ -78,14 +78,23 @@
    :slopp.git/map-conn (ensure-map! (db/open! dir))
    :slopp.git/lock     (Object.)})
 
-(defn close-ctx! "Close a git context's in-memory JGit repo and its git_map connection, and
+(defn close-ctx!
+  "Close a git context's in-memory JGit repo and its git_map connection, and
   return nil. The repo is a rebuildable CACHE of the journal's milestones — the
   store is the source of truth — so closing one loses nothing;
-  `ensure-projected!` rebuilds it on demand."
-  [{:slopp.git/keys [^java.sql.Connection map-conn ^Repository repo]}]
-  (.close repo)
-  (.close map-conn)
-  nil)
+  `ensure-projected!` rebuilds it on demand.
+
+  `ctx` is an OPAQUE handle from `open-ctx!`: it carries a live JGit
+  `Repository`, a JDBC `Connection` and a lock, so no caller builds one and no
+  schema can usefully describe one. Destructuring it in the arglist would
+  advertise a shape callers must not depend on — the same shape-divergence
+  that broke live REPL handles."
+  [ctx]
+  (let [^Repository repo             (:slopp.git/repo ctx)
+        ^java.sql.Connection map-conn (:slopp.git/map-conn ctx)]
+    (.close repo)
+    (.close map-conn)
+    nil))
 
 (defn fingerprint
   "Line-independent identity of a :commit marker: SHA-256 of the canonical
@@ -335,26 +344,30 @@
   by fetch; the remote durably holds its own history). A pinned sha is reused
   only when its object is live in this repo; on a fresh repo the object is
   re-inserted deterministically (same sha). Returns the tip sha (= base when
-  no markers) or nil."
-  [{:slopp.git/keys [map-conn repo]} line-label deltas & {:keys [base]}]
-  (reduce
-   (fn [parent d]
-     (if (= :commit (:op d))
-       (if-let [gsha (:git-sha d)]
-         (do (record-sha! map-conn (:id d) (fingerprint d) gsha line-label)
-             gsha)
-         (let [fp     (fingerprint d)
-               pinned (lookup-sha map-conn (:id d) fp)]
-           (if (and pinned
-                    (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
-             pinned
-             (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
-                   sha  (insert-commit! repo parent d tree)]
-               (record-sha! map-conn (:id d) fp sha line-label)
-               sha))))
-       parent))
-   base
-   deltas))
+  no markers) or nil.
+
+  `ctx` is an OPAQUE handle from `open-ctx!` — see `close-ctx!`."
+  [ctx line-label deltas & {:keys [base]}]
+  (let [map-conn         (:slopp.git/map-conn ctx)
+        ^Repository repo (:slopp.git/repo ctx)]
+    (reduce
+     (fn [parent d]
+       (if (= :commit (:op d))
+         (if-let [gsha (:git-sha d)]
+           (do (record-sha! map-conn (:id d) (fingerprint d) gsha line-label)
+               gsha)
+           (let [fp     (fingerprint d)
+                 pinned (lookup-sha map-conn (:id d) fp)]
+             (if (and pinned
+                      (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
+               pinned
+               (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
+                     sha  (insert-commit! repo parent d tree)]
+                 (record-sha! map-conn (:id d) fp sha line-label)
+                 sha))))
+         parent))
+     base
+     deltas)))
 
 (defn- branch-journals
   "[[name dir]] for every on-disk branch that has a store.db — checked
@@ -376,38 +389,39 @@
   `git-remote` on demand — offline, downstream ref updates throw and the
   caller degrades. Reads the dbs directly (always-current, no session
   needed), deterministic and idempotent: safe to call before every refs
-  advertisement. Returns {:refs {name sha-or-nil}}."
-  [{:slopp.git/keys [dir map-conn repo lock] :as ctx}]
-  (locking lock
-    (let [base     (db/get-meta map-conn "git-base-sha")
-          main-ds  (db/deltas-after map-conn 0)
-          need     (cond-> (into [] (keep :git-sha) main-ds) base (conj base))
-          missing? (fn [sha] (not (.has (.getObjectDatabase ^Repository repo)
-                                        (ObjectId/fromString sha))))]
-      (when (some missing? need)
-        ;; fetch-remote! lives in git.client, which requires THIS ns
-        ;; (append-only form order), so late-bind instead of forward-ref
-        (when-let [url (db/get-meta map-conn "git-remote")]
-          ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
-          ;; so a static require back would cycle — resolve at call time
-          ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
-          ;; so a static require back would cycle — the carrier makes the
-          ;; reference visible to renames/moves/the unused gate
-          (try ((store/late-ref 'slopp.git.client/fetch-remote!) repo url)
-               (catch Exception _ nil))))
-      (let [main-tip (project-journal! ctx "main" main-ds :base base)
-            _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
-            refs     (into {"main" main-tip}
-                           (map (fn [[nm bdir]]
-                                  [nm (with-open [conn (db/open! bdir)]
-                                        (let [ds  (db/deltas-after conn 0)
-                                              tip (project-journal! ctx nm ds :base base)]
-                                          (ensure-wip! ctx nm conn ds tip)
-                                          tip))]))
-                           (branch-journals dir))]
-        (doseq [[nm sha] refs :when sha]
-          (set-branch-ref! repo nm sha))
-        {:refs refs}))))
+  advertisement. Returns {:refs {name sha-or-nil}}.
+
+  `ctx` is an OPAQUE handle from `open-ctx!` — see `close-ctx!`."
+  [ctx]
+  (let [dir              (:slopp.git/dir ctx)
+        map-conn         (:slopp.git/map-conn ctx)
+        ^Repository repo (:slopp.git/repo ctx)]
+    (locking (:slopp.git/lock ctx)
+      (let [base     (db/get-meta map-conn "git-base-sha")
+            main-ds  (db/deltas-after map-conn 0)
+            need     (cond-> (into [] (keep :git-sha) main-ds) base (conj base))
+            missing? (fn [sha] (not (.has (.getObjectDatabase repo)
+                                          (ObjectId/fromString sha))))]
+        (when (some missing? need)
+          (when-let [url (db/get-meta map-conn "git-remote")]
+            ;; late-bound: git.client requires THIS ns (push → ensure-projected!),
+            ;; so a static require back would cycle — the carrier makes the
+            ;; reference visible to renames/moves/the unused gate
+            (try ((store/late-ref 'slopp.git.client/fetch-remote!) repo url)
+                 (catch Exception _ nil))))
+        (let [main-tip (project-journal! ctx "main" main-ds :base base)
+              _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
+              refs     (into {"main" main-tip}
+                             (map (fn [[nm bdir]]
+                                    [nm (with-open [conn (db/open! bdir)]
+                                          (let [ds  (db/deltas-after conn 0)
+                                                tip (project-journal! ctx nm ds :base base)]
+                                            (ensure-wip! ctx nm conn ds tip)
+                                            tip))]))
+                             (branch-journals dir))]
+          (doseq [[nm sha] refs :when sha]
+            (set-branch-ref! repo nm sha))
+          {:refs refs})))))
 
 ;; ---------------------------------------------------------------------------
 ;; import: git push → slopp (M3)
