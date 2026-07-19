@@ -52,6 +52,36 @@
   [node]
   (boolean (:reads (meta (n/sexpr node)))))
 
+(def ^:private local-binder-heads
+  "Heads that introduce LOCAL names. Built partly from strings for the same
+  reason `pair-binding-heads` is: naming binding/with-redefs as symbols would
+  trip D3 in this very namespace."
+  (into '#{defn defn- fn fn* let let* loop loop* doseq for if-let when-let
+           if-some when-some with-open}
+        (map symbol)
+        ["binding" "with-redefs" "with-local-vars"]))
+
+(defn- local-name?
+  "Is `sym` bound as a LOCAL name anywhere in sexpr `s` — a parameter vector or
+  a let-style binding vector, destructuring included?
+
+  Used ONLY to explain a D3 refusal, never to permit one. A local named
+  `binding` cannot invoke `clojure.core/binding` (locals shadow it), so the
+  refusal IS a false positive — but permitting on that basis needs real scope
+  tracking to be sound, and a denylist with a hole is worse than one with a
+  confusing message. So: still refuse, and say why. Over-matching here costs a
+  slightly wrong hint and nothing else."
+  [s sym]
+  (boolean
+   (some (fn [node]
+           (and (seq? node)
+                (contains? local-binder-heads (first node))
+                (some (fn [v]
+                        (and (vector? v)
+                             (some #{sym} (filter symbol? (tree-seq coll? seq v)))))
+                      (tree-seq coll? seq node))))
+         (tree-seq coll? seq s))))
+
 (defn dialect-check
   "nil if the form is admissible; an error string otherwise (D3/D4). An
   `^:unsafe` form is admissible by assertion — the author takes on the
@@ -68,6 +98,13 @@
         (let [hit (first (filter banned-syms (all-symbols node)))]
           (str "dialect (D3): denylisted symbol used — " hit
                (cond
+                 (local-name? s hit)
+                 (str " — you are using it as a LOCAL name, which cannot invoke"
+                      " clojure.core/" hit " at all (locals shadow); the gate"
+                      " matches symbol NAMES regardless of position, so RENAME"
+                      " the local (binding → bnd, eval → ev) — ^:unsafe is the"
+                      " wrong tool here")
+
                  (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
                   (name hit))
                  (str " — references resolve through CARRIERS:"

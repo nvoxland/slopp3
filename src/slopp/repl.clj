@@ -100,13 +100,26 @@
   (eval! handle "(in-ns 'user)")
   handle)
 
-(defn ^:live-handle start!
+(defn ^{:live-handle true
+        :malli/schema
+        [:=> [:cat [:? [:map
+                        [:slopp.repl/cmd {:optional true} [:maybe [:sequential :string]]]
+                        [:slopp.repl/dir {:optional true} [:maybe :some]]
+                        [:slopp.repl/timeout-ms {:optional true} :int]
+                        [:slopp.repl/deps {:optional true} [:maybe :map]]]]]
+         :map]}
+  start!
   "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
   for eval!/restart!/stop!.
 
   The OPTION map is a caller-built contract, so its keys are qualified —
   unlike the handle this returns, whose keys are internal and read in the
-  body by `eval!`/`stop!` rather than destructured at any boundary."
+  body by `eval!`/`stop!` rather than destructured at any boundary.
+
+  The `:=>` schema is DOCUMENTATION here, not a verified claim: this fn
+  spawns a JVM, so `analyzer-pure?` excludes it from the generative
+  oracle-check. Nothing will catch it drifting from the impl — keep it
+  honest by hand."
   ([] (start! {}))
   ([{:slopp.repl/keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
    (let [cmd (or cmd (default-cmd deps))
