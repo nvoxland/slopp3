@@ -517,7 +517,19 @@
                     " — error-level kondo findings are almost never false"
                     " positives; fix the form before sending it"
                     (when (some #(= :invalid-arity (:type %)) own)
-                      " (changing a signature? change_signature rewrites the defn AND its call sites as one intent)"))}
+                      " (changing a signature? change_signature rewrites the defn AND its call sites as one intent)")
+                    ;; the commonest cause of BOTH types on your own form: the
+                    ;; edit was too narrow. A binding and its use, a loop and
+                    ;; its recur, an arglist and its body must change together
+                    ;; — and they are ONE form, so it is ONE edit. Agents
+                    ;; reliably misread this as needing atomicity ACROSS forms
+                    ;; and reach for a batch primitive that does not exist.
+                    (when (some #(#{:unresolved-symbol :invalid-arity} (:type %)) own)
+                      (str " — if this was a targeted subform edit, the change"
+                           " spans MORE of this form than you matched (a binding"
+                           " and its use, a loop and its recur). Widen the match"
+                           " to the enclosing form, or edit_replace_form the"
+                           " whole thing: two edits to ONE form is ONE edit.")))}
 
       (seq carried)
       {:carried (vec (for [f carried]

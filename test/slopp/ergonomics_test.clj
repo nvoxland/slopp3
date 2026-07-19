@@ -404,3 +404,27 @@
                                    :prompt "same contract")]
           (is (empty? (:drift r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-too-narrow-subform-edit-teaches-the-fix
+  ;; I hit this twice and flailed both times: a loop binding and its recur, and
+  ;; an arglist and its body. Neither half compiles alone, so each edit is
+  ;; refused — correctly — and the refusal read as "these two edits must be
+  ;; atomic", which sent me looking for a batch primitive that is deliberately
+  ;; not on the wire.
+  ;;
+  ;; The answer is the opposite: they are ONE form, so it is ONE edit. Widen
+  ;; the match. That belongs in the refusal, where it arrives at the moment of
+  ;; need, not only in a skill an agent may not re-read.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'nt.core
+                   "(ns nt.core)\n\n(defn f [a b] (+ a b))\n")
+      (testing "an edit introducing an unbound symbol teaches widening"
+        (let [r (api/edit-subform! sess 'nt.core 'f "[a b]" "[a]"
+                                   :prompt "narrow the arglist only")]
+          (is (:error r) (pr-str r))
+          (is (re-find #"two edits to ONE form is ONE edit" (str (:error r)))
+              (str "the refusal must name the fix: " (pr-str (:error r))))))
+      (testing "the form is untouched — a refusal changes nothing"
+        (is (re-find #"\[a b\] \(\+ a b\)" (api/query-source sess 'nt.core))))
+      (finally (api/close! sess)))))

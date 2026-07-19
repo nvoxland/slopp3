@@ -65,9 +65,16 @@
 ^:unsafe (defn eval!
   "Eval `code` in the image; returns a vector of returned values, read as data
   when readable and left as the raw printed string otherwise (so evals that
-  return unreadable objects — namespaces, functions — don't blow up)."
-  [{:keys [client session]} code]
-  (->> (nrepl/message client {:op "eval" :code code :session session})
+  return unreadable objects — namespaces, functions — don't blow up).
+
+  `image` is an OPAQUE handle from `start!`: the caller never builds one, it
+  passes back what it was given. Destructuring it here would advertise
+  internals as a contract a caller is expected to know; reading them in the
+  body says the truth. It also keeps the handle's key shape out of arglists,
+  which is what made renaming `:client` brick a whole session."
+  [image code]
+  (->> (nrepl/message (:client image) {:op "eval" :code code
+                                       :session (:session image)})
        (keep :value)
        (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
@@ -115,10 +122,11 @@
 ^:unsafe (defn eval-checked!
   "Like `eval!` but surfaces evaluation errors instead of silently dropping
   them (F-3c2 — an eval that throws must not look like an empty result).
-  Returns {:values [...]} or {:err msg}."
-  [{:keys [client session]} code]
-  (let [msgs (doall (nrepl/message client {:op "eval" :code code
-                                           :session session}))
+  Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
+  `eval!` for why it is not destructured."
+  [image code]
+  (let [msgs (doall (nrepl/message (:client image) {:op "eval" :code code
+                                                    :session (:session image)}))
         errs (concat (keep :err msgs)
                      (mapcat (fn [m]
                                (when (some #{"eval-error"} (:status m))
@@ -146,12 +154,14 @@
 ^:unsafe (defn load-checked!
   "Like `load!` but surfaces evaluation failures instead of silently dropping
   them (T4 — a failed load must never leave the store and image out of step).
-  Returns {:values [...]} or {:err msg}."
-  [{:keys [client session]} src path]
-  (let [msgs (doall (nrepl/message client
-                                   {:op "load-file" :file src :file-path path
-                                    :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
-                                    :session session}))
+  Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
+  `eval!` for why it is not destructured."
+  [image src path]
+  (let [msgs (doall (nrepl/message
+                     (:client image)
+                     {:op "load-file" :file src :file-path path
+                      :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
+                      :session (:session image)}))
         errs (concat (keep :err msgs)
                      (mapcat (fn [m]
                                (when (some #{"eval-error"} (:status m))
@@ -163,10 +173,14 @@
                     (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
 
 (defn stop!
-  "Destroy the image subprocess and release its connection."
-  [{:keys [^java.io.Closeable conn ^Process process]}]
-  (when conn (.close conn))
-  (when process
+  "Destroy the image subprocess and release its connection. `image` is the
+  opaque handle from `start!` — see `eval!` for why it is not destructured.
+  Tolerates a partially-built or foreign-shaped handle: each resource is
+  released only if present, which is what lets `restart!` rebuild from a
+  broken one."
+  [image]
+  (when-let [^java.io.Closeable conn (:conn image)] (.close conn))
+  (when-let [^Process process (:process image)]
     (.destroy process)
     (.waitFor process 5 TimeUnit/SECONDS))
   nil)
