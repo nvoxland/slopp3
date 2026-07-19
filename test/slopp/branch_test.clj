@@ -104,7 +104,7 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-br-" (System/nanoTime))]
     (try
-      (let [sess (api/open! {:dir dir})]
+      (let [sess (api/open! {:slopp.api/dir dir})]
         (try
           (api/ingest! sess 'br.core seed)
           (branch/branch! sess "feature")
@@ -114,7 +114,7 @@
                              "(deftest f-t (is (= 11 (f 1))))")
           (branch/branch-switch! sess "main")
           (finally (api/close! sess))))
-      (let [sess (api/open! {:dir dir})]
+      (let [sess (api/open! {:slopp.api/dir dir})]
         (try
           (testing "the branch is still there after reopen"
             (is (some #(= "feature" (:name %))
@@ -127,7 +127,7 @@
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:isolated per-branch-images-park-adopt-and-reap          ; m4
-  (let [sess (api/open! {:branch-image-ttl-ms 200})]
+  (let [sess (api/open! {:slopp.api/branch-image-ttl-ms 200})]
     (try
       (api/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")

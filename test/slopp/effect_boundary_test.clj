@@ -17,7 +17,7 @@
         (edit/ns-warnings (:store @sess) ns-sym)))
 
 (deftest ^:isolated external-dep-call-is-effectful-by-default
-  (let [sess (api/open! {:dir (temp-dir)})]     ; durable → surface is cached
+  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]     ; durable → surface is cached
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -40,7 +40,7 @@
   ;; slopp is built on wholesale-pure libs (rewrite-clj, clj-kondo); marking
   ;; every var pure one call at a time floods self-host code with warnings, so
   ;; :pure also lands at namespace and whole-dep granularity.
-  (let [sess (api/open! {:dir (temp-dir)})]
+  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -68,7 +68,7 @@
   ;; effectful (should be `!`). `^:reads` asserts it is a READ, not a mutation,
   ;; so it takes no bang — the Clojure norm (slurp/deref/a SELECT read no bang).
   ;; Greppable + self-limiting, like `^:unsafe` for the dialect gate.
-  (let [sess (api/open! {:dir (temp-dir)})]
+  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
       (api/ingest! sess 'rd.core
@@ -87,7 +87,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:isolated store-and-stdlib-calls-are-not-external
-  (let [sess (api/open! {:dir (temp-dir)})]
+  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -101,7 +101,7 @@
 
 (deftest ^:isolated dep-namespaces-persist-and-reopen
   (let [dir (temp-dir)]
-    (let [sess (api/open! {:dir dir})]
+    (let [sess (api/open! {:slopp.api/dir dir})]
       (try
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
@@ -111,7 +111,7 @@
                        'clojure.data.json))
         (finally (api/close! sess))))
     (testing "a reopened session reconstructs :dep-ns and :dep-pure"
-      (let [s2 (api/open! {:dir dir})]
+      (let [s2 (api/open! {:slopp.api/dir dir})]
         (try
           (is (contains? (get (:dep-ns (:store @s2)) 'org.clojure/data.json)
                          'clojure.data.json))

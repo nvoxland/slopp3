@@ -199,6 +199,16 @@
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["from" "to"]}}
+   {:name "edit_requalify"
+    :description "Namespace a module-external fn's OPTION KEYS in ONE intent: its arglist destructuring AND every caller's map literal, together. THE way to discharge require-namespaced-keys — a store-wide rename_sweep is unsafe whenever the key means more than one thing (:dir names three different things), and hand-editing dozens of call sites is worse. Keys are DERIVED from the arglist, so half a contract cannot be namespaced and left reading nil. `to-ns` defaults to the target's namespace. Callers passing a NON-literal map are reported under :unknown-shape and left UNTOUCHED — no syntactic reader can see through a binding, and those are yours to check. Call sites outside the store (kernel .clj files) are invisible to it. dry-run previews without writing."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :name {:type "string"}
+                               :to-ns {:type "string"}
+                               :dry-run {:type "boolean"
+                                         :description "preview only: write nothing, report the form count and :unknown-shape"}
+                               :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "name"]}}
    {:name "edit_rename"
     :description "Rename ONE form + every reference across namespaces (shadow-safe). For concept-wide renames (ns + keys + prose) use rename_sweep."
     :inputSchema {:type "object"

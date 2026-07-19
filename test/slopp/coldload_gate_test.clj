@@ -72,7 +72,7 @@
   ;; the same invariant as every other write door.
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-coldload-merge" (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'm.core
                    (str "(ns m.core)\n"

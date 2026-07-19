@@ -1,1 +1,2 @@
 require-boundary-schemas: true
+require-namespaced-keys: true

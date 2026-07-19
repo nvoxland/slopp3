@@ -37,7 +37,7 @@
 (deftest ^:isolated push-then-fetch-round-trips-the-projection
   (let [dir  (temp-dir)
         bare (bare-repo! (str (temp-dir) "/remote.git"))
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gc.core seed)
       (api/commit-point! sess "v1: f ships" :agent "alice")
