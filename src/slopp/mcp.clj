@@ -642,6 +642,17 @@
                                                          :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
+      "edit_requalify" (text! (-> (api/requalify-boundary-keys!
+                                   session (sym :ns) (sym :name)
+                                   :to-ns (or (:to-ns a) (:to_ns a))
+                                   :prompt (:prompt a)
+                                   :agent (:agent a)
+                                   :dry-run (or (:dry-run a) (:dry_run a)))
+                                  (select-keys [:error :dry-run :keys :to-ns :forms :in-code
+                                                :unknown-shape :note :group :deltas
+                                                :warnings :existing-warnings
+                                                :changed-nses :test :affected])
+                                  (summarize (:verbose a))))
       "rename_sweep" (let [{:keys [from to]} a]
                             (when-not (and from to)
                               (throw (ex-info "rename_sweep needs :from and :to (plain words/segments)" {})))
@@ -799,7 +810,7 @@
   ({:content [{:text …}]}; :isError true on tool errors), same as the
   server would send."
   [dir tool arguments]
-  (let [session (api/open! {:dir (str dir)})]
+  (let [session (api/open! {:slopp.api/dir (str dir)})]
     (swap! session assoc :require-turns? true)
     (try
       (try (call-tool! session {:name tool :arguments arguments})
@@ -891,8 +902,8 @@
       (binding [*out* *err*]
         (println (str "slopp: auto-imported " (:namespaces r)
                       " namespaces from the repo's slopp branch")))))
-  (let [session (api/open! (cond-> {:warm-spare? true}
-                             dir (assoc :dir dir)))]
+  (let [session (api/open! (cond-> {:slopp.api/warm-spare? true}
+                             dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
     (when dir
       (try

@@ -1052,6 +1052,61 @@
          (->> (iterate z/next (z/of-string src))
               (take-while (complement z/end?))))))
 
+(defn requalify-call-args
+  "Qualify key `key-name` with `to-ns` in the map LITERAL passed as argument 1
+  to calls of the target fn in `src`. `heads` is the SET of head spellings that
+  resolve to that fn in this source's namespace — `#{\"slopp.api/open!\"
+  \"api/open!\"}`, plus the bare name only inside the defining ns.
+
+  Matching on the bare NAME instead was the bug this signature exists to
+  prevent: `slopp.db/open!` and `slopp.api/open!` share a name, and a name-only
+  match rewrote calls to both. It showed up only because a dry-run reported 62
+  forms where the caller graph said 60.
+
+  The scope is otherwise the point. A store-wide keyword sweep cannot do this
+  safely whenever the key means more than one thing: `:dir` names a session
+  directory, a git context's directory and a repl cwd. Inside a call to ONE fn
+  it unambiguously means that fn's option, and nothing else is touched — not
+  another fn's identically-spelled key, not a bare map that is nobody's
+  argument.
+
+  Only KEY positions change, so `{:a :dir}` keeps its value. A call passing a
+  non-literal (`(open! opts)`) or nothing is left exactly as it is: this reader
+  cannot see through a binding and must not pretend to.
+
+  Pure: source string in, source string out; untouched when nothing matches."
+  [src heads key-name to-ns]
+  (if (or (str/blank? (str to-ns)) (empty? heads))
+    src
+    (let [kw    (keyword (str key-name))
+          qkw   (keyword (str to-ns) (str key-name))
+          sx    (fn [nd] (try (n/sexpr nd) (catch Exception _ ::none)))
+          kids  (fn [nd] (vec (filter n/sexpr-able? (n/children nd))))
+          call? (fn [nd]
+                  (and (= :list (n/tag nd))
+                       (let [c (kids nd)
+                             h (sx (first c))]
+                         (and (symbol? h)
+                              (contains? (set heads) (str h))
+                              (= :map (some-> (second c) n/tag))))))
+          requal (fn [m]
+                   (n/map-node
+                    (interpose (n/spaces 1)
+                               (mapcat (fn [[k v]]
+                                         [(if (= kw (sx k)) (n/keyword-node qkw) k) v])
+                                       (partition 2 (kids m))))))]
+      (loop [z (z/of-string src)]
+        (cond
+          (z/end? z) (z/root-string z)
+
+          (call? (z/node z))
+          (let [nd  (z/node z)
+                tgt (second (kids nd))
+                ch  (mapv #(if (identical? % tgt) (requal %) %) (n/children nd))]
+            (recur (z/next (z/replace z (n/list-node ch)))))
+
+          :else (recur (z/next z)))))))
+
 (defn requalify-keys
   "Rewrite `{:keys [x]}` destructuring to `{:to-ns/keys [x]}` for the single key
   named `key-name`, leaving every other key in the vector where it is.

@@ -129,7 +129,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-modules-adopt"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     ;; land cross-module reality with the gate bypassed (what a bulk import
     ;; does) — manifest stays {}, journal has no :module-edge deltas
     (try
@@ -141,7 +141,7 @@
       (is (= {} (modules/modules-manifest (:store @sess))))
       (finally (api/close! sess)))
     ;; reopen: empty manifest + populated + no edge delta ever = adopt
-    (let [sess2 (api/open! {:dir dir})]
+    (let [sess2 (api/open! {:slopp.api/dir dir})]
       (try
         (is (= {"kb.app" #{"ka.core"}}
                (modules/modules-manifest (:store @sess2))))

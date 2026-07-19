@@ -102,7 +102,7 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5a-" (System/nanoTime))]
     (try
-      (let [sess (api/open! {:dir dir})]
+      (let [sess (api/open! {:slopp.api/dir dir})]
         (try
           (api/ingest! sess 'cc.core seed)
           (let [results (doall
@@ -116,7 +116,7 @@
                 (pr-str (mapv #(select-keys % [:error :conflict]) results))))
           (finally (api/close! sess))))
       ;; the journal is the record: a fresh session sees all four writes
-      (let [sess (api/open! {:dir dir})]
+      (let [sess (api/open! {:slopp.api/dir dir})]
         (try
           (let [src (api/query-source sess 'cc.core)]
             (doseq [nm '[a b c d]]

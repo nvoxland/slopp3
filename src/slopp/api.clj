@@ -95,7 +95,7 @@
   exists, `require-namespaced-keys` stays off with this as its only
   violation."
   ([] (open! {}))
-  ([{:keys [dir warm-spare? branch-image-ttl-ms agent-id]}]
+  ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare?]}]
    (let [conn    (when dir (db/open! dir))
          store   (or (some-> conn db/load-store) (store/empty-store))
          image   (repl/start! {:slopp.repl/deps (:deps store)})
@@ -3841,3 +3841,100 @@
   [session & {:keys [since]}]
   (telemetry/rule-telemetry (:store @session) :since since))
 
+(defn requalify-boundary-keys!
+  "Namespace a module-external fn's OPTION KEYS in one verified intent: its
+  arglist destructuring AND the map literals its callers pass, together.
+
+  This exists because `require-namespaced-keys` was otherwise UNDISCHARGEABLE.
+  Its last violation, `api/open!`, has 60 call sites; a store-wide
+  `rename_sweep` is unsafe whenever the key means more than one thing (`:dir`
+  names three different things here), and 60 hand edits is worse. A rule
+  nobody can discharge trains people to ignore the channel — the rule's own
+  docstring says so.
+
+  `to-ns` defaults to the target's namespace. The keys are DERIVED — every
+  unqualified key its first arg destructures — so the caller cannot namespace
+  half a contract and leave the rest reading nil.
+
+  A call site counts only when its head RESOLVES to the target: the defining
+  ns's own name, the caller's alias for it, or the fully-qualified symbol.
+  Matching by bare name instead silently included `slopp.db/open!` alongside
+  `slopp.api/open!` — caught by a dry-run reporting 62 forms and 24 unknowns
+  where the caller graph said 60 and 4.
+
+  Reports `:unknown-shape`: callers passing a non-literal (`(open! opts)`),
+  which no syntactic reader can rewrite. Those are left untouched and NAMED,
+  never silently skipped — the count is the part you still owe by hand. Call
+  sites OUTSIDE the store (the kernel's own .clj files) are invisible to this
+  and to every store-based analysis; check them yourself.
+  `:dry-run true` previews without writing."
+  [session ns-sym nm & {:keys [to-ns prompt agent dry-run]}]
+  (let [st     (:store @session)
+        ns-sym (symbol (str ns-sym))
+        nm     (symbol (str nm))
+        form   (store/named-sexpr st ns-sym nm)]
+    (if-not form
+      (edit/missing-form-error st ns-sym nm)
+      (let [tons (str (or to-ns ns-sym))
+            ks   (vec (sort (remove namespace (:destructured (shape/read-keys form)))))]
+        (if (empty? ks)
+          {:error (str ns-sym "/" nm " destructures no unqualified keys —"
+                       " nothing to requalify")}
+          (let [why     (or prompt (str "namespace " ns-sym "/" nm "'s option keys"
+                                        " under " tons))
+                heads   (fn [nsx]
+                          (cond-> #{(str ns-sym "/" nm)}
+                            (= nsx ns-sym) (conj (str nm))
+                            true (into (for [[alias lib] (edit/require-aliases st nsx)
+                                             :when (= (symbol (str lib)) ns-sym)]
+                                         (str alias "/" nm)))))
+                rewrite (fn [src nsx target?]
+                          (reduce (fn [s k]
+                                    (let [s' (refactor/requalify-call-args
+                                              s (heads nsx) (name k) tons)]
+                                      (if target?
+                                        (refactor/requalify-keys s' (name k) tons)
+                                        s')))
+                                  src ks))
+                steps   (vec (for [nsx (store/ns-dependency-order st)
+                                   e   (store/forms st nsx)
+                                   :when (:name e)
+                                   :let [src  (n/string (:node e))
+                                         tgt? (and (= nsx ns-sym) (= (:name e) nm))
+                                         src' (rewrite src nsx tgt?)]
+                                   :when (not= src src')]
+                               {:action :replace :ns nsx :name (:name e) :source src'}))
+                opaque? (fn [nsx e]
+                          (let [hs (heads nsx)]
+                            (some (fn [node]
+                                    (and (seq? node)
+                                         (symbol? (first node))
+                                         (contains? hs (str (first node)))
+                                         (next node)
+                                         (not (map? (second node)))))
+                                  (tree-seq coll? seq (store/form-sexpr (:node e))))))
+                unknown (vec (sort (for [nsx (keys (:namespaces st))
+                                         e   (store/forms st nsx)
+                                         :when (and (:name e) (opaque? nsx e))]
+                                     (symbol (str nsx) (str (:name e))))))
+                report  (cond-> {:keys ks :to-ns tons :forms (count steps)
+                                 ;; a preview that only COUNTS is not a preview: you
+                                 ;; cannot check 62 rewrites against a caller graph
+                                 ;; you are not shown. The bare-name bug looked
+                                 ;; exactly like a correct run until the numbers
+                                 ;; were compared.
+                                 :in-code (vec (sort (map #(symbol (str (:ns %))
+                                                                   (str (:name %)))
+                                                          steps)))}
+                          (seq unknown)
+                          (assoc :unknown-shape unknown
+                                 :note (str (count unknown) " call site(s) pass a"
+                                            " non-literal map — no syntactic reader"
+                                            " can see through a binding, so those"
+                                            " are UNTOUCHED and yours to check")))]
+            (cond
+              (empty? steps) {:error (str "no call site or arglist to rewrite for "
+                                          ns-sym "/" nm)}
+              dry-run        (assoc report :dry-run true)
+              :else          (let [r (edit-group! session steps :prompt why :agent agent)]
+                               (if (:error r) r (merge r report))))))))))

@@ -3,7 +3,7 @@
             [slopp.api :as api]))
 
 (deftest ^:isolated warm-spare-makes-restart-cheap
-  (let [sess (api/open! {:warm-spare? true})]
+  (let [sess (api/open! {:slopp.api/warm-spare? true})]
     (try
       (api/ingest! sess 'wdemo "(ns wdemo)\n(def x 1)\n")
       (let [spare1   @(:spare @sess)              ; wait until the spare is ready

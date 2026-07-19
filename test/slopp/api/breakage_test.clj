@@ -89,3 +89,40 @@
     (is (true?  (breakage/node-boundary? 'app.core.impl '(defn ^{:export 42} f [x] x))))
     (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export false} f [x] x))))
     (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export nil} f [x] x))))))
+
+(deftest ^:isolated breaking-ok-marks-a-deliberate-break-and-polices-itself
+  ;; breaking-changes sat at :advisory because a CORRECT change — privatising a
+  ;; fn with no outside callers — was flagged with no escape. A rule you cannot
+  ;; discharge has to be ignorable, and an ignorable rule is not a rule.
+  ;;
+  ;; The ns is DEEP (bok.core.impl): ^:export only widens visibility below the
+  ;; module surface, so dropping it from a top-level ns narrows nothing.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'bok.core.impl
+                   (str "(ns bok.core.impl)\n"
+                        "(defn ^:export ^:unused-ok gone \"G.\" [x] x)\n"
+                        "(defn ^:export ^:unused-ok kept \"K.\" [x] x)\n"))
+      (api/done! sess :label "baseline")
+      (testing "an unmarked narrowing is still flagged — the rule is not weakened"
+        (api/edit-replace! sess 'bok.core.impl 'gone
+                           "(defn ^:unused-ok gone \"G.\" [x] x)"
+                           :prompt "privatise")
+        (let [r (api/done! sess :label "unmarked")]
+          (is (= [{:form 'bok.core.impl/gone :visibility-narrowed true}]
+                 (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
+      (testing "^:breaking-ok discharges it"
+        (api/edit-replace! sess 'bok.core.impl 'kept
+                           "(defn ^:breaking-ok ^:unused-ok kept \"K.\" [x] x)"
+                           :prompt "privatise, deliberately")
+        (let [r (api/done! sess :label "marked")]
+          (is (nil? (get-in r [:findings :breaking-changes]))
+              (pr-str (:findings r)))))
+      (testing "a marker on a form that narrowed NOTHING says so, so it cannot decay"
+        (api/edit-replace! sess 'bok.core.impl 'kept
+                           "(defn ^:breaking-ok ^:unused-ok kept \"K2.\" [x] x)"
+                           :prompt "touch it again, no narrowing this time")
+        (let [f (get-in (api/done! sess :label "stale") [:findings :breaking-changes])]
+          (is (= ['bok.core.impl/kept] (mapv :form f)) (pr-str f))
+          (is (:stale-marker (first f)) (pr-str f))))
+      (finally (api/close! sess)))))

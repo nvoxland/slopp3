@@ -66,10 +66,23 @@
    slice can't see). Three narrowings, each additive to the finding:
    `:removed-arities` (a fixed arity dropped), `:removed-keys` (a `:=>` arg-map key
    dropped), `:visibility-narrowed` (was a boundary, now private / unexported).
-   Returns `[{:form …} …]` — ADVISORY (internal callers already turn the tests
-   red). Filtered on the OLD form's boundary status via `node-boundary?`, so a
+   Filtered on the OLD form's boundary status via `node-boundary?`, so a
    public→private narrowing is still seen. New forms (no baseline) and forms that
-   were never a boundary are skipped."
+   were never a boundary are skipped.
+
+   `^:breaking-ok` on the NAME discharges it: the break is DELIBERATE and the
+   author owns telling downstream. Without an escape this rule could only ever
+   be advisory — privatising a fn with no outside callers is a correct change,
+   and a rule you cannot discharge has to be ignorable.
+
+   Like `^:unused-ok` / `^:ambient-ok` / `^:foreign-keys` it POLICES ITSELF: a
+   marker on a changed form that narrowed NOTHING yields `:stale-marker`, so it
+   cannot be sprinkled ahead of time or left behind as a permanent opt-out.
+   That check deliberately sits OUTSIDE the boundary filter — once a narrowing
+   lands, the new baseline is already private, so a guard on the old form's
+   boundary status would never see the stale marker again.
+
+   Returns `[{:form …} …]`."
   [store changed-fids]
   (let [baseline (->> (store/deltas store)
                       (filter #(= :done (:op %)))
@@ -86,14 +99,24 @@
                     (let [old-form (try (n/sexpr (p/parse-string old-src))
                                         (catch Exception _ nil))
                           new-form (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                      (when (and old-form new-form (node-boundary? ns-sym old-form))
-                        (let [rem-ar (removed-arities old-form new-form)
-                              rem-ks (removed-schema-keys old-form new-form)
-                              vis?   (not (node-boundary? ns-sym new-form))
-                              finding (cond-> {:form (symbol (str ns-sym) (str (:name e)))}
+                      (when (and old-form new-form)
+                        (let [qsym    (symbol (str ns-sym) (str (:name e)))
+                              marked? (boolean (and (symbol? (second new-form))
+                                                    (:breaking-ok (meta (second new-form)))))
+                              was?    (node-boundary? ns-sym old-form)
+                              rem-ar  (when was? (removed-arities old-form new-form))
+                              rem-ks  (when was? (removed-schema-keys old-form new-form))
+                              vis?    (and was? (not (node-boundary? ns-sym new-form)))
+                              finding (cond-> {:form qsym}
                                         (seq rem-ar) (assoc :removed-arities (vec (sort rem-ar)))
                                         (seq rem-ks) (assoc :removed-keys (vec (sort rem-ks)))
-                                        vis?         (assoc :visibility-narrowed true))]
-                          (when (> (count finding) 1) finding)))))))
+                                        vis?         (assoc :visibility-narrowed true))
+                              narrowed? (> (count finding) 1)]
+                          (cond
+                            (and marked? narrowed?) nil
+                            marked? {:form qsym :stale-marker true
+                                     :note (str qsym " carries ^:breaking-ok but"
+                                                " narrowed nothing — remove the flag")}
+                            narrowed? finding)))))))
               changed-fids))))))
 

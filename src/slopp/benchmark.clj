@@ -109,7 +109,7 @@
   and public surface is what the boundary gates judge, so an accidental
   `defn` makes an internal fixture shape look like a contract."
   [{:keys [name steps test-ns]}]
-  (let [session (api/open! {:dir (temp-dir) :warm-spare? true})]
+  (let [session (api/open! {:slopp.api/dir (temp-dir) :slopp.api/warm-spare? true})]
     (try
       (let [t0    (System/nanoTime)
             sizes (mapv #(call! session %) steps)

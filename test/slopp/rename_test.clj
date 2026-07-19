@@ -47,7 +47,7 @@
 (deftest ^:isolated rename-across-namespaces-and-restart
   (let [dir  (str (Files/createTempDirectory "slopp-rename-test"
                                              (make-array FileAttribute 0)))
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'liba "(ns liba)\n(defn helper [x] (* x 2))\n")
       (api/module-dep! sess "libb" "liba" :prompt "fixture edge")
@@ -62,7 +62,7 @@
           (is (= [10] (api/query-eval sess "(libb/use-it 5)")))))
       (finally (api/close! sess)))
     ;; a fresh session over the same dir: the rename persisted in both nses
-    (let [sess2 (api/open! {:dir dir})]
+    (let [sess2 (api/open! {:slopp.api/dir dir})]
       (try
         (is (re-find #"defn twice" (api/query-source sess2 'liba)))
         (is (re-find #"la/twice" (api/query-source sess2 'libb)))
@@ -84,13 +84,13 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-nsren"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        s1  (api/open! {:dir dir})]
+        s1  (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! s1 'nr.old "(ns nr.old)\n(defn f [x] x)\n")
       (let [r (api/ns-rename! s1 "nr.old" "nr.new")]
         (is (nil? (:error r)) (pr-str r)))
       (finally (api/close! s1)))
-    (let [s2 (api/open! {:dir dir})]
+    (let [s2 (api/open! {:slopp.api/dir dir})]
       (try
         (testing "the rename PERSISTED — the old ns does not resurrect (eval9 sweep found both alive)"
           (is (nil? (get-in (:store @s2) [:namespaces 'nr.old]))
@@ -250,4 +250,42 @@
         (is (= '{zsweep-target "String"} (:detail (first (:drift r))))
             (str "the drift names WHICH hint went, on WHICH symbol: "
                  (pr-str (:drift r)))))
+      (finally (api/close! sess)))))
+
+(defn ^:unused-ok src-of
+  "The rendered source of `ns-sym/nm` via `query-slice`, which nests it under
+  `:target`. Reading it as `(:source r)` yields nil, and nil reaches `re-find`
+  as an NPE about `this.text` rather than a readable failure."
+  [session ns-sym nm]
+  (get-in (api/query-slice session ns-sym nm) [:target :source]))
+
+(deftest ^:isolated requalify-boundary-keys-does-arglist-and-call-sites-together
+  ;; The capability require-namespaced-keys needs to be dischargeable: its last
+  ;; violation has 60 call sites, and a store-wide keyword sweep is unsafe when
+  ;; the key means more than one thing.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'rq.core
+                   (str "(ns rq.core)\n"
+                        "(defn opts \"O.\" [{:keys [dir mode]}] [dir mode])\n"
+                        "(defn ^:unused-ok a \"A.\" [] (opts {:dir \"x\" :mode :fast}))\n"
+                        "(defn ^:unused-ok b \"B.\" [m] (opts m))\n"
+                        "(defn ^:unused-ok c \"C.\" [] {:dir \"not an argument\"})\n"))
+      (let [r (api/requalify-boundary-keys! sess 'rq.core 'opts
+                                            :prompt "namespace the option keys")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the keys are DERIVED, so half a contract cannot be namespaced"
+          (is (= [:dir :mode] (:keys r)) (pr-str r)))
+        (testing "the arglist destructuring moved"
+          (is (re-find #"\{:rq\.core/keys \[dir mode\]\}" (src-of sess 'rq.core 'opts))
+              (src-of sess 'rq.core 'opts)))
+        (testing "the literal call site moved with it"
+          (let [src (src-of sess 'rq.core 'a)]
+            (is (re-find #":rq\.core/dir" src) src)
+            (is (re-find #":rq\.core/mode" src) src)))
+        (testing "a map that is nobody's argument is untouched"
+          (is (re-find #"\{:dir \"not an argument\"\}" (src-of sess 'rq.core 'c))
+              (src-of sess 'rq.core 'c)))
+        (testing "the non-literal call site is NAMED, not silently skipped"
+          (is (= '[rq.core/b] (:unknown-shape r)) (pr-str r))))
       (finally (api/close! sess)))))

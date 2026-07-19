@@ -64,7 +64,7 @@
     :escape "reuse the established key (query_vocabulary), or accept the new one"
     :teach "a new namespaced key is one Damerau edit from an established same-namespace key"}
    {:rule :breaking-changes :grain :done :severity :advisory
-    :escape "restore the arity/key/visibility, or rename for a clean break"
+    :escape "^:breaking-ok on the name (a DELIBERATE break — you own telling downstream; it polices itself, a marker that narrowed nothing is reported stale), restore the arity/key/visibility, or rename for a clean break"
     :teach "a module-external fn's contract narrowed (arity/schema-key/visibility) vs the last-done baseline"}
    {:rule :ambient-state :grain :done :severity :advisory
     :escape "pass state in as an arg, or accept it (a legit top-level cache)"

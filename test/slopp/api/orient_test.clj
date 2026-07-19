@@ -50,7 +50,7 @@
 (deftest ^:isolated cards-carry-observed-examples
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-obs" (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'ob.core
                    "(ns ob.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")

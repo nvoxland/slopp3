@@ -25,7 +25,7 @@
 
 (deftest ^:isolated concurrent-projection-converges
   (let [dir  (temp-dir "slopp-git-conc")
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gc.core seed)
       (api/commit-point! sess "v1" :agent "alice")
@@ -66,7 +66,7 @@
   ;; its milestones must be served by the git server with NO restart —
   ;; projection reads the journals from disk on every advertisement
   (let [dir   (temp-dir "slopp-git-foreign")
-        sess1 (api/open! {:dir dir})
+        sess1 (api/open! {:slopp.api/dir dir})
         
         
         ;; 0 = the OS assigns a genuinely-free loopback port ATOMICALLY (#136).
@@ -87,7 +87,7 @@
       (let [tip1 (tip)]
         (is (some? tip1))
         ;; a SECOND session on the same dir — a foreign writer
-        (let [sess2 (api/open! {:dir dir})]
+        (let [sess2 (api/open! {:slopp.api/dir dir})]
           (try
             (api/edit-replace! sess2 'gc.core 'f "(defn f [x] (+ 10 x))"
                                :prompt "foreign work" :agent "bob")

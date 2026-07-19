@@ -66,7 +66,7 @@
   "Build the template store under `dir` (a slopp session dir) and the matching
   conventional project under `<dir>-files`. Throws unless everything is green."
   [dir]
-  (let [sess (api/open! {:dir dir})]
+  (let [sess (api/open! {:slopp.api/dir dir})]
     (try
       (doseq [[ns-sym src] [['tasker.model model-src]
                             ['tasker.store store-src]
@@ -263,7 +263,7 @@
   "Round-3 scale seed: 12 interconnected namespaces + deterministic padding
   (6 filler fns/ns), as a slopp store under `dir` and files under `<dir>-files`."
   [dir]
-  (let [sess (api/open! {:dir dir})]
+  (let [sess (api/open! {:slopp.api/dir dir})]
     (try
       (doseq [[ns-sym src] large-namespaces]
         (let [r (api/ingest! sess ns-sym (str src "\n" (padding ns-sym 6)))]

@@ -1,4 +1,4 @@
 ambient-state: error
 bare-throw: error
-breaking-changes: advisory
+breaking-changes: error
 key-typos: error

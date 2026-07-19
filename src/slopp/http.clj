@@ -94,8 +94,8 @@
   `clojure -M -m slopp.http [port] [dir]`"
   [& [port dir]]
   (let [{:keys [session]} (start-server! (Long/parseLong (or port "7357"))
-                                         (cond-> {:warm-spare? true}
-                                           dir (assoc :dir dir)))]
+                                         (cond-> {:slopp.api/warm-spare? true}
+                                           dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true))  ; real servers enforce turns
   (println (str "slopp http transport on 127.0.0.1:" (or port "7357")))
   @(promise))

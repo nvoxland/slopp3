@@ -5,7 +5,7 @@
   the PLANS are cheap to assert."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.refactor :as refactor]
-            [slopp.store :as store]))
+            [slopp.store :as store] [clojure.string :as str]))
 (defn- fixture-store
   "mv.core defines a private util + a public mid + entry; mv.app (another
   module) and mv.core-test both call across; mv.other aliases nothing."
@@ -189,3 +189,31 @@
         (:new-src p))
     (is (not (re-find #"Date" (:new-src p)))
         "unused classes don't ride")))
+
+(deftest requalify-call-args-is-scoped-to-one-fns-first-argument
+  ;; The reason a keyword sweep cannot do this: :dir means three different
+  ;; things in this store. Only the map passed as arg 1 to THIS fn is ours.
+  (let [src (str "(ns c.core)\n"
+                 "(defn a [] (api/open! {:dir \"x\"}))\n"
+                 "(defn b [] (api/open! {:dir \"y\" :warm-spare? true}))\n"
+                 "(defn c [] (db/open! {:dir \"z\"}))\n"
+                 "(defn d [] (other! {:dir \"w\"}))\n"
+                 "(defn e [] {:dir \"loose\"})\n"
+                 "(defn f [m] (api/open! m))\n"
+                 "(defn g [] (api/open!))\n")
+        out (refactor/requalify-call-args src #{"api/open!"} "dir" "slopp.api")]
+    (testing "the target fn's first-arg literals are qualified"
+      (is (re-find #"\(api/open! \{:slopp\.api/dir \"x\"\}\)" out) out)
+      (is (re-find #"\{:slopp\.api/dir \"y\" :warm-spare\? true\}" out) out))
+    (testing "a SAME-NAMED fn in another namespace is untouched — the bug a
+              dry-run caught by reporting 62 forms where the graph said 60"
+      (is (re-find #"\(db/open! \{:dir \"z\"\}\)" out) out))
+    (testing "another fn's identically-spelled key is untouched"
+      (is (re-find #"\(other! \{:dir \"w\"\}\)" out) out))
+    (testing "and a bare map that is nobody's argument is untouched"
+      (is (re-find #"\(defn e \[\] \{:dir \"loose\"\}\)" out) out))
+    (testing "a non-literal or absent argument is left alone, not corrupted"
+      (is (re-find #"\(api/open! m\)" out) out)
+      (is (re-find #"\(api/open!\)" out) out))
+    (testing "nothing else in the source moved"
+      (is (= (count (str/split-lines src)) (count (str/split-lines out)))))))

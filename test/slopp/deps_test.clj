@@ -132,7 +132,7 @@
 
 (deftest ^:isolated deps-durable-round-trip-and-branch-inherit
   (let [dir (temp-dir)]
-    (let [sess (api/open! {:dir dir})]
+    (let [sess (api/open! {:slopp.api/dir dir})]
       (try
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
@@ -142,7 +142,7 @@
                  (get (api/deps-list sess) 'org.clojure/data.json))))
         (finally (api/close! sess))))
     (testing "a fresh session over the same dir reloads deps AND its image can use them"
-      (let [sess2 (api/open! {:dir dir})]
+      (let [sess2 (api/open! {:slopp.api/dir dir})]
         (try
           (is (= {:mvn/version "2.5.0"}
                  (get (api/deps-list sess2) 'org.clojure/data.json)))
@@ -236,7 +236,7 @@
 
 (deftest ^:isolated build-native-warns-on-missing-metadata
   (let [dir  (temp-dir)
-        sess (api/open! {:dir dir})]
+        sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
