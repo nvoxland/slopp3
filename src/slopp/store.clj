@@ -1155,3 +1155,14 @@
   (into #{(symbol (str ns-sym) (str (or (:name e) (:id e))))}
         (map #(symbol (str ns-sym) (str %)))
         (:names e)))
+
+(defn named-sexpr
+  "The sexpr of the form in `ns-sym` defining `nm`, or nil when there is none.
+
+  Exists because `form-named` returns an ENTRY MAP and `form-sexpr` takes a
+  NODE: `(form-sexpr (form-named …))` type-checks fine, reads fine, and
+  silently returns nil forever — the entry map is not `sexpr-able?`, so the
+  mistake never throws. Every caller that wants \"the code at ns/name\" should
+  come through here rather than rediscover that."
+  [store ns-sym nm]
+  (some-> (form-named store ns-sym nm) :node form-sexpr))

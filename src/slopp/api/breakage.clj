@@ -36,10 +36,12 @@
   [ns-sym form]
   (edit.modules/module-external? ns-sym form))
 
-(defn- arg-map-keys
+(defn arg-map-keys
   "The set of keys of a defn's `:=>` `:malli/schema` FIRST arg when that arg is a
    `:map` schema, else nil. `[:=> [:cat [:map [:a A] [:b B]]] R]` → `#{:a :b}`
-   (a `:map` properties map and per-key `:optional` opts are tolerated)."
+   (a `:map` properties map and per-key `:optional` opts are tolerated).
+   Shared with the shape tracer: the DECLARED half of a form's key contract has
+   one reader, so the two answers can never drift apart."
   [form]
   (let [sch (:malli/schema (meta (second form)))]
     (when (and (vector? sch) (= :=> (first sch)))

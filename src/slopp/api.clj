@@ -23,7 +23,7 @@
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
             [slopp.build :as build]
-            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules] [slopp.api.telemetry :as telemetry] [slopp.api.done :as done]))
+            [slopp.db :as db] [clojure.java.shell :as sh] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.testrun :as testrun] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.edit.refs :as refs] [slopp.api.attrs :as attrs] [slopp.api.rules :as rules] [slopp.api.telemetry :as telemetry] [slopp.api.done :as done] [slopp.api.shape :as shape]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -3010,8 +3010,15 @@
   reach those), CARRIER references (:carrier-refs — quoted-symbol
   positions; signature templates can't reach those either), outside-world
   declarations (:declared), and the tests runtime evidence says exercise
-  it (:covered-by — the graph's :observed records). change_signature's
-  discovery as a READ: plan the edit before paying for it."
+  it (:covered-by — the graph's :observed records). change_signature's discovery as a READ: plan the edit before paying for it.
+
+  When the form takes or is passed a MAP, `:shape` answers the other half —
+  the keys it READS off its first argument (destructured, body, `:=>` schema,
+  `:or`-optional) against the literal keys its callers PASS, grouped by
+  key-set, with the diff in `:mismatch`. Renaming a key, or wondering who
+  supplies one, is a read here rather than a grep. `:unknown-shape` names the
+  callers passing a non-literal: a syntactic reader cannot see through a
+  binding, so trust `:mismatch` only as far as that list is empty."
   [session ns-sym nm]
   (let [st (:store @session)]
     (if-not (store/form-named st ns-sym nm)
@@ -3034,10 +3041,12 @@
             tests   (->> (refs/observed-refs (:test-map @session))
                          (filter #(and (= ns-sym (:to-ns %)) (= nm (:to-name %))))
                          (map #(symbol (str (:from-ns %)) (str (:from-var %))))
-                         sort vec)]
+                         sort vec)
+            shp     (shape/shape-of st ns-sym nm callers)]
         (cond-> {:target qsym :callers callers :covered-by tests}
           (seq carried) (assoc :carrier-refs carried)
           (seq marks)   (assoc :declared marks)
+          shp           (assoc :shape shp)
           (or (some (comp pos? :value-refs) callers) (seq carried))
           (assoc :hint (str "value/higher-order and carrier refs can't be"
                             " template-rewritten — change_signature handles"

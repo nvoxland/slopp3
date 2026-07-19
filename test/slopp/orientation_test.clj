@@ -438,3 +438,34 @@
                '(fn [store] (map :name (slopp.store/forms store 'x))))))
     (is (nil? (edit/pure-eval-refusal
                '(fn [store] (rewrite-clj.node/sexpr (:node (first store)))))))))
+
+(deftest ^:isolated impact-traces-the-map-shape-callers-pass
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sh.core
+                   (str "(ns sh.core)\n"
+                        "(defn consume\n"
+                        "  ([] (consume {:sh/alpha 0}))\n"
+                        "  ([{:sh/keys [alpha]}] alpha))\n"
+                        "(defn good [] (consume {:sh/alpha 1}))\n"
+                        "(defn also-good [] (consume {:sh/alpha 2}))\n"
+                        "(defn stale [] (consume {:alpha 1}))\n"
+                        "(defn dynamic [m] (consume m))\n"
+                        "(defn no-arg [] (consume))\n"))
+      (let [sh      (:shape (api/query-impact sess 'sh.core 'consume))
+            by-keys (into {} (map (juxt :keys identity)) (:producers sh))]
+        (testing "the keys the target itself reads"
+          (is (= #{:sh/alpha} (:destructured (:reads sh))) (pr-str sh)))
+        (testing "callers group by the key-set they pass, not one line each"
+          (is (= 2 (:callers (by-keys #{:sh/alpha}))) (pr-str sh))
+          (is (= '[sh.core/also-good sh.core/good] (:forms (by-keys #{:sh/alpha})))
+              (pr-str sh)))
+        (testing "a stale key-set is its own group, so it cannot hide in a crowd"
+          (is (= '[sh.core/stale] (:forms (by-keys #{:alpha}))) (pr-str sh)))
+        (testing "a caller passing a non-literal is NAMED, never silently omitted"
+          (is (= '[sh.core/dynamic] (:unknown-shape sh)) (pr-str sh)))
+        (testing "but a NO-ARGUMENT call passes no map — not an unknown shape"
+          (is (not (some #{'sh.core/no-arg} (:unknown-shape sh))) (pr-str sh)))
+        (testing "the mismatch is computed, not eyeballed"
+          (is (= #{:alpha} (:passed-never-read (:mismatch sh))) (pr-str sh))))
+      (finally (api/close! sess)))))
