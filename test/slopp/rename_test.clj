@@ -226,3 +226,28 @@
           (is (nil? (:error r)) (pr-str r))
           (is (re-find #":dr/renamed" (api/query-source sess 'dr.core)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-sweep-that-loses-a-hint-says-so
+  ;; The case that started it. A rename_sweep silently rebuilt a destructuring
+  ;; and dropped ^Repository / ^java.sql.Connection from slopp.git/close-ctx!,
+  ;; turning direct interop into reflection. It compiled, passed every gate,
+  ;; and reported green — found only because I happened to re-read the form.
+  ;;
+  ;; requalify-keys no longer drops hints, so this drives the loss directly to
+  ;; prove the REPORTING works: a sweep is a group write, and group writes
+  ;; bypassed drift detection entirely until now.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sd.core
+                   (str "(ns sd.core)\n\n"
+                        "(defn use-it [^String zsweep-target] zsweep-target)\n"))
+      (let [r (api/edit-group! sess
+                               [{:action :replace :ns 'sd.core :name 'use-it
+                                 :source "(defn use-it [zsweep-target] zsweep-target)"}]
+                               :prompt "a group op that loses a hint")]
+        (is (= '[sd.core/use-it] (mapv :form (:drift r))) (pr-str r))
+        (is (= :metadata-lost (:kind (first (:drift r)))) (pr-str r))
+        (is (= '{zsweep-target "String"} (:detail (first (:drift r))))
+            (str "the drift names WHICH hint went, on WHICH symbol: "
+                 (pr-str (:drift r)))))
+      (finally (api/close! sess)))))

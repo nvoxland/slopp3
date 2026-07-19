@@ -1197,7 +1197,24 @@
                              :changed-nses (vec (distinct (map :ns steps)))
                              :warnings (vec (remove (comp pre-warned :var) all-w))
                              :test     summary
-                             :affected (or (not-empty affected) :all)}
+                             :affected (or (not-empty affected) :all)
+                             ;; drift for the WHOLE group, read off the deltas —
+                             ;; every step kind (including :subform, which
+                             ;; computes its own source) records its final
+                             ;; source there, so one place covers them all.
+                             ;; Detecting it per-step would need a loop arity
+                             ;; change; the deltas already carry the answer.
+                             :drift
+                             (vec (for [d     deltas
+                                        :when (= :replace (:op d))
+                                        :let  [fid (:form-id d)
+                                               e   (store/form-by-id base0 fid)
+                                               nu  (some-> (get (:sources d) fid)
+                                                           edit/parse-form :node)]
+                                        :when (and (:node e) nu)
+                                        x     (edit/contract-drift (:node e) nu)]
+                                    (assoc x :form (symbol (str (:ns d))
+                                                           (str (or (:name e) fid))))))}
                       (:healed load-res) (assoc :image-healed true)
                       (:stubbed load-res) (assoc :red-first (:stubbed load-res)
                                                  :note (str "these vars don't exist yet —"

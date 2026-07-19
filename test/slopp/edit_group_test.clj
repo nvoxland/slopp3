@@ -84,3 +84,44 @@
         (is (= [10] (api/query-eval sess "(gdemo/new-helper 5)")))
         (is (= [nil] (api/query-eval sess "(resolve 'gdemo/old-helper)"))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated group-writes-report-contract-drift-too
+  ;; contract-drift was wired into edit/replace-form only. Every GROUP write —
+  ;; edit_group, rename_sweep, edit_move_forms, change_signature, edit_extract
+  ;; — goes through apply-group-step, which calls store/replace-node directly
+  ;; and bypassed it entirely.
+  ;;
+  ;; So the fix missed its own motivating case: the sweep that silently dropped
+  ;; ^Repository and ^java.sql.Connection from slopp.git/close-ctx!, turning
+  ;; direct interop into reflection, would STILL not report drift. A guard
+  ;; wired into one of several paths is barely a guard — it is a guard on the
+  ;; path that happened to be in front of me.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'gd.core
+                   (str "(ns gd.core)\n\n"
+                        "(defn f\n  \"Doc.\"\n  [{:keys [^String a]} b] [a b])\n\n"
+                        "(defn g [x] x)\n"))
+      (testing "a group replace that drops a hint reports it"
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'gd.core :name 'f
+                                   :source "(defn f\n  \"Doc.\"\n  [{:keys [a]} b] [a b])"}]
+                                 :prompt "drop the hint in a group")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some #(= :metadata-lost (:kind %)) (:drift r))
+              (str "a group write must surface drift too: " (pr-str r)))))
+      (testing "drift names the form, since a group touches many"
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'gd.core :name 'f
+                                   :source "(defn f [{:keys [a]} b] [a b])"}
+                                  {:action :replace :ns 'gd.core :name 'g
+                                   :source "(defn g [x] (identity x))"}]
+                                 :prompt "one step drifts, one does not")]
+          (is (= '[gd.core/f] (mapv :form (:drift r))) (pr-str r))))
+      (testing "a clean group reports no drift"
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'gd.core :name 'g
+                                   :source "(defn g [x] (identity x))"}]
+                                 :prompt "same contract")]
+          (is (empty? (:drift r)) (pr-str r))))
+      (finally (api/close! sess)))))
