@@ -438,3 +438,40 @@
         (is (= [41] (api/query-eval sess "(rr.core/f)"))
             "the store reloads into a genuinely fresh image"))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated fallback-verifies-tests-that-reach-the-change
+  ;; The "conservative full" fallback ran tests IN the touched PRODUCTION
+  ;; namespaces — which contain none. On the real store,
+  ;; test_run {ns "slopp.git"} runs 0 tests while FIFTEEN test namespaces
+  ;; reach it. So every write lacking trace evidence — every multi-form
+  ;; refactor especially — verified NOTHING while reporting a result, and the
+  ;; biggest changes are the ones least likely to carry complete evidence.
+  ;;
+  ;; Naming cannot fix it: slopp.git is covered by slopp.git-projection-test,
+  ;; not slopp.git-test. Only the require graph knows. The covering ns here is
+  ;; deliberately NOT cv.core-test, so a naming heuristic still finds nothing.
+  (let [sess (api/open!)]
+    (try
+      (is (nil? (:error (api/ingest! sess 'cv.core
+                                     "(ns cv.core)\n(defn f [] 41)\n"))))
+      (is (nil? (:error (api/ingest!
+                         sess 'cv.core.probe-test
+                         (str "(ns cv.core.probe-test\n"
+                              "  (:require [clojure.test :refer [deftest is]]\n"
+                              "            [cv.core :as c]))\n\n"
+                              "(deftest covers-f (is (= 41 (c/f))))\n")))))
+      (testing "a single-form write with NO trace evidence still verifies"
+        (let [r (api/edit-replace! sess 'cv.core 'f "(defn f [] 41)"
+                                   :prompt "empty trace map")]
+          (is (pos? (:test (:test r)))
+              (str "must run the covering test ns found via the graph: "
+                   (pr-str (:test r))))))
+      (testing "a GROUP write does too — this is where it mattered most"
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'cv.core :name 'f
+                                   :source "(defn f [] 41)"}]
+                                 :prompt "group with no trace evidence")]
+          (is (pos? (:test (:test r)))
+              (str "a multi-form refactor must not verify nothing: "
+                   (pr-str (:test r))))))
+      (finally (api/close! sess)))))

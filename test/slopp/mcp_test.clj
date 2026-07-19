@@ -257,8 +257,14 @@
           (is (re-find #":ok true" r) r)
           (is (re-find #":untested true" r) r)
           (is (not (re-find #"identity" r)) r)
-          (testing "…and a zero-test verification names its emptiness (Q8)"
-            (is (re-find #":coverage :none" r) r))))
+          (testing "…but the covering namespace's suite still RUNS (graph fallback)"
+            ;; no test covers `g` specifically, so :untested holds. It used to
+            ;; also verify NOTHING, because the fallback ran tests in ut.core
+            ;; — a production ns holding none. It now runs ut.core-test, found
+            ;; through the require graph. Emptiness itself is asserted by
+            ;; unverified-says-why-it-verified-nothing.
+            (is (re-find #":status :green" r) r)
+            (is (not (re-find #":coverage :none" r)) r))))
       (testing "a new deftest is not 'untested' — it IS a test"
         (call! sess "edit_add_form" {:ns "ut.core-test"
                                     :source "(deftest g-t (is (= 2 (c/g 2))))"})
@@ -847,4 +853,21 @@
                         :source "(defn ^:unused-ok f [x] (inc x))"
                         :prompt "touch it so its test runs"})]
           (is (not (re-find #":unverified" r)) r)))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated unverified-says-why-it-verified-nothing
+  ;; :unverified alone repeats the original sin at one remove. "No test covers
+  ;; this yet" and "the fallback looked in the wrong place" are different
+  ;; facts: the first is the agent's to fix by writing a test, the second is a
+  ;; slopp bug. They were indistinguishable, which is exactly how the empty
+  ;; fallback hid — it looked like an ordinary untested form for months.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'uw.core "(ns uw.core)\n")
+      (let [r (call! sess "edit_add_form"
+                     {:ns "uw.core" :source "(defn ^:unused-ok f [x] (inc x))"
+                      :prompt "genuinely nothing covers this"})]
+        (is (re-find #":status :unverified" r) r)
+        (is (re-find #":reason :no-covering-tests" r)
+            (str "an :unverified must name its cause: " r)))
       (finally (api/close! sess)))))

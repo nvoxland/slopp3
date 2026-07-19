@@ -223,8 +223,10 @@
              (update :deltas conj delta))
          delta]))))
 
-(defn- ns-requires
-  "Store namespaces required by `ns-sym`'s ns form."
+(defn ns-requires
+  "Store namespaces required by `ns-sym`'s ns form — the require graph's edge
+  set, public because verification needs it: finding which TEST namespaces
+  reach a change is a graph question, and no naming convention answers it."
   [store ns-sym]
   (when-let [e (form-named store ns-sym ns-sym)]
     (let [s (n/sexpr (:node e))]

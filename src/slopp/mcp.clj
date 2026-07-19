@@ -145,7 +145,14 @@
                                                             :else               (:status t :green))
                                               :scope (:scope t)}
                                        (:staleness-detected t)  (assoc :staleness-healed true)
-                                       (zero? (:test t 0))      (assoc :coverage :none)
+                                       (zero? (:test t 0))      ;; name the CAUSE. "no test covers this yet" is the agent's to fix;
+                                       ;; "the scope ran nothing" is a slopp bug. Collapsing the
+                                       ;; two is how an empty verification fallback hid, looking
+                                       ;; like an ordinary untested form.
+                                       (assoc :coverage :none
+                                              :reason (if (= :all (:affected r))
+                                                        :no-covering-tests
+                                                        :scope-ran-nothing))
                                        (red? t)                 (assoc :fail (+ (:fail t 0) (:error t 0)))
                                        (seq (:still-red t))     (assoc :still-red (:still-red t))
                                        (seq (:went-green t))    (assoc :went-green (:went-green t))))

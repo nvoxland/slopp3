@@ -851,7 +851,14 @@
                                        (format "(ns-unmap '%s '%s)" ns-sym nm)))
                 _        (when unregister
                            (repl/eval! (:image @session) unregister))
-                summary  (session/run-verification! session ns-sym affected
+                ;; no trace evidence → fall back to the tests that REACH this
+                ;; namespace, not to tests named after it (there are none)
+                scope    (if affected
+                           ns-sym
+                           (or (seq (session/covering-test-nses
+                                     (:store @session) [ns-sym]))
+                               ns-sym))
+                summary  (session/run-verification! session scope affected
                                             :edited edited)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))]
             (session/commit-appended! session
@@ -1167,7 +1174,14 @@
                                (vec (sort (apply set/union per-step))))
                     ;; F-3c5: with no/partial trace info the fallback run must
                     ;; cover EVERY touched namespace, not just the first step's
-                    main-ns  (vec (distinct (map :ns steps)))
+                    ;; the fallback scope is a GRAPH question: tests that REACH the
+                    ;; touched namespaces. Running tests IN the production
+                    ;; namespaces found none, so a group write with incomplete
+                    ;; trace evidence verified nothing at all.
+                    touched  (vec (distinct (map :ns steps)))
+                    main-ns  (or (seq (session/covering-test-nses
+                                       (:store @session) touched))
+                                 touched)
                     summary  (session/run-verification! session main-ns
                                                 (when (seq affected) affected)
                                                 :edited edited)]

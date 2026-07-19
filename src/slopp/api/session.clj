@@ -375,6 +375,43 @@
                        (and (not (contains? edited t))
                             (empty? (set/intersection touched edited))))))
                failures)))))
+(defn covering-test-nses
+  "Test namespaces whose requires REACH any of `ns-syms` — the verification
+  scope to fall back on when trace evidence is missing.
+
+  The old fallback ran tests IN the touched PRODUCTION namespaces, which
+  contain none: on slopp's own store `test_run {ns \"slopp.git\"}` runs zero
+  tests while five test namespaces cover it. So a write without trace evidence
+  verified NOTHING while still reporting a result — and a multi-form refactor,
+  least likely to carry complete evidence, was the most exposed of all.
+
+  Naming cannot answer this. `slopp.git` is covered by
+  `slopp.git-projection-test`, not `slopp.git-test`, so an `x` → `x-test`
+  heuristic finds nothing here. Only the require graph knows, and it is
+  walked TRANSITIVELY so a test reaching the change through one hop counts.
+
+  Returns a sorted vector, empty when genuinely nothing covers `ns-syms` —
+  which is a real answer, and the caller reports it as such rather than as a
+  pass."
+  [store ns-syms]
+  (let [known   (set (keys (:namespaces store)))
+        targets (set ns-syms)
+        reqs    (memoize (fn [n] (filter known (store/ns-requires store n))))
+        reaches? (fn [t]
+                   (loop [seen #{}, queue [t]]
+                     (if-let [n (first queue)]
+                       (cond
+                         (seen n)    (recur seen (rest queue))
+                         (targets n) true
+                         :else       (recur (conj seen n)
+                                            (into (vec (rest queue)) (reqs n))))
+                       false)))]
+    (->> known
+         (filter render/test-ns?)
+         (filter reaches?)
+         sort
+         vec)))
+
 (defn affected-tests
   "Which tests must re-run after editing `ns-sym/nm`: the tests observed (via
   tracing) to exercise that form — or the form itself if it IS a test. nil =

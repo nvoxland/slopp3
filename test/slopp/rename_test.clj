@@ -209,10 +209,17 @@
           (is (= '[dr.core/real] (mapv :form (:in-code r))) (pr-str r))
           (is (= '[dr.core/fixture] (mapv :form (:in-strings r))) (pr-str r))))
       (testing "a preview does not rename NAMESPACES either — that phase writes"
-        (let [r (api/rename-sweep! sess "dr" "renamed" :dry-run true)]
+        ;; The FIRST cut of dry-run got this wrong and this test still passed,
+        ;; because the fixture swept a keyword that matched no namespace name —
+        ;; a green on a path it never touched. So assert the property, not the
+        ;; instance: NO dry run appends a delta, whatever it matches.
+        (let [before (count (store/deltas (:store @sess)))
+              r      (api/rename-sweep! sess "dr" "renamed" :dry-run true)]
           (is (= '[[dr.core renamed.core]] (:renamed-namespaces r)) (pr-str r))
           (is (contains? (set (keys (:namespaces (:store @sess)))) 'dr.core)
-              "the namespace must still exist after a preview")))
+              "the namespace must still exist after a preview")
+          (is (= before (count (store/deltas (:store @sess))))
+              "a dry run must append NO delta — the shape-level guarantee")))
       (testing "without dry-run it still writes"
         (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed"
                                    :prompt "for real")]
