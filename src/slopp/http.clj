@@ -77,12 +77,15 @@
     (.start server)
     {:server server :session session :calls calls}))
 
-(defn stop-server! "Stop the HTTP transport and close the session it serves, returning nil.
-  Takes the map `start-server!` returned. Closing the session is the part that
-  matters — it reaps the owned image subprocess."
-  [{:keys [^HttpServer server session]}]
-  (.stop server 0)
-  (api/close! session)
+(defn stop-server!
+  "Stop the HTTP transport and close the session it serves, returning nil.
+  Takes the map `start-server!` returned — an opaque handle, so its keys are
+  read here rather than destructured in the arglist (they are not a contract
+  the caller builds). Closing the session is the part that matters: it reaps
+  the owned image subprocess."
+  [srv]
+  (.stop ^HttpServer (:server srv) 0)
+  (api/close! (:session srv))
   nil)
 
 (defn -main "CLI: serve the HTTP transport on `port` (default 7357) over a session at
