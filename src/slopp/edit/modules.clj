@@ -272,7 +272,9 @@
                    (contains? '#{defn defmacro} (first s))
                    (symbol? (second s))
                    (not (:private (meta (second s))))
-                   (not (string? (nth s 2 nil)))
+                   ;; via the shared accessor: (def x "a value") has a string at
+                   ;; index 2 that is NOT a docstring, and indexing cannot tell
+                   (nil? (store/form-docstring (:node e)))
                    (or (<= (count (str/split (str ns-sym) #"\.")) 2)
                        ;; only a WORLD export is public surface — a subtree
                        ;; export stays internal, no docstring nag

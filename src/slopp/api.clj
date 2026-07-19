@@ -1095,7 +1095,27 @@
   (sharing a `:group` id) commit and persist, every change hot-reloads, and
   verification runs ONCE at the end — no meaningless mid-refactor red, no
   wasted diagnostic restart. Steps: [{:action :replace|:add|:delete
-  :ns sym :name sym :source str} ...]."
+  :ns sym :name sym :source str} ...].
+
+  DELIBERATELY NOT AN MCP TOOL, and it must stay that way. This is an
+  IMPLEMENTATION PRIMITIVE for transformations a TOOL derives from a single
+  stated intent — `change-signature!`, `rename-sweep!`, `revert-episode!`,
+  `undo!`, `sync/apply-ns!`. Their intermediate states are invalid by
+  construction and no one was ever asked to reason about them.
+
+  Exposed to agents it becomes a shopping list, and that was measured to go
+  badly: agents batched a whole feature into one call instead of working
+  incrementally, which is too much to hold at once and skips the property that
+  makes this system work — every step is a VALID PROGRAM, verified, with the
+  automated checks at `done` and the judgement call about completeness made
+  there too.
+
+  The test for whether a multi-form op belongs on the wire: does the AGENT
+  choose the steps, or does the TOOL derive them from one intent? `rename_sweep
+  {from to}` is one intent. `edit_group [step step step]` is a shopping list.
+  If you are reaching for this because a single-form edit would not compile,
+  you almost certainly need a BIGGER MATCH on that one form, not atomicity
+  across several."
   [session steps & {:keys [prompt agent]}]
   (if (empty? steps)
     {:error "edit-group needs at least one step"}

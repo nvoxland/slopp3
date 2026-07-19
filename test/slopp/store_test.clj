@@ -156,3 +156,33 @@
         (let [[s2 d2] (store/record-module-tier s1 "app.core" :effects)]
           (is (= {"app.core" :effects} (:module-tiers s2)))
           (is (= {"app.core" :effects} (:module-tiers (store/replay-delta s1 d2)))))))))
+
+(deftest form-accessors-handle-every-shape
+  ;; THE bug class of this project. Analyzers reached into a form by INDEX:
+  ;; `(nth s 2)` for a def's value, which is where a DOCSTRING sits. So
+  ;; ambient-def? never once fired on a documented global — every global anyone
+  ;; had bothered to justify — and looked healthy for its entire life while
+  ;; nine accumulated. A day later I made the same class of error in
+  ;; contract-drift, binding a whitespace node instead of a symbol.
+  ;;
+  ;; A wrong index does not throw. It yields nil, nil is falsy, and the rule
+  ;; simply does not fire. That is why this needs ONE tested accessor rather
+  ;; than fifteen independent guesses, each silently wrong in its own way.
+  (let [p #(rewrite-clj.parser/parse-string %)]
+    (testing "def-init sees past an optional docstring"
+      (is (= '(atom {}) (store/def-init (p "(def x (atom {}))"))))
+      (is (= '(atom {}) (store/def-init (p "(def x \"why\" (atom {}))"))))
+      (is (= '(atom {}) (store/def-init (p "(def ^:private ^:ambient-ok x \"why\" (atom {}))"))))
+      (is (= 41 (store/def-init (p "(def x 41)")))))
+    (testing "…and through a leading metadata wrapper, like form-symbol does"
+      (is (= '(atom {}) (store/def-init (p "^:unsafe (def x \"why\" (atom {}))")))))
+    (testing "form-docstring finds one only where a docstring can legally be"
+      (is (= "why" (store/form-docstring (p "(def x \"why\" 1)"))))
+      (is (= "why" (store/form-docstring (p "(defn f \"why\" [] 1)"))))
+      (is (nil? (store/form-docstring (p "(def x 1)"))))
+      (is (nil? (store/form-docstring (p "(defn f [] 1)"))))
+      (testing "a lone string VALUE is not a docstring"
+        (is (nil? (store/form-docstring (p "(def x \"just a value\")"))))))
+    (testing "a non-def form yields nil rather than a plausible wrong answer"
+      (is (nil? (store/def-init (p "(println 1)"))))
+      (is (nil? (store/form-docstring (p "(println 1)")))))))

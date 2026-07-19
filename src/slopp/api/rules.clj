@@ -65,21 +65,22 @@
     :teach "a global (def _ (atom/ref/agent/volatile! …)) — ambient mutable state a slice can't track"}
    {:rule :bare-throw :grain :done :severity :advisory
     :escape "return data / (ex-info …) at the boundary, or accept the throw"
-    :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}])
+    :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
+   ])
 
 (defn- ambient-def?
   "True when `node` is a top-level `(def name (atom|ref|agent|volatile! …))` —
    ambient MUTABLE state a slice-limited editor can't track.
 
-   Reads the LAST element, not index 2: `(def x \"doc\" (atom {}))` puts the
-   docstring there, so an index-2 lookup silently missed every DOCUMENTED
-   global — which is to say, every one someone had bothered to justify."
+   Reads the initializer through `store/def-init` rather than by index. This
+   fn is the origin of the project's worst bug: it indexed position 2, which
+   is where a DOCSTRING sits, so it never fired on a documented global — every
+   global anyone had bothered to justify — while reporting one finding for its
+   whole life and looking clean."
   [node]
-  (let [s (try (n/sexpr node) (catch Exception _ nil))]
-    (boolean (and (seq? s) (= 'def (first s)) (>= (count s) 3)
-                  (let [v (last s)]
-                    (and (seq? v)
-                         (contains? '#{atom ref agent volatile!} (first v))))))))
+  (let [v (store/def-init node)]
+    (boolean (and (seq? v)
+                  (contains? '#{atom ref agent volatile!} (first v))))))
 
 (defn- bare-throws?
   "True when `node`'s body throws a freshly-CONSTRUCTED exception that isn't
@@ -174,7 +175,8 @@
    {:key :ambient-state    :severity :advisory :check #'ambient-state-check
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
    {:key :bare-throw       :severity :advisory :check #'bare-throw-check
-    :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}])
+    :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
+   ])
 
 (defn run-done-advisories!
   "Run every registered done-advisory `:check` over the episode's changes —

@@ -69,6 +69,51 @@
   '#{def defn defn- defmacro defmulti defrecord deftype
      defprotocol defonce deftest ns})
 
+(defn form-sexpr
+  "A top-level form's sexpr with any LEADING metadata wrapper unwrapped, or nil
+  when it has none / is unreadable. The shared entry point for the form
+  accessors, so each one stops re-deriving `^:unsafe (defn …)` on its own."
+  [node]
+  (when (n/sexpr-able? node)
+    (if (= :meta (n/tag node))
+      (some-> (last (filter n/sexpr-able? (n/children node))) form-sexpr)
+      (when (= :list (n/tag node))
+        (let [s (try (n/sexpr node) (catch Exception _ nil))]
+          (when (seq? s) s))))))
+
+(defn form-docstring
+  "A `def`/`defn`-family form's docstring, or nil.
+
+  Index-based access is THE bug class of this codebase: a docstring sits at
+  index 2, which is also where a `def`'s VALUE sits when there is no
+  docstring. `ambient-def?` read index 2 for the value and so never once fired
+  on a documented global — every global anyone had bothered to justify — while
+  looking perfectly healthy for its entire life. A wrong index does not throw:
+  it yields nil, nil is falsy, and the rule simply does not fire.
+
+  So this asks whether a docstring can LEGALLY be there rather than whether
+  index 2 happens to hold a string — `(def x \"a value\")` is a value, not a
+  doc."
+  [node]
+  (let [s (form-sexpr node)]
+    (when (and (seq? s) (symbol? (first s)) (contains? def-heads (first s))
+               (string? (nth s 2 nil))
+               (> (count s) 3))
+      (nth s 2))))
+
+(defn def-init
+  "The initializer of a `(def name …)` form — the expression its var is bound
+  to — accounting for an optional docstring, or nil when `node` is not a `def`.
+
+  Use this instead of indexing. `(nth s 2)` is the initializer only when there
+  is no docstring; with one it returns the docstring, which is how a rule can
+  silently stop firing on exactly the forms someone documented. See
+  `form-docstring`."
+  [node]
+  (let [s (form-sexpr node)]
+    (when (and (seq? s) (= 'def (first s)) (> (count s) 2))
+      (last s))))
+
 (defn form-symbol
   "The symbol a top-level form defines, or nil (anonymous/effectful top-levels).
   Sees through leading metadata (`^:unsafe`, `^{:integration true}`, …) so a

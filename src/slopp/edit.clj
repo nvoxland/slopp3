@@ -639,8 +639,9 @@
                                :let [[m v] (filter n/sexpr-able? (n/children nd*))]
                                :when (symbol? (sx v))]
                            [(sx v) (n/string m)])))
-        docs  (fn [nd] (let [s (sx nd)]
-                         (when (and (seq? s) (string? (nth s 2 nil))) (nth s 2))))
+        ;; through the shared accessor — indexing here is the same mistake
+        ;; that hid nine documented globals from ambient-state
+        docs  store/form-docstring
         arits (fn [nd] (mapv count (modules/fn-arglists (sx nd))))
         lost  (remove (fn [[sym _]] (contains? (hints new-node) sym))
                       (hints old-node))]

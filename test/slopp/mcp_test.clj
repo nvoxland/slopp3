@@ -871,3 +871,31 @@
         (is (re-find #":reason :no-covering-tests" r)
             (str "an :unverified must name its cause: " r)))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated edit-group-stays-off-the-wire-on-purpose
+  ;; Its absence is a MEASURED design decision, not an oversight, and it looks
+  ;; exactly like an oversight from the outside — I argued for registering it
+  ;; within one session of arriving at this codebase, on the grounds that the
+  ;; API had a capability the wire did not.
+  ;;
+  ;; Exposed, agents batch a whole feature into one call instead of working
+  ;; incrementally, which is too much to hold and skips the property the whole
+  ;; system rests on: every step is a VALID PROGRAM, verified, with the
+  ;; completeness judgement made at done.
+  ;;
+  ;; It stays as an internal primitive for transformations a TOOL derives from
+  ;; ONE intent (change-signature!, rename-sweep!, revert-episode!, undo!,
+  ;; sync/apply-ns!) — those intermediates are invalid by construction and
+  ;; nobody was asked to reason about them.
+  (let [sess (api/open!)]
+    (try
+      (let [by-name (into {} (map (juxt :name identity))
+                          (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
+                                  [:result :tools]))]
+        (is (not (contains? by-name "edit_group"))
+            "off the wire on purpose — see slopp.api/edit-group!'s docstring")
+        (testing "while the TOOL-derived multi-form ops that use it stay exposed"
+          (is (contains? by-name "rename_sweep"))
+          (is (contains? by-name "change_signature"))
+          (is (contains? by-name "undo"))))
+      (finally (api/close! sess)))))
