@@ -15,7 +15,7 @@
   Feature registers Clojure classes for build-time init), `--no-fallback`."
   (:require [clojure.string :as str]))
 
-(defn arg-style
+(defn ^:foreign-keys arg-style
   "How the launcher hands CLI args to the entry fn, judged from its index
   var-definition: a single fixed arity of 1 (and no varargs) receives the
   args as ONE vector; every other shape is `apply`'d, -main style."

@@ -191,9 +191,11 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "rename_sweep"
-    :description "A concept rename as ONE intent: every namespace, var, keyword, and prose occurrence of `from` (whole word/segment) becomes `to`, store-wide — ns renames + one atomic group, one verification. THE tool for docs-team renames ('zone is now region'); never do those form-by-form."
+    :description "A concept rename as ONE intent: every namespace, var, keyword, and prose occurrence of `from` (whole word/segment) becomes `to`, store-wide — ns renames + one atomic group, one verification. THE tool for docs-team renames ('zone is now region'); never do those form-by-form. Renaming a KEYWORD also requalifies `{:keys [x]}` destructuring, which names its key as a SYMBOL and so is invisible to a text pass. PREVIEW FIRST with dry-run: it writes nothing and splits the hits into :in-code and :in-strings — the string bucket needs an eye, since a sweep rewrites keyword text inside string literals and a test FIXTURE is data, not prose."
     :inputSchema {:type "object"
                   :properties {:from {:type "string"} :to {:type "string"}
+                               :dry-run {:type "boolean"
+                                         :description "preview only: write nothing, report :in-code and :in-strings"}
                                :prompt {:type "string"}
                                :verbose {:type "boolean"}}
                   :required ["from" "to"]}}
