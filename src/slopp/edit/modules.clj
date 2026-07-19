@@ -330,10 +330,37 @@
   "The opt-in NAMESPACED-BOUNDARY-KEYS gate over the CANDIDATE store (D9): when the
    store opts in (config file `gates`, key `require-namespaced-keys` = `true`; OFF
    by default), a MODULE-EXTERNAL `defn` any of whose arities destructures
-   UNQUALIFIED `:keys` (`{:keys [id]}`) is refused — a boundary map should carry
-   namespaced domain keys (`{:some.ns/keys [id]}`), self-documenting at the use
-   site and safe against the silent nil-pun. Structural only; shares
-   `module-external?` + `fn-arglists` with the other boundary gates.
+   UNQUALIFIED `:keys` (`{:keys [id]}`) is refused — use
+   `{:some.ns/keys [id]}`. Structural only; shares `module-external?` +
+   `fn-arglists` with the other boundary gates.
+
+   SCOPE — read this before \"improving\" beyond it. This gate is deliberately
+   NARROW and it is the WHOLE rule. It covers a module-external defn's ARGLIST
+   destructuring, nothing else. It does NOT ask you to namespace map keys
+   generally, return maps, internal fns, or keys read as `(:k m)`. Its finding
+   list IS the worklist; `cleanup {all true}` reports it under `:gates`.
+
+   WHY the narrow scope is not timidity: measured on this store, 674 distinct
+   unqualified keys appear in production code and 445 of them appear in more
+   than one form. The most-shared are Clojure syntax (`:require`, `:as`,
+   `:when`) and slopp's universal result vocabulary (`:error` in 119 forms,
+   `:id`, `:name`, `:ns`) — where ONE shared spelling is exactly right and
+   namespacing would be pure loss. A broader rule is undischargeable, and an
+   undischargeable rule trains people to ignore the channel.
+
+   WHY the rule exists at all, given that general Clojure practice defaults to
+   UNQUALIFIED keys and namespaces only for a specific reason (spec's flat
+   global registry, data crossing systems): this is a deliberate HOUSE rule,
+   stricter than community practice, because the argument for bare keys
+   assumes CONTEXT DISAMBIGUATES — a reader with the file open sees the
+   producer twenty lines up. An agent reads one form. Measured here: `:session`
+   means an nREPL session id AND slopp's session atom; `:dir` means three
+   things; `:values` means a config entry's values AND eval-checked!'s return
+   map. Each was found by tooling, never by reading. A qualified key names its
+   own origin inside the slice.
+
+   What it does NOT buy, so do not claim it: it does not prevent typos
+   (`:some.ns/idd` nil-puns exactly like `:idd` — that is `key-typos`' job).
 
    `^:foreign-keys` on the NAME discharges it, for the one case our own code
    cannot fix: a fn destructuring a THIRD-PARTY map (clj-kondo analysis, a JDBC

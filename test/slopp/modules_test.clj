@@ -650,3 +650,45 @@
         (is (= :pure (:supports (modules/tier-report (:store @sess) 'ra.core)))
             "the effectful TEST namespace must not veto the module's tier")
         (finally (api/close! sess))))))
+
+(deftest ^:isolated namespaced-keys-gate-scope-is-pinned-in-both-directions
+  ;; The anti-drift guard. A rule stated only in prose drifts: I read
+  ;; "namespaced boundary keys" as a mandate to namespace keys store-wide and
+  ;; set off migrating :session, :dir, :values — overloaded keys whose renames
+  ;; are risky — when the gate's actual finding list was twelve forms.
+  ;;
+  ;; So the SCOPE is asserted, not described. Tightening the gate breaks the
+  ;; negative cases; loosening it breaks the positive one. An agent cannot
+  ;; drift in either direction without turning the suite red.
+  ;;
+  ;; Measured justification for the narrow scope: 674 distinct unqualified keys
+  ;; appear in this store's production code and 445 in more than one form. The
+  ;; most-shared are Clojure syntax (:require, :as, :when) and slopp's
+  ;; universal result vocabulary (:error in 119 forms) — where one shared
+  ;; spelling is right and namespacing is pure loss.
+  (let [sess (api/open!)]
+    (try
+      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
+      (api/ingest! sess 'ks.core "(ns ks.core)\n")
+      (testing "IN scope: a module-external defn destructuring bare :keys"
+        (is (re-find #"namespaced"
+                     (str (:error (api/add-form! sess 'ks.core
+                                                 "(defn boundary [{:keys [id]}] id)"
+                                                 :prompt "in scope"))))))
+      (testing "OUT of scope: a PRIVATE fn — the module can see its own producer"
+        (is (nil? (:error (api/add-form! sess 'ks.core
+                                         "(defn- internal [{:keys [id]}] id)"
+                                         :prompt "private")))))
+      (testing "OUT of scope: keys read in the BODY, not destructured in the arglist"
+        (is (nil? (:error (api/add-form! sess 'ks.core
+                                         "(defn reads-body [m] (:id m))"
+                                         :prompt "body read")))))
+      (testing "OUT of scope: a RETURN map's keys"
+        (is (nil? (:error (api/add-form! sess 'ks.core
+                                         "(defn returns [] {:id 1 :error nil})"
+                                         :prompt "return map")))))
+      (testing "OUT of scope: a non-map argument"
+        (is (nil? (:error (api/add-form! sess 'ks.core
+                                         "(defn plain [id] id)"
+                                         :prompt "no map arg")))))
+      (finally (api/close! sess)))))

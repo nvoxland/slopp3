@@ -49,8 +49,14 @@
     :escape "add a :=> :malli/schema, or config_file {path gates key require-boundary-schemas unset true}"
     :teach "a module-external map-arg fn must carry a :=> :malli/schema (when the store opts in)"}
    {:rule :namespaced-keys-refusal :grain :form :severity :refuse
-    :escape "use {:some.ns/keys [...]}, or config_file {path gates key require-namespaced-keys unset true}"
-    :teach "a module-external fn must use namespaced boundary keys (when the store opts in)"}
+    :escape "use {:some.ns/keys [...]}, ^:foreign-keys for a third-party map, or config_file {path gates key require-namespaced-keys unset true}"
+    :teach (str "a module-external fn's ARGLIST destructuring must use namespaced keys"
+                " (when the store opts in). SCOPE: arglist destructuring on a"
+                " module-external defn ONLY — not map keys generally, not return maps,"
+                " not private fns, not (:k m) body reads. Its finding list IS the"
+                " worklist. A deliberate HOUSE rule, stricter than Clojure practice,"
+                " which defaults to unqualified keys: the argument for bare keys assumes"
+                " context disambiguates, and an agent reads one form")}
    {:rule :schema-drift :grain :done :severity :error
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}
