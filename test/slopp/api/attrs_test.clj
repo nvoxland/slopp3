@@ -47,17 +47,20 @@
     (try
       (api/ingest! sess 'kt.core
                    (str "(ns kt.core)\n"
-                        "(defn a [m] {:user/email (:x m)})\n"
-                        "(defn b [m] {:user/email (:y m)})\n"))
+                        ;; ^:unused-ok throughout: done now scans the whole
+                        ;; store, so unmarked fixture surface would make
+                        ;; test-status red for a reason this test is not about
+                        "(defn ^:unused-ok a [m] {:user/email (:x m)})\n"
+                        "(defn ^:unused-ok b [m] {:user/email (:y m)})\n"))
       (api/done! sess :label "baseline")
-      (api/add-form! sess 'kt.core "(defn c [m] {:user/emial (:z m)})"
+      (api/add-form! sess 'kt.core "(defn ^:unused-ok c [m] {:user/emial (:z m)})"
                      :prompt "typo the boundary key")
       (let [r (api/done! sess :label "typo")]
         (testing "the typo'd key is flagged with the established key it resembles"
           (is (= [{:used :user/emial :suggest :user/email :seen 2}]
                  (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
       (testing "advisory only — a key typo does NOT flip test-status red"
-        (api/add-form! sess 'kt.core "(defn d [m] {:order/idd (:z m)})"
+        (api/add-form! sess 'kt.core "(defn ^:unused-ok d \"D.\" [m] {:order/idd (:z m)})"
                        :prompt "another typo, but there is no established :order key")
         (let [r (api/done! sess :label "no-neighbor")]
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))

@@ -21,32 +21,38 @@
                          :node    node
                          :applied applied})))
 
-(defn anchored-lint "Kondo findings for every namespace the episode touched, expressed as
-  ANCHORS rather than coordinates: each row carries the owning `:form` and an
-  `:at` snippet of the offending line, and `:row`/`:col` are dropped.
+(defn anchored-lint
+  "Kondo findings for EVERY namespace in the store, expressed as ANCHORS
+  rather than coordinates: each row carries the owning `:form` and an `:at`
+  snippet of the offending line, and `:row`/`:col` are dropped.
+
+  Store-wide, not episode-scoped, because `done` means done: the claim is
+  about the codebase, not about which namespaces this episode happened to
+  touch. The done point compresses findings on UNTOUCHED forms to a count
+  (`loud?` in `done!`) so a global scan reports without spamming — but they
+  still count, so a standing problem cannot be outrun by editing elsewhere.
 
   Coordinates never cross the wire because they are meaningless to a
   form-addressed agent — and stale the moment anything above them shifts. A
   form plus a match-ready snippet stays true and is what the edit tools take."
-  [session changed]
-  (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
-                                              changed))
-                        :let [st*   (:store @session)
-                              src   (render/render-ns st* ns-sym)
-                              lines (vec (str/split-lines src))]
-                        f (index/lint src)]
-                    ;; anchors, not coordinates: the owning form + a
-                    ;; match-ready snippet; row/col never cross the wire
-                    (cond-> (-> f
-                                (dissoc :row :col)
-                                (assoc :ns ns-sym
-                                       :form (when-let [e (render/owner-form
-                                                           st* ns-sym
-                                                           (:row f) (:col f))]
-                                               (symbol (str ns-sym)
-                                                       (str (or (:name e) (:id e)))))))
-                      (get lines (dec (:row f 0)))
-                      (assoc :at (str/trim (nth lines (dec (:row f)))))))))
+  [session]
+  (vec (for [ns-sym (sort (keys (:namespaces (:store @session))))
+             :let [st*   (:store @session)
+                   src   (render/render-ns st* ns-sym)
+                   lines (vec (str/split-lines src))]
+             f (index/lint src)]
+         ;; anchors, not coordinates: the owning form + a match-ready
+         ;; snippet; row/col never cross the wire
+         (cond-> (-> f
+                     (dissoc :row :col)
+                     (assoc :ns ns-sym
+                            :form (when-let [e (render/owner-form
+                                                st* ns-sym
+                                                (:row f) (:col f))]
+                                    (symbol (str ns-sym)
+                                            (str (or (:name e) (:id e)))))))
+           (get lines (dec (:row f 0)))
+           (assoc :at (str/trim (nth lines (dec (:row f)))))))))
 
 (defn with-unused-gate "Fold the unused-public report into `lint` as ERROR-grade rows — dead public
   surface (`:unused-public`) and stale `^:unused-ok` markers on vars that ARE

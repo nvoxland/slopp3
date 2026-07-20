@@ -25,10 +25,10 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'bc.core
-                   "(ns bc.core)\n(defn handle \"H.\" ([x] x) ([x y] (+ x y)))\n")
+                   "(ns bc.core)\n(defn ^:unused-ok handle \"H.\" ([x] x) ([x y] (+ x y)))\n")
       (api/done! sess :label "baseline")
       (api/edit-replace! sess 'bc.core 'handle
-                         "(defn handle \"H.\" [x] x)"
+                         "(defn ^:unused-ok handle \"H.\" [x] x)"
                          :prompt "narrow away the 2-arity")
       (let [r (api/done! sess :label "narrow")]
         (testing "the removed arity on a boundary fn is flagged"
@@ -36,7 +36,7 @@
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
       (testing "advisory only — a breaking change does NOT flip test-status red"
         (api/edit-replace! sess 'bc.core 'handle
-                           "(defn handle \"H.\" ([x] x) ([x y] y) ([x y z] z))"
+                           "(defn ^:unused-ok handle \"H.\" ([x] x) ([_x y] y) ([_x _y z] z))"
                            :prompt "widen — accretion")
         (let [r (api/done! sess :label "widen")]
           (is (nil? (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
