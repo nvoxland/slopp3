@@ -5,9 +5,8 @@
   Derived and content-memoized, never stored: references are an index of
   source, and the journal owes them no consistency."
   (:require [rewrite-clj.node :as n]
-            [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.cache :as cache]))
+            [slopp.store :as store] [slopp.cache :as cache] [slopp.index.analyze :as analyze]))
 (defn ^:export walk-pruned
   "THE quote-aware traversal: depth-first over sexpr `x`, PRUNING quoted
   subtrees (a quoted symbol is data, never a reference). Returns the
@@ -42,7 +41,7 @@
    (fn [nsx]
      (let [fid-of (into {} (keep (fn [e] (when (:name e) [(:name e) (:id e)])))
                         (store/forms st nsx))
-           usages (:var-usages (index/analyze (render/render-ns st nsx)))
+           usages (:var-usages (analyze/analyze (render/render-ns st nsx)))
            kondo  (for [u usages
                         :when (and (:name u) (:from-var u)
                                    (contains? known (:to u))

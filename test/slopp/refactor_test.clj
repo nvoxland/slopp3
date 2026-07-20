@@ -265,3 +265,30 @@
       (is (= '[clojure.string] (:from-require-drops p))))
     (testing "a lib the stay-behinds still use is kept"
       (is (not (contains? (set (:from-require-drops p)) 'clojure.set))))))
+
+(deftest plan-drops-a-callers-require-when-nothing-is-left
+  ;; The mirror of plan-drops-requires-the-move-orphans. A caller is rewritten
+  ;; to the new home and gains that require — but if the moved forms were the
+  ;; ONLY things it used from the source namespace, the old require is now
+  ;; dead weight, and a :pure caller keeps inheriting the source namespace's
+  ;; tier for a dependency it no longer has. That is exactly what kept
+  ;; slopp.refactor / .edit.modules / .edit.refs / .api.query from layering
+  ;; after the analysis split: four namespaces requiring slopp.index while
+  ;; using nothing from it.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cr.src
+                             (str "(ns cr.src)\n\n"
+                                  "(defn moved \"M.\" [x] (inc x))\n\n"
+                                  "(defn stays \"S.\" [x] (dec x))\n"))
+               (store/ingest 'cr.only
+                             (str "(ns cr.only\n  (:require [cr.src :as src]))\n\n"
+                                  "(defn a \"A.\" [x] (src/moved x))\n"))
+               (store/ingest 'cr.both
+                             (str "(ns cr.both\n  (:require [cr.src :as src]))\n\n"
+                                  "(defn b \"B.\" [x] (+ (src/moved x) (src/stays x)))\n")))
+        p  (refactor/move-plan st 'cr.src '[moved] 'cr.dest {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (testing "a caller left using nothing from the source drops its require"
+      (is (= '[cr.only] (:caller-require-drops p))))
+    (testing "a caller that still uses a stay-behind keeps it"
+      (is (not (contains? (set (:caller-require-drops p)) 'cr.both))))))

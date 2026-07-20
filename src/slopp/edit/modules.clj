@@ -1,4 +1,4 @@
-(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.index :as index] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs]))
+(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (defn ^:export modules-manifest
   "The module manifest — {module-string #{dep-module-strings}} — the FOLD
@@ -48,7 +48,7 @@
                                       (map #(module-of (:to %)))
                                       (remove #{cmod}))
                                 (:var-usages
-                                 (index/analyze (render/render-ns store nsx))))]
+                                 (analyze/analyze (render/render-ns store nsx))))]
                 (if (seq tmods) (merge-with into acc {cmod tmods}) acc)))
             {}
             (sort nses))))
@@ -165,11 +165,11 @@
   A MIGRATION aid: the end state is these violations being refused at write
   time, at which point a standing report has no one left to inform."
   [store ns-sym]
-  (let [analysis (index/analyze (render/render-ns store ns-sym))
+  (let [analysis (analyze/analyze (render/render-ns store ns-sym))
         dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
-        eff-pure (index/effectful-vars analysis dep-nses (:dep-pure store))
-        eff-mut  (index/effectful-vars analysis nil nil)
-        nondet   (index/nondeterministic-vars analysis)
+        eff-pure (derive/effectful-vars analysis dep-nses (:dep-pure store))
+        eff-mut  (derive/effectful-vars analysis nil nil)
+        nondet   (derive/nondeterministic-vars analysis)
         here?    #(= (str ns-sym) (namespace %))
         blocking (fn [vs] (vec (sort (filter here? vs))))
         b-pure   (blocking (into (set eff-pure) nondet))
@@ -233,12 +233,12 @@
   (let [raw  (tier-for candidate ns-sym)
         tier ({:reads :internal :effects :external} raw raw)]
     (when (not= tier :external)
-      (let [analysis (index/analyze (render/render-ns candidate ns-sym))
+      (let [analysis (analyze/analyze (render/render-ns candidate ns-sym))
             dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
             eff      (if (= tier :pure)
-                       (index/effectful-vars analysis dep-nses (:dep-pure candidate))
-                       (index/externally-effectful-vars analysis dep-nses (:dep-pure candidate)))
-            nondet   (when (= tier :pure) (index/nondeterministic-vars analysis))
+                       (derive/effectful-vars analysis dep-nses (:dep-pure candidate))
+                       (derive/externally-effectful-vars analysis dep-nses (:dep-pure candidate)))
+            nondet   (when (= tier :pure) (derive/nondeterministic-vars analysis))
             vnode    (symbol (str ns-sym) (str form-name))]
         (cond
           (contains? eff vnode)

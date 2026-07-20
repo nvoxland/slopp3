@@ -15,13 +15,12 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index]
             [slopp.repl :as repl]
             [slopp.image :as image]
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query]))
+            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -356,7 +355,7 @@
                          known (set (keys (:namespaces st)))]
                      (vec (distinct
                            (for [nsx known
-                                 u   (:var-usages (index/analyze (render/render-ns st nsx)))
+                                 u   (:var-usages (analyze/analyze (render/render-ns st nsx)))
                                  :when (and (= (symbol (str ns-sym)) (:to u))
                                             (= (symbol (str nm)) (:name u))
                                             (not (and (= nsx (symbol (str ns-sym)))
@@ -1620,6 +1619,15 @@
                                                    :prompt prompt :group gid
                                                    :agent agent))
                             st4 (:from-require-drops plan))
+                ;; 4c. and the mirror: a rewritten caller left referencing
+                ;; nothing in from-ns drops that require. Left behind, a
+                ;; :pure caller keeps inheriting from-ns's TIER for a
+                ;; dependency it no longer has.
+                st4 (reduce (fn [s nsx]
+                              (remove-require-node s nsx from-ns
+                                                   :prompt prompt :group gid
+                                                   :agent agent))
+                            st4 (:caller-require-drops plan))
                 ;; the PIPELINE owns ordering. The planner no longer mints a
                 ;; declare for the moved set: a source ns may have ordered
                 ;; caller-before-callee behind a declare that STAYS BEHIND, so

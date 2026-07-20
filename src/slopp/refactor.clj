@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index] [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs]))
+            [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs] [slopp.index.analyze :as analyze]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -494,7 +494,7 @@
                 abs      (fn [[rr cc]] [(+ fr rr -1) (if (= rr 1) (+ fc cc -1) cc)])
                 a-start  (abs [r c])
                 a-end    (abs [er ec])
-                an       (index/analyze-with-locals (render/render-ns store ns-sym))
+                an       (analyze/analyze-with-locals (render/render-ns store ns-sym))
                 defs     (into {} (map (juxt :id identity)) (:locals an))
                 params   (->> (:local-usages an)
                               (filter #(inside? a-start a-end [(:row %) (:col %)]))
@@ -604,7 +604,7 @@
          (fn [acc ns-sym]
            (if (:error acc)
              acc
-             (let [an      (index/analyze (render/render-ns store ns-sym))
+             (let [an      (analyze/analyze (render/render-ns store ns-sym))
                    sites   (distinct
                             (for [u (:var-usages an)
                                   :when (and (= def-ns (:to u))
@@ -645,7 +645,7 @@
   [store def-ns old-name new-name]
   (into {}
         (mapcat (fn [ns-sym]
-                  (let [an      (index/analyze (render/render-ns store ns-sym))
+                  (let [an      (analyze/analyze (render/render-ns store ns-sym))
                         sites   (sites-in-analysis an def-ns old-name (= ns-sym def-ns))
                         offsets (render/element-offsets store ns-sym)
                         elems   (store/elements store ns-sym)]
@@ -834,7 +834,7 @@
         to-ns    (symbol (str to-ns))
         from-ns  (symbol (str from-ns))
         new-ns?  (not (contains? (:namespaces store) to-ns))
-        analyze* (fn [nsx] (:var-usages (index/analyze (render/render-ns store nsx))))
+        analyze* (fn [nsx] (:var-usages (analyze/analyze (render/render-ns store nsx))))
         rows     (analyze* from-ns)
         moved-rows (filter #(moved (:from-var %)) rows)
         
@@ -909,6 +909,22 @@
                                 {} (refs/refs store))
             need-alias  (cond-> (set (keys ext-usages))
                           (seq stay->moved) (conj from-ns))
+            ;; the mirror of from-require-drops, on the CALLER side: a caller
+            ;; rewritten to the new home may be left using NOTHING from
+            ;; from-ns, and the stale require is worse than untidy — a :pure
+            ;; caller keeps inheriting from-ns's TIER for a dependency it no
+            ;; longer has, so the layering check reads a violation that the
+            ;; code no longer commits.
+            caller-require-drops
+            (let [still (reduce (fn [s r]
+                                  (if (and (= from-ns (:to-ns r))
+                                           (not (moved (:to-name r)))
+                                           (not= from-ns (:from-ns r))
+                                           (not= :declared (:via r)))
+                                    (conj s (:from-ns r))
+                                    s))
+                                #{} (refs/refs store))]
+              (vec (sort (remove still (keys ext-usages)))))
             alias-of    (into {}
                               (map (fn [nsx] [nsx (alias-for (require-specs store nsx) to-ns)]))
                               need-alias)
@@ -1030,7 +1046,8 @@
                    :require-adds require-adds
                    :module-rows module-rows
                    :removals (vec (sort moved))
-                   :from-require-drops from-require-drops}
+                   :from-require-drops from-require-drops
+                   :caller-require-drops caller-require-drops}
             new-ns?
             (assoc :new-src
                    (str "(ns " to-ns

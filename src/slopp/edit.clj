@@ -10,7 +10,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.index :as index]
-            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set]))
+            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -267,7 +267,7 @@
                                  (symbol (str ns-sym) (str (:name e))))))
                        (store/forms store ns-sym))]
     (remove #(contains? exempt (:var %))
-            (index/effect-violations (index/analyze (render/render-ns store ns-sym))
+            (derive/effect-violations (analyze/analyze (render/render-ns store ns-sym))
                                      dep-nses (:dep-pure store)))))
 
 (defn dialect-scan
@@ -556,8 +556,8 @@
   (let [cycles   (require-cycles store ns-syms)
         findings (mapcat (fn [ns-sym]
                            (map #(assoc % :ns ns-sym)
-                                (index/forward-refs
-                                 (index/analyze (render/render-ns store ns-sym))
+                                (derive/forward-refs
+                                 (analyze/analyze (render/render-ns store ns-sym))
                                  ns-sym)))
                          (distinct ns-syms))]
     (cond

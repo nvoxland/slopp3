@@ -1,4 +1,4 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store]))
+(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -74,7 +74,7 @@
         missing (vec (distinct
                       (concat
                        (for [t tests
-                             u (:var-usages (index/analyze (render/render-ns candidate t)))
+                             u (:var-usages (analyze/analyze (render/render-ns candidate t)))
                              :when (and (contains? nses (:to u)) (:name u)
                                         (not (store/form-named candidate (:to u) (:name u))))]
                          (symbol (str (:to u)) (str (:name u))))

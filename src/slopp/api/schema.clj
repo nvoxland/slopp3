@@ -3,8 +3,7 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index]
-            [slopp.repl :as repl]))
+            [slopp.repl :as repl] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (defn schema-of
   "The :=> :malli/schema declared on a stored form's defn name, or nil. Read
@@ -28,10 +27,10 @@
    a green `done`). Same RT bar as `tier-refusal`'s `:pure`."
   [store qsym]
   (let [ns-sym   (symbol (namespace qsym))
-        analysis (index/analyze (render/render-ns store ns-sym))
+        analysis (analyze/analyze (render/render-ns store ns-sym))
         dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
-        eff      (index/effectful-vars analysis dep-nses (:dep-pure store))
-        nondet   (index/nondeterministic-vars analysis)]
+        eff      (derive/effectful-vars analysis dep-nses (:dep-pure store))
+        nondet   (derive/nondeterministic-vars analysis)]
     (not (or (contains? eff qsym) (contains? nondet qsym)))))
 
 (defn schema-candidates

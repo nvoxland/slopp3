@@ -1,6 +1,6 @@
 (ns slopp.index-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.index :as index]))
+            [slopp.index :as index] [slopp.index.derive :as derive] [slopp.cache :as cache] [slopp.index.analyze :as analyze]))
 
 (def src
   (str "(ns demo)\n"
@@ -10,87 +10,104 @@
        "(defn ok! [a] (reset! a 0))\n"))      ; effectful, correctly named
 
 (deftest analyze-and-effects
-  (let [an (index/analyze src)]
+  (let [an (analyze/analyze src)]
     (testing "effectful reachability propagates through the call graph (D6)"
-      (let [eff (index/effectful-vars an)]
+      (let [eff (derive/effectful-vars an)]
         (is (contains? eff 'demo/tainted))
         (is (contains? eff 'demo/caller))
         (is (contains? eff 'demo/ok!))
         (is (not (contains? eff 'demo/pure)))))
     (testing "`!` name must match computed effectfulness (D6)"
-      (let [v (set (map :var (index/effect-violations an)))]
+      (let [v (set (map :var (derive/effect-violations an)))]
         (is (contains? v 'demo/tainted))   ; effectful but not !-named
         (is (contains? v 'demo/caller))    ; effectful (transitively) but not !-named
         (is (not (contains? v 'demo/ok!))) ; effectful and !-named — ok
         (is (not (contains? v 'demo/pure)))))
     (testing "references finds callers of a var"
-      (let [refs (index/references an 'demo 'tainted)]
+      (let [refs (derive/references an 'demo 'tainted)]
         (is (= 1 (count refs)))
         (is (= 'caller (:from-var (first refs))))))))
 
 (deftest cross-ns-bang-callees-propagate-effects       ; N1
-  (let [an (index/analyze
+  (let [an (analyze/analyze
             (str "(ns w (:require [other.store :as st]))\n"
                  "(defn save-all [xs] (doseq [x xs] (st/put! x)))\n"
                  "(defn pure-view [xs] (map :id xs))\n"))]
-    (is (contains? (index/effectful-vars an) 'w/save-all))
-    (is (not (contains? (index/effectful-vars an) 'w/pure-view)))
-    (is (some #(= 'w/save-all (:var %)) (index/effect-violations an)))))
+    (is (contains? (derive/effectful-vars an) 'w/save-all))
+    (is (not (contains? (derive/effectful-vars an) 'w/pure-view)))
+    (is (some #(= 'w/save-all (:var %)) (derive/effect-violations an)))))
 
 (deftest external-purity-narrows-at-var-and-namespace-granularity   ; M3 coarser :pure
-  (let [an   (index/analyze
+  (let [an   (analyze/analyze
               (str "(ns c (:require [ext.lib :as e]))\n"
                    "(defn f [x] (e/go x))\n"))
         ext? #{'ext.lib}]
     (testing "an external call is effectful by default"
-      (is (contains? (index/effectful-vars an ext? #{}) 'c/f)))
+      (is (contains? (derive/effectful-vars an ext? #{}) 'c/f)))
     (testing "var-level :pure narrows it (existing granularity)"
-      (is (not (contains? (index/effectful-vars an ext? #{'ext.lib/go}) 'c/f))))
+      (is (not (contains? (derive/effectful-vars an ext? #{'ext.lib/go}) 'c/f))))
     (testing "NAMESPACE-level :pure narrows every var in that namespace (new)"
-      (is (not (contains? (index/effectful-vars an ext? #{'ext.lib}) 'c/f))))))
+      (is (not (contains? (derive/effectful-vars an ext? #{'ext.lib}) 'c/f))))))
 
 (deftest deftests-are-exempt-from-bang-rule            ; T1
-  (let [an (index/analyze
+  (let [an (analyze/analyze
             (str "(ns d (:require [clojure.test :refer [deftest is]]))\n"
                  "(defn go! [a] (swap! a inc))\n"
                  "(deftest go-test (is (= 1 (go! (atom 0)))))\n"))]
     (testing "a test exercising effectful code is NOT a naming violation"
-      (is (not-any? #(= 'd/go-test (:var %)) (index/effect-violations an))))
+      (is (not-any? #(= 'd/go-test (:var %)) (derive/effect-violations an))))
     (testing "but real violations still surface"
-      (let [an2 (index/analyze "(ns d)\n(defn go [a] (swap! a inc))\n")]
-        (is (some #(= 'd/go (:var %)) (index/effect-violations an2)))))))
+      (let [an2 (analyze/analyze "(ns d)\n(defn go [a] (swap! a inc))\n")]
+        (is (some #(= 'd/go (:var %)) (derive/effect-violations an2)))))))
 
 (deftest main-is-exempt-from-bang-rule                  ; entry-point convention
   ;; -main is an effectful entry point that is never bang-named (Clojure
   ;; convention), exactly like deftest — exempt it.
-  (let [an (index/analyze "(ns app)\n(defn -main [& a] (spit \"f\" a))\n")]
-    (is (not-any? #(= 'app/-main (:var %)) (index/effect-violations an)))))
+  (let [an (analyze/analyze "(ns app)\n(defn -main [& a] (spit \"f\" a))\n")]
+    (is (not-any? #(= 'app/-main (:var %)) (derive/effect-violations an)))))
 
 (deftest a-bang-is-trusted-never-flagged-for-removal    ; interop effects
   ;; A `!` is a human assertion of effectfulness; when the analyzer computes a
   ;; banged fn as pure (an interop/opaque effect it can't see — .close, a socket
   ;; write), it must NOT demand the `!` be removed. Only the MISSING-`!`
   ;; direction (effectful but unlabeled) is a real signal.
-  (let [an (index/analyze "(ns app)\n(defn shut! [x] (.close x))\n")]
+  (let [an (analyze/analyze "(ns app)\n(defn shut! [x] (.close x))\n")]
     (testing "banged-but-analyzer-thinks-pure is NOT a violation"
-      (is (not-any? #(= 'app/shut! (:var %)) (index/effect-violations an))))
+      (is (not-any? #(= 'app/shut! (:var %)) (derive/effect-violations an))))
     (testing "missing-bang (effectful, unlabeled) is STILL flagged"
-      (let [an2 (index/analyze "(ns app)\n(defn go [a] (reset! a 1))\n")]
-        (is (some #(= 'app/go (:var %)) (index/effect-violations an2)))))))
-(deftest analyze-and-lint-share-one-memoized-kondo-pass
-  ;; per-write kondo cost: analyze + lint used to be TWO passes over the same
-  ;; rendered ns, and lint wasn't memoized (the unchanged base re-linted every
-  ;; write). One cached pass now feeds both.
+      (let [an2 (analyze/analyze "(ns app)\n(defn go [a] (reset! a 1))\n")]
+        (is (some #(= 'app/go (:var %)) (derive/effect-violations an2)))))))
+(deftest analysis-and-lint-are-memoized-separately
+  ;; These used to share ONE cached kondo pass, to hold per-write kondo cost
+  ;; at a single run. That coupling is RETIRED: `:findings` depend on
+  ;; cross-namespace cache state and `:analysis` does not, so sharing the pass
+  ;; made analysis IO — which every caller of `analyze` inherited, and that is
+  ;; most of the pure core. Measured before the split: warm-cache and
+  ;; `:cache false` runs differ only in :fixed-arities on cross-ns var-usages,
+  ;; which nothing reads. Measured after: no benchmark regression.
+  ;;
+  ;; The ORIGINAL concern still stands and is what this test now protects:
+  ;; neither pass may recompute for the same source.
   (let [s "(ns kx.core)\n(defn f [x] (reduce + x))\n(defn g [] (f 1 2 3))\n"]
-    (index/analyze s)
-    (is (contains? @@#'index/kondo-cache s)
-        "analyze populates the shared cache")
-    (is (seq (index/lint s)) "lint returns findings")
-    (testing "lint of the SAME content is a cache hit (no second kondo run)"
+    (testing "lint keeps its cache-dir-backed pass, memoized as before"
+      (is (seq (index/lint s)) "lint returns findings")
       (let [before (get @@#'index/kondo-cache s)]
+        (is (some? before) "lint populates the kondo cache")
         (index/lint s)
         (is (identical? before (get @@#'index/kondo-cache s))
-            "same cached kondo result object — no recompute")))))
+            "same cached kondo result object — no recompute")))
+    (testing "analysis runs its own pass and does NOT ride lint's cache"
+      (let [s2 "(ns kx.other)\n\n(defn h \"D.\" [x] (inc x))\n"]
+        (analyze/analyze s2)
+        (is (not (contains? @@#'index/kondo-cache s2))
+            "analysis must not populate the cache-dir-backed pass")))
+    (testing "and analysis is memoized on its own key"
+      (let [s3 "(ns kx.memo)\n\n(defn k \"D.\" [x] (inc x))\n"
+            _  (analyze/analyze s3)
+            n1 (get (cache/registry) :slopp.index.analyze/analysis 0)]
+        (analyze/analyze s3)
+        (is (= n1 (get (cache/registry) :slopp.index.analyze/analysis 0))
+            "a second analysis of the same source adds no entry — memo hit")))))
 ^:unsafe (deftest lint-findings-refresh-when-a-dependency-moves
   ;; The memo key must cover what the findings actually depend on. kondo reads
   ;; CROSS-NS facts (arities, var existence) from .clj-kondo/.cache, which other
@@ -161,11 +178,34 @@
                  "(def registry [#'leaf!])\n"
                  "(def aliased leaf!)\n"
                  "(defn caller [a] (leaf! a))\n")
-        an  (slopp.index/analyze src)
-        eff (slopp.index/effectful-vars an)]
+        an  (analyze/analyze src)
+        eff (derive/effectful-vars an)]
     (testing "a fn that CALLS an effect is effectful"
       (is (contains? eff 'app.core/caller)))
     (testing "a #'var CARRIER held in data is NOT effectful (it's not invoked)"
       (is (not (contains? eff 'app.core/registry))))
     (testing "but a BARE value alias (def aliased leaf!) IS — it is callable-as-leaf!"
       (is (contains? eff 'app.core/aliased)))))
+
+(deftest ^:external analysis-does-not-touch-the-kondo-cache
+  ;; analyze's VALUE is a function of source alone — measured: a warm-cache
+  ;; run and a `:cache false` run differ only in :fixed-arities on cross-ns
+  ;; var-USAGES, which nothing in slopp reads (every reader takes arities from
+  ;; var-definitions, which are same-source). The cache exists for `lint`'s
+  ;; cross-ns findings, not for analysis.
+  ;;
+  ;; While analysis runs against the cache dir it is IO, so every namespace
+  ;; calling analyze inherits an :external dependency — which is what kept
+  ;; slopp.refactor, slopp.edit.modules and slopp.edit.refs from layering.
+  (let [dir  (java.nio.file.Files/createTempDirectory
+              "kondo-probe" (make-array java.nio.file.attribute.FileAttribute 0))
+        f    (.toFile dir)
+        prev @index/kondo-cache-dir]
+    (try
+      (reset! index/kondo-cache-dir (str f))
+      (cache/without-caching!
+       (fn []
+         (analyze/analyze "(ns probe.a)\n\n(defn f \"D.\" [x] (inc x))\n")))
+      (is (empty? (seq (.listFiles f)))
+          "analysis must leave kondo's cache dir untouched")
+      (finally (reset! index/kondo-cache-dir prev)))))
