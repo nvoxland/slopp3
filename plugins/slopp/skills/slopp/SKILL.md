@@ -176,9 +176,21 @@ calls: nothing, unless a decision changed. Final summary: short —
 name what shipped and quote result keys (`:test`, `:done`,
 `:findings`); don't re-describe what the tools already said.
 
-**Every write must compile.** Form ORDER is not your job: write forms in any
-order — the pipeline moves definitions above their callers, and inserts a
-marked `(declare …)` itself for genuine mutual recursion. Hand-written
+**Every write must compile — AND must still cold-load.** Form ORDER is not
+your job: write forms in any order — the pipeline moves definitions above
+their callers, and inserts a marked `(declare …)` itself for genuine mutual
+recursion.
+
+The distinction worth carrying: your work hot-loads into a LIVE image where
+the vars already exist, so the image happily runs code that a FRESH load
+(boot, restart, a clone, the external test tier) cannot load at all. That is
+what the cold-load gate is for, and it refuses two shapes — a form
+referencing a later form in the same namespace, and a require CYCLE between
+namespaces (`would not cold-load — require CYCLE: a -> b -> a`). Both are
+invisible to in-image verification by construction, which is why a write can
+be refused while every test passes. A cycle usually means a require that is
+no longer referenced: drop it, or move the shared code somewhere both sides
+can depend on. Hand-written
 `(declare …)` is refused; you never need one. Mutating fns end in `!` (rename
 with the `:suggest` if warned); `^:reads` marks read-only dep calls;
 `^:unsafe` is the dialect escape hatch.
