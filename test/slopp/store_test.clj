@@ -168,7 +168,7 @@
   ;; A wrong index does not throw. It yields nil, nil is falsy, and the rule
   ;; simply does not fire. That is why this needs ONE tested accessor rather
   ;; than fifteen independent guesses, each silently wrong in its own way.
-  (let [p #(rewrite-clj.parser/parse-string %)]
+  (let [p rewrite-clj.parser/parse-string]
     (testing "def-init sees past an optional docstring"
       (is (= '(atom {}) (store/def-init (p "(def x (atom {}))"))))
       (is (= '(atom {}) (store/def-init (p "(def x \"why\" (atom {}))"))))

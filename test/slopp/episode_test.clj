@@ -627,33 +627,35 @@
           (is (not (re-find #"defn c" src)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated lint-warnings-block-at-done-not-at-the-write
-  ;; D-rule-grain. A write gate may only judge what cannot change as
-  ;; legitimate work continues; `unused-binding` is routinely true of a form
-  ;; mid-edit. Flipping it at the WRITE grain turned 33 assertions red across
-  ;; 14 tests — it also applies to the fixture stores tests build at runtime.
-  ;; At the DONE grain the same finding means something true: this finished
-  ;; code has a dead binding.
+(deftest ^:isolated lint-warnings-are-listed-never-blocking
+  ;; D-rule-grain, expressed through the CONFIG rather than a second set:
+  ;; slopp's kondo config tiers every linter by one question — could a form
+  ;; legitimately look like this MID-EDIT? `unused-binding` routinely can, so
+  ;; it is :warning: reported for the agent to judge, blocking nothing.
+  ;; Measured: gating writes on warning-grade findings killed red-first TDD,
+  ;; the module lifecycle and carried-lint compression (13 assertions, 7 tests).
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [] 1)\n")
-      (testing "the write itself is NOT refused — mid-edit is not a verdict"
+      (testing "a warning-grade finding does NOT refuse the write"
         (let [r (api/add-form! sess 'lg2.core
                                "(defn ^:unused-ok w \"D.\" [] (let [x 1] 2))"
                                :prompt "an unused binding")]
           (is (nil? (:error r)) (pr-str r))))
-      (testing "but the done point counts it, so it cannot be scrolled past"
-        (let [r (api/done! sess :label "with a warning")]
-          (is (pos? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))
-          (is (some #(and (= :warning (:level %)) (= :unused-binding (:type %)))
-                    (:lint r))
-              (pr-str (:lint r)))))
-      (testing "and a clean namespace closes clean"
-        (api/edit-replace! sess 'lg2.core 'w
-                           "(defn ^:unused-ok w \"D.\" [] (let [x 1] x))"
-                           :prompt "use the binding")
-        (let [r (api/done! sess :label "clean")]
-          (is (zero? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))))
+      (let [r (api/done! sess :label "with a warning")]
+        (testing "done LISTS it, so it is visible without being enforced"
+          (is (some #(= :unused-binding (:type %))
+                    (get-in r [:findings :lint-warnings]))
+              (pr-str (:findings r))))
+        (testing "and it does not count — the done is still green"
+          (is (zero? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))
+          (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))))
+      (testing "an ERROR-grade finding still refuses the write"
+        (let [r (api/add-form! sess 'lg2.core
+                               "(defn ^:unused-ok bad \"D.\" [] (if (nil? 1) 2))"
+                               :prompt "missing else branch is error-grade")]
+          (is (:error r) (pr-str r))
+          (is (re-find #"missing-else-branch" (str (:error r))) (str (:error r)))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated done-runs-the-whole-suite-regardless-of-what-was-touched

@@ -2667,7 +2667,9 @@
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
                                :note  "first 5 shown — the milestone gate runs them all"}}))))
-        findings (let [lint-errors (count (filter #(#{:error :warning} (:level %)) lint))
+        findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
+      lint-warns  (vec (for [f lint :when (= :warning (:level f))]
+                         (select-keys f [:form :type :message])))
       failures    (+ (:fail summary 0) (:error summary 0)
                      (:failures iso 0) (:errors iso 0))
       iso-red?    (contains? #{:red :error} (:status iso))
@@ -2707,6 +2709,10 @@
            (str "not run at done (it spawns JVMs) — impacted ^:isolated tests"
                 " DID run; test_run {isolated true} runs the rest, and the"
                 " milestone requires it")}
+    ;; ADVISORY, and named as such: kondo findings slopp's config
+    ;; deliberately does not block on, because each is routinely true of a
+    ;; form mid-edit. Listed so the agent can judge them, never counted.
+    (seq lint-warns)  (assoc :lint-warnings lint-warns)
     (:pending iso)    (assoc :isolated-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq advisories)  (merge advisories)

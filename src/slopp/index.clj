@@ -200,6 +200,89 @@
   the code they describe. A slopp-owned dir is self-sufficient — linting a
   namespace teaches it, which is how any kondo cache fills."
   (atom nil))
+(def kondo-config
+  "SLOPP'S OWN clj-kondo configuration — static, shipped with slopp, applied to
+  every project it hosts. Deliberately NOT a file in the user's repo and NOT a
+  per-store knob: linter levels are part of slopp's definition of clean code,
+  the same way the dialect and the rule registry are.
+
+  It must be passed EXPLICITLY rather than left to kondo's own resolution.
+  Kondo otherwise reads config relative to the process CWD, which is exactly
+  the bug #134 fixed for the cache: findings that vary by which directory the
+  process happened to start in. The tree is fileless, so a store cloned
+  elsewhere must lint identically or `done` means different things on
+  different machines.
+
+  EVERYTHING IS `:error`. Nothing slopp keeps is 'just a warning' — a finding
+  an agent may scroll past is not a rule. `:level` here means SEVERITY ONLY;
+  it does NOT decide what refuses a write. That is `edit/write-blocking-lint`,
+  a separate structural set, because a form mid-edit may legitimately carry an
+  unused binding and refusing it makes red-first TDD unreachable (measured:
+  33 assertions across 14 tests). See D-rule-grain."
+  {:output  {:analysis true}
+   :linters
+   {;; ── OFF: measured and rejected, with the numbers, so the next person does
+    ;; not re-derive the same good-sounding rationale and re-measure it. ──
+    ;;
+    ;; 156 findings, 81 of them the parameter `agent` shadowing
+    ;; clojure.core/agent, which this codebase never calls. The rule an agent
+    ;; actually wants is "a symbol means one thing in one form", but the linter
+    ;; cannot tell "shadows something unused" from "shadows a fn used in this
+    ;; very form", and the volume is slopp's own domain vocabulary (agent, ns,
+    ;; new, name, key, format). Enforcing it renames the RIGHT words to prevent
+    ;; a hazard that has not bitten.
+    :shadowed-var                 {:level :off}
+    ;; 62 findings, and the wrong TOOL: require order is mechanical, so the
+    ;; normalizer should SORT it. Never warn about what a tool can fix.
+    :unsorted-required-namespaces {:level :off}
+
+    ;; ── ERROR: blocks, at every grain. ──
+    ;;
+    ;; THE TEST for putting a type here: could a form legitimately look like
+    ;; this MID-EDIT, on the way to something correct? If no, refusing it
+    ;; immediately saves a wasted episode. If yes, it belongs below.
+    ;;
+    ;; (kondo's own defaults already put :syntax, :unresolved-symbol and
+    ;; :invalid-arity at :error — they are not restated here.)
+    ;;
+    ;; a value computed and DISCARDED in non-tail position is almost always a
+    ;; forgotten result — the language-level form of the bug that bit this
+    ;; codebase four times at the wire layer (computed, then dropped).
+    :unused-value                 {:level :error}
+    ;; (if x y) returns an implicit nil. slopp's recurring failure mode is a
+    ;; plausible wrong value rather than a crash; an unstated nil is that.
+    :missing-else-branch          {:level :error}
+    :redundant-fn-wrapper         {:level :error}
+    :single-key-in                {:level :error}
+    :redefined-var                {:level :error}
+    :duplicate-require            {:level :error}
+    :conflicting-alias            {:level :error}
+    :misplaced-docstring          {:level :error}
+    :deprecated-var               {:level :error}
+    :type-mismatch                {:level :error}
+    :inline-def                   {:level :error}
+    :not-empty?                   {:level :error}
+    :equals-true                  {:level :error}
+
+    ;; ── WARNING: `done` LISTS these; nothing blocks on them. ──
+    ;;
+    ;; Every one is routinely, correctly true of a form MID-EDIT: you bind a
+    ;; value before writing the line that uses it, you require a namespace
+    ;; before calling into it, you wrap a body in a `do` you are about to
+    ;; fill. MEASURED — promoting these to :error turned 13 assertions red
+    ;; across 7 tests, killing red-first TDD (a spec naming a not-yet-written
+    ;; fn), the module lifecycle (:unresolved-namespace on a legitimate
+    ;; forward reference), and carried-lint compression.
+    :unused-binding               {:level :warning}
+    :unused-referred-var          {:level :warning}
+    :unused-namespace             {:level :warning}
+    :unused-private-var           {:level :warning}
+    :unresolved-namespace         {:level :warning}
+    :redundant-do                 {:level :warning}
+    :redundant-let                {:level :warning}
+    :redundant-expression         {:level :warning}
+    :unreachable-code             {:level :warning}}})
+
 ^:reads (defn- kondo-pass
   "ONE real kondo run over `source`, stored. Also records what this pass just
   taught kondo's cache about `source`'s OWN namespace — that side effect is
@@ -212,7 +295,7 @@
   [source]
   (let [dir (some-> @kondo-cache-dir str)
         r (with-in-str source
-            (kondo/run! (cond-> {:lint ["-"] :config {:output {:analysis true}}}
+            (kondo/run! (cond-> {:lint ["-"] :config kondo-config}
                           dir (assoc :cache-dir dir))))
         a (:analysis r)
         requires (into #{} (map :to) (:namespace-usages a))
@@ -223,6 +306,10 @@
            ;; the cross-ns state these FINDINGS are true under: WHICH cache,
            ;; and what it knew about this source's requires
            :cache-dir dir
+           ;; the CONFIG is part of the world these findings are true under:
+           ;; change a linter level and every memoized entry is stale. Without
+           ;; this, editing kondo-config silently did nothing until restart.
+           :cfg      (hash kondo-config)
            :fp       (deps-fp requires)
            :findings (->> (:findings r)
                           (filter #(#{:warning :error} (:level %)))
@@ -255,6 +342,9 @@
   holds, which is three things:
   - the same CACHE (`:cache-dir`) — a different cache is a different world
     (#134);
+  - the same CONFIG (`:cfg`) — a linter level change makes every prior
+    finding stale, and without this term it silently did nothing until
+    restart;
   - the same knowledge of this source's requires (`:fp` vs `deps-fp`);
   - a disk cache still reflecting this source's own namespace — a memo HIT
     skips the pass, and the pass is the side effect that teaches the cache.
@@ -266,6 +356,7 @@
   (let [ent (run-kondo source)]
     (:findings
      (if (and (= (:cache-dir ent) (some-> @kondo-cache-dir str))
+              (= (:cfg ent) (hash kondo-config))
               (= (:fp ent) (deps-fp (:requires ent)))
               (= (get @ns-source-hash (:ns ent)) (hash source)))
        ent

@@ -521,10 +521,18 @@
   returns {:refuse msg} — your own form must be well-formed. New errors in
   OTHER forms (stale callers after an incremental signature change) don't
   block the REPL flow: they return as {:carried [{:form :type :message}]}
-  and the done-point re-checks them hard. nil when clean. Error-level
-  lint is ~never a false positive (two 'invalid-arity' errors once
+  and the done-point re-checks them hard. nil when clean.
+
+  Only `:error` blocks, and slopp's `index/kondo-config` is what decides which
+  types those are — tiered by ONE question: could a form legitimately look
+  like this MID-EDIT? `:warning` types (unused binding, unresolved namespace,
+  redundant do) routinely are, so `done` LISTS them and nothing refuses them.
+  Measured: gating writes on them killed red-first TDD, the module lifecycle
+  and carried-lint compression — 13 assertions across 7 tests.
+
+  Error-level findings are ~never false positives (two 'invalid-arity' errors once
   dismissed as noise were real ArityExceptions in shipped handlers);
-  pre-existing errors never block (no deadlock on legacy)."
+  pre-existing findings never block (no deadlock on legacy)."
   [base cand ns-syms written-fids]
   (let [written (set written-fids)
         errs    (fn [store ns-sym]

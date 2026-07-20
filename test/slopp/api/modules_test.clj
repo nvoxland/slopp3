@@ -34,7 +34,7 @@
             (is (true? (:export hoisted)))
             (is (= "ma.core" (:export scoped)))))
         (testing "deps and consumers come from the manifest"
-          (is (= ["ma.core"] (get-in (modules/module-surface sess "mb.app") [:deps]))
+          (is (= ["ma.core"] (:deps (modules/module-surface sess "mb.app")))
               "mb.app declares ma.core")
           (is (= ["mb.app"] (:consumers r)))))
       (testing "an unknown module teaches the list"
