@@ -1265,7 +1265,10 @@
   "Walk back your own recent writes — the reach-for-it-without-thinking undo.
   Addressed by DELTA, not by name: `:deltas n` (default 1) undoes your last `n`
   content writes, `:to \"d123\"` undoes everything of yours after that delta.
-  One atomic verified group, recorded as honest provenance rather than erased.
+  `:to` also takes a NAMED anchor — `:last-commit` (scrap everything since the
+  last milestone — the usual dead-end rollback) or `:last-done` (back to your
+  last done point) — as a keyword or the same string over the wire. One atomic
+  verified group, recorded as honest provenance rather than erased.
 
   Delta addressing is the point. `revert-form!` looks a form up by name, so it
   can never undo a DELETE — there is no name left to find. The log still holds
@@ -1275,25 +1278,50 @@
 
   Returns `{:reverted n :undid [delta-ids] :skipped-shared [...]}`."
   [session & {:keys [deltas to agent prompt]}]
-  (let [st     (:store @session)
-        all    (store/deltas st)
-        mine?  (fn [d] (and (contains? query/content-ops (:op d))
-                            (or (nil? agent) (= agent (:agent d)))))
-        target (if to
-                 (first (filter mine? (rest (drop-while #(not= to (:id %)) all))))
-                 (first (take-last (max 1 (or deltas 1)) (filter mine? all))))]
-    (if-not target
+  (let [st       (:store @session)
+        ;; undo means "walk back MY writes"; with no explicit agent that is the
+        ;; session's own id — what every live write is tagged with. Left nil,
+        ;; `mine?` counted every delta as mine while `others` counted every
+        ;; real-agent delta as someone else's, so a session's own forms were
+        ;; skipped as :skipped-shared, leaving the store red. One agent, one
+        ;; ownership test.
+        agent    (or agent (:agent-id @session))
+        all      (store/deltas st)
+        ;; :last-commit / :last-done name the two anchors worth rolling back to
+        ;; without knowing a delta id — accepted as keyword or wire string.
+        commit-anchor? (contains? #{:last-commit "last-commit" ":last-commit"} to)
+        done-anchor?   (contains? #{:last-done "last-done" ":last-done"} to)
+        to       (cond
+                   commit-anchor?
+                   (:id (last (filter #(= :commit (:op %)) all)))
+                   done-anchor?
+                   (:id (last (filter #(= :done (:op %)) all)))
+                   :else to)
+        mine?    (fn [d] (and (contains? query/content-ops (:op d))
+                              (= agent (:agent d))))
+        target   (if to
+                   (first (filter mine? (rest (drop-while #(not= to (:id %)) all))))
+                   (first (take-last (max 1 (or deltas 1)) (filter mine? all))))]
+    (cond
+      (and (or commit-anchor? done-anchor?) (nil? to))
+      {:reverted 0
+       :note (str "no " (if commit-anchor? "commit" "done")
+                  " to roll back to")}
+
+      (not target)
       {:reverted 0
        :note (if to
                (str "nothing of yours after " to)
                "no writes of yours to undo")}
+
+      :else
       (let [from    (:id target)
             changes (query/query-changes session :agent agent :from from)
             span    (drop-while #(not= from (:id %)) all)
             others  (into #{}
                           (mapcat history/delta-fids)
                           (filter #(and (contains? query/content-ops (:op %))
-                                        (not= agent (:agent %)))
+                                        (not (mine? %)))
                                   span))
             {:keys [steps shared]} (history/revert-steps changes others)]
         (cond
@@ -1326,7 +1354,12 @@
   that went off the rails, without losing the rest of the episode, use
   `undo!` — same inverse, addressed by delta."
   [session & {:keys [agent prompt]}]
-  (let [changes (query/query-changes session :agent agent)
+  (let [;; no explicit agent means \"MY episode\" — the session's own id, what
+        ;; every live write carries. Left nil, `others` counted every
+        ;; real-agent delta as someone else's and skipped the session's own
+        ;; forms.
+        agent   (or agent (:agent-id @session))
+        changes (query/query-changes session :agent agent)
         others  (into #{}
                       (mapcat history/delta-fids)
                       (filter #(and (contains? query/content-ops (:op %))

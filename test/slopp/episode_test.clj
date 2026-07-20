@@ -705,3 +705,99 @@
           (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))
           (is (nil? (get-in r [:findings :external-pending])))))
       (finally (api/close! sess)))))
+
+(deftest ^:external undo-to-without-agent-reverts-cleanly
+  ;; The pool-revert bug, distilled. I scrapped a whole exploration with
+  ;; `undo {to <milestone>}` and it SKIPPED my own solely-authored forms as
+  ;; :skipped-shared, leaving the store RED with dangling references.
+  ;;
+  ;; Trigger: every live write carries the SESSION's agent-id, but the MCP
+  ;; `undo` tool passes no agent. undo! then treated nil inconsistently —
+  ;; `mine?` counted every delta as mine (found the target), but `others`
+  ;; (forms to protect) counted every real-agent delta as someone else's, so
+  ;; the session's own forms were skipped. undo with no agent must mean "this
+  ;; session's writes".
+  (let [sess (external/open!)
+        me   (:agent-id @sess)]           ; what every real write is tagged with
+    (try
+      (let [_    (api/ingest! sess 'ur.core "(ns ur.core)\n" :agent me)
+            base (:id (:delta (api/add-form! sess 'ur.core "(defn keep-me [] 1)"
+                                             :prompt "keep this" :agent me)))]
+        (api/add-form! sess 'ur.core "(def p (atom 0))" :prompt "explore: state" :agent me)
+        (api/add-form! sess 'ur.core "(defn f [] (swap! p inc))" :prompt "explore" :agent me)
+        (api/edit-replace! sess 'ur.core 'f "(defn f [] (swap! p + 2))" :prompt "tweak" :agent me)
+        ;; scrap it — no :agent, exactly how the MCP tool calls undo
+        (let [r (api/undo! sess :to base :prompt "scrap this dead end")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (empty? (:skipped-shared r))
+              (str "the session's own forms must not be skipped as shared: " (pr-str r)))
+          (is (pos? (:reverted r)) (str "it must actually revert: " (pr-str r)))
+          (let [src (query/query-source sess 'ur.core)]
+            (is (not (re-find #"def p|defn f" src))
+                (str "the explored forms should be gone:\n" src))
+            (is (re-find #"defn keep-me" src) "the pre-exploration form stays"))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external episode-revert-without-agent-scraps-my-own-work
+  ;; The revert-episode! twin of the undo bug. Every write carries the
+  ;; session's agent-id, but the MCP `episode_revert` tool passes no agent, so
+  ;; revert-episode! judged the session's own forms as SHARED and skipped them.
+  ;; No-agent episode_revert must scrap THIS session's episode.
+  (let [sess (external/open!)
+        me   (:agent-id @sess)]
+    (try
+      (api/ingest! sess 'er.core "(ns er.core)\n\n(defn f [] 1)\n" :agent me)
+      (api/edit-replace! sess 'er.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
+      (api/add-form! sess 'er.core "(defn g [] 2)" :prompt "explore more" :agent me)
+      ;; no :agent — exactly how the MCP tool calls it
+      (let [r (api/revert-episode! sess :prompt "scrap the episode")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (empty? (:skipped-shared r))
+            (str "the session's own forms must not be skipped as shared: " (pr-str r)))
+        (is (pos? (:reverted r)) (str "it must actually revert: " (pr-str r)))
+        ;; no `done` was called, so the boundary is the empty start — the whole
+        ;; episode is scrapped, which is exactly right. The point of THIS test
+        ;; is that a no-agent revert reverts the session's own work instead of
+        ;; skipping it as shared.
+        (let [src (query/query-source sess 'er.core)]
+          (is (not (re-find #"defn f|defn g" src))
+              (str "the whole episode should be scrapped:\n" (pr-str src)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external undo-to-last-commit-scraps-uncommitted-work
+  ;; The dead-end anchor. Scrapping an exploration usually means "back to the
+  ;; last PUBLISHED-good point" — the last commit — not the last done (which is
+  ;; fine-grained; I call done constantly). `undo {to :last-commit}` names that
+  ;; anchor so I don't have to fish the milestone's delta id out of history.
+  (let [sess (external/open!)
+        me   (:agent-id @sess)]
+    (try
+      (api/ingest! sess 'lc.core "(ns lc.core)\n\n(defn f [] 1)\n" :agent me)
+      (external/commit-point! sess "baseline milestone" :force true)   ; the anchor
+      (api/add-form! sess 'lc.core "(defn g [] 2)" :prompt "explore" :agent me)
+      (api/edit-replace! sess 'lc.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
+      (let [r (api/undo! sess :to :last-commit :prompt "scrap since the milestone")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (pos? (:reverted r)) (str "must revert the uncommitted work: " (pr-str r)))
+        (let [src (query/query-source sess 'lc.core)]
+          (is (re-find #"\(defn f \[\] 1\)" src) "f is back to the committed state")
+          (is (not (re-find #"defn g" src)) "uncommitted g is gone")))
+      (finally (api/close! sess)))))
+
+(deftest ^:external undo-to-last-done-rolls-back-to-the-done-point
+  ;; The finer anchor: :last-done rolls back to the session's own last done,
+  ;; for scrapping just the work since then (vs :last-commit for the whole
+  ;; uncommitted span).
+  (let [sess (external/open!)
+        me   (:agent-id @sess)]
+    (try
+      (api/ingest! sess 'ld.core "(ns ld.core)\n\n(defn f [] 1)\n" :agent me)
+      (external/done! sess)                                    ; the done boundary
+      (api/add-form! sess 'ld.core "(defn g [] 2)" :prompt "explore past the done" :agent me)
+      (let [r (api/undo! sess :to :last-done :prompt "scrap since my last done")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (pos? (:reverted r)) (str "must revert since the done: " (pr-str r)))
+        (let [src (query/query-source sess 'ld.core)]
+          (is (re-find #"defn f" src) "work up to the done stays")
+          (is (not (re-find #"defn g" src)) "work after the done is gone")))
+      (finally (api/close! sess)))))
