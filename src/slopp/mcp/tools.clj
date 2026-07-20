@@ -235,7 +235,7 @@
                                :prompt {:type "string"}}
                   :required ["ns" "from" "name"]}}
    {:name "undo"
-    :description "Walk back your OWN recent writes — the cheap, reach-for-it-immediately undo. deltas: n (default 1) undoes your last n writes; to: \"d123\" undoes everything of yours after that delta. Addressed by DELTA, not by name, so it also restores a form you DELETED — the case edit_revert structurally cannot reach (no name left to look up). Forms another agent also wrote in the span are skipped and reported. One atomic verified group. Reach for this the moment a write turns out wrong; use episode_revert only to scrap a whole episode."
+    :description "Walk back your OWN recent writes — the cheap, reach-for-it-immediately undo. deltas: n (default 1) undoes your last n writes; to: \"d123\" undoes everything of yours after that delta. to also takes a NAMED anchor: \"last-commit\" scraps everything since the last milestone (the usual dead-end rollback — no delta id to hunt), \"last-done\" goes back to your last done point. Addressed by DELTA, not by name, so it also restores a form you DELETED — the case edit_revert structurally cannot reach (no name left to look up). Forms another agent also wrote in the span are skipped and reported. One atomic verified group. Reach for this the moment a write turns out wrong; use episode_revert only to scrap a whole episode."
     :inputSchema {:type "object"
                   :properties {:deltas {:type "integer"}
                                :to {:type "string"}
