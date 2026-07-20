@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query]))
+            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -529,7 +529,7 @@
                                                (api/query-commits session)))]
                                    (told! session name a (cond-> b al (assoc :alignment al)))))
       "review_scan" (text! (told! session name a
-                                            (api/review-scan session
+                                            (review/review-scan session
                                                              :ns (:ns a)
                                                              :limit (or (:limit a) 25))))
       "report" (text! (let [r    (api/report session

@@ -1,6 +1,6 @@
 (ns slopp.orientation-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query] [slopp.api.review :as review]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (api/open!)]
@@ -303,7 +303,7 @@
                         "                            [clojure.test :refer [deftest is]]))\n"
                         "(deftest probe-t (is (nil? (io/probed! 1))))\n"))
       (api/test-run! sess 'rv.core)   ; trace covers ONLY safe — not probed!
-      (let [r   (api/review-scan sess)
+      (let [r   (review/review-scan sess)
             top (mapv :form (:top r))
             row (fn [q] (first (filter #(= q (:form %)) (:top r))))]
         (testing "the orphan fn (no test reaches it) ranks first, flagged untested"
@@ -381,7 +381,7 @@
                         "(defn used \"U.\" [x] x)\n\n"
                         "(defn orphan \"O.\" [x] x)\n\n"
                         "(defn -main \"M.\" [x] (used x))\n"))
-      (let [r    (api/review-scan sess)
+      (let [r    (review/review-scan sess)
             row  (fn [q] (first (filter #(= q (:form %)) (:top r))))]
         (is (some #{:unused} (:flags (row 'ru.core/orphan))) (pr-str (:top r)))
         (is (not (some #{:unused} (:flags (row 'ru.core/used))))

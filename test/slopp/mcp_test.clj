@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -795,7 +795,7 @@
                         "(defn big [x]\n"
                         (apply str (repeat 60 "  (println x)\n"))
                         "  x)\n"))
-      (let [r (api/review-scan sess)]
+      (let [r (review/review-scan sess)]
         (is (= 'rs.core/big (get-in r [:loc :largest])) (pr-str (:loc r)))
         (is (>= (get-in r [:loc :max]) 60) (pr-str (:loc r)))
         (testing "the median is the honest counterweight to the max"
@@ -816,7 +816,7 @@
                         "(def threshold 42)\n\n"
                         "(defn untouched [x] (+ x threshold))\n"))
       (let [flags (into {} (map (juxt :form :flags))
-                        (:top (api/review-scan sess :ns 'ut.core :limit 50)))]
+                        (:top (review/review-scan sess :ns 'ut.core :limit 50)))]
         (is (not (contains? (set (get flags 'ut.core/threshold)) :untested))
             (str "a plain def cannot be traced: " (pr-str flags)))
         (is (contains? (set (get flags 'ut.core/untouched)) :untested)
