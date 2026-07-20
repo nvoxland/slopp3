@@ -1703,7 +1703,13 @@
                                        (keys (:require-adds plan)))
                                  (keys (:rewrites plan))))
                 hl       (session/hot-load-all! session st4 ordered)
-                load-err (:err hl)]
+                ;; the COLD-load gate, which a move needs more than any other write:
+                ;; it is the one operation that reorders NAMESPACE dependencies,
+                ;; and hot-loading structurally cannot see a require cycle
+                ;; because the vars already exist in the image. A move once
+                ;; committed `[slopp/api] -> slopp/api/external -> [slopp/api]`
+                ;; and verified GREEN over it.
+                load-err (or (:err hl) (edit/cold-load-errors st4 touched))]
             (if load-err
               (do (session/fresh-image! session)
                   (edit/compile-error st4 load-err "move failed to compile: "))

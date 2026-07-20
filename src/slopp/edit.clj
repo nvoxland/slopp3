@@ -508,20 +508,68 @@
     (if-let [a (anchor-error store err)]
       (assoc a :error clean)
       {:error clean})))
+(defn require-cycles
+  "Namespace require CYCLES reachable from `ns-syms`, as a vector of paths
+  `[a b a]`. Empty when the require graph is acyclic from those roots.
+
+  A cycle is a cold-load failure Clojure reports as `Cyclic load dependency`,
+  and until this existed nothing in slopp could see one:
+
+  - `forward-refs` (what `cold-load-errors` was built on) is INTRA-namespace —
+    it finds a form referencing a later form in the same file, not a namespace
+    requiring one that requires it back;
+  - module-edge cycle detection is between MODULES, so it says nothing about
+    two namespaces inside one module.
+
+  Which is exactly the hole a `move_forms` fell into: the move added a require
+  to the source namespace for callers it was itself moving, leaving it
+  requiring a namespace it referenced nowhere. Hot-loading tolerates that —
+  the vars already exist in the image — so in-image verification went GREEN
+  over a store no fresh JVM could load.
+
+  Only in-store namespaces are edges; external libs cannot participate."
+  [store ns-syms]
+  (let [known (set (keys (:namespaces store)))
+        edges (fn [n] (filter known (store/ns-requires store n)))
+        walk  (fn walk [n seen path]
+                (if (contains? seen n)
+                  [(conj path n)]
+                  (mapcat #(walk % (conj seen n) (conj path n)) (edges n))))]
+    (vec (distinct (mapcat #(walk % #{} []) (distinct ns-syms))))))
+
 (defn cold-load-errors
   "The cold-load half of the compile gate: nil when every ns in `ns-syms`
-  renders to a namespace a FRESH load can resolve top-to-bottom; else one
-  actionable message naming each forward reference. Hot-loading into the
-  live image cannot see these (the vars already exist there) — without this
-  check a write can commit a store that boot/restart cannot load."
+  renders to a namespace a FRESH load can resolve — top-to-bottom AND without
+  a require cycle; else one actionable message.
+
+  TWO failure shapes, because there are two ways a fresh load dies:
+
+  - a FORWARD REFERENCE inside a namespace (`index/forward-refs`);
+  - a REQUIRE CYCLE between namespaces (`require-cycles`) — Clojure's
+    `Cyclic load dependency`.
+
+  Hot-loading into the live image cannot see either: the vars already exist
+  there. Without this check a write commits a store that boot/restart cannot
+  load. The cycle half was added after a `move_forms` group did exactly that
+  and verified GREEN — the gate was there, it simply could not see cycles."
   [store ns-syms]
-  (let [findings (mapcat (fn [ns-sym]
+  (let [cycles   (require-cycles store ns-syms)
+        findings (mapcat (fn [ns-sym]
                            (map #(assoc % :ns ns-sym)
                                 (index/forward-refs
                                  (index/analyze (render/render-ns store ns-sym))
                                  ns-sym)))
                          (distinct ns-syms))]
-    (when (seq findings)
+    (cond
+      (seq cycles)
+      (str "would not cold-load — require CYCLE: "
+           (str/join "; " (map #(str/join " -> " %) cycles))
+           ". A fresh load fails on this even though the live image tolerates"
+           " it (the vars are already there). Break the cycle: drop a require"
+           " that is no longer referenced, or move the shared code into a"
+           " namespace both can depend on.")
+
+      (seq findings)
       (str "would not cold-load (a fresh namespace load fails): "
            (str/join "; "
                      (map (fn [{:keys [ns form symbol row def-row]}]

@@ -147,3 +147,35 @@
     (testing "auto-reorder cannot fix it (registrations are not orderable by
               name) and must say so, not return a still-broken store"
       (is (nil? (edit/resolve-cold-load bad 'cl.bad))))))
+
+(deftest require-cycles-are-a-cold-load-failure
+  ;; The gap that let a move_forms group commit a store no fresh JVM could
+  ;; load: slopp.api required slopp.api.external while referencing nothing in
+  ;; it, and slopp.api.external required slopp.api.
+  ;;
+  ;;   Cyclic load dependency: [slopp/api] -> slopp/api/external -> [slopp/api]
+  ;;
+  ;; forward-refs is INTRA-namespace, so cold-load-errors could not see it, and
+  ;; module-edge cycle detection does not apply because both namespaces are in
+  ;; ONE module. Hot-load tolerates the cycle; a cold load does not.
+  (let [cyclic (-> (store/empty-store)
+                   (store/ingest 'cy.core
+                                 (str "(ns cy.core (:require [cy.core.edge :as edge]))\n"
+                                      "(defn f \"F.\" [x] (edge/g x))\n"))
+                   (store/ingest 'cy.core.edge
+                                 (str "(ns cy.core.edge (:require [cy.core :as core]))\n"
+                                      "(defn g \"G.\" [x] (core/f x))\n")))
+        clean  (-> (store/empty-store)
+                   (store/ingest 'ok.core.edge "(ns ok.core.edge)\n(defn g \"G.\" [x] x)\n")
+                   (store/ingest 'ok.core
+                                 (str "(ns ok.core (:require [ok.core.edge :as edge]))\n"
+                                      "(defn f \"F.\" [x] (edge/g x))\n")))]
+    (testing "a require cycle is reported, naming the namespaces in it"
+      (let [msg (str (edit/cold-load-errors cyclic '[cy.core cy.core.edge]))]
+        (is (re-find #"(?i)cycl" msg) msg)
+        (is (re-find #"cy\.core" msg) msg)
+        (is (re-find #"cy\.core\.edge" msg) msg)))
+    (testing "reporting it from EITHER end — a move touches only one side"
+      (is (re-find #"(?i)cycl" (str (edit/cold-load-errors cyclic '[cy.core])))))
+    (testing "a one-way require is clean"
+      (is (nil? (edit/cold-load-errors clean '[ok.core ok.core.edge]))))))
