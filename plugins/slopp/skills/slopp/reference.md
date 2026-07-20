@@ -46,10 +46,20 @@ code; runtime state it perturbs is disposable (`restart` rebuilds).
   no bang). `^:unsafe` opts one form out of the dialect gate (macros,
   `binding`, `eval` …) — the greppable last resort; doesn't silence `!`.
 - **Purity tiers** (the functional-core gate): `module_purity {module tier}` —
-  `:pure` (no effect reachable), `:reads` (reads ok, no mutation), `:effects`
-  (unrestricted periphery). Once declared, the write gate HARD-REFUSES an
-  effect-reaching form in that module. Undeclared = `:effects` (ungated). Read
-  tiers via `query_depends {modules true}`.
+  `:pure` (referentially transparent: no mutation, no `rand`/`slurp`),
+  `:internal` (may mutate IN-PROCESS state — a memo, a registry — but touches
+  nothing outside the process), `:external` (IO: files, subprocesses, network,
+  db). Once declared, the write gate HARD-REFUSES a form exceeding its tier.
+  Undeclared = `:external` (ungated). Scope is a namespace PATH and the most
+  specific declaration WINS, so a pure core below an effectful module is
+  declarable; declaring VERIFIES the code already there and refuses a tier the
+  existing forms exceed. Read via `query_depends {modules true}`, or
+  `{modules true, on "app.core.calc"}` for one namespace's surface + tier.
+  The axis is internal/external because it decides how a thing must be TESTED:
+  external needs isolation, internal needs a cache/state reset, pure needs
+  nothing. Every memo must go through `slopp.cache` — that is what keeps
+  `:internal` checkable. (`:reads`/`:effects` are legacy spellings of
+  `:internal`/`:external`.)
 
 ## History as a query surface
 

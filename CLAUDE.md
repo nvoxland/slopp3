@@ -25,7 +25,10 @@ for design decisions, system mechanics, gotchas, and conventions.
   Don't re-litigate silently — revisit explicitly, and record the change.
 - **Red/green TDD, always.** Tests first, watch them fail, then implement —
   through the edit tools (per-write verification reports the red/green).
-  `done` runs the whole in-image suite plus impacted `^:isolated` tests and
+  **Call `done` at every point you think you're finished with something,
+  not once at the end** — finishing a unit of work and starting the next IS
+  a done point, and finding out you weren't done is cheapest right then.
+  `done` runs the whole in-image suite plus impacted `^:external` tests and
   REPORTS rather than refuses; `commit_point` has no checks of its own and
   gates on done's verdict, so there is exactly ONE bar. A red done STANDS
   until new work supersedes it. `done` is EPISODE-scoped (its `:scope` field

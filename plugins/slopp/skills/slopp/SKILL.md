@@ -26,7 +26,9 @@ contracts, the conventions slopp enforces); reviewing slopp code: `slopp-review`
 ## The loop — and the budget
 
 A whole task should be ~10–20 tool calls: orient (1) → read (1) → write
-REPL-style (small individual writes) → `done` → ONE milestone. Each extra
+REPL-style (small individual writes) → `done` → ONE milestone. `done` is
+not once-per-session: call it at every point you believe a piece of work is
+complete, before starting the next. Each extra
 call re-reads your entire context; the patterns below are where sessions
 measurably bleed tokens.
 
@@ -67,8 +69,16 @@ measurably bleed tokens.
    writes. Nothing asks you to pre-plan groups. Red-first TDD: write the
    failing test FIRST, then implement. An `:untested` flag? `draft_test
    {ns name code}` drafts a deftest from OBSERVED calls.
-5. **Say `done {label}` when you believe you're finished.** It runs the
-   WHOLE in-image suite plus the `^:isolated` tests your changes impact,
+5. **Say `done {label}` at EVERY point you think you're finished with
+   something — not once at the end.** Finished a unit of work and about to
+   start the next? That's a done point. Call it, read the findings, and
+   find out whether you were actually done before you move on. Multiple
+   `done`s per session is the normal shape, not an exception: each one is
+   cheap, each marks a boundary you can revert to, and each catches a
+   problem while the work is still fresh in your context rather than three
+   tasks later. (A turn ending is merely one such moment — the hook fires
+   it for you then.) It runs the
+   WHOLE in-image suite plus the `^:external` tests your changes impact,
    normalizes, marks the episode boundary, and reports findings; address
    them. A pre-flight `test_run` is redundant. **`done` REPORTS, it does
    not refuse** — it records the boundary honestly and tells you "not done
@@ -78,10 +88,17 @@ measurably bleed tokens.
    committing without changing anything.
    **`done` is EPISODE-scoped**, and its `:scope` field says so every
    time: lint and dead-surface cover only the namespaces you touched, and
-   the full `^:isolated`/`^:integration` tiers do not run. `full_check`
+   the full `^:external`/`^:integration` tiers do not run. `full_check`
    answers the whole-store question — see below. If your session pauses
    first, the hook fires done for you and the findings greet the next
    session's brief.
+   **Tier vocabulary** (namespaces AND tests): `:pure` (referentially
+   transparent) · `:internal` (mutates in-process state only — a memo via
+   `slopp.cache`) · `:external` (IO: files, subprocesses, network, db).
+   `module_purity {module tier}` declares a namespace's; `^:external` marks a
+   test that exercises one. The axis is what decides how a thing is TESTED —
+   external needs a separate JVM and temp dirs, internal needs a cache reset,
+   pure needs nothing.
 6. **`full_check` when the episode's scope isn't the question.** Every
    namespace linted, dead surface store-wide, every test in every tier.
    NOTHING forces it — not `done`, not `commit_point`. Reach for it when a
@@ -102,17 +119,18 @@ measurably bleed tokens.
 | New form | `edit_add_form` (`before` anchors placement) |
 | Change a whole form | `edit_replace_form` |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
+| Change a form's NAME METADATA (`^:export`, `^{:malli/schema …}`) | `edit_subform {text: true}` matching the `defn` head — `"^:live-handle open!"` → the new metadata. Structural matching can't address the head on its own, so without this you resend the whole form to change one marker |
 | A subform edit refused with `unresolved-symbol`/`invalid-arity` | **Widen the match.** The change spans more of the form than you matched — a binding and its use, a loop and its `recur`, an arglist and its body. Match the enclosing form, or `edit_replace_form` the whole thing. **Two edits to ONE form is ONE edit**; this is NOT cross-form atomicity and there is no batch tool for it (the refusal says so too) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
-| Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form |
-| Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers) |
+| Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form. Whole-word only, so `region-ish` survives a `region` sweep. **`dry-run` first and check the count against what you expected** — a mismatch means your pattern is catching something else. Two gotchas: it rewrites prose DESCRIBING the rename (a comment explaining `a -> b` comes out saying `b -> b`), and if a live GATE enforces the thing you are renaming, you need two phases — teach the gate to accept BOTH spellings, sweep, then tighten. A gate runs from the old compiled code while the group rewrites it, so a one-shot sweep is refused at the first form it re-tags |
+| Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers). **Propose the cluster you want and let it close the set for you** — it refuses a two-way split and NAMES the forms that would leave a cycle ("the moved set calls [x y] (staying)"). Add those and retry. Guessing the seam leaves a cycle; the refusal IS the analysis |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
-| Declare a module's purity tier | `module_purity {module tier prompt}` — `:pure`/`:reads`/`:effects`; hard-refuses effect-reaching writes into a pure core (functional-core gate) |
+| Declare a namespace's purity tier | `module_purity {module tier prompt}` — `:pure` (referentially transparent) / `:internal` (mutates in-process only) / `:external` (IO). Namespace PATH, most-specific wins; declaring VERIFIES the code already there. Undeclared = `:external` = ungated |
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the
@@ -133,19 +151,19 @@ marker on a var that IS called fails with "remove the flag". Fixture
 namespaces in tests follow the same rule (and edits must KEEP the marker).
 
 **Tiers are not your problem:** `done` runs the WHOLE in-image suite plus
-the `^:isolated` tests your changes impact (in the external JVM,
+the `^:external` tests your changes impact (in a separate JVM,
 automatically; a large slice defers and rides findings as
-`:isolated-pending`). `commit_point` has NO checks of its own — it runs
+`:external-pending`). `commit_point` has NO checks of its own — it runs
 done and gates on that verdict. There is exactly ONE bar, and it is
 `done`. The whole-store answer is `full_check`, and nothing forces it. **A write's `:status` says which tier actually ran**:
 `:green` = the impacted tests ran and passed · `:partial` = some ran, but
-impacted `^:isolated` ones were DEFERRED (`:isolated-pending` names them —
+impacted `^:external` ones were DEFERRED (`:external-pending` names them —
 a green here would be earned by other tests) · `:unverified` = nothing ran,
-with `:reason` distinguishing `:all-impacted-isolated` (by design, the
+with `:reason` distinguishing `:all-impacted-external` (by design, the
 done point runs them) from `:no-covering-tests` (yours to fix) and
-`:scope-ran-nothing` (a slopp bug — report it). Writing an `^:isolated`
+`:scope-ran-nothing` (a slopp bug — report it). Writing an `^:external`
 test is `:partial` or `:unverified`, never green — **to see it go red-first
-you must run `test_run {isolated true, only [...]}` yourself.** You never run `test_run` as a ritual — it's for
+you must run `test_run {external true, only [...]}` yourself.** You never run `test_run` as a ritual — it's for
 spot-checking one namespace or test mid-flight. Red runs return
 `:all-failing {file [tests]}` and `:themes` (clustered causes) — read
 those before drilling into blocks.

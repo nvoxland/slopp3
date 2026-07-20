@@ -2246,3 +2246,224 @@ wrong — a refusal that cannot say why is one an agent cannot act on.
   with zero errors: the NORMALIZER rewrites `(if y 2)` → `(when y 2)` before
   lint runs. The linter is harmless but redundant there. Worth auditing
   `:redundant-fn-wrapper` and `:single-key-in` for the same overlap.
+
+---
+
+## D-tiers-internal-external (2026-07-20) — the axis is internal/external, not read/write
+
+**Decision.** Purity tiers are **`:pure` / `:internal` / `:external`**.
+`:reads` is RETIRED. (`:reads`/`:effects` remain accepted as legacy spellings
+of `:internal`/`:external`.)
+
+- **`:pure`** — referentially transparent. No mutation, no non-determinism.
+  This is what lets the generative schema oracle (`analyzer-pure?` +
+  `mg/check`) run on a form at all.
+- **`:internal`** — may mutate IN-PROCESS state (a memo, a registry); touches
+  nothing outside the process.
+- **`:external`** — IO: files, subprocesses, network, the database.
+
+**The evidence that decided it.** Measured across the whole store on the old
+read/write axis: **6 `:pure`, 0 `:reads`, 19 `:effects`.** The middle tier had
+ZERO members, because read/write puts a memo `swap!` in the same class as a
+`git push`. On the internal/external axis the middle is populated
+immediately — `render`, `edit.refs` and `cache` moved out of the same tier as
+`db` and `repl`.
+
+**Why this axis and not that one:** it is the axis that decides how a thing
+must be TESTED, which is the whole reason the tiers exist.
+
+| tier | test strategy |
+|---|---|
+| `:pure` | plain unit test, no setup; generatively checkable |
+| `:internal` | in-image test plus a cache/state reset |
+| `:external` | isolation — fresh JVM, temp dirs, cleanup |
+
+Read/write cannot do this: an external READ needs the same isolation as an
+external write (`slurp` needs the file to exist), so the distinction buys
+nothing at the point where it would have to pay.
+
+**Layering keys on EXTERNALITY, not tier ordering.** A non-`:external`
+namespace may not require an `:external` one — but `:pure` MAY depend on
+`:internal`, because an in-process memo is observationally pure from outside.
+Forbidding that would mean the pure core could use no memoized helper, which
+in this codebase means no pure core at all. The coupling is real but bounded:
+a `:pure` namespace is then only as transparent as its dependency's cache
+KEYS are correct — which is exactly why caches must go through one construct.
+
+### The blessed cache (`slopp.cache`)
+
+Every memo goes through `cache/cached` (value-keyed) or `cache/cached-last`
+(identity-keyed). Hand-rolled memo atoms are what this replaces. It buys four
+things, and only the last one is about tiers:
+
+1. **Testability** — `reset-all!` clears everything; `without-caching!` makes
+   every call recompute, so a test proves the COMPUTATION rather than a
+   previous call's answer.
+2. **Staleness** — the key is a value you pass, in one place. slopp's lint
+   memo silently served findings computed under an old linter config until a
+   config hash was added to its key; its validity check is FOUR
+   hand-maintained terms, each a place to be wrong.
+3. **One eviction policy** — not hand-rolled per site (kondo's memo cleared
+   itself at 256 inside a `swap!`).
+4. **Mechanically checkable tiers** — "does this namespace mutate only through
+   `slopp.cache`?" is DECIDABLE. The alternative considered was a `^:memo`
+   marker, rejected because "is my memo semantically transparent?" is an
+   unverifiable author claim, and this session has been punished repeatedly
+   for those.
+
+**Two strategies, both real** — this was nearly missed:
+
+- `cached` — value-keyed map with eviction. For small keys.
+- `cached-last` — memoize-LAST keyed on `identical?`. For keys too large to
+  hash: the whole-store reference graph is memoized on the STORE, and hashing
+  that map every call would cost more than the computation saves. Sound
+  because the store is immutable — a new value appears only on a write, so
+  same identity means same content BY CONSTRUCTION. Wrong for anything
+  rebuilt per call: two `=` values that are not `identical?` miss every time
+  and the cache silently never hits.
+
+**`cached` is deliberately NOT `!`-named.** D6 propagates effects across
+namespaces only through `!`-named callees, so `cached!` would make every
+memoizing caller effectful and defeat the entire point. `without-caching!` IS
+`!`-named — it flips a global, and its callers are tests.
+
+**Tiers are namespace declarations, never form metadata.** They are
+`:module-tier` deltas carrying their `:prompt` (why) with full history — not
+`^:meta` on a form, which has no provenance. And there is deliberately NO
+per-form escape: if one `defn` could opt out, "this namespace is core" would
+be unverifiable without reading every form, which destroys the only property
+that makes the claim useful. The escape is to MOVE the form. That is the
+pressure that produces the shape.
+
+### Standing debt, deliberately not reclassified away
+
+Remaining layering violations are genuine core→edge dependencies, not
+classification noise: `edit.modules`/`refactor` → `index` (kondo writes a
+cache DIRECTORY on disk), `api.orient` → `db`, `api.telemetry` → `api.rules`
+(evals in the image). `slopp.index`'s two remaining hand-rolled caches stay
+hand-rolled for now; it is `:external` regardless because of that directory.
+
+---
+
+## D-external-test-tier (2026-07-20) — `^:isolated` is `^:external`; the marker names the REASON
+
+**Decision.** The test marker is `^:external`, matching the namespace tier.
+368 forms swept in one intent; the gate accepts ONE spelling.
+
+`^:isolated` named the MECHANISM (runs in a separate JVM) rather than the
+reason (it touches the world outside the process). That is why nobody could
+answer "should this test be isolated?" — the name did not say. With
+`^:external`, the question is mechanical: **a test is external when it
+exercises an `:external` namespace.**
+
+Worth noting the codebase was already inconsistent: `isolated-test-run!`'s
+docstring said "a FRESH EXTERNAL JVM" and the refusal said "external tests
+run in the external suite". The tier was already called external while the
+marker was called isolated, which is probably what made the old name
+confusing in the first place.
+
+### Two migration hazards, both general
+
+**1. A live gate cannot be renamed atomically with the marker it enforces.**
+The first sweep was REFUSED at step 6: `isolation-refusal` requires tests
+calling `repl/start!` to carry the marker, and it runs from the OLD compiled
+code while the group rewrites it — so a one-shot sweep is refused at the
+first test it re-tags. It needs two phases: accept both spellings, sweep,
+then tighten. This applies to any self-hosting system where a rule and the
+code it governs share a store.
+
+**2. A sweep rewrites prose DESCRIBING the sweep.** The transitional comment
+explaining `:isolated -> :external` came out reading `:external ->
+:external`.
+
+**Tightening to one spelling was NOT optional.** Tolerating `^:isolated` as
+well would be worse than rejecting it: the runner (`test-var-tiers`) reads
+`:external`, so a tolerated old marker would pass the gate and then run
+in-image and RECURSE. Two checks disagreeing is this codebase's recurring
+failure; a compatibility shim would have manufactured a fresh instance.
+
+### Demoting the mislabeled tests
+
+**22 tests** dropped from the external tier to plain in-image units. The
+criterion was the codebase's OWN: `edit/spawning-vars` defines what would
+recurse in-image, and `isolation-refusal` REFUSES a write that drops the
+marker from a test reaching one — so the gate arbitrated every demotion
+rather than my judgement. The clearest case: `build-native-test/arg-style-t`
+was spawning a JVM to test `arg-style`, a pure function over a clj-kondo map.
+
+**Seven candidates were deliberately left external** (`git-client-test`,
+`multiproc-test`, `commit-test`, `mcp-test`). They pass the no-spawning-var
+check, but the check sees only DIRECT symbols — a fixture helper could spawn
+without the test naming it, and an in-image recursion HANGS rather than
+failing cleanly.
+
+**The honest bound on the criterion:** it is sound for REFUSING (the gate
+sees what a form directly calls) but not complete for PERMITTING. Demote on
+it; do not trust it to clear the last few.
+
+---
+
+## D-api-decomposition (2026-07-20) — what `slopp.api` actually is, measured
+
+**Status: IN PROGRESS, and the remaining step is a DESIGN CALL, not a refactor.**
+
+`slopp.api` was 105 forms / 4030 lines and read as "the god namespace".
+Measured on the internal/external axis it is less wrong than that suggested,
+and the wrongness is specific.
+
+### What the measurement showed
+
+| | count | |
+|---|---|---|
+| thin pass-throughs (<15 lines AND delegating) | **10** | it is NOT a facade today |
+| self-contained (no delegation to a deep ns) | **50** | implementation living at the top |
+| over 40 lines | 34 | |
+
+So `slopp.api` was not a facade being mistaken for a namespace — it was a
+namespace doing implementation work. That settled the sequencing: push
+implementations DOWN first, and only then ask the facade question.
+
+### Extracted so far
+
+- **`slopp.api.query`** (`:pure`) — 33 forms: the 25 pure query operations
+  plus every pure helper they use.
+- **`slopp.api.review`** (`:pure`) — `review-scan`, 122 lines of analysis.
+
+`slopp.api`: 105 → 71 forms.
+
+**`edit_move_forms` found the seam, not judgement.** The first attempt
+proposed 25 forms and was REFUSED with a two-way-split analysis naming
+exactly what was missing (seven pure helpers), then refused again
+(`label-ancestors`). The direction it enforces is the correct one:
+`revert-episode!`/`undo!`/`done!` calling INTO the moved set is shell→core
+and fine; the moved set calling back out is a cycle. **Propose a cluster and
+let the tool close it transitively** — guessing leaves a cycle.
+
+### The remaining state, and the open question
+
+`slopp.api` is now **71 forms: 11 pure, 51 internal, 9 external**.
+
+The 51 are `:internal` because they mutate the **session atom** — in-process,
+not IO. That is what a functional core with an imperative shell is SUPPOSED
+to look like: decisions pure, orchestration mutating one owned piece of
+state, IO at nine named entry points. The "63/105 effectful" reading was an
+artifact of the read/write axis conflating a memo with a subprocess.
+
+**THE OPEN QUESTION** — and it is the facade question in another form:
+should the **9 external** forms (`open!`, `done!`, `commit-point!`, `build!`,
+`full-check!`, `external-test-run!`, `config!`, `author-identity`,
+`git-config-value`) live apart from the 51 orchestration operations?
+
+- **For:** `slopp.api` becomes declarable `:internal` — the gate would then
+  apply to the largest namespace in the store.
+- **Against:** `open!`/`done!`/`commit_point` are THE primary operations;
+  moving them decides what `slopp.api` *is*. Mechanically safe (the tool
+  rewrites every caller), but it is a product decision, not a cleanup.
+
+**Do not infer this one.** Decide it, then execute.
+
+### Not yet touched (readability, not architecture)
+
+`edit-group!` (156), `move-forms!` (152), `edit-replace!` (134) — long
+internal forms. And `done!` at 200 lines, worth its own pass: it is the
+most-changed function in the codebase.

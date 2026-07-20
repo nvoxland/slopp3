@@ -32,13 +32,49 @@ decision stays pure and `=`-testable.
   `edit_rename` to fix). A `!` deep in what should be your pure core is the smell
   — it means an effect leaked inward. `^:reads` marks a read-through-a-dep that
   isn't a mutation; `^:unsafe` is the dialect escape hatch.
-- **slopp ENFORCES it when you commit to it:** declare a module's purity tier
-  with `module_purity {module "app.core" tier :pure}` (or `:reads`, or `:effects`
-  for the periphery) and the write gate then HARD-REFUSES any form in that module
-  that reaches an effect (`:pure`) or a mutation (`:reads`) — teaching you to move
-  the IO to a periphery namespace. Tiers are opt-in: an undeclared module is
-  `:effects` (ungated). Declare the tier once a module is genuinely a pure core;
-  the gate keeps it that way. Read tiers with `query_depends {modules true}`.
+- **slopp ENFORCES it when you commit to it:** declare a purity tier with
+  `module_purity {module "app.core" tier :pure}`. THREE tiers, split on
+  internal/external rather than read/write:
+  - `:pure` — referentially transparent. No mutation, no `rand`/`slurp`. This
+    is what lets the generative `:=>` schema check run on a form at all.
+  - `:internal` — may mutate IN-PROCESS state (a memo, a registry); touches
+    nothing outside the process.
+  - `:external` — IO: files, subprocesses, network, db. Undeclared = external
+    = ungated, so tiers stay opt-in and a pre-tier store just opens clean.
+
+  The write gate then HARD-REFUSES a form exceeding its tier. **The axis is
+  internal/external because that is what decides how a thing must be TESTED**
+  — external needs isolation (fresh JVM, temp dirs), internal needs only a
+  cache/state reset, pure needs nothing. Read/write cannot do that: an
+  external READ needs the same isolation as an external write, since `slurp`
+  needs the file to exist.
+
+  **Scope is a namespace PATH and the most specific declaration wins**, so a
+  pure core one level below an effectful module (`app.core.calc` inside
+  `app.core`) is declarable. Declaring VERIFIES the code already there and
+  refuses a tier the existing forms exceed — a tier is an assertion about the
+  code, so it is checked against the code. Read tiers with `query_depends
+  {modules true}`, or `{modules true, on "app.core.calc"}` for one namespace's
+  surface plus its tier.
+
+  There is deliberately **no per-form escape**. If one `defn` could opt out,
+  "this namespace is core" would be unverifiable without reading every form.
+  The escape is to MOVE the form — which is the pressure that produces the
+  shape.
+- **Caches go through `slopp.cache`.** A hand-rolled memo atom makes a
+  semantically-pure projection classify as effectful, and then everything
+  depending on it does too. `(cache/cached ::id key thunk)` for a normal memo;
+  `(cache/cached-last ::id key thunk)` when the key is large and immutable
+  (identity-compared — hashing a whole store value on every call costs more
+  than it saves; wrong for anything rebuilt per call, where it silently never
+  hits). This is what keeps `:internal` CHECKABLE: "does this namespace mutate
+  only through the cache?" is decidable, where "is my memo semantically
+  transparent?" is an unverifiable claim.
+- **Testing cached code:** `cache/reset-all!` between tests, and
+  `(cache/without-caching! (fn [] ...))` to make every call recompute. A cache
+  can hide a bug by answering from an earlier call — under `without-caching!`
+  the test proves the COMPUTATION rather than the cache, and a stale-key bug
+  shows up as a wrong answer instead of a hit.
 - **On your judgment (no gate yet):** whether logic that *could* be pure was
   actually pushed to the shell. Ask of any function: "could this be args-in →
   value-out?" If yes, make it so and test it by value.
@@ -216,7 +252,7 @@ cover, so drifting either way turns the suite red.
 | Cross-module edge declared; no cycles; cohesion vs export | **Yes** (module gate) |
 | Public surface documented | **Yes** (write advisory) |
 | Dead public surface removed | **Yes** (`done`/`commit_point` gate) |
-| Pure core / effects at the edge (locale) | **Yes, when the module declares a tier** — `module_purity {module :pure/:reads}` hard-refuses effect-reaching writes; **`:pure` also forbids non-determinism** (`rand`/`slurp` — referential transparency) |
+| Pure core / IO at the edge (locale) | **Yes, when a namespace declares a tier** — `module_purity {module tier :pure/:internal/:external}` hard-refuses a form exceeding it; **`:pure` also forbids non-determinism** (`rand`/`slurp` — referential transparency). Declaring verifies the existing code, so a tier cannot claim more than it earns |
 | Boundary schemas on exports | **Yes** — a written `:=>` `:malli/schema` is generatively oracle-checked at `done` (drift → red `:schema-drift`); opt-in `require-boundary-schemas` gate mandates them on module-external map-arg fns |
 | Key hygiene (namespaced + no near-dups) | **Yes** — `done` flags likely-typo keys (`:key-typos` advisory); opt-in `require-namespaced-keys` gate refuses bare `{:keys}` at a boundary; browse/reuse with `query_vocabulary` |
 | Accretion over breakage | **Advisory** — `done` flags a narrowed boundary contract (`:breaking-changes`: arity / `:=>` schema-key / visibility, vs the last-done baseline) |
