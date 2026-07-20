@@ -118,3 +118,64 @@
           (is (contains? (:dep-pure (:store @s2))
                          'clojure.data.json/write-str))
           (finally (api/close! s2)))))))
+
+(deftest ^:isolated declaring-a-tier-verifies-the-code-already-there
+  ;; The gap recorded in ideas/functional-core-gate.md: `:pure` gates only NEW
+  ;; writes, so declaring it over an existing module produced a claim nothing
+  ;; had verified — a marker that lies. A declaration is an assertion about the
+  ;; code, so it has to be checked against the code.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'tv.core
+                   (str "(ns tv.core)\n"
+                        "(defn ^:unused-ok calc \"Pure.\" [x] (inc x))\n"
+                        "(defn ^:unused-ok write! \"Effectful.\" [x] (slurp x))\n"))
+      (testing "declaring :pure over an effectful module is REFUSED, and names why"
+        (let [r (api/module-tier! sess "tv.core" :pure :prompt "wishful")]
+          (is (:error r) (pr-str r))
+          (is (re-find #"tv\.core/write!" (str (:error r))) (str (:error r)))))
+      (testing "the tier is NOT recorded — a refused declaration must not land"
+        (is (nil? (get (:module-tiers (:store @sess)) "tv.core"))
+            (pr-str (:module-tiers (:store @sess)))))
+      (testing ":effects is always declarable — it asserts nothing"
+        (let [r (api/module-tier! sess "tv.core" :effects :prompt "periphery")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :effects (get (:module-tiers (:store @sess)) "tv.core")))))
+      (testing "and a genuinely pure module declares clean"
+        (api/ingest! sess 'tp.core
+                     "(ns tp.core)\n(defn ^:unused-ok f \"Pure.\" [x] (* 2 x))\n")
+        (let [r (api/module-tier! sess "tp.core" :pure :prompt "real core")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :pure (get (:module-tiers (:store @sess)) "tp.core")))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated purity-is-declarable-at-namespace-grain
+  ;; Measured on slopp itself: slopp.api holds SEVEN fully-pure namespaces
+  ;; (shape, breakage, schema, ...) inside an :effects module. At module grain
+  ;; the pure core exists but cannot be NAMED — so nothing enforces it and no
+  ;; test can rely on it. The most specific declaration wins.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ng.core
+                   "(ns ng.core)\n(defn ^:unused-ok boot! \"Edge.\" [p] (slurp p))\n")
+      (api/ingest! sess 'ng.core.calc
+                   "(ns ng.core.calc)\n(defn ^:unused-ok add \"Pure.\" [a b] (+ a b))\n")
+      (api/module-tier! sess "ng.core" :effects :prompt "the module has an edge")
+      (testing "a pure DEEP namespace declares :pure inside an :effects module"
+        (let [r (api/module-tier! sess "ng.core.calc" :pure :prompt "the core")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "and the deeper declaration WINS for forms in it"
+        (let [r (api/add-form! sess 'ng.core.calc
+                               "(defn ^:unused-ok sneak \"Edge.\" [p] (slurp p))"
+                               :prompt "an effect in the declared-pure core")]
+          (is (:error r) (pr-str r))
+          (is (re-find #"ng\.core\.calc" (str (:error r))) (str (:error r)))))
+      (testing "while the parent module stays unrestricted"
+        (let [r (api/add-form! sess 'ng.core
+                               "(defn ^:unused-ok more! \"Edge.\" [p] (slurp p))"
+                               :prompt "effects are fine out here")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "and declaring :pure over an already-effectful deep ns is refused"
+        (let [r (api/module-tier! sess "ng.core" :pure :prompt "wishful")]
+          (is (:error r) (pr-str r))))
+      (finally (api/close! sess)))))
