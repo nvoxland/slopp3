@@ -21,3 +21,4 @@
       (testing "a new spare is warming behind it"
         (is (some? (:spare @sess))))
       (finally (api/close! sess)))))
+
