@@ -80,8 +80,8 @@
 
 (defn- inject-rt!
   "Load slopp's runtime support (slopp.rt — traced test execution) into the
-  image, wrap rt against itself (#126), then return to `user`. Every owned image
-  carries it.
+  image, install a parent-death watchdog, wrap rt against itself (#126), then
+  return to `user`. Every owned image carries all of it.
 
   The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
   whichever slopp/rt.clj is on the READING process's classpath, and that differs
@@ -93,10 +93,21 @@
   The timing is the point: wrapping here — before anything calls in — is what
   makes rt's own entry points visible. `traced-run` cannot wrap itself from the
   inside; it is already on the stack by then, which is exactly why it measured
-  zero covering tests while 213 exercised it."
+  zero covering tests while 213 exercised it.
+
+  The WATCHDOG closes a subprocess leak: a ProcessBuilder child is orphaned,
+  not killed, when its parent JVM dies abnormally (OOM, SIGKILL, a killed
+  test_run) — no shutdown hook can catch that. The child's stdin is a pipe from
+  the parent, so a daemon thread blocked on `System/in` sees EOF the moment the
+  parent's fds close, and exits the image. `nrepl.cmdline` never reads stdin,
+  so the thread owns it uncontended."
   [handle]
   (eval! handle (slurp (io/resource "slopp/rt.clj")))
   (eval! handle "(when-let [f (resolve 'slopp.rt/self-instrument!)] (f))")
+  (eval! handle
+         (str "(doto (Thread. (fn [] (try (while (not (neg? (.read System/in))))"
+              " (catch Throwable _)) (System/exit 0)) \"slopp-parent-watchdog\")"
+              " (.setDaemon true) (.start))"))
   (eval! handle "(in-ns 'user)")
   handle)
 
