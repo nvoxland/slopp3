@@ -1,6 +1,6 @@
 (ns slopp.api.telemetry
   (:require [rewrite-clj.node :as n]
-            [slopp.api.rules :as rules]))
+            [slopp.api.rules.catalog :as catalog]))
 
 (defn- escape-markers
   "Store-wide counts of the discharge markers agents add to opt OUT of the
@@ -38,7 +38,12 @@
    counted."
   [store & {:keys [since]}]
   (let [rule-keys (into #{:missing-doc :unused-public :stale-unused-ok}
-                        (map :key rules/done-advisories))
+                        ;; the CATALOG, not the executable registry: it is a
+                        ;; verified superset (catalog-covers-every-registered-rule)
+                        ;; and carries no check vars, so telemetry stays pure.
+                        ;; Its extra write-gate keys are inert here — they simply
+                        ;; never match a done finding.
+                        (map :rule catalog/rule-catalog))
         deltas    (:deltas store)
         window    (if since (rest (drop-while #(not= since (:id %)) deltas)) deltas)
         dones     (filter #(= :done (:op %)) window)

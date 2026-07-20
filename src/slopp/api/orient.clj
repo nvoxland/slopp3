@@ -2,7 +2,6 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.db :as db]
             [slopp.store :as store]))
 
 (defn snip
@@ -41,16 +40,16 @@
                     ;; a defprotocol's card counts tests that called m or n
                     (count (keep (fn [[t fs]] (when (some fs ks) t))
                                  (:test-map @session))))
-          examples (when-let [conn (:db @session)]
+          examples (when-let [raw (get (:observed @session)
+                                       (str "observed/" ns-sym "/" nm))]
                      (try
-                       (when-let [raw (db/get-meta conn (str "observed/" ns-sym "/" nm))]
-                         (->> (edn/read-string raw)
-                              (take 2)
-                              (mapv (fn [{:keys [args ret threw]}]
-                                      (snip (str "(" nm " " (str/join " " args)
-                                                 ") → " (or ret threw))
-                                            90)))
-                              not-empty))
+                       (->> (edn/read-string raw)
+                            (take 2)
+                            (mapv (fn [{:keys [args ret threw]}]
+                                    (snip (str "(" nm " " (str/join " " args)
+                                               ") → " (or ret threw))
+                                          90)))
+                            not-empty)
                        (catch Exception _ nil)))]
       (cond-> {:form q :warranty {:covered covered}}
         sig  (assoc :sig sig)

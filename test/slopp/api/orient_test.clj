@@ -63,3 +63,27 @@
           (is (some #(re-find #"100" %) (:examples c)) (pr-str c))
           (is (some #(re-find #"50" %) (:examples c)) (pr-str c))))
       (finally (api/close! sess)))))
+
+(deftest ^:external observed-examples-survive-a-reopen
+  ;; The half cards-carry-observed-examples does NOT cover: examples written
+  ;; in one session must still show in the next. This pins the durable path
+  ;; before form-card stops reading the db directly — without it, moving
+  ;; observations into session state could silently reduce them to
+  ;; this-session-only and every existing test would still pass.
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-obs-reopen" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (let [sess (external/open! {:slopp.api/dir dir})]
+      (try
+        (api/ingest! sess 'ob2.core
+                     "(ns ob2.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")
+        (api/remember-observation! sess 'ob2.core 'scale
+                                   (api/query-observe sess 'ob2.core 'scale
+                                                      "(ob2.core/scale 100 0.5)"))
+        (finally (api/close! sess))))
+    (let [sess2 (external/open! {:slopp.api/dir dir})]
+      (try
+        (let [c (orient/form-card sess2 'ob2.core 'scale)]
+          (is (vector? (:examples c))
+              (str "a reopened session must still carry observed examples: " (pr-str c)))
+          (is (some #(re-find #"100" %) (:examples c)) (pr-str c)))
+        (finally (api/close! sess2))))))

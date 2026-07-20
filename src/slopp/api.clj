@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze]))
+            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -714,7 +714,7 @@
                                                 :agent agent)]
                                      (:store rz) s))
                                  st (distinct (map :ns steps)))
-                lr       (edit/lint-refusals base0 st (distinct (map :ns steps))
+                lr       (lintgate/lint-refusals base0 st (distinct (map :ns steps))
                                              (keep :form-id deltas))
                 load-res (if-let [gate (or (edit/cold-load-errors st (distinct (map :ns steps)))
                                            (:refuse lr))]
@@ -2010,14 +2010,21 @@
   store meta observed/<ns>/<name> — interface cards surface them as
   :examples, the strongest behavior line a card can carry (examples don't
   lie; prose can). Called by the MCP layer after query_observe; a no-op
-  for ephemeral sessions or empty captures."
+  for ephemeral sessions or empty captures.
+
+  Writes THROUGH: the db row is the durable copy (reloaded by
+  `session/load-observations` at open) and the session's `:observed` map is
+  the working one that `orient/form-card` reads. Both, or a card in this
+  session would not see what was just observed."
   [session ns-sym nm observe-result]
-  (when-let [conn (:db @session)]
-    (when-let [calls (seq (:calls observe-result))]
-      (try
-        (db/set-meta! conn (str "observed/" ns-sym "/" nm)
-                      (pr-str (vec (take 2 calls))))
-        (catch Exception _ nil))))
+  (when-let [calls (seq (:calls observe-result))]
+    (let [k   (str "observed/" ns-sym "/" nm)
+          raw (pr-str (vec (take 2 calls)))]
+      (swap! session assoc-in [:observed k] raw)
+      (when-let [conn (:db @session)]
+        (try
+          (db/set-meta! conn k raw)
+          (catch Exception _ nil)))))
   nil)
 ^:reads (defn session-brief
   "THE one-call orientation, task-shaped (knowledge-differential stance):

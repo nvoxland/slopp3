@@ -333,6 +333,18 @@
   config the journal doesn't track (e.g. `git-remote`, `git-base-sha`)."
   [conn k]
   (:meta/v (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = ?" k])))
+^:reads (defn meta-with-prefix
+  "Every meta row whose key starts with `prefix`, as `{k v}`. The k/v
+  side-table has no other way to be enumerated, and observations are stored
+  one row per form (`observed/<ns>/<name>`) — they load in one scan at
+  session open, like the trace map, so the card view can read them from
+  session state instead of the db."
+  [conn prefix]
+  (into {}
+        (map (fn [r] [(:meta/k r) (:meta/v r)]))
+        (jdbc/execute! conn ["SELECT k, v FROM meta WHERE k LIKE ?"
+                             (str prefix "%")])))
+
 (defn set-meta!
   "Upsert a meta row — the write side of `get-meta`."
   [conn k v]

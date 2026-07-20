@@ -5,14 +5,13 @@
             [slopp.api.history :as history]
             [slopp.api.modules :as modules]
             [slopp.api.orient :as orient]
-            [slopp.api.rules :as rules]
             [slopp.api.shape :as shape]
             [slopp.api.telemetry :as telemetry]
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -813,7 +812,7 @@
                      (if (= grain :form)
                        (case eff (:off :advisory) eff :refuse)
                        eff))))
-          rules/rule-catalog)))
+          catalog/rule-catalog)))
 
 (defn ^:export query-rule-telemetry
   "The D9 rules' fire-rate + discharge signal for THIS store — the demand signal

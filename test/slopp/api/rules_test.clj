@@ -1,6 +1,6 @@
 (ns slopp.api.rules-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.api.rules.catalog :as catalog]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -49,12 +49,12 @@
       (finally (api/close! sess)))))
 
 (deftest catalog-covers-every-registered-rule
-  (let [cataloged   (set (map :rule rules/rule-catalog))
+  (let [cataloged   (set (map :rule catalog/rule-catalog))
         write-gates (set (edit.modules/write-gate-names))
         done-keys   (set (map :key rules/done-advisories))]
     (testing "every entry carries the declarative shape"
       (is (every? (fn [r] (and (:rule r) (:grain r) (:severity r) (:escape r) (:teach r)))
-                  rules/rule-catalog)))
+                  catalog/rule-catalog)))
     (testing "every registered write gate is cataloged (drift guard)"
       (is (empty? (set/difference write-gates cataloged))
           (str "uncataloged write gates: " (set/difference write-gates cataloged))))

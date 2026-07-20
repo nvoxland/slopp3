@@ -4,7 +4,7 @@
             [slopp.render :as render]
             [slopp.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit] [slopp.edit.refs :as refs]))
+            [slopp.edit :as edit] [slopp.edit.refs :as refs] [slopp.edit.hotload :as hotload]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 
@@ -93,7 +93,7 @@
       (image/load-ns! h s 'demo2)
       (testing "initially red (add 2 3 = 5, test expects 6)"
         (is (= 1 (:fail (image/test-run h 'demo2)))))
-      (let [r (edit/apply-replace! {:store s :image h} 'demo2 'add
+      (let [r (hotload/apply-replace! {:store s :image h} 'demo2 'add
                                    "(defn add [x y] (+ x y 1))" :prompt "off-by-one")]
         (testing "the edit hot-reloads: image reflects the redefinition, tests green"
           (is (nil? (:error r)))

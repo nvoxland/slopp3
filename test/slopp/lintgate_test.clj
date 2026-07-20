@@ -3,7 +3,7 @@
   refused; pre-existing errors don't block. Pure — stores built with ingest."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.index :as index]))
+            [slopp.store :as store] [slopp.index :as index] [slopp.edit.lintgate :as lintgate]))
 
 (defn- st [src] (store/ingest (store/empty-store) 'lg.core src))
 
@@ -12,22 +12,22 @@
 
 (deftest introducing-an-arity-error-is-refused
   (testing "an arity error in a form NOT being written CARRIES (REPL flow)"
-    (let [r (edit/lint-refusals (st clean) (st bad) ['lg.core] [])]
+    (let [r (lintgate/lint-refusals (st clean) (st bad) ['lg.core] [])]
       (is (nil? (:refuse r)) (pr-str r))
       (is (some #(re-find #"invalid-arity" (name (:type %))) (:carried r))
           (pr-str r))))
   (testing "the SAME error refuses when it is in the form being written"
     (let [g-fid (:id (store/form-named (st bad) 'lg.core 'g))
-          r     (edit/lint-refusals (st clean) (st bad) ['lg.core] [g-fid])]
+          r     (lintgate/lint-refusals (st clean) (st bad) ['lg.core] [g-fid])]
       (is (re-find #"in the form you are writing" (str (:refuse r))) (pr-str r))
       (is (re-find #"invalid-arity" (str (:refuse r)))))))
 
 (deftest clean-writes-pass
-  (is (nil? (edit/lint-refusals (st clean) (st clean) ['lg.core] []))))
+  (is (nil? (lintgate/lint-refusals (st clean) (st clean) ['lg.core] []))))
 
 (deftest pre-existing-errors-do-not-block
   (testing "base already has the error — the write is not the one to blame"
-    (is (nil? (edit/lint-refusals (st bad) (st bad) ['lg.core] [])))))
+    (is (nil? (lintgate/lint-refusals (st bad) (st bad) ['lg.core] [])))))
 ^:unsafe (deftest cross-ns-arity-is-gated-without-a-clj-kondo-nearby
   ;; THE user-project case (#134). Calling ANOTHER namespace's fn with the
   ;; wrong arity is refused only if kondo knows that fn's arities — a CROSS-NS
@@ -59,7 +59,7 @@
         gid      (:id (store/form-named base 'lg.use 'g))
         [cand _] (store/replace-node base 'lg.use 'g
                                      (:node (edit/parse-form "(defn g \"G.\" [] (d/f 1 2 3))")))
-        r        (edit/lint-refusals base cand '[lg.use] #{gid})]
+        r        (lintgate/lint-refusals base cand '[lg.use] #{gid})]
     (testing "calling lg.dep/f with 3 args is REFUSED — the arity came from the
               cache slopp owns, not from anything beside the process"
       (is (:refuse r)

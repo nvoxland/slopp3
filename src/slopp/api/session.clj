@@ -1,4 +1,4 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze]))
+(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -36,6 +36,17 @@
   []
   (or (not-empty (System/getenv "SLOPP_AGENT"))
       (str "s-" (subs (str (java.util.UUID/randomUUID)) 0 8))))
+(defn load-observations
+  "Every persisted observation, `{meta-key raw-edn}`, or `{}` without a db —
+  the sibling of `load-trace`. Observations are durable (written by
+  `remember-observation!`) but READ constantly by the card view, so they load
+  once into session state rather than making every card a db query. That is
+  what lets `slopp.api.orient` stay off `slopp.db`."
+  [conn]
+  (if conn
+    (or (db/meta-with-prefix conn "observed/") {})
+    {}))
+
 (defn load-trace
   "The persisted trace map, pruned to tests/forms that still exist in `store`
   (names move between sessions — including renames that never re-persisted —
@@ -213,7 +224,7 @@
     (letfn [(load-all []
               (loop [ids (seq form-ids)]
                 (when ids
-                  (or (edit/hot-load-form! (:image @session) candidate (first ids))
+                  (or (hotload/hot-load-form! (:image @session) candidate (first ids))
                       (recur (next ids))))))]
       (when-let [err1 (load-all)]
         (let [stubbed (stub!)]
@@ -275,7 +286,7 @@
                 (if (:error out)
                   out
                   (let [load-res (when (and load? (not loaded?))
-                                   (let [lr (edit/lint-refusals base (:store out) [ns-sym]
+                                   (let [lr (lintgate/lint-refusals base (:store out) [ns-sym]
                                                                 [(:form-id (:delta out))])]
                                      (if-let [gate (or (edit/cold-load-errors (:store out) [ns-sym])
                                                        (:refuse lr))]
@@ -308,7 +319,7 @@
         (if (:error out0)
           out0
           (let [load-res (when load?
-                           (let [lr (edit/lint-refusals base0 (:store out0) [ns-sym]
+                           (let [lr (lintgate/lint-refusals base0 (:store out0) [ns-sym]
                                                         [(:form-id (:delta out0))])]
                              (if-let [gate (or (edit/cold-load-errors (:store out0) [ns-sym])
                                                (:refuse lr))]

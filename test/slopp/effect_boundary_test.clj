@@ -194,7 +194,7 @@
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ly.shell
-                   "(ns ly.shell)\n(defn ^:unused-ok read-cfg \"No bang.\" [p] (slurp p))\n")
+                   "(ns ly.shell)\n(defn read-cfg \"No bang.\" [p] (slurp p))\n")
       (api/module-tier! sess "ly.shell" :effects :prompt "the shell")
       (api/module-dep! sess "ly.core" "ly.shell" :prompt "fixture edge")
       (api/ingest! sess 'ly.core
@@ -209,7 +209,19 @@
           (is (some #(and (= 'ly.core (:ns %)) (= 'ly.shell (:requires %))) v)
               (pr-str v))
           (is (re-find #"(?i)looser" (str (:tier-layering-note r)))
-              (pr-str (:tier-layering-note r)))))
+              (pr-str (:tier-layering-note r)))
+          ;; discriminating: `red` proves nothing unless every OTHER red-maker is
+          ;; clean. The first version of this assertion passed while the
+          ;; layering finding was still purely advisory.
+          (is (zero? (:lint-errors r)) (pr-str (:lint r)))
+          (is (empty? (:unused-public r)) (pr-str (:unused-public r)))
+          (is (empty? (:stale-unused-ok r)) (pr-str (:stale-unused-ok r)))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              (pr-str (:test r)))
+          (is (= :red (:status r))
+              (str "a core→shell dependency must FLIP the check red — a"
+                   " finding the agent can scroll past is not a rule: "
+                   (pr-str (select-keys r [:status :tier-layering]))))))
       (testing "layering-violations itself: :reads may depend on :pure, not :effects"
         (api/ingest! sess 'lz.pure "(ns lz.pure)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
         (api/module-tier! sess "lz.pure" :pure :prompt "core")

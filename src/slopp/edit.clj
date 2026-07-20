@@ -9,8 +9,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [slopp.index :as index]
-            [slopp.repl :as repl] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+            [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -419,24 +418,6 @@
                  (if near
                    (str " — nearest: " (str/join ", " near))
                    (str " — query_source {ns " ns-sym "} lists what exists")))}))
-(defn hot-load-form!
-  "Hot-reload one form (from a store VALUE — commit only on success, S1) into
-  the image, padded with newlines to its VFS row and attributed to its VFS
-  path so stack traces cite the exact lines `query-source` shows (F6).
-  Returns nil on success, or the compile/load error message."
-  [image store form-id]
-  (let [ns-sym  (store/ns-of-form-id store form-id)
-        elems   (store/elements store ns-sym)
-        idx     (first (keep-indexed
-                        (fn [i e] (when (= form-id (:id e)) i)) elems))
-        [row _] (nth (render/element-offsets store ns-sym) idx)
-        src     (n/string (:node (nth elems idx)))
-        padded  (if (>= row 2)
-                  (str "(in-ns '" ns-sym ")\n"
-                       (apply str (repeat (- row 2) "\n")) src)
-                  (str "(in-ns '" ns-sym ") " src))]
-    (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))
-
 (defn remove-require-source
   "Symmetric counterpart of add-require-source: structurally remove the
   require spec for `lib` from an ns form's source. Returns {:src new-src} or
@@ -612,73 +593,6 @@
   signature change is never blocked by its own not-yet-updated callers."
   #{:syntax :unresolved-symbol :invalid-arity :type-mismatch})
 
-(defn lint-refusals
-  "NEW error-level kondo findings a candidate store would introduce over
-  its base. An error IN one of the forms being written (`written-fids`)
-  returns {:refuse msg} — your own form must be well-formed. New errors in
-  OTHER forms (stale callers after an incremental signature change) don't
-  block the REPL flow: they return as {:carried [{:form :type :message}]}
-  and the done-point re-checks them hard. nil when clean.
-
-  WHAT blocks here is `write-coherence-lint`, NOT a severity level. A write is
-  mid-work by definition, so this asks only whether the FORM is internally
-  incoherent right now — whether the CODEBASE is finished is `done`'s
-  question, decided by `index/kondo-config`'s `:level`. Gating writes on
-  severity instead killed red-first TDD, the module lifecycle and carried-lint
-  compression (13 assertions, 7 tests), and refused `(if x y)` written on the
-  way to adding an else branch.
-
-  These types are ~never false positives (two 'invalid-arity' errors once
-  dismissed as noise were real ArityExceptions in shipped handlers);
-  pre-existing findings never block (no deadlock on legacy)."
-  [base cand ns-syms written-fids]
-  (let [written (set written-fids)
-        errs    (fn [store ns-sym]
-                  (when (get-in store [:namespaces ns-sym])
-                    (->> (index/lint (render/render-ns store ns-sym))
-                         (filter #(contains? write-coherence-lint (:type %)))
-                         (map #(assoc % :ns ns-sym)))))
-        key*    (juxt :ns :type :message)
-        news    (mapcat (fn [ns-sym]
-                          (let [old (set (map key* (errs base ns-sym)))]
-                            (remove #(old (key* %)) (errs cand ns-sym))))
-                        (distinct ns-syms))
-        located (map (fn [f]
-                       (let [e (render/owner-form cand (:ns f) (:row f) (:col f))]
-                         (assoc f :form-id (:id e)
-                                :form (when e
-                                        (symbol (str (:ns f))
-                                                (str (or (:name e) (:id e))))))))
-                     news)
-        [own carried] ((juxt filter remove) #(contains? written (:form-id %)) located)]
-    (cond
-      (seq own)
-      {:refuse (str "lint ERROR in the form you are writing: "
-                    (str/join "; " (map #(str (:ns %) ": " (name (:type %))
-                                              " — " (:message %))
-                                        own))
-                    " — error-level kondo findings are almost never false"
-                    " positives; fix the form before sending it"
-                    (when (some #(= :invalid-arity (:type %)) own)
-                      " (changing a signature? change_signature rewrites the defn AND its call sites as one intent)")
-                    ;; the commonest cause of BOTH types on your own form: the
-                    ;; edit was too narrow. A binding and its use, a loop and
-                    ;; its recur, an arglist and its body must change together
-                    ;; — and they are ONE form, so it is ONE edit. Agents
-                    ;; reliably misread this as needing atomicity ACROSS forms
-                    ;; and reach for a batch primitive that does not exist.
-                    (when (some #(#{:unresolved-symbol :invalid-arity} (:type %)) own)
-                      (str " — if this was a targeted subform edit, the change"
-                           " spans MORE of this form than you matched (a binding"
-                           " and its use, a loop and its recur). Widen the match"
-                           " to the enclosing form, or edit_replace_form the"
-                           " whole thing: two edits to ONE form is ONE edit.")))}
-
-      (seq carried)
-      {:carried (vec (for [f carried]
-                       {:form (:form f) :type (:type f) :message (:message f)}))}
-
-      :else nil)))
 (defn declare-node
   "Build a `(declare …)` form NODE for `names`, optionally carrying the
   `^{:auto-declare \"<why>\"}` marker (a pipeline-owned declare says why it
@@ -880,22 +794,4 @@
                 (seq advisories) (assoc :advisories advisories)
                 (seq drift)      (assoc :drift drift))))
           (missing-form-error store ns-sym form-name))))))
-
-(defn apply-replace!
-  "Pipeline through hot-reload over `system` {:store store :image handle}:
-  `replace-form`, then redefine the form in the live image (D5) — a form that
-  fails to COMPILE rejects the whole edit (S1; nothing to commit). Returns
-  {:system {:store ...} :delta :warnings} or {:error msg}."
-  [system ns-sym form-name new-source & {:keys [prompt]}]
-  (let [r (replace-form (:store system) ns-sym form-name new-source :prompt prompt)]
-    (cond
-      (:error r) r
-
-      :else
-      (if-let [err (hot-load-form! (:image system) (:store r)
-                                   (:form-id (:delta r)))]
-        (compile-error (:store r) err "form failed to compile: ")
-        {:system   (assoc system :store (:store r))
-         :delta    (:delta r)
-         :warnings (:warnings r)}))))
 
