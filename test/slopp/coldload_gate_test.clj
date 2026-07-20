@@ -13,7 +13,7 @@
        "(defn late [] 2)\n"
        "(defn tail [] (late))\n"))
 
-(deftest ^:isolated cold-load-gate-reorders-acyclic-declares-cycles
+(deftest ^:external cold-load-gate-reorders-acyclic-declares-cycles
   (let [sess (api/open!)]
     (try
       (testing "replace: an early form referencing a later one AUTO-REORDERS (silent)"
@@ -65,7 +65,7 @@
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated merge-replay-that-breaks-cold-load-is-refused
+(deftest ^:external merge-replay-that-breaks-cold-load-is-refused
   ;; Each line is individually gate-legal, but the MERGE interleaves into a
   ;; forward ref: main deletes the (now-satisfied) declare while the branch
   ;; grows a new forward use of the declared var. The merge door must hold
@@ -111,7 +111,7 @@
                           (.delete f)))]
           (rm dir))))))
 
-(deftest ^:isolated declare-satisfies-the-gate
+(deftest ^:external declare-satisfies-the-gate
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cl.two

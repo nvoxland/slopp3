@@ -10,7 +10,7 @@
        "(deftest add-t (is (= 5 (add 2 3))))\n"
        "(deftest mul-t (is (= 6 (mul 2 3))))\n"))
 
-(deftest ^:isolated tracing-maps-tests-to-forms
+(deftest ^:external tracing-maps-tests-to-forms
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
@@ -22,7 +22,7 @@
           (is (= #{'vdemo/mul} (tmap 'vdemo/mul-t)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated edit-runs-only-affected-tests
+(deftest ^:external edit-runs-only-affected-tests
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
@@ -50,7 +50,7 @@
             (finally (api/close! sess2)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated reload-signature-reds-still-heal              ; D5.1 belt-and-suspenders
+(deftest ^:external reload-signature-reds-still-heal              ; D5.1 belt-and-suspenders
   ;; Even when the red IS on an edited path (flip rule says "explained"), an
   ;; unbound-var-style failure smells like staleness and must cross-check.
   (let [sess (api/open!)]
@@ -71,7 +71,7 @@
         (is (zero? (+ (:fail (:test r)) (:error (:test r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated test-run-fresh-forces-a-cross-check
+(deftest ^:external test-run-fresh-forces-a-cross-check
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'fr.core
@@ -83,7 +83,7 @@
         (is (not= before (:port (:image @sess)))))   ; image really was replaced
       (finally (api/close! sess)))))
 
-(deftest ^:isolated test-run-only-targets-named-tests
+(deftest ^:external test-run-only-targets-named-tests
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
@@ -92,7 +92,7 @@
         (is (= 1 (:pass r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated red-is-cross-checked-on-a-fresh-image
+(deftest ^:external red-is-cross-checked-on-a-fresh-image
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
@@ -118,7 +118,7 @@
               (is (re-find #"\(= 5 \(add 2 3\)\)" (:expected f)))
               (is (= "(not (= 5 -1))" (:actual f)))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated red-results-name-the-implicated-forms
+(deftest ^:external red-results-name-the-implicated-forms
   ;; Rock 2: the system holds the trace map AND the delta — a red write
   ;; result says WHICH changed form each failing test exercises
   (let [sess (api/open!)]
@@ -134,7 +134,7 @@
         (testing "narrowing kept the untouched test out of the run"
           (is (= 1 (count fails)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated trace-map-survives-sessions
+(deftest ^:external trace-map-survives-sessions
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-trace"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -168,7 +168,7 @@
       (is (= [{:phrase "does not declare" :tests 3}] themes) (pr-str themes)))
     (testing "below the threshold nothing clusters"
       (is (empty? (#'testrun/failure-themes (block "t9" "lone wolf failure")))))))
-(deftest ^:isolated affected-slice-runs-only-reachable-tests
+(deftest ^:external affected-slice-runs-only-reachable-tests
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-affected"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -186,7 +186,7 @@
                         "(deftest g-t (is (= 0 (c/g 1))))\n"))
       (api/commit-point! sess "baseline")
       (testing "right after a milestone the slice is empty — and says so"
-        (let [r (api/isolated-test-run! sess :affected true)]
+        (let [r (api/external-test-run! sess :affected true)]
           (is (zero? (:ran r)) (pr-str r))
           (is (re-find #"full gate" (str (:note r))))))
       (testing "changing ONE island runs only the tests that can reach it"
@@ -194,14 +194,14 @@
                                     :prompt "same behavior, new spelling")]
           (is (nil? (:error er)) (pr-str er))
           (is (nil? (:conflict er)) (pr-str er)))
-        (let [r (api/isolated-test-run! sess :affected true)]
+        (let [r (api/external-test-run! sess :affected true)]
           (is (= 1 (:ran r)) (pr-str (dissoc r :output)))
           (is (= '[ia.core-test] (get-in r [:affected :selected])) (pr-str (:affected r)))
           (is (some #{'ia.core} (get-in r [:affected :changed-nses])))
           (is (= :green (:status r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated parallel-isolated-runs-shard-and-merge
-  ;; the full isolated suite is the wall-time king (~210s at repo scale,
+(deftest ^:external parallel-external-runs-shard-and-merge
+  ;; the full external suite is the wall-time king (~210s at repo scale,
   ;; run at every milestone) — sharding test nses across parallel JVMs
   ;; must return the same merged truth
   (let [sess (api/open!)]
@@ -215,7 +215,7 @@
                         "(defn g \"G.\" [x] (dec x))\n"
                         "(deftest g-t (is (= 0 (g 1))))\n"
                         "(deftest g2-t (is (= -1 (g 0))))\n"))
-      (let [r (api/isolated-test-run! sess :parallel 2)]
+      (let [r (api/external-test-run! sess :parallel 2)]
         (is (= 3 (:ran r)) (pr-str (dissoc r :output)))
         (is (= 3 (:assertions r 0)) (pr-str (dissoc r :output)))
         (is (= :green (:status r)))
@@ -223,7 +223,7 @@
       (testing "a red in any shard surfaces with its details"
         (api/edit-replace! sess 'pb.core 'g "(defn g \"G.\" [x] (+ x 5))"
                            :prompt "breaks both g tests")
-        (let [r (api/isolated-test-run! sess :parallel 2)]
+        (let [r (api/external-test-run! sess :parallel 2)]
           (is (= :red (:status r)))
           (is (pos? (:failures r 0)))
           (is (seq (:all-failing r)) (pr-str (dissoc r :output)))))
@@ -240,7 +240,7 @@
       (is (= 4 (ap 50 8)))
       (is (= 1 (ap 50 2)) "a 2-core box never over-parallelizes")
       (is (<= (ap 999 64) 4) "hard cap at 4"))))
-(deftest ^:isolated dead-shards-retry-once
+(deftest ^:external dead-shards-retry-once
   ;; a shard whose JVM dies with NO parseable summary (fork pressure, OOM —
   ;; seen when the sharded suite nests JVM-spawning tests) is an
   ;; environment failure, not a test failure: test failures PARSE. Retry
@@ -262,7 +262,7 @@
                         {:exit 0 :err ""
                          :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."})))]
         (with-redefs-fn {#'testrun/run-shard! fake}
-          #(let [r (api/isolated-test-run! sess :parallel 2)]
+          #(let [r (api/external-test-run! sess :parallel 2)]
              (is (= :green (:status r)) (pr-str r))
              (is (= 2 (:ran r)))
              (is (= 2 (:shard-retries r)))
@@ -270,7 +270,7 @@
                  "each dead shard retried exactly once"))))
       (finally (api/close! sess)))))
 (deftest external-traces-merge-across-shards
-  ;; #121: a sharded isolated run is N concurrent JVMs in ONE built dir, each
+  ;; #121: a sharded external run is N concurrent JVMs in ONE built dir, each
   ;; writing its own trace file. Reading the trace back = glob + merge.
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-trace-merge"
@@ -293,11 +293,11 @@
     (testing "unrelated files in the built dir are ignored"
       (spit (java.io.File. dir "deps.edn") "{:paths [\"src\"]}")
       (is (= 2 (count (testrun/read-traces dir)))))))
-(deftest ^:isolated external-tier-trace-absorbs-into-the-session
-  ;; #121: ^:isolated tests only ever run out-of-process, so the external tier
+(deftest ^:external external-tier-trace-absorbs-into-the-session
+  ;; #121: ^:external tests only ever run out-of-process, so the external tier
   ;; is the ONLY place their form trace can come from. This drives the pipe
   ;; end to end — build routes through the store's runner, the runner writes a
-  ;; trace beside the build, isolated-test-run! reads it back and absorbs it —
+  ;; trace beside the build, external-test-run! reads it back and absorbs it —
   ;; with a STUB runner, so it tests the wiring rather than the tracer.
   (let [sess (api/open!)]
     (try
@@ -316,7 +316,7 @@
                                    "  (spit (io/file (str trace-file-prefix \"stub.edn\"))\n"
                                    "        (pr-str '{tt.core-test/f-t #{tt.core/f}}))\n"
                                    "  (apply (requiring-resolve 'cognitect.test-runner/-main) args))\n"))
-      (let [r (api/isolated-test-run! sess)]
+      (let [r (api/external-test-run! sess)]
         (is (= :green (:status r)) (pr-str r))
         (testing "the verdict path is untouched — the runner WRAPS cognitect"
           (is (= 1 (:ran r)) (pr-str r))))
@@ -324,7 +324,7 @@
         (is (= '#{tt.core/f} (get (:test-map @sess) 'tt.core-test/f-t))
             (pr-str (:test-map @sess))))
       (finally (api/close! sess)))))
-(deftest ^:isolated child-image-rt-calls-reach-the-callers-trace
+(deftest ^:external child-image-rt-calls-reach-the-callers-trace
   ;; THE child-JVM blind spot (#126). Driving a child image runs slopp.rt THERE,
   ;; where the caller's var-wrapping cannot reach. Measured on the live store
   ;; 2026-07-17: slopp.rt/traced-run read 0 covering tests while 213 exercised it
@@ -333,7 +333,7 @@
   ;; closure, while 1 narrows to a single test and calls the result green.
   ;;
   ;; Stand in for the external runner's tracer: publish a sink the way testmain's
-  ;; instrument! does around every isolated test, then drive a child image.
+  ;; instrument! does around every external test, then drive a child image.
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'vdemo target)
@@ -345,7 +345,7 @@
             (is (contains? @touched 'slopp.rt/traced-run) (pr-str @touched)))
           (finally (rt/restore! originals))))
       (finally (api/close! sess)))))
-(deftest ^:isolated multimethod-tests-trace-to-the-method-forms
+(deftest ^:external multimethod-tests-trace-to-the-method-forms
   ;; The whole point of the C-wave: a test exercising ONE method of a
   ;; multimethod produces evidence for THAT method's form (keyed by id — D8:
   ;; registrations define no name) plus the defmulti, and NOT for sibling
@@ -381,7 +381,7 @@
           (is (contains? ci-trace (fkey ci-form)) (pr-str ci-trace))
           (is (not (contains? ci-trace (fkey sq-form))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated protocols-and-records-track-through-their-vars
+(deftest ^:external protocols-and-records-track-through-their-vars
   ;; The other half of the polymorphism wave — and it PINS A LIMIT found red
   ;; (2026-07-17): protocol method vars ARE wrapped, but a protocol call site
   ;; compiles an inline cache that hits the interface DIRECTLY when the target
@@ -419,7 +419,7 @@
           (is (:untested r) "the per-write path admits it could not cover this")))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated restart-recovers-from-a-broken-image-handle
+(deftest ^:external restart-recovers-from-a-broken-image-handle
   ;; restart is the correctness backstop, and it had a bootstrapping
   ;; dependency on the thing most likely to be broken: it stopped the current
   ;; image (reading that handle) and could adopt a warm spare built under
@@ -439,7 +439,7 @@
             "the store reloads into a genuinely fresh image"))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated fallback-verifies-tests-that-reach-the-change
+(deftest ^:external fallback-verifies-tests-that-reach-the-change
   ;; The "conservative full" fallback ran tests IN the touched PRODUCTION
   ;; namespaces — which contain none. On the real store,
   ;; test_run {ns "slopp.git"} runs 0 tests while FIFTEEN test namespaces
@@ -476,7 +476,7 @@
                    (pr-str (:test r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated live-handle-shape-change-rebuilds-the-image
+(deftest ^:external live-handle-shape-change-rebuilds-the-image
   ;; The one failure this project never guarded, and it bricked the session
   ;; TWICE. slopp's own code lives in the store, so editing slopp.repl
   ;; hot-reloads it into the process doing the editing. Renaming :client to

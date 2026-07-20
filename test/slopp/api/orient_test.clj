@@ -26,7 +26,7 @@
     (testing "over-budget changes ROLL UP by namespace — information aggregates, never amputates"
       (is (some #(and (:ns %) (number? (:forms %))) (:changes r)) (pr-str (take 3 (:changes r))))
       (is (re-find #"rolled up" (str (:note r))) (pr-str (:note r))))))
-(deftest ^:isolated form-cards-are-the-interface-view
+(deftest ^:external form-cards-are-the-interface-view
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cd.core
@@ -47,7 +47,7 @@
         (is (nil? (:source c)) (pr-str c))
         (is (< (count (pr-str c)) 400) (str (count (pr-str c)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated cards-carry-observed-examples
+(deftest ^:external cards-carry-observed-examples
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-obs" (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (api/open! {:slopp.api/dir dir})]

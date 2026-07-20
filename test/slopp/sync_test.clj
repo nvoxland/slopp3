@@ -44,7 +44,7 @@
                  (and (.isFile f) (str/ends-with? (.getName f) ".clj"))))
        (mapv str)))
 
-(deftest ^:isolated clone-is-fileless-and-pushes-fast-forward
+(deftest ^:external clone-is-fileless-and-pushes-fast-forward
   (let [dir-a (temp-dir)
         dir-b (str (temp-dir) "/clone")
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
@@ -102,7 +102,7 @@
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
 
-(deftest ^:isolated pull-absorbs-remote-changes-bidirectionally
+(deftest ^:external pull-absorbs-remote-changes-bidirectionally
   ;; A pushes v1 → B clones → A pushes v2 → B pulls (absorbs, chains via the
   ;; :git-sha marker) → B pushes v3 → A pulls B's work back. Full circle.
   (let [dir-a (temp-dir)
@@ -174,7 +174,7 @@
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
 
-(deftest ^:isolated pull-conflicts-quarantine-and-block-push
+(deftest ^:external pull-conflicts-quarantine-and-block-push
   ;; Both sides edit the same form → the ns is quarantined (git-style
   ;; conflict, OUR version stays live), push is blocked until the agent
   ;; resolves and clears it.
@@ -231,7 +231,7 @@
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
 
-(deftest ^:isolated clone-guards
+(deftest ^:external clone-guards
   (testing "an empty remote (no main) is an honest error"
     (let [bare (bare-repo! (str (temp-dir) "/empty.git"))
           dir  (str (temp-dir) "/x")]
@@ -292,7 +292,7 @@
                          (.setForceUpdate true)))
               (.name cid)))))
       (finally (.close repo)))))
-(deftest ^:isolated slopp-owns-one-branch-humans-own-the-rest
+(deftest ^:external slopp-owns-one-branch-humans-own-the-rest
   ;; the ownership boundary IS the branch: slopp pushes only refs/heads/slopp/*
   ;; mirrors; a human manages main with regular git and
   ;; slopp never touches it — mixed repos without everything living in slopp
@@ -329,7 +329,7 @@
         (api/close! sess)
         (rm-rf! dir)
         (rm-rf! (.getParentFile (io/file bare)))))))
-(deftest ^:isolated local-repo-push-guards-the-checked-out-branch
+(deftest ^:external local-repo-push-guards-the-checked-out-branch
   ;; pushing INTO the working repo's own .git is the local mixed workflow —
   ;; but never onto the branch a working tree has checked out (JGit would
   ;; move the ref under it)
@@ -352,7 +352,7 @@
           (api/close! sess)
           (rm-rf! dir)
           (rm-rf! work))))))
-(deftest ^:isolated import-into-a-main-checkout
+(deftest ^:external import-into-a-main-checkout
   ;; THE onboarding flow: git clone (main checked out, human files on disk) →
   ;; slopp import . → the store comes from the slopp BRANCH of the same local
   ;; repo; the working dir stays the human's main checkout
@@ -403,7 +403,7 @@
         (api/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))
-(deftest ^:isolated import-tolerates-the-servers-empty-store
+(deftest ^:external import-tolerates-the-servers-empty-store
   ;; the plugin's MCP server auto-creates an EMPTY store when it serves a
   ;; fresh clone; import must treat that as a fresh dir, not refuse it
   (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
@@ -429,7 +429,7 @@
         (api/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))
-(deftest ^:isolated auto-import-on-serve
+(deftest ^:external auto-import-on-serve
   ;; the server auto-imports a fresh clone of a slopp-published repo: the
   ;; slopp BRANCH is the marker; plain git repos are never auto-ingested
   (let [origin (bare-repo! (str (temp-dir) "/origin.git"))

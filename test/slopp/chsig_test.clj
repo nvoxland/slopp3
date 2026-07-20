@@ -2,7 +2,7 @@
   "change_signature (P2): the defn and every call site rewritten as ONE
   atomic intent — call args rebuilt from a $1..$9 template, the callee kept
   as written (aliases survive), higher-order references surfaced as :manual.
-  Plan tests are pure (ingest stores); the api op is exercised isolated."
+  Plan tests are pure (ingest stores); the api op is exercised external."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.refactor :as refactor]
             [slopp.store :as store] [slopp.api :as api]))
@@ -59,7 +59,7 @@
         plan  (refactor/change-signature-plan store 'cs.rec 'f "$1")]
     (is (nil? (:error plan)) (pr-str plan))
     (is (= ['g] (mapv :name (:caller-steps plan))))))
-(deftest ^:isolated change-signature-end-to-end
+(deftest ^:external change-signature-end-to-end
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'cs.e2e

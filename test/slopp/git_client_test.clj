@@ -34,7 +34,7 @@
       (.setDirectory (io/file dir)) (.call) (.close))
   dir)
 
-(deftest ^:isolated push-then-fetch-round-trips-the-projection
+(deftest ^:external push-then-fetch-round-trips-the-projection
   (let [dir  (temp-dir)
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         sess (api/open! {:slopp.api/dir dir})]
@@ -80,7 +80,7 @@
         (rm-rf! dir)
         (rm-rf! (io/file bare))))))
 
-(deftest ^:isolated push-refuses-when-nothing-projected
+(deftest ^:external push-refuses-when-nothing-projected
   ;; no milestone → no refs/heads/main → an honest error, not an NPE
   (let [dir  (temp-dir)
         bare (bare-repo! (str (temp-dir) "/remote.git"))
@@ -92,7 +92,7 @@
         (git/close-ctx! ctx)
         (rm-rf! dir)
         (rm-rf! (io/file bare))))))
-(deftest ^:isolated dead-remotes-time-out
+(deftest ^:external dead-remotes-time-out
   ;; a half-dead HTTPS connection froze the server's serve thread for 40+
   ;; minutes mid-commit_point: JGit transports carried NO timeout, so one
   ;; wedged socket read blocked every tool. A dead remote must become a

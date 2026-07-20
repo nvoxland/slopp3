@@ -4,7 +4,7 @@
             [slopp.edit :as edit]
             [slopp.store :as store] [slopp.api.session :as session]))
 
-(deftest ^:isolated heal-path-replays-candidate-namespaces
+(deftest ^:external heal-path-replays-candidate-namespaces
   ;; the extract_ns live failure: hot-load-all!'s heal boots a FRESH image
   ;; from the COMMITTED store, so a candidate that CREATES a namespace lost
   ;; it — the parent's (:require new-ns) then hit the classpath and
@@ -35,13 +35,13 @@
         (is (:healed r) (pr-str r))
         (is (= [3] (api/query-eval sess "(hp.core/top 2)"))))
       (finally (api/close! sess)))))
-(deftest isolated-among-splits-traced-tests-by-tier
+(deftest external-among-splits-traced-tests-by-tier
   ;; done! already knows PRECISELY which tests a change reaches — that is what
-  ;; the trace map is — but only the external tier can execute ^:isolated ones,
+  ;; the trace map is — but only the external tier can execute ^:external ones,
   ;; so the narrowed set must be split before it can be routed.
   ;;
   ;; Routing by require-closure instead (what done! did until #127) selects a
-  ;; median 43 of 46 isolated test namespaces — measured over every source ns
+  ;; median 43 of 46 external test namespaces — measured over every source ns
   ;; 2026-07-17 — which blows the cap of 4 and defers 84.6% of the time. The
   ;; evidence was computed four lines above and thrown away.
   (let [st (-> (store/empty-store)
@@ -50,38 +50,38 @@
                              (str "(ns z.core-test (:require [z.core :as c]\n"
                                   "                          [clojure.test :refer [deftest is]]))\n\n"
                                   "(deftest fast-t (is (= 1 (c/f 1))))\n\n"
-                                  "(deftest ^:isolated slow-t (is (= 2 (c/f 2))))\n")))]
-    (testing "only the ^:isolated members come back — the rest already ran in-image"
+                                  "(deftest ^:external slow-t (is (= 2 (c/f 2))))\n")))]
+    (testing "only the ^:external members come back — the rest already ran in-image"
       (is (= '[z.core-test/slow-t]
-             (session/isolated-among st '[z.core-test/fast-t z.core-test/slow-t]))))
+             (session/external-among st '[z.core-test/fast-t z.core-test/slow-t]))))
     (testing "an all-in-image set routes nowhere: there is nothing for the
               external tier to do, which is NOT the same as a silent trace"
-      (is (empty? (session/isolated-among st '[z.core-test/fast-t]))))))
-(deftest impacted-isolated-expands-untraced-forms-per-form
-  ;; #127 gave the isolated tier trace-narrowing but kept the all-or-nothing
+      (is (empty? (session/external-among st '[z.core-test/fast-t]))))))
+(deftest impacted-external-expands-untraced-forms-per-form
+  ;; #127 gave the external tier trace-narrowing but kept the all-or-nothing
   ;; collapse: ONE untraced form made the answer nil and done! fell back to the
   ;; require-closure of EVERYTHING. #132 dissolves the silence per form: an
   ;; untraced form contributes its own namespace's reach, so the answer is
-  ;; never nil — [] genuinely means no isolated test can be affected.
+  ;; never nil — [] genuinely means no external test can be affected.
   (let [st   (-> (store/empty-store)
                  (store/ingest 'z.core "(ns z.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n")
                  (store/ingest 'z.core-test
                                (str "(ns z.core-test (:require [z.core :as c]\n"
                                     "                          [clojure.test :refer [deftest is]]))\n\n"
                                     "(deftest fast-t (is (= 1 (c/f 1))))\n\n"
-                                    "(deftest ^:isolated slow-t (is (= 2 (c/f 2))))\n")))
+                                    "(deftest ^:external slow-t (is (= 2 (c/f 2))))\n")))
         sess (atom {:store st
                     :test-map {'z.core-test/fast-t #{'z.core/f}
                                'z.core-test/slow-t #{'z.core/f}}})
         fid  (:id (store/form-named st 'z.core 'f))
         gid  (:id (store/form-named st 'z.core 'g))]
-    (testing "traced: only the ^:isolated half routes out — fast-t already ran in-image"
-      (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [fid]))))
+    (testing "traced: only the ^:external half routes out — fast-t already ran in-image"
+      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [fid]))))
     (testing "an UNTRACED form expands to its namespace's reach instead of
               collapsing the whole answer to nil"
-      (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [gid]))))
+      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [gid]))))
     (testing "mixed: the union, still never nil"
-      (is (= '[z.core-test/slow-t] (session/impacted-isolated sess st [fid gid]))))))
+      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [fid gid]))))))
 (deftest affected-tests-consults-every-name-and-refuses-opaque-bodies
   ;; Two consequences of D8 land here. (1) Evidence arrives keyed by the VAR
   ;; that ran — a test calling protocol method m records p.core/m — but the

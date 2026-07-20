@@ -296,7 +296,7 @@
   one CANNOT run in-image — per-write verification runs tests in the image,
   and these vars spawn images: the run would recurse (Q7). Resolution is
   alias-based (see require-aliases); fully-qualified calls hit directly."
-  '#{slopp.api/open! slopp.api/restart! slopp.api/isolated-test-run!
+  '#{slopp.api/open! slopp.api/restart! slopp.api/external-test-run!
      slopp.repl/start! slopp.git/start-server!
      slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
      slopp.sync/maybe-auto-import!
@@ -332,7 +332,24 @@
     (when (and (seq? s)
                (contains? '#{deftest clojure.test/deftest} (first s))
                (symbol? (second s))
-               (not (:isolated (meta (second s)))))
+               ;; BOTH spellings during the ^:external -> ^:external migration. A live
+               ;; gate enforcing a marker cannot be renamed atomically WITH the
+               ;; marker: it runs from the OLD compiled code while the group
+               ;; rewrites it, so a one-shot sweep is refused at the first test
+               ;; it re-tags. Accepting either is what makes the sweep possible.
+               ;; ONE spelling. Tolerating the old `^:isolated` too would be WORSE
+               ;; than rejecting it: the runner (`test-var-tiers`) reads
+               ;; `:external`, so a tolerated old marker would pass this gate
+               ;; and then run in-image and recurse — the two checks
+               ;; disagreeing, which is this codebase's recurring failure.
+               ;;
+               ;; Renaming the marker needed a two-phase migration precisely
+               ;; because this gate enforces it: a live gate runs from the OLD
+               ;; compiled code while a sweep rewrites it, so it must accept
+               ;; both for one step, then tighten. The sweep also rewrote the
+               ;; comment that said so — prose describing a rename is not
+               ;; exempt from the rename.
+               (not (:external (meta (second s)))))
       (when-let [hit (some (fn [sym]
                              (let [q (when-let [a (some-> (namespace sym) symbol)]
                                        (when-let [full (aliases a)]
@@ -340,9 +357,9 @@
                                (when (contains? spawning-vars (or q sym)) sym)))
                            (all-symbols node))]
         (str "this test calls " hit " — it spawns slopp images/sessions, and"
-             " running it in-image would recurse. Tag it ^:isolated:"
-             " (deftest ^:isolated " (second s) " …) — isolated tests run in"
-             " the external suite (test_run {:isolated true})")))))
+             " running it in-image would recurse. Tag it ^:external:"
+             " (deftest ^:external " (second s) " …) — external tests run in"
+             " the external suite (test_run {:external true})")))))
 (defn ambiguous-form-error
   "nil when exactly one element of `ns-sym` bears on `nm`; otherwise the
   refusal every destructive write shares — the sibling of

@@ -9,7 +9,7 @@
             [slopp.mcp]
             [slopp.store :as store]))
 
-(deftest ^:isolated form-history-is-reconstructible
+(deftest ^:external form-history-is-reconstructible
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'h.core "(ns h.core)\n(defn f [x] x)\n(defn g [x] (f x))\n")
@@ -44,7 +44,7 @@
 ;; ---------------------------------------------------------------------------
 ;; HM1: form-at-delta (time-travel)
 
-(deftest ^:isolated form-at-delta-travels-through-a-forms-versions
+(deftest ^:external form-at-delta-travels-through-a-forms-versions
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -70,7 +70,7 @@
                                                       :at (:target v2))))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated form-at-delta-edge-cases
+(deftest ^:external form-at-delta-edge-cases
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -85,7 +85,7 @@
           (is (:error (api/query-form-at sess 'hi.core 'f)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated form-at-delta-follows-renames
+(deftest ^:external form-at-delta-follows-renames
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -105,7 +105,7 @@
 ;; ---------------------------------------------------------------------------
 ;; HM2: was-green-at
 
-(deftest ^:isolated was-green-at-reads-the-verification-arc
+(deftest ^:external was-green-at-reads-the-verification-arc
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -127,7 +127,7 @@
           (is (:error (api/query-status-at sess :at "d99999")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated form-history-versions-carry-was-green-at
+(deftest ^:external form-history-versions-carry-was-green-at
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -141,7 +141,7 @@
           (is (= :green (:status (first h))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated form-at-delta-rides-the-mcp-surface
+(deftest ^:external form-at-delta-rides-the-mcp-surface
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -160,7 +160,7 @@
 ;; ---------------------------------------------------------------------------
 ;; HM3: delta-log search ("which prompts touched X")
 
-(deftest ^:isolated search-history-finds-prompts-intents-and-descriptions
+(deftest ^:external search-history-finds-prompts-intents-and-descriptions
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -195,7 +195,7 @@
         (is (<= (count (api/query-search-history sess "x" :limit 1)) 1)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated search-history-rides-the-mcp-surface
+(deftest ^:external search-history-rides-the-mcp-surface
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
@@ -212,7 +212,7 @@
 ;; ---------------------------------------------------------------------------
 ;; HM4: form-history diffs — one form's life as a diff story
 
-(deftest ^:isolated form-history-renders-as-a-diff-timeline
+(deftest ^:external form-history-renders-as-a-diff-timeline
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)

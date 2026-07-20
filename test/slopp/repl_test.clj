@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]))
 
-(deftest ^:isolated owned-repl-eval-and-restart
+(deftest ^:external owned-repl-eval-and-restart
   (let [h (repl/start!)]
     (try
       (testing "evaluates in the owned image"

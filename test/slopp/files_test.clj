@@ -66,7 +66,7 @@
     (testing "unknown formats refuse to render"
       (is (thrown? Exception (store/render-config {:format :yaml :values {"a" "b"}}))))))
 
-(deftest ^:isolated file-api-round-trip-and-refusals
+(deftest ^:external file-api-round-trip-and-refusals
   ;; The store layer is covered above; the API layer was not — and it is the
   ;; layer the file_put/file_get/file_remove wire tools actually call, so its
   ;; validation and session plumbing had no test at all.

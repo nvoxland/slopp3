@@ -16,7 +16,7 @@
        "(defn ^:unused-ok h [x] x)\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
-(deftest ^:isolated solo-episode-lifecycle
+(deftest ^:external solo-episode-lifecycle
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -45,7 +45,7 @@
           (is (some #(= "plus-ten" (get-in % [:episode :label])) rows))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated parallel-agents-have-independent-episodes
+(deftest ^:external parallel-agents-have-independent-episodes
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -67,7 +67,7 @@
                (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated episode-revert-scraps-only-my-unshared-work
+(deftest ^:external episode-revert-scraps-only-my-unshared-work
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -95,7 +95,7 @@
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated turn-trees-from-label-paths                    ; P4-m6.1
+(deftest ^:external turn-trees-from-label-paths                    ; P4-m6.1
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -124,7 +124,7 @@
         (is (every? #(number? (:at %)) (store/deltas (:store @sess)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated turn-markers-bracket-the-history               ; P4-m6.2
+(deftest ^:external turn-markers-bracket-the-history               ; P4-m6.2
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -161,7 +161,7 @@
             (is (not-any? #(= "alice" (get-in % [:episode :agent])) rows)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated hook-driven-turn-markers-flow-through-the-journal
+(deftest ^:external hook-driven-turn-markers-flow-through-the-journal
   ;; the Claude Code hooks path: a one-shot CLI appends the turn delta
   ;; OUT-OF-BAND; the agent's server absorbs it via journal sync (m5b)
   (let [dir (str (System/getProperty "java.io.tmpdir")
@@ -183,7 +183,7 @@
         (api/close! sess)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
-(deftest ^:isolated turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
+(deftest ^:external turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
   (let [sess (api/open!)]
     (try
       (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
@@ -222,7 +222,7 @@
                               :agent "alice"})))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated hook-json-mode-records-the-exact-user-words    ; the real hook shape
+(deftest ^:external hook-json-mode-records-the-exact-user-words    ; the real hook shape
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-hook-" (System/nanoTime))
         sess (api/open! {:slopp.api/dir dir})]
@@ -245,7 +245,7 @@
         (api/close! sess)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
-(deftest ^:isolated history-drill-down-and-text-rendering          ; granularity gaps
+(deftest ^:external history-drill-down-and-text-rendering          ; granularity gaps
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
@@ -280,7 +280,7 @@
           (is (re-find #"plus-ten" txt))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated human-history-timestamps-diffs-and-intent-search
+(deftest ^:external human-history-timestamps-diffs-and-intent-search
   ;; the human-side gaps: WHEN did it happen, WHAT changed (as a diff, not
   ;; two full sources), and finding a turn by what the user actually asked
   (let [sess (api/open!)]
@@ -327,7 +327,7 @@
           (is (map? c))
           (is (re-find #"\* x 2" (:was (first (:forms c)))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-always-verifies-the-episode
+(deftest ^:external done-always-verifies-the-episode
   ;; the done-point IS the test run — it must verify the episode's changes
   ;; even when normalization has nothing to rewrite
   (let [sess (api/open!)]
@@ -346,7 +346,7 @@
             (str "tests must run at the done-point even with zero rewrites: "
                  (pr-str r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-findings-resurface-in-the-next-session
+(deftest ^:external done-findings-resurface-in-the-next-session
   ;; a turn-end auto-done that leaves reds must greet the next session —
   ;; findings ride the boundary delta and surface in session-brief
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -371,7 +371,7 @@
           (is (pos? (get-in b [:last-done :findings :failures] 0))
               (pr-str (:last-done b))))
         (finally (api/close! sess2))))))
-(deftest ^:isolated done-reaches-tests-in-other-namespaces
+(deftest ^:external done-reaches-tests-in-other-namespaces
   ;; dogfooding catch: with no trace coverage, done's fallback ran "all
   ;; tests in the CHANGED nses" — which contain none when tests live in a
   ;; separate -test ns. The require-closure bounds the honest fallback.
@@ -391,7 +391,7 @@
             (str "the done-point must reach dr.core-test: " (pr-str r)))
         (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated episode-reds-compress-to-direction
+(deftest ^:external episode-reds-compress-to-direction
   ;; response diet for the REPL flow: full failure detail rides ONCE (when a
   ;; test newly goes red); re-running the same red mid-episode compresses to
   ;; :still-red names; recovery reports :went-green. Direction, not repetition.
@@ -417,7 +417,7 @@
                                    :prompt "fixed")]
           (is (= '[er.core/f-t] (get-in r [:test :went-green])) (pr-str (:test r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated missing-doc-waits-for-the-done-point
+(deftest ^:external missing-doc-waits-for-the-done-point
   ;; advisories are episode-level concerns: writes stay quiet, the boundary
   ;; names the undocumented public surface once
   (let [sess (api/open!)]
@@ -434,7 +434,7 @@
           (is (= '[md.core/bare] (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-separates-new-lint-from-carried
+(deftest ^:external done-separates-new-lint-from-carried
   ;; every done re-listed the same stale warnings from untouched forms —
   ;; alarm fatigue that buries real findings. NEW warnings (on forms this
   ;; episode touched) ride :lint in full; carried ones compress to a count
@@ -457,9 +457,9 @@
           (is (= 1 (:count (:lint-carried r))) (pr-str (:lint-carried r)))
           (is (some #{'lc.core/stale} (:forms (:lint-carried r))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-runs-impacted-isolated-tests
+(deftest ^:external done-runs-impacted-external-tests
   ;; the tier is an implementation detail: done's contract is "everything
-  ;; impacted, whatever tier" — ^:isolated tests reached by the episode's
+  ;; impacted, whatever tier" — ^:external tests reached by the episode's
   ;; changes run in the external JVM without the agent asking.
   (let [sess (api/open!)]
     (try
@@ -468,15 +468,15 @@
       (api/ingest! sess 'ti.core-test
                    (str "(ns ti.core-test (:require [ti.core :as core]\n"
                         "                           [clojure.test :refer [deftest is]]))\n\n"
-                        "(deftest ^:isolated f-t (is (= 6 (core/f 3))))\n")
+                        "(deftest ^:external f-t (is (= 6 (core/f 3))))\n")
                    :agent "t")
-      (let [r (api/done! sess :label "isolated impact" :agent "t")]
-        (is (= 1 (:ran (:isolated r))) (pr-str (:isolated r)))
-        (is (= :green (:status (:isolated r))))
+      (let [r (api/done! sess :label "external impact" :agent "t")]
+        (is (= 1 (:ran (:external r))) (pr-str (:external r)))
+        (is (= :green (:status (:external r))))
         (is (= :green (get-in r [:findings :test-status]))
             (pr-str (:findings r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-caps-the-isolated-slice-and-reports
+(deftest ^:external done-caps-the-external-slice-and-reports
   ;; The cap is on TESTS (40) and it still exists for the honest reason: a
   ;; :only run is one serial JVM, and a change whose reach is most of the
   ;; suite belongs to the milestone gate. What CHANGED (#132): a fresh, small
@@ -494,28 +494,28 @@
         (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
                      (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
                           "                            [clojure.test :refer [deftest is]]))\n\n"
-                          "(deftest ^:isolated t" i " (is (= 1 (core/f 1))))\n")
+                          "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
       (testing "a small fresh slice RUNS — brand-new tests are their own reach"
         (let [r (api/done! sess :label "small hub" :agent "t")]
-          (is (nil? (get-in r [:findings :isolated-pending])) (pr-str (:findings r)))
-          (is (= 2 (:ran (:isolated r))) (pr-str (:isolated r)))))
-      ;; now push the reach over the cap: one ns, 41 isolated tests
+          (is (nil? (get-in r [:findings :external-pending])) (pr-str (:findings r)))
+          (is (= 2 (:ran (:external r))) (pr-str (:external r)))))
+      ;; now push the reach over the cap: one ns, 41 external tests
       (api/ingest! sess 'hub.core.wide-test
                    (apply str
                           "(ns hub.core.wide-test (:require [hub.core :as core]\n"
                           "                          [clojure.test :refer [deftest is]]))\n\n"
                           (for [i (range 41)]
-                            (str "(deftest ^:isolated w" i " (is (= 1 (core/f 1))))\n\n")))
+                            (str "(deftest ^:external w" i " (is (= 1 (core/f 1))))\n\n")))
                    :agent "t")
       (testing "over the cap: defers to the milestone gate, REPORTED as tests"
         (let [r (api/done! sess :label "wide hub" :agent "t")]
-          (is (nil? (:isolated r)) "above the cap, nothing runs")
-          (is (<= 41 (get-in r [:findings :isolated-pending :count]))
+          (is (nil? (:external r)) "above the cap, nothing runs")
+          (is (<= 41 (get-in r [:findings :external-pending :count]))
               (pr-str (:findings r)))
-          (is (seq (get-in r [:findings :isolated-pending :tests])))))
+          (is (seq (get-in r [:findings :external-pending :tests])))))
       (finally (api/close! sess)))))
-(deftest ^:isolated unused-publics-gate-the-done
+(deftest ^:external unused-publics-gate-the-done
   ;; unused public surface FAILS the done gate (error-grade lint + findings)
   ;; and refuses the milestone. The deliberate escape is ^:unused-ok on the
   ;; name — and a STALE marker (the var IS called now) fails symmetrically,
@@ -556,12 +556,12 @@
                           (re-find #"remove" (str (:message %))))
                     (:lint r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated done-runs-the-traced-isolated-slice
-  ;; The complement of done-caps-the-isolated-slice-and-reports. THAT one's tests
+(deftest ^:external done-runs-the-traced-external-slice
+  ;; The complement of done-caps-the-external-slice-and-reports. THAT one's tests
   ;; have never run, so the trace is silent and it proves the closure fallback
   ;; still defers honestly. This one HAS evidence, and proves done routes it —
   ;; rather than re-deriving the require-closure, which selects a median 43 of 46
-  ;; isolated test namespaces (measured 2026-07-17), blows the cap, and gives up.
+  ;; external test namespaces (measured 2026-07-17), blows the cap, and gives up.
   ;;
   ;; Five test nses reach hub.core/f by require-closure. Exactly one has ever
   ;; touched it. Before #127 done deferred all five and ran nothing.
@@ -572,21 +572,21 @@
         (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
                      (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
                           "                            [clojure.test :refer [deftest is]]))\n\n"
-                          "(deftest ^:isolated t" i " (is (= 1 (core/f 1))))\n")
+                          "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
       (api/done! sess :label "setup" :agent "t")
       (swap! sess assoc :test-map {'hub.core.u0-test/t0 #{'hub.core/f}})
       (api/edit-replace! sess 'hub.core 'f "(defn f \"F.\" [x] (identity x))"
                          :prompt "traced edit" :agent "t")
       (let [r (api/done! sess :label "traced edit" :agent "t")]
-        (is (nil? (get-in r [:findings :isolated-pending]))
+        (is (nil? (get-in r [:findings :external-pending]))
             (str "the traced slice fits the cap — nothing should defer: "
                  (pr-str (:findings r))))
-        (is (= 1 (:ran (:isolated r)))
+        (is (= 1 (:ran (:external r)))
             (str "exactly the one test the evidence names, not all five: "
-                 (pr-str (:isolated r)))))
+                 (pr-str (:external r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated undo-walks-back-by-delta-not-by-name
+(deftest ^:external undo-walks-back-by-delta-not-by-name
   ;; The hole undo! fills. edit_revert is NAME-addressed, so it cannot undo a
   ;; DELETE — the name is gone, so query-form-history returns nil and you get
   ;; "no form named". episode_revert reaches it but is all-or-nothing: it costs
@@ -627,7 +627,7 @@
           (is (not (re-find #"defn c" src)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated lint-severity-splits-write-from-done
+(deftest ^:external lint-severity-splits-write-from-done
   ;; Three separate questions, three answers:
   ;;   write     — is this FORM incoherent right now? (write-coherence-lint)
   ;;   done      — is the work I just did clean?      (kondo :level, episode)
@@ -670,7 +670,7 @@
           (is (re-find #"full_check" (str (:scope f))) (pr-str f))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated done-runs-the-whole-suite-regardless-of-what-was-touched
+(deftest ^:external done-runs-the-whole-suite-regardless-of-what-was-touched
   ;; Replaces one-untraced-form-no-longer-collapses-narrowing, which pinned the
   ;; #132 fix to impacted-test NARROWING. That machinery is gone: "done means
   ;; done" is a claim about the codebase, not about what the episode touched,
@@ -701,7 +701,7 @@
       (let [r (api/done! sess :label "one edit" :agent "t")]
         (testing "every test in the store ran, not just the ones f reaches"
           (is (= 3 (:test (:test r))) (pr-str (:test r))))
-        (testing "green, with no isolated-pending noise"
+        (testing "green, with no external-pending noise"
           (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))
-          (is (nil? (get-in r [:findings :isolated-pending])))))
+          (is (nil? (get-in r [:findings :external-pending])))))
       (finally (api/close! sess)))))

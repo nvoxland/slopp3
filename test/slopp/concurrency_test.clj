@@ -11,7 +11,7 @@
   (str "(ns cc.core)\n"
        "(defn a [x] x)\n(defn b [x] x)\n(defn c [x] x)\n(defn d [x] x)\n"))
 
-(deftest ^:isolated parallel-different-form-edits-all-land
+(deftest ^:external parallel-different-form-edits-all-land
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cc.core seed)
@@ -37,7 +37,7 @@
           (is (= [(+ 5 97)] (api/query-eval sess "(cc.core/a 5)")))))
       (finally (api/close! sess)))))
 
-^:unsafe (deftest ^:isolated same-form-contention-surfaces-a-conflict
+^:unsafe (deftest ^:external same-form-contention-surfaces-a-conflict
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cc.core seed)
@@ -75,7 +75,7 @@
             (is (re-find #":mine" src)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated revert-restores-a-prior-version
+(deftest ^:external revert-restores-a-prior-version
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'rv.core "(ns rv.core)\n(defn f [x] x)\n")
@@ -98,7 +98,7 @@
         (is (:error (api/revert-form! sess 'rv.core 'f :to "d99999"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated durable-concurrent-writers-share-the-journal   ; m5a storage inversion
+(deftest ^:external durable-concurrent-writers-share-the-journal   ; m5a storage inversion
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5a-" (System/nanoTime))]
     (try

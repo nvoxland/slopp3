@@ -119,7 +119,7 @@
   This path REBUILDS :test from a fixed key list, so anything the layers
   below compute must be added here too or it silently never reaches the
   agent. That has now happened three times — :dry-run's payload, :drift,
-  and :isolated-pending — each looking like a missing feature rather than
+  and :external-pending — each looking like a missing feature rather than
   a dropped one. Adding a key below? Add it here in the same edit."
   [r verbose?]
   (let [strip (fn [d] (if (map? d) (dissoc d :source :sources :node) d))
@@ -155,11 +155,11 @@
                                               :status (cond
                                                         (red? t)                    :red
                                                         (zero? (:test t 0))         :unverified
-                                                        ;; impacted ^:isolated tests were DEFERRED — whatever
-                                                        ;; passed here, it wasn't those. Writing an ^:isolated
+                                                        ;; impacted ^:external tests were DEFERRED — whatever
+                                                        ;; passed here, it wasn't those. Writing an ^:external
                                                         ;; deftest reported :green off its neighbours in the same
                                                         ;; namespace: a red-first spec reporting success.
-                                                        (seq (:isolated-pending t)) :partial
+                                                        (seq (:external-pending t)) :partial
                                                         :else                       (:status t :green))
                                               :scope (:scope t)}
                                        (:staleness-detected t)  (assoc :staleness-healed true)
@@ -170,9 +170,9 @@
                                        (assoc :coverage :none
                                               :reason (cond
                                                         ;; nothing ran because everything impacted is
-                                                        ;; ^:isolated — by DESIGN, and the done point
+                                                        ;; ^:external — by DESIGN, and the done point
                                                         ;; will run them. Not a gap, not a bug.
-                                                        (seq (:isolated-pending t)) :all-impacted-isolated
+                                                        (seq (:external-pending t)) :all-impacted-external
                                                         (= :all (:affected r))      :no-covering-tests
                                                         :else                       :scope-ran-nothing))
                                        (red? t)                 (assoc :fail (+ (:fail t 0) (:error t 0)))
@@ -181,8 +181,8 @@
                                        ;; WHICH tests are deferred, not merely that some are — a
                                        ;; bare :partial an agent cannot act on becomes noise it
                                        ;; learns to skip
-                                       (seq (:isolated-pending t))
-                                       (assoc :isolated-pending (:isolated-pending t))))
+                                       (seq (:external-pending t))
+                                       (assoc :external-pending (:external-pending t))))
           (:affected r) (assoc :affected (let [a (:affected r)]
                                            (if (= :all a) :all (count a))))
           (:hint r) (assoc :hint (:hint r))
@@ -737,8 +737,8 @@
                                       r)))
       "test_run" (text!
                        (cond
-                         (:isolated a)
-                         (api/isolated-test-run! session
+                         (:external a)
+                         (api/external-test-run! session
                                                  :ns (some-> (:ns a) symbol)
                                                  :affected (:affected a)
                                                  :parallel (some-> (:parallel a) str parse-long)
@@ -757,14 +757,14 @@
                                 :note (str "done runs the affected tests for everything"
                                            " you touched — a whole-suite in-image run is"
                                            " rarely needed mid-episode; the merge gate is"
-                                           " test_run {isolated true}"))
+                                           " test_run {external true}"))
 
                          :else
                          {:guidance (str "name what to spot-check: test_run {ns \"x.y-test\"}"
                                          " or {only [\"x.y-test/some-t\"]}. You do NOT need to"
                                          " run tests before done — done runs the affected"
                                          " tests itself. Whole suite in-image: {all true};"
-                                         " external merge gate: {isolated true}.")}))
+                                         " external merge gate: {external true}.")}))
       
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)

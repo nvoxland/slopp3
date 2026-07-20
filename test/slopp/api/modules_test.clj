@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs]))
 
-(deftest ^:isolated the-module-surface-is-browsable
+(deftest ^:external the-module-surface-is-browsable
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ma.core
@@ -50,7 +50,7 @@
           (is (nil? (:cycles r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated module-graph-views-use-production-edges
+(deftest ^:external module-graph-views-use-production-edges
   ;; -test namespaces fold into the subject module, so their fixture deps
   ;; pollute the graph and manufacture cycles that don't exist in
   ;; production. The DECLARED manifest keeps them (enforcement); the
@@ -139,7 +139,7 @@
             m  (first (filter #(nil? (:name %)) (store/forms st 'g.core)))]
         (is (= [(:id m)] (mapv :from-form rs)) (pr-str rs))))))
 
-(deftest ^:isolated module-graph-reports-purity-standing
+(deftest ^:external module-graph-reports-purity-standing
   ;; The gates slopp enforces on a WRITE should also be readable as a REPORT
   ;; over existing code — otherwise a modernization pass has to reconstruct
   ;; them by hand. query_depends {modules true} is where someone asking "what

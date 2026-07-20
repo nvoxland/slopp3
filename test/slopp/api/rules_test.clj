@@ -22,7 +22,7 @@
           (is (false? (rules/status-affecting-fired? drift-off {:schema-drift [{:form 'a/b}]})))
           (is (true?  (rules/status-affecting-fired? typos-err {:key-typos [{:used :a/b}]}))))))))
 
-(deftest ^:isolated per-store-severity-config-retunes-done
+(deftest ^:external per-store-severity-config-retunes-done
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sv.core
@@ -62,7 +62,7 @@
       (is (empty? (set/difference done-keys cataloged))
           (str "uncataloged done advisories: " (set/difference done-keys cataloged))))))
 
-(deftest ^:isolated query-rules-reports-write-gate-severity-honestly
+(deftest ^:external query-rules-reports-write-gate-severity-honestly
   (let [sess (api/open!)]
     (try
       (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
@@ -96,7 +96,7 @@
     (testing "bare-throw flags a boundary fn throwing a constructed non-ex-info exception"
       (is (= '[app.core/handle] (mapv :form (rules/bare-throw-check nil s all)))))))
 
-(deftest ^:isolated done-surfaces-ambient-state-and-bare-throw
+(deftest ^:external done-surfaces-ambient-state-and-bare-throw
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
@@ -113,7 +113,7 @@
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated ambient-ok-marks-a-deliberate-global-and-polices-itself
+(deftest ^:external ambient-ok-marks-a-deliberate-global-and-polices-itself
   ;; ambient-state can only be BLOCKING if a legitimately-deliberate global has
   ;; a way to say so — a memo whose answer is immutable is the standing
   ;; counter-example. ^:ambient-ok is that escape, and it polices itself the
@@ -149,7 +149,7 @@
           (is (not (contains? hits 'am.core/plain)) (pr-str hits))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated every-advisory-fires-on-its-own-fixture
+(deftest ^:external every-advisory-fires-on-its-own-fixture
   ;; A rule that has stopped firing is INDISTINGUISHABLE from a clean codebase.
   ;; ambient-state read a def's value at index 2 — where a docstring sits — and
   ;; so never once fired on a documented global: it reported a single finding
@@ -179,7 +179,7 @@
           (str key " has neither a :fires-on fixture nor a :selftest-note"
                " explaining why it cannot have one")))))
 
-(deftest ^:isolated done-asks-about-a-newly-widened-shell
+(deftest ^:external done-asks-about-a-newly-widened-shell
   ;; Declaring a namespace :effects makes the CORE smaller. That is sometimes
   ;; right and sometimes the path of least resistance, and the moment to ask is
   ;; while the reason is still in context. It fires only for the episode that

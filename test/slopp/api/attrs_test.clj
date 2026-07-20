@@ -42,7 +42,7 @@
             fid   (:id (store/form-named novel 'app.core 'e))]
         (is (empty? (attrs/near-duplicate-keys novel #{fid})))))))
 
-(deftest ^:isolated done-surfaces-key-typos-as-advisory
+(deftest ^:external done-surfaces-key-typos-as-advisory
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'kt.core
@@ -81,7 +81,7 @@
     (testing "an exact namespace does not match an unrelated one"
       (is (= #{:order/id} (set (map :kw (attrs/vocabulary s :ns-prefix "order"))))))))
 
-(deftest ^:isolated keyword-blast-radius-includes-destructuring
+(deftest ^:external keyword-blast-radius-includes-destructuring
   ;; query_depends on a keyword was a TEXT scan, so it missed every consumer
   ;; that reads the key by destructuring — the key appears nowhere as a token,
   ;; it is computed from the directive's namespace plus the symbol's name.

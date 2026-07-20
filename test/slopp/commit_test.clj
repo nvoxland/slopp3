@@ -15,7 +15,7 @@
        "(defn ^:unused-ok g [x] (dec x))\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
-(deftest ^:isolated commit-point-marks-a-verified-milestone
+(deftest ^:external commit-point-marks-a-verified-milestone
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
@@ -58,7 +58,7 @@
                      (api/query-history sess :collapse true :format "text"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated commit-point-green-gate
+(deftest ^:external commit-point-green-gate
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
@@ -79,7 +79,7 @@
         (is (:error (api/commit-point! sess "  " :agent "bob"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated retroactive-commit-point
+(deftest ^:external retroactive-commit-point
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
@@ -99,13 +99,13 @@
                                          :target "d99999")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated commit-replays-as-a-marker
+(deftest ^:external commit-replays-as-a-marker
   ;; foreign-journal sync (m5b) must treat the new op as a no-content marker
   (let [st (store/ingest (store/empty-store) 'cm.core seed)]
     (is (some? (store/replay-delta st {:id "d90" :op :commit :ns '*session*
                                        :description "m" :target "d0" :at 1})))))
 
-(deftest ^:isolated commit-point-rides-the-mcp-surface
+(deftest ^:external commit-point-rides-the-mcp-surface
   (let [sess (api/open!)]
     (try
       (swap! sess assoc :require-turns? true)
@@ -121,7 +121,7 @@
         (testing "query_commits answers over MCP"
           (is (re-find #"m1" (call "query_commits" {})))))
       (finally (api/close! sess)))))
-(deftest ^:isolated repeat-milestone-on-unchanged-store-returns-it
+(deftest ^:external repeat-milestone-on-unchanged-store-returns-it
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn ^:unused-ok f [] 1)\n")
@@ -133,13 +133,13 @@
           (is (= "v1" (:description m2)))
           (is (re-find #"nothing changed" (str (:note m2))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated the-milestone-forces-no-whole-store-check
-  ;; CHANGED CONTRACT. The milestone used to run the full ^:isolated suite and
+(deftest ^:external the-milestone-forces-no-whole-store-check
+  ;; CHANGED CONTRACT. The milestone used to run the full ^:external suite and
   ;; refuse on it. It no longer does: it runs `done!` and gates on that
   ;; verdict, nothing more. `full_check` is the whole-store answer and is the
   ;; agent's call — including before a commit.
   ;;
-  ;; The cost is real and pinned here deliberately: a red ^:isolated test the
+  ;; The cost is real and pinned here deliberately: a red ^:external test the
   ;; episode did not touch will NOT stop a milestone. That is the trade for
   ;; not forcing a slow whole-store run on every publish.
   (let [sess (api/open!)]
@@ -148,18 +148,18 @@
       (api/ingest! sess 'mg.core-test
                    (str "(ns mg.core-test (:require [mg.core :as core]\n"
                         "                           [clojure.test :refer [deftest is]]))\n\n"
-                        "(deftest ^:isolated f-t (is (= :nope (core/f 1))))\n"))
-      (testing "the milestone records without running the isolated tier itself"
+                        "(deftest ^:external f-t (is (= :nope (core/f 1))))\n"))
+      (testing "the milestone records without running the external tier itself"
         (let [r (api/commit-point! sess "no forced whole-store check")]
           (is (:commit r) (pr-str (dissoc r :test)))
-          (is (nil? (:isolated r)) (pr-str (:isolated r)))))
-      (testing "full_check is where the red isolated spec surfaces"
+          (is (nil? (:external r)) (pr-str (:external r)))))
+      (testing "full_check is where the red external spec surfaces"
         (let [r (api/full-check! sess)]
           (is (= :red (:status r)) (pr-str (dissoc r :lint :warnings)))
-          (is (= :red (:status (:isolated r))) (pr-str (:isolated r)))))
+          (is (= :red (:status (:external r))) (pr-str (:external r)))))
       (testing "and once the spec is honest, full_check is green"
         (api/edit-replace! sess 'mg.core-test 'f-t
-                           "(deftest ^:isolated f-t (is (= 1 (core/f 1))))"
+                           "(deftest ^:external f-t (is (= 1 (core/f 1))))"
                            :prompt "fix the spec")
         (let [r (api/full-check! sess)]
           (is (= :green (:status r)) (pr-str (dissoc r :lint :warnings)))))

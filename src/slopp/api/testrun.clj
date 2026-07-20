@@ -19,7 +19,7 @@
 (defn ^{:export "slopp.verification"} parse-test-failures
   "The FAIL/ERROR blocks from a clojure.test runner's output:
   [{:test name :detail block}] (up to `limit` blocks, each capped ~500 chars)
-  — so an isolated run NAMES its failures instead of making the caller
+  — so an external run NAMES its failures instead of making the caller
   rebuild the project and rerun the suite just to see them (Q2)."
   [output & {:keys [limit] :or {limit 5}}]
   (->> (str/split (str output) #"\n(?=(?:FAIL|ERROR) in )")
@@ -82,7 +82,7 @@
                    (conj out {:phrase g :tests (count ts)}))))))))
 
 (defn ^{:export "slopp.verification"} auto-parallel
-  "Default shard count for an isolated run over `n` test namespaces on a
+  "Default shard count for an external run over `n` test namespaces on a
   `cores`-core box. Each shard reloads the WHOLE materialized store, so
   sharding only pays at real scale: 1 below ~8 test nses (boot overhead
   beats the gain), then n/8 shards, capped at 4 and at half the cores."

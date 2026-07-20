@@ -16,7 +16,7 @@
   (some #(re-find (re-pattern (str "\\b" nm "\\b")) (str %))
         (edit/ns-warnings (:store @sess) ns-sym)))
 
-(deftest ^:isolated external-dep-call-is-effectful-by-default
+(deftest ^:external external-dep-call-is-effectful-by-default
   (let [sess (api/open! {:slopp.api/dir (temp-dir)})]     ; durable → surface is cached
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
@@ -36,7 +36,7 @@
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json/write-str)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated pure-narrows-at-namespace-and-lib-granularity   ; M3 coarser :pure
+(deftest ^:external pure-narrows-at-namespace-and-lib-granularity   ; M3 coarser :pure
   ;; slopp is built on wholesale-pure libs (rewrite-clj, clj-kondo); marking
   ;; every var pure one call at a time floods self-host code with warnings, so
   ;; :pure also lands at namespace and whole-dep granularity.
@@ -63,7 +63,7 @@
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated reads-suppresses-the-effect-name-warning   ; per-form !-effect override
+(deftest ^:external reads-suppresses-the-effect-name-warning   ; per-form !-effect override
   ;; A fn that READS through an effectful-by-default external dep is flagged
   ;; effectful (should be `!`). `^:reads` asserts it is a READ, not a mutation,
   ;; so it takes no bang — the Clojure norm (slurp/deref/a SELECT read no bang).
@@ -86,7 +86,7 @@
           (is (= 'peek-json (:name q)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated store-and-stdlib-calls-are-not-external
+(deftest ^:external store-and-stdlib-calls-are-not-external
   (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
@@ -99,7 +99,7 @@
         (is (not (warns-about? sess 'ex.pure 'shout))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated dep-namespaces-persist-and-reopen
+(deftest ^:external dep-namespaces-persist-and-reopen
   (let [dir (temp-dir)]
     (let [sess (api/open! {:slopp.api/dir dir})]
       (try
@@ -119,7 +119,7 @@
                          'clojure.data.json/write-str))
           (finally (api/close! s2)))))))
 
-(deftest ^:isolated declaring-a-tier-verifies-the-code-already-there
+(deftest ^:external declaring-a-tier-verifies-the-code-already-there
   ;; The gap recorded in ideas/functional-core-gate.md: `:pure` gates only NEW
   ;; writes, so declaring it over an existing module produced a claim nothing
   ;; had verified — a marker that lies. A declaration is an assertion about the
@@ -149,7 +149,7 @@
           (is (= :pure (get (:module-tiers (:store @sess)) "tp.core")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated purity-is-declarable-at-namespace-grain
+(deftest ^:external purity-is-declarable-at-namespace-grain
   ;; Measured on slopp itself: slopp.api holds SEVEN fully-pure namespaces
   ;; (shape, breakage, schema, ...) inside an :effects module. At module grain
   ;; the pure core exists but cannot be NAMED — so nothing enforces it and no
@@ -180,7 +180,7 @@
           (is (:error r) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated tier-layering-is-reported-by-full-check
+(deftest ^:external tier-layering-is-reported-by-full-check
   ;; effectful-vars sees a CROSS-NAMESPACE effect only when the callee is
   ;; `!`-named — so a core namespace calling a non-bang effectful fn in a shell
   ;; namespace slips through it entirely. Layering reads the REQUIRE graph, so

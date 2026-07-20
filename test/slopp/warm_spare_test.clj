@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]))
 
-(deftest ^:isolated warm-spare-makes-restart-cheap
+(deftest ^:external warm-spare-makes-restart-cheap
   (let [sess (api/open! {:slopp.api/warm-spare? true})]
     (try
       (api/ingest! sess 'wdemo "(ns wdemo)\n(def x 1)\n")

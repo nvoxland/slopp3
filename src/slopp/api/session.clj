@@ -496,8 +496,8 @@
   [store nsx]
   (some #(str/starts-with? (str/triml (n/string (:node %))) "(deftest")
         (store/forms store nsx)))
-(defn isolated-test-nses
-  "Of `nses`, those defining at least one ^:isolated deftest — tests only
+(defn external-test-nses
+  "Of `nses`, those defining at least one ^:external deftest — tests only
   the EXTERNAL tier can execute (they spawn sessions/images; in-image runs
   skip them). The done-point uses this to route impacted tests to the
   right tier without the agent choosing tiers."
@@ -508,7 +508,7 @@
                                         (catch Exception _ nil))]
                              (and (seq? s)
                                   (= 'deftest (first s))
-                                  (boolean (:isolated (meta (second s)))))))
+                                  (boolean (:external (meta (second s)))))))
                          (store/forms store nsx))]
          nsx)))
 (defn test-nses-reaching
@@ -534,47 +534,47 @@
         tmap))
 (defn test-var-tiers
   "Plain deftest names of `ns-sym` split by execution tier:
-   {:image [...] :isolated [...]}. `^:isolated` tests spawn images / recurse,
+   {:image [...] :external [...]}. `^:external` tests spawn images / recurse,
    so the IN-IMAGE runner must skip them (they only behave in the external
-   tier) — this is what lets `traced-run!` defer them as :isolated-pending
+   tier) — this is what lets `traced-run!` defer them as :external-pending
    instead of running (and false-greening) them in-image."
   [store ns-sym]
   (reduce (fn [m e]
             (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
               (if (and (seq? s) (= 'deftest (first s)))
-                (update m (if (:isolated (meta (second s))) :isolated :image)
+                (update m (if (:external (meta (second s))) :external :image)
                         (fnil conj []) (second s))
                 m)))
-          {:image [] :isolated []}
+          {:image [] :external []}
           (store/forms store ns-sym)))
 (defn traced-run!
   "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
   observed test→form map into the session (persisted — Q3); return the summary.
   `skip-integration?` drops `^:integration` tests (M5, the fast-path default).
-  The in-image tier NEVER runs `^:isolated` tests (they spawn images / recurse
+  The in-image tier NEVER runs `^:external` tests (they spawn images / recurse
   and only behave in the external tier): any in scope are filtered OUT of the
-  run and reported as `:isolated-pending` on the summary — never executed
+  run and reported as `:external-pending` on the summary — never executed
   in-image (which would false-green/false-red them). The done-point / merge
   gate runs them for real in the external tier."
   [session test-ns only & [skip-integration?]]
   (let [{:keys [image store]} @session
         nses     (if (coll? test-ns) test-ns [test-ns])
-        isolated (into #{} (mapcat #(:isolated (test-var-tiers store %))) nses)]
-    (if (empty? isolated)
-      ;; no ^:isolated tests in scope — original path, untouched
+        external (into #{} (mapcat #(:external (test-var-tiers store %))) nses)]
+    (if (empty? external)
+      ;; no ^:external tests in scope — original path, untouched
       (let [{:keys [summary trace]} (image/traced-test-run
                                      image store test-ns :only only
                                      :skip-integration? skip-integration?)]
         (swap! session update :test-map merge trace)
         (persist-trace! session)
         summary)
-      ;; some are isolated — run only the in-image tier, defer the rest
-      (let [pending (if only (filterv isolated only) (vec isolated))
+      ;; some are external — run only the in-image tier, defer the rest
+      (let [pending (if only (filterv external only) (vec external))
             only'   (if only
-                      (vec (remove isolated only))
+                      (vec (remove external only))
                       (vec (mapcat #(:image (test-var-tiers store %)) nses)))
             summary (if (empty? only')
-                      ;; every impacted test is isolated — nothing to run here
+                      ;; every impacted test is external — nothing to run here
                       {:test 0 :pass 0 :fail 0 :error 0 :type :summary}
                       (let [{:keys [summary trace]} (image/traced-test-run
                                                      image store test-ns :only only'
@@ -584,7 +584,7 @@
                         summary))]
         (cond-> summary
           (seq pending)
-          (assoc :isolated-pending
+          (assoc :external-pending
                  (cond-> {:count (count pending)
                           :tests (vec (take 5 (sort pending)))}
                    (> (count pending) 5)
@@ -641,10 +641,10 @@
             (:test-map @session)
             edited)
            affected default-ns boundary?)
-    ;; the done-point runs the isolated tier for REAL right after this, and
+    ;; the done-point runs the external tier for REAL right after this, and
     ;; reports its own cap in :findings — an in-image deferral note there is
     ;; noise about an implementation detail
-    boundary? (dissoc :isolated-pending)))
+    boundary? (dissoc :external-pending)))
 (defn absorb-trace!
   "Merge an EXTERNAL-tier trace (#121) into the session's test-map and persist
   it (Q3), exactly as `traced-run!` does for the in-image tier — one test-map,
@@ -659,24 +659,24 @@
   (when (seq trace)
     (swap! session update :test-map merge trace)
     (persist-trace! session)))
-(defn isolated-among
-  "Of qualified test syms `tests`, those tagged ^:isolated — the ones only the
+(defn external-among
+  "Of qualified test syms `tests`, those tagged ^:external — the ones only the
   EXTERNAL tier can execute.
 
   The routing half of affected-test selection (#127). `affected-tests` names the
   tests a change reaches; this says which of them the in-image runner had to
   defer, so `done!` can hand exactly those to the external tier instead of
   re-deriving a set from the require-closure. That closure selects a median 43
-  of 46 isolated test namespaces (measured over every source ns 2026-07-17) —
+  of 46 external test namespaces (measured over every source ns 2026-07-17) —
   it is not narrowing, it is 'everything' with rounding.
 
   Empty is NOT the same as a silent trace: it means the evidence names tests and
-  none of them are isolated, so the external tier has nothing to do. A silent
+  none of them are external, so the external tier has nothing to do. A silent
   trace is `affected-tests` returning nil, and that must still fall back to the
   closure."
   [store tests]
   (vec (sort (mapcat (fn [[nsx syms]]
-                       (let [iso (set (:isolated (test-var-tiers store nsx)))]
+                       (let [iso (set (:external (test-var-tiers store nsx)))]
                          (filter #(iso (symbol (name %))) syms)))
                      (group-by (comp symbol namespace) tests)))))
 (defn impacted-tests
@@ -700,7 +700,7 @@
                (fn [ns-sym]
                  (vec (for [tns (test-nses-reaching store [ns-sym])
                             :let [tiers (test-var-tiers store tns)]
-                            nm (concat (:image tiers) (:isolated tiers))]
+                            nm (concat (:image tiers) (:external tiers))]
                         (symbol (str tns) (str nm))))))]
     (vec (sort (distinct
                 (mapcat (fn [fid]
@@ -711,15 +711,15 @@
                                   (reach ns-sym)))
                             []))
                         changed))))))
-(defn impacted-isolated
-  "The ^:isolated test vars the changed form-ids can affect, for the
+(defn impacted-external
+  "The ^:external test vars the changed form-ids can affect, for the
   done-point to route to the external tier — `impacted-tests` filtered to the
   tier only the external runner can execute.
 
   Never nil (#132): an untraced form expands to its own namespace's reach
-  instead of collapsing the whole answer, so [] genuinely means no isolated
+  instead of collapsing the whole answer, so [] genuinely means no external
   test can be affected. The #127 version returned nil on ANY untraced form and
   done! fell back to the require-closure of everything — which selects a
-  median 43 of 46 isolated test namespaces and deferred 84.6% of changes."
+  median 43 of 46 external test namespaces and deferred 84.6% of changes."
   [session store changed]
-  (isolated-among store (impacted-tests session store changed)))
+  (external-among store (impacted-tests session store changed)))

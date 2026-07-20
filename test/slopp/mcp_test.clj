@@ -5,7 +5,7 @@
             [slopp.api :as api]
             [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools]))
 
-(deftest ^:isolated protocol-handshake
+(deftest ^:external protocol-handshake
   (let [sess (atom {})]
     (testing "initialize returns serverInfo named slopp"
       (let [r (mcp/handle! sess {:jsonrpc "2.0" :id 1 :method "initialize" :params {}})]
@@ -27,7 +27,7 @@
                             :params {:name tool :arguments args}})
           [:result :content 0 :text]))
 
-(deftest ^:isolated tools-call-end-to-end
+(deftest ^:external tools-call-end-to-end
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
@@ -48,7 +48,7 @@
           (is (re-find #"\b6\b" (call! sess "query_eval" {:code "(demo/add 2 3)"})))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated help-and-hints                                ; item 3: weak-model guidance
+(deftest ^:external help-and-hints                                ; item 3: weak-model guidance
   (let [sess (api/open!)]
     (try
       (testing "the help tool exists (agents invented the name twice)"
@@ -72,14 +72,14 @@
         (call! sess "edit_replace_form" {:ns "hint" :name "f" :source "(defn f [x] x)"})
         (is (not (re-find #"pre-flight" (call! sess "done" {:label "quiet"})))))
       (testing "an ISOLATED run before done stays quiet — it is the milestone gate"
-        (call! sess "test_run" {:ns "hint" :isolated true})
+        (call! sess "test_run" {:ns "hint" :external true})
         (is (not (re-find #"pre-flight" (call! sess "done" {:label "gated"})))))
       (testing "an in-image test_run immediately before done earns the redundancy hint"
         (call! sess "test_run" {:ns "hint"})
         (is (re-find #"pre-flight" (call! sess "done" {:label "noisy"}))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated rename-arg-forgiveness                        ; from the symmetric eval
+(deftest ^:external rename-arg-forgiveness                        ; from the symmetric eval
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
@@ -94,7 +94,7 @@
                      (call! sess "query_source" {}))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated write-op-arg-forgiveness                      ; eval round 2
+(deftest ^:external write-op-arg-forgiveness                      ; eval round 2
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
@@ -107,7 +107,7 @@
                                           {:ns "wa" :from "f" :name "z"}))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated green-responses-are-terse                     ; B1
+(deftest ^:external green-responses-are-terse                     ; B1
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
@@ -145,7 +145,7 @@
   (testing "non-map input is a clear error"
     (is (thrown-with-msg? Exception #"JSON or EDN map"
                           (mcp/parse-call-args "[1 2 3]")))))
-(deftest ^:isolated one-shot-call
+(deftest ^:external one-shot-call
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-call" (make-array java.nio.file.attribute.FileAttribute 0)))]
     (testing "a query works with no MCP connection and returns the wire shape"
@@ -163,7 +163,7 @@
                                           :source "(ns demo)\n(defn f [x] x)\n"
                                           :agent "probe"})]
         (is (not (:isError r)) (get-in r [:content 0 :text]))))))
-(deftest ^:isolated pending-intent-opens-the-turn
+(deftest ^:external pending-intent-opens-the-turn
   ;; the plugin's UserPromptSubmit hook drops {session-id, prompt} JSON in
   ;; .slopp/pending-intent; the turn gate opens the turn from it and the
   ;; session ADOPTS the harness session id as its identity — no agent
@@ -195,7 +195,7 @@
                                             :source "(defn g [] 2)"})]
           (is (re-find #"no open turn" r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated two-sessions-never-merge-episodes
+(deftest ^:external two-sessions-never-merge-episodes
   ;; the P4 invariant, now free of wire labels: two sessions on ONE store
   ;; get DISTINCT generated identities, so episode_revert scopes to the
   ;; session that calls it (under a constant label these episodes MERGED)
@@ -214,7 +214,7 @@
         (is (not (re-find #"defn fb" (call! sb "query_source" {:targets [{:ns "iso.b" :name "fb"}]}))))
         (is (re-find #"defn fa" (call! sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
       (finally (api/close! sa) (api/close! sb)))))
-(deftest ^:isolated terse-results-carry-forms
+(deftest ^:external terse-results-carry-forms
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "tf.core" :source "(ns tf.core)\n(defn f [x] x)\n"})
@@ -223,7 +223,7 @@
                      (call! sess "edit_replace_form" {:ns "tf.core" :name "f"
                                                      :source "(defn f [x] (identity x))"}))))
       (finally (api/close! sess)))))
-(deftest ^:isolated trimmed-responses-spool-the-full-version
+(deftest ^:external trimmed-responses-spool-the-full-version
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "sp.core" :source "(ns sp.core)\n(defn f [] 1)\n"})
@@ -245,7 +245,7 @@
       (testing "an unknown id is an honest error"
         (is (re-find #"no spooled response" (call! sess "query_detail" {:id "r999"}))))
       (finally (api/close! sess)))))
-(deftest ^:isolated untested-writes-stay-terse-and-honest
+(deftest ^:external untested-writes-stay-terse-and-honest
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "ut.core" :source "(ns ut.core)\n(defn f [x] x)\n(defn g [x] x)\n"})
@@ -272,7 +272,7 @@
                                                 :source "(deftest g-t (is (= 3 (c/g 3))))"})]
           (is (not (re-find #":untested" r)) r)))
       (finally (api/close! sess)))))
-(deftest ^:isolated rename-names-leftover-prose-mentions
+(deftest ^:external rename-names-leftover-prose-mentions
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create"
@@ -292,7 +292,7 @@
         (let [r (call! sess "edit_rename" {:ns "pm.core" :old "volume-rate" :new "tier-rate"})]
           (is (not (re-find #":mentions" r)) r)))
       (finally (api/close! sess)))))
-(deftest ^:isolated milestones-publish-themselves
+(deftest ^:external milestones-publish-themselves
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-pub" (make-array java.nio.file.attribute.FileAttribute 0)))
         _    (sh/sh "git" "init" dir)
@@ -310,7 +310,7 @@
       (testing "no REMOTE is touched or saved — remote publishing stays explicit"
         (is (nil? (db/get-meta (:db @sess) "git-remote"))))
       (finally (api/close! sess)))))
-(deftest ^:isolated commits-prove-git-alignment
+(deftest ^:external commits-prove-git-alignment
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-align" (make-array java.nio.file.attribute.FileAttribute 0)))
         _    (sh/sh "git" "init" dir)
@@ -326,7 +326,7 @@
           (is (re-find #":branch-head" r) r)
           (is (re-find #"no worktree" r) r)))
       (finally (api/close! sess)))))
-(deftest ^:isolated whole-ns-source-is-outline-by-default
+(deftest ^:external whole-ns-source-is-outline-by-default
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "gt.core" :source "(ns gt.core)\n(defn f [x] (* x 2))\n(defn g [x] (+ x 1))\n"})
@@ -341,7 +341,7 @@
       (testing "full: true is the explicit whole-namespace dump"
         (is (re-find #"\(\* x 2\)" (call! sess "query_source" {:ns "gt.core" :full true}))))
       (finally (api/close! sess)))))
-(deftest ^:isolated rename-sweep-is-one-intent
+(deftest ^:external rename-sweep-is-one-intent
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create"
@@ -366,7 +366,7 @@
         (is (re-find #"600" (call! sess "query_eval" {:code "(sw.core/total 1)"})))
         (is (re-find #"500" (call! sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
       (finally (api/close! sess)))))
-(deftest ^:isolated repeated-reads-are-free
+(deftest ^:external repeated-reads-are-free
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create"
@@ -388,7 +388,7 @@
         (call! sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
         (is (re-find #":outline" (call! sess "query_source" {:ns "tk.core"}))))
       (finally (api/close! sess)))))
-(deftest ^:isolated usage-smells-hint-once
+(deftest ^:external usage-smells-hint-once
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "sm.a" :source "(ns sm.a)\n(defn f [x] x)\n(defn g [x] x)\n"})
@@ -405,7 +405,7 @@
         (let [r (call! sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
           (is (re-find #"rename_sweep" r) r)))
       (finally (api/close! sess)))))
-(deftest ^:isolated one-off-pushes-keep-the-default-remote
+(deftest ^:external one-off-pushes-keep-the-default-remote
   (let [dir   (str (java.nio.file.Files/createTempDirectory
                     "slopp-oop" (make-array java.nio.file.attribute.FileAttribute 0)))
         barea (str (java.nio.file.Files/createTempDirectory
@@ -427,7 +427,7 @@
           (is (= barea (db/get-meta (:db @sess) "git-remote")))
           (is (= barea (str (:default-remote r))) (pr-str r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated mirror-push-and-pull-sync-slopp-branches
+(deftest ^:external mirror-push-and-pull-sync-slopp-branches
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-mir" (make-array java.nio.file.attribute.FileAttribute 0)))
         bare (str (java.nio.file.Files/createTempDirectory
@@ -478,7 +478,7 @@
           (is (re-find #"refs/heads/slopp/main"
                        (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
           (finally (api/close! s3)))))))
-(deftest ^:isolated red-first-rides-the-wire
+(deftest ^:external red-first-rides-the-wire
   ;; the api carried :red-first but the wire's select-keys dropped it —
   ;; an agent would never have seen WHY its spec landed red
   (let [sess (api/open!)]
@@ -497,7 +497,7 @@
         (is (re-find #":red-first \[rw\.core/dbl\]" r) r)
         (is (re-find #"stubbed in-image" r) r))
       (finally (api/close! sess)))))
-(deftest ^:isolated read-tools-declare-readonly-on-the-wire
+(deftest ^:external read-tools-declare-readonly-on-the-wire
   ;; MCP readOnlyHint: without it, plan-mode clients must treat every tool
   ;; as potentially mutating and prompt — even for query_source
   (let [sess (api/open!)]
@@ -513,7 +513,7 @@
             "writes carry NO read-only claim")
         (is (nil? (get-in by-name ["module_dep" :annotations]))))
       (finally (api/close! sess)))))
-(deftest ^:isolated the-wire-speaks-done-not-groups
+(deftest ^:external the-wire-speaks-done-not-groups
   (let [sess (api/open!)]
     (try
       (let [names (into #{} (map :name)
@@ -524,7 +524,7 @@
             "episodes are inferred — no agent-facing grouping")
         (is (not (contains? names "checkpoint"))))
       (finally (api/close! sess)))))
-(deftest ^:isolated test-run-wire-guards-the-whole-suite
+(deftest ^:external test-run-wire-guards-the-whole-suite
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "tg.core"
@@ -542,7 +542,7 @@
           (is (re-find #":pass" r) r)
           (is (re-find #"rarely needed" r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated review-scan-is-on-the-wire-and-read-only
+(deftest ^:external review-scan-is-on-the-wire-and-read-only
   (let [sess (api/open!)]
     (try
       (let [tools   (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
@@ -607,7 +607,7 @@
                             (#'mcp/text! {:error "at (x/y.clj:9)"})))
       (is (map? (#'mcp/text! {:form 'a.b/c :at "(defn c [])"})) "clean passes")
       (finally (reset! @#'mcp/strict-boundary? false)))))
-(deftest ^:isolated a-compile-failure-crosses-the-wire-anchored
+(deftest ^:external a-compile-failure-crosses-the-wire-anchored
   ;; drives a real compile error THROUGH the wire under the boundary audit:
   ;; the response must anchor (form + snippet) and carry NO coordinate —
   ;; the audit would throw otherwise, so this pins the compile-error path.
@@ -622,7 +622,7 @@
         (is (not (re-find #"\.clj:\d" r)) "no file:line in the wire text"))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated module-purity-rides-the-wire
+(deftest ^:external module-purity-rides-the-wire
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create"
@@ -649,7 +649,7 @@
   (is (re-find #"row/col" (str (#'mcp/boundary-leak {:row 5 :col 2}))))
   (is (re-find #"\.clj" (str (#'mcp/boundary-leak {:at "foo.clj:42"})))))
 
-(deftest ^:isolated source-arg-friction
+(deftest ^:external source-arg-friction
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
@@ -672,7 +672,7 @@
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-vocabulary-rides-the-wire
+(deftest ^:external query-vocabulary-rides-the-wire
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create"
@@ -688,7 +688,7 @@
           (is (= [:order/id] (mapv :kw (:attributes r))) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-rules-rides-the-wire
+(deftest ^:external query-rules-rides-the-wire
   (let [sess (api/open!)]
     (try
       (let [rs (edn/read-string (call! sess "query_rules" {}))]
@@ -704,7 +704,7 @@
           (is (= :advisory (:severity drift)) (pr-str drift))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-rule-telemetry-rides-the-wire
+(deftest ^:external query-rule-telemetry-rides-the-wire
   (let [sess (api/open!)]
     (try
       (call! sess "ns_create" {:ns "tl" :source "(ns tl)\n(defn seed \"S.\" [x] x)\n"})
@@ -717,7 +717,7 @@
         (is (contains? t :dials) (pr-str t)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-is-reachable-over-the-wire
+(deftest ^:external cleanup-is-reachable-over-the-wire
   ;; The done-point tidy has to be callable for ONE namespace, because a legacy
   ;; declare is otherwise unaddressable: it and the defn share a name, so
   ;; edit_delete_form / edit_replace_form cannot resolve it. Exposed as a
@@ -745,7 +745,7 @@
                           (call! sess "query_source" {:ns "fd.wire" :full true})))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated undo-is-reachable-over-the-wire
+(deftest ^:external undo-is-reachable-over-the-wire
   ;; undo must be on the wire to do its job: it is only reached for reflexively
   ;; if it is one call away the moment a write turns out wrong.
   (let [sess (api/open!)]
@@ -767,7 +767,7 @@
           (is (re-find #"keep-me" src) "unrelated work survives")))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated module-purity-accepts-the-spelling-the-docs-use
+(deftest ^:external module-purity-accepts-the-spelling-the-docs-use
   ;; Every surface writes the tier WITH the colon — the tool description says
   ;; ":pure (may reach NO effect…)", the skill says `tier :pure`, and
   ;; query_depends reports :pure back. So an agent naturally sends ":pure",
@@ -782,7 +782,7 @@
           (is (re-find #":pure" r) (str spelling " → " r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated review-scan-reports-a-size-distribution-not-just-a-count
+(deftest ^:external review-scan-reports-a-size-distribution-not-just-a-count
   ;; ":large 3" is honest but misleading as a progress signal: DECOMPOSING a
   ;; god-form ADDS forms, so the count can rise while the codebase improves —
   ;; it did, 50 -> 54, during this sweep. Large forms are a distribution to
@@ -803,7 +803,7 @@
               (pr-str (:loc r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated untested-does-not-flag-plain-defs
+(deftest ^:external untested-does-not-flag-plain-defs
   ;; :untested means "no runtime evidence reaches this form". A plain (def x
   ;; <data>) has no invocation to trace, so it can NEVER acquire evidence —
   ;; flagging it is a finding no one can ever discharge, which is worse than
@@ -823,7 +823,7 @@
             (str "a callable fn with no evidence still flags: " (pr-str flags))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-zero-test-verification-is-unverified-not-green
+(deftest ^:external a-zero-test-verification-is-unverified-not-green
   ;; The single most expensive dishonesty in the response shape. A write whose
   ;; verification ran NOTHING reported :status :green with :coverage :none
   ;; beside it — two fields saying opposite things, and :green is the one an
@@ -855,7 +855,7 @@
           (is (not (re-find #":unverified" r)) r)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated unverified-says-why-it-verified-nothing
+(deftest ^:external unverified-says-why-it-verified-nothing
   ;; :unverified alone repeats the original sin at one remove. "No test covers
   ;; this yet" and "the fallback looked in the wrong place" are different
   ;; facts: the first is the agent's to fix by writing a test, the second is a
@@ -872,7 +872,7 @@
             (str "an :unverified must name its cause: " r)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated edit-group-stays-off-the-wire-on-purpose
+(deftest ^:external edit-group-stays-off-the-wire-on-purpose
   ;; Its absence is a MEASURED design decision, not an oversight, and it looks
   ;; exactly like an oversight from the outside — I argued for registering it
   ;; within one session of arriving at this codebase, on the grounds that the
@@ -900,7 +900,7 @@
           (is (contains? by-name "undo"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated dry-run-is-honored-over-the-wire
+(deftest ^:external dry-run-is-honored-over-the-wire
   ;; A preview that silently performs the operation is far worse than no
   ;; preview. api/rename-sweep! gained :dry-run, but the MCP tool schema and
   ;; dispatch did not — and the layer IGNORES unknown arguments, so asking for
@@ -923,10 +923,10 @@
             "and must not rewrite anything"))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-write-cannot-green-what-the-tier-never-ran
-  ;; Writing an ^:isolated deftest returned :status :green — a green earned by
+(deftest ^:external a-write-cannot-green-what-the-tier-never-ran
+  ;; Writing an ^:external deftest returned :status :green — a green earned by
   ;; OTHER tests in the namespace, for a form the in-image tier structurally
-  ;; cannot run. traced-run! computes :isolated-pending correctly; summarize's
+  ;; cannot run. traced-run! computes :external-pending correctly; summarize's
   ;; terse path rebuilds :test from a fixed key list and dropped it, the same
   ;; way :dry-run's payload and :drift were dropped before it.
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -934,7 +934,7 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (api/open! {:slopp.api/dir dir})]
     (try
-      ;; MIXED tiers: a fast test runs, an isolated one defers
+      ;; MIXED tiers: a fast test runs, an external one defers
       (call! sess "ns_create" {:ns "iso.core" :source "(ns iso.core)\n(defn f [] 1)\n"})
       (call! sess "ns_create"
              {:ns "iso.core-test"
@@ -945,11 +945,11 @@
       (let [r (edn/read-string
                (call! sess "edit_add_form"
                       {:ns "iso.core-test"
-                       :prompt "an isolated spec"
-                       :source "(deftest ^:isolated slow-t (is (= 1 (c/f))))"}))
+                       :prompt "an external spec"
+                       :source "(deftest ^:external slow-t (is (= 1 (c/f))))"}))
             t (:test r)]
         (testing "the deferral survives to the wire"
-          (is (some #{'slow-t} (:tests (:isolated-pending t))) (pr-str r)))
+          (is (some #{'slow-t} (:tests (:external-pending t))) (pr-str r)))
         (testing "and the write does not claim green for what that tier never ran"
           (is (= :partial (:status t)) (pr-str r))))
       ;; ISOLATED ONLY: nothing can run in-image, which is design, not a bug
@@ -959,22 +959,22 @@
               :source (str "(ns only.core-test\n"
                            "  (:require [clojure.test :refer [deftest is]]\n"
                            "            [only.core :as c]))\n"
-                           "(deftest ^:isolated slow-only-t (is (= 1 (c/g))))\n")})
-      (testing "all-isolated scope is named as design, not blamed on a scope bug"
+                           "(deftest ^:external slow-only-t (is (= 1 (c/g))))\n")})
+      (testing "all-external scope is named as design, not blamed on a scope bug"
         (let [raw (call! sess "edit_replace_form"
                          {:ns "only.core"
                           :name "g"
-                          :prompt "touch a form only isolated tests cover"
+                          :prompt "touch a form only external tests cover"
                           :source "(defn g [] (inc 0))"})
               t   (try (:test (edn/read-string raw)) (catch Exception _ nil))]
           (is (map? t) raw)
           (is (= :unverified (:status t)) raw)
-          (is (= :all-impacted-isolated (:reason t)) raw)))
+          (is (= :all-impacted-external (:reason t)) raw)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-previews-payload-survives-the-wire
+(deftest ^:external a-previews-payload-survives-the-wire
   ;; The fourth silent loss on this path. :dry-run's payload, :drift and
-  ;; :isolated-pending were each computed correctly and dropped by an
+  ;; :external-pending were each computed correctly and dropped by an
   ;; allow-list in the dispatch; the fourth was edit_requalify's :in-code,
   ;; dropped while building the tool meant to be careful about the third.
   ;;

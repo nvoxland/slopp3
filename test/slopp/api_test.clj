@@ -4,7 +4,7 @@
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
-(deftest ^:isolated create-ns-modes
+(deftest ^:external create-ns-modes
   (let [sess (api/open!)]
     (try
       (testing ":source lands a whole namespace in one verified call (folded-in ingest)"
@@ -28,7 +28,7 @@
                                     :requires ["[clojure.string]"]))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated operation-surface
+(deftest ^:external operation-surface
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'demo
@@ -82,7 +82,7 @@
             (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated parse-test-summary-reads-the-runner-line
+(deftest ^:external parse-test-summary-reads-the-runner-line
   (testing "a green clojure.test summary"
     (is (= {:ran 46 :assertions 1200 :failures 0 :errors 0 :status :green}
            (testrun/parse-test-summary
@@ -96,7 +96,7 @@
   (testing "no summary present -> nil"
     (is (nil? (testrun/parse-test-summary "boom — the JVM died before any test ran")))))
 
-(deftest ^:isolated build-routes-test-namespaces-to-test-dir
+(deftest ^:external build-routes-test-namespaces-to-test-dir
   ;; a normal Clojure layout: production under src/, tests under test/, off the
   ;; default classpath (a :test alias makes them runnable).
   (let [sess (api/open!)]
@@ -138,18 +138,18 @@
     (testing "blocks are capped and limited"
       (is (every? #(<= (count (:detail %)) 520) fs))
       (is (= 1 (count (testrun/parse-test-failures out :limit 1)))))))
-(deftest ^:isolated inline-test-stores-build-a-runnable-suite
+(deftest ^:external inline-test-stores-build-a-runnable-suite
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'il.core
                    (str "(ns il.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (let [r (api/isolated-test-run! sess)]
+      (let [r (api/external-test-run! sess)]
         (is (= :green (:status r)) (pr-str r))
         (is (= 1 (:ran r)) (pr-str r)))
       (finally (api/close! sess)))))
-(deftest ^:isolated build-routes-tests-through-the-trace-runner-when-present
+(deftest ^:external build-routes-tests-through-the-trace-runner-when-present
   ;; #121: the external tier can only trace if the built project carries the
   ;; trace runner. PRESENCE in the store is the condition — a store without it
   ;; must still build a deps.edn that runs, so it stays on plain cognitect.

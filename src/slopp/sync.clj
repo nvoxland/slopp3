@@ -625,7 +625,7 @@
                        (try (pull! sess)
                             (finally (api/close! sess))))
             "test"   (let [sess (api/open! {:slopp.api/dir a})]
-                       (try (api/isolated-test-run! sess)
+                       (try (api/external-test-run! sess)
                             (finally (api/close! sess))))
             {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
     (println (pr-str r))

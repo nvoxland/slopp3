@@ -10,7 +10,7 @@
        "(defn add [x y] (+ x y))\n\n"
        "(deftest add-works (is (= 5 (add 2 3))))\n"))
 
-(deftest ^:isolated load-and-test-run
+(deftest ^:external load-and-test-run
   (let [s (store/ingest (store/empty-store) 'demo target)
         h (repl/start!)]
     (try

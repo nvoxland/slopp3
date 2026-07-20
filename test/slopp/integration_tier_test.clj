@@ -17,7 +17,7 @@
 (defn- ran [sess]
   (first (api/query-eval sess "@it.core/ran")))
 
-(deftest ^:isolated integration-tier-skips-fast-path-includes-explicit
+(deftest ^:external integration-tier-skips-fast-path-includes-explicit
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'it.core seed)

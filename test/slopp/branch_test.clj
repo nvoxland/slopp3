@@ -11,7 +11,7 @@
        "(defn f [x] (inc x))\n"
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
-(deftest ^:isolated branch-edit-switch-isolation
+(deftest ^:external branch-edit-switch-isolation
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.core seed)
@@ -39,7 +39,7 @@
         (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated merge-branch-down-to-main
+(deftest ^:external merge-branch-down-to-main
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.core seed)
@@ -79,7 +79,7 @@
           (is (re-find #":main-version" (api/query-source sess 'br.core)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated branch-guards-and-listing
+(deftest ^:external branch-guards-and-listing
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.core seed)
@@ -100,7 +100,7 @@
         (is (= ["main"] (mapv :name (:branches (branch/query-branches sess))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated branches-survive-restart-of-a-durable-session
+(deftest ^:external branches-survive-restart-of-a-durable-session
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-br-" (System/nanoTime))]
     (try
@@ -126,7 +126,7 @@
       (finally
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
-(deftest ^:isolated per-branch-images-park-adopt-and-reap          ; m4
+(deftest ^:external per-branch-images-park-adopt-and-reap          ; m4
   (let [sess (api/open! {:slopp.api/branch-image-ttl-ms 200})]
     (try
       (api/ingest! sess 'br.core seed)
@@ -157,7 +157,7 @@
               (is (= [11] (api/query-eval sess "(br.core/f 1)")))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated branches-have-identity-beyond-their-name
+(deftest ^:external branches-have-identity-beyond-their-name
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.core seed)
@@ -185,7 +185,7 @@
             (is (= [21] (api/query-eval sess "(br.core/f 1)"))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated concurrent-branch-creation-races-yield-one-winner
+(deftest ^:external concurrent-branch-creation-races-yield-one-winner
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.core seed)

@@ -12,7 +12,7 @@
        "(defn trap [helper] (helper 9))\n"       ; local param SHADOWS the var
        "(deftest caller-t (is (= 5 (caller 2))))\n"))
 
-(deftest ^:isolated rename-coordinates-all-references
+(deftest ^:external rename-coordinates-all-references
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'rdemo target)
@@ -44,7 +44,7 @@
                          :rename))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated rename-across-namespaces-and-restart
+(deftest ^:external rename-across-namespaces-and-restart
   (let [dir  (str (Files/createTempDirectory "slopp-rename-test"
                                              (make-array FileAttribute 0)))
         sess (api/open! {:slopp.api/dir dir})]
@@ -70,7 +70,7 @@
         (is (= :rename (:op (last (filter #(= :rename (:op %))
                                           (store/deltas (:store @sess2)))))))
         (finally (api/close! sess2))))))
-(deftest ^:isolated already-renamed-is-state-not-error
+(deftest ^:external already-renamed-is-state-not-error
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'ar.core :source "(ns ar.core)\n(defn old-name [] 1)\n")
@@ -80,7 +80,7 @@
           (is (nil? (:error r)) (pr-str r))
           (is (:already (:renamed r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated ns-rename-survives-reopen
+(deftest ^:external ns-rename-survives-reopen
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-nsren"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -97,7 +97,7 @@
               (pr-str (keys (:namespaces (:store @s2)))))
           (is (some? (get-in (:store @s2) [:namespaces 'nr.new]))))
         (finally (api/close! s2))))))
-(deftest ^:isolated renaming-replaces-unmap-the-old-var
+(deftest ^:external renaming-replaces-unmap-the-old-var
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gv.core "(ns gv.core)\n(defn alpha [x] x)\n(defn beta [x] x)\n")
@@ -115,7 +115,7 @@
             (pr-str (api/query-eval sess "(resolve 'gv.core/beta)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated sweep-requalifies-keys-destructuring
+(deftest ^:external sweep-requalifies-keys-destructuring
   ;; rename_sweep renames keyword LITERALS by text. A destructuring names its
   ;; keys as SYMBOLS inside a :keys vector, so a text sweep left it reading the
   ;; OLD unqualified key — code that compiles, passes the write gate, and reads
@@ -153,7 +153,7 @@
         (is (= [[1 2 3]] (api/query-eval sess "(rq.core/mixed (rq.core/mk))"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated sweep-preserves-type-hints-when-requalifying
+(deftest ^:external sweep-preserves-type-hints-when-requalifying
   ;; The first cut of requalify-keys rebuilt the :keys vector from `sexpr`,
   ;; which silently DROPPED type hints — {:keys [^Repository repo]} became
   ;; {:slopp.git/keys [repo]}, turning direct interop into reflection — and it
@@ -183,7 +183,7 @@
         (is (= [["c" 1]] (api/query-eval sess "(hint.core/use-it (hint.core/mk))"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated sweep-dry-run-separates-string-hits-from-code
+(deftest ^:external sweep-dry-run-separates-string-hits-from-code
   ;; A sweep is store-wide and rewrites prose and STRING LITERALS as well as
   ;; code. Sweeping prose is the documented intent — but a fixture string is
   ;; not prose, and a :repo sweep silently rewrote the literal inside a test
@@ -227,7 +227,7 @@
           (is (re-find #":dr/renamed" (api/query-source sess 'dr.core)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-sweep-that-loses-a-hint-says-so
+(deftest ^:external a-sweep-that-loses-a-hint-says-so
   ;; The case that started it. A rename_sweep silently rebuilt a destructuring
   ;; and dropped ^Repository / ^java.sql.Connection from slopp.git/close-ctx!,
   ;; turning direct interop into reflection. It compiled, passed every gate,
@@ -259,7 +259,7 @@
   [session ns-sym nm]
   (get-in (api/query-slice session ns-sym nm) [:target :source]))
 
-(deftest ^:isolated requalify-boundary-keys-does-arglist-and-call-sites-together
+(deftest ^:external requalify-boundary-keys-does-arglist-and-call-sites-together
   ;; The capability require-namespaced-keys needs to be dischargeable: its last
   ;; violation has 60 call sites, and a store-wide keyword sweep is unsafe when
   ;; the key means more than one thing.

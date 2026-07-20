@@ -17,7 +17,7 @@
        "(defn wrap [x] (c/top x))\n"
        "(deftest wrap-t (is (= 8 (wrap 2))))\n"))
 
-(deftest ^:isolated query-deps-transitive-callee-tree
+(deftest ^:external query-deps-transitive-callee-tree
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
@@ -31,7 +31,7 @@
         (is (= [] (get (:calls d) 'sg.core/leaf))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated fix-declares-moves-and-deletes
+(deftest ^:external fix-declares-moves-and-deletes
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'fd.core
@@ -60,7 +60,7 @@
                 "but it is the PIPELINE's now, and it says why"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated ns-rename-rewrites-the-world
+(deftest ^:external ns-rename-rewrites-the-world
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
@@ -83,7 +83,7 @@
           (is (= [8] (api/query-eval sess "(sg.util/wrap 2)")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated extract-forms-to-a-new-namespace
+(deftest ^:external extract-forms-to-a-new-namespace
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
@@ -106,7 +106,7 @@
         (testing "behavior intact in the live image"
           (is (= [8] (api/query-eval sess "(sg.core/top 2)")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated extract-into-a-deep-child-namespace
+(deftest ^:external extract-into-a-deep-child-namespace
   ;; the slopp.api split shape: internal helpers move into a PACKAGE-PRIVATE
   ;; deep child ns, and the parent requires its own child back. Regression
   ;; for the live FileNotFound (the new store-only ns must be loadable when
@@ -135,7 +135,7 @@
             (is (:error w) (pr-str w))
             (is (re-find #"package-private" (str (:error w)))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated move-rewrites-callers-everywhere
+(deftest ^:external move-rewrites-callers-everywhere
   ;; THE v1 gap: in a tested codebase everything has external references, so
   ;; no real cluster was movable. v2 rewrites every caller — production AND
   ;; tests — injects requires, and the export dial covers deep targets.
@@ -168,7 +168,7 @@
           (is (= [4] (api/query-eval sess "(mvx.app/go 3)")))
           (is (= [3] (api/query-eval sess "(mvx.core/entry 2)")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated move-into-an-existing-namespace
+(deftest ^:external move-into-an-existing-namespace
   ;; consolidation: the target already exists — moved forms append, the
   ;; stay-behind caller is rewritten, only missing requires are added.
   (let [sess (api/open!)]
@@ -189,7 +189,7 @@
         (testing "behavior intact"
           (is (= [6] (api/query-eval sess "(mve.a/g 3)")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated fix-declares-prunes-phantom-names
+(deftest ^:external fix-declares-prunes-phantom-names
   ;; a declare naming a var NOT defined in this ns (moved away by an earlier
   ;; move-forms) is a PHANTOM: it mints an unbound var, so a typo'd unqualified
   ;; call resolves silently instead of failing loudly. It must never BLOCK
@@ -208,7 +208,7 @@
           (is (not (re-find #"\(declare" src))
               "helper was reorderable, so the whole declare goes")))
       (finally (api/close! sess)))))
-(deftest ^:isolated move-forms-leaves-ordering-to-the-pipeline
+(deftest ^:external move-forms-leaves-ordering-to-the-pipeline
   ;; the planner used to mint an UNMARKED (declare …) for ANY multi-form move,
   ;; whether or not a forward ref existed. That is the source of phantom-declare
   ;; debt: a later move lifts one of those names out and it becomes a phantom
@@ -245,7 +245,7 @@
                 (str "and it must be the PIPELINE's, saying why:\n" src)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-runs-the-done-points-tidy-on-demand
+(deftest ^:external cleanup-runs-the-done-points-tidy-on-demand
   ;; The tidy the done-point applies, callable for one namespace. Code written
   ;; through slopp never needs it — the pipeline owns ordering and declares
   ;; from the first write — but INGESTED code predates those invariants, and
@@ -274,7 +274,7 @@
         (is (= [2] (api/query-eval sess "(cu.core/a)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-reports-what-purity-tier-a-namespace-could-support
+(deftest ^:external cleanup-reports-what-purity-tier-a-namespace-could-support
   ;; Declaring a tier was BLIND: module_purity accepts any tier and the gate
   ;; only bites on the NEXT write, so a wrong call lands on whoever edits next
   ;; rather than on whoever made it. cleanup reports the standing position
@@ -298,7 +298,7 @@
               (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-reports-done-advisories-for-the-whole-namespace
+(deftest ^:external cleanup-reports-done-advisories-for-the-whole-namespace
   ;; Done-time advisories run over the forms of an EPISODE, so they already
   ;; fired for anything written through slopp since the rule existed. What they
   ;; have never seen is code that PREDATES the rule — ingested code, or forms
@@ -323,7 +323,7 @@
           (is (empty? (:advisories r)) (pr-str (:advisories r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-reports-every-gate-not-just-the-advisories
+(deftest ^:external cleanup-reports-every-gate-not-just-the-advisories
   ;; Everything slopp can check on a WRITE, checkable over EXISTING code. The
   ;; write gates (module/tier/schema/namespaced-keys) fire per write, so code
   ;; that predates a gate was never subject to it; lint, dead public surface
@@ -345,7 +345,7 @@
           (is (contains? r :gates) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated cleanup-all-sweeps-the-whole-store
+(deftest ^:external cleanup-all-sweeps-the-whole-store
   ;; THE migration surface: adopting slopp on an existing codebase, or landing
   ;; a slopp upgrade that adds a rule, means every namespace needs the tidy
   ;; applied and the whole enforcement surface replayed. Per-namespace is the

@@ -4,7 +4,7 @@
             [slopp.edit :as edit]
             [slopp.api :as api]))
 
-(deftest ^:isolated unparseable-source-returns-error-not-throw   ; F3
+(deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
     (let [r (edit/parse-form "(defn broken [x")]
       (is (:error r))
@@ -26,7 +26,7 @@
           (is (= 2 (:forms r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated ingest-is-the-batch-write-for-NEW-namespaces   ; W1 (user decision)
+(deftest ^:external ingest-is-the-batch-write-for-NEW-namespaces   ; W1 (user decision)
   (let [sess (api/open!)]
     (try
       (testing "a whole namespace lands in one verified write"
@@ -50,7 +50,7 @@
           (is (re-find #"triple" (api/query-source sess 'w1.core)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated create-ns-and-add-require                     ; F4 + F5
+(deftest ^:external create-ns-and-add-require                     ; F4 + F5
   (let [sess (api/open!)]
     (try
       (testing "create a namespace directly, with requires"
@@ -78,7 +78,7 @@
           (is (= [#{1 2}] (api/query-eval sess "(bare.core/u #{1} #{2})")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated warnings-report-only-whats-new                ; T3
+(deftest ^:external warnings-report-only-whats-new                ; T3
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'w.core)
@@ -91,7 +91,7 @@
           (is (= 1 (:existing-warnings r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated failed-namespace-load-is-not-silently-committed   ; T4
+(deftest ^:external failed-namespace-load-is-not-silently-committed   ; T4
   (let [sess (api/open!)]
     (try
       (testing "requiring a not-yet-created store ns fails loudly, nothing committed"
@@ -104,7 +104,7 @@
                                           :requires ["[dep.lib :as lib]"])))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-eval-is-observe-only                    ; T5
+(deftest ^:external query-eval-is-observe-only                    ; T5
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'g.core "(ns g.core)\n(defn f [x] x)\n")
@@ -120,7 +120,7 @@
         (is (= [3] (api/query-eval sess "(g.core/f 3)")))
         (is (= [1] (api/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
       (finally (api/close! sess)))))
-(deftest spawning-tests-must-be-isolated
+(deftest spawning-tests-must-be-external
   (let [store (store/ingest (store/empty-store) 'iso.demo-test
                             (str "(ns iso.demo-test (:require [clojure.test :refer [deftest is]] [slopp.api :as api]))\n"
                                  "(defn setup [] 1)\n"))]
@@ -128,10 +128,10 @@
       (let [r (edit/replace-form store 'iso.demo-test 'setup
                                  "(deftest t (is (some? (api/open!))))")]
         (is (:error r) (pr-str r))
-        (is (re-find #"\^:isolated" (str (:error r))) (pr-str r))))
-    (testing "the ^:isolated tag admits it"
+        (is (re-find #"\^:external" (str (:error r))) (pr-str r))))
+    (testing "the ^:external tag admits it"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
-                                 "(deftest ^:isolated t (is (some? (api/open!))))")]
+                                 "(deftest ^:external t (is (some? (api/open!))))")]
         (is (nil? (:error r)) (pr-str r))))))
 (deftest missing-form-errors-teach
   (let [store (store/ingest (store/empty-store) 'mf.core
@@ -142,7 +142,7 @@
     (testing "a cold miss points at the outline"
       (is (re-find #"query_source"
                    (:error (edit/missing-form-error store 'mf.core 'zzz)))))))
-(deftest ^:isolated red-first-specs-land-as-red
+(deftest ^:external red-first-specs-land-as-red
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'rf.core "(ns rf.core)\n(defn seed \"S.\" [x] x)\n")
@@ -165,7 +165,7 @@
           (is (nil? (:error r)) (pr-str r))
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated red-first-is-command-agnostic
+(deftest ^:external red-first-is-command-agnostic
   ;; the seam is the compile gate, not the command: EVERY write path that
   ;; loads a -test namespace inherits red-first — groups, whole-ns ingest,
   ;; :refer'd bare names, and image restarts with stubs outstanding
@@ -202,7 +202,7 @@
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
               (pr-str (:test r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated incremental-signature-change-is-unforced
+(deftest ^:external incremental-signature-change-is-unforced
   ;; REPL-native flow: growing a signature one write at a time must not be
   ;; refused — stale callers are CARRIED to the done-point, not blockers;
   ;; an error inside the form being written still refuses
@@ -238,7 +238,7 @@
         (let [r (api/done! sess :label "left broken")]
           (is (pos? (get-in r [:findings :lint-errors] 0)) (pr-str r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated renaming-via-replace-refuses-when-callers-dangle
+(deftest ^:external renaming-via-replace-refuses-when-callers-dangle
   ;; replacing a form with a DIFFERENTLY-NAMED one strands committed callers
   ;; on the old name — the store stops cold-loading (the self-hosting bind
   ;; in miniature). The write must refuse and teach the atomic tool.
@@ -258,7 +258,7 @@
                                    "(defn ^:unused-ok consumer \"U.\" [x] (helper x))")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated compile-failures-reach-the-agent-as-anchors
+(deftest ^:external compile-failures-reach-the-agent-as-anchors
   ;; a write that fails to compile must hand the agent an ACTIONABLE
   ;; address — the owning form + a match-ready snippet — not a VFS
   ;; file:line no tool consumes; the coordinate never rides the message.
@@ -276,7 +276,7 @@
         (is (not (re-find #"\.clj:\d" (str (:error r))))
             "no file:line in the message"))
       (finally (api/close! sess)))))
-(deftest ^:isolated forward-refs-auto-reorder-no-declare
+(deftest ^:external forward-refs-auto-reorder-no-declare
   ;; the agent writes in any order; a forward reference is RESOLVED by the
   ;; pipeline reordering defs above callers — SILENTLY: no refusal, no declare,
   ;; and no ordering signal leaks back (order is store truth, not the agent's
@@ -297,7 +297,7 @@
         (is (nil? (edit/cold-load-errors (:store @sess) '[ar.core])))
         (is (not (re-find #"\(declare" (api/query-source sess 'ar.core)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated add-caller-before-callee-auto-reorders
+(deftest ^:external add-caller-before-callee-auto-reorders
   ;; the .ideas motivating case: the agent adds a caller anchored ABOVE the
   ;; callee it references. That is a forward ref — the pipeline reorders the
   ;; callee above the caller silently, no declare, no refusal.
@@ -314,7 +314,7 @@
         (is (nil? (edit/cold-load-errors (:store @sess) '[cc.core])))
         (is (not (re-find #"\(declare" (api/query-source sess 'cc.core)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated genuine-cycle-auto-declares-with-marker
+(deftest ^:external genuine-cycle-auto-declares-with-marker
   ;; mutual recursion has no legal form order — the pipeline OWNS the declare:
   ;; it inserts a MARKED (declare …) itself so the ns cold-loads. The agent
   ;; never writes one, and no declare key leaks back (like the reorder).
@@ -334,7 +334,7 @@
           (is (and decl (re-find #"ping" decl)) "ping is declared")
           (is (and decl (re-find #"pong" decl)) "pong is declared")))
       (finally (api/close! sess)))))
-(deftest ^:isolated hand-written-declares-are-refused
+(deftest ^:external hand-written-declares-are-refused
   ;; the pipeline OWNS declares — an agent never writes one. A hand-written
   ;; (declare …) on the EDIT path is refused with teaching; imports (ingest)
   ;; and the pipeline's own inserts are unaffected.
@@ -352,21 +352,21 @@
                              "(ns nd.imp)\n(declare h)\n(defn f [] (h))\n(defn h [] 2)\n")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
-(deftest ^:isolated inline-run-defers-isolated-tests
-  ;; ^:isolated tests only behave in a FRESH image — the in-image per-write
+(deftest ^:external inline-run-defers-external-tests
+  ;; ^:external tests only behave in a FRESH image — the in-image per-write
   ;; run must never execute them (a false green/red); it reports them
-  ;; :isolated-pending. The whole-ns fallback (no trace) is where they leak in.
+  ;; :external-pending. The whole-ns fallback (no trace) is where they leak in.
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ir.test
                    (str "(ns ir.test (:require [clojure.test :refer [deftest is]]))\n"
                         "(deftest fast (is true))\n"))
-      (let [r (api/add-form! sess 'ir.test "(deftest ^:isolated slow (is true))")]
-        (is (some #{'slow} (:tests (:isolated-pending (:test r))))
+      (let [r (api/add-form! sess 'ir.test "(deftest ^:external slow (is true))")]
+        (is (some #{'slow} (:tests (:external-pending (:test r))))
             (str "slow must be deferred, not run in-image: " (pr-str (:test r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-write-reports-what-it-changed-that-you-did-not-name
+(deftest ^:external a-write-reports-what-it-changed-that-you-did-not-name
   ;; A refactor silently dropped ^Repository and ^java.sql.Connection from a
   ;; destructuring, turning direct interop into reflection. It compiled, passed
   ;; every gate, and reported green — I found it only because I happened to
@@ -405,7 +405,7 @@
           (is (empty? (:drift r)) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated a-too-narrow-subform-edit-teaches-the-fix
+(deftest ^:external a-too-narrow-subform-edit-teaches-the-fix
   ;; I hit this twice and flailed both times: a loop binding and its recur, and
   ;; an arglist and its body. Neither half compiles alone, so each edit is
   ;; refused — correctly — and the refusal read as "these two edits must be

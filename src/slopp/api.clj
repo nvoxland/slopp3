@@ -1406,8 +1406,8 @@
     (session/with-ms (cond-> summary
                (and only' (zero? (:test summary 0)))
                (assoc :note (str "0 tests matched :only " (vec only)
-                                 " — check the names; ^:isolated tests only run"
-                                 " under test_run {:isolated true}")))
+                                 " — check the names; ^:external tests only run"
+                                 " under test_run {:external true}")))
              t0)))
 
 (defn fix-declares!
@@ -2423,11 +2423,11 @@
                       (forms-changed-since st last-c))]
     {:changed-nses (vec (sort changed))
      :selected     (session/test-nses-reaching st changed)}))
-(defn isolated-test-run!
+(defn external-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
   out-of-process counterpart to in-image `traced-run`, and the ONLY tier that
-  executes ^:isolated tests (they spawn their own images/subprocesses, so
+  executes ^:external tests (they spawn their own images/subprocesses, so
   running them in-image would recurse). Needs no repo files — the store is
   the source, which is what lets the working dir go fileless. `:ns` narrows
   to one test namespace, `:only` to specific ns-qualified test vars (Q2);
@@ -2437,19 +2437,19 @@
   build, round-robin namespace shards, merged into one summary. Defaults
   to AUTO (auto-parallel: scales with test-ns count + cores, serial below
   ~8 nses where boot overhead beats the gain); an explicit N overrides
-  (1 forces serial). A single :ns/:only run never shards. Returns {:isolated
+  (1 forces serial). A single :ns/:only run never shards. Returns {:external
   true :status :ran :assertions :failures :errors :exit} plus :failing +
   :all-failing {file [tests]} + :themes (clustered causes) when red.
 
   Also ABSORBS the run's form trace (#121) when the build carried the trace
-  runner: this is the only tier that ever executes an ^:isolated test, so it
+  runner: this is the only tier that ever executes an ^:external test, so it
   is the only place their test→form evidence can come from. Silent — the
   trace lands in the session's test-map (and persists), surfacing later as
   honest `:warranty` and affected-test narrowing, not as output here."
   [session & {:keys [alias ns only affected parallel nses]}]
   (let [aff (when affected (affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
-      {:isolated true :ran 0 :status :green :affected aff
+      {:external true :ran 0 :status :green :affected aff
        :note (str "no test namespace can reach the changes since the last"
                   " milestone — nothing to verify (run without affected for"
                   " the full gate)")}
@@ -2474,7 +2474,7 @@
                       (if (or ns aff (seq only) (seq nses) (seq shard-nses))
                         ":test-run" ":test"))
             dir (str (java.nio.file.Files/createTempDirectory
-                      "slopp-isolated"
+                      "slopp-external"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
             b   (build! session dir)]
         (if (:error b)
@@ -2500,7 +2500,7 @@
                         out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
                         sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
                     (if (some nil? sums)
-                      (cond-> {:isolated true :exit (apply max (map :exit outs))
+                      (cond-> {:external true :exit (apply max (map :exit outs))
                                :status :error
                                :shards (count shards)
                                :output (->> (str/split-lines out)
@@ -2512,7 +2512,7 @@
                                     :failures   (reduce + (map :failures sums))
                                     :errors     (reduce + (map :errors sums))}
                             red?   (pos? (+ (:failures merged) (:errors merged)))]
-                        (cond-> (merge {:isolated true
+                        (cond-> (merge {:external true
                                         :exit (apply max (map :exit outs))
                                         :shards (count shards)
                                         :status (if red? :red :green)}
@@ -2532,7 +2532,7 @@
                         r    (apply sh/sh (concat args [:dir dir]))
                         out  (str (:out r) "\n" (:err r))
                         s    (testrun/parse-test-summary out)]
-                    (merge {:isolated true :exit (:exit r)}
+                    (merge {:external true :exit (:exit r)}
                            (when aff {:affected aff})
                            (cond
                              (nil? s)           {:status :error
@@ -2546,7 +2546,7 @@
                                                     (assoc :themes (testrun/failure-themes out)))
                              :else s))))]
             ;; #121: ONE absorb point for BOTH branches — the external tier is
-            ;; the only place an ^:isolated test ever runs, so a trace missed
+            ;; the only place an ^:external test ever runs, so a trace missed
             ;; here is missed forever. nil when the build carried no runner, so
             ;; untraced stores behave exactly as before.
             (session/absorb-trace! session (testrun/read-traces dir))
@@ -2564,7 +2564,7 @@
   session's brief surfaces anything left red. Returns {:done id
   :normalized n :rewrites [{:form :applied}] :lint [...] :test s
   :findings {...}}."
-  [session & {:keys [label agent isolated?] :or {isolated? true}}]
+  [session & {:keys [label agent external?] :or {external? true}}]
   (let [st       (:store @session)
         changed  (->> (episode-span st agent)
                       (filter #(and (contains? content-ops (:op %))
@@ -2644,20 +2644,20 @@
             (session/commit-appended! session
                               #(store/record-verification % main-ns s) [])
             s))
-        ;; the tier is an implementation detail: ^:isolated tests the episode's
+        ;; the tier is an implementation detail: ^:external tests the episode's
         ;; changes reach run in the EXTERNAL tier here — capped, and a deferral
-        ;; is REPORTED (isolated-pending), never silent.
+        ;; is REPORTED (external-pending), never silent.
         ;;
         ;; #127: selected from THE TRACE, like the in-image half above, instead
         ;; of re-derived from the require-closure. That closure selects a median
-        ;; 43 of 46 isolated test nses (measured over every source ns
+        ;; 43 of 46 external test nses (measured over every source ns
         ;; 2026-07-17) — it never narrowed, it just always blew the cap, so 84.6%
         ;; of changes deferred and the tier effectively never ran here. The
         ;; evidence was already computed a few lines up and thrown away.
-        iso (when (and isolated? (seq changed))
+        iso (when (and external? (seq changed))
               (let [st*      (:store @session)
-                    iso-only (session/impacted-isolated session st* changed)]
-                ;; #132: impacted-isolated is never silent — an untraced form expands
+                    iso-only (session/impacted-external session st* changed)]
+                ;; #132: impacted-external is never silent — an untraced form expands
                 ;; to its own namespace's reach — so the old closure fallback is
                 ;; gone with the collapse that needed it. Run exactly the named
                 ;; tests. A :only run is one serial JVM (it never shards), so the
@@ -2666,7 +2666,7 @@
                 ;; case that honestly wants the whole suite anyway.
                 (when (seq iso-only)
                   (if (<= (count iso-only) 40)
-                    (isolated-test-run! session :only iso-only)
+                    (external-test-run! session :only iso-only)
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
                                :note  "first 5 shown — the milestone gate runs them all"}}))))
@@ -2704,19 +2704,19 @@
                               :else                           :green)
            :failures    failures
            :lint-errors lint-errors
-           ;; done runs the WHOLE in-image suite but not the full isolated
+           ;; done runs the WHOLE in-image suite but not the full external
            ;; tier. Say so EVERY time: an unstated omission reads as coverage,
            ;; and that is how a green status comes to mean less than the agent
            ;; thinks it does.
            ;; done is EPISODE-scoped: the whole in-image suite plus impacted
-           ;; ^:isolated tests, but lint and dead-surface cover only what this
-           ;; episode touched, and the full isolated + integration tiers do
+           ;; ^:external tests, but lint and dead-surface cover only what this
+           ;; episode touched, and the full external + integration tiers do
            ;; not run. Say so EVERY time: an unstated omission reads as
            ;; coverage, and that is how a green status comes to mean less than
            ;; the agent thinks it does.
            :scope
            (str "EPISODE-scoped: lint + dead-surface cover only the namespaces"
-                " you touched, and the full ^:isolated / ^:integration tiers"
+                " you touched, and the full ^:external / ^:integration tiers"
                 " did not run. `full_check` does the whole store — every"
                 " namespace, every tier. Nothing forces it, including the"
                 " milestone; run it when the change is broad, when you deleted"
@@ -2725,7 +2725,7 @@
     ;; deliberately does not block on, because each is routinely true of a
     ;; form mid-edit. Listed so the agent can judge them, never counted.
     (seq lint-warns)  (assoc :lint-warnings lint-warns)
-    (:pending iso)    (assoc :isolated-pending (:pending iso))
+    (:pending iso)    (assoc :external-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq advisories)  (merge advisories)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
@@ -2750,12 +2750,12 @@
                                  {:count (count carried)
                                   :forms (vec (sort (distinct (keep :form carried))))})
       summary             (assoc :test summary)
-      (:status iso)       (assoc :isolated iso))))
+      (:status iso)       (assoc :external iso))))
 
 (defn full-check!
   "The WHOLE-STORE check, on demand: kondo over every namespace, the
   dead-public-surface report over every namespace, and every test in every
-  tier — the in-image suite, `^:integration`, and the external `^:isolated`
+  tier — the in-image suite, `^:integration`, and the external `^:external`
   tier.
 
   Deliberately NOT forced anywhere, not by `done` and not by `commit_point`.
@@ -2769,7 +2769,7 @@
   call, everything, no tier flags to get wrong.
 
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
-  [...] :test {...} :isolated {...} :status :green|:red}."
+  [...] :test {...} :external {...} :status :green|:red}."
   [session]
   (let [st    (:store @session)
         nses  (sort (keys (:namespaces st)))
@@ -2791,9 +2791,9 @@
         tests (session/run-verification! session (vec nses) nil
                                          :include-integration? true
                                          :boundary? true)
-        iso   (when (seq (session/isolated-test-nses
+        iso   (when (seq (session/external-test-nses
                           st (filter #(session/test-ns? st %) nses)))
-                (isolated-test-run! session))
+                (external-test-run! session))
         red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
                   (pos? (+ (:fail tests 0) (:error tests 0)))
                   (contains? #{:red :error} (:status iso)))]
@@ -2813,7 +2813,7 @@
                                       " claim it does not earn"))
       (seq (:unused rep)) (assoc :unused-public (:unused rep))
       (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
-      iso                 (assoc :isolated iso))))
+      iso                 (assoc :external iso))))
 
 (defn last-judged-done
   "The `:findings` of the most recent `:done` delta that actually JUDGED
@@ -2895,11 +2895,11 @@
                   :description (:description last-d)
                   :note "nothing changed since this milestone — returning it"})
           (let [cp     (done! session :label description :agent agent
-                            :isolated? false) ; the isolated tier runs below
+                            :external? false) ; the external tier runs below
                 st     (:store @session)
                 head   (:id (last (store/deltas st)))
-                ;; the ONE thing done does not do: the whole isolated suite.
-                ;; Run it when the store has any ^:isolated tests (fixture
+                ;; the ONE thing done does not do: the whole external suite.
+                ;; Run it when the store has any ^:external tests (fixture
                 ;; stores without them skip the tier); :force skips straight
                 ;; to honest red
                 ;; NOT FORCED. The milestone runs no whole-store check of its own —
@@ -2934,7 +2934,7 @@
                 ;; :scope and :lint-warnings are INFORMATIONAL — always present,
                 ;; never a reason. Listing them as things that fired made a
                 ;; refusal say "scope" instead of "unused-public".
-                wrong  (->> (dissoc verdict :test-status :isolated-suite
+                wrong  (->> (dissoc verdict :test-status :external-suite
                                     :scope :lint-warnings :failures)
                             (remove (fn [[_ v]] (or (and (number? v) (zero? v))
                                                     (and (coll? v) (empty? v)))))
@@ -2952,9 +2952,9 @@
                                    " true to record a red milestone honestly.")
                        :status :red :done (:done cp) :test (:test cp)
                        :findings verdict}
-                iso (assoc :isolated iso))
+                iso (assoc :external iso))
               (mark! head status (cond-> {:done (:done cp)}
-                                   iso (assoc :isolated iso))
+                                   iso (assoc :external iso))
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
@@ -3416,9 +3416,9 @@
                 :status (or (get-in verify* [:summary :status])
                             (:status verify*) :unknown)})
       :verify (str "writes self-verify; test_run {} re-runs in-image; "
-                   "test_run {:isolated true} = the full external suite. "
+                   "test_run {:external true} = the full external suite. "
                    "HANDOFF one-shots (humans/scripts, no session needed): "
-                   "`slopp --call test_run '{\"isolated\":true}'` and "
+                   "`slopp --call test_run '{\"external\":true}'` and "
                    "`slopp --call query_commits` — quote these in handoff "
                    "docs; no need to read skill files for the CLI forms")})))
 ^:reads (defn query-slice
@@ -3667,7 +3667,7 @@
   findings, undocumented public surface, effects — then RISK-RANKS so a
   reviewer reads the dangerous forms first instead of eyeballing
   everything. Coverage is STATIC (a form reachable in the call graph from
-  any test namespace is covered) so the signal survives ^:isolated tests,
+  any test namespace is covered) so the signal survives ^:external tests,
   which never touch the in-image trace map; the trace map, when warm,
   refines it. ONE analysis pass (analyze + lint share the memoized kondo).
   Drill into a flagged form with query_slice. `:ns` scopes to one

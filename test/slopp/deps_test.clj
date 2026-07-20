@@ -19,7 +19,7 @@
 ;; ---------------------------------------------------------------------------
 ;; M1a: the delta model (store)
 
-(deftest ^:isolated deps-delta-model
+(deftest ^:external deps-delta-model
   (let [s0 (store/empty-store)]
     (testing "a fresh store has an empty manifest"
       (is (= {} (:deps s0))))
@@ -44,7 +44,7 @@
           (is (= {} (:deps s2)))
           (is (= {} (:deps (store/replay-delta s1 d2)))))))))
 
-(deftest ^:isolated deps-merge-across-lines
+(deftest ^:external deps-merge-across-lines
   (testing "different libs from a diverged line land; same-lib divergence conflicts"
     (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n(defn f [] 1)\n")
           [ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.0"})
@@ -53,7 +53,7 @@
       (is (= {:mvn/version "1.0"} (get-in (:store merged) [:deps 'a/lib])))
       (is (= {:mvn/version "2.0"} (get-in (:store merged) [:deps 'b/lib]))))))
 
-(deftest ^:isolated deps-merge-resolves-version-divergence-to-newer
+(deftest ^:external deps-merge-resolves-version-divergence-to-newer
   ;; same lib pinned to diverging mvn versions auto-resolves to the NEWER
   ;; (numeric, via slopp.semver) with a note — not left as a conflict.
   (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n")]
@@ -81,7 +81,7 @@
 ;; ---------------------------------------------------------------------------
 ;; M1b: persistence (db meta materialization)
 
-(deftest ^:isolated db-materializes-and-reloads-deps
+(deftest ^:external db-materializes-and-reloads-deps
   (let [dir  (temp-dir)
         conn (db/open! dir)]
     (try
@@ -98,7 +98,7 @@
 ;; ---------------------------------------------------------------------------
 ;; M1c: the api ops — reaching the live image classpath + durable round-trip
 
-(deftest ^:isolated deps-add-hot-loads-into-image
+(deftest ^:external deps-add-hot-loads-into-image
   (let [sess (api/open!)]
     (try
       (let [pid0 (.pid ^Process (:process (:image @sess)))
@@ -122,7 +122,7 @@
             (is (empty? (api/deps-list sess))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated deps-add-validates
+(deftest ^:external deps-add-validates
   (let [sess (api/open!)]
     (try
       (is (:error (api/deps-add! sess "not-a-symbol" {:mvn/version "1.0"})))
@@ -130,7 +130,7 @@
       (is (:error (api/deps-remove! sess 'never/declared)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated deps-durable-round-trip-and-branch-inherit
+(deftest ^:external deps-durable-round-trip-and-branch-inherit
   (let [dir (temp-dir)]
     (let [sess (api/open! {:slopp.api/dir dir})]
       (try
@@ -152,7 +152,7 @@
                                    "(clojure.data.json/write-str {:a 1})")))))
           (finally (api/close! sess2)))))))
 
-(deftest ^:isolated build-deps-edn-carries-manifest
+(deftest ^:external build-deps-edn-carries-manifest
   (testing "an empty manifest is byte-identical to the pre-manifest output"
     ;; the build! ours? byte-identity guard depends on this
     (is (= "{:paths [\"src\"]}\n" (build/deps-edn false)))
@@ -164,7 +164,7 @@
       (is (re-find #"org\.clojure/data\.json" s))
       (is (re-find #"2\.5\.0" s)))))
 
-(deftest ^:isolated build-deps-edn-test-alias
+(deftest ^:external build-deps-edn-test-alias
   (testing "no test alias by default — byte-identity preserved"
     (is (not (re-find #":test" (build/deps-edn false {} false))))
     (is (= "{:paths [\"src\"]}\n" (build/deps-edn false {} false)))
@@ -185,8 +185,8 @@
 ;; ---------------------------------------------------------------------------
 ;; M4: dependency surface analysis (clj-kondo over the dep's own jars)
 
-(deftest ^:isolated dep-surface-analysis
-  (testing "a dep's own jars are isolated (classpath diff) and analyzed"
+(deftest ^:external dep-surface-analysis
+  (testing "a dep's own jars are external (classpath diff) and analyzed"
     (let [jars (deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
       (is (some #(str/includes? % "data.json") jars))
       (let [s (deps/surface jars)]
@@ -197,7 +197,7 @@
             (is (= 1 (:varargs-min wr)))
             (is (string? (:doc wr)))))))))
 
-(deftest ^:isolated dep-surface-db-round-trip
+(deftest ^:external dep-surface-db-round-trip
   (let [dir (temp-dir) conn (db/open! dir)]
     (try
       (is (nil? (db/get-dep-surface conn "a/b@1.0")))
@@ -208,7 +208,7 @@
         (is (= [1] (get-in s [:vars 'x.y/f :arities]))))
       (finally (.close conn)))))
 
-(deftest ^:isolated deps-add-returns-surface
+(deftest ^:external deps-add-returns-surface
   (let [sess (api/open!)]
     (try
       (let [r (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
@@ -219,7 +219,7 @@
 ;; ---------------------------------------------------------------------------
 ;; M6: native-compat gate (GraalVM reachability metadata)
 
-(deftest ^:isolated native-verdict-detects-metadata
+(deftest ^:external native-verdict-detects-metadata
   (testing "a dep without reachability metadata → :none (warn, not incompatible)"
     (is (= :none (:verdict (deps/native-verdict
                             (deps/dep-jars 'org.clojure/data.json
@@ -234,7 +234,7 @@
         (.closeEntry jos))
       (is (= :declared (:verdict (deps/native-verdict [jar])))))))
 
-(deftest ^:isolated build-native-warns-on-missing-metadata
+(deftest ^:external build-native-warns-on-missing-metadata
   (let [dir  (temp-dir)
         sess (api/open! {:slopp.api/dir dir})]
     (try
@@ -249,7 +249,7 @@
                     (get-in r [:native :metadata-missing])))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated deps-ride-the-mcp-surface
+(deftest ^:external deps-ride-the-mcp-surface
   (let [sess (api/open!)]
     (try
       (let [call (fn [tool args]
@@ -264,8 +264,8 @@
         (testing "deps_list answers over MCP"
           (is (re-find #"data\.json" (call "deps_list" {})))))
       (finally (api/close! sess)))))
-(deftest ^:isolated build-deps-edn-trace-alias
-  ;; #121: the external tier is the ONLY tier that runs ^:isolated tests, so it
+(deftest ^:external build-deps-edn-trace-alias
+  ;; #121: the external tier is the ONLY tier that runs ^:external tests, so it
   ;; is the only place their trace can come from. When the store carries the
   ;; trace runner, both test aliases route through it instead of straight to
   ;; cognitect — it WRAPS cognitect, so the output the summary parsers read is

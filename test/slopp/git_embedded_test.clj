@@ -23,7 +23,7 @@
        "\n"
        "(deftest f-t (is (= 11 (f 1))))\n"))
 
-(deftest ^:isolated derived-port-is-stable-and-in-range
+(deftest ^:external derived-port-is-stable-and-in-range
   (let [d "/some/store/dir"]
     (testing "same dir → same port, always in the private range"
       (is (= (server/derived-port d) (server/derived-port d)))
@@ -31,7 +31,7 @@
     (testing "different dirs generally differ"
       (is (not= (server/derived-port "/a/b") (server/derived-port "/c/d"))))))
 
-(deftest ^:isolated start-server-reports-actual-bound-port-and-falls-back
+(deftest ^:external start-server-reports-actual-bound-port-and-falls-back
   (let [dir (temp-dir "slopp-embed-port")
         p   (server/derived-port dir)
         s1  (server/start-server! p {:dir dir})]
@@ -46,7 +46,7 @@
             (finally (server/stop-server! s2)))))
       (finally (server/stop-server! s1)))))
 
-(deftest ^:isolated query-git-surfaces-the-url-over-mcp
+(deftest ^:external query-git-surfaces-the-url-over-mcp
   (let [dir  (temp-dir "slopp-embed-mcp")
         sess (api/open! {:slopp.api/dir dir})
         call (fn [tool args]

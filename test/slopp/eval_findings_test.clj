@@ -4,7 +4,7 @@
             [slopp.store :as store]
             [slopp.api :as api]))
 
-(deftest ^:isolated s1-non-compiling-forms-are-rejected-not-silently-committed
+(deftest ^:external s1-non-compiling-forms-are-rejected-not-silently-committed
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 's1.core
@@ -40,7 +40,7 @@
           (is (= [7] (api/query-eval sess "(s1.core/f 7)")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated s2-forward-refs-rejected-at-write-time-and-move-reorders
+(deftest ^:external s2-forward-refs-rejected-at-write-time-and-move-reorders
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 's2.core "(ns s2.core)\n")
@@ -69,7 +69,7 @@
         (is (:error (api/move-form! sess 's2.core 'helper :before 'nope))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated x3-image-loads-follow-dependency-order
+(deftest ^:external x3-image-loads-follow-dependency-order
   ;; 12 chained namespaces: >8 entries puts the store's ns map in hash order,
   ;; which used to drive restart loads -> silent half-loaded images (round 3).
   (let [sess (api/open!)]
@@ -90,7 +90,7 @@
         (is (= [2] (api/query-eval sess "(x3.n12/f12 1)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated x2-rename-loads-the-definition-first
+(deftest ^:external x2-rename-loads-the-definition-first
   ;; many cross-ns callers -> pre-fix, hash-ordered changeset loads could
   ;; reload a caller before the renamed def existed (destructive failure).
   (let [sess (api/open!)]
@@ -111,7 +111,7 @@
         (is (= [14] (api/query-eval sess "(x2.c9/call9 7)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated reload-of-a-store-namespace-is-a-no-op-not-a-file-error   ; self-host eval finding
+(deftest ^:external reload-of-a-store-namespace-is-a-no-op-not-a-file-error   ; self-host eval finding
   ;; Store namespaces have no .clj on the classpath (loaded via load-ns!), so the
   ;; muscle-memory `(require 'the.ns :reload)` threw FileNotFoundException. In the
   ;; owned image there are no source files to reload, so query-eval strips
@@ -127,7 +127,7 @@
         (is (= [4] (api/query-eval sess "(do (require 'rl.core :reload-all) (rl.core/f 3))"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated remove-require-is-symmetric
+(deftest ^:external remove-require-is-symmetric
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'rr.core :requires ["[clojure.string :as str]"

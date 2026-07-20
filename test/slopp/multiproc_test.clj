@@ -10,7 +10,7 @@
             [slopp.render]
             [slopp.api :as api] [slopp.api.branch :as branch]))
 
-(deftest ^:isolated two-servers-one-store
+(deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5b-" (System/nanoTime))
         s1  (api/open! {:slopp.api/dir dir})]
@@ -71,7 +71,7 @@
         (api/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
-(deftest ^:isolated private-checkouts-shared-branch-storage        ; m5c
+(deftest ^:external private-checkouts-shared-branch-storage        ; m5c
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5c-" (System/nanoTime))
         s1  (api/open! {:slopp.api/dir dir})]
@@ -106,7 +106,7 @@
         (api/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
-(deftest ^:isolated incremental-sync-replays-the-suffix-exactly    ; backlog: no full reload
+(deftest ^:external incremental-sync-replays-the-suffix-exactly    ; backlog: no full reload
   (let [b  (store/ingest (store/empty-store) 'ir.core
                          "(ns ir.core)\n(defn f [x] x)\n(defn g [x] x)\n")
         ;; the writer's side: a realistic suffix of ops

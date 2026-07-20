@@ -18,7 +18,7 @@
       (= tool "test_run")
       ;; the ISOLATED suite before a milestone is the documented gate —
       ;; only in-image runs count toward the redundant-pre-flight smell
-      (-> c (update :test-runs (if (:isolated args) identity inc))
+      (-> c (update :test-runs (if (:external args) identity inc))
           (assoc :searches 0))
 
       (#{"query_history" "query_search_history" "query_changes"} tool)

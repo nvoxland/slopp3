@@ -7,7 +7,7 @@
        "(defn add [x y] (+ x y))\n"
        "(deftest add-t (is (= 5 (add 2 3))))\n"))
 
-(deftest ^:isolated add-form-grows-the-namespace
+(deftest ^:external add-form-grows-the-namespace
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'adm target)
@@ -34,7 +34,7 @@
           (is (some #(= "stash!" (:suggest %)) (:warnings r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated delete-form-removes-everywhere
+(deftest ^:external delete-form-removes-everywhere
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'adm target)
@@ -49,7 +49,7 @@
         (testing "remaining tests still verify green"
           (is (= 1 (:pass (:test r))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated deleting-a-defmethod-unregisters-it
+(deftest ^:external deleting-a-defmethod-unregisters-it
   ;; ns-unmap was the delete path's only image effect — a no-op for a
   ;; defmethod, whose name is its form id and whose registration lives in the
   ;; MULTI's method table. So the deleted method KEPT ANSWERING in the image:
@@ -74,7 +74,7 @@
           (is (= [:unknown]
                  (api/query-eval sess "(dmz/area {:shape :square :side 2})")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated replacing-a-defmethods-dispatch-unregisters-the-old
+(deftest ^:external replacing-a-defmethods-dispatch-unregisters-the-old
   ;; Hot-load of the replacement evals the NEW defmethod — registering :sq —
   ;; but nothing removed :square, so the image answered BOTH dispatches while
   ;; the store said only :sq exists. Tests exercising the old dispatch stayed
@@ -100,7 +100,7 @@
                  (api/query-eval sess "(dmr/area {:shape :square :side 2})")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated ambiguous-form-names-refuse-instead-of-guessing
+(deftest ^:external ambiguous-form-names-refuse-instead-of-guessing
   ;; A legacy `(declare b)` and `(defn b …)` are TWO store elements answering
   ;; to the same name. `store/form-named` returns the FIRST match, so a
   ;; destructive write silently hit whichever happened to come first — that is

@@ -2,7 +2,7 @@
   "The BUILT project's traced test entry point (#121) — cognitect's runner
   wrapped in slopp's form tracer, so the EXTERNAL tier produces a trace.
 
-  Why this exists: `^:isolated` tests only ever run out-of-process (they spawn
+  Why this exists: `^:external` tests only ever run out-of-process (they spawn
   images), so the in-image tracer never sees them — 69% of slopp's own suite
   had zero runtime evidence and read as `:warranty {:covered 0}`.
 

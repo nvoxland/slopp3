@@ -5,7 +5,7 @@
 (def catch-frames
   "(try (tr.core/outer) (catch Exception e (mapv str (take 4 (.getStackTrace e)))))")
 
-(deftest ^:isolated stack-traces-map-to-vfs-lines                 ; F6
+(deftest ^:external stack-traces-map-to-vfs-lines                 ; F6
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'tr.core

@@ -14,7 +14,7 @@
        "(deftest price-t\n"
        "  (is (= 1060 (price [{:cents 500} {:cents 500}] 0.01))))\n"))
 
-(deftest ^:isolated subform-edit-touches-only-what-it-names
+(deftest ^:external subform-edit-touches-only-what-it-names
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sf.core target)
@@ -47,7 +47,7 @@
                                                 "(+ (inc a) (inc a))"
                                                 "(eval a)")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated text-misses-teach-and-reflow
+(deftest ^:external text-misses-teach-and-reflow
   ;; text-mode misses returned a bare error (no :source-now to correct
   ;; against), and exact-text matching is brittle across docstring
   ;; reflows — a whitespace-fuzzy fallback should land the unique match.
@@ -68,7 +68,7 @@
           (is (nil? (:error r)) (pr-str r))
           (is (re-find #"New doc" (api/query-source sess 'tm.core)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated fragment-matches-suggest-the-enclosing-form
+(deftest ^:external fragment-matches-suggest-the-enclosing-form
   ;; the recurring loop: a match that opens a delimiter it doesn't close is
   ;; refused with the rule — but when the fragment appears in the form, the
   ;; error should SHOW the smallest complete form containing it, so the

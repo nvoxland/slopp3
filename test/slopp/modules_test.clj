@@ -75,7 +75,7 @@
           "a.pub.deep.deeper is callable from a.pub.deep")
       (is (some #(= :visibility (:rule %))
                 (viol {} [(row 'a.pub.other 'a.pub.deep.deeper)]))
-          "but NOT from a.pub.other — sibling sub-packages are isolated")
+          "but NOT from a.pub.other — sibling sub-packages are external")
       (is (re-find #"\^:export"
                    (:error (first (viol {"b.user" #{"a.pub"}}
                                         [(row 'b.user 'a.pub.deep)]))))
@@ -105,7 +105,7 @@
           "the refusal names the granted subtree"))
     (testing "same-ns rows are exempt"
       (is (nil? (viol {"b.user" #{}} [(row 'b.user 'b.user)]))))))
-(deftest ^:isolated the-manifest-follows-ns-renames
+(deftest ^:external the-manifest-follows-ns-renames
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ma.core "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n")
@@ -125,7 +125,7 @@
                                              "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
                                              :prompt "still declared under the new names")))))
       (finally (api/close! sess)))))
-(deftest ^:isolated an-unadopted-populated-store-adopts-on-reopen
+(deftest ^:external an-unadopted-populated-store-adopts-on-reopen
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-modules-adopt"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -149,7 +149,7 @@
                                              "(defn g \"G.\" [x] (core/f (inc x)))"
                                              :prompt "gated edits work under the adopted manifest"))))
         (finally (api/close! sess2))))))
-(deftest ^:isolated cycle-refusal-is-local-to-the-new-edge
+(deftest ^:external cycle-refusal-is-local-to-the-new-edge
   (testing "module-path answers reachability deterministically"
     (let [m {"a.x" #{"b.y"} "b.y" #{"c.z"}}]
       (is (= ["a.x" "b.y" "c.z"] (store/module-path m "a.x" "c.z")))
@@ -181,7 +181,7 @@
   (testing "dep-only modules (declaring nothing) sit at layer 0"
     (is (= [["z.leaf"] ["z.top"]]
            (:layers (store/module-layers {"z.top" #{"z.leaf"}}))))))
-(deftest ^:isolated the-module-lifecycle
+(deftest ^:external the-module-lifecycle
   (let [sess (api/open!)]
     (try
       (is (nil? (:error (api/ingest! sess 'ma.core
@@ -320,7 +320,7 @@
       (is (nil? (modules/tier-refusal (at eff-src :reads) 'app.core 'tick!)))
       (is (nil? (modules/tier-refusal (at eff-src :effects) 'app.core 'tick!))))))
 
-(deftest ^:isolated module-purity-verb
+(deftest ^:external module-purity-verb
   (let [sess (api/open!)]
     (try
       (testing "declares a tier, folded onto the store"
@@ -338,7 +338,7 @@
       (is (:error (api/module-tier! sess "has spaces" :pure))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated purity-gate-refuses-effectful-writes
+(deftest ^:external purity-gate-refuses-effectful-writes
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'pcore "(ns pcore)\n\n(defn add \"A.\" [x y] (+ x y))\n")
@@ -407,7 +407,7 @@
       (let [s (on deep-noexport 'app.core.impl)]
         (is (nil? (modules/schema-refusal s 'app.core.impl 'handle)))))))
 
-(deftest ^:isolated schema-require-gate-refuses-boundary-writes
+(deftest ^:external schema-require-gate-refuses-boundary-writes
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sg.core "(ns sg.core)\n\n(defn seed \"S.\" [x] x)\n")
@@ -484,7 +484,7 @@
       (let [s (on private 'app.core)]
         (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))))
 
-(deftest ^:isolated namespaced-keys-gate-refuses-boundary-writes
+(deftest ^:external namespaced-keys-gate-refuses-boundary-writes
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'nk.core "(ns nk.core)\n\n(defn seed \"S.\" [x] x)\n")
@@ -562,7 +562,7 @@
         (is (re-find #"functional-core" (str (:refuse gc))))
         (is (empty? (:advisories gc)))))))
 
-(deftest ^:isolated advisory-write-gate-warns-but-proceeds
+(deftest ^:external advisory-write-gate-warns-but-proceeds
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'aw.core "(ns aw.core)\n\n(defn seed \"S.\" [x] x)\n")
@@ -579,7 +579,7 @@
           (is (re-find #"namespaced" (str (first (:advisories r)))) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated purity-gate-exempts-test-namespaces
+(deftest ^:external purity-gate-exempts-test-namespaces
   ;; A test namespace belongs to its module (x.y-test → x.y), so declaring a
   ;; module :pure was silently making its TESTS unwritable — they set up
   ;; sessions and exercise effects by design, which is the whole job. The tier
@@ -603,7 +603,7 @@
               (str "tests exercise effects by design: " (pr-str r)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated foreign-keys-marks-a-third-party-map-and-polices-itself
+(deftest ^:external foreign-keys-marks-a-third-party-map-and-polices-itself
   ;; require-namespaced-keys cannot be satisfied by a fn that destructures
   ;; SOMEONE ELSE'S map — slopp.build/arg-style takes clj-kondo's analysis, and
   ;; we do not get to rename kondo's keys. ^:foreign-keys records that, and
@@ -631,7 +631,7 @@
           (is (re-find #"remove the flag" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated rule-test-applicability-is-declared-not-rediscovered
+(deftest ^:external rule-test-applicability-is-declared-not-rediscovered
   ;; Whether a rule applies to TEST namespaces bit twice: a :pure tier silently
   ;; stranded its own test namespace, and effect-naming flagged three test
   ;; helpers. Each was fixed ad hoc. Worse, two surfaces answered the question
@@ -658,7 +658,7 @@
             "the effectful TEST namespace must not veto the module's tier")
         (finally (api/close! sess))))))
 
-(deftest ^:isolated namespaced-keys-gate-scope-is-pinned-in-both-directions
+(deftest ^:external namespaced-keys-gate-scope-is-pinned-in-both-directions
   ;; The anti-drift guard. A rule stated only in prose drifts: I read
   ;; "namespaced boundary keys" as a mandate to namespace keys store-wide and
   ;; set off migrating :session, :dir, :values — overloaded keys whose renames

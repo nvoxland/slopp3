@@ -17,7 +17,7 @@
                     "(defn g [x] (a/f (a/f x)))\n"
                     "(deftest b-t (is (= 3 (g 1))))\n")))
 
-(deftest ^:isolated project-wide-test-run                          ; F-3c1
+(deftest ^:external project-wide-test-run                          ; F-3c1
   (let [sess (api/open!)]
     (try
       (seed! sess)
@@ -31,7 +31,7 @@
         (is (contains? (get (:test-map @sess) 'ta.b/b-t) 'ta.a/f)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-eval-surfaces-errors                     ; F-3c2
+(deftest ^:external query-eval-surfaces-errors                     ; F-3c2
   (let [sess (api/open!)]
     (try
       (seed! sess)
@@ -43,7 +43,7 @@
                      (:error (api/query-eval sess "(ta.a/f)")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated references-cross-namespaces                    ; F-3c3
+(deftest ^:external references-cross-namespaces                    ; F-3c3
   (let [sess (api/open!)]
     (try
       (seed! sess)
@@ -53,7 +53,7 @@
         (is (some #(= 'ta.a (:from-ns %)) refs)))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated traceless-group-verification-covers-all-touched-nses ; F-3c5
+(deftest ^:external traceless-group-verification-covers-all-touched-nses ; F-3c5
   (let [sess (api/open!)]
     (try
       (seed! sess)

@@ -35,7 +35,7 @@
 (defn- log-messages [^Git g]
   (mapv #(.getFullMessage %) (-> g (.log) (.call))))
 
-(deftest ^:isolated clone-fetch-and-branches-over-smart-http
+(deftest ^:external clone-fetch-and-branches-over-smart-http
   ;; 0 = the OS assigns a genuinely-free loopback port ATOMICALLY (#136), and
   ;; srv's :port/:url are the only ones that can be trusted — a port chosen
   ;; before binding is a guess another shard can win.
@@ -89,7 +89,7 @@
         (server/stop-server! srv)
         (api/close! sess)))))
 
-(deftest ^:isolated empty-store-clones-as-empty-repo
+(deftest ^:external empty-store-clones-as-empty-repo
   (let [dir  (temp-dir "slopp-git-empty")
         sess (api/open! {:slopp.api/dir dir})
         srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
@@ -102,7 +102,7 @@
         (server/stop-server! srv)
         (api/close! sess)))))
 
-(deftest ^:isolated wip-refs-expose-unmilestoned-work
+(deftest ^:external wip-refs-expose-unmilestoned-work
   ;; the protocol can't say "uncommitted changes" (that's a working-dir
   ;; feature) — the idiom is a synthetic ref: refs/heads/wip/<branch> holds
   ;; a throwaway commit of the LIVE store state whenever it differs from
@@ -159,7 +159,7 @@
         (server/stop-server! srv)
         (api/close! sess)))))
 
-(deftest ^:isolated remote-is-read-only
+(deftest ^:external remote-is-read-only
   ;; the remote serves clone/fetch only — git-receive-pack is never advertised,
   ;; so any push is refused (edits arrive through slopp's write tools, not push).
   (let [dir  (temp-dir "slopp-git-ro")
@@ -193,7 +193,7 @@
         (server/stop-server! srv)
         (api/close! sess)))))
 
-(deftest ^:isolated real-git-cli-smoke
+(deftest ^:external real-git-cli-smoke
   ;; the actual `git` binary is the compatibility oracle; skip silently
   ;; when it isn't installed
   (let [git-bin (try (zero? (:exit (sh/sh "git" "--version")))
@@ -215,7 +215,7 @@
           (finally
             (server/stop-server! srv)
             (api/close! sess)))))))
-(deftest ^:isolated the-served-port-is-the-bound-one-not-the-requested-one
+(deftest ^:external the-served-port-is-the-bound-one-not-the-requested-one
   ;; THE flake (observed once on a milestone gate 2026-07-16). Two bugs stacked:
   ;;
   ;; 1. free-port did (ServerSocket. 0), read the port, and CLOSED it — so the
