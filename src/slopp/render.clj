@@ -5,24 +5,17 @@
   to disk unless an explicit build asks."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store]))
-
-(def ^:private ^:ambient-ok render-cache
-  "elements-vector -> rendered string (bounded). Every write renders the same
-  immutable elements several times (warnings pre/post, offsets, analysis) —
-  item 2: the repeats were measurable per-write wall."
-  (atom {}))
+            [slopp.store :as store] [slopp.cache :as cache]))
 
 ^:reads (defn render-ns
   "Render `ns-sym`'s current source as a string from the store. Memoized on
-  the (immutable) elements vector."
+  the (immutable) elements vector, through the blessed cache — so a test can
+  reset it or bypass it entirely, and the memo is countable in
+  `cache/registry` rather than being an invisible atom."
   [store ns-sym]
   (if-let [elements (store/elements store ns-sym)]
-    (or (get @render-cache elements)
-        (let [s (apply str (map (comp n/string :node) elements))]
-          (swap! render-cache
-                 (fn [c] (assoc (if (>= (count c) 32) {} c) elements s)))
-          s))
+    (cache/cached ::render-ns elements
+                  (fn [] (apply str (map (comp n/string :node) elements))))
     ""))
 
 (defn ns-path

@@ -11,7 +11,7 @@ slopp.commit: slopp.api slopp.mcp slopp.store
 slopp.concurrency: slopp.api slopp.store
 slopp.db: slopp.api slopp.render slopp.store
 slopp.deps: slopp.api slopp.build slopp.db slopp.mcp slopp.repl slopp.store
-slopp.edit: slopp.image slopp.index slopp.render slopp.repl slopp.store
+slopp.edit: slopp.cache slopp.image slopp.index slopp.render slopp.repl slopp.store
 slopp.edit-group: slopp.api slopp.store
 slopp.effect-boundary: slopp.api slopp.edit
 slopp.episode: slopp.api slopp.mcp slopp.store slopp.turn
@@ -44,7 +44,7 @@ slopp.orientation: slopp.api slopp.edit
 slopp.phase4: slopp.api slopp.http slopp.store
 slopp.refactor: slopp.edit slopp.index slopp.render slopp.store
 slopp.rename: slopp.api slopp.store
-slopp.render: slopp.store
+slopp.render: slopp.cache slopp.store
 slopp.store: slopp.semver
 slopp.subform: slopp.api
 slopp.subform-plan: slopp.refactor slopp.store

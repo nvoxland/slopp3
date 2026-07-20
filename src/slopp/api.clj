@@ -3581,8 +3581,14 @@
                    " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
                    (pr-str module))}
 
-      (not (#{:pure :reads :effects} tier))
-      {:error (str "tier must be :pure, :reads, or :effects — got " (pr-str tier))}
+      (not (#{:pure :internal :external :reads :effects} tier))
+      {:error (str "tier must be :pure, :internal, or :external — got "
+                   (pr-str tier)
+                   ". :pure = referentially transparent; :internal = may mutate"
+                   " IN-PROCESS state (a memo, a registry) but touches nothing"
+                   " outside; :external = IO (files, subprocesses, network, db)."
+                   " (:reads and :effects are legacy spellings of :internal and"
+                   " :external.)")}
 
       ;; a tier is an ASSERTION ABOUT THE CODE, so check it against the
       ;; code. Gating only future writes let :pure land on a module full of

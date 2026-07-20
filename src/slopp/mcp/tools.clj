@@ -374,7 +374,7 @@
                                :prompt {:type "string"}}
                   :required ["from" "to"]}}
    {:name "module_purity"
-    :description "Declare a module's purity TIER for the functional-core gate (D9): :pure (may reach NO effect, incl. an opaque-dep read), :reads (reads ok, no mutation), :effects (unrestricted — the periphery). modules are the first two ns segments; :effects or undeclared = ungated. Say WHY in prompt. Read tiers: query_depends {modules true}."
+    :description "Declare a NAMESPACE's purity tier for the functional-core gate. :pure = referentially transparent (no mutation, no rand/slurp) — that is what lets the generative schema check run on it; :internal = may mutate IN-PROCESS state (a memo, a registry) but touches NOTHING outside the process; :external = IO (files, subprocesses, network, db). Undeclared = :external = ungated. Scope is a namespace PATH and the MOST SPECIFIC declaration wins, so a pure core one level below an effectful module (slopp.api.shape inside slopp.api) is declarable. Declaring VERIFIES the code already there and refuses a tier the existing forms exceed. The axis is internal/external because that is what decides how a thing must be TESTED: external needs isolation (fresh JVM, temp dirs), internal needs only a cache/state reset, pure needs nothing. Caches must go through slopp.cache so `internal` stays checkable. Say WHY in prompt. (:reads/:effects are legacy spellings of :internal/:external.) Read tiers: query_depends {modules true}."
     :inputSchema {:type "object"
                   :properties {:module {:type "string"}
                                :tier {:type "string"}

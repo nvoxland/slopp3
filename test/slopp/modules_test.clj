@@ -290,32 +290,35 @@
 
 (deftest purity-tier-gate
   (let [pure-src "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n"
-        eff-src  "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n"]
-    (testing "an undeclared module (:effects default) gates nothing"
+        eff-src  "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n"
+        io-src   "(ns app.core)\n\n(defn grab! \"G.\" [p] (spit p \"x\"))\n"
+        at       (fn [src tier]
+                   (first (store/record-module-tier
+                           (store/ingest (store/empty-store) 'app.core src)
+                           "app.core" tier)))]
+    (testing "an undeclared namespace (:external default) gates nothing"
       (let [cand (store/ingest (store/empty-store) 'app.core eff-src)]
         (is (nil? (modules/tier-refusal cand 'app.core 'tick!)))))
     (testing ":pure refuses a form that reaches a mutation, with teaching"
-      (let [[t _] (store/record-module-tier
-                   (store/ingest (store/empty-store) 'app.core eff-src)
-                   "app.core" :pure)]
+      (let [t (at eff-src :pure)]
         (is (re-find #":pure" (str (modules/tier-refusal t 'app.core 'tick!))))
         (is (re-find #"functional-core"
                      (str (modules/tier-refusal t 'app.core 'tick!))))))
     (testing ":pure allows a pure form"
-      (let [[t _] (store/record-module-tier
-                   (store/ingest (store/empty-store) 'app.core pure-src)
-                   "app.core" :pure)]
-        (is (nil? (modules/tier-refusal t 'app.core 'add)))))
-    (testing ":effects is unrestricted"
-      (let [[t _] (store/record-module-tier
-                   (store/ingest (store/empty-store) 'app.core eff-src)
-                   "app.core" :effects)]
-        (is (nil? (modules/tier-refusal t 'app.core 'tick!)))))
-    (testing ":reads refuses a mutation-reaching form"
-      (let [[t _] (store/record-module-tier
-                   (store/ingest (store/empty-store) 'app.core eff-src)
-                   "app.core" :reads)]
-        (is (re-find #":reads" (str (modules/tier-refusal t 'app.core 'tick!))))))))
+      (is (nil? (modules/tier-refusal (at pure-src :pure) 'app.core 'add))))
+    (testing ":external is unrestricted"
+      (is (nil? (modules/tier-refusal (at eff-src :external) 'app.core 'tick!))))
+    (testing ":internal ALLOWS in-process mutation — a memo is not an effect
+              on the world, and treating it as one is what put a memoized
+              projection in the same class as a subprocess spawn"
+      (is (nil? (modules/tier-refusal (at eff-src :internal) 'app.core 'tick!))))
+    (testing ":internal REFUSES what leaves the process"
+      (let [msg (str (modules/tier-refusal (at io-src :internal) 'app.core 'grab!))]
+        (is (re-find #":internal" msg) msg)
+        (is (re-find #"(?i)outside this process" msg) msg)))
+    (testing "legacy spellings still resolve: :reads => :internal, :effects => :external"
+      (is (nil? (modules/tier-refusal (at eff-src :reads) 'app.core 'tick!)))
+      (is (nil? (modules/tier-refusal (at eff-src :effects) 'app.core 'tick!))))))
 
 (deftest ^:isolated module-purity-verb
   (let [sess (api/open!)]

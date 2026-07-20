@@ -65,6 +65,26 @@
   [target]
   (str/ends-with? (name target) "!"))
 
+(def external-leaves
+  "Core anchors that touch the world OUTSIDE this process — as opposed to the
+  rest of `effectful-leaves`, which mutate in-process state (`swap!`,
+  `reset!`, transients, refs, agents).
+
+  This is the split the `:internal` tier rests on. Measured on slopp: the
+  read/write axis put `render` and `edit.refs` in the same bucket as `db` and
+  `repl`, because a memo `swap!` and a `git push` are both writes. The
+  internal/external axis separates them, and it is the axis that decides how a
+  thing must be TESTED: anything external needs isolation (fresh JVM, temp
+  dirs, cleanup), while in-process state needs only a reset.
+
+  Reads count here too — `slurp` needs the file to exist, so an external read
+  demands the same test isolation as an external write."
+  '#{clojure.core/spit clojure.core/delete-file clojure.core/slurp
+     clojure.core/file-seq clojure.core/line-seq
+     clojure.java.io/file clojure.java.io/reader clojure.java.io/writer
+     clojure.java.io/copy clojure.java.io/delete-file
+     clojure.java.shell/sh})
+
 (defn effectful-vars
   "Set of user var nodes that transitively reach an effectful anchor (D6).
   An anchor is a `!`-leaf, a bang-named callee, OR (M3) a call into an OPAQUE
@@ -372,6 +392,30 @@
   '#{clojure.core/rand clojure.core/rand-int clojure.core/rand-nth
      clojure.core/random-uuid clojure.core/shuffle
      clojure.core/slurp clojure.core/line-seq clojure.core/read-line})
+
+(defn externally-effectful-vars
+  "Set of user var nodes that transitively reach the world OUTSIDE this
+   process: an `external-leaves` anchor, or a call into an OPAQUE external
+   dependency that `pure-vars` does not cover. In-process mutation
+   (`swap!`, `reset!`, transients, refs) is NOT an anchor here.
+
+   This is what the `:internal` tier enforces. `effectful-vars` answers a
+   different question — did anything change at all — which put a memoized
+   projection in the same class as a subprocess spawn. Monotonic fixpoint,
+   cycle-safe; mirrors `effectful-vars`."
+  [analysis external-ns? pure-vars]
+  (let [edges (call-graph analysis)
+        ext?  (or external-ns? (constantly false))
+        pure  (or pure-vars #{})
+        pure? (fn [t] (or (contains? pure t)
+                          (contains? pure (some-> (namespace t) symbol))))
+        anchor? (fn [t]
+                  (or (contains? external-leaves t)
+                      (and (ext? (some-> (namespace t) symbol))
+                           (not (pure? t)))))]
+    (loop [eff (set (for [[n ts] edges :when (some anchor? ts)] n))]
+      (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
+        (if (= eff eff') eff (recur eff'))))))
 
 (defn nondeterministic-vars
   "Set of user var nodes that transitively reach a `nondeterministic-leaves`

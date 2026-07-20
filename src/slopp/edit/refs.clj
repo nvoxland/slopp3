@@ -7,7 +7,7 @@
   (:require [rewrite-clj.node :as n]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.cache :as cache]))
 (defn ^:export walk-pruned
   "THE quote-aware traversal: depth-first over sexpr `x`, PRUNING quoted
   subtrees (a quoted symbol is data, never a reference). Returns the
@@ -151,14 +151,6 @@
   carrier self-ref was keeping dead forms alive)."
   [rs]
   (remove #(and (:from-form %) (= (:from-form %) (:to-form %))) rs))
-(def ^:private ^:ambient-ok refs-memo
-  "Memoize-LAST of the whole-store graph, keyed on store-value IDENTITY:
-  the store is immutable, so a new value appears only on a write — same
-  value → same graph, by construction (no content hashing needed). Holds
-  one [store records] pair; a benign race under concurrent lines costs at
-  most a rebuild, never a wrong answer. `refs` is O(store); this collapses
-  the several whole-graph calls per done/milestone to one build."
-  (atom nil))
 ^:reads (defn ^:export refs
   "EVERY reference in the store as canonical records — THE single source
   of truth for 'who references what'. Producers normalize here (kondo
@@ -172,16 +164,14 @@
   immutable store value so repeated whole-graph queries within an
   operation are free."
   [st]
-  (let [c @refs-memo]
-    (if (identical? st (first c))
-      (second c)
-      (let [known (set (keys (:namespaces st)))
-            v (vec (drop-self
-                    (concat (static-refs st known (sort known))
-                            (carrier-refs st known (sort known))
-                            (declared-refs st known (sort known)))))]
-        (reset! refs-memo [st v])
-        v))))
+  (cache/cached-last
+   ::refs st
+   (fn []
+     (let [known (set (keys (:namespaces st)))]
+       (vec (drop-self
+             (concat (static-refs st known (sort known))
+                     (carrier-refs st known (sort known))
+                     (declared-refs st known (sort known)))))))))
 (defn ^:export ns-refs
   "The graph SLICE for one namespace's outbound references — the same
   canonical records `refs` yields, produced for `nsx` alone (the write
@@ -276,13 +266,6 @@
           {:order (into order (map nm->id) remaining)
            :cycle (vec (sort (map #(symbol (str nsx) (str %)) remaining)))})))))
 
-(def ^:private ^:ambient-ok kw-refs-memo
-  "Memoize-LAST of the whole-store KEYWORD graph, keyed on store-value
-  IDENTITY — the sibling of `refs-memo`, same rationale: the store is
-  immutable, so a new value appears only on a write, and a benign race under
-  concurrent lines costs at most a rebuild, never a wrong answer."
-  (atom nil))
-
 (defn- form-keyword-uses
   "`[[kw via] …]` for one form's sexpr — every keyword it references, and HOW.
 
@@ -335,15 +318,13 @@
   Quote-pruned via the shared `walk-pruned`, and memoized on the immutable
   store value exactly as `refs` is."
   [st]
-  (let [c @kw-refs-memo]
-    (if (identical? st (first c))
-      (second c)
-      (let [v (vec (for [nsx  (sort (keys (:namespaces st)))
-                         e    (store/forms st nsx)
-                         :when (:name e)
-                         :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                         [kw via] (when s (form-keyword-uses s))]
-                     {:from-form (:id e) :from-ns nsx :from-var (:name e)
-                      :kw kw :via via}))]
-        (reset! kw-refs-memo [st v])
-        v))))
+  (cache/cached-last
+   ::keyword-refs st
+   (fn []
+     (vec (for [nsx  (sort (keys (:namespaces st)))
+                e    (store/forms st nsx)
+                :when (:name e)
+                :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                [kw via] (when s (form-keyword-uses s))]
+            {:from-form (:id e) :from-ns nsx :from-var (:name e)
+             :kw kw :via via})))))

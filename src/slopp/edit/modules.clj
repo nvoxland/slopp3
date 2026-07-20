@@ -205,53 +205,61 @@
 
 (defn ^:export ^{:rule/applies-to :production} tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
-   form whose reachability exceeds its module's declared purity tier.
-   `:pure` rejects ANY effect (incl. an opaque-dep read) AND any NON-DETERMINISM
-   (rand/slurp — a pure core must be referentially transparent, not merely
-   mutation-free); `:reads` rejects a reach to a MUTATION (an in-process/external
-   write or a `!`-named callee) but allows reads and non-determinism; `:effects`
-   — or an undeclared module — is unrestricted. Built on index/effectful-vars +
-   index/nondeterministic-vars over the candidate ns's analysis, so it inherits
-   D6's single-ns, bang-name-propagating soundness (a cross-ns effect is seen only
-   when the callee is `!`-named; interop non-determinism is out of scope).
+   form whose reachability exceeds its namespace's declared tier.
+
+   - `:pure` rejects ANY effect (including an opaque-dep read) AND any
+     NON-DETERMINISM (`rand`/`slurp`) — a pure core must be referentially
+     transparent, not merely mutation-free. That is what lets the generative
+     schema oracle run on it at all.
+   - `:internal` rejects only what leaves the PROCESS — file/subprocess/network
+     IO and opaque external-dep calls. In-process mutation (a memo, a
+     registry) is allowed: it is resettable, invisible outside, and needs no
+     test isolation.
+   - `:external` — or an undeclared namespace — is unrestricted.
+
+   `:reads` is accepted as a legacy spelling of `:internal` and `:effects` of
+   `:external`; both retire (see `tier-order` for why `:reads` measured zero).
+
+   Built on `index/effectful-vars`, `index/externally-effectful-vars` and
+   `index/nondeterministic-vars`, so it inherits D6's single-ns,
+   bang-name-propagating soundness: a CROSS-namespace effect is seen only when
+   the callee is `!`-named. That bound is why the blessed cache accessor
+   (`slopp.cache/cached`) is deliberately NOT bang-named — memoizing must not
+   make every caller effectful. The graph-level check
+   (`layering-violations`) is what covers the gap.
+
    Returns a teaching string, or nil when clean."
   [candidate ns-sym form-name]
-  (let [tier (tier-for candidate ns-sym)]
-    (when ;; A TEST namespace belongs to its module (x.y-test → x.y), but the tier
-    ;; is a claim about the functional CORE, not about the code that drives
-    ;; it: tests set up sessions, do IO and exercise effects by design.
-    ;; Gating them makes declaring a module :pure silently strand its own
-    ;; test namespace — caught by cleanup {all true} on slopp's own store,
-    ;; where :pure on slopp.normalize had already stranded its tests.
-    ;; the test exemption now lives in the registry (^{:rule/applies-to
-    ;; :production}), read by gate-check — not restated here, where a REPORT
-    ;; of this same rule could not see it
-    (not= tier :effects)
+  (let [raw  (tier-for candidate ns-sym)
+        tier ({:reads :internal :effects :external} raw raw)]
+    (when (not= tier :external)
       (let [analysis (index/analyze (render/render-ns candidate ns-sym))
             dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
             eff      (if (= tier :pure)
                        (index/effectful-vars analysis dep-nses (:dep-pure candidate))
-                       (index/effectful-vars analysis nil nil))
+                       (index/externally-effectful-vars analysis dep-nses (:dep-pure candidate)))
             nondet   (when (= tier :pure) (index/nondeterministic-vars analysis))
             vnode    (symbol (str ns-sym) (str form-name))]
         (cond
           (contains? eff vnode)
           (str ns-sym "/" form-name " reaches "
-               (if (= tier :pure) "an effect" "a mutation")
+               (if (= tier :pure) "an effect" "OUTSIDE this process (IO)")
                " but " ns-sym " is governed by :" (name tier)
-               " (functional-core gate) — this is CORE: move the effect into a"
-               " SHELL namespace (one declared :effects), or loosen the tier"
-               " with module_purity {module \""
-               ns-sym "\" tier :"
-               (if (= tier :pure) "reads" "effects") "} (say why)")
+               " (functional-core gate) — move it into an :external namespace"
+               (when (= tier :pure)
+                 ", or to :internal if it only mutates in-process state")
+               ", or loosen the tier with module_purity {module \""
+               ns-sym "\" tier :" (if (= tier :pure) "internal" "external")
+               "} (say why)")
 
           (and nondet (contains? nondet vnode))
           (str ns-sym "/" form-name " reaches non-determinism (rand/slurp) but"
-               " module " (module-of ns-sym) " is declared :pure — a pure core"
-               " must be referentially transparent (deterministic in its args);"
-               " move the non-determinism to a periphery namespace, or loosen the"
-               " tier with module_purity {module \"" (module-of ns-sym)
-               "\" tier :reads} (say why)"))))))
+               " " ns-sym " is declared :pure — a pure core must be"
+               " referentially transparent (deterministic in its args), which"
+               " is what lets the generative schema check run on it. Move the"
+               " non-determinism to an :external namespace, or loosen the"
+               " tier with module_purity {module \"" ns-sym
+               "\" tier :internal} (say why)"))))))
 
 (defn ^:export module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):
@@ -467,33 +475,53 @@
   (:refuse (gate-check candidate ns-sym form-name)))
 
 (def ^:export tier-order
-  "Purity tiers from strictest to loosest. A namespace may only require
-   namespaces at its OWN tier or stricter — core never depends on shell.
-   Exported because comparing tiers is not `edit`'s private business: the
-   done-time shell-widening advisory asks whether a tier got LOOSER, and
-   re-deriving the ordering there would be a second copy of it."
-  {:pure 0 :reads 1 :effects 2})
+  "Purity tiers, strictest to loosest. A namespace may only require namespaces
+   at its OWN tier or stricter — core never depends on the edge.
+
+   - `:pure`     — referentially transparent. No mutation, no non-determinism.
+   - `:internal` — may mutate IN-PROCESS state (a memo, a registry); touches
+                   nothing outside the process.
+   - `:external` — may do IO: files, subprocesses, network, the database.
+
+   `:reads` (read-yes/write-no) was RETIRED: measured across this whole store
+   it had **zero** members — 6 pure, 0 reads, 19 effects — because the
+   read/write axis puts a memo `swap!` in the same class as a `git push`.
+   internal/external carves the code where it actually divides, and it is the
+   axis that decides how a thing must be TESTED: external needs isolation
+   (fresh JVM, temp dirs), internal needs only a state reset, pure needs
+   nothing. `:effects` is accepted as a legacy spelling of `:external`.
+
+   Exported because comparing tiers is not `edit`'s private business — the
+   done-time shell-widening advisory asks whether a tier got LOOSER."
+  {:pure 0 :internal 1 :external 2})
 
 (defn ^:export layering-violations
-  "Namespaces required by `ns-sym` whose tier is LOOSER than `tier`, as
-   `[{:requires :tier} …]`. Empty when the dependency graph layers correctly.
+  "Namespaces required by `ns-sym` that reach OUTSIDE the process while
+   `ns-sym` claims not to, as `[{:requires :tier} …]`. Empty when it layers.
+
+   The rule is EXTERNALITY, not tier ordering: a non-`:external` namespace may
+   not require an `:external` one. `:pure` MAY depend on `:internal` — an
+   in-process memo is observationally pure from outside, and forbidding it
+   would mean the pure core could use no memoized helper at all, which in this
+   codebase means no pure core at all. (The coupling is real but bounded: a
+   `:pure` namespace is then only as referentially transparent as its
+   dependency's cache keys are correct. That is a bug in the cache, not a
+   layering error — and it is why caches go through `slopp.cache`.)
 
    This is the check `tier-refusal` cannot make. Effect-reachability sees a
    CROSS-NAMESPACE effect only when the callee is `!`-named (D6's documented
-   soundness bound), so a core namespace calling a non-bang effectful fn in a
-   shell namespace slips through it entirely. Layering reads the REQUIRE
-   graph, so it holds regardless of naming discipline: if you depend on the
-   shell you are not core, whatever the callee happens to be called.
-
-   Direction is easy to get backwards: `:pure` (0) may require only `:pure`;
-   `:effects` (2) may require anything. The shell depends on the core, never
-   the reverse — that IS the functional-core shape."
+   soundness bound), so a core namespace calling a non-bang IO fn in an edge
+   namespace slips through it entirely. Layering reads the REQUIRE graph, so
+   it holds regardless of naming discipline."
   [store ns-sym tier]
-  (let [lvl (tier-order tier 2)]
-    (vec (for [req  (store/ns-requires store ns-sym)
-               :let [rt (tier-for store req)]
-               :when (> (tier-order rt 2) lvl)]
-           {:requires req :tier rt}))))
+  (let [norm  (fn [t] ({:reads :internal :effects :external} t t))
+        mine  (norm tier)]
+    (if (= mine :external)
+      []
+      (vec (for [req  (store/ns-requires store ns-sym)
+                 :let [rt (norm (tier-for store req))]
+                 :when (= rt :external)]
+             {:requires req :tier rt})))))
 
 (defn ^:export tier-violations
   "The forms ALREADY in `module` that would violate `tier`, as
