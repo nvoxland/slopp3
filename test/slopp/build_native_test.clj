@@ -12,7 +12,7 @@
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
-(deftest ^:external arg-style-t
+(deftest arg-style-t
   (testing "a single fixed arity of 1 receives the CLI args as ONE vector"
     (is (= :vector (build/arg-style {:fixed-arities #{1}}))))
   (testing "varargs and every other shape is applied -main style"
@@ -21,7 +21,7 @@
     (is (= :apply (build/arg-style {:fixed-arities #{1} :varargs-min-arity 1})))
     (is (= :apply (build/arg-style {:fixed-arities #{0 1}})))))
 
-(deftest ^:external launcher-source-t
+(deftest launcher-source-t
   (let [src (build/launcher-source 'calc.core/run-cli :vector)]
     (is (re-find #"\(ns native\.main" src))
     (is (re-find #":gen-class" src))
@@ -31,7 +31,7 @@
   (is (re-find #"\(apply calc\.core/run-cli args\)"
                (build/launcher-source 'calc.core/run-cli :apply))))
 
-(deftest ^:external recipe-content-t
+(deftest recipe-content-t
   (testing "native deps.edn parses and carries the :native alias"
     (let [d (edn/read-string (build/deps-edn true))]
       (is (= ["src"] (:paths d)))

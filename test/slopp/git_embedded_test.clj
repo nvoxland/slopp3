@@ -23,7 +23,7 @@
        "\n"
        "(deftest f-t (is (= 11 (f 1))))\n"))
 
-(deftest ^:external derived-port-is-stable-and-in-range
+(deftest derived-port-is-stable-and-in-range
   (let [d "/some/store/dir"]
     (testing "same dir → same port, always in the private range"
       (is (= (server/derived-port d) (server/derived-port d)))

@@ -16,7 +16,7 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-deps-test" (make-array FileAttribute 0))))
 
-(deftest ^:external deps-delta-model
+(deftest deps-delta-model
   (let [s0 (store/empty-store)]
     (testing "a fresh store has an empty manifest"
       (is (= {} (:deps s0))))
@@ -41,7 +41,7 @@
           (is (= {} (:deps s2)))
           (is (= {} (:deps (store/replay-delta s1 d2)))))))))
 
-(deftest ^:external deps-merge-across-lines
+(deftest deps-merge-across-lines
   (testing "different libs from a diverged line land; same-lib divergence conflicts"
     (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n(defn f [] 1)\n")
           [ours _]   (store/record-deps-add base 'a/lib {:mvn/version "1.0"})
@@ -50,7 +50,7 @@
       (is (= {:mvn/version "1.0"} (get-in (:store merged) [:deps 'a/lib])))
       (is (= {:mvn/version "2.0"} (get-in (:store merged) [:deps 'b/lib]))))))
 
-(deftest ^:external deps-merge-resolves-version-divergence-to-newer
+(deftest deps-merge-resolves-version-divergence-to-newer
   ;; same lib pinned to diverging mvn versions auto-resolves to the NEWER
   ;; (numeric, via slopp.semver) with a note — not left as a conflict.
   (let [base (store/ingest (store/empty-store) 'x.core "(ns x.core)\n")]
@@ -143,7 +143,7 @@
                                    "(clojure.data.json/write-str {:a 1})")))))
           (finally (api/close! sess2)))))))
 
-(deftest ^:external build-deps-edn-carries-manifest
+(deftest build-deps-edn-carries-manifest
   (testing "an empty manifest is byte-identical to the pre-manifest output"
     ;; the build! ours? byte-identity guard depends on this
     (is (= "{:paths [\"src\"]}\n" (build/deps-edn false)))
@@ -155,7 +155,7 @@
       (is (re-find #"org\.clojure/data\.json" s))
       (is (re-find #"2\.5\.0" s)))))
 
-(deftest ^:external build-deps-edn-test-alias
+(deftest build-deps-edn-test-alias
   (testing "no test alias by default — byte-identity preserved"
     (is (not (re-find #":test" (build/deps-edn false {} false))))
     (is (= "{:paths [\"src\"]}\n" (build/deps-edn false {} false)))
@@ -173,7 +173,7 @@
       (is (contains? (:aliases m) :native))
       (is (contains? (:deps m) 'org.clojure/data.json)))))
 
-(deftest ^:external dep-surface-analysis
+(deftest dep-surface-analysis
   (testing "a dep's own jars are external (classpath diff) and analyzed"
     (let [jars (deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
       (is (some #(str/includes? % "data.json") jars))
@@ -204,7 +204,7 @@
         (is (pos? (:vars r))))
       (finally (api/close! sess)))))
 
-(deftest ^:external native-verdict-detects-metadata
+(deftest native-verdict-detects-metadata
   (testing "a dep without reachability metadata → :none (warn, not incompatible)"
     (is (= :none (:verdict (deps/native-verdict
                             (deps/dep-jars 'org.clojure/data.json
@@ -250,7 +250,7 @@
           (is (re-find #"data\.json" (call "deps_list" {})))))
       (finally (api/close! sess)))))
 
-(deftest ^:external build-deps-edn-trace-alias
+(deftest build-deps-edn-trace-alias
   ;; #121: the external tier is the ONLY tier that runs ^:external tests, so it
   ;; is the only place their trace can come from. When the store carries the
   ;; trace runner, both test aliases route through it instead of straight to
