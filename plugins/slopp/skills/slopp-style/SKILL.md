@@ -63,15 +63,21 @@ decision stays pure and `=`-testable.
   shape.
 
   **A tier is only as honest as what the namespace REQUIRES.** The write gate
-  checks a namespace's own forms; `full_check` additionally reports
-  core→shell dependencies, because a `:pure` namespace requiring an
-  `:external` one is doing IO transitively whatever its own forms look like.
-  When that fires, the useful question is *which function are they actually
-  reaching for* — often one effectful entry point sits in a namespace that is
-  otherwise pure computation, and the fix is to split THAT namespace so
-  callers depend on the half they use. Splitting off the obviously-pure
-  helpers instead feels principled and can move the number not at all: verify
-  by re-running the check, not by inspecting the new shape.
+  checks a namespace's own forms; `full_check` additionally REFUSES on
+  core→shell dependencies (a `:pure` namespace requiring an `:external` one is
+  doing IO transitively whatever its own forms look like) — this is the check
+  effect-reachability structurally cannot make, since it sees a cross-ns
+  effect only through a `!`-named callee, and a non-bang `lint`/`slurp` in a
+  dependency slips right past it. When it fires, the useful question is *which
+  function is the caller actually reaching for* (`query_depends`, or grep the
+  caller's uses of the required ns) — often one effectful entry point sits in
+  a namespace that is otherwise pure computation, and the fix is to split THAT
+  namespace so callers depend on the half they use. Splitting off the
+  obviously-pure helpers instead feels principled and can move the number not
+  at all: verify by re-running `full_check`, not by inspecting the new shape.
+  And when the caller ends up using NOTHING from the required namespace, the
+  stale require alone keeps the violation alive — a namespace inherits the
+  tier of everything it requires.
 - **Caches go through `slopp.cache`.** A hand-rolled memo atom makes a
   semantically-pure projection classify as effectful, and then everything
   depending on it does too. `(cache/cached ::id key thunk)` for a normal memo;
@@ -264,6 +270,7 @@ cover, so drifting either way turns the suite red.
 | Public surface documented | **Yes** (write advisory) |
 | Dead public surface removed | **Yes** (`done`/`commit_point` gate) |
 | Pure core / IO at the edge (locale) | **Yes, when a namespace declares a tier** — `module_purity {module tier :pure/:internal/:external}` hard-refuses a form exceeding it; **`:pure` also forbids non-determinism** (`rand`/`slurp` — referential transparency). Declaring verifies the existing code, so a tier cannot claim more than it earns |
+| Core does not depend on shell (layering) | **Yes** — `full_check` REFUSES (red) on a non-`:external` namespace requiring an `:external` one. Whole-graph, so it lives at `full_check`, not the write gate; catches the transitive IO a non-bang callee hides from effect-reachability |
 | Boundary schemas on exports | **Yes** — a written `:=>` `:malli/schema` is generatively oracle-checked at `done` (drift → red `:schema-drift`); opt-in `require-boundary-schemas` gate mandates them on module-external map-arg fns |
 | Key hygiene (namespaced + no near-dups) | **Yes** — `done` flags likely-typo keys (`:key-typos` advisory); opt-in `require-namespaced-keys` gate refuses bare `{:keys}` at a boundary; browse/reuse with `query_vocabulary` |
 | Accretion over breakage | **Advisory** — `done` flags a narrowed boundary contract (`:breaking-changes`: arity / `:=>` schema-key / visibility, vs the last-done baseline) |
