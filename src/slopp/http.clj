@@ -9,7 +9,7 @@
   Entry: clojure -M -m slopp.http <port> [project-dir]"
   (:require [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp])
+            [slopp.mcp :as mcp] [slopp.api.external :as external])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress]))
 
@@ -31,7 +31,7 @@
   "Start the transport on `port` over a fresh session (`opts` as api/open!).
   Returns {:server :session :calls} for stop-server!."
   [port opts]
-  (let [session (api/open! opts)
+  (let [session (external/open! opts)
         calls   (atom [])
         server  (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
     (.createContext server "/call"

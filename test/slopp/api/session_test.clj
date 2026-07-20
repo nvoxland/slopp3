@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.session :as session]))
+            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external]))
 
 (deftest ^:external heal-path-replays-candidate-namespaces
   ;; the extract_ns live failure: hot-load-all!'s heal boots a FRESH image
@@ -11,7 +11,7 @@
   ;; FileNotFound'd. The heal must replay the candidate's touched nses from
   ;; the CANDIDATE (dependency order, full load-ns! so *loaded-libs* is
   ;; stamped) before retrying.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hp.core "(ns hp.core)\n\n(defn top \"T.\" [x] x)\n")
       (let [st   (:store @sess)

@@ -17,7 +17,7 @@
         (edit/ns-warnings (:store @sess) ns-sym)))
 
 (deftest ^:external external-dep-call-is-effectful-by-default
-  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]     ; durable → surface is cached
+  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]     ; durable → surface is cached
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -40,7 +40,7 @@
   ;; slopp is built on wholesale-pure libs (rewrite-clj, clj-kondo); marking
   ;; every var pure one call at a time floods self-host code with warnings, so
   ;; :pure also lands at namespace and whole-dep granularity.
-  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
+  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -68,7 +68,7 @@
   ;; effectful (should be `!`). `^:reads` asserts it is a READ, not a mutation,
   ;; so it takes no bang — the Clojure norm (slurp/deref/a SELECT read no bang).
   ;; Greppable + self-limiting, like `^:unsafe` for the dialect gate.
-  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
+  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
       (api/ingest! sess 'rd.core
@@ -87,7 +87,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external store-and-stdlib-calls-are-not-external
-  (let [sess (api/open! {:slopp.api/dir (temp-dir)})]
+  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
@@ -101,7 +101,7 @@
 
 (deftest ^:external dep-namespaces-persist-and-reopen
   (let [dir (temp-dir)]
-    (let [sess (api/open! {:slopp.api/dir dir})]
+    (let [sess (external/open! {:slopp.api/dir dir})]
       (try
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
@@ -111,7 +111,7 @@
                        'clojure.data.json))
         (finally (api/close! sess))))
     (testing "a reopened session reconstructs :dep-ns and :dep-pure"
-      (let [s2 (api/open! {:slopp.api/dir dir})]
+      (let [s2 (external/open! {:slopp.api/dir dir})]
         (try
           (is (contains? (get (:dep-ns (:store @s2)) 'org.clojure/data.json)
                          'clojure.data.json))
@@ -124,7 +124,7 @@
   ;; writes, so declaring it over an existing module produced a claim nothing
   ;; had verified — a marker that lies. A declaration is an assertion about the
   ;; code, so it has to be checked against the code.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'tv.core
                    (str "(ns tv.core)\n"
@@ -154,7 +154,7 @@
   ;; (shape, breakage, schema, ...) inside an :effects module. At module grain
   ;; the pure core exists but cannot be NAMED — so nothing enforces it and no
   ;; test can rely on it. The most specific declaration wins.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ng.core
                    "(ns ng.core)\n(defn ^:unused-ok boot! \"Edge.\" [p] (slurp p))\n")
@@ -191,7 +191,7 @@
   ;; dependencies and the same declaration becomes valid), which is exactly
   ;; the D-rule-grain test for a check that does not belong at write grain.
   ;; Refusing there would also force rigidly bottom-up declaration order.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ly.shell
                    "(ns ly.shell)\n(defn ^:unused-ok read-cfg \"No bang.\" [p] (slurp p))\n")

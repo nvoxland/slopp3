@@ -1,5 +1,4 @@
-(ns slopp.cache
-  (:require [clojure.string :as str]))
+(ns slopp.cache)
 
 (def ^:private ^:ambient-ok caches
   "Every blessed cache, `{cache-id {key value}}`.

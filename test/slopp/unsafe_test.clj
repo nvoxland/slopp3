@@ -45,7 +45,7 @@
       (is (edit/unsafe? n)))))
 
 (deftest ^:external unsafe-form-ingests-loads-and-is-addressable
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'us.core
                    (str "(ns us.core)\n\n"
@@ -70,7 +70,7 @@
 (deftest ^:external unsafe-survives-done-normalize
   ;; done runs slopp.normalize over changed forms — the ^:unsafe marker
   ;; (and the form's addressability) must survive that node-level rewrite
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'us.chk
                    (str "(ns us.chk)\n\n"
@@ -87,7 +87,7 @@
   ;; become frozen — the edit path later refuses to modify them (their own body
   ;; contains a denylisted symbol) — and import silently swallows the warnings
   ;; the edit path surfaces. (Self-host dogfooding, 2026-07.)
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "an un-^:unsafe host form is REJECTED on import (nothing commits)"
         (let [r (api/ingest! sess 'ig.bad
@@ -130,7 +130,7 @@
 
 (deftest ^:external unsafe-does-not-relax-effect-warnings
   ;; ^:unsafe opts out of the DIALECT ban only — honest !-labeling is orthogonal
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'us.eff
                    (str "(ns us.eff)\n\n(def s (atom 0))\n\n"
@@ -146,7 +146,7 @@
   ;; quoted symbol is INERT unless something resolves it — so the gate
   ;; blocks the resolvers, not the mentions. Docstrings may name vars;
   ;; tests may hold quoted symbols; nothing un-carried may BECOME a var.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rz.core "(ns rz.core)\n\n(defn f \"F.\" [x] x)\n")
       (testing "naked requiring-resolve is refused with carrier teaching"

@@ -4,7 +4,7 @@
   semantics; merging down to main rides the m2 causal-delivery engine."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
-            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns br.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -12,7 +12,7 @@
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:external branch-edit-switch-isolation
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.core seed)
       (testing "branching is instant and starts identical (no image work)"
@@ -40,7 +40,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external merge-branch-down-to-main
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
@@ -80,7 +80,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external branch-guards-and-listing
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
@@ -104,7 +104,7 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-br-" (System/nanoTime))]
     (try
-      (let [sess (api/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.api/dir dir})]
         (try
           (api/ingest! sess 'br.core seed)
           (branch/branch! sess "feature")
@@ -114,7 +114,7 @@
                              "(deftest f-t (is (= 11 (f 1))))")
           (branch/branch-switch! sess "main")
           (finally (api/close! sess))))
-      (let [sess (api/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.api/dir dir})]
         (try
           (testing "the branch is still there after reopen"
             (is (some #(= "feature" (:name %))
@@ -127,7 +127,7 @@
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external per-branch-images-park-adopt-and-reap          ; m4
-  (let [sess (api/open! {:slopp.api/branch-image-ttl-ms 200})]
+  (let [sess (external/open! {:slopp.api/branch-image-ttl-ms 200})]
     (try
       (api/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
@@ -158,7 +158,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external branches-have-identity-beyond-their-name
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
@@ -186,7 +186,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external concurrent-branch-creation-races-yield-one-winner
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.core seed)
       (let [results (doall (pmap (fn [_] (branch/branch! sess "contested"))

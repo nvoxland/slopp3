@@ -2,10 +2,10 @@
   "Fixes for what the symmetric eval surfaced (S-series)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external s1-non-compiling-forms-are-rejected-not-silently-committed
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 's1.core
                    (str "(ns s1.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -41,7 +41,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external s2-forward-refs-rejected-at-write-time-and-move-reorders
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 's2.core "(ns s2.core)\n")
       (testing "S1 makes dependency order self-enforcing: a caller added before
@@ -72,7 +72,7 @@
 (deftest ^:external x3-image-loads-follow-dependency-order
   ;; 12 chained namespaces: >8 entries puts the store's ns map in hash order,
   ;; which used to drive restart loads -> silent half-loaded images (round 3).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'x3.n1)
       (api/add-form! sess 'x3.n1 "(defn f1 [x] (inc x))")
@@ -93,7 +93,7 @@
 (deftest ^:external x2-rename-loads-the-definition-first
   ;; many cross-ns callers -> pre-fix, hash-ordered changeset loads could
   ;; reload a caller before the renamed def existed (destructive failure).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'x2.m)
       (api/add-form! sess 'x2.m "(defn f [x] (* 2 x))")
@@ -116,7 +116,7 @@
   ;; muscle-memory `(require 'the.ns :reload)` threw FileNotFoundException. In the
   ;; owned image there are no source files to reload, so query-eval strips
   ;; :reload/:reload-all — the require becomes the intended no-op.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rl.core "(ns rl.core)\n(defn f [x] (inc x))\n")
       (testing "plain require of the loaded store ns works (baseline)"
@@ -128,7 +128,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external remove-require-is-symmetric
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'rr.core :requires ["[clojure.string :as str]"
                                                "[clojure.set :as cset]"])

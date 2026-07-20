@@ -10,7 +10,7 @@
             [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external form-history-is-reconstructible
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'h.core "(ns h.core)\n(defn f [x] x)\n(defn g [x] (f x))\n")
       (api/edit-replace! sess 'h.core 'f "(defn f [x] (inc x))" :prompt "bump by one")
@@ -42,7 +42,7 @@
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:external form-at-delta-travels-through-a-forms-versions
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (let [v1 (external/commit-point! sess "v1: f adds one" :agent "a")]
@@ -68,7 +68,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external form-at-delta-edge-cases
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (let [early (:id (last (store/deltas (:store @sess))))]
@@ -83,7 +83,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external form-at-delta-follows-renames
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (let [before (:id (last (store/deltas (:store @sess))))]
@@ -100,7 +100,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external was-green-at-reads-the-verification-arc
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (let [green-head (:id (last (store/deltas (:store @sess))))]
@@ -122,7 +122,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external form-history-versions-carry-was-green-at
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 2))"
@@ -136,7 +136,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external form-at-delta-rides-the-mcp-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (let [v1 (external/commit-point! sess "v1" :agent "a")
@@ -152,7 +152,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external search-history-finds-prompts-intents-and-descriptions
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 3))"
@@ -187,7 +187,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external search-history-rides-the-mcp-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 9))"
@@ -201,7 +201,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external form-history-renders-as-a-diff-timeline
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
       (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 2))"

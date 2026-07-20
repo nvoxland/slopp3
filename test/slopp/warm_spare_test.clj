@@ -1,9 +1,9 @@
 (ns slopp.warm-spare-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest ^:external warm-spare-makes-restart-cheap
-  (let [sess (api/open! {:slopp.api/warm-spare? true})]
+  (let [sess (external/open! {:slopp.api/warm-spare? true})]
     (try
       (api/ingest! sess 'wdemo "(ns wdemo)\n(def x 1)\n")
       (let [spare1   @(:spare @sess)              ; wait until the spare is ready

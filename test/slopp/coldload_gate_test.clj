@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -14,7 +14,7 @@
        "(defn tail [] (late))\n"))
 
 (deftest ^:external cold-load-gate-reorders-acyclic-declares-cycles
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "replace: an early form referencing a later one AUTO-REORDERS (silent)"
         (api/ingest! sess 'cl.core seed)
@@ -72,7 +72,7 @@
   ;; the same invariant as every other write door.
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-coldload-merge" (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'm.core
                    (str "(ns m.core)\n"
@@ -112,7 +112,7 @@
           (rm dir))))))
 
 (deftest ^:external declare-satisfies-the-gate
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cl.two
                    (str "(ns cl.two)\n"

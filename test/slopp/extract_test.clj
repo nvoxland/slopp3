@@ -1,9 +1,9 @@
 (ns slopp.extract-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external extract-subform-to-function
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ex.core
                    (str "(ns ex.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -47,7 +47,7 @@
   ;; transcription is the whole risk. An anchor — the subform's head, the same
   ;; idiom query_slice {match} and done's lint :at already use — points at it
   ;; without quoting its body.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ax.core
                    (str "(ns ax.core)\n\n"

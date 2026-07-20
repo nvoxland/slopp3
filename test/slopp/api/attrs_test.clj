@@ -43,7 +43,7 @@
         (is (empty? (attrs/near-duplicate-keys novel #{fid})))))))
 
 (deftest ^:external done-surfaces-key-typos-as-advisory
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'kt.core
                    (str "(ns kt.core)\n"
@@ -89,7 +89,7 @@
   ;; omitted close-ctx!, ensure-projected!, project-journal! and
   ;; push-to-remote!, i.e. exactly the module-boundary fns someone asking the
   ;; question cares most about. It did not say "partial"; it looked complete.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'kb.core
                    (str "(ns kb.core)\n\n"

@@ -27,7 +27,7 @@
       (is (= src (normed src)) src))))
 
 (deftest ^:external done-normalizes-the-working-set
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cp.core
                    (str "(ns cp.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -82,7 +82,7 @@
       (is (= src (:src (norm/normalize-source src))) src))))
 
 (deftest ^:external done-removes-stale-auto-declare-silently
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dh.core
                    (str "(ns dh.core)\n"

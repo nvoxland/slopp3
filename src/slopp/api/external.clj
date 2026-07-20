@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store]))
+            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -686,3 +686,85 @@
          :effective (if (or (nil? conf) (= conf "<git>"))
                       (git-config-value (:dir @session) (str k))
                       conf)}))))
+
+(defn ^:export ^{:live-handle true
+        :malli/schema
+        [:=> [:cat [:? [:map
+                        [:dir {:optional true} [:maybe :some]]
+                        [:warm-spare? {:optional true} [:maybe :boolean]]
+                        [:branch-image-ttl-ms {:optional true} [:maybe :int]]
+                        [:agent-id {:optional true} [:maybe :string]]]]]
+         :any]}
+  open!
+  "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
+  when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
+  keeps a spare image warming in the background so restarts are near-instant.
+  `:agent-id` (default: session-identity) keys every delta/turn/episode this
+  session writes.
+
+  The `:=>` schema is DOCUMENTATION, not a verified claim: this fn boots a
+  JVM, so `analyzer-pure?` excludes it from the generative oracle-check.
+
+  These option keys are still UNQUALIFIED, knowingly: 60 call sites pass
+  `{:dir …}`, and `:dir` means three different things across this store, so
+  no store-wide sweep can do it safely. Requalifying a boundary key needs a
+  TARGETED tool (the keys in maps passed as arg 1 to ONE fn) — until that
+  exists, `require-namespaced-keys` stays off with this as its only
+  violation."
+  ([] (open! {}))
+  ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare?]}]
+   (let [conn    (when dir (db/open! dir))
+         store   (or (some-> conn db/load-store) (store/empty-store))
+         image   (repl/start! {:slopp.repl/deps (:deps store)})
+         ttl     (or branch-image-ttl-ms 600000)
+         session (atom {:store store :image image :db conn
+                        :data-version (some-> conn db/data-version)
+                        :dir dir :branch "main" :lines {}
+                        :test-map (or (session/load-trace conn store) {})
+                        :agent-id (or agent-id (session/session-identity))
+                        :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
+                        :branch-image-ttl-ms ttl
+                        :warm-spare? (boolean warm-spare?)})]
+     ;; #134: kondo's cross-ns cache follows the STORE, not the process cwd.
+     ;; Unset, kondo resolves it from cwd — so cross-ns findings existed only
+     ;; where a .clj-kondo/ happened to sit beside the process, and a user
+     ;; project's :carried stale-caller gate silently found nothing. A dirless
+     ;; session gets an owned temp dir rather than inheriting whatever is there.
+     ;; The atom is process-global: two sessions on different stores in ONE
+     ;; process share the last opener's dir, which `index/lint` handles by
+     ;; re-passing on a dir change — correct, just not memoized across them.
+     (reset! index/kondo-cache-dir
+             (if dir
+               (str (io/file dir ".slopp" "kondo-cache"))
+               (str (java.nio.file.Files/createTempDirectory
+                     "slopp-kondo"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))))
+     (session/start-spare! session)
+     ;; m4: parked branch images retire after sitting idle for the TTL
+     (let [t      (java.util.Timer. "slopp-branch-reaper" true)
+           period (long (max 1000 (quot ttl 3)))]
+       (.schedule t
+                  (proxy [java.util.TimerTask] []
+                    (run [] (try (api/reap-idle-images! session)
+                                 (catch Throwable _))))
+                  period period)
+       (swap! session assoc :reaper t))
+     (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
+       (when-let [err (image/load-ns! image store ns-sym)]
+         ;; a store carrying red-first specs still opens — stub and retry
+         (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
+                        (nil? (image/load-ns! image store ns-sym)))
+           (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
+     ;; module adoption: a populated store from a pre-module db (:modules
+     ;; nil) gets its manifest derived from reality, once — fresh stores
+     ;; are born with {} and enforcement already on
+     (when (and conn (seq (:namespaces store))
+                (or (nil? (:modules store))
+                    ;; an EMPTY manifest on a populated store whose journal has
+                    ;; never seen a :module-edge delta = pre-adoption (the
+                    ;; journal is the record of truth; a user who retracted
+                    ;; edges has retraction deltas)
+                    (and (empty? (:modules store))
+                         (not-any? #(= :module-edge (:op %)) (:deltas store)))))
+       (api/adopt-modules! session :agent (or agent-id "slopp")))
+     session)))

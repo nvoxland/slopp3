@@ -23,7 +23,7 @@
           (is (true?  (rules/status-affecting-fired? typos-err {:key-typos [{:used :a/b}]}))))))))
 
 (deftest ^:external per-store-severity-config-retunes-done
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sv.core
                    (str "(ns sv.core)\n"
@@ -63,7 +63,7 @@
           (str "uncataloged done advisories: " (set/difference done-keys cataloged))))))
 
 (deftest ^:external query-rules-reports-write-gate-severity-honestly
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
         (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
@@ -97,7 +97,7 @@
       (is (= '[app.core/handle] (mapv :form (rules/bare-throw-check nil s all)))))))
 
 (deftest ^:external done-surfaces-ambient-state-and-bare-throw
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")
@@ -119,7 +119,7 @@
   ;; counter-example. ^:ambient-ok is that escape, and it polices itself the
   ;; same way ^:unused-ok does: a marker on a def that is NOT ambient state is
   ;; itself a finding, so the flag can never drift into decoration.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'am.core
                    (str "(ns am.core)\n\n"
@@ -161,7 +161,7 @@
   ;; turns the suite red instead of quietly reporting all-clear.
   (doseq [{:keys [key check fires-on selftest-note]} rules/done-advisories]
     (if fires-on
-      (let [sess (api/open!)]
+      (let [sess (external/open!)]
         (try
           (api/ingest! sess 'rf.core fires-on)
           (let [st   (:store @sess)
@@ -184,7 +184,7 @@
   ;; right and sometimes the path of least resistance, and the moment to ask is
   ;; while the reason is still in context. It fires only for the episode that
   ;; declared it, so it prompts once and cannot decay into standing noise.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sw.core
                    "(ns sw.core)\n(defn ^:unused-ok grab \"E.\" [p] (slurp p))\n")

@@ -3,7 +3,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.db :as db]
-            [slopp.api :as api] [slopp.api.query :as query])
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -37,14 +37,14 @@
         target (str "(ns demo\n  (:require [clojure.test :refer [deftest is]]))\n"
                     "(defn add [x y] (+ x y))\n"
                     "(deftest t (is (= 6 (add 2 3))))\n")
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'demo target)
       (api/edit-replace! sess 'demo 'add "(defn add [x y] (+ x y 1))" :prompt "off-by-one")
       (api/test-run! sess 'demo)
       (finally (api/close! sess)))
     ;; process "restarts": a brand-new session over the same dir
-    (let [sess2 (api/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.api/dir dir})]
       (try
         (testing "source is reconstructed from the db"
           (is (re-find #"\(\+ x y 1\)" (query/query-source sess2 'demo))))

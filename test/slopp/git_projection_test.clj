@@ -70,7 +70,7 @@
           (finally (.close conn) (rm-rf! dir)))))))
 
 (deftest ^:external commit-point-snapshots-the-rendered-tree
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gp.core seed)
       (let [r (external/commit-point! sess "v1: f ships" :agent "alice")
@@ -91,7 +91,7 @@
 
 (deftest ^:external projection-mints-deterministic-shas
   (let [dir  (temp-dir)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
       ;; G5: milestones stamp a configured author; pin it so the assertions
@@ -142,7 +142,7 @@
 
 (deftest ^:external branch-shares-prefix-shas
   (let [dir  (temp-dir)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
       (external/commit-point! sess "v1: f ships" :agent "alice")
@@ -168,7 +168,7 @@
 
 (deftest ^:external retroactive-target-is-lossy-but-pinned
   (let [dir  (temp-dir)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
       (let [r1 (external/commit-point! sess "v1" :agent "alice")]
@@ -195,7 +195,7 @@
 
 (deftest ^:external forced-red-milestone-carries-status-trailer
   (let [dir  (temp-dir)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
       (api/edit-replace! sess 'gp.core 'f-t "(deftest f-t (is (= 999 (f 1))))"

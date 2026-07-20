@@ -62,7 +62,7 @@
       (finally (repl/stop! h)))))
 
 (deftest ^:external done-surfaces-schema-drift
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sd.core "(ns sd.core)\n(defn seeded \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")

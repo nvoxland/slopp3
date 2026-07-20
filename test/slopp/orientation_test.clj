@@ -3,7 +3,7 @@
             [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'o.core
                    (str "(ns o.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -42,7 +42,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external batched-source-reads
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
       (api/create-ns! sess 'bq.b :source "(ns bq.b)\n(defn h [] 3)\n")
@@ -57,7 +57,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-project-since
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
       (let [head (:head (query/query-project sess))]
@@ -73,7 +73,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external outline-is-compact-by-default
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'oc.core
                       :source "(ns oc.core)\n(defn f\n  \"Adds one.\"\n  [x] (inc x))\n")
@@ -88,7 +88,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-brief-is-the-one-call-dossier
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
       (api/module-dep! sess "qb.b" "qb.a" :prompt "fixture edge")
@@ -108,7 +108,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external flow-and-impact-answer-the-thread
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
       (api/module-dep! sess "fl.b" "fl.a" :prompt "fixture edge")
@@ -133,7 +133,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external draft-test-scaffolds-from-observation
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dt.core
                    "(ns dt.core)\n(defn scale [x r] (long (Math/round (* x r))))\n")
@@ -150,7 +150,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external session-brief-is-the-one-call-orientation
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
                                    "(defn ^:unused-ok g [x] x)\n"))
@@ -173,7 +173,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external report-composes-the-handoff
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/commit-point! sess "seed rp" :agent "t")
@@ -199,7 +199,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external slices-are-source-plus-cards
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sl.util
                    "(ns sl.util)\n(defn pad \"Pads.\" [s] (str \" \" s))\n(defn fmt \"Formats cents.\" [c] (pad (str \"$\" c)))\n")
@@ -227,7 +227,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external briefs-arrive-task-shaped
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'bw.core
                    (str "(ns bw.core)\n"
@@ -244,7 +244,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external briefs-roll-up-namespace-families
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (doseq [i (range 1 7)]
         (api/ingest! sess (symbol (str "fam.r0" i))
@@ -259,7 +259,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-depends-is-the-generic-front-door
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
       (api/module-dep! sess "dp.app" "dp.base" :prompt "fixture edge")
@@ -294,7 +294,7 @@
   ;; knows which are risky. :untested must be STATIC (reachable from any
   ;; test ns), not trace-only — else an external-test codebase looks 100%
   ;; untested (the flaw dogfooding caught).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rv.core
                    (str "(ns rv.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -340,7 +340,7 @@
   ;; ABOUT it — read-only eval over the immutable store value, in the server
   ;; where that value lives. The sanctioned home for ad-hoc analysis that
   ;; otherwise becomes a canned tool or a raw db read.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'qs.core
                    (str "(ns qs.core)\n\n"
@@ -389,7 +389,7 @@
   ;; kondo sees unused PRIVATES per-namespace; unused PUBLICS need the
   ;; whole-store call graph review_scan already builds — zero in-store
   ;; callers on a public defn/def is dead code or unadvertised surface.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ru.core
                    (str "(ns ru.core)\n\n"
@@ -411,7 +411,7 @@
   ;; (The fixture var still carries ^:unused-ok — this driver lives in
   ;; SLOPP's store, not the fixture's; cross-store references are invisible
   ;; by construction. In-store drivers — the normal app case — need none.)
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'qc.core
                    "(ns qc.core)\n\n(defn ^:unused-ok pair \"P.\" [x y] [x y])\n")
@@ -457,7 +457,7 @@
                '(fn [store] (rewrite-clj.node/sexpr (:node (first store)))))))))
 
 (deftest ^:external impact-traces-the-map-shape-callers-pass
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sh.core
                    (str "(ns sh.core)\n"

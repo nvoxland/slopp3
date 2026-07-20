@@ -8,19 +8,19 @@
             [rewrite-clj.parser]
             [slopp.store :as store]
             [slopp.render]
-            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5b-" (System/nanoTime))
-        s1  (api/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! s1 'tp.core
                    (str "(ns tp.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(defn h [x] (dec x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (let [s2 (api/open! {:slopp.api/dir dir})]           ; second server, same dir
+      (let [s2 (external/open! {:slopp.api/dir dir})]           ; second server, same dir
         (try
           (testing "server 2 opens onto server 1's work"
             (is (= [2] (api/query-eval s2 "(tp.core/f 1)"))))
@@ -74,7 +74,7 @@
 (deftest ^:external private-checkouts-shared-branch-storage        ; m5c
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5c-" (System/nanoTime))
-        s1  (api/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! s1 'pc.core
                    (str "(ns pc.core)\n(defn f [x] (inc x))\n"))
@@ -82,7 +82,7 @@
       (branch/branch! s1 "feature")
       (api/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 50))"
                          :prompt "feature work" :agent "server-1")
-      (let [s2 (api/open! {:slopp.api/dir dir})]          ; server 2: own checkout (main)
+      (let [s2 (external/open! {:slopp.api/dir dir})]          ; server 2: own checkout (main)
         (try
           (testing "checkouts are per-server: s2 is on main, unaffected"
             (is (= "main" (:current (branch/query-branches s2))))

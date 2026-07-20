@@ -1,7 +1,7 @@
 (ns slopp.edit-group-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def buggy
   (str "(ns gdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -13,7 +13,7 @@
        "(deftest eval-t (is (= 7 (evaluate [1 :+ 2 :* 3]))))\n"))
 
 (deftest ^:external edit-group-fixes-multi-form-refactor-in-one-intent
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gdemo buggy)
       (api/test-run! sess 'gdemo)                       ; red + builds trace map
@@ -47,7 +47,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external edit-group-is-atomic-on-error
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gdemo buggy)
       (let [deltas-before (count (store/deltas (:store @sess)))
@@ -70,7 +70,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external edit-group-supports-add-and-delete
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gdemo "(ns gdemo)\n(defn old-helper [x] x)\n")
       (let [r (api/edit-group!
@@ -96,7 +96,7 @@
   ;; direct interop into reflection, would STILL not report drift. A guard
   ;; wired into one of several paths is barely a guard — it is a guard on the
   ;; path that happened to be in front of me.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gd.core
                    (str "(ns gd.core)\n\n"

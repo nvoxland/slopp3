@@ -22,7 +22,7 @@
                                           '(defn f [x] x))))))
 
 (deftest ^:external done-flags-arity-narrowing-on-a-boundary-fn
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'bc.core
                    "(ns bc.core)\n(defn ^:unused-ok handle \"H.\" ([x] x) ([x y] (+ x y)))\n")
@@ -61,7 +61,7 @@
       (is (empty? (breakage/removed-schema-keys '(defn f [m] 1) '(defn f [m] 1)))))))
 
 (deftest ^:external done-flags-visibility-and-schema-key-narrowing
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'bc2.core
                    "(ns bc2.core)\n(defn ^{:malli/schema [:=> [:cat [:map [:a :int] [:b :int]]] :int]} shaped \"S.\" [m] (:a m))\n")
@@ -97,7 +97,7 @@
   ;;
   ;; The ns is DEEP (bok.core.impl): ^:export only widens visibility below the
   ;; module surface, so dropping it from a top-level ns narrows nothing.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'bok.core.impl
                    (str "(ns bok.core.impl)\n"
