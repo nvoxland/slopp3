@@ -627,35 +627,47 @@
           (is (not (re-find #"defn c" src)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated lint-warnings-are-listed-never-blocking
-  ;; D-rule-grain, expressed through the CONFIG rather than a second set:
-  ;; slopp's kondo config tiers every linter by one question — could a form
-  ;; legitimately look like this MID-EDIT? `unused-binding` routinely can, so
-  ;; it is :warning: reported for the agent to judge, blocking nothing.
-  ;; Measured: gating writes on warning-grade findings killed red-first TDD,
-  ;; the module lifecycle and carried-lint compression (13 assertions, 7 tests).
+(deftest ^:isolated lint-severity-splits-write-from-done
+  ;; Three separate questions, three answers:
+  ;;   write     — is this FORM incoherent right now? (write-coherence-lint)
+  ;;   done      — is the work I just did clean?      (kondo :level, episode)
+  ;;   full_check— is the STORE clean?                (agent's call)
+  ;; A write is mid-work by definition, so `(if x y)` on the way to an else
+  ;; branch must land even though it is error-grade at done.
   (let [sess (api/open!)]
     (try
-      (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [] 1)\n")
-      (testing "a warning-grade finding does NOT refuse the write"
+      (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [x] x)\n")
+      (testing "a warning-grade finding neither refuses nor counts"
         (let [r (api/add-form! sess 'lg2.core
                                "(defn ^:unused-ok w \"D.\" [] (let [x 1] 2))"
                                :prompt "an unused binding")]
-          (is (nil? (:error r)) (pr-str r))))
-      (let [r (api/done! sess :label "with a warning")]
-        (testing "done LISTS it, so it is visible without being enforced"
-          (is (some #(= :unused-binding (:type %))
-                    (get-in r [:findings :lint-warnings]))
-              (pr-str (:findings r))))
-        (testing "and it does not count — the done is still green"
-          (is (zero? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))
-          (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (testing "an ERROR-grade finding still refuses the write"
+          (is (nil? (:error r)) (pr-str r)))
+        (let [f (:findings (api/done! sess :label "warned"))]
+          (is (some #(= :unused-binding (:type %)) (:lint-warnings f)) (pr-str f))
+          (is (zero? (:lint-errors f)) (pr-str f))
+          (is (= :green (:test-status f)) (pr-str f))))
+      (testing "an error-grade STYLE finding lands at the write — and the
+                NORMALIZER fixes it before done ever judges it, which is why
+                it is not the write gate's business"
         (let [r (api/add-form! sess 'lg2.core
-                               "(defn ^:unused-ok bad \"D.\" [] (if (nil? 1) 2))"
-                               :prompt "missing else branch is error-grade")]
+                               "(defn ^:unused-ok halfif \"D.\" [y] (if y 2))"
+                               :prompt "missing else — normalize turns it into when")]
+          (is (nil? (:error r)) (pr-str r)))
+        (let [f (:findings (api/done! sess :label "half if"))]
+          (is (zero? (:lint-errors f)) (pr-str f))
+          (is (re-find #"\(when y 2\)"
+                       (get-in (api/query-slice sess 'lg2.core 'halfif)
+                               [:target :source]))
+              (get-in (api/query-slice sess 'lg2.core 'halfif) [:target :source]))))
+      (testing "but an INCOHERENT form is refused — it is no step toward anything"
+        (let [r (api/add-form! sess 'lg2.core
+                               "(defn ^:unused-ok bad \"D.\" [] (ok 1 2 3))"
+                               :prompt "wrong arity")]
           (is (:error r) (pr-str r))
-          (is (re-find #"missing-else-branch" (str (:error r))) (str (:error r)))))
+          (is (re-find #"invalid-arity" (str (:error r))) (str (:error r)))))
+      (testing "done names its scope and points at full_check every time"
+        (let [f (:findings (api/done! sess :label "scope note"))]
+          (is (re-find #"full_check" (str (:scope f))) (pr-str f))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated done-runs-the-whole-suite-regardless-of-what-was-touched

@@ -515,6 +515,38 @@
                                  (or form "<the referencing form>") "}"))
                           findings))
            " — or add (declare ...)"))))
+(def write-coherence-lint
+  "The kondo finding types that refuse a WRITE. Everything else kondo reports
+  is a `done`-grain concern.
+
+  These two dials answer DIFFERENT QUESTIONS, which is why there are two of
+  them (contrast the duplicated dead-surface scans, which were two copies of
+  ONE question and drifted):
+
+  - `index/kondo-config`'s `:level` — *is this codebase finished and clean?*
+    `:error` counts at `done`, `:warning` is listed for the agent to judge.
+  - THIS set — *is this form internally incoherent right now?*
+
+  A write is BY DEFINITION mid-work, so almost nothing belongs here. Writing
+  `(if x y)` on the way to adding an else branch is normal; refusing it is
+  not. The bar is: the form cannot be a step toward anything correct.
+
+  Why these five specifically:
+  - `:syntax`, `:unresolved-symbol`, `:unresolved-var` — the form does not
+    hold together. Compilation catches most of these too, but lint reaches
+    them FIRST and with a far better message: the too-narrow-subform-edit
+    hint (a binding without its use, a loop without its recur) fires here and
+    is the single most common agent edit mistake, cheap to fix the instant it
+    happens and expensive to diagnose later.
+  - `:invalid-arity`, `:type-mismatch` — these COMPILE FINE and fail at
+    runtime. Two `invalid-arity` findings once dismissed as noise in this
+    project were real ArityExceptions in shipped handlers.
+
+  Cross-form staleness is already handled elsewhere: findings in OTHER forms
+  ride as `:carried` and are re-checked at `done`, so an incremental
+  signature change is never blocked by its own not-yet-updated callers."
+  #{:syntax :unresolved-symbol :invalid-arity :type-mismatch})
+
 (defn lint-refusals
   "NEW error-level kondo findings a candidate store would introduce over
   its base. An error IN one of the forms being written (`written-fids`)
@@ -523,14 +555,15 @@
   block the REPL flow: they return as {:carried [{:form :type :message}]}
   and the done-point re-checks them hard. nil when clean.
 
-  Only `:error` blocks, and slopp's `index/kondo-config` is what decides which
-  types those are — tiered by ONE question: could a form legitimately look
-  like this MID-EDIT? `:warning` types (unused binding, unresolved namespace,
-  redundant do) routinely are, so `done` LISTS them and nothing refuses them.
-  Measured: gating writes on them killed red-first TDD, the module lifecycle
-  and carried-lint compression — 13 assertions across 7 tests.
+  WHAT blocks here is `write-coherence-lint`, NOT a severity level. A write is
+  mid-work by definition, so this asks only whether the FORM is internally
+  incoherent right now — whether the CODEBASE is finished is `done`'s
+  question, decided by `index/kondo-config`'s `:level`. Gating writes on
+  severity instead killed red-first TDD, the module lifecycle and carried-lint
+  compression (13 assertions, 7 tests), and refused `(if x y)` written on the
+  way to adding an else branch.
 
-  Error-level findings are ~never false positives (two 'invalid-arity' errors once
+  These types are ~never false positives (two 'invalid-arity' errors once
   dismissed as noise were real ArityExceptions in shipped handlers);
   pre-existing findings never block (no deadlock on legacy)."
   [base cand ns-syms written-fids]
@@ -538,7 +571,7 @@
         errs    (fn [store ns-sym]
                   (when (get-in store [:namespaces ns-sym])
                     (->> (index/lint (render/render-ns store ns-sym))
-                         (filter #(= :error (:level %)))
+                         (filter #(contains? write-coherence-lint (:type %)))
                          (map #(assoc % :ns ns-sym)))))
         key*    (juxt :ns :type :message)
         news    (mapcat (fn [ns-sym]

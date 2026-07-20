@@ -22,21 +22,20 @@
                          :applied applied})))
 
 (defn anchored-lint
-  "Kondo findings for EVERY namespace in the store, expressed as ANCHORS
+  "Kondo findings for every namespace the EPISODE TOUCHED, expressed as ANCHORS
   rather than coordinates: each row carries the owning `:form` and an `:at`
   snippet of the offending line, and `:row`/`:col` are dropped.
 
-  Store-wide, not episode-scoped, because `done` means done: the claim is
-  about the codebase, not about which namespaces this episode happened to
-  touch. The done point compresses findings on UNTOUCHED forms to a count
-  (`loud?` in `done!`) so a global scan reports without spamming — but they
-  still count, so a standing problem cannot be outrun by editing elsewhere.
+  Episode-scoped on purpose. A store-wide scan at every done point re-judges
+  code this episode never touched, which is `full_check`'s job — done reminds
+  the agent it exists rather than doing it unasked.
 
   Coordinates never cross the wire because they are meaningless to a
   form-addressed agent — and stale the moment anything above them shifts. A
   form plus a match-ready snippet stays true and is what the edit tools take."
-  [session]
-  (vec (for [ns-sym (sort (keys (:namespaces (:store @session))))
+  [session changed]
+  (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
+                                   changed))
              :let [st*   (:store @session)
                    src   (render/render-ns st* ns-sym)
                    lines (vec (str/split-lines src))]

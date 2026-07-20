@@ -281,10 +281,12 @@
     :description "Close the turn (usually automatic)."
     :inputSchema {:type "object"
                   :properties {:note {:type "string"}}}}
+   {:name "full_check"
+    :description "The WHOLE-STORE check, on demand: kondo over every namespace, dead public surface over every namespace, and every test in every tier — in-image, ^:integration, and the external ^:isolated suite. One call, everything; there is no separate integration-only or lint-only tool. NOTHING forces this — not done, not commit_point. `done` is episode-scoped (it answers whether the work you just did is good); this answers whether the STORE is good, which is slower and is your judgement call. Reach for it when a change was broad, when you deleted a caller (dead surface appears in namespaces you never touched), or before a commit you want to stand behind."
+    :inputSchema {:type "object" :properties {}}}
    {:name "done"
-    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary. Affected tests run in EVERY tier — impacted ^:isolated tests included, automatically. Selection is per form: trace evidence where it exists, the form's own namespace-reach where it does not (a brand-new form runs its slice). You never choose tiers. One thing defers to the milestone gate, riding findings as :isolated-pending: a change whose reach exceeds the cap — something so central it names most of the suite."
-    :inputSchema {:type "object"
-                  :properties {:label {:type "string"}}}}
+    :description "Close a unit of work: normalize your touched forms, re-verify, record a labeled boundary. EPISODE-SCOPED — it runs the whole in-image suite plus the ^:isolated tests your changes impact, but lint and dead-surface cover only the namespaces you touched and the full ^:isolated / ^:integration tiers do not run. Its :scope field says so every time, and names `full_check` for the whole store. done REPORTS; it never refuses — an unfixable finding is recorded honestly rather than blocking you. Selection is per form: trace evidence where it exists, the form's own namespace-reach where it does not."
+    :inputSchema {:type "object" :properties {:label {:type "string"}}}}
    {:name "commit_point"
     :description "Record a MILESTONE — green-gated on the FULL ^:isolated suite (run automatically; no test_run first; force=true records red honestly and skips the gate). The git-projection grain; target=<delta id> marks an earlier spot."
     :inputSchema {:type "object"

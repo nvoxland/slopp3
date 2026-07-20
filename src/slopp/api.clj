@@ -1524,7 +1524,9 @@
                  ;; schema / namespaced-keys). Each normally fires only as code
                  ;; is written, so a form predating a rule was never subject to
                  ;; it. Reported, never auto-applied — every one needs judgment.
-                 :lint       (vec (done/anchored-lint session))
+                 :lint       (let [st* (:store @session)]
+                               (vec (done/anchored-lint
+                                     session (mapv :id (store/forms st* ns-sym)))))
                  :unused     (vec (:unused (modules/unused-report
                                             (:store @session) [ns-sym])))
                  :undocumented
@@ -2584,15 +2586,16 @@
                          :agent agent))
         ;; kondo lint over every namespace touched since the last done-point —
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
-        lint (done/anchored-lint session)
+        lint (done/anchored-lint session changed)
         ;; the unused-public GATE: unmarked dead surface — and stale
         ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
         unused-rep (let [st* (:store @session)]
-                     ;; STORE-WIDE, like the lint scan: "done means done" is a
-                     ;; claim about the codebase, so dead surface anywhere
-                     ;; counts — you cannot outrun a standing problem by
-                     ;; editing a different namespace.
-                     (modules/unused-report st* (keys (:namespaces st*))))
+                     ;; episode-scoped, like the lint scan: a form elsewhere
+                     ;; can become dead because THIS episode deleted its last
+                     ;; caller, so the store-wide sweep is real — it is just
+                     ;; `full_check`'s job, not every done point's.
+                     (modules/unused-report
+                      st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
         lint (done/with-unused-gate lint unused-rep)
         ;; NEW warnings (on forms this episode touched) report in full;
         ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
@@ -2705,10 +2708,19 @@
            ;; tier. Say so EVERY time: an unstated omission reads as coverage,
            ;; and that is how a green status comes to mean less than the agent
            ;; thinks it does.
-           :isolated-suite
-           (str "not run at done (it spawns JVMs) — impacted ^:isolated tests"
-                " DID run; test_run {isolated true} runs the rest, and the"
-                " milestone requires it")}
+           ;; done is EPISODE-scoped: the whole in-image suite plus impacted
+           ;; ^:isolated tests, but lint and dead-surface cover only what this
+           ;; episode touched, and the full isolated + integration tiers do
+           ;; not run. Say so EVERY time: an unstated omission reads as
+           ;; coverage, and that is how a green status comes to mean less than
+           ;; the agent thinks it does.
+           :scope
+           (str "EPISODE-scoped: lint + dead-surface cover only the namespaces"
+                " you touched, and the full ^:isolated / ^:integration tiers"
+                " did not run. `full_check` does the whole store — every"
+                " namespace, every tier. Nothing forces it, including the"
+                " milestone; run it when the change is broad, when you deleted"
+                " a caller, or before a commit you want to stand behind")}
     ;; ADVISORY, and named as such: kondo findings slopp's config
     ;; deliberately does not block on, because each is routinely true of a
     ;; form mid-edit. Listed so the agent can judge them, never counted.
@@ -2740,14 +2752,83 @@
       summary             (assoc :test summary)
       (:status iso)       (assoc :isolated iso))))
 
+(defn full-check!
+  "The WHOLE-STORE check, on demand: kondo over every namespace, the
+  dead-public-surface report over every namespace, and every test in every
+  tier — the in-image suite, `^:integration`, and the external `^:isolated`
+  tier.
+
+  Deliberately NOT forced anywhere, not by `done` and not by `commit_point`.
+  `done` is episode-scoped: it answers whether the work you just did is good,
+  which is the question you can act on. This answers whether the STORE is
+  good, which is a different and much slower question — and one only the
+  agent can judge the right moment for. `done` names this tool in its result
+  so the choice is visible rather than forgotten.
+
+  It also retires any need for an integration-only or lint-only tool: one
+  call, everything, no tier flags to get wrong.
+
+  Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
+  [...] :test {...} :isolated {...} :status :green|:red}."
+  [session]
+  (let [st    (:store @session)
+        nses  (sort (keys (:namespaces st)))
+        lint  (vec (for [n nses
+                         :let [src (render/render-ns st n)]
+                         f (index/lint src)]
+                     (-> f (dissoc :row :col) (assoc :ns n))))
+        rep   (modules/unused-report st nses)
+        errs  (filterv #(= :error (:level %)) lint)
+        warns (filterv #(= :warning (:level %)) lint)
+        tests (session/run-verification! session (vec nses) nil
+                                         :include-integration? true
+                                         :boundary? true)
+        iso   (when (seq (session/isolated-test-nses
+                          st (filter #(session/test-ns? st %) nses)))
+                (isolated-test-run! session))
+        red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
+                  (pos? (+ (:fail tests 0) (:error tests 0)))
+                  (contains? #{:red :error} (:status iso)))]
+    (cond-> {:namespaces (count nses)
+             :lint-errors (count errs)
+             :lint-warnings (count warns)
+             :test tests
+             :status (if red? :red :green)}
+      (seq errs)          (assoc :lint errs)
+      (seq warns)         (assoc :warnings warns)
+      (seq (:unused rep)) (assoc :unused-public (:unused rep))
+      (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
+      iso                 (assoc :isolated iso))))
+
+(defn last-judged-done
+  "The `:findings` of the most recent `:done` delta that actually JUDGED
+  something (`:test-status` `:red` or `:green`), or nil.
+
+  Exists because `done` is episode-scoped: calling it twice with no writes
+  between yields `:none` the second time — nothing changed, so nothing was
+  checked. Without this a RED done could be laundered by simply committing
+  afterwards: the milestone runs its own done, gets `:none`, and publishes.
+  The last real verdict stands until new work supersedes it.
+
+  Returns the whole findings map rather than the status alone so a standing
+  red can still NAME what was wrong — a refusal that cannot say why is a
+  refusal an agent cannot act on."
+  [store]
+  (->> (store/deltas store)
+       (filter #(= :done (:op %)))
+       (map :findings)
+       (filter #(#{:red :green} (:test-status %)))
+       last))
+
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
   pointing at the resulting state with a human `description`.
 
-  THE MILESTONE HAS NO GATES OF ITS OWN. It runs `done!`, adds the full
-  ISOLATED tier (the one thing done deliberately skips), and gates on that
-  verdict — nothing is re-judged here. Two enforcement points DRIFT: this
+  THE MILESTONE HAS NO GATES OF ITS OWN. It runs `done!` and gates on that
+  verdict — nothing is re-judged here, and nothing whole-store is forced.
+  `full_check` (every namespace, every tier) is the agent's call, before a
+  commit or any other time; a milestone records what the done point verified. Two enforcement points DRIFT: this
   function used to recompute status from raw test counts and so never saw
   the `:error` done-advisories at all, and it carried its own copies of the
   dead-surface and lint scans. `done` means done, which only holds if done
@@ -2806,18 +2887,25 @@
                 ;; Run it when the store has any ^:isolated tests (fixture
                 ;; stores without them skip the tier); :force skips straight
                 ;; to honest red
-                iso    (when (and (not force)
-                                  (seq (session/isolated-test-nses
-                                        st (filter #(session/test-ns? st %)
-                                                   (keys (:namespaces st))))))
-                         (isolated-test-run! session))
+                ;; NOT FORCED. The milestone runs no whole-store check of its own —
+                ;; `full_check` exists for that and is the agent's call. A
+                ;; milestone records what the done point verified; it does not
+                ;; independently re-judge, because two enforcement points
+                ;; drift (five :error advisories were once blocking at done
+                ;; and invisible here).
+                iso    nil
                 ;; done's OWN verdict — it already accounts for failures, the
                 ;; :error advisories, store-wide lint and store-wide dead
                 ;; surface. Believe it rather than re-deriving a weaker answer.
-                status (case (get-in cp [:findings :test-status])
-                         :red   :red
-                         :green :green
-                         (history/status-at st head))
+                ;; :none means this done judged NOTHING (no writes since the last
+                ;; one) — so the previous real verdict stands. Otherwise a red
+                ;; done is laundered by committing without changing anything.
+                ;; the findings this milestone is judged on: THIS done's when it
+                ;; judged something, otherwise the last done that did.
+                verdict (if (#{:red :green} (get-in cp [:findings :test-status]))
+                          (:findings cp)
+                          (last-judged-done st))
+                status  (or (:test-status verdict) (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
                 status (if (contains? #{:red :error} (:status iso)) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
@@ -2828,7 +2916,11 @@
                 ;; a SUMMARY of done's findings, not a second implementation:
                 ;; name the findings that actually fired so the refusal is
                 ;; actionable without re-deriving anything
-                wrong  (->> (dissoc (:findings cp) :test-status :isolated-suite)
+                ;; :scope and :lint-warnings are INFORMATIONAL — always present,
+                ;; never a reason. Listing them as things that fired made a
+                ;; refusal say "scope" instead of "unused-public".
+                wrong  (->> (dissoc verdict :test-status :isolated-suite
+                                    :scope :lint-warnings :failures)
                             (remove (fn [[_ v]] (or (and (number? v) (zero? v))
                                                     (and (coll? v) (empty? v)))))
                             (map (comp name key))
@@ -2838,11 +2930,13 @@
                                    (when (seq wrong)
                                      (str " — " (str/join ", " wrong)))
                                    ". Your work is at its done-point; the full"
-                                   " list is in :findings. Fix and retry, or"
-                                   " :force true to record a red milestone"
-                                   " honestly.")
+                                   " list is in :findings — and if this done"
+                                   " judged nothing (no writes since the last"
+                                   " one), the RED verdict of that earlier done"
+                                   " still stands. Fix and retry, or :force"
+                                   " true to record a red milestone honestly.")
                        :status :red :done (:done cp) :test (:test cp)
-                       :findings (:findings cp)}
+                       :findings verdict}
                 iso (assoc :isolated iso))
               (mark! head status (cond-> {:done (:done cp)}
                                    iso (assoc :isolated iso))

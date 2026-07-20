@@ -133,10 +133,15 @@
           (is (= "v1" (:description m2)))
           (is (re-find #"nothing changed" (str (:note m2))))))
       (finally (api/close! sess)))))
-(deftest ^:isolated milestones-gate-on-the-isolated-suite
-  ;; the milestone owns the FULL gate: a red ^:isolated suite refuses the
-  ;; milestone (no manual test_run first), and a green one records its
-  ;; isolated summary on the result.
+(deftest ^:isolated the-milestone-forces-no-whole-store-check
+  ;; CHANGED CONTRACT. The milestone used to run the full ^:isolated suite and
+  ;; refuse on it. It no longer does: it runs `done!` and gates on that
+  ;; verdict, nothing more. `full_check` is the whole-store answer and is the
+  ;; agent's call — including before a commit.
+  ;;
+  ;; The cost is real and pinned here deliberately: a red ^:isolated test the
+  ;; episode did not touch will NOT stop a milestone. That is the trade for
+  ;; not forcing a slow whole-store run on every publish.
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'mg.core "(ns mg.core)\n\n(defn f \"F.\" [x] x)\n")
@@ -144,14 +149,18 @@
                    (str "(ns mg.core-test (:require [mg.core :as core]\n"
                         "                           [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest ^:isolated f-t (is (= :nope (core/f 1))))\n"))
-      (let [r (api/commit-point! sess "should refuse")]
-        (is (:error r) (pr-str (dissoc r :test)))
-        (is (= :red (:status r))))
-      (api/edit-replace! sess 'mg.core-test 'f-t
-                         "(deftest ^:isolated f-t (is (= 1 (core/f 1))))"
-                         :prompt "fix the spec")
-      (let [r (api/commit-point! sess "now green")]
-        (is (:commit r) (pr-str (dissoc r :test)))
-        (is (= :green (:status r)))
-        (is (= :green (:status (:isolated r))) (pr-str (:isolated r))))
+      (testing "the milestone records without running the isolated tier itself"
+        (let [r (api/commit-point! sess "no forced whole-store check")]
+          (is (:commit r) (pr-str (dissoc r :test)))
+          (is (nil? (:isolated r)) (pr-str (:isolated r)))))
+      (testing "full_check is where the red isolated spec surfaces"
+        (let [r (api/full-check! sess)]
+          (is (= :red (:status r)) (pr-str (dissoc r :lint :warnings)))
+          (is (= :red (:status (:isolated r))) (pr-str (:isolated r)))))
+      (testing "and once the spec is honest, full_check is green"
+        (api/edit-replace! sess 'mg.core-test 'f-t
+                           "(deftest ^:isolated f-t (is (= 1 (core/f 1))))"
+                           :prompt "fix the spec")
+        (let [r (api/full-check! sess)]
+          (is (= :green (:status r)) (pr-str (dissoc r :lint :warnings)))))
       (finally (api/close! sess)))))
