@@ -586,49 +586,6 @@
             (str "exactly the one test the evidence names, not all five: "
                  (pr-str (:isolated r)))))
       (finally (api/close! sess)))))
-(deftest ^:isolated one-untraced-form-no-longer-collapses-narrowing
-  ;; THE headline of #132, measured before it was fixed: 54.4% of real
-  ;; episodes touched a form the tracer can never see — 43.2% an NS form,
-  ;; which is what ns_add_require edits — and ONE such form discarded the
-  ;; evidence for every other form in the episode. Adding a require to a leaf
-  ;; namespace reverted the whole done to closure runs.
-  ;;
-  ;; The pin: an episode editing a TRACED fn in one ns and the NS FORM of an
-  ;; unrelated leaf runs the traced fn's test and the leaf's reach — and NOT
-  ;; the unrelated test in the first ns, which the collapse used to drag in.
-  (let [sess (api/open!)]
-    (try
-      (api/ingest! sess 'pfa.core
-                   "(ns pfa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
-                   :agent "t")
-      (api/ingest! sess 'pfb.core "(ns pfb.core)\n\n(defn h \"H.\" [x] x)\n"
-                   :agent "t")
-      (api/ingest! sess 'pfa.core-test
-                   (str "(ns pfa.core-test (:require [pfa.core :as a]\n"
-                        "                            [clojure.test :refer [deftest is]]))\n\n"
-                        "(deftest f-t (is (= 1 (a/f 1))))\n\n"
-                        "(deftest g-t (is (= 1 (a/g 1))))\n")
-                   :agent "t")
-      (api/ingest! sess 'pfb.core-test
-                   (str "(ns pfb.core-test (:require [pfb.core :as b]\n"
-                        "                            [clojure.test :refer [deftest is]]))\n\n"
-                        "(deftest h-t (is (= 1 (b/h 1))))\n")
-                   :agent "t")
-      ;; boundary: runs everything fresh, which BUILDS the per-test evidence
-      (api/done! sess :label "setup" :agent "t")
-      ;; the mixed episode — a traced edit plus the 43.2% case
-      (api/edit-replace! sess 'pfa.core 'f "(defn f \"F.\" [x] (identity x))"
-                         :prompt "traced edit" :agent "t")
-      (api/add-require! sess 'pfb.core "[clojure.string :as str]"
-                        :prompt "the untraceable ns-form touch" :agent "t")
-      (let [r (api/done! sess :label "mixed" :agent "t")]
-        (testing "f's test and pfb's reach run; g-t is NOT dragged in"
-          (is (= 2 (:test (:test r))) (pr-str (:test r))))
-        (testing "green, with no isolated-pending noise"
-          (is (= :green (get-in r [:findings :test-status])))
-          (is (nil? (get-in r [:findings :isolated-pending])))))
-      (finally (api/close! sess)))))
-
 (deftest ^:isolated undo-walks-back-by-delta-not-by-name
   ;; The hole undo! fills. edit_revert is NAME-addressed, so it cannot undo a
   ;; DELETE — the name is gone, so query-form-history returns nil and you get
@@ -697,4 +654,40 @@
                            :prompt "use the binding")
         (let [r (api/done! sess :label "clean")]
           (is (zero? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated done-runs-the-whole-suite-regardless-of-what-was-touched
+  ;; Replaces one-untraced-form-no-longer-collapses-narrowing, which pinned the
+  ;; #132 fix to impacted-test NARROWING. That machinery is gone: "done means
+  ;; done" is a claim about the codebase, not about what the episode touched,
+  ;; so done runs everything. Narrowing was ALSO a source of misses — one
+  ;; untraced form (an ns form, which ns_add_require edits) used to discard the
+  ;; evidence for every other form, on 54.4% of real episodes. This pins the
+  ;; inverse, so nobody reintroduces selection for speed without deciding to.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'wsa.core "(ns wsa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
+                   :agent "t")
+      (api/ingest! sess 'wsb.core "(ns wsb.core)\n\n(defn h \"H.\" [x] x)\n" :agent "t")
+      (api/ingest! sess 'wsa.core-test
+                   (str "(ns wsa.core-test (:require [wsa.core :as a]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest f-t (is (= 1 (a/f 1))))\n\n"
+                        "(deftest g-t (is (= 1 (a/g 1))))\n")
+                   :agent "t")
+      (api/ingest! sess 'wsb.core-test
+                   (str "(ns wsb.core-test (:require [wsb.core :as b]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest h-t (is (= 1 (b/h 1))))\n")
+                   :agent "t")
+      (api/done! sess :label "setup" :agent "t")
+      ;; touch ONE form in ONE namespace
+      (api/edit-replace! sess 'wsa.core 'f "(defn f \"F.\" [x] (identity x))"
+                         :prompt "one small edit" :agent "t")
+      (let [r (api/done! sess :label "one edit" :agent "t")]
+        (testing "every test in the store ran, not just the ones f reaches"
+          (is (= 3 (:test (:test r))) (pr-str (:test r))))
+        (testing "green, with no isolated-pending noise"
+          (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))
+          (is (nil? (get-in r [:findings :isolated-pending])))))
       (finally (api/close! sess)))))

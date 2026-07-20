@@ -1524,8 +1524,7 @@
                  ;; schema / namespaced-keys). Each normally fires only as code
                  ;; is written, so a form predating a rule was never subject to
                  ;; it. Reported, never auto-applied — every one needs judgment.
-                 :lint       (vec (done/anchored-lint
-                                   session (mapv :id (store/forms (:store @session) ns-sym))))
+                 :lint       (vec (done/anchored-lint session))
                  :unused     (vec (:unused (modules/unused-report
                                             (:store @session) [ns-sym])))
                  :undocumented
@@ -2585,12 +2584,15 @@
                          :agent agent))
         ;; kondo lint over every namespace touched since the last done-point —
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
-        lint (done/anchored-lint session  changed)
+        lint (done/anchored-lint session)
         ;; the unused-public GATE: unmarked dead surface — and stale
         ;; ^:unused-ok markers — join as ERROR-grade lint (never demoted)
         unused-rep (let [st* (:store @session)]
-                     (modules/unused-report
-                      st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
+                     ;; STORE-WIDE, like the lint scan: "done means done" is a
+                     ;; claim about the codebase, so dead surface anywhere
+                     ;; counts — you cannot outrun a standing problem by
+                     ;; editing a different namespace.
+                     (modules/unused-report st* (keys (:namespaces st*))))
         lint (done/with-unused-gate lint unused-rep)
         ;; NEW warnings (on forms this episode touched) report in full;
         ;; CARRIED ones (pre-existing, untouched forms) compress to a count —
@@ -2619,21 +2621,20 @@
                                          (symbol (str (store/ns-of-form-id st* fid))
                                                  (str (or (:name e) (:id e)))))))
                                changed)
-                
-                affected ;; PER FORM (#132): evidence where it exists, that form's own
-                ;; namespace-reach where it doesn't. The old all-or-nothing
-                ;; collapse — one nil discarding every other form's evidence —
-                ;; fired on 54.4% of real episodes (43.2% via ns forms alone:
-                ;; ns_add_require edits a form the tracer can never see).
-                (session/impacted-tests session st* changed)
-                changed-nses (vec (distinct (keep #(store/ns-of-form-id st* %)
-                                                  changed)))
-                ;; with no trace coverage the fallback must still REACH the
-                ;; tests: closure-bounded test nses, not just the changed ones
-                main-ns  (vec (distinct (concat changed-nses
-                                                (session/test-nses-reaching st* changed-nses))))
-                s        (session/run-verification! session main-ns
-                                            (when (seq affected) affected)
+                ;; the ENTIRE in-image suite, not the impacted slice: "done
+                ;; means done". Impacted-only answered the weaker question
+                ;; "does what I touched still work" — and impacted SELECTION
+                ;; was itself a source of misses (one untraced form used to
+                ;; collapse the whole narrowing, on 54.4% of real episodes).
+                ;; Running everything retires that machinery here.
+                ;;
+                ;; The full ISOLATED tier is still skipped (it spawns JVMs)
+                ;; and the findings SAY so, so running it stays a visible
+                ;; choice rather than a silent omission.
+                main-ns  (vec (sort (keys (:namespaces st*))))
+                ;; nil affected => every test in main-ns; :edited still powers
+                ;; the red :implicated correlation
+                s        (session/run-verification! session main-ns nil
                                             :edited qsyms
                                             :include-integration? true
                                             :boundary? true)]  ; M5
@@ -2684,12 +2685,28 @@
                                                (store/ns-of-form-id st* fid)
                                                (:name e)))))
                                     changed))))]
-  (cond-> {:test-status (cond (and (nil? summary) (nil? iso)) :none
+  (cond-> {:test-status (cond (and (nil? summary) (nil? iso) (zero? lint-errors)) :none
                               (or (pos? failures) iso-red?
+                                  ;; lint errors — which INCLUDE dead public
+                                  ;; surface, folded in as ERROR rows by
+                                  ;; with-unused-gate — are part of "is this
+                                  ;; codebase good?". They were absent here
+                                  ;; while commit-point! kept its own dead-surface
+                                  ;; scan; with that removed, omitting them let a
+                                  ;; store with dead surface milestone green.
+                                  (pos? lint-errors)
                                   (rules/status-affecting-fired? st* advisories)) :red
                               :else                           :green)
            :failures    failures
-           :lint-errors lint-errors}
+           :lint-errors lint-errors
+           ;; done runs the WHOLE in-image suite but not the full isolated
+           ;; tier. Say so EVERY time: an unstated omission reads as coverage,
+           ;; and that is how a green status comes to mean less than the agent
+           ;; thinks it does.
+           :isolated-suite
+           (str "not run at done (it spawns JVMs) — impacted ^:isolated tests"
+                " DID run; test_run {isolated true} runs the rest, and the"
+                " milestone requires it")}
     (:pending iso)    (assoc :isolated-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq advisories)  (merge advisories)
@@ -2720,9 +2737,19 @@
 (defn commit-point!
   "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,
   declare hygiene, verify) for `:agent`, then append a `:commit` marker
-  pointing at the resulting state with a human `description`. GREEN-GATED:
-  a red verification refuses the milestone (the done still stands —
-  fix and retry) unless `:force true`, which records `:status :red`
+  pointing at the resulting state with a human `description`.
+
+  THE MILESTONE HAS NO GATES OF ITS OWN. It runs `done!`, adds the full
+  ISOLATED tier (the one thing done deliberately skips), and gates on that
+  verdict — nothing is re-judged here. Two enforcement points DRIFT: this
+  function used to recompute status from raw test counts and so never saw
+  the `:error` done-advisories at all, and it carried its own copies of the
+  dead-surface and lint scans. `done` means done, which only holds if done
+  is the single bar; a second bar is somewhere to accidentally put a check
+  that then does not apply at done.
+
+  GREEN-GATED: a red verification refuses the milestone (the done still
+  stands — fix and retry) unless `:force true`, which records `:status :red`
   honestly. Re-requesting a milestone on an UNCHANGED store returns the
   existing marker instead of minting an empty one. With `:target` (a past
   delta id) it is a pure retroactive marker: no done runs, status is
@@ -2766,59 +2793,50 @@
                   :description (:description last-d)
                   :note "nothing changed since this milestone — returning it"})
           (let [cp     (done! session :label description :agent agent
-                            :isolated? false) ; the milestone owns the FULL gate
+                            :isolated? false) ; the isolated tier runs below
                 st     (:store @session)
                 head   (:id (last (store/deltas st)))
-                ;; the whole isolated suite IS the milestone gate — run it when
-                ;; the store has any ^:isolated tests (fixture stores without
-                ;; them skip the tier); :force skips straight to honest red
+                ;; the ONE thing done does not do: the whole isolated suite.
+                ;; Run it when the store has any ^:isolated tests (fixture
+                ;; stores without them skip the tier); :force skips straight
+                ;; to honest red
                 iso    (when (and (not force)
                                   (seq (session/isolated-test-nses
                                         st (filter #(session/test-ns? st %)
                                                    (keys (:namespaces st))))))
                          (isolated-test-run! session))
-                status (if-let [t (:test cp)]
-                         (if (zero? (+ (:fail t 0) (:error t 0))) :green :red)
+                ;; done's OWN verdict — it already accounts for failures, the
+                ;; :error advisories, store-wide lint and store-wide dead
+                ;; surface. Believe it rather than re-deriving a weaker answer.
+                status (case (get-in cp [:findings :test-status])
+                         :red   :red
+                         :green :green
                          (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
                 status (if (contains? #{:red :error} (:status iso)) :red status)
-                ;; the milestone gates GLOBALLY (like the full suite): standing
-                ;; unused surface anywhere refuses, not just this episode's
-                dead   (let [rep (modules/unused-report
-                                  st (keys (:namespaces st)))]
-                         (concat (:unused rep) (:stale rep)))
-                ;; lint gates GLOBALLY here too, and at the MILESTONE grain
-                ;; rather than the write grain: `unused-binding` is routinely
-                ;; true of a form mid-edit, so refusing it at write time made
-                ;; red-first TDD and every negative-testing fixture
-                ;; unreachable (33 assertions, 14 tests). A milestone claims
-                ;; the work is finished, which is exactly when it is fair to
-                ;; ask. See D-rule-grain.
-                lintw  (vec (for [n (sort (keys (:namespaces st)))
-                                  f (index/lint (render/render-ns st n))
-                                  :when (#{:error :warning} (:level f))]
-                              (symbol (str n) (str (name (:type f))))))
-                status (if (or (seq dead) (seq lintw)) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
                 tree   (into (sorted-map)
                              (map (fn [n] [n (render/render-ns st n)]))
-                             (keys (:namespaces st)))]
+                             (keys (:namespaces st)))
+                ;; a SUMMARY of done's findings, not a second implementation:
+                ;; name the findings that actually fired so the refusal is
+                ;; actionable without re-deriving anything
+                wrong  (->> (dissoc (:findings cp) :test-status :isolated-suite)
+                            (remove (fn [[_ v]] (or (and (number? v) (zero? v))
+                                                    (and (coll? v) (empty? v)))))
+                            (map (comp name key))
+                            sort vec)]
             (if (and (= :red status) (not force))
-              (cond-> {:error (str "verification is RED — milestone refused (your work is "
-                                   "at its done-point; fix and retry, or :force true to record "
-                                   "a red milestone honestly)"
-                                   (when (seq dead)
-                                     (str " — unused public surface: " (vec dead)
-                                          " (delete it, mark ^:unused-ok, or"
-                                          " remove a stale marker)"))
-                                   (when (seq lintw)
-                                     (str " — lint findings: " lintw
-                                          " (a milestone claims the work is"
-                                          " FINISHED, so warnings count here"
-                                          " even though they never block a"
-                                          " write — mid-edit is not a verdict)")))
-                       :status :red :done (:done cp) :test (:test cp)}
+              (cond-> {:error (str "verification is RED — milestone refused"
+                                   (when (seq wrong)
+                                     (str " — " (str/join ", " wrong)))
+                                   ". Your work is at its done-point; the full"
+                                   " list is in :findings. Fix and retry, or"
+                                   " :force true to record a red milestone"
+                                   " honestly.")
+                       :status :red :done (:done cp) :test (:test cp)
+                       :findings (:findings cp)}
                 iso (assoc :isolated iso))
               (mark! head status (cond-> {:done (:done cp)}
                                    iso (assoc :isolated iso))

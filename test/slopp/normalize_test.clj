@@ -31,7 +31,7 @@
     (try
       (api/ingest! sess 'cp.core
                    (str "(ns cp.core (:require [clojure.test :refer [deftest is]]))\n"
-                        "(defn clean [x] (inc x))\n"))
+                        "(defn ^:unused-ok clean [x] (inc x))\n"))
       (api/done! sess :label "baseline")           ; everything-so-far boundary
       ;; agent writes working-but-clunky code
       (api/add-form! sess 'cp.core
@@ -46,7 +46,7 @@
           (is (= 1 (:normalized r)))
           (is (= ['cp.core/classify] (mapv :form (:rewrites r))))
           (is (re-find #"if-not" (api/query-source sess 'cp.core)))
-          (is (re-find #"\(defn clean \[x\] \(inc x\)\)"
+          (is (re-find #"\(defn \^:unused-ok clean \[x\] \(inc x\)\)"
                        (api/query-source sess 'cp.core))))
         (testing "behavior verified after normalization (affected tests green)"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
