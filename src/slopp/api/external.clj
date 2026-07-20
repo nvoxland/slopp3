@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image]))
+            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -111,7 +111,7 @@
           (cond-> {:built (str target)}
             main
             (assoc :native
-                   (let [an    (index/analyze (render/render-ns st entry-ns))
+                   (let [an    (analyze/analyze (render/render-ns st entry-ns))
                          vdef  (first (filter #(and (= entry-ns (:ns %))
                                                     (= (symbol (name main)) (:name %)))
                                               (:var-definitions an)))

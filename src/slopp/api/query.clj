@@ -11,9 +11,8 @@
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
-            [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -46,7 +45,7 @@
   [session ns-sym nm]
   (let [st  (:store @session)
         f   (store/form-named st ns-sym nm)
-        eff (index/effectful-vars (index/analyze (render/render-ns st ns-sym)))]
+        eff (derive/effectful-vars (analyze/analyze (render/render-ns st ns-sym)))]
     (when f
       (cond-> {:id         (:id f)
                :name       (:name f)
@@ -62,7 +61,7 @@
   [session ns-sym nm]
   (let [st (:store @session)]
     (vec (mapcat (fn [n]
-                   (index/references (index/analyze (render/render-ns st n))
+                   (derive/references (analyze/analyze (render/render-ns st n))
                                      ns-sym nm))
                  (sort (keys (:namespaces st)))))))
 
@@ -214,8 +213,8 @@
   docstring first line (the outline's token bulk)."
   [session ns-sym & {:keys [detail]}]
   (let [st  (:store @session)
-        an  (index/analyze (render/render-ns st ns-sym))
-        eff (index/effectful-vars an)]
+        an  (analyze/analyze (render/render-ns st ns-sym))
+        eff (derive/effectful-vars an)]
     {:ns ns-sym
      :forms
      (vec (for [d (:var-definitions an)
@@ -224,8 +223,8 @@
               (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
               (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
               (and detail (:doc d))   (assoc :doc (first (str/split-lines (:doc d))))
-              (index/test-definition? d) (assoc :test? true)
-              (and (not (index/test-definition? d))
+              (derive/test-definition? d) (assoc :test? true)
+              (and (not (derive/test-definition? d))
                    (contains? eff (symbol (str ns-sym) (str (:name d)))))
               (assoc :effectful? true))))}))
 
@@ -376,7 +375,7 @@
   (let [internal? (:namespaces st)]
     (reduce
      (fn [adj ns-sym]
-       (let [an (index/analyze (render/render-ns st ns-sym))]
+       (let [an (analyze/analyze (render/render-ns st ns-sym))]
          (reduce (fn [adj u]
                    (if (and (:from-var u) (internal? (:to u)))
                      (update adj
