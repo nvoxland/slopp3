@@ -7,7 +7,7 @@
             [slopp.store :as store]
             [slopp.turn]
             [slopp.mcp]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns ep.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -20,7 +20,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       ;; a classic TDD arc: red test change, then the fix
       (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
                          :prompt "want +10 behavior")
@@ -38,7 +38,7 @@
           (testing "the red→green arc is visible"
             (is (= [1 0] (mapv :fail (:verification-arc c)))))))
       (testing "done closes the episode"
-        (api/done! sess :label "plus-ten")
+        (external/done! sess :label "plus-ten")
         (is (empty? (:forms (query/query-changes sess)))))
       (testing "collapsed history reads at episode grain"
         (let [rows (query/query-history sess :collapse true)]
@@ -49,7 +49,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       ;; two "sub-agents" interleave on one session
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1 1))"
                          :prompt "alice's work" :agent "alice")
@@ -61,7 +61,7 @@
         (is (= #{'ep.core/g}
                (set (map :form (:forms (query/query-changes sess :agent "bob")))))))
       (testing "alice marking done does NOT close bob's episode"
-        (api/done! sess :label "alice done" :agent "alice")
+        (external/done! sess :label "alice done" :agent "alice")
         (is (empty? (:forms (query/query-changes sess :agent "alice"))))
         (is (= #{'ep.core/g}
                (set (map :form (:forms (query/query-changes sess :agent "bob")))))))
@@ -71,7 +71,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       ;; alice: modifies f, adds a helper — and touches the SHARED form h
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 9))"
                          :prompt "alice attempt" :agent "alice")
@@ -99,7 +99,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
-      (api/done! sess :label "baseline" :agent "alice")
+      (external/done! sess :label "baseline" :agent "alice")
       ;; alice's turn: her own edit + two sub-agents she spawned
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
                          :prompt "alice's own step" :agent "alice")
@@ -107,7 +107,7 @@
                          :prompt "sub tests work" :agent "alice/tests")
       (api/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
                          :prompt "sub impl work" :agent "alice/impl")
-      (api/done! sess :label "alice turn done" :agent "alice")
+      (external/done! sess :label "alice turn done" :agent "alice")
       (testing "the collapsed history nests sub-agent episodes under the turn"
         (let [rows   (query/query-history sess :collapse true)
               alice  (first (filter #(= "alice turn done"
@@ -135,7 +135,7 @@
                          :prompt "step 1" :agent "alice")
       (api/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
                          :prompt "sub step" :agent "alice/impl")
-      (api/done! sess :label "rush support" :agent "alice")
+      (external/done! sess :label "rush support" :agent "alice")
       (let [r (api/turn-end! sess :agent "alice")]
         (is (nil? (:error r))))
       (testing "lineage + form-history resolve the enclosing turn's ask"
@@ -254,7 +254,7 @@
                          :prompt "red first" :agent "alice")
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
                          :prompt "green" :agent "alice")
-      (api/done! sess :label "plus-ten" :agent "alice")
+      (external/done! sess :label "plus-ten" :agent "alice")
       (api/turn-end! sess :agent "alice")
       ;; more work after, so the span is genuinely historical
       (api/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
@@ -290,7 +290,7 @@
       (api/edit-replace! sess 'ep.core 'h
                          "(defn h [x]\n  ;; loud on purpose\n  (* x 2))"
                          :prompt "make h double" :agent "alice")
-      (api/done! sess :label "h doubles" :agent "alice")
+      (external/done! sess :label "h doubles" :agent "alice")
       (api/turn-end! sess :agent "alice")
       ;; a later, still-open episode so was/now spans a real line-level change
       (api/edit-replace! sess 'ep.core 'h
@@ -337,10 +337,10 @@
                         "(defn f \"F.\" [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
       (api/test-run! sess 'dv.core)
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (api/edit-replace! sess 'dv.core 'f "(defn f \"F2.\" [x] (inc x))"
                          :prompt "docstring only — normalize will not rewrite")
-      (let [r (api/done! sess :label "tweaked")]
+      (let [r (external/done! sess :label "tweaked")]
         (is (zero? (:normalized r)) (pr-str r))
         (is (pos? (:test (:test r) 0))
             (str "tests must run at the done-point even with zero rewrites: "
@@ -361,7 +361,7 @@
       (api/test-run! sess 'fr.core)
       (api/edit-replace! sess 'fr.core 'f "(defn f \"F.\" [x] (inc x))"
                          :prompt "breaks f-t")
-      (let [r (api/done! sess :label "left red")]
+      (let [r (external/done! sess :label "left red")]
         (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str r)))
       (finally (api/close! sess)))
     (let [sess2 (api/open! {:slopp.api/dir dir})]
@@ -382,11 +382,11 @@
                    (str "(ns dr.core-test (:require [dr.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest f-t (is (= 2 (c/f 1))))\n"))
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       ;; break f WITHOUT ever running tests — the trace map knows nothing
       (api/edit-replace! sess 'dr.core 'f "(defn f \"F.\" [x] (+ x 2))"
                          :prompt "breaks f-t; only dr.core-test can prove it")
-      (let [r (api/done! sess :label "must catch the red")]
+      (let [r (external/done! sess :label "must catch the red")]
         (is (pos? (:test (:test r) 0))
             (str "the done-point must reach dr.core-test: " (pr-str r)))
         (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r))))
@@ -423,14 +423,14 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'md.core "(ns md.core)\n(defn seeded \"S.\" [x] x)\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (testing "the write itself stays quiet"
         (let [r (api/add-form! sess 'md.core "(defn bare [x] x)"
                                :prompt "no docstring yet")]
           (is (nil? (:error r)) (pr-str r))
           (is (not-any? :missing-doc (:warnings r)) (pr-str (:warnings r)))))
       (testing "the done-point names the undocumented surface"
-        (let [r (api/done! sess :label "review")]
+        (let [r (external/done! sess :label "review")]
           (is (= '[md.core/bare] (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
@@ -445,11 +445,11 @@
                    (str "(ns lc.core)\n\n"
                         "(defn ^:unused-ok stale \"S.\" [x] (let [a x] (let [b a] b)))\n\n"
                         "(defn ^:unused-ok fresh \"F.\" [x] x)\n"))
-      (api/done! sess :label "baseline" :agent "t")
+      (external/done! sess :label "baseline" :agent "t")
       (api/edit-replace! sess 'lc.core 'fresh
                          "(defn ^:unused-ok fresh \"F.\" [x] (let [c x] (let [d c] d)))"
                          :prompt "introduce a new warning" :agent "t")
-      (let [r (api/done! sess :label "the split" :agent "t")]
+      (let [r (external/done! sess :label "the split" :agent "t")]
         (testing "the new warning rides in full"
           (is (some #(= 'lc.core/fresh (:form %)) (:lint r)) (pr-str (:lint r))))
         (testing "the carried one compresses to a count + names"
@@ -470,7 +470,7 @@
                         "                           [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest ^:external f-t (is (= 6 (core/f 3))))\n")
                    :agent "t")
-      (let [r (api/done! sess :label "external impact" :agent "t")]
+      (let [r (external/done! sess :label "external impact" :agent "t")]
         (is (= 1 (:ran (:external r))) (pr-str (:external r)))
         (is (= :green (:status (:external r))))
         (is (= :green (get-in r [:findings :test-status]))
@@ -497,7 +497,7 @@
                           "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
       (testing "a small fresh slice RUNS — brand-new tests are their own reach"
-        (let [r (api/done! sess :label "small hub" :agent "t")]
+        (let [r (external/done! sess :label "small hub" :agent "t")]
           (is (nil? (get-in r [:findings :external-pending])) (pr-str (:findings r)))
           (is (= 2 (:ran (:external r))) (pr-str (:external r)))))
       ;; now push the reach over the cap: one ns, 41 external tests
@@ -509,7 +509,7 @@
                             (str "(deftest ^:external w" i " (is (= 1 (core/f 1))))\n\n")))
                    :agent "t")
       (testing "over the cap: defers to the milestone gate, REPORTED as tests"
-        (let [r (api/done! sess :label "wide hub" :agent "t")]
+        (let [r (external/done! sess :label "wide hub" :agent "t")]
           (is (nil? (:external r)) "above the cap, nothing runs")
           (is (<= 41 (get-in r [:findings :external-pending :count]))
               (pr-str (:findings r)))
@@ -528,7 +528,7 @@
                         "(defn orphan \"O.\" [x] (keeper x))\n")
                    :agent "t")
       (testing "an unmarked unused public is an ERROR-grade finding"
-        (let [r (api/done! sess :label "check" :agent "t")]
+        (let [r (external/done! sess :label "check" :agent "t")]
           (is (= '[up.core/orphan] (get-in r [:findings :unused-public]))
               (pr-str (:findings r)))
           (is (some #(and (= :unused-public (:type %)) (= :error (:level %)))
@@ -536,20 +536,20 @@
               (pr-str (:lint r)))
           (is (pos? (get-in r [:findings :lint-errors])))))
       (testing "...and it refuses the milestone"
-        (let [r (api/commit-point! sess "should refuse")]
+        (let [r (external/commit-point! sess "should refuse")]
           (is (re-find #"unused" (str (:error r))) (pr-str (dissoc r :test)))))
       (testing "the ^:unused-ok marker is the deliberate escape"
         (api/edit-replace! sess 'up.core 'orphan
                            "(defn ^:unused-ok orphan \"O.\" [x] (keeper x))"
                            :prompt "external surface" :agent "t")
-        (let [r (api/done! sess :label "marked" :agent "t")]
+        (let [r (external/done! sess :label "marked" :agent "t")]
           (is (nil? (get-in r [:findings :unused-public]))
               (pr-str (:findings r)))))
       (testing "a STALE marker fails too — remove the flag when it's called"
         (api/edit-replace! sess 'up.core 'keeper
                            "(defn ^:unused-ok keeper \"K.\" [x] x)"
                            :prompt "wrongly marked — orphan calls it" :agent "t")
-        (let [r (api/done! sess :label "stale" :agent "t")]
+        (let [r (external/done! sess :label "stale" :agent "t")]
           (is (= '[up.core/keeper] (get-in r [:findings :stale-unused-ok]))
               (pr-str (:findings r)))
           (is (some #(and (= :stale-unused-ok (:type %))
@@ -574,11 +574,11 @@
                           "                            [clojure.test :refer [deftest is]]))\n\n"
                           "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
-      (api/done! sess :label "setup" :agent "t")
+      (external/done! sess :label "setup" :agent "t")
       (swap! sess assoc :test-map {'hub.core.u0-test/t0 #{'hub.core/f}})
       (api/edit-replace! sess 'hub.core 'f "(defn f \"F.\" [x] (identity x))"
                          :prompt "traced edit" :agent "t")
-      (let [r (api/done! sess :label "traced edit" :agent "t")]
+      (let [r (external/done! sess :label "traced edit" :agent "t")]
         (is (nil? (get-in r [:findings :external-pending]))
             (str "the traced slice fits the cap — nothing should defer: "
                  (pr-str (:findings r))))
@@ -642,7 +642,7 @@
                                "(defn ^:unused-ok w \"D.\" [] (let [x 1] 2))"
                                :prompt "an unused binding")]
           (is (nil? (:error r)) (pr-str r)))
-        (let [f (:findings (api/done! sess :label "warned"))]
+        (let [f (:findings (external/done! sess :label "warned"))]
           (is (some #(= :unused-binding (:type %)) (:lint-warnings f)) (pr-str f))
           (is (zero? (:lint-errors f)) (pr-str f))
           (is (= :green (:test-status f)) (pr-str f))))
@@ -653,7 +653,7 @@
                                "(defn ^:unused-ok halfif \"D.\" [y] (if y 2))"
                                :prompt "missing else — normalize turns it into when")]
           (is (nil? (:error r)) (pr-str r)))
-        (let [f (:findings (api/done! sess :label "half if"))]
+        (let [f (:findings (external/done! sess :label "half if"))]
           (is (zero? (:lint-errors f)) (pr-str f))
           (is (re-find #"\(when y 2\)"
                        (get-in (query/query-slice sess 'lg2.core 'halfif)
@@ -666,7 +666,7 @@
           (is (:error r) (pr-str r))
           (is (re-find #"invalid-arity" (str (:error r))) (str (:error r)))))
       (testing "done names its scope and points at full_check every time"
-        (let [f (:findings (api/done! sess :label "scope note"))]
+        (let [f (:findings (external/done! sess :label "scope note"))]
           (is (re-find #"full_check" (str (:scope f))) (pr-str f))))
       (finally (api/close! sess)))))
 
@@ -694,11 +694,11 @@
                         "                            [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest h-t (is (= 1 (b/h 1))))\n")
                    :agent "t")
-      (api/done! sess :label "setup" :agent "t")
+      (external/done! sess :label "setup" :agent "t")
       ;; touch ONE form in ONE namespace
       (api/edit-replace! sess 'wsa.core 'f "(defn f \"F.\" [x] (identity x))"
                          :prompt "one small edit" :agent "t")
-      (let [r (api/done! sess :label "one edit" :agent "t")]
+      (let [r (external/done! sess :label "one edit" :agent "t")]
         (testing "every test in the store ran, not just the ones f reaches"
           (is (= 3 (:test (:test r))) (pr-str (:test r))))
         (testing "green, with no external-pending noise"

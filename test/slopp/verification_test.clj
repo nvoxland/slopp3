@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -184,9 +184,9 @@
                    (str "(ns ib.core-test (:require [ib.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest g-t (is (= 0 (c/g 1))))\n"))
-      (api/commit-point! sess "baseline")
+      (external/commit-point! sess "baseline")
       (testing "right after a milestone the slice is empty — and says so"
-        (let [r (api/external-test-run! sess :affected true)]
+        (let [r (external/external-test-run! sess :affected true)]
           (is (zero? (:ran r)) (pr-str r))
           (is (re-find #"full gate" (str (:note r))))))
       (testing "changing ONE island runs only the tests that can reach it"
@@ -194,7 +194,7 @@
                                     :prompt "same behavior, new spelling")]
           (is (nil? (:error er)) (pr-str er))
           (is (nil? (:conflict er)) (pr-str er)))
-        (let [r (api/external-test-run! sess :affected true)]
+        (let [r (external/external-test-run! sess :affected true)]
           (is (= 1 (:ran r)) (pr-str (dissoc r :output)))
           (is (= '[ia.core-test] (get-in r [:affected :selected])) (pr-str (:affected r)))
           (is (some #{'ia.core} (get-in r [:affected :changed-nses])))
@@ -215,7 +215,7 @@
                         "(defn g \"G.\" [x] (dec x))\n"
                         "(deftest g-t (is (= 0 (g 1))))\n"
                         "(deftest g2-t (is (= -1 (g 0))))\n"))
-      (let [r (api/external-test-run! sess :parallel 2)]
+      (let [r (external/external-test-run! sess :parallel 2)]
         (is (= 3 (:ran r)) (pr-str (dissoc r :output)))
         (is (= 3 (:assertions r 0)) (pr-str (dissoc r :output)))
         (is (= :green (:status r)))
@@ -223,7 +223,7 @@
       (testing "a red in any shard surfaces with its details"
         (api/edit-replace! sess 'pb.core 'g "(defn g \"G.\" [x] (+ x 5))"
                            :prompt "breaks both g tests")
-        (let [r (api/external-test-run! sess :parallel 2)]
+        (let [r (external/external-test-run! sess :parallel 2)]
           (is (= :red (:status r)))
           (is (pos? (:failures r 0)))
           (is (seq (:all-failing r)) (pr-str (dissoc r :output)))))
@@ -262,7 +262,7 @@
                         {:exit 0 :err ""
                          :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."})))]
         (with-redefs-fn {#'testrun/run-shard! fake}
-          #(let [r (api/external-test-run! sess :parallel 2)]
+          #(let [r (external/external-test-run! sess :parallel 2)]
              (is (= :green (:status r)) (pr-str r))
              (is (= 2 (:ran r)))
              (is (= 2 (:shard-retries r)))
@@ -316,7 +316,7 @@
                                    "  (spit (io/file (str trace-file-prefix \"stub.edn\"))\n"
                                    "        (pr-str '{tt.core-test/f-t #{tt.core/f}}))\n"
                                    "  (apply (requiring-resolve 'cognitect.test-runner/-main) args))\n"))
-      (let [r (api/external-test-run! sess)]
+      (let [r (external/external-test-run! sess)]
         (is (= :green (:status r)) (pr-str r))
         (testing "the verdict path is untouched — the runner WRAPS cognitect"
           (is (= 1 (:ran r)) (pr-str r))))

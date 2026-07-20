@@ -11,7 +11,7 @@
             [slopp.api :as api]
             [slopp.db :as db]
             [slopp.git :as git]
-            [slopp.store :as store] [slopp.api.branch :as branch] [slopp.api.query :as query])
+            [slopp.store :as store] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.lib ObjectId Repository]
@@ -73,7 +73,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gp.core seed)
-      (let [r (api/commit-point! sess "v1: f ships" :agent "alice")
+      (let [r (external/commit-point! sess "v1: f ships" :agent "alice")
             d (->> (store/deltas (:store @sess))
                    (filter #(= (:commit r) (:id %))) first)]
         (is (nil? (:error r)) (pr-str r))
@@ -81,7 +81,7 @@
           (is (= (query/query-source sess 'gp.core) (get (:tree d) 'gp.core)))
           (is (str/includes? (get (:tree d) 'gp.core) ";; top-level trivia")))
         (testing "a retroactive :target marker carries NO tree (backfill path)"
-          (let [r2 (api/commit-point! sess "was here" :agent "alice"
+          (let [r2 (external/commit-point! sess "was here" :agent "alice"
                                       :target (:target r))
                 d2 (->> (store/deltas (:store @sess))
                         (filter #(= (:commit r2) (:id %))) first)]
@@ -96,12 +96,12 @@
       (api/ingest! sess 'gp.core seed)
       ;; G5: milestones stamp a configured author; pin it so the assertions
       ;; below don't depend on this machine's global git config
-      (api/config! sess "user.name" "alice")
-      (api/config! sess "user.email" "alice@slopp")
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/config! sess "user.name" "alice")
+      (external/config! sess "user.email" "alice@slopp")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip arg order" :agent "alice")
-      (api/commit-point! sess "v2: flipped" :agent "alice")
+      (external/commit-point! sess "v2: flipped" :agent "alice")
       (let [ctx  (git/open-ctx! dir)
             tip  (get-in (git/ensure-projected! ctx) [:refs "main"])
             info (commit-info (:slopp.git/repo ctx) tip)
@@ -145,11 +145,11 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (branch/branch! sess "feature")
       (api/edit-replace! sess 'gp.core 'f "(defn f [x] (int (+ x 10)))"
                          :prompt "tweak on feature" :agent "bob")
-      (api/commit-point! sess "feature: tweak" :agent "bob")
+      (external/commit-point! sess "feature: tweak" :agent "bob")
       (let [ctx (git/open-ctx! dir)]
         (try
           (let [{:keys [refs]} (git/ensure-projected! ctx)
@@ -171,11 +171,11 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
-      (let [r1 (api/commit-point! sess "v1" :agent "alice")]
+      (let [r1 (external/commit-point! sess "v1" :agent "alice")]
         (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
                            :prompt "newer work" :agent "alice")
-        (api/commit-point! sess "v2" :agent "alice")
-        (api/commit-point! sess "v1.5 was actually here" :agent "alice"
+        (external/commit-point! sess "v2" :agent "alice")
+        (external/commit-point! sess "v1.5 was actually here" :agent "alice"
                            :target (:target r1))
         (let [ctx (git/open-ctx! dir)]
           (try
@@ -200,7 +200,7 @@
       (api/ingest! sess 'gp.core seed)
       (api/edit-replace! sess 'gp.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
                          :prompt "deliberately red" :agent "bob")
-      (let [r (api/commit-point! sess "broken but important" :agent "bob"
+      (let [r (external/commit-point! sess "broken but important" :agent "bob"
                                  :force true)]
         (is (= :red (:status r)))
         (let [ctx (git/open-ctx! dir)]

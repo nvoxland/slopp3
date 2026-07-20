@@ -8,7 +8,7 @@
             [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.server :as server] [clojure.java.io :as io])
+            [slopp.git :as git] [slopp.git.server :as server] [clojure.java.io :as io] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -28,13 +28,13 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gc.core seed)
-      (api/commit-point! sess "v1" :agent "alice")
+      (external/commit-point! sess "v1" :agent "alice")
       (api/edit-replace! sess 'gc.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip" :agent "alice")
-      (api/commit-point! sess "v2" :agent "alice")
+      (external/commit-point! sess "v2" :agent "alice")
       (api/edit-replace! sess 'gc.core 'f "(defn f [x] (int (+ 10 x)))"
                          :prompt "tighten" :agent "alice")
-      (api/commit-point! sess "v3" :agent "alice")
+      (external/commit-point! sess "v3" :agent "alice")
       ;; two ctxs = two processes: separate repo handles, conns, locks
       (let [ctx1 (git/open-ctx! dir)
             ctx2 (git/open-ctx! dir)]
@@ -83,7 +83,7 @@
                           (.setHeads true) (.call))))]
     (try
       (api/ingest! sess1 'gc.core seed)
-      (api/commit-point! sess1 "v1" :agent "alice")
+      (external/commit-point! sess1 "v1" :agent "alice")
       (let [tip1 (tip)]
         (is (some? tip1))
         ;; a SECOND session on the same dir — a foreign writer
@@ -91,7 +91,7 @@
           (try
             (api/edit-replace! sess2 'gc.core 'f "(defn f [x] (+ 10 x))"
                                :prompt "foreign work" :agent "bob")
-            (api/commit-point! sess2 "v2: foreign milestone" :agent "bob")
+            (external/commit-point! sess2 "v2: foreign milestone" :agent "bob")
             (finally (api/close! sess2))))
         (let [tip2 (tip)]
           (is (not= tip1 tip2))

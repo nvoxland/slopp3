@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -228,14 +228,14 @@
         (api/edit-replace! sess 'sg2.core 'caller
                            "(defn ^:unused-ok caller \"C.\" [x] (base x 3))"
                            :prompt "caller catches up")
-        (let [r (api/done! sess :label "signature change complete")]
+        (let [r (external/done! sess :label "signature change complete")]
           (is (empty? (filter #(= :error (:level %)) (:lint r)))
               (pr-str (:lint r)))))
       (testing "done with a STANDING stale caller reports it in findings"
         (api/edit-replace! sess 'sg2.core 'base
                            "(defn base \"B.\" [x y z] (* x y z))"
                            :prompt "grow again, forget the caller")
-        (let [r (api/done! sess :label "left broken")]
+        (let [r (external/done! sess :label "left broken")]
           (is (pos? (get-in r [:findings :lint-errors] 0)) (pr-str r))))
       (finally (api/close! sess)))))
 (deftest ^:external renaming-via-replace-refuses-when-callers-dangle

@@ -3,7 +3,7 @@
   slopp store and (b) a conventional files project (via build!). Fresh eval
   agents then get IDENTICAL starting codebases for the modify-and-extend task.
   Run: clojure -M -m slopp.evalseed <template-dir>   (see .context/dogfooding.md)"
-  (:require [slopp.api :as api] [clojure.java.io :as io] [clojure.string :as str]))
+  (:require [slopp.api :as api] [clojure.java.io :as io] [clojure.string :as str] [slopp.api.external :as external]))
 
 (def model-src
   (str "(ns tasker.model\n  (:require [clojure.test :refer [deftest is]]))\n\n"
@@ -77,8 +77,8 @@
         (let [r (api/test-run! sess ns-sym)]
           (when-not (zero? (+ (:fail r) (:error r)))
             (throw (ex-info (str "seed not green in " ns-sym) r)))))
-      (api/done! sess :label "seed: tasker v1")
-      (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
+      (external/done! sess :label "seed: tasker v1")
+      (external/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
 ;; --- round 3: the SCALE seed (12 interconnected namespaces) ---
@@ -270,8 +270,8 @@
           (when (:error r) (throw (ex-info (str ns-sym ": " (:error r)) r)))
           (when-not (zero? (+ (get-in r [:test :fail]) (get-in r [:test :error])))
             (throw (ex-info (str ns-sym " not green") r)))))
-      (api/done! sess :label "seed: orders v1")
-      (api/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
+      (external/done! sess :label "seed: orders v1")
+      (external/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
       (finally (api/close! sess)))))
 
 (defn -main "CLI: seed an eval template — a known-green codebase as BOTH a slopp store

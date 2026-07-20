@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.normalize :as norm]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
@@ -32,7 +32,7 @@
       (api/ingest! sess 'cp.core
                    (str "(ns cp.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn ^:unused-ok clean [x] (inc x))\n"))
-      (api/done! sess :label "baseline")           ; everything-so-far boundary
+      (external/done! sess :label "baseline")           ; everything-so-far boundary
       ;; agent writes working-but-clunky code
       (api/add-form! sess 'cp.core
                      "(defn classify [x] (if (not (neg? x)) (if (pos? x) :pos :zero) :neg))")
@@ -41,7 +41,7 @@
                           "  (is (= :pos (classify 2)))\n"
                           "  (is (= :zero (classify 0)))\n"
                           "  (is (= :neg (classify -2))))"))
-      (let [r (api/done! sess :label "classification done")]
+      (let [r (external/done! sess :label "classification done")]
         (testing "changed-since-done forms are normalized, others untouched"
           (is (= 1 (:normalized r)))
           (is (= ['cp.core/classify] (mapv :form (:rewrites r))))
@@ -56,12 +56,12 @@
                          :normalize))
           (is (= :done (:op (last (store/deltas (:store @sess))))))))
       (testing "an immediate second done is a no-op"
-        (let [r (api/done! sess)]
+        (let [r (external/done! sess)]
           (is (zero? (:normalized r)))
           (is (empty? (:lint r)))))
       (testing "done lints the changed namespaces (kondo findings)"
         (api/add-form! sess 'cp.core "(defn sloppy [x] (let [unused 1] x))")
-        (let [r    (api/done! sess :label "lint probe")
+        (let [r    (external/done! sess :label "lint probe")
               hits (filter #(= :unused-binding (:type %)) (:lint r))]
           (is (seq hits))
           (is (= 'cp.core/sloppy (:form (first hits))))
@@ -88,7 +88,7 @@
                    (str "(ns dh.core)\n"
                         "(defn ping [n] n)\n"
                         "(defn pong [n] (ping n))\n"))
-      (api/done! sess :label "base")
+      (external/done! sess :label "base")
       ;; make ping call pong → mutual recursion → the pipeline auto-declares
       ;; (the agent writes NO declare — the edit path bans them)
       (api/add-form! sess 'dh.core "(declare later)")  ; refused — proves the ban
@@ -97,7 +97,7 @@
           "the cycle got a pipeline-owned, marked declare")
       ;; break the cycle → the auto-declare is now stale
       (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (inc n))")
-      (let [r (api/done! sess :label "feature")]
+      (let [r (external/done! sess :label "feature")]
         (is (nil? (:declares-fixed r))
             "done cleans up SILENTLY — no declare housekeeping reported")
         (is (not (re-find #"declare" (query/query-source sess 'dh.core)))

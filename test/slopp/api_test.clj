@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -71,14 +71,14 @@
       (testing "build materializes .clj on demand (C1/C6 explicit build)"
         (let [dir (str (Files/createTempDirectory "slopp-build"
                                                   (make-array FileAttribute 0)))]
-          (api/build! sess dir)
+          (external/build! sess dir)
           (is (= (query/query-source sess 'demo) (slurp (str dir "/src/demo.clj"))))
           (is (.exists (clojure.java.io/file dir "deps.edn")))
           (testing "X4 guard: never into the running system, absolute only, no deps.edn clobber"
-            (is (:error (api/build! sess ".")))
-            (is (:error (api/build! sess (System/getProperty "user.dir"))))
+            (is (:error (external/build! sess ".")))
+            (is (:error (external/build! sess (System/getProperty "user.dir"))))
             (spit (str dir "/deps.edn") "{:paths [\"src\"] :custom true}\n")
-            (api/build! sess dir)
+            (external/build! sess dir)
             (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
       (finally (api/close! sess)))))
 
@@ -109,7 +109,7 @@
       (let [dir (str (Files/createTempDirectory "slopp-testdir"
                                                 (make-array FileAttribute 0)))
             f   #(clojure.java.io/file dir %)]
-        (api/build! sess dir)
+        (external/build! sess dir)
         (testing "production ns under src/, test ns under test/ (not src/)"
           (is (.exists (f "src/proj/core.clj")))
           (is (.exists (f "test/proj/core_test.clj")))
@@ -145,7 +145,7 @@
                    (str "(ns il.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (let [r (api/external-test-run! sess)]
+      (let [r (external/external-test-run! sess)]
         (is (= :green (:status r)) (pr-str r))
         (is (= 1 (:ran r)) (pr-str r)))
       (finally (api/close! sess)))))
@@ -163,7 +163,7 @@
                         "(deftest f-t (is (= 2 (f 1))))\n"))
       (testing "no trace runner in the store — the build stays on cognitect"
         (let [dir (tmp "slopp-trace-build")]
-          (api/build! sess dir)
+          (external/build! sess dir)
           (let [d (slurp (java.io.File. dir "deps.edn"))]
             (is (re-find #"\"-m\" \"cognitect\.test-runner\"" d))
             (is (not (re-find #"slopp\.testmain" d))))))
@@ -173,7 +173,7 @@
                                      " condition build! reads.\")\n"
                                      "(defn -main [& _args] nil)\n"))
         (let [dir (tmp "slopp-trace-build2")]
-          (api/build! sess dir)
+          (external/build! sess dir)
           (let [d (slurp (java.io.File. dir "deps.edn"))]
             (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" d))) d)
             (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" d))))))

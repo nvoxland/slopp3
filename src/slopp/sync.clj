@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -369,7 +369,7 @@
         (apply-ns! session ns-sym path (get treeM path) (get treeT path)
                    conflict! applied! note! agent)))
     (let [head (:id (last (store/deltas (:store @session))))
-          m    (api/commit-point! session
+          m    (external/commit-point! session
                                   (str "pull " (subs tip 0 8) " from " url)
                                   :agent agent :target head
                                   :extra {:git-sha tip})]
@@ -625,7 +625,7 @@
                        (try (pull! sess)
                             (finally (api/close! sess))))
             "test"   (let [sess (api/open! {:slopp.api/dir a})]
-                       (try (api/external-test-run! sess)
+                       (try (external/external-test-run! sess)
                             (finally (api/close! sess))))
             {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
     (println (pr-str r))

@@ -1,6 +1,6 @@
 (ns slopp.orientation-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query] [slopp.api.review :as review]))
+            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (api/open!)]
@@ -148,7 +148,7 @@
       (api/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
                                    "(defn ^:unused-ok g [x] x)\n"))
       (api/ingest! sess 'br.b "(ns br.b)\n(defn ^:unused-ok h [x] x)\n")
-      (api/commit-point! sess
+      (external/commit-point! sess
                          (str "seeded the br domain "
                               (apply str (repeat 40 "with a very long story ")))
                          :agent "t")
@@ -168,12 +168,12 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
-      (api/commit-point! sess "seed rp" :agent "t")
+      (external/commit-point! sess "seed rp" :agent "t")
       (api/edit-replace! sess 'rp.core 'f "(defn ^:unused-ok f [x] (inc x))"
                          :prompt (str "make f increment "
                                       (apply str (repeat 40 "because reasons ")))
                          :agent "t")
-      (api/commit-point! sess "f increments now" :agent "t")
+      (external/commit-point! sess "f increments now" :agent "t")
       (let [r (api/report sess)]
         (testing "milestones + changes with their recorded asks"
           (is (some #(re-find #"f increments" (str (:description %))) (:milestones r)) (pr-str r))

@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query])
+            [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -44,10 +44,10 @@
         srv  (server/start-server! 0 {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (api/edit-replace! sess 'gs.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip" :agent "alice")
-      (api/commit-point! sess "v2: flipped" :agent "alice")
+      (external/commit-point! sess "v2: flipped" :agent "alice")
       (let [clone-dir (temp-dir "slopp-git-clone")]
         (with-open [g (clone! (:port srv) clone-dir)]
           (testing "the clone IS the store's rendered source, newest milestone"
@@ -64,7 +64,7 @@
             (api/edit-replace! sess 'gs.core 'f-t
                                "(deftest f-t (is (= 11 (f 1))) (is true))"
                                :prompt "more coverage" :agent "alice")
-            (api/commit-point! sess "v3: coverage" :agent "alice")
+            (external/commit-point! sess "v3: coverage" :agent "alice")
             (-> g (.fetch) (.call))
             (let [tip (-> g (.getRepository)
                           (.resolve "refs/remotes/origin/main"))]
@@ -78,7 +78,7 @@
         (branch/branch! sess "feature")
         (api/edit-replace! sess 'gs.core 'f "(defn f [x] (int (+ x 10)))"
                            :prompt "feature work" :agent "bob")
-        (api/commit-point! sess "feature: tweak" :agent "bob")
+        (external/commit-point! sess "feature: tweak" :agent "bob")
         (let [refs (-> (Git/lsRemoteRepository)
                        (.setRemote (:url srv))
                        (.setHeads true)
@@ -120,7 +120,7 @@
                           (.setHeads true) (.call))))]
     (try
       (api/ingest! sess 'gs.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (testing "a clean journal advertises NO wip ref"
         (is (nil? (get (heads) "refs/heads/wip/main"))))
       (api/edit-replace! sess 'gs.core 'f "(defn f [x] (+ 10 x))"
@@ -151,7 +151,7 @@
             (is (some? wip2))
             (is (not= wip1 wip2))))
         (testing "a milestone catches up — the wip ref disappears"
-          (api/commit-point! sess "v2: f done" :agent "alice")
+          (external/commit-point! sess "v2: f done" :agent "alice")
           (let [h (heads)]
             (is (nil? (get h "refs/heads/wip/main")))
             (is (not= (get h1 "refs/heads/main") (get h "refs/heads/main"))))))
@@ -167,7 +167,7 @@
         srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
     (try
       (api/ingest! sess 'gs.core seed)
-      (api/commit-point! sess "v1" :agent "alice")
+      (external/commit-point! sess "v1" :agent "alice")
       (let [clone-dir (temp-dir "slopp-ro-clone")]
         (with-open [g (clone! (:port srv) clone-dir)]
           (spit (io/file clone-dir "src" "gs" "core.clj")
@@ -204,7 +204,7 @@
             srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
         (try
           (api/ingest! sess 'gs.core seed)
-          (api/commit-point! sess "v1: f ships" :agent "alice")
+          (external/commit-point! sess "v1: f ships" :agent "alice")
           (let [clone-dir (str (temp-dir "slopp-git-cli-clone") "/clone")
                 res (sh/sh "git" "clone" (:url srv) clone-dir)]
             (is (zero? (:exit res)) (:err res))
@@ -238,7 +238,7 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
-      (api/commit-point! sess "v1" :agent "alice")
+      (external/commit-point! sess "v1" :agent "alice")
       (let [hostage (java.net.ServerSocket.
                      0 50 (java.net.InetAddress/getByName "127.0.0.1"))]
         (try

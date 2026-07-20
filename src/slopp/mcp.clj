@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review]))
+            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -272,7 +272,7 @@
      (text! "restarted"))
    "build"
    (fn [session a _sym]
-     (text! (api/build! session (:dir a)
+     (text! (external/build! session (:dir a)
                                     :main (some-> (:main a) symbol)
                                     :name (:name a))))
    "help"
@@ -282,7 +282,7 @@
   "call-tool dispatch \u2014 tracked files + config (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
   {"config"
    (fn [session a _sym]
-     (text! (api/config! session (:key a) (:value a))))
+     (text! (external/config! session (:key a) (:value a))))
    "file_put"
    (fn [session a _sym]
      (text! (api/file-put! session (:path a) (:content a)
@@ -642,7 +642,7 @@
                                                          :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "full_check" (text! (api/full-check! session))
+      "full_check" (text! (external/full-check! session))
       "edit_requalify" (text! (-> (api/requalify-boundary-keys!
                                    session (sym :ns) (sym :name)
                                    :to-ns (or (:to-ns a) (:to_ns a))
@@ -713,9 +713,9 @@
                                     (select-keys [:error :source-now :extracted
                                                   :group :test :affected])
                                     (summarize (:verbose a))))))
-      "done" (text! (api/done! session :label (:label a)
+      "done" (text! (external/done! session :label (:label a)
                                                   :agent (:agent a)))
-      "commit_point" (text! (let [r (api/commit-point! session (:description a)
+      "commit_point" (text! (let [r (external/commit-point! session (:description a)
                                                        :agent (:agent a)
                                                        :force (:force a)
                                                        :target (:target a))]
@@ -738,7 +738,7 @@
       "test_run" (text!
                        (cond
                          (:external a)
-                         (api/external-test-run! session
+                         (external/external-test-run! session
                                                  :ns (some-> (:ns a) symbol)
                                                  :affected (:affected a)
                                                  :parallel (some-> (:parallel a) str parse-long)

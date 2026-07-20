@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.query :as query]))
+            [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 ;; ---------------------------------------------------------------------------
 ;; form-symbol must see through ^:unsafe (else the form is un-addressable)
@@ -84,7 +84,7 @@
       (api/ingest! sess 'us.chk
                    (str "(ns us.chk)\n\n"
                         "^:unsafe\n(defn q [x] (binding [*out* *out*] (inc x)))\n"))
-      (api/done! sess :label "cp" :agent "a")
+      (external/done! sess :label "cp" :agent "a")
       (is (str/includes? (query/query-source sess 'us.chk) "^:unsafe"))
       (is (:unsafe? (query/query-symbol sess 'us.chk 'q)))
       (is (= [2] (api/query-eval sess "(us.chk/q 1)")))

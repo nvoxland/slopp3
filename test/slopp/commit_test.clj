@@ -7,7 +7,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.mcp]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns cm.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -23,7 +23,7 @@
                          :prompt "red first" :agent "alice")
       (api/edit-replace! sess 'cm.core 'f "(defn f [x] (+ x 10))"
                          :prompt "green" :agent "alice")
-      (let [r (api/commit-point! sess "v1: plus-ten shipped" :agent "alice")]
+      (let [r (external/commit-point! sess "v1: plus-ten shipped" :agent "alice")]
         (is (nil? (:error r)) (pr-str r))
         (is (= :green (:status r)))
         (is (some? (:commit r)))
@@ -39,7 +39,7 @@
       (testing "query-commits: newest first, human time, status"
         (api/edit-replace! sess 'cm.core 'g "(defn ^:unused-ok g [x] (- x 2))"
                            :prompt "more" :agent "alice")
-        (api/commit-point! sess "v2: minus-two" :agent "alice")
+        (external/commit-point! sess "v2: minus-two" :agent "alice")
         (let [[c2 c1 :as cs] (api/query-commits sess)]
           (is (= 2 (count cs)))
           (is (= "v2: minus-two" (:description c2)))
@@ -65,18 +65,18 @@
       (api/edit-replace! sess 'cm.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
                          :prompt "deliberately red" :agent "bob")
       (testing "a red state refuses the milestone (work stays at its done-point)"
-        (let [r (api/commit-point! sess "broken milestone" :agent "bob")]
+        (let [r (external/commit-point! sess "broken milestone" :agent "bob")]
           (is (:error r))
           (is (= :red (:status r)))
           (is (empty? (api/query-commits sess)))))
       (testing ":force records the red milestone HONESTLY"
-        (let [r (api/commit-point! sess "broken but important" :agent "bob"
+        (let [r (external/commit-point! sess "broken but important" :agent "bob"
                                    :force true)]
           (is (nil? (:error r)) (pr-str r))
           (is (= :red (:status r)))
           (is (= :red (:status (first (api/query-commits sess)))))))
       (testing "a blank description is refused"
-        (is (:error (api/commit-point! sess "  " :agent "bob"))))
+        (is (:error (external/commit-point! sess "  " :agent "bob"))))
       (finally (api/close! sess)))))
 
 (deftest ^:external retroactive-commit-point
@@ -89,13 +89,13 @@
         (api/edit-replace! sess 'cm.core 'g "(defn g [x] :newer)"
                            :prompt "later work" :agent "a")
         (testing "a past delta id can be marked after the fact (pure marker)"
-          (let [r (api/commit-point! sess "v0.9 was actually here" :agent "a"
+          (let [r (external/commit-point! sess "v0.9 was actually here" :agent "a"
                                      :target past)]
             (is (nil? (:error r)) (pr-str r))
             (is (= past (:target r)))
             (is (= past (:target (first (api/query-commits sess)))))))
         (testing "an unknown target is refused"
-          (is (:error (api/commit-point! sess "nowhere" :agent "a"
+          (is (:error (external/commit-point! sess "nowhere" :agent "a"
                                          :target "d99999")))))
       (finally (api/close! sess)))))
 
@@ -125,8 +125,8 @@
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn ^:unused-ok f [] 1)\n")
-      (let [m1 (api/commit-point! sess "v1" :agent "t")
-            m2 (api/commit-point! sess "anything" :agent "t")]
+      (let [m1 (external/commit-point! sess "v1" :agent "t")
+            m2 (external/commit-point! sess "anything" :agent "t")]
         (is (nil? (:error m1)))
         (testing "no new marker minted; the existing one comes back"
           (is (= (:commit m1) (:commit m2)))
@@ -150,17 +150,17 @@
                         "                           [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest ^:external f-t (is (= :nope (core/f 1))))\n"))
       (testing "the milestone records without running the external tier itself"
-        (let [r (api/commit-point! sess "no forced whole-store check")]
+        (let [r (external/commit-point! sess "no forced whole-store check")]
           (is (:commit r) (pr-str (dissoc r :test)))
           (is (nil? (:external r)) (pr-str (:external r)))))
       (testing "full_check is where the red external spec surfaces"
-        (let [r (api/full-check! sess)]
+        (let [r (external/full-check! sess)]
           (is (= :red (:status r)) (pr-str (dissoc r :lint :warnings)))
           (is (= :red (:status (:external r))) (pr-str (:external r)))))
       (testing "and once the spec is honest, full_check is green"
         (api/edit-replace! sess 'mg.core-test 'f-t
                            "(deftest ^:external f-t (is (= 1 (core/f 1))))"
                            :prompt "fix the spec")
-        (let [r (api/full-check! sess)]
+        (let [r (external/full-check! sess)]
           (is (= :green (:status r)) (pr-str (dissoc r :lint :warnings)))))
       (finally (api/close! sess)))))

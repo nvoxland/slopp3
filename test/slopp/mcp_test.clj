@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -417,7 +417,7 @@
         sess  (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
-      (api/commit-point! sess "seed" :agent "t")
+      (external/commit-point! sess "seed" :agent "t")
       (testing "the FIRST url is saved as the default"
         (is (nil? (:error (sync/push! dir :url barea))))
         (is (= barea (db/get-meta (:db @sess) "git-remote"))))

@@ -9,7 +9,7 @@
             [slopp.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io])
+            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -241,7 +241,7 @@
       (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
       (let [out (str (temp-dir) "/built")
-            r   (api/build! sess out :main 'app.core/run)]
+            r   (external/build! sess out :main 'app.core/run)]
         (is (nil? (:error r)) (pr-str r))
         (testing "the metadata-less dep surfaces as a native warning"
           (is (re-find #"data\.json" (str (get-in r [:native :warnings]))))

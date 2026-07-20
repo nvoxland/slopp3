@@ -10,7 +10,7 @@
             [slopp.db :as db]
             [slopp.git :as git]
             [slopp.store :as store]
-            [slopp.sync :as sync] [slopp.api.query :as query])
+            [slopp.sync :as sync] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -51,7 +51,7 @@
         sess  (api/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sess 'gc.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (let [p1 (sync/push! dir-a :url bare)]
         (is (nil? (:error p1)) (pr-str p1))
         (is (string? (:pushed p1)))
@@ -76,7 +76,7 @@
               (let [e (api/edit-replace! sb 'gc.core 'f "(defn f [x] (+ 1 x))"
                                          :prompt "flip arg order" :agent "bob")]
                 (is (nil? (:error e)) (pr-str e)))
-              (let [m (api/commit-point! sb "v2: flipped" :agent "bob")]
+              (let [m (external/commit-point! sb "v2: flipped" :agent "bob")]
                 (is (nil? (:error m)) (pr-str m)))
               (let [p2 (sync/push! dir-b)]     ; url comes from the saved meta
                 (is (nil? (:error p2)) (pr-str p2))
@@ -111,7 +111,7 @@
         sa    (api/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sa 'gc.core seed)
-      (api/commit-point! sa "v1" :agent "alice")
+      (external/commit-point! sa "v1" :agent "alice")
       (is (nil? (:error (sync/push! dir-a :url bare))))
       (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
 
@@ -121,7 +121,7 @@
                            {:action :replace :ns 'gc.core :name 'f-t
                             :source "(deftest f-t (is (= 11 (f 1))))"}]
                        :prompt "v2" :agent "alice")
-      (api/commit-point! sa "v2" :agent "alice")
+      (external/commit-point! sa "v2" :agent "alice")
       (let [p2 (sync/push! dir-a)]
         (is (nil? (:error p2)) (pr-str p2))
 
@@ -149,7 +149,7 @@
                                    {:action :add :ns 'gc.core
                                     :source "(deftest g-t (is (= 4 (g 2))))"}]
                                :prompt "v3" :agent "bob")
-              (api/commit-point! sb "v3" :agent "bob")
+              (external/commit-point! sb "v3" :agent "bob")
               (let [p3 (sync/push! dir-b)]
                 (is (nil? (:error p3)) (pr-str p3))
                 (testing "the new tip's parent is A's v2 tip"
@@ -184,7 +184,7 @@
         sa    (api/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sa 'gc.core seed)
-      (api/commit-point! sa "v1" :agent "alice")
+      (external/commit-point! sa "v1" :agent "alice")
       (is (nil? (:error (sync/push! dir-a :url bare))))
       (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
 
@@ -194,7 +194,7 @@
                            {:action :replace :ns 'gc.core :name 'f-t
                             :source "(deftest f-t (is (= 11 (f 1))))"}]
                        :prompt "v2" :agent "alice")
-      (api/commit-point! sa "v2" :agent "alice")
+      (external/commit-point! sa "v2" :agent "alice")
       (is (nil? (:error (sync/push! dir-a))))
 
       (let [sb (api/open! {:slopp.api/dir dir-b})]
@@ -222,7 +222,7 @@
                                     :source "(deftest f-t (is (= 11 (f 1))))"}]
                                :prompt "adopt remote f" :agent "bob")
               (is (empty? (:conflicts (sync/resolve! dir-b "src/gc/core.clj"))))
-              (api/commit-point! sb "v3: merged" :agent "bob")
+              (external/commit-point! sb "v3: merged" :agent "bob")
               (is (nil? (:error (sync/push! dir-b))))))
           (finally (api/close! sb))))
       (finally
@@ -301,7 +301,7 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'mo.core "(ns mo.core)\n(defn ^:unused-ok f [] 1)\n")
-      (api/commit-point! sess "v1" :agent "a")
+      (external/commit-point! sess "v1" :agent "a")
       (testing "default push lands on the slopp branch; main is never created"
         (let [p (sync/push! dir :url bare)]
           (is (nil? (:error p)) (pr-str p))
@@ -315,7 +315,7 @@
         (let [human-sha (human-commit! bare "main" "NOTES.md" "mine, not slopp's\n")]
           (api/edit-replace! sess 'mo.core 'f "(defn ^:unused-ok f [] 2)"
                              :prompt "v2" :agent "a")
-          (api/commit-point! sess "v2" :agent "a")
+          (external/commit-point! sess "v2" :agent "a")
           (is (nil? (:error (sync/push! dir))))
           (let [remote (-> (FileRepositoryBuilder.)
                            (.setGitDir (io/file bare)) (.build))]
@@ -340,7 +340,7 @@
     (let [sess (api/open! {:slopp.api/dir dir})]
       (try
         (api/ingest! sess 'lo.core "(ns lo.core)\n")
-        (api/commit-point! sess "v1" :agent "a")
+        (external/commit-point! sess "v1" :agent "a")
         (testing "the checked-out branch is refused"
           (let [r (sync/push! dir :url work :branch "main")]
             (is (:error r))
@@ -362,7 +362,7 @@
     (try
       ;; seed origin's slopp branch from a store, and main from a "human"
       (api/ingest! sess 'im.core "(ns im.core)\n(defn ^:unused-ok f [] 41)\n")
-      (api/commit-point! sess "v1" :agent "a")
+      (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
       ;; a human's git clone: main checked out, slopp only remote-tracking
@@ -387,7 +387,7 @@
               (is (= "." (db/get-meta (:db @sw) "git-remote")))
               (api/edit-replace! sw 'im.core 'f "(defn ^:unused-ok f [] 42)"
                                  :prompt "answer" :agent "b")
-              (api/commit-point! sw "v2" :agent "b")
+              (external/commit-point! sw "v2" :agent "b")
               (let [p (sync/push! work)]
                 (is (nil? (:error p)) (pr-str p))
                 ;; refs/heads/slopp advanced INSIDE the checkout's .git;
@@ -411,7 +411,7 @@
         sess   (api/open! {:slopp.api/dir seed-d})]
     (try
       (api/ingest! sess 'im2.core "(ns im2.core)\n(defn ^:unused-ok f [] 41)\n")
-      (api/commit-point! sess "v1" :agent "a")
+      (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
       (let [work (str (temp-dir) "/work")]
@@ -437,7 +437,7 @@
         sess   (api/open! {:slopp.api/dir seed-d})]
     (try
       (api/ingest! sess 'ai.core "(ns ai.core)\n(defn ^:unused-ok f [] 41)\n")
-      (api/commit-point! sess "v1" :agent "a")
+      (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# p\n")
       (let [work (str (temp-dir) "/work")]

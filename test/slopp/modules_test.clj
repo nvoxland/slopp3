@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external]))
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
   (is (= "logi.quoting" (modules/module-of 'logi.quoting.internal)))
@@ -257,7 +257,7 @@
                                    :prompt "drop the doc")]
           (is (nil? (:error r)) (pr-str r))
           (is (not-any? :missing-doc (:warnings r)) "the write stays quiet"))
-        (let [r (api/done! sess :label "docs review")]
+        (let [r (external/done! sess :label "docs review")]
           (is (some #{'mb.app/use-it} (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))

@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.mcp]
-            [slopp.store :as store] [slopp.api.query :as query]))
+            [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external form-history-is-reconstructible
   (let [sess (api/open!)]
@@ -28,7 +28,7 @@
           (is (= :replace (:op (first hist)))))
         (is (<= (count (query/query-history sess :limit 3)) 3)))
       (testing "done labels appear in the story"
-        (api/done! sess :label "phase one done")
+        (external/done! sess :label "phase one done")
         (is (= :done
                (:op (first (query/query-history sess :contains "phase one"))))))
       (testing "lineage responses stay lean (no bulk sources)"
@@ -48,12 +48,12 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
-      (let [v1 (api/commit-point! sess "v1: f adds one" :agent "a")]
+      (let [v1 (external/commit-point! sess "v1: f adds one" :agent "a")]
         (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 100))"
                            :prompt "bump to 100" :agent "a")
         (api/edit-replace! sess 'hi.core 'f-t "(deftest f-t (is (= 101 (f 1))))"
                            :prompt "match" :agent "a")
-        (let [v2 (api/commit-point! sess "v2: f adds 100" :agent "a")]
+        (let [v2 (external/commit-point! sess "v2: f adds 100" :agent "a")]
           (testing "a form renders as it stood at a past delta"
             (is (= "(defn f [x] (+ x 1))"
                    (:source (query/query-form-at sess 'hi.core 'f
@@ -115,7 +115,7 @@
             (is (= :green (:status r)))
             (is (some? (:verify r)))))
         (testing "a commit id resolves to its target's status"
-          (let [c (api/commit-point! sess "v1" :agent "a")]
+          (let [c (external/commit-point! sess "v1" :agent "a")]
             (is (= :green (:status (query/query-status-at sess :at (:commit c)))))))
         (testing "a deliberately red state reads red"
           (api/edit-replace! sess 'hi.core 'f-t
@@ -145,7 +145,7 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'hi.core seed)
-      (let [v1 (api/commit-point! sess "v1" :agent "a")
+      (let [v1 (external/commit-point! sess "v1" :agent "a")
             _  (api/edit-replace! sess 'hi.core 'f "(defn f [x] (+ x 100))"
                                   :prompt "bump" :agent "a")
             call (fn [args]
@@ -187,7 +187,7 @@
       (testing "a commit-point DESCRIPTION is searchable"
         ;; :force — the earlier edits left f-t red; we only care that the
         ;; :commit marker (with its description) lands and is searchable
-        (api/commit-point! sess "auth milestone shipped" :agent "a" :force true)
+        (external/commit-point! sess "auth milestone shipped" :agent "a" :force true)
         (is (some #(= "auth milestone shipped" (:description %))
                   (query/query-search-history sess "milestone"))))
       (testing "a blank pattern is refused; limit is respected"
