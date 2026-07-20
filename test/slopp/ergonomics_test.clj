@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -47,7 +47,7 @@
       (testing "overwriting an existing namespace is NOT allowed"
         (let [r (api/ingest! sess 'w1.core "(ns w1.core)\n(def replaced 1)\n")]
           (is (re-find #"already exists" (:error r)))
-          (is (re-find #"triple" (api/query-source sess 'w1.core)))))
+          (is (re-find #"triple" (query/query-source sess 'w1.core)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external create-ns-and-add-require                     ; F4 + F5
@@ -57,14 +57,14 @@
         (let [r (api/create-ns! sess 'fresh.core
                                 :requires ["[clojure.test :refer [deftest is]]"])]
           (is (nil? (:error r)))
-          (is (re-find #"\(ns fresh\.core" (api/query-source sess 'fresh.core)))
-          (is (re-find #"clojure\.test" (api/query-source sess 'fresh.core)))))
+          (is (re-find #"\(ns fresh\.core" (query/query-source sess 'fresh.core)))
+          (is (re-find #"clojure\.test" (query/query-source sess 'fresh.core)))))
       (testing "duplicate namespace rejected"
         (is (:error (api/create-ns! sess 'fresh.core))))
       (testing "add-require structurally extends the ns form and hot-reloads"
         (let [r (api/add-require! sess 'fresh.core "[clojure.string :as str]")]
           (is (nil? (:error r)))
-          (is (re-find #"clojure\.string :as str" (api/query-source sess 'fresh.core)))
+          (is (re-find #"clojure\.string :as str" (query/query-source sess 'fresh.core)))
           ;; the alias is genuinely live in the image
           (api/add-form! sess 'fresh.core "(defn shout [s] (str/upper-case s))")
           (is (= ["HI"] (api/query-eval sess "(fresh.core/shout \"hi\")")))))
@@ -295,7 +295,7 @@
         (is (= '[ar.core b a] (mapv :name (store/forms (:store @sess) 'ar.core)))
             "the def was moved above its caller")
         (is (nil? (edit/cold-load-errors (:store @sess) '[ar.core])))
-        (is (not (re-find #"\(declare" (api/query-source sess 'ar.core)))))
+        (is (not (re-find #"\(declare" (query/query-source sess 'ar.core)))))
       (finally (api/close! sess)))))
 (deftest ^:external add-caller-before-callee-auto-reorders
   ;; the .ideas motivating case: the agent adds a caller anchored ABOVE the
@@ -312,7 +312,7 @@
       (testing "callee precedes caller; cold-loads; no declare"
         (is (= '[cc.core callee caller] (mapv :name (store/forms (:store @sess) 'cc.core))))
         (is (nil? (edit/cold-load-errors (:store @sess) '[cc.core])))
-        (is (not (re-find #"\(declare" (api/query-source sess 'cc.core)))))
+        (is (not (re-find #"\(declare" (query/query-source sess 'cc.core)))))
       (finally (api/close! sess)))))
 (deftest ^:external genuine-cycle-auto-declares-with-marker
   ;; mutual recursion has no legal form order — the pipeline OWNS the declare:
@@ -328,7 +328,7 @@
           (is (nil? (:declared r)) "silent — no declare key leaks to the agent")))
       (testing "the ns cold-loads via an auto-inserted, marked declare"
         (is (nil? (edit/cold-load-errors (:store @sess) '[cy.core])))
-        (let [src  (api/query-source sess 'cy.core)
+        (let [src  (query/query-source sess 'cy.core)
               decl (re-find #"\(declare[^)]*\)" src)]
           (is (re-find #":auto-declare" src) "the declare carries the marker/why")
           (is (and decl (re-find #"ping" decl)) "ping is declared")
@@ -426,5 +426,5 @@
           (is (re-find #"two edits to ONE form is ONE edit" (str (:error r)))
               (str "the refusal must name the fix: " (pr-str (:error r))))))
       (testing "the form is untouched — a refusal changes nothing"
-        (is (re-find #"\[a b\] \(\+ a b\)" (api/query-source sess 'nt.core))))
+        (is (re-find #"\[a b\] \(\+ a b\)" (query/query-source sess 'nt.core))))
       (finally (api/close! sess)))))

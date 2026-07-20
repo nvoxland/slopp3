@@ -7,7 +7,7 @@
             [slopp.store :as store]
             [slopp.turn]
             [slopp.mcp]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (def seed
   (str "(ns ep.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -27,7 +27,7 @@
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
                          :prompt "implement +10")
       (testing "query-changes = my work since my last stable spot"
-        (let [c (api/query-changes sess)]
+        (let [c (query/query-changes sess)]
           (is (= 2 (count (:steps c))))
           (is (= #{'ep.core/f 'ep.core/f-t}
                  (set (map :form (:forms c)))))
@@ -39,9 +39,9 @@
             (is (= [1 0] (mapv :fail (:verification-arc c)))))))
       (testing "done closes the episode"
         (api/done! sess :label "plus-ten")
-        (is (empty? (:forms (api/query-changes sess)))))
+        (is (empty? (:forms (query/query-changes sess)))))
       (testing "collapsed history reads at episode grain"
-        (let [rows (api/query-history sess :collapse true)]
+        (let [rows (query/query-history sess :collapse true)]
           (is (some #(= "plus-ten" (get-in % [:episode :label])) rows))))
       (finally (api/close! sess)))))
 
@@ -57,14 +57,14 @@
                          :prompt "bob's work" :agent "bob")
       (testing "each agent sees only ITS episode"
         (is (= #{'ep.core/f}
-               (set (map :form (:forms (api/query-changes sess :agent "alice"))))))
+               (set (map :form (:forms (query/query-changes sess :agent "alice"))))))
         (is (= #{'ep.core/g}
-               (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
+               (set (map :form (:forms (query/query-changes sess :agent "bob")))))))
       (testing "alice marking done does NOT close bob's episode"
         (api/done! sess :label "alice done" :agent "alice")
-        (is (empty? (:forms (api/query-changes sess :agent "alice"))))
+        (is (empty? (:forms (query/query-changes sess :agent "alice"))))
         (is (= #{'ep.core/g}
-               (set (map :form (:forms (api/query-changes sess :agent "bob")))))))
+               (set (map :form (:forms (query/query-changes sess :agent "bob")))))))
       (finally (api/close! sess)))))
 
 (deftest ^:external episode-revert-scraps-only-my-unshared-work
@@ -87,10 +87,10 @@
         (testing "alice's exclusive work is rolled back to the boundary"
           (is (nil? (:error r)) (pr-str r))
           (is (= [2] (api/query-eval sess "(ep.core/f 1)")))
-          (is (not (re-find #"alice-helper" (api/query-source sess 'ep.core)))))
+          (is (not (re-find #"alice-helper" (query/query-source sess 'ep.core)))))
         (testing "the SHARED form is skipped and reported, not stomped"
           (is (= ['ep.core/h] (:skipped-shared r)))
-          (is (re-find #":bob-touched" (api/query-source sess 'ep.core))))
+          (is (re-find #":bob-touched" (query/query-source sess 'ep.core))))
         (testing "the revert is itself provenance, and tests are green again"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (finally (api/close! sess)))))
@@ -109,7 +109,7 @@
                          :prompt "sub impl work" :agent "alice/impl")
       (api/done! sess :label "alice turn done" :agent "alice")
       (testing "the collapsed history nests sub-agent episodes under the turn"
-        (let [rows   (api/query-history sess :collapse true)
+        (let [rows   (query/query-history sess :collapse true)
               alice  (first (filter #(= "alice turn done"
                                         (get-in % [:episode :label]))
                                     rows))
@@ -139,14 +139,14 @@
       (let [r (api/turn-end! sess :agent "alice")]
         (is (nil? (:error r))))
       (testing "lineage + form-history resolve the enclosing turn's ask"
-        (let [lin (api/query-lineage sess 'ep.core 'f)
-              fh  (api/query-form-history sess 'ep.core 'f)]
+        (let [lin (query/query-lineage sess 'ep.core 'f)
+              fh  (query/query-form-history sess 'ep.core 'f)]
           (is (= "add rush-order support to checkout"
                  (:turn-intent (last lin))))
           (is (= "add rush-order support to checkout"
                  (:turn-intent (last fh))))))
       (testing "the collapsed history has a TURN bracket with the verbatim ask"
-        (let [rows (api/query-history sess :collapse true)
+        (let [rows (query/query-history sess :collapse true)
               turn (first (keep :turn rows))]
           (is (some? turn))
           (is (= "add rush-order support to checkout" (:intent turn)))
@@ -176,7 +176,7 @@
                          :prompt "the fix" :agent "alice")
       (slopp.turn/-main dir "end" "alice")
       (api/sync-with-journal! sess)
-      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+      (let [turn (first (keep :turn (query/query-history sess :collapse true)))]
         (is (= "fix the flaky test" (:intent turn)))
         (is (= 1 (count (:episodes turn)))))
       (finally
@@ -239,7 +239,7 @@
         (slopp.turn/-main dir "hook-end" "alice"))
       (api/sync-with-journal! sess)
       (is (not (api/turn-open? sess "alice")))
-      (let [turn (first (keep :turn (api/query-history sess :collapse true)))]
+      (let [turn (first (keep :turn (query/query-history sess :collapse true)))]
         (is (= "please add rush orders — exactly these words" (:intent turn))))
       (finally
         (api/close! sess)
@@ -261,9 +261,9 @@
                          :prompt "later work" :agent "bob")
       (testing "a PAST episode inspects like the current one: plug the
                 from/to ids from its collapsed row into query_changes"
-        (let [row  (first (keep :turn (api/query-history sess :collapse true)))
+        (let [row  (first (keep :turn (query/query-history sess :collapse true)))
               ep   (first (:episodes row))
-              c    (api/query-changes sess :agent "alice"
+              c    (query/query-changes sess :agent "alice"
                                       :from (:from ep) :to (:to ep))]
           (is (= #{'ep.core/f 'ep.core/f-t}
                  (set (map :form (:forms c)))))
@@ -274,7 +274,7 @@
           (testing "bob's later work is NOT in the span"
             (is (not-any? #(= 'ep.core/g (:form %)) (:forms c))))))
       (testing "format text renders a human story"
-        (let [txt (api/query-history sess :collapse true :format "text")]
+        (let [txt (query/query-history sess :collapse true :format "text")]
           (is (string? txt))
           (is (re-find #"make f add ten" txt))
           (is (re-find #"plus-ten" txt))))
@@ -297,24 +297,24 @@
                          "(defn h [x]\n  ;; loud on purpose\n  (* x 3))"
                          :prompt "actually triple" :agent "alice")
       (testing "collapsed rows carry human-readable timestamps"
-        (let [rows (api/query-history sess :collapse true)
+        (let [rows (query/query-history sess :collapse true)
               turn (first (keep :turn rows))
               ep   (first (:episodes turn))]
           (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at turn))))
           (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at ep))))))
       (testing "raw rows and the text story show when, too"
         (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"
-                        (str (:at (first (api/query-history sess))))))
+                        (str (:at (first (query/query-history sess))))))
         (is (re-find #"@ \d{4}-\d{2}-\d{2} \d{2}:\d{2}"
-                     (api/query-history sess :collapse true :format "text"))))
+                     (query/query-history sess :collapse true :format "text"))))
       (testing "contains searches TURN INTENTS in collapsed mode"
-        (let [rows (api/query-history sess :collapse true :contains "loudly")]
+        (let [rows (query/query-history sess :collapse true :contains "loudly")]
           (is (= "teach h to double, loudly"
                  (:intent (:turn (first rows))))))
-        (is (empty? (filter :turn (api/query-history sess :collapse true
+        (is (empty? (filter :turn (query/query-history sess :collapse true
                                                      :contains "zz-no-match")))))
       (testing "query-changes format=text renders line diffs with context"
-        (let [txt (api/query-changes sess :agent "alice" :format "text")]
+        (let [txt (query/query-changes sess :agent "alice" :format "text")]
           (is (string? txt))
           (is (re-find #"actually triple" txt))            ; the step's prompt
           (is (re-find #"(?m)^\s+- .*\* x 2" txt))         ; removed line only
@@ -323,7 +323,7 @@
           (is (re-find #"(?m)^\s+;; loud on purpose" txt))
           (is (not (re-find #"(?m)^\s*[-+] .*loud on purpose" txt)))))
       (testing "the EDN shape is unchanged when no format is asked for"
-        (let [c (api/query-changes sess :agent "alice")]
+        (let [c (query/query-changes sess :agent "alice")]
           (is (map? c))
           (is (re-find #"\* x 2" (:was (first (:forms c)))))))
       (finally (api/close! sess)))))
@@ -604,7 +604,7 @@
         (let [r (api/undo! sess :agent "u" :prompt "undo the bad edit")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:reverted r))))
-        (is (re-find #"\(defn a \[\] 1\)" (api/query-source sess 'un.core))))
+        (is (re-find #"\(defn a \[\] 1\)" (query/query-source sess 'un.core))))
       (testing "undo restores a DELETED form — the case edit_revert cannot reach"
         (api/delete-form! sess 'un.core 'b :prompt "bad delete" :agent "u")
         (is (:error (api/revert-form! sess 'un.core 'b))
@@ -612,7 +612,7 @@
         (let [r (api/undo! sess :agent "u" :prompt "undo the bad delete")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:reverted r))))
-        (is (re-find #"\(defn b \[\] 2\)" (api/query-source sess 'un.core))))
+        (is (re-find #"\(defn b \[\] 2\)" (query/query-source sess 'un.core))))
       (testing "a chain that went off the rails comes back in one call"
         (api/edit-replace! sess 'un.core 'a "(defn a [] 7)" :prompt "w1" :agent "u")
         (api/edit-replace! sess 'un.core 'b "(defn b [] 8)" :prompt "w2" :agent "u")
@@ -621,7 +621,7 @@
                            :prompt "that whole line of work was wrong")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 3 (:reverted r))))
-        (let [src (api/query-source sess 'un.core)]
+        (let [src (query/query-source sess 'un.core)]
           (is (re-find #"\(defn a \[\] 1\)" src))
           (is (re-find #"\(defn b \[\] 2\)" src))
           (is (not (re-find #"defn c" src)))))
@@ -656,9 +656,9 @@
         (let [f (:findings (api/done! sess :label "half if"))]
           (is (zero? (:lint-errors f)) (pr-str f))
           (is (re-find #"\(when y 2\)"
-                       (get-in (api/query-slice sess 'lg2.core 'halfif)
+                       (get-in (query/query-slice sess 'lg2.core 'halfif)
                                [:target :source]))
-              (get-in (api/query-slice sess 'lg2.core 'halfif) [:target :source]))))
+              (get-in (query/query-slice sess 'lg2.core 'halfif) [:target :source]))))
       (testing "but an INCOHERENT form is refused — it is no step toward anything"
         (let [r (api/add-form! sess 'lg2.core
                                "(defn ^:unused-ok bad \"D.\" [] (ok 1 2 3))"

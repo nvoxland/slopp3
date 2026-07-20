@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.normalize :as norm]
             [slopp.store :as store]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
@@ -45,14 +45,14 @@
         (testing "changed-since-done forms are normalized, others untouched"
           (is (= 1 (:normalized r)))
           (is (= ['cp.core/classify] (mapv :form (:rewrites r))))
-          (is (re-find #"if-not" (api/query-source sess 'cp.core)))
+          (is (re-find #"if-not" (query/query-source sess 'cp.core)))
           (is (re-find #"\(defn \^:unused-ok clean \[x\] \(inc x\)\)"
-                       (api/query-source sess 'cp.core))))
+                       (query/query-source sess 'cp.core))))
         (testing "behavior verified after normalization (affected tests green)"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
           (is (= [:pos] (api/query-eval sess "(cp.core/classify 5)"))))
         (testing "provenance: a :normalize delta + a :done boundary"
-          (is (contains? (set (map :op (api/query-lineage sess 'cp.core 'classify)))
+          (is (contains? (set (map :op (query/query-lineage sess 'cp.core 'classify)))
                          :normalize))
           (is (= :done (:op (last (store/deltas (:store @sess))))))))
       (testing "an immediate second done is a no-op"
@@ -93,13 +93,13 @@
       ;; (the agent writes NO declare — the edit path bans them)
       (api/add-form! sess 'dh.core "(declare later)")  ; refused — proves the ban
       (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (pong n))")
-      (is (re-find #":auto-declare" (api/query-source sess 'dh.core))
+      (is (re-find #":auto-declare" (query/query-source sess 'dh.core))
           "the cycle got a pipeline-owned, marked declare")
       ;; break the cycle → the auto-declare is now stale
       (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (inc n))")
       (let [r (api/done! sess :label "feature")]
         (is (nil? (:declares-fixed r))
             "done cleans up SILENTLY — no declare housekeeping reported")
-        (is (not (re-find #"declare" (api/query-source sess 'dh.core)))
+        (is (not (re-find #"declare" (query/query-source sess 'dh.core)))
             "the stale auto-declare was removed at done"))
       (finally (api/close! sess)))))

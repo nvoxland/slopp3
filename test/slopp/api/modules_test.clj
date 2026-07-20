@@ -1,6 +1,6 @@
 (ns slopp.api.modules-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs]))
+            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query]))
 
 (deftest ^:external the-module-surface-is-browsable
   (let [sess (api/open!)]
@@ -41,7 +41,7 @@
         (is (re-find #"modules true" (str (:error (modules/module-surface sess "zz.nope"))))))
       (testing "the graph view: layers, and drift toward DEAD edges is named"
         (api/module-dep! sess "mb.app" "mc.ghost" :prompt "declared, never used")
-        (let [r (api/query-depends sess nil :modules true)]
+        (let [r (query/query-depends sess nil :modules true)]
           ;; mc.ghost is a phantom (declared edge, NO code) — production layers
           ;; exclude it, though :unused-edges still flags the dead edge
           (is (= [["ma.core"] ["mb.app"]] (:layers r)) (pr-str r))
@@ -70,7 +70,7 @@
                         "(deftest go-t (is (= 1 (app/go 1))))\n"))
       (swap! sess dissoc :adopting?)
       (api/adopt-modules! sess)   ; records pb.app→pa.core AND (test) pa.core→pb.app
-      (let [r (api/query-depends sess nil :modules true)]
+      (let [r (query/query-depends sess nil :modules true)]
         (testing "the DECLARED manifest still carries the test-fixture back-edge"
           (is (contains? (set (get-in r [:manifest "pa.core"])) "pb.app")
               (pr-str (:manifest r))))
@@ -151,7 +151,7 @@
       (api/ingest! sess 'pm.core "(ns pm.core)\n(defn add [x y] (+ x y))\n")
       (api/ingest! sess 'pm.edge
                    "(ns pm.edge)\n(defn roll [] (rand))\n")
-      (let [r (api/query-depends sess nil :modules true)]
+      (let [r (query/query-depends sess nil :modules true)]
         (testing "a module whose code is clean is reported as tightenable"
           (is (= :pure (get-in r [:purity :could-tighten "pm.core" :supports]))
               (pr-str (:purity r))))
@@ -161,7 +161,35 @@
               (pr-str (:purity r)))))
       (testing "once declared, it is reported as declared and no longer offered"
         (api/module-tier! sess "pm.core" :pure :prompt "clean core")
-        (let [r (api/query-depends sess nil :modules true)]
+        (let [r (query/query-depends sess nil :modules true)]
           (is (= :pure (get-in r [:purity :declared "pm.core"])) (pr-str r))
           (is (nil? (get-in r [:purity :could-tighten "pm.core"])) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external the-surface-answers-at-namespace-grain
+  ;; Tiers became namespace-grained (a pure core one level below an effectful
+  ;; module), so "what does this offer?" has to be answerable there too.
+  ;; Asking about slopp.api.shape used to error with "no namespaces in module".
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sg.core
+                   "(ns sg.core)\n(defn ^:unused-ok top \"T.\" [x] x)\n")
+      (api/ingest! sess 'sg.core.calc
+                   (str "(ns sg.core.calc)\n"
+                        "(defn ^:unused-ok add \"A.\" [a b] (+ a b))\n"
+                        "(defn ^:unused-ok ^:private hidden \"H.\" [x] x)\n"))
+      (testing "a MODULE still answers with its whole surface"
+        (let [r (modules/module-surface sess "sg.core")]
+          (is (some #(= 'top (:name %)) (:surface r)) (pr-str r))))
+      (testing "a NAMESPACE answers with just its own surface"
+        (let [r (modules/module-surface sess "sg.core.calc")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[add] (mapv :name (:surface r))) (pr-str r))
+          (is (not-any? #(= 'top (:name %)) (:surface r))
+              "the parent's forms are not this namespace's surface")))
+      (testing "private stays out at either grain"
+        (is (not-any? #(= 'hidden (:name %))
+                      (:surface (modules/module-surface sess "sg.core.calc")))))
+      (testing "and a name matching nothing still says so"
+        (is (:error (modules/module-surface sess "sg.nope"))))
       (finally (api/close! sess)))))

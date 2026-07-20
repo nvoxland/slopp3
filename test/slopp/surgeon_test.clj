@@ -2,7 +2,7 @@
   "clj-surgeon-inspired structural ops, slopp-grade: gated, verified,
   recorded. query_deps / fix_declares / ns_rename / edit_move_forms."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (def core-src
   (str "(ns sg.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -23,7 +23,7 @@
       (api/ingest! sess 'sg.core core-src)
       (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
       (api/ingest! sess 'sg.util util-src)
-      (let [d (api/query-deps sess 'sg.util 'wrap)]
+      (let [d (query/query-deps sess 'sg.util 'wrap)]
         (is (= 'sg.util/wrap (:root d)))
         (is (= ['sg.core/top] (get (:calls d) 'sg.util/wrap)))
         (is (= ['sg.core/mid] (get (:calls d) 'sg.core/top)))
@@ -43,7 +43,7 @@
       (let [r (api/fix-declares! sess 'fd.core :agent "tidier")]
         (is (= 1 (:removed r)) (pr-str r))
         (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
-        (let [src (api/query-source sess 'fd.core)]
+        (let [src (query/query-source sess 'fd.core)]
           (is (not (re-find #"declare" src)))
           (is (< (.indexOf src "defn helper") (.indexOf src "defn caller")))))
       (testing "mutual recursion: the hand-written declare MIGRATES to a pipeline-owned marked one"
@@ -54,7 +54,7 @@
                           "(defn odd-x [n] (if (zero? n) false (even-x (dec n))))\n"))
         (let [r (api/fix-declares! sess 'fd.rec)]
           (is (nil? (:error r)) (pr-str r))
-          (let [src (api/query-source sess 'fd.rec)]
+          (let [src (query/query-source sess 'fd.rec)]
             (is (re-find #"\(declare" src) "a real cycle still needs a declare")
             (is (re-find #":auto-declare" src)
                 "but it is the PIPELINE's now, and it says why"))))
@@ -75,7 +75,7 @@
           (is (nil? (get-in @sess [:store :namespaces 'sg.core])))
           (is (= [8] (api/query-eval sess "(sg.central/top 2)"))))
         (testing "requires and FQ refs across the store were rewritten"
-          (let [u (api/query-source sess 'sg.util)]
+          (let [u (query/query-source sess 'sg.util)]
             (is (re-find #"\[sg\.central :as c\]" u))
             (is (re-find #"sg\.central/leaf" u))
             (is (not (re-find #"sg\.core" u)))))
@@ -95,11 +95,11 @@
         (is (nil? (:error r)) (pr-str r))
         (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
         (testing "the new namespace holds the moved forms"
-          (let [src (api/query-source sess 'sg.calc)]
+          (let [src (query/query-source sess 'sg.calc)]
             (is (re-find #"defn leaf" src))
             (is (re-find #"defn mid" src))))
         (testing "the source ns requires the new one; callers are REWRITTEN"
-          (let [src (api/query-source sess 'sg.core)]
+          (let [src (query/query-source sess 'sg.core)]
             (is (re-find #"\[sg\.calc :as calc\]" src))
             (is (re-find #"calc/mid" src))
             (is (not (re-find #"defn leaf" src)))))
@@ -123,7 +123,7 @@
                                :prompt "package-private helpers" :agent "alice")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the parent requires the deep child; callers rewritten"
-          (let [src (api/query-source sess 'xr.core)]
+          (let [src (query/query-source sess 'xr.core)]
             (is (re-find #"\[xr\.core\.impl :as impl\]" src))
             (is (re-find #"impl/helper-b" src))))
         (testing "behavior intact in the live image"
@@ -161,9 +161,9 @@
         (is (nil? (:error r)) (pr-str r))
         (is (= '[mvx.app mvx.core mvx.core-test] (:callers r)) (pr-str r))
         (testing "every caller rewritten, requires injected"
-          (is (re-find #"util/util" (api/query-source sess 'mvx.app)))
+          (is (re-find #"util/util" (query/query-source sess 'mvx.app)))
           (is (re-find #"\[mvx\.core\.util :as util\]"
-                       (api/query-source sess 'mvx.core-test))))
+                       (query/query-source sess 'mvx.core-test))))
         (testing "behavior lives at the new address"
           (is (= [4] (api/query-eval sess "(mvx.app/go 3)")))
           (is (= [3] (api/query-eval sess "(mvx.core/entry 2)")))))
@@ -182,10 +182,10 @@
       (let [r (api/move-forms! sess 'mve.a '[f] 'mve.b :prompt "consolidate")]
         (is (nil? (:error r)) (pr-str r))
         (testing "appended to the existing target, caller rewritten"
-          (is (re-find #"defn f" (api/query-source sess 'mve.b)))
-          (is (re-find #"defn spare" (api/query-source sess 'mve.b))
+          (is (re-find #"defn f" (query/query-source sess 'mve.b)))
+          (is (re-find #"defn spare" (query/query-source sess 'mve.b))
               "existing content untouched")
-          (is (re-find #"b/f" (api/query-source sess 'mve.a))))
+          (is (re-find #"b/f" (query/query-source sess 'mve.a))))
         (testing "behavior intact"
           (is (= [6] (api/query-eval sess "(mve.a/g 3)")))))
       (finally (api/close! sess)))))
@@ -203,7 +203,7 @@
                         "(defn helper [x] (inc x))\n"))
       (let [r (api/fix-declares! sess 'ph.core :agent "t")]
         (is (nil? (:error r)) (pr-str r))
-        (let [src (api/query-source sess 'ph.core)]
+        (let [src (query/query-source sess 'ph.core)]
           (is (not (re-find #"gone-away" src)) "the phantom name is gone")
           (is (not (re-find #"\(declare" src))
               "helper was reorderable, so the whole declare goes")))
@@ -226,7 +226,7 @@
         (let [r (api/move-forms! sess 'mv.core ["a" "b"] 'mv.target
                                  :prompt "m" :agent "t")]
           (is (nil? (:error r)) (pr-str r))
-          (let [src (api/query-source sess 'mv.target)]
+          (let [src (query/query-source sess 'mv.target)]
             (is (not (re-find #"\(declare" src))
                 (str "a and b never reference each other:\n" src)))))
 
@@ -239,7 +239,7 @@
         (let [r (api/move-forms! sess 'mv.rec ["ping" "pong"] 'mv.rectarget
                                  :prompt "m" :agent "t")]
           (is (nil? (:error r)) (pr-str r))
-          (let [src (api/query-source sess 'mv.rectarget)]
+          (let [src (query/query-source sess 'mv.rectarget)]
             (is (re-find #"\(declare" src) "a real cycle still needs one")
             (is (re-find #":auto-declare" src)
                 (str "and it must be the PIPELINE's, saying why:\n" src)))))
@@ -261,7 +261,7 @@
       (let [r (api/cleanup! sess 'cu.core :agent "t" :prompt "tidy the import")]
         (is (nil? (:error r)) (pr-str r))
         (is (= 1 (:declares r)) "the legacy declare is retired"))
-      (let [src (api/query-source sess 'cu.core)]
+      (let [src (query/query-source sess 'cu.core)]
         (is (not (re-find #"declare" src)))
         (is (< (.indexOf src "(defn b") (.indexOf src "(defn a"))
             "the definition is reordered above its caller instead"))

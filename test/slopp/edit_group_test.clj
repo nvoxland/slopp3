@@ -1,7 +1,7 @@
 (ns slopp.edit-group-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (def buggy
   (str "(ns gdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -51,7 +51,7 @@
     (try
       (api/ingest! sess 'gdemo buggy)
       (let [deltas-before (count (store/deltas (:store @sess)))
-            src-before    (api/query-source sess 'gdemo)
+            src-before    (query/query-source sess 'gdemo)
             r (api/edit-group!
                sess
                [{:action :replace :ns 'gdemo :name 'tier
@@ -64,7 +64,7 @@
           (is (= 1 (:step r))))
         (testing "NOTHING was committed — store, deltas, and image untouched"
           (is (= deltas-before (count (store/deltas (:store @sess)))))
-          (is (= src-before (api/query-source sess 'gdemo)))
+          (is (= src-before (query/query-source sess 'gdemo)))
           ;; the first step's change never reached the image either
           (is (not= [[1 :+ 2]] (api/query-eval sess "(gdemo/tier #{:+} [1 :+ 2])")))))
       (finally (api/close! sess)))))
@@ -79,8 +79,8 @@
                 {:action :delete :ns 'gdemo :name 'old-helper}]
                :prompt "swap helpers")]
         (is (nil? (:error r)))
-        (is (re-find #"new-helper" (api/query-source sess 'gdemo)))
-        (is (not (re-find #"old-helper" (api/query-source sess 'gdemo))))
+        (is (re-find #"new-helper" (query/query-source sess 'gdemo)))
+        (is (not (re-find #"old-helper" (query/query-source sess 'gdemo))))
         (is (= [10] (api/query-eval sess "(gdemo/new-helper 5)")))
         (is (= [nil] (api/query-eval sess "(resolve 'gdemo/old-helper)"))))
       (finally (api/close! sess)))))

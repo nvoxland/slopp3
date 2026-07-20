@@ -11,7 +11,7 @@
             [slopp.api :as api]
             [slopp.db :as db]
             [slopp.git :as git]
-            [slopp.store :as store] [slopp.api.branch :as branch])
+            [slopp.store :as store] [slopp.api.branch :as branch] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.lib ObjectId Repository]
@@ -78,7 +78,7 @@
                    (filter #(= (:commit r) (:id %))) first)]
         (is (nil? (:error r)) (pr-str r))
         (testing "byte-exact rendered source, trivia included"
-          (is (= (api/query-source sess 'gp.core) (get (:tree d) 'gp.core)))
+          (is (= (query/query-source sess 'gp.core) (get (:tree d) 'gp.core)))
           (is (str/includes? (get (:tree d) 'gp.core) ";; top-level trivia")))
         (testing "a retroactive :target marker carries NO tree (backfill path)"
           (let [r2 (api/commit-point! sess "was here" :agent "alice"
@@ -120,7 +120,7 @@
                (:message (commit-info (:slopp.git/repo ctx) (first (:parents info))))
                "v1: f ships")))
         (testing "blob bytes ARE the live render"
-          (is (= (api/query-source sess 'gp.core)
+          (is (= (query/query-source sess 'gp.core)
                  (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj"))))
         (testing "the clone is a runnable project (deps.edn present)"
           (is (str/includes? (str (blob-text (:slopp.git/repo ctx) tip "deps.edn"))

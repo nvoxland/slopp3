@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io] [slopp.api.query :as query]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -49,7 +49,7 @@
           (is (nil? (:declared r)) "silent — no declare key leaks to the agent")
           (is (nil? (edit/cold-load-errors (:store @sess) '[cl.cyc]))
               "the inserted declare makes it cold-load")
-          (is (re-find #":auto-declare" (api/query-source sess 'cl.cyc))
+          (is (re-find #":auto-declare" (query/query-source sess 'cl.cyc))
               "a MARKED declare was inserted by the pipeline")))
 
       (testing "move: relocating a caller before its callee is still REFUSED (explicit order)"
@@ -94,15 +94,15 @@
         (is (nil? (:error r)) (pr-str r)))
       (let [r (api/fix-declares! sess 'm.core :agent "t")]
         (is (nil? (:error r)) (pr-str r))
-        (is (not (re-find #"declare" (api/query-source sess 'm.core)))
+        (is (not (re-find #"declare" (query/query-source sess 'm.core)))
             "setup: the declare must be gone on main"))
       ;; the merge would land g→(h) with no declare and h defined after g
-      (let [before (api/query-source sess 'm.core)
+      (let [before (query/query-source sess 'm.core)
             r      (branch/branch-merge! sess "side")]
         (is (:error r) (pr-str r))
         (is (re-find #"cold-load" (str (:error r))))
         (testing "nothing committed, image intact"
-          (is (= before (api/query-source sess 'm.core)))
+          (is (= before (query/query-source sess 'm.core)))
           (is (= [:indep] (api/query-eval sess "(m.core/f)")))))
       (finally
         (api/close! sess)

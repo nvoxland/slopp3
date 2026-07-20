@@ -2,7 +2,7 @@
   "Item 5: paredit's valid-tree→valid-tree invariant as ONE content-addressed
   primitive — sub-form edits that never re-transcribe sibling code."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (def target
   (str "(ns sf.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -25,7 +25,7 @@
                                    :prompt "cap the fee")]
           (is (nil? (:error r)))
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
-          (let [src (api/query-source sess 'sf.core)]
+          (let [src (query/query-source sess 'sf.core)]
             (is (re-find #";; keep this comment intact" src))
             (is (re-find #"\(min 500 \(max 50" src))
             ;; untouched siblings byte-identical
@@ -36,7 +36,7 @@
                                    "(long (reduce + (map :cents items)))"
                                    :prompt "force long subtotals")]
           (is (nil? (:error r)))
-          (is (re-find #"\(long \(reduce \+" (api/query-source sess 'sf.core)))))
+          (is (re-find #"\(long \(reduce \+" (query/query-source sess 'sf.core)))))
       (testing "ambiguity, absence, and degenerate results are clean errors"
         (api/add-form! sess 'sf.core "(defn dup [a] (+ (inc a) (inc a)))")
         (is (re-find #"2 times" (:error (api/edit-subform! sess 'sf.core 'dup
@@ -66,7 +66,7 @@
                                    "Original doc line one continued here."
                                    "New doc." :text true)]
           (is (nil? (:error r)) (pr-str r))
-          (is (re-find #"New doc" (api/query-source sess 'tm.core)))))
+          (is (re-find #"New doc" (query/query-source sess 'tm.core)))))
       (finally (api/close! sess)))))
 (deftest ^:external fragment-matches-suggest-the-enclosing-form
   ;; the recurring loop: a match that opens a delimiter it doesn't close is

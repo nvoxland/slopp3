@@ -3,7 +3,7 @@
   F-3c2 query-eval surfaces exceptions, F-3c3 cross-namespace references,
   F-3c5 trace-less group verification covers ALL touched namespaces."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (defn- seed! [sess]
   (api/ingest! sess 'ta.a
@@ -47,7 +47,7 @@
   (let [sess (api/open!)]
     (try
       (seed! sess)
-      (let [refs (api/query-references sess 'ta.a 'f)]
+      (let [refs (query/query-references sess 'ta.a 'f)]
         (is (some #(= 'ta.b (:from-ns %)) refs)
             "callers in OTHER namespaces must be visible")
         (is (some #(= 'ta.a (:from-ns %)) refs)))

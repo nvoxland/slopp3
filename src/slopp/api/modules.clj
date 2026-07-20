@@ -60,20 +60,36 @@
           :count (count vs)})))))
 
 (defn module-surface
-  "What module `m` OFFERS: the public defns/defmacros/defs of its depth<=2
-  namespaces plus every deeper var widened by :export (with its level) —
-  compact rows {:ns :name :sig :doc :export?}, -test namespaces and
-  ^:private vars excluded. Plus :deps (its declared edges) and :consumers
-  (modules declaring an edge to it). The cheap browse before calling into
-  a module."
+  "What `m` OFFERS, where `m` is a MODULE (`logi.parcel`) or any NAMESPACE
+  PATH inside one (`logi.parcel.impl.calc`) — compact rows
+  `{:ns :name :sig :doc :export}`, `-test` namespaces and `^:private` vars
+  excluded, plus `:deps` (declared edges) and `:consumers`.
+
+  Namespace grain exists because tiers do: a pure core routinely lives one
+  level below an effectful module, and `tier-for` resolves most-specific-wins.
+  A surface view that could only address modules could not answer \"what does
+  this offer?\" at the grain that carries the architecture.
+
+  For a MODULE the surface is its depth<=2 namespaces plus every deeper var
+  widened by `:export` — the OUTSIDE world's view. For a deeper NAMESPACE it
+  is that namespace and anything under it WITHOUT the export filter: inside a
+  module everything is already visible, so filtering by `:export` there would
+  hide most of what a same-module caller may legitimately call.
+
+  The cheap browse before calling in."
   [session m]
   (let [st       (:store @session)
         m        (str m)
         manifest (or (modules/modules-manifest st) {})
-        nses     (filter #(= m (modules/module-of %)) (keys (:namespaces st)))
+        module?  (<= (count (str/split m #"\.")) 2)
+        nses     (if module?
+                   (filter #(= m (modules/module-of %)) (keys (:namespaces st)))
+                   (filter #(or (= m (str %)) (str/starts-with? (str %) (str m ".")))
+                           (keys (:namespaces st))))
         rows     (for [nsx  (sort nses)
                        :when (not (str/ends-with? (str nsx) "-test"))
-                       :let [deep? (> (count (str/split (str nsx) #"\.")) 2)]
+                       :let [deep? (and module?
+                                        (> (count (str/split (str nsx) #"\.")) 2))]
                        e    (store/forms st nsx)
                        :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
                        :when (and (seq? s)
@@ -90,13 +106,16 @@
                      doc             (assoc :doc (first (str/split-lines doc)))
                      (and deep? ex)  (assoc :export (if (true? ex) true (str ex)))))]
     (if (empty? nses)
-      {:error (str "no namespaces in module " m
-                   " — query_depends {modules true} lists the modules")}
-      {:module    m
-       :surface   (vec rows)
-       :deps      (vec (sort (get manifest m #{})))
-       :consumers (vec (sort (keep (fn [[k deps]] (when (contains? deps m) k))
-                                   manifest)))})))
+      {:error (str "nothing named " m
+                   " — query_depends {modules true} lists the modules, and a"
+                   " namespace path inside one also works")}
+      (cond-> {:module m :surface (vec rows)}
+        module?       (assoc :deps      (vec (sort (get manifest m #{})))
+                             :consumers (vec (sort (keep (fn [[k deps]]
+                                                           (when (contains? deps m) k))
+                                                         manifest))))
+        (not module?) (assoc :tier   (modules/tier-for st (symbol m))
+                             :within (modules/module-of (symbol m)))))))
 (defn unused-report
   "PUBLIC defn/def vars in `nses` with NO references in THE graph
   (edit.refs — static, carrier, and declared records all count):

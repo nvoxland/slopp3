@@ -1,7 +1,7 @@
 (ns slopp.rename-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api])
+            [slopp.api :as api] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -22,7 +22,7 @@
         (is (:error (api/rename! sess 'rdemo 'helper 'caller))))
       (let [r (api/rename! sess 'rdemo 'helper 'doubler :prompt "clearer name")]
         (is (nil? (:error r)))
-        (let [src (api/query-source sess 'rdemo)]
+        (let [src (query/query-source sess 'rdemo)]
           (testing "def + true references renamed"
             (is (re-find #"\(defn doubler \[x\]" src))
             (is (re-find #"\(\+ 1 \(doubler x\)\)" src)))
@@ -40,7 +40,7 @@
           (is (= [nil] (api/query-eval sess "(resolve 'rdemo/helper)")))
           (is (= [10] (api/query-eval sess "(rdemo/trap (fn [x] 10))"))))
         (testing "lineage of the new name includes the rename delta"
-          (is (contains? (set (map :op (api/query-lineage sess 'rdemo 'doubler)))
+          (is (contains? (set (map :op (query/query-lineage sess 'rdemo 'doubler)))
                          :rename))))
       (finally (api/close! sess)))))
 
@@ -56,16 +56,16 @@
       (let [r (api/rename! sess 'liba 'helper 'twice :prompt "cross-ns")]
         (is (nil? (:error r)))
         (testing "alias-qualified reference in the other namespace is rewritten"
-          (is (re-find #"defn twice" (api/query-source sess 'liba)))
-          (is (re-find #"la/twice" (api/query-source sess 'libb))))
+          (is (re-find #"defn twice" (query/query-source sess 'liba)))
+          (is (re-find #"la/twice" (query/query-source sess 'libb))))
         (testing "the live image works across the rename"
           (is (= [10] (api/query-eval sess "(libb/use-it 5)")))))
       (finally (api/close! sess)))
     ;; a fresh session over the same dir: the rename persisted in both nses
     (let [sess2 (api/open! {:slopp.api/dir dir})]
       (try
-        (is (re-find #"defn twice" (api/query-source sess2 'liba)))
-        (is (re-find #"la/twice" (api/query-source sess2 'libb)))
+        (is (re-find #"defn twice" (query/query-source sess2 'liba)))
+        (is (re-find #"la/twice" (query/query-source sess2 'libb)))
         (is (= [10] (api/query-eval sess2 "(libb/use-it 5)")))
         (is (= :rename (:op (last (filter #(= :rename (:op %))
                                           (store/deltas (:store @sess2)))))))
@@ -139,7 +139,7 @@
       (let [r (api/rename-sweep! sess ":zkey-two" ":rq/zkey-two"
                                  :prompt "namespace the key")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [src (api/query-source sess 'rq.core)]
+      (let [src (query/query-source sess 'rq.core)]
         (testing "a sole key becomes a qualified :keys entry"
           (is (re-find #"\{:rq/keys \[zkey-two\]\}" src) src))
         (testing "a MIXED destructuring splits — unrenamed keys stay bare"
@@ -174,7 +174,7 @@
       (let [r (api/rename-sweep! sess ":zhint-one" ":hint/zhint-one"
                                  :prompt "namespace a hinted key")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [src (api/query-source sess 'hint.core)]
+      (let [src (query/query-source sess 'hint.core)]
         (testing "the MOVED symbol keeps its hint"
           (is (re-find #":hint/keys \[\^String zhint-one\]" src) src))
         (testing "the symbols left behind keep theirs"
@@ -203,7 +203,7 @@
       (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed" :dry-run true)]
         (testing "nothing is written"
           (is (:dry-run r) (pr-str r))
-          (is (re-find #":dr/target" (api/query-source sess 'dr.core))
+          (is (re-find #":dr/target" (query/query-source sess 'dr.core))
               "the store must be untouched by a preview"))
         (testing "code hits and string hits are reported separately"
           (is (= '[dr.core/real] (mapv :form (:in-code r))) (pr-str r))
@@ -224,7 +224,7 @@
         (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed"
                                    :prompt "for real")]
           (is (nil? (:error r)) (pr-str r))
-          (is (re-find #":dr/renamed" (api/query-source sess 'dr.core)))))
+          (is (re-find #":dr/renamed" (query/query-source sess 'dr.core)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external a-sweep-that-loses-a-hint-says-so
@@ -257,7 +257,7 @@
   `:target`. Reading it as `(:source r)` yields nil, and nil reaches `re-find`
   as an NPE about `this.text` rather than a readable failure."
   [session ns-sym nm]
-  (get-in (api/query-slice session ns-sym nm) [:target :source]))
+  (get-in (query/query-slice session ns-sym nm) [:target :source]))
 
 (deftest ^:external requalify-boundary-keys-does-arglist-and-call-sites-together
   ;; The capability require-namespaced-keys needs to be dischargeable: its last

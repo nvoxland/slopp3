@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -279,7 +279,7 @@
   are conservatively a conflict (an agent should confirm destruction)."
   [session ns-sym path old new conflict! applied! note! agent]
   (let [have (get-in (:store @session) [:namespaces ns-sym])
-        cur  (when have (api/query-source session ns-sym))]
+        cur  (when have (query/query-source session ns-sym))]
     (cond
       (nil? new)
       (when have
@@ -310,7 +310,7 @@
               (if (:error r)
                 (conflict! path ns-sym (str "failed to apply: " (:error r)))
                 (do (reorder-to! session ns-sym (:order plan) agent)
-                    (when (not= (api/query-source session ns-sym) new)
+                    (when (not= (query/query-source session ns-sym) new)
                       (note! (str path ": applied, but trivia differs from the remote")))
                     (applied! ns-sym))))))))))
 (defn- apply-files!

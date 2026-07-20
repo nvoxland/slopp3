@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.session :as session]))
+            [slopp.api :as api] [slopp.api.session :as session] [slopp.api.query :as query]))
 
 (def seed
   (str "(ns cc.core)\n"
@@ -26,7 +26,7 @@
           (is (every? #(nil? (:error %)) results))
           (is (every? #(nil? (:conflict %)) results)))
         (testing "no lost updates: all four changes present in the store"
-          (let [src (api/query-source sess 'cc.core)]
+          (let [src (query/query-source sess 'cc.core)]
             (doseq [nm '[a b c d]]
               (is (re-find (re-pattern (format "defn %s \\[x\\] \\(\\+ x" nm)) src)
                   (str nm " lost")))))
@@ -56,8 +56,8 @@
         (is (some? (:conflict r)))
         (is (re-find #"changed concurrently" (str (:conflict r))))
         (testing "the competitor's write is what survived"
-          (is (re-find #":competitor" (api/query-source sess 'cc.core)))
-          (is (not (re-find #":loser" (api/query-source sess 'cc.core))))))
+          (is (re-find #":competitor" (query/query-source sess 'cc.core)))
+          (is (not (re-find #":loser" (query/query-source sess 'cc.core))))))
       (testing "but a DIFFERENT-form competitor rebases cleanly instead"
         (let [fired (atom false)
               r (binding [session/*pre-commit-hook*
@@ -70,7 +70,7 @@
                                      :prompt "should rebase and land"))]
           (is (nil? (:error r)))
           (is (nil? (:conflict r)))
-          (let [src (api/query-source sess 'cc.core)]
+          (let [src (query/query-source sess 'cc.core)]
             (is (re-find #":other" src))
             (is (re-find #":mine" src)))))
       (finally (api/close! sess)))))
@@ -83,13 +83,13 @@
       (api/edit-replace! sess 'rv.core 'f "(defn f [x] (+ 2 x))" :prompt "v3")
       (let [r (api/revert-form! sess 'rv.core 'f)]     ; default: previous
         (is (nil? (:error r)))
-        (is (re-find #"\(inc x\)" (api/query-source sess 'rv.core)))
+        (is (re-find #"\(inc x\)" (query/query-source sess 'rv.core)))
         (is (= [6] (api/query-eval sess "(rv.core/f 5)")))
         (testing "the revert is itself provenance"
           (is (re-find #"revert to"
-                       (str (:prompt (last (api/query-lineage sess 'rv.core 'f))))))))
+                       (str (:prompt (last (query/query-lineage sess 'rv.core 'f))))))))
       (testing "revert to a specific delta from form history"
-        (let [v1 (first (api/query-form-history sess 'rv.core 'f))
+        (let [v1 (first (query/query-form-history sess 'rv.core 'f))
               r  (api/revert-form! sess 'rv.core 'f :to (:delta v1))]
           (is (nil? (:error r)))
           (is (= [5] (api/query-eval sess "(rv.core/f 5)")))))
@@ -118,7 +118,7 @@
       ;; the journal is the record: a fresh session sees all four writes
       (let [sess (api/open! {:slopp.api/dir dir})]
         (try
-          (let [src (api/query-source sess 'cc.core)]
+          (let [src (query/query-source sess 'cc.core)]
             (doseq [nm '[a b c d]]
               (is (re-find (re-pattern (format "defn %s \\[x\\] \\(\\+ x" nm)) src)
                   (str nm " lost from the journal"))))

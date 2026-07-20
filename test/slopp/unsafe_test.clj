@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.api.query :as query]))
 
 ;; ---------------------------------------------------------------------------
 ;; form-symbol must see through ^:unsafe (else the form is un-addressable)
@@ -63,17 +63,17 @@
       (testing "the ^:unsafe form loaded into the image and works"
         (is (= [2] (api/query-eval sess "(us.core/with-tap inc)"))))
       (testing "it is addressable by name (form-symbol saw through :meta)"
-        (is (str/includes? (api/query-source sess 'us.core) "with-tap"))
+        (is (str/includes? (query/query-source sess 'us.core) "with-tap"))
         (let [r (api/edit-replace! sess 'us.core 'with-tap
                                    "^:unsafe (defn with-tap [f] (binding [*tap* f] (f 10)))"
                                    :prompt "bump" :agent "a")]
           (is (nil? (:error r)) (pr-str r))
           (is (= [11] (api/query-eval sess "(us.core/with-tap inc)")))))
       (testing "the ^:unsafe marker round-trips through render"
-        (is (str/includes? (api/query-source sess 'us.core) "^:unsafe")))
+        (is (str/includes? (query/query-source sess 'us.core) "^:unsafe")))
       (testing "query_symbol surfaces :unsafe? (greppable/visible)"
-        (is (:unsafe? (api/query-symbol sess 'us.core 'with-tap)))
-        (is (not (:unsafe? (api/query-symbol sess 'us.core '*tap*)))))
+        (is (:unsafe? (query/query-symbol sess 'us.core 'with-tap)))
+        (is (not (:unsafe? (query/query-symbol sess 'us.core '*tap*)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external unsafe-survives-done-normalize
@@ -85,8 +85,8 @@
                    (str "(ns us.chk)\n\n"
                         "^:unsafe\n(defn q [x] (binding [*out* *out*] (inc x)))\n"))
       (api/done! sess :label "cp" :agent "a")
-      (is (str/includes? (api/query-source sess 'us.chk) "^:unsafe"))
-      (is (:unsafe? (api/query-symbol sess 'us.chk 'q)))
+      (is (str/includes? (query/query-source sess 'us.chk) "^:unsafe"))
+      (is (:unsafe? (query/query-symbol sess 'us.chk 'q)))
       (is (= [2] (api/query-eval sess "(us.chk/q 1)")))
       (finally (api/close! sess)))))
 

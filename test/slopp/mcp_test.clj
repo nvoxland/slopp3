@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -188,7 +188,7 @@
                     (filter #(= :ingest (:op %)))
                     first :agent))))
       (testing "the turn carries the verbatim prompt"
-        (is (seq (api/query-search-history sess "add a widget feature"))))
+        (is (seq (query/query-search-history sess "add a widget feature"))))
       (testing "with no pending intent and no turn, the gate still refuses"
         (call! sess "turn_end" {})
         (let [r (call! sess "edit_add_form" {:ns "pi.core"
@@ -919,7 +919,7 @@
         (is (re-find #":dry-run true" r) r)
         (is (= before (count (store/deltas (:store @sess))))
             "a preview over the wire must append NO delta")
-        (is (re-find #":dw/target" (api/query-source sess 'dw.core))
+        (is (re-find #":dw/target" (query/query-source sess 'dw.core))
             "and must not rewrite anything"))
       (finally (api/close! sess)))))
 
@@ -997,7 +997,7 @@
           (is (= '[wp.core/b] (:unknown-shape r)) (pr-str r)))
         (testing "a preview writes nothing — the property, not the report"
           (is (re-find #"\{:keys \[dir\]\}"
-                       (get-in (api/query-slice sess 'wp.core 'opts)
+                       (get-in (query/query-slice sess 'wp.core 'opts)
                                [:target :source]))
               "the arglist must be untouched after a dry run")))
       (finally (api/close! sess)))))

@@ -1,6 +1,6 @@
 (ns slopp.orientation-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.edit :as edit]))
+            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (api/open!)]
@@ -13,9 +13,9 @@
       (api/ingest! sess 'o.util "(ns o.util)\n(defn helper [x] x)\n")
       (testing "query-namespaces: what exists, without knowing names up front"
         (is (= [{:ns 'o.core :forms 4} {:ns 'o.util :forms 2}]
-               (api/query-namespaces sess))))
+               (query/query-namespaces sess))))
       (testing "query-outline: names + arities + !-status + test-ness + doc line"
-        (let [o       (api/query-outline sess 'o.core :detail true)
+        (let [o       (query/query-outline sess 'o.core :detail true)
               by-name (into {} (map (juxt :name identity)) (:forms o))]
           (is (= [1] (:arities (by-name 'pure-f))))
           (is (= "Adds one." (:doc (by-name 'pure-f))))
@@ -24,28 +24,28 @@
           (is (true? (:test? (by-name 't))))
           (is (nil? (:effectful? (by-name 't))))))    ; T1: tests aren't flagged
       (testing "query-project: the whole store's shape in ONE call, with :head"
-        (let [p (api/query-project sess)]
+        (let [p (query/query-project sess)]
           (is (string? (:head p)))
           (is (= '[o.core o.util] (mapv :ns (:namespaces p))))
           (is (some #(= 'mut! (:name %))
                     (:forms (first (filter #(= 'o.core (:ns %))
                                            (:namespaces p))))))))
       (testing "query-search: the missing grep, form-addressed"
-        (let [hits (api/query-search sess "swap!")]
+        (let [hits (query/query-search sess "swap!")]
           (is (= 1 (count hits)))
           (is (= 'o.core (:ns (first hits))))
           (is (= 'mut! (:form (first hits)))))
-        (is (= 2 (count (api/query-search sess "defn \\w+-f|helper"))))
-        (is (empty? (api/query-search sess "nonexistent-thing")))
+        (is (= 2 (count (query/query-search sess "defn \\w+-f|helper"))))
+        (is (empty? (query/query-search sess "nonexistent-thing")))
         (testing "bad regex is a clean error"
-          (is (:error (api/query-search sess "([")))))
+          (is (:error (query/query-search sess "([")))))
       (finally (api/close! sess)))))
 (deftest ^:external batched-source-reads
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
       (api/create-ns! sess 'bq.b :source "(ns bq.b)\n(defn h [] 3)\n")
-      (let [r (api/query-sources sess [{:ns 'bq.a :name 'f}
+      (let [r (query/query-sources sess [{:ns 'bq.a :name 'f}
                                        {:ns 'bq.b}
                                        {:ns 'bq.a :name 'nope}
                                        {:ns 'bq.zz}])]
@@ -58,14 +58,14 @@
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
-      (let [head (:head (api/query-project sess))]
+      (let [head (:head (query/query-project sess))]
         (testing "unchanged structure is a one-liner"
           (is (= {:unchanged-since head :head head}
-                 (select-keys (api/query-project sess :since head)
+                 (select-keys (query/query-project sess :since head)
                               [:unchanged-since :head]))))
         (testing "a write invalidates it"
           (api/add-form! sess 'qs.core "(defn g [] 2)" :agent "t")
-          (let [r (api/query-project sess :since head)]
+          (let [r (query/query-project sess :since head)]
             (is (nil? (:unchanged-since r)))
             (is (seq (:namespaces r))))))
       (finally (api/close! sess)))))
@@ -75,12 +75,12 @@
       (api/create-ns! sess 'oc.core
                       :source "(ns oc.core)\n(defn f\n  \"Adds one.\"\n  [x] (inc x))\n")
       (testing "no doc lines unless asked"
-        (is (nil? (-> (api/query-outline sess 'oc.core) :forms first :doc)))
+        (is (nil? (-> (query/query-outline sess 'oc.core) :forms first :doc)))
         (is (= "Adds one."
-               (-> (api/query-outline sess 'oc.core :detail true) :forms first :doc))))
+               (-> (query/query-outline sess 'oc.core :detail true) :forms first :doc))))
       (testing "query-project passes detail through"
-        (is (nil? (-> (api/query-project sess) :namespaces first :forms first :doc)))
-        (is (some? (-> (api/query-project sess :detail true)
+        (is (nil? (-> (query/query-project sess) :namespaces first :forms first :doc)))
+        (is (some? (-> (query/query-project sess :detail true)
                        :namespaces first :forms first :doc))))
       (finally (api/close! sess)))))
 (deftest ^:external query-brief-is-the-one-call-dossier
@@ -91,7 +91,7 @@
       (api/create-ns! sess 'qb.b :source "(ns qb.b (:require [qb.a :as a]))\n(defn g [x] (a/f x))\n")
       (api/edit-replace! sess 'qb.a 'f "(defn f\n  \"Core fn.\"\n  [x] (+ x 1))" :prompt "prefer + for clarity" :agent "t")
       (api/test-run! sess nil)
-      (let [b (api/query-brief sess 'qb.a 'f)]
+      (let [b (query/query-brief sess 'qb.a 'f)]
         (is (re-find #"\+ x 1" (:source b)))
         (testing "cross-ns callers included"
           (is (some #(= 'qb.b (:from-ns %)) (:callers b))))
@@ -100,7 +100,7 @@
         (testing "the recorded why is in the dossier"
           (is (= "prefer + for clarity" (get-in b [:why :prompt])))))
       (testing "unknown form is an honest error"
-        (is (:error (api/query-brief sess 'qb.a 'nope))))
+        (is (:error (query/query-brief sess 'qb.a 'nope))))
       (finally (api/close! sess)))))
 (deftest ^:external flow-and-impact-answer-the-thread
   (let [sess (api/open!)]
@@ -116,12 +116,12 @@
                         "(deftest ship-t (is (= 2 (ship (a/mk true)))))\n"))
       (api/test-run! sess 'fl.b)
       (testing "query-flow threads a keyword across namespaces"
-        (let [r (api/query-flow sess ":rush?")]
+        (let [r (query/query-flow sess ":rush?")]
           (is (= #{['fl.a 'mk] ['fl.b 'ship]}
                  (into #{} (map (juxt :ns :form)) r))
               (pr-str r))))
       (testing "query-impact reads the blast radius"
-        (let [r (api/query-impact sess 'fl.b 'ship)]
+        (let [r (query/query-impact sess 'fl.b 'ship)]
           (is (= {:count 1 :tests ['fl.b/ship-t]} (:covered-by r)) (pr-str r))
           (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
@@ -200,19 +200,19 @@
                         "(defn- tax \"Ten percent.\" [c] (long (* c 0.1)))\n"
                         "(defn total \"Subtotal plus tax.\" [c] (u/fmt (+ c (tax c))))\n"))
       (testing "target rides as full source; the neighborhood rides as cards"
-        (let [r (api/query-slice sess 'sl.core 'total)]
+        (let [r (query/query-slice sess 'sl.core 'total)]
           (is (re-find #"u/fmt" (str (get-in r [:target :source]))) (pr-str r))
           (is (= #{'sl.core/tax 'sl.util/fmt 'sl.util/pad}
                  (set (map :form (:cards r)))) (pr-str r))
           (is (every? #(nil? (:source %)) (:cards r)))
           (is (< (count (pr-str r)) 1400) (str (count (pr-str r))))))
       (testing "match windows the target — giant forms read as neighborhoods"
-        (let [r (api/query-slice sess 'sl.core 'total :match "u/fmt" :window 0)]
+        (let [r (query/query-slice sess 'sl.core 'total :match "u/fmt" :window 0)]
           (is (re-find #"u/fmt" (get-in r [:target :source])) (pr-str r))
           (is (zero? (count (re-seq #"\n" (get-in r [:target :source])))))
           (is (get-in r [:target :window]))))
       (testing "depth 1 = direct callees only"
-        (let [r (api/query-slice sess 'sl.core 'total :depth 1)]
+        (let [r (query/query-slice sess 'sl.core 'total :depth 1)]
           (is (= #{'sl.core/tax 'sl.util/fmt}
                  (set (map :form (:cards r)))) (pr-str r))))
       (finally (api/close! sess)))))
@@ -255,25 +255,25 @@
                    (str "(ns dp.app (:require [dp.base :as base]))\n"
                         "(defn total [o] (+ 100 (base/fee (:dest-zone o))))\n"))
       (testing "a NAMESPACE answer: who requires it + what it requires"
-        (let [r (api/query-depends sess "dp.base")]
+        (let [r (query/query-depends sess "dp.base")]
           (is (= :namespace (:kind r)) (pr-str r))
           (is (= '[dp.app] (:required-by r)) (pr-str r))))
       (testing "a VAR answer delegates to the blast radius"
-        (let [r (api/query-depends sess "dp.base/fee")]
+        (let [r (query/query-depends sess "dp.base/fee")]
           (is (= :var (:kind r)) (pr-str r))
           (is (some #(= 'total (:form %)) (:callers r)) (pr-str r))))
       (testing "a KEYWORD answer delegates to the flow"
-        (let [r (api/query-depends sess ":dest-zone")]
+        (let [r (query/query-depends sess ":dest-zone")]
           (is (= :keyword (:kind r)) (pr-str r))
           (is (some #(= 'dp.app (:ns %)) (:rows r)) (pr-str r))))
       (testing "an unknown thing teaches the kinds"
-        (is (re-find #"namespace, var" (str (:error (api/query-depends sess "nope.zip"))))))
+        (is (re-find #"namespace, var" (str (:error (query/query-depends sess "nope.zip"))))))
       (testing "direction :dependencies gives the callee tree (absorbs query_deps)"
-        (let [r (api/query-depends sess "dp.app/total" :direction :dependencies)]
+        (let [r (query/query-depends sess "dp.app/total" :direction :dependencies)]
           (is (= :var (:kind r)) (pr-str r))
           (is (contains? (:calls r) 'dp.base/fee) (pr-str r))))
       (testing "a namespace's :dependencies are its requires"
-        (let [r (api/query-depends sess "dp.app" :direction :dependencies)]
+        (let [r (query/query-depends sess "dp.app" :direction :dependencies)]
           (is (some #{'dp.base} (:requires r)) (pr-str r))))
       (finally (api/close! sess)))))
 (deftest ^:external review-scan-triages-by-risk
@@ -333,21 +333,21 @@
                         "(defn f \"F.\" [x] x)\n\n"
                         "(defn- g \"G.\" [x] x)\n"))
       (testing "pure analysis over the live store value"
-        (let [r (api/query-store sess
+        (let [r (query/query-store sess
                                  "(fn [store] (count (slopp.store/forms store 'qs.core)))")]
           (is (= 3 (:result r)) (pr-str r)))
-        (let [r (api/query-store sess
+        (let [r (query/query-store sess
                                  "(fn [store] (sort (map :name (slopp.store/forms store 'qs.core))))")]
           (is (= '(f g qs.core) (:result r)) (pr-str r))))
       (testing "the code must be one fn of the store"
-        (is (re-find #"\(fn \[store\]" (str (:error (api/query-store sess "(+ 1 2)"))))))
+        (is (re-find #"\(fn \[store\]" (str (:error (query/query-store sess "(+ 1 2)"))))))
       (testing "effects refuse with teaching"
         (is (re-find #"(?i)read-only"
-                     (str (:error (api/query-store
+                     (str (:error (query/query-store
                                    sess "(fn [store] (spit \"/tmp/x\" store))")))))
-        (is (:error (api/query-store
+        (is (:error (query/query-store
                      sess "(fn [store] (slopp.db/append! nil store nil))")))
-        (is (:error (api/query-store sess "(fn [store] (eval '(+ 1 2)))"))))
+        (is (:error (query/query-store sess "(fn [store] (eval '(+ 1 2)))"))))
 
       (testing "the SANDBOX is the sole gate — refusals teach it, not the dialect"
         ;; query_store parses RAW (edit/parse-one). The D3 dialect denylist
@@ -356,18 +356,18 @@
         ;; query with advice about reference carriers and ^:unsafe.
         (doseq [code ["(fn [store] (read-string \"#=(println :x)\"))"
                       "(fn [store] ((requiring-resolve 'clojure.core/inc) 1))"]]
-          (let [msg (str (:error (api/query-store sess code)))]
+          (let [msg (str (:error (query/query-store sess code)))]
             (is (re-find #"(?i)read-only" msg) (str code " => " msg))
             (is (not (re-find #"(?i)dialect|carrier|late-ref" msg))
                 (str "store-code advice leaked into an analysis query: " msg)))))
       (testing "runaway code times out instead of wedging the server"
         (is (re-find #"timed out"
-                     (str (:error (api/query-store
+                     (str (:error (query/query-store
                                    sess "(fn [store] (loop [] (recur)))"
                                    :timeout-ms 300))))))
       (testing "exceptions surface as errors"
         (is (re-find #"boom"
-                     (str (:error (api/query-store
+                     (str (:error (query/query-store
                                    sess "(fn [store] (throw (ex-info \"boom\" {})))"))))))
       (finally (api/close! sess)))))
 (deftest ^:external review-scan-flags-unused-publics
@@ -452,7 +452,7 @@
                         "(defn stale [] (consume {:alpha 1}))\n"
                         "(defn dynamic [m] (consume m))\n"
                         "(defn no-arg [] (consume))\n"))
-      (let [sh      (:shape (api/query-impact sess 'sh.core 'consume))
+      (let [sh      (:shape (query/query-impact sess 'sh.core 'consume))
             by-keys (into {} (map (juxt :keys identity)) (:producers sh))]
         (testing "the keys the target itself reads"
           (is (= #{:sh/alpha} (:destructured (:reads sh))) (pr-str sh)))

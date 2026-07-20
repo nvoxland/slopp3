@@ -1,6 +1,6 @@
 (ns slopp.addelete-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.api.query :as query]))
 
 (def target
   (str "(ns adm\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -20,13 +20,13 @@
         (is (nil? (:error r)))
         (is (= :add (:op (:delta r))))
         (testing "rendered source contains the new form, tidily separated"
-          (let [src (api/query-source sess 'adm)]
+          (let [src (query/query-source sess 'adm)]
             (is (re-find #"\(defn triple \[x\] \(\* 3 x\)\)" src))
             (is (not (re-find #"\n\n\n" src)))))
         (testing "the new form is live in the image"
           (is (= [12] (api/query-eval sess "(adm/triple 4)"))))
         (testing "its lineage starts at the :add delta"
-          (is (= [:add] (mapv :op (api/query-lineage sess 'adm 'triple)))))
+          (is (= [:add] (mapv :op (query/query-lineage sess 'adm 'triple)))))
         (testing "verification ran and was recorded"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (testing "effect warnings surface at add time (D6)"
@@ -44,7 +44,7 @@
         (is (nil? (:error r)))
         (is (= :delete (:op (:delta r))))
         (testing "gone from the source and from the live image"
-          (is (not (re-find #"triple" (api/query-source sess 'adm))))
+          (is (not (re-find #"triple" (query/query-source sess 'adm))))
           (is (= [nil] (api/query-eval sess "(resolve 'adm/triple)"))))
         (testing "remaining tests still verify green"
           (is (= 1 (:pass (:test r))))))
@@ -69,7 +69,7 @@
             r (api/delete-form! sess 'dmz (symbol meth-id) :prompt "drop :square")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the method is gone from the SOURCE"
-          (is (not (re-find #":square" (api/query-source sess 'dmz)))))
+          (is (not (re-find #":square" (query/query-source sess 'dmz)))))
         (testing "…and gone from the IMAGE — dispatch falls to :default"
           (is (= [:unknown]
                  (api/query-eval sess "(dmz/area {:shape :square :side 2})")))))

@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -402,13 +402,13 @@
                         "(deftest perim-t (is (= 8 (g/perim (g/->Sq 2)))))\n"))
       (is (= 1 (:pass (api/test-run! sess 'geo.core-test))))
       (testing "the defrecord form owns its constructors' evidence (D8 names)"
-        (let [b (api/query-brief sess 'geo.core 'Sq)]
+        (let [b (query/query-brief sess 'geo.core 'Sq)]
           (is (= {:count 1 :tests '[geo.core-test/perim-t]} (:covered-by b)) (pr-str b))))
       (testing "the defprotocol form has NO evidence — the inline cache bypassed
                 its wrapped var. If this ever flips to covered, the tracer
                 started seeing direct interface dispatch: update the narrowing
                 rule in store/method-carrying? before trusting it"
-        (let [b (api/query-brief sess 'geo.core 'P)]
+        (let [b (query/query-brief sess 'geo.core 'P)]
           (is (nil? (:covered-by b)) (pr-str (:covered-by b)))))
       (testing "editing the record falls back to run-everything and says so —
                 ->Sq evidence alone would under-select"

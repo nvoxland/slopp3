@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch]))
+            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -477,15 +477,15 @@
                                                   :test :affected :delta])
                                     (summarize (:verbose a))))
       "query_project" (text! (told! session name a
-                                        (api/query-project session :since (:since a)
+                                        (query/query-project session :since (:since a)
                                                           :detail (:detail a))))
-      "query_search" (text! (api/query-search session (:pattern a)
+      "query_search" (text! (query/query-search session (:pattern a)
                                                   :limit (or (:limit a) 30)))
       "query_source" (text! (told! session name a
                                         (let [full?   (:full a)
                                               gate    (fn [n]
                                                         {:ns n
-                                                         :outline (:forms (api/query-outline session n))
+                                                         :outline (:forms (query/query-outline session n))
                                                          :note (str "outline by default — name the"
                                                                     " forms you need (targets"
                                                                     " [{ns name}]) or pass full:"
@@ -493,14 +493,14 @@
                                           (if-let [ts (:targets a)]
                                             (mapv (fn [t]
                                                     (if (or full? (:name t))
-                                                      (first (api/query-sources
+                                                      (first (query/query-sources
                                                               session
                                                               [(cond-> {:ns (symbol (:ns t))}
                                                                  (:name t) (assoc :name (symbol (:name t))))]))
                                                       (gate (symbol (:ns t)))))
                                                   ts)
                                             (if full?
-                                              (api/query-source session (sym :ns))
+                                              (query/query-source session (sym :ns))
                                               (gate (sym :ns)))))))
       "query_detail" (if-let [full (get-in @session [::spool :entries (:id a)])]
                             ;; the retrieval path must NOT re-trim its own payload
@@ -508,15 +508,15 @@
                             (text! {:error (str "no spooled response " (:id a)
                                                 " — the spool keeps the last "
                                                 spool-cap " trimmed responses")}))
-      "query_brief" (text! (told! session name a (api/query-brief session (sym :ns) (sym :name))))
+      "query_brief" (text! (told! session name a (query/query-brief session (sym :ns) (sym :name))))
       "query_slice" (text! (told! session name a
-                                        (api/query-slice session (sym :ns) (sym :name)
+                                        (query/query-slice session (sym :ns) (sym :name)
                                                         :depth (or (:depth a) 2)
                                                         :limit (or (:limit a) 8)
                                                         :match (:match a)
                                                         :window (:window a))))
       "query_depends" (text! (told! session name a
-                                        (api/query-depends session (:on a)
+                                        (query/query-depends session (:on a)
                                                           :modules (:modules a)
                                                           :direction (if (= "dependencies" (:direction a))
                                                                        :dependencies :dependents))))
@@ -551,7 +551,7 @@
                                                  :user (:user a)))
       "turn_end" (text! (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
-      "query_changes" (text! (api/query-changes session :agent (:agent a)
+      "query_changes" (text! (query/query-changes session :agent (:agent a)
                                                    :from (:from a) :to (:to a)
                                                    :format (:format a)))
       "episode_revert" (text! (-> (api/revert-episode! session
@@ -565,26 +565,26 @@
                                         (let [nm (:name a)]
                                           (cond
                                             (and nm (:at a))
-                                            (assoc (api/query-form-at session (sym :ns) (sym :name)
+                                            (assoc (query/query-form-at session (sym :ns) (sym :name)
                                                                      :at (:at a))
                                                    :kind :form-at)
 
                                             nm
                                             {:kind :form-history
-                                             :versions (api/query-form-history session (sym :ns) (sym :name)
+                                             :versions (query/query-form-history session (sym :ns) (sym :name)
                                                                               :format (:format a))}
 
                                             (:at a)
-                                            (assoc (api/query-status-at session :at (:at a))
+                                            (assoc (query/query-status-at session :at (:at a))
                                                    :kind :status-at)
 
                                             (:contains a)
                                             {:kind :prompts
-                                             :hits (api/query-search-history session (:contains a)
+                                             :hits (query/query-search-history session (:contains a)
                                                                             :limit (:limit a))}
 
                                             :else
-                                            (api/query-history session
+                                            (query/query-history session
                                                               :ns (some-> (:ns a) symbol)
                                                               :collapse (:collapse a)
                                                               :format (:format a)
@@ -595,7 +595,7 @@
                                              (throw (ex-info "query_call needs :sym (a qualified var name)" {}))))
                                  (:args a)))
       "query_store" (text! (told! session name a
-                                  (api/query-store session (:code a)
+                                  (query/query-store session (:code a)
                                                    :timeout-ms (or (:timeout_ms a) 10000))))
       "query_observe" (text! (let [r (api/query-observe session (sym :ns) (sym :name)
                                                           (:code a)
@@ -603,9 +603,9 @@
                                  (api/remember-observation! session (sym :ns) (sym :name) r)
                                  r))
       "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
-      "query_vocabulary" (text! (told! session name a (api/query-vocabulary session :ns (:ns a))))
-      "query_rules" (text! (told! session name a (api/query-rules session)))
-      "query_rule_telemetry" (text! (told! session name a (api/query-rule-telemetry session :since (:since a))))
+      "query_vocabulary" (text! (told! session name a (query/query-vocabulary session :ns (:ns a))))
+      "query_rules" (text! (told! session name a (query/query-rules session)))
+      "query_rule_telemetry" (text! (told! session name a (query/query-rule-telemetry session :since (:since a))))
       "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (src :source) :prompt (:prompt a)
                                                        :agent (:agent a))

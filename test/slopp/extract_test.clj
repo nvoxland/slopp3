@@ -1,6 +1,6 @@
 (ns slopp.extract-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (deftest ^:external extract-subform-to-function
   (let [sess (api/open!)]
@@ -19,7 +19,7 @@
           (is (nil? (:error r)))
           (is (= '[tax items] (get-in r [:extracted :params]))))
         (testing "the new fn is defined BEFORE its caller; caller calls it"
-          (let [src ^String (api/query-source sess 'ex.core)]
+          (let [src ^String (query/query-source sess 'ex.core)]
             (is (< (.indexOf src "(defn taxed-prices [tax items]")
                    (.indexOf src "(defn pricey")))
             (is (re-find #"\(reduce \+ \(taxed-prices tax items\)\)" src))))

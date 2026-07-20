@@ -2,7 +2,7 @@
   "Fixes for what the symmetric eval surfaced (S-series)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.query :as query]))
 
 (deftest ^:external s1-non-compiling-forms-are-rejected-not-silently-committed
   (let [sess (api/open!)]
@@ -16,14 +16,14 @@
           (is (:error r))
           (is (re-find #"compile" (:error r)))
           (is (= n (count (store/deltas (:store @sess)))))
-          (is (not (re-find #"bad" (api/query-source sess 's1.core))))))
+          (is (not (re-find #"bad" (query/query-source sess 's1.core))))))
       (testing "the sonnet case: a test referencing an undefined fn is a loud error, not {:ok :ran 0}"
         (let [r (api/add-form! sess 's1.core "(deftest ghost-t (is (= 1 (ghost 1))))")]
           (is (:error r))))
       (testing "a replace that doesn't compile leaves the old form intact everywhere"
         (let [r (api/edit-replace! sess 's1.core 'f "(defn f [x] (nope x))")]
           (is (:error r))
-          (is (re-find #"\(defn f \[x\] x\)" (api/query-source sess 's1.core)))
+          (is (re-find #"\(defn f \[x\] x\)" (query/query-source sess 's1.core)))
           (is (= [7] (api/query-eval sess "(s1.core/f 7)")))))
       (testing "a group with a non-compiling step commits nothing and the image stays faithful"
         (let [n (count (store/deltas (:store @sess)))
@@ -55,14 +55,14 @@
         (let [r (api/move-form! sess 's2.core 'util :before 'helper
                                 :prompt "group utils first")]
           (is (nil? (:error r)))
-          (let [src ^String (api/query-source sess 's2.core)]
+          (let [src ^String (query/query-source sess 's2.core)]
             (is (< (.indexOf src "util") (.indexOf src "helper"))))))
       (testing "a FRESH load respects the new order; everything still works"
         (api/restart! sess)
         (is (= [10] (api/query-eval sess "(s2.core/caller 5)")))
         (is (= [:u] (api/query-eval sess "(s2.core/util)"))))
       (testing "lineage records the :move"
-        (is (contains? (set (map :op (api/query-lineage sess 's2.core 'util)))
+        (is (contains? (set (map :op (query/query-lineage sess 's2.core 'util)))
                        :move)))
       (testing "validation"
         (is (:error (api/move-form! sess 's2.core 'nope :before 'caller)))
@@ -134,7 +134,7 @@
                                                "[clojure.set :as cset]"])
       (let [r (api/remove-require! sess 'rr.core 'clojure.set)]
         (is (nil? (:error r)))
-        (is (not (re-find #"clojure\.set" (api/query-source sess 'rr.core))))
-        (is (re-find #"clojure\.string" (api/query-source sess 'rr.core))))
+        (is (not (re-find #"clojure\.set" (query/query-source sess 'rr.core))))
+        (is (re-find #"clojure\.string" (query/query-source sess 'rr.core))))
       (is (:error (api/remove-require! sess 'rr.core 'clojure.set)))  ; already gone
       (finally (api/close! sess)))))

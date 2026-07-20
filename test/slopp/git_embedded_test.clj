@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [slopp.git.server :as server])
+            [slopp.mcp :as mcp] [slopp.git.server :as server] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -74,7 +74,7 @@
                 (is (str/starts-with?
                      (.getFullMessage (first (-> g (.log) (.call))))
                      "v1: f ships"))
-                (is (= (api/query-source sess 'ge.core)
+                (is (= (query/query-source sess 'ge.core)
                        (slurp (io/file clone-dir "src" "ge" "core.clj")))))))
           (finally (server/stop-server! srv))))
       (testing "query_git is a READ — allowed with no open turn (write-gated server)"

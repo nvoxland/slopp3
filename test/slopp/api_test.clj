@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -13,15 +13,15 @@
                                 :agent "alice")]
           (is (nil? (:error r)))
           (is (= 3 (:forms r)))
-          (is (re-find #"defn f" (api/query-source sess 'cn.core)))
+          (is (re-find #"defn f" (query/query-source sess 'cn.core)))
           (is (= [10] (api/query-eval sess "(cn.core/f 5)")))))
       (testing ":source carries provenance via :agent"
         (is (some #(= "alice" (:agent %))
-                  (api/query-lineage sess 'cn.core 'f))))
+                  (query/query-lineage sess 'cn.core 'f))))
       (testing ":requires still scaffolds an empty namespace"
         (let [r (api/create-ns! sess 'cn.util :requires ["[clojure.string :as str]"])]
           (is (nil? (:error r)))
-          (is (re-find #"clojure.string" (api/query-source sess 'cn.util)))))
+          (is (re-find #"clojure.string" (query/query-source sess 'cn.util)))))
       (testing ":source and :requires are mutually exclusive"
         (is (:error (api/create-ns! sess 'cn.bad
                                     :source "(ns cn.bad)\n"
@@ -36,10 +36,10 @@
                         "(defn add [x y] (+ x y))\n"
                         "(defn tainted [a] (swap! a inc))\n"))
       (testing "query.source renders current source from the store (VFS read)"
-        (is (re-find #"defn add" (api/query-source sess 'demo))))
+        (is (re-find #"defn add" (query/query-source sess 'demo))))
       (testing "query.symbol reports effectfulness (D6)"
-        (is (false? (:effectful? (api/query-symbol sess 'demo 'add))))
-        (is (true? (:effectful? (api/query-symbol sess 'demo 'tainted)))))
+        (is (false? (:effectful? (query/query-symbol sess 'demo 'add))))
+        (is (true? (:effectful? (query/query-symbol sess 'demo 'tainted)))))
       (testing "query.references finds callers"
         ;; tainted is defined AFTER add — the caller must be the later form,
         ;; or the write is (correctly) refused by the cold-load gate (S1b)
@@ -47,7 +47,7 @@
                                    "(defn tainted [a] (add (swap! a inc) 1))"
                                    :prompt "call add")]
           (is (nil? (:error r)) (pr-str r)))
-        (is (seq (api/query-references sess 'demo 'add))))
+        (is (seq (query/query-references sess 'demo 'add))))
       (testing "a cycle (add calls tainted, which already calls add) AUTO-DECLARES"
         ;; mutual recursion has no legal order — the pipeline inserts a marked
         ;; declare instead of refusing; the agent writes none
@@ -55,7 +55,7 @@
                                    "(defn add [x y] (tainted (atom (+ x y))))"
                                    :prompt "call tainted")]
           (is (nil? (:error r)) (pr-str r))
-          (is (re-find #":auto-declare" (api/query-source sess 'demo)))))
+          (is (re-find #":auto-declare" (query/query-source sess 'demo)))))
       (testing "query.eval asks the live image (the oracle)"
         (is (= [7] (api/query-eval sess "(+ 3 4)"))))
       (testing "edit.replace-form updates store + hot-reloads image"
@@ -64,7 +64,7 @@
           (is (nil? (:error r)))
           (is (= [42] (api/query-eval sess "(demo/tainted 42)")))))
       (testing "query.lineage shows provenance (ingest + replaces, with prompts)"
-        (let [lin (api/query-lineage sess 'demo 'tainted)]
+        (let [lin (query/query-lineage sess 'demo 'tainted)]
           (is (contains? (set (map :op lin)) :ingest))
           (is (contains? (set (map :op lin)) :replace))
           (is (some #(= "defang" (:prompt %)) lin))))
@@ -72,7 +72,7 @@
         (let [dir (str (Files/createTempDirectory "slopp-build"
                                                   (make-array FileAttribute 0)))]
           (api/build! sess dir)
-          (is (= (api/query-source sess 'demo) (slurp (str dir "/src/demo.clj"))))
+          (is (= (query/query-source sess 'demo) (slurp (str dir "/src/demo.clj"))))
           (is (.exists (clojure.java.io/file dir "deps.edn")))
           (testing "X4 guard: never into the running system, absolute only, no deps.edn clobber"
             (is (:error (api/build! sess ".")))
