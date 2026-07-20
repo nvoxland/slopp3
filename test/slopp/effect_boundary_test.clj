@@ -5,7 +5,7 @@
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit])
+            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -178,4 +178,45 @@
       (testing "and declaring :pure over an already-effectful deep ns is refused"
         (let [r (api/module-tier! sess "ng.core" :pure :prompt "wishful")]
           (is (:error r) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:isolated tier-layering-is-reported-by-full-check
+  ;; effectful-vars sees a CROSS-NAMESPACE effect only when the callee is
+  ;; `!`-named — so a core namespace calling a non-bang effectful fn in a shell
+  ;; namespace slips through it entirely. Layering reads the REQUIRE graph, so
+  ;; it holds regardless of naming discipline.
+  ;;
+  ;; It is reported by full_check rather than refusing the declaration: a
+  ;; layering verdict CHANGES as legitimate work continues (declare your
+  ;; dependencies and the same declaration becomes valid), which is exactly
+  ;; the D-rule-grain test for a check that does not belong at write grain.
+  ;; Refusing there would also force rigidly bottom-up declaration order.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'ly.shell
+                   "(ns ly.shell)\n(defn ^:unused-ok read-cfg \"No bang.\" [p] (slurp p))\n")
+      (api/module-tier! sess "ly.shell" :effects :prompt "the shell")
+      (api/module-dep! sess "ly.core" "ly.shell" :prompt "fixture edge")
+      (api/ingest! sess 'ly.core
+                   (str "(ns ly.core (:require [ly.shell :as sh]))\n"
+                        "(defn ^:unused-ok load-it \"Looks pure.\" [p] (sh/read-cfg p))\n"))
+      (testing "the declaration itself is NOT refused — its verdict could still change"
+        (let [r (api/module-tier! sess "ly.core" :pure :prompt "core, for now")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "but full_check names the core→shell edge effect-reachability missed"
+        (let [r (api/full-check! sess)
+              v (:tier-layering r)]
+          (is (some #(and (= 'ly.core (:ns %)) (= 'ly.shell (:requires %))) v)
+              (pr-str v))
+          (is (re-find #"(?i)looser" (str (:tier-layering-note r)))
+              (pr-str (:tier-layering-note r)))))
+      (testing "layering-violations itself: :reads may depend on :pure, not :effects"
+        (api/ingest! sess 'lz.pure "(ns lz.pure)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
+        (api/module-tier! sess "lz.pure" :pure :prompt "core")
+        (api/module-dep! sess "lz.mid" "lz.pure" :prompt "fixture edge")
+        (api/ingest! sess 'lz.mid
+                     (str "(ns lz.mid (:require [lz.pure :as p]))\n"
+                          "(defn ^:unused-ok twice \"P.\" [x] (p/calc (p/calc x)))\n"))
+        (is (empty? (edit.modules/layering-violations (:store @sess) 'lz.mid :reads)))
+        (is (seq (edit.modules/layering-violations (:store @sess) 'ly.core :pure))))
       (finally (api/close! sess)))))

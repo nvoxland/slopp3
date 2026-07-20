@@ -466,6 +466,35 @@
   [candidate ns-sym form-name]
   (:refuse (gate-check candidate ns-sym form-name)))
 
+(def ^:export tier-order
+  "Purity tiers from strictest to loosest. A namespace may only require
+   namespaces at its OWN tier or stricter — core never depends on shell.
+   Exported because comparing tiers is not `edit`'s private business: the
+   done-time shell-widening advisory asks whether a tier got LOOSER, and
+   re-deriving the ordering there would be a second copy of it."
+  {:pure 0 :reads 1 :effects 2})
+
+(defn ^:export layering-violations
+  "Namespaces required by `ns-sym` whose tier is LOOSER than `tier`, as
+   `[{:requires :tier} …]`. Empty when the dependency graph layers correctly.
+
+   This is the check `tier-refusal` cannot make. Effect-reachability sees a
+   CROSS-NAMESPACE effect only when the callee is `!`-named (D6's documented
+   soundness bound), so a core namespace calling a non-bang effectful fn in a
+   shell namespace slips through it entirely. Layering reads the REQUIRE
+   graph, so it holds regardless of naming discipline: if you depend on the
+   shell you are not core, whatever the callee happens to be called.
+
+   Direction is easy to get backwards: `:pure` (0) may require only `:pure`;
+   `:effects` (2) may require anything. The shell depends on the core, never
+   the reverse — that IS the functional-core shape."
+  [store ns-sym tier]
+  (let [lvl (tier-order tier 2)]
+    (vec (for [req  (store/ns-requires store ns-sym)
+               :let [rt (tier-for store req)]
+               :when (> (tier-order rt 2) lvl)]
+           {:requires req :tier rt}))))
+
 (defn ^:export tier-violations
   "The forms ALREADY in `module` that would violate `tier`, as
    `[{:form :why} …]` — empty when the declaration is honest.
@@ -493,9 +522,15 @@
                     (filter #(or (= pfx (str %)) (str/starts-with? (str %) (str pfx "."))))
                     (remove #(str/ends-with? (str %) "-test"))
                     sort)]
-      (vec (for [n nses
-                 f (store/forms store n)
-                 :when (:name f)
-                 :let [why (tier-refusal cand n (:name f))]
-                 :when why]
-             {:form (symbol (str n) (str (:name f))) :why why})))))
+      ;; FORM-level only. Layering (does this namespace REQUIRE a looser one?)
+    ;; is deliberately NOT checked here: its verdict CHANGES as legitimate
+    ;; work continues — declare your dependencies and the same declaration
+    ;; becomes valid — which is exactly the D-rule-grain test for a check
+    ;; that does not belong at write grain. It is a whole-GRAPH property,
+    ;; like module cycles, and `full_check` reports it there.
+    (vec (for [n nses
+               f (store/forms store n)
+               :when (:name f)
+               :let [why (tier-refusal cand n (:name f))]
+               :when why]
+           {:form (symbol (str n) (str (:name f))) :why why})))))

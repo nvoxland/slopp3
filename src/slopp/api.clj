@@ -2778,6 +2778,14 @@
                          f (index/lint src)]
                      (-> f (dissoc :row :col) (assoc :ns n))))
         rep   (modules/unused-report st nses)
+        ;; tier LAYERING — a whole-graph property, so it lives here rather
+        ;; than at a declaration: core must not depend on shell. This is the
+        ;; check effect-reachability cannot make, since that sees a cross-ns
+        ;; effect only when the callee is `!`-named.
+        layer (vec (for [n nses
+                         :let [t (edit.modules/tier-for st n)]
+                         v (edit.modules/layering-violations st n t)]
+                     {:ns n :tier t :requires (:requires v) :requires-tier (:tier v)}))
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (session/run-verification! session (vec nses) nil
@@ -2796,6 +2804,13 @@
              :status (if red? :red :green)}
       (seq errs)          (assoc :lint errs)
       (seq warns)         (assoc :warnings warns)
+            (seq layer)         (assoc :tier-layering layer
+                                 :tier-layering-note
+                                 (str (count layer) " core→shell dependency(ies):"
+                                      " a namespace depends on one at a LOOSER"
+                                      " tier. Either move what it needs into a"
+                                      " core namespace, or its own tier is a"
+                                      " claim it does not earn"))
       (seq (:unused rep)) (assoc :unused-public (:unused rep))
       (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
       iso                 (assoc :isolated iso))))

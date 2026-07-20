@@ -72,6 +72,9 @@
    {:rule :bare-throw :grain :done :severity :advisory
     :escape "return data / (ex-info …) at the boundary, or accept the throw"
     :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
+   {:rule :shell-widening :grain :done :severity :advisory
+    :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
+    :teach "this episode declared a namespace :effects/:reads — the functional CORE got smaller, and only you know whether it had to"}
    ])
 
 (defn- ambient-def?
@@ -148,6 +151,47 @@
                               (bare-throws? (:node e)))
                      {:form (symbol (str ns-sym) (str (or (:name e) (:id e))))}))))
              changed)))
+(defn shell-widening-check
+  "Namespaces this EPISODE moved into (or further toward) the shell — a new
+   `:effects`/`:reads` declaration, or a loosening of an existing one.
+
+   Declaring a namespace `:effects` makes the functional CORE smaller. That is
+   sometimes exactly right and sometimes the path of least resistance when a
+   gate refuses a write, and the moment to ask is while the reason is still in
+   the agent's context — not at review time, when nobody remembers.
+
+   The one rule in the registry that is a QUESTION rather than a verdict, and
+   legitimately advisory: the system cannot know whether the effect belonged
+   there. It fires only for the episode that made the declaration, so it
+   prompts once and cannot decay into a standing warning to scroll past."
+  [_session store _changed]
+  (let [ds      (store/deltas store)
+        since   (->> ds (keep-indexed #(when (= :done (:op %2)) %1)) last)
+        recent  (if since (drop (inc since) ds) ds)
+        prior   (fn [m] (->> (take (or since (count ds)) ds)
+                             (filter #(and (= :module-tier (:op %))
+                                           (= m (:module %))))
+                             last :tier))
+        looser? (fn [t was] (> (get edit.modules/tier-order t 2)
+                               (get edit.modules/tier-order (or was t) 2)))]
+    (vec (for [d recent
+               :when (= :module-tier (:op d))
+               :let [t (:tier d) was (prior (:module d))]
+               ;; a FIRST declaration fires too. An undeclared namespace is already
+               ;; effectively :effects, so this is not a loosening — but writing
+               ;; the declaration down IS the decision, and the decision is what
+               ;; deserves the question.
+               :when (and (contains? #{:reads :effects} t)
+                          (or (nil? was) (looser? t was)))]
+           {:ns (symbol (str (:module d)))
+            :tier t
+            :why (str (:module d) " became SHELL (:" (name t) ") this episode"
+                      (when was (str ", loosened from :" (name was)))
+                      " — the core got smaller. Did the effect have to live"
+                      " there, or does it belong in an existing shell"
+                      " namespace, with the pure part left in core? Accept by"
+                      " doing nothing; this asks once.")}))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -182,6 +226,13 @@
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
    {:key :bare-throw       :severity :advisory :check #'bare-throw-check
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
+   ;; the one entry that is a QUESTION, not a verdict — and therefore the one
+   ;; that is legitimately :advisory. The system cannot know whether an effect
+   ;; belonged in the namespace that was just widened; only the agent who did
+   ;; it can. It fires ONLY for the episode that declared the tier, so it asks
+   ;; once and cannot become a standing warning to scroll past.
+   {:key :shell-widening  :severity :advisory :check #'shell-widening-check
+    :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
    ])
 
 (defn run-done-advisories!

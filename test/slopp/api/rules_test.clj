@@ -178,3 +178,27 @@
       (is (string? selftest-note)
           (str key " has neither a :fires-on fixture nor a :selftest-note"
                " explaining why it cannot have one")))))
+
+(deftest ^:isolated done-asks-about-a-newly-widened-shell
+  ;; Declaring a namespace :effects makes the CORE smaller. That is sometimes
+  ;; right and sometimes the path of least resistance, and the moment to ask is
+  ;; while the reason is still in context. It fires only for the episode that
+  ;; declared it, so it prompts once and cannot decay into standing noise.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'sw.core
+                   "(ns sw.core)\n(defn ^:unused-ok grab \"E.\" [p] (slurp p))\n")
+      (api/done! sess :label "baseline")
+      (testing "declaring a namespace :effects raises the question at done"
+        (api/module-tier! sess "sw.core" :effects :prompt "needs to read a file")
+        (let [f (get-in (api/done! sess :label "widened") [:findings :shell-widening])]
+          (is (some #(= 'sw.core (:ns %)) f) (pr-str f))
+          (is (re-find #"(?i)shell" (str (:why (first f)))) (pr-str f))))
+      (testing "it does NOT re-fire on the next done — one prompt, not nagging"
+        (let [f (get-in (api/done! sess :label "later") [:findings :shell-widening])]
+          (is (nil? f) (pr-str f))))
+      (testing "and it is advisory: a question does not turn the done red"
+        (api/module-tier! sess "sw.other" :effects :prompt "another edge")
+        (let [r (api/done! sess :label "still green")]
+          (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))
