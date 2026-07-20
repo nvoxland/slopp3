@@ -43,8 +43,15 @@ repo: this one. That is the whole project failing at its own goal.
   in `.slopp/store.db`; only the boot kernel (`src/slopp/boot.clj`,
   `src/slopp/rt.clj`) and `deps.edn` are files. ALL development goes through
   slopp's MCP tools — there are no source files to hand-edit.
-- **Decisions are settled in `.context/decisions.md`** (D/C/O/H/F series).
-  Don't re-litigate silently — revisit explicitly, and record the change.
+- **Decisions are settled in `.context/decisions.md`** — that file holds
+  DECISIONS ONLY (D/C/O/H/G/S/R4 + the named `D-*` series). Don't
+  re-litigate silently — revisit explicitly, and record the change.
+  Observations are a different genre and go elsewhere: historical findings
+  from user tests, evals, probe sessions and dogfooding turns →
+  `.context/findings-log.md`; open frictions → `ideas/`; forward plans →
+  `.context/roadmap.md`. This split is load-bearing — filing findings in the
+  decision log once grew it to 47% non-decisions, which is how a settled
+  decision becomes hard to find and easy to contradict.
 - **Red/green TDD, always.** Tests first, watch them fail, then implement —
   through the edit tools (per-write verification reports the red/green).
   **Call `done` at every point you think you're finished with something,
@@ -74,7 +81,8 @@ repo: this one. That is the whole project failing at its own goal.
 | Doc | Read before touching |
 |---|---|
 | `.context/architecture.md` | anything — the layer map + core stance |
-| `.context/decisions.md` | any design-level change |
+| `.context/decisions.md` | any design-level change — DECISIONS only |
+| `.context/findings-log.md` | what past user tests / evals actually observed |
 | `.context/store-and-persistence.md` | `slopp.store`, `slopp.db`, `slopp.render` |
 | `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.api` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
