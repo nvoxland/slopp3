@@ -3554,7 +3554,12 @@
         ;; output — spells tiers WITH the colon, so accept that spelling too
         ;; rather than turning ":pure" into ::pure and refusing it
         tier   (keyword (str/replace (name (or tier "")) #"^:" ""))
-        modish (re-matches #"[^.\s]+(\.[^.\s]+)?" module)]
+        ;; namespace grain, not just module grain: a pure CORE routinely lives
+        ;; one level below an effectful module (slopp.api holds seven fully-pure
+        ;; namespaces). At module grain that core cannot be named, so nothing
+        ;; enforces it — and the tier's whole job is to make agents MOVE code
+        ;; into core/shell shape, which it cannot do if it cannot describe it.
+        modish (re-matches #"[^.\s]+(\.[^.\s]+)*" module)]
     (cond
       (not modish)
       {:error (str "modules are the first TWO segments of a namespace"
@@ -3564,14 +3569,27 @@
       (not (#{:pure :reads :effects} tier))
       {:error (str "tier must be :pure, :reads, or :effects — got " (pr-str tier))}
 
+      ;; a tier is an ASSERTION ABOUT THE CODE, so check it against the
+      ;; code. Gating only future writes let :pure land on a module full of
+      ;; effects — a marker that lies, which is worse than no marker.
       :else
-      (let [st' (session/commit-appended!
-                 session
-                 #(first (store/record-module-tier % module tier
-                                                   :prompt prompt :agent agent))
-                 [])]
-        {:module module :tier tier
-         :tiers (:module-tiers st')}))))
+      (let [bad (edit.modules/tier-violations (:store @session) module tier)]
+        (if (seq bad)
+          {:error (str "cannot declare " module " :" (name tier) " — "
+                       (count bad) " existing form(s) already exceed it: "
+                       (str/join ", " (map (comp str :form) (take 5 bad)))
+                       (when (> (count bad) 5)
+                         (str " (+" (- (count bad) 5) " more)"))
+                       ". Move the effects to a periphery namespace, or declare"
+                       " a looser tier. The first: " (:why (first bad)))
+           :violations (mapv :form bad)}
+          (let [st' (session/commit-appended!
+                     session
+                     #(first (store/record-module-tier % module tier
+                                                       :prompt prompt :agent agent))
+                     [])]
+            {:module module :tier tier
+             :tiers (:module-tiers st')}))))))
 
 (defn module-dep!
   "Declare or retract ONE module dependency edge — the semantic verb behind

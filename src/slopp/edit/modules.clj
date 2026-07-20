@@ -182,6 +182,27 @@
                  (seq b-pure)  (assoc :pure b-pure)
                  (seq b-reads) (assoc :reads b-reads))}))
 
+(defn ^:export tier-for
+  "The purity tier governing `ns-sym`: the MOST SPECIFIC declaration wins —
+   the namespace itself, then each enclosing prefix, then its module, then
+   `:effects` (undeclared = unrestricted).
+
+   Namespace grain exists because a pure core routinely lives one level BELOW
+   an effectful module. Measured on slopp itself: `slopp.api` holds seven
+   fully-pure namespaces (`shape`, `breakage`, `schema` …) while the module as
+   a whole reaches effects. At module grain that core cannot be NAMED, so
+   nothing enforces it and no test can rely on it — which is precisely what
+   keeps its tests session-bound when they need not be."
+  [store ns-sym]
+  (let [tiers (:module-tiers store)
+        segs  (str/split (str ns-sym) #"\.")]
+    ;; down to 1, not 2: a single-segment namespace (`pcore`) has one
+    ;; prefix, and stopping at 2 made its declaration unreachable — the
+    ;; gate silently stopped firing for it.
+    (or (some #(get tiers (str/join "." (take % segs)))
+              (range (count segs) 0 -1))
+        :effects)))
+
 (defn ^:export ^{:rule/applies-to :production} tier-refusal
   "The per-form functional-core gate over the CANDIDATE store (D9): refuses a
    form whose reachability exceeds its module's declared purity tier.
@@ -195,7 +216,7 @@
    when the callee is `!`-named; interop non-determinism is out of scope).
    Returns a teaching string, or nil when clean."
   [candidate ns-sym form-name]
-  (let [tier (get (:module-tiers candidate) (module-of ns-sym) :effects)]
+  (let [tier (tier-for candidate ns-sym)]
     (when ;; A TEST namespace belongs to its module (x.y-test → x.y), but the tier
     ;; is a claim about the functional CORE, not about the code that drives
     ;; it: tests set up sessions, do IO and exercise effects by design.
@@ -217,10 +238,11 @@
           (contains? eff vnode)
           (str ns-sym "/" form-name " reaches "
                (if (= tier :pure) "an effect" "a mutation")
-               " but module " (module-of ns-sym) " is declared :" (name tier)
-               " (functional-core gate) — move the effect to a periphery"
-               " namespace, or loosen the tier with module_purity {module \""
-               (module-of ns-sym) "\" tier :"
+               " but " ns-sym " is governed by :" (name tier)
+               " (functional-core gate) — this is CORE: move the effect into a"
+               " SHELL namespace (one declared :effects), or loosen the tier"
+               " with module_purity {module \""
+               ns-sym "\" tier :"
                (if (= tier :pure) "reads" "effects") "} (say why)")
 
           (and nondet (contains? nondet vnode))
@@ -443,3 +465,37 @@
    `per-form-write-gates`, not at the N write sites."
   [candidate ns-sym form-name]
   (:refuse (gate-check candidate ns-sym form-name)))
+
+(defn ^:export tier-violations
+  "The forms ALREADY in `module` that would violate `tier`, as
+   `[{:form :why} …]` — empty when the declaration is honest.
+
+   `tier-refusal` gates FUTURE writes; without this, declaring `:pure` over an
+   existing module asserted a purity nothing had verified. A marker that lies
+   is worse than no marker: every reader downstream — the tests you decide not
+   to isolate, the reviewer trusting the core/shell split — is relying on it.
+
+   PRODUCTION namespaces only, matching `tier-refusal`'s own
+   `^{:rule/applies-to :production}`: a module's tests set up sessions and do
+   IO by design, so gating them would make declaring a module `:pure`
+   silently strand its own test namespace.
+
+   `:effects` asserts nothing and therefore never has violations."
+  [store module tier]
+  (if (= tier :effects)
+    []
+    (let [cand (assoc-in store [:module-tiers (str module)] tier)
+          ;; `module` may be a namespace path, so scope by PREFIX: declaring
+          ;; slopp.api.shape covers that namespace and anything under it,
+          ;; not the whole slopp.api module.
+          pfx  (str module)
+          nses (->> (keys (:namespaces store))
+                    (filter #(or (= pfx (str %)) (str/starts-with? (str %) (str pfx "."))))
+                    (remove #(str/ends-with? (str %) "-test"))
+                    sort)]
+      (vec (for [n nses
+                 f (store/forms store n)
+                 :when (:name f)
+                 :let [why (tier-refusal cand n (:name f))]
+                 :when why]
+             {:form (symbol (str n) (str (:name f))) :why why})))))

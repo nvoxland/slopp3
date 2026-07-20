@@ -328,7 +328,11 @@
       (testing "rejects a bogus tier"
         (is (:error (api/module-tier! sess "app.core" :bogus))))
       (testing "rejects a non-module string"
-        (is (:error (api/module-tier! sess "app.core.impl" :pure))))
+        ;; a DEEP namespace is now legal — a pure core routinely lives below an
+      ;; effectful module, and the tier exists to make agents move code into
+      ;; that shape, which it cannot do if it cannot name it
+      (is (nil? (:error (api/module-tier! sess "app.core.impl" :pure))))
+      (is (:error (api/module-tier! sess "has spaces" :pure))))
       (finally (api/close! sess)))))
 
 (deftest ^:isolated purity-gate-refuses-effectful-writes
