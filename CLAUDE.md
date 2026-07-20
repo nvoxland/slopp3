@@ -1,15 +1,37 @@
 # Working in this repo
 
-`.context/` is the project's durable knowledge base — the authoritative home
-for design decisions, system mechanics, gotchas, and conventions.
+Knowledge here has TWO homes, and putting it in the wrong one is a real
+failure mode — not a filing preference.
+
+- **`.context/`** — why slopp is built the way it is. Design decisions,
+  system mechanics, internal gotchas. Audience: whoever works ON slopp.
+- **`plugins/slopp/skills/`** — how to WORK with slopp. **These SHIP.** Every
+  agent and user driving slopp anywhere gets them, and they are the product.
+
+**The routing test: would this help someone using slopp on a completely
+different codebase?** If yes it belongs in a skill, whatever else you also
+record. "The tier axis is internal/external *because* read/write measured
+zero members" is `.context/`. "Caches must go through `slopp.cache`, and
+`without-caching!` is how you test them" is a SKILL — a user hits that rule
+on day one and will never read our decision log.
+
+A lesson about using slopp that lives only in `.context/` helps exactly one
+repo: this one. That is the whole project failing at its own goal.
 
 1. **Read the relevant doc before touching its subsystem.** They're short on
    purpose — skipping them costs more than reading them.
 2. **Update the relevant doc in the same commit as your change.** Docs that
    drift from code are worse than no docs.
-3. **Capture new knowledge in `.context/`, not agent memory or chat.** A
-   non-obvious decision, a recurring gotcha, an undocumented convention →
-   write it into the matching doc.
+3. **Capture new knowledge in `.context/` AND/OR the skills — never in agent
+   memory or chat.** Apply the routing test above; plenty of things belong in
+   both, phrased differently (the skill states the rule, `.context/` records
+   why it was chosen and what was measured).
+4. **When you change how slopp WORKS, audit the skills for what now points
+   the wrong way.** Stale guidance is worse than missing guidance: a skill
+   that names a retired tier or a renamed marker actively misleads. Grep the
+   old vocabulary before you finish — and watch for near-misses, e.g. the
+   `:reads` TIER is retired while the form-level `^:reads` marker is still
+   valid, so a careless sweep breaks correct guidance.
 
 ## Always-on rules
 
