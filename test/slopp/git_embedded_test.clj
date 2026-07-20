@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [slopp.git.server :as server] [slopp.api.query :as query])
+            [slopp.mcp :as mcp] [slopp.git.server :as server] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -55,7 +55,7 @@
                        [:result :content 0 :text]))]
     (try
       (api/ingest! sess 'ge.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (testing "with no listener, query_git says so (no crash)"
         (is (str/includes? (call "query_git" {}) "no git")))
       ;; simulate what mcp/-main does for a durable session

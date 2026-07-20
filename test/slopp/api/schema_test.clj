@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [slopp.api.schema :as schema]
             [slopp.store :as store]
-            [slopp.repl :as repl] [slopp.api :as api]))
+            [slopp.repl :as repl] [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest schema-of-reads-name-metadata
   (let [src (str "(ns app.bnd)\n\n"
@@ -65,18 +65,18 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sd.core "(ns sd.core)\n(defn seeded \"S.\" [x] x)\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (testing "an honest :=> schema draws no drift finding"
         (api/add-form! sess 'sd.core
                        "(defn ^{:malli/schema [:=> [:cat :int] :int]} honest \"H.\" [x] (inc x))"
                        :prompt "honest schema")
-        (let [r (api/done! sess :label "honest")]
+        (let [r (external/done! sess :label "honest")]
           (is (nil? (get-in r [:findings :schema-drift])) (pr-str (:findings r)))))
       (testing "a lying :=> schema surfaces as :schema-drift and flips status red"
         (api/add-form! sess 'sd.core
                        "(defn ^{:malli/schema [:=> [:cat :int] :string]} liar \"L.\" [x] (inc x))"
                        :prompt "lying schema")
-        (let [r (api/done! sess :label "lying")]
+        (let [r (external/done! sess :label "lying")]
           (is (= '[sd.core/liar] (mapv :form (get-in r [:findings :schema-drift])))
               (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))

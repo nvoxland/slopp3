@@ -1,7 +1,7 @@
 (ns slopp.api.attrs-test
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.api.attrs :as attrs]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest keyword-inventory-collects-namespaced-domain-keys
   (let [s (store/ingest (store/empty-store) 'app.core
@@ -52,17 +52,17 @@
                         ;; test-status red for a reason this test is not about
                         "(defn ^:unused-ok a [m] {:user/email (:x m)})\n"
                         "(defn ^:unused-ok b [m] {:user/email (:y m)})\n"))
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (api/add-form! sess 'kt.core "(defn ^:unused-ok c [m] {:user/emial (:z m)})"
                      :prompt "typo the boundary key")
-      (let [r (api/done! sess :label "typo")]
+      (let [r (external/done! sess :label "typo")]
         (testing "the typo'd key is flagged with the established key it resembles"
           (is (= [{:used :user/emial :suggest :user/email :seen 2}]
                  (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
       (testing "advisory only — a key typo does NOT flip test-status red"
         (api/add-form! sess 'kt.core "(defn ^:unused-ok d \"D.\" [m] {:order/idd (:z m)})"
                        :prompt "another typo, but there is no established :order key")
-        (let [r (api/done! sess :label "no-neighbor")]
+        (let [r (external/done! sess :label "no-neighbor")]
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))

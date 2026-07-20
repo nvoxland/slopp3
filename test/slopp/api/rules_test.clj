@@ -1,6 +1,6 @@
 (ns slopp.api.rules-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query]))
+            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -30,7 +30,7 @@
                         "(defn a [m] {:user/email (:x m)})\n"
                         "(defn b [m] {:user/email (:y m)})\n"
                         "(defn handle \"H.\" ([x] x) ([x y] (+ x y)))\n"))
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (api/config-file! sess "rules" :key "key-typos" :value "off"
                         :prompt "silence typos for this project")
       (api/config-file! sess "rules" :key "breaking-changes" :value "error"
@@ -38,12 +38,12 @@
       (testing ":off silences an advisory end-to-end"
         (api/add-form! sess 'sv.core "(defn c [m] {:user/emial (:z m)})"
                        :prompt "typo — but the advisory is dialed off")
-        (let [r (api/done! sess :label "typo-off")]
+        (let [r (external/done! sess :label "typo-off")]
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
       (testing ":error escalates an advisory to flip test-status red"
         (api/edit-replace! sess 'sv.core 'handle "(defn handle \"H.\" [x] x)"
                            :prompt "narrow away the 2-arity")
-        (let [r (api/done! sess :label "narrow")]
+        (let [r (external/done! sess :label "narrow")]
           (is (seq (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
@@ -100,11 +100,11 @@
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (api/add-form! sess 'as.core "(def cache (atom {}))" :prompt "a global atom")
       (api/add-form! sess 'as.core "(defn boom \"B.\" [x] (throw (IllegalArgumentException. \"e\")))"
                      :prompt "a bare throw at a boundary")
-      (let [r (api/done! sess :label "check")]
+      (let [r (external/done! sess :label "check")]
         (testing "the ambient global atom is flagged"
           (is (= '[as.core/cache] (mapv :form (get-in r [:findings :ambient-state])))
               (pr-str (:findings r))))
@@ -188,17 +188,17 @@
     (try
       (api/ingest! sess 'sw.core
                    "(ns sw.core)\n(defn ^:unused-ok grab \"E.\" [p] (slurp p))\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (testing "declaring a namespace :effects raises the question at done"
         (api/module-tier! sess "sw.core" :effects :prompt "needs to read a file")
-        (let [f (get-in (api/done! sess :label "widened") [:findings :shell-widening])]
+        (let [f (get-in (external/done! sess :label "widened") [:findings :shell-widening])]
           (is (some #(= 'sw.core (:ns %)) f) (pr-str f))
           (is (re-find #"(?i)shell" (str (:why (first f)))) (pr-str f))))
       (testing "it does NOT re-fire on the next done — one prompt, not nagging"
-        (let [f (get-in (api/done! sess :label "later") [:findings :shell-widening])]
+        (let [f (get-in (external/done! sess :label "later") [:findings :shell-widening])]
           (is (nil? f) (pr-str f))))
       (testing "and it is advisory: a question does not turn the done red"
         (api/module-tier! sess "sw.other" :effects :prompt "another edge")
-        (let [r (api/done! sess :label "still green")]
+        (let [r (external/done! sess :label "still green")]
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))

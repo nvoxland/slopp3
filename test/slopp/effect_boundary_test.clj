@@ -5,7 +5,7 @@
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.api.query :as query])
+            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -204,7 +204,7 @@
         (let [r (api/module-tier! sess "ly.core" :pure :prompt "core, for now")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "but full_check names the core→shell edge effect-reachability missed"
-        (let [r (api/full-check! sess)
+        (let [r (external/full-check! sess)
               v (:tier-layering r)]
           (is (some #(and (= 'ly.core (:ns %)) (= 'ly.shell (:requires %))) v)
               (pr-str v))

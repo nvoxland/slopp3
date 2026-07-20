@@ -1,7 +1,7 @@
 (ns slopp.api.breakage-test
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.api.breakage :as breakage]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest fixed-arities-and-removed
   (testing "single and multi fixed arities"
@@ -26,11 +26,11 @@
     (try
       (api/ingest! sess 'bc.core
                    "(ns bc.core)\n(defn ^:unused-ok handle \"H.\" ([x] x) ([x y] (+ x y)))\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (api/edit-replace! sess 'bc.core 'handle
                          "(defn ^:unused-ok handle \"H.\" [x] x)"
                          :prompt "narrow away the 2-arity")
-      (let [r (api/done! sess :label "narrow")]
+      (let [r (external/done! sess :label "narrow")]
         (testing "the removed arity on a boundary fn is flagged"
           (is (= [{:form 'bc.core/handle :removed-arities [2]}]
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
@@ -38,7 +38,7 @@
         (api/edit-replace! sess 'bc.core 'handle
                            "(defn ^:unused-ok handle \"H.\" ([x] x) ([_x y] y) ([_x _y z] z))"
                            :prompt "widen — accretion")
-        (let [r (api/done! sess :label "widen")]
+        (let [r (external/done! sess :label "widen")]
           (is (nil? (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
@@ -67,18 +67,18 @@
                    "(ns bc2.core)\n(defn ^{:malli/schema [:=> [:cat [:map [:a :int] [:b :int]]] :int]} shaped \"S.\" [m] (:a m))\n")
       (api/ingest! sess 'bc2.core.impl
                    "(ns bc2.core.impl)\n(defn ^:export widget \"W.\" [x] x)\n")
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (testing "dropping a :=> arg-map key at a boundary is flagged"
         (api/edit-replace! sess 'bc2.core 'shaped
                            "(defn ^{:malli/schema [:=> [:cat [:map [:a :int]]] :int]} shaped \"S.\" [m] (:a m))"
                            :prompt "drop the :b key")
-        (let [r (api/done! sess :label "drop-key")]
+        (let [r (external/done! sess :label "drop-key")]
           (is (= [{:form 'bc2.core/shaped :removed-keys [:b]}]
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
       (testing "un-exporting a boundary fn (visibility narrowing) is flagged"
         (api/edit-replace! sess 'bc2.core.impl 'widget "(defn widget \"W.\" [x] x)"
                            :prompt "drop ^:export")
-        (let [r (api/done! sess :label "unexport")]
+        (let [r (external/done! sess :label "unexport")]
           (is (= [{:form 'bc2.core.impl/widget :visibility-narrowed true}]
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
@@ -103,26 +103,26 @@
                    (str "(ns bok.core.impl)\n"
                         "(defn ^:export ^:unused-ok gone \"G.\" [x] x)\n"
                         "(defn ^:export ^:unused-ok kept \"K.\" [x] x)\n"))
-      (api/done! sess :label "baseline")
+      (external/done! sess :label "baseline")
       (testing "an unmarked narrowing is still flagged — the rule is not weakened"
         (api/edit-replace! sess 'bok.core.impl 'gone
                            "(defn ^:unused-ok gone \"G.\" [x] x)"
                            :prompt "privatise")
-        (let [r (api/done! sess :label "unmarked")]
+        (let [r (external/done! sess :label "unmarked")]
           (is (= [{:form 'bok.core.impl/gone :visibility-narrowed true}]
                  (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))))
       (testing "^:breaking-ok discharges it"
         (api/edit-replace! sess 'bok.core.impl 'kept
                            "(defn ^:breaking-ok ^:unused-ok kept \"K.\" [x] x)"
                            :prompt "privatise, deliberately")
-        (let [r (api/done! sess :label "marked")]
+        (let [r (external/done! sess :label "marked")]
           (is (nil? (get-in r [:findings :breaking-changes]))
               (pr-str (:findings r)))))
       (testing "a marker on a form that narrowed NOTHING says so, so it cannot decay"
         (api/edit-replace! sess 'bok.core.impl 'kept
                            "(defn ^:breaking-ok ^:unused-ok kept \"K2.\" [x] x)"
                            :prompt "touch it again, no narrowing this time")
-        (let [f (get-in (api/done! sess :label "stale") [:findings :breaking-changes])]
+        (let [f (get-in (external/done! sess :label "stale") [:findings :breaking-changes])]
           (is (= ['bok.core.impl/kept] (mapv :form f)) (pr-str f))
           (is (:stale-marker (first f)) (pr-str f))))
       (finally (api/close! sess)))))

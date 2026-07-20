@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.client :as client] [slopp.api.query :as query])
+            [slopp.git :as git] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -40,7 +40,7 @@
         sess (api/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gc.core seed)
-      (api/commit-point! sess "v1: f ships" :agent "alice")
+      (external/commit-point! sess "v1: f ships" :agent "alice")
       (let [ctx (git/open-ctx! dir)]
         (try
           (testing "push lands the milestone tip in the bare remote"

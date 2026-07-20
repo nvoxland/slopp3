@@ -8,7 +8,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.build :as build])
+            [slopp.build :as build] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -61,11 +61,11 @@
                         "(defn run-cli [args]\n"
                         "  (doseq [a args] (println a)))\n"))
       (testing "an unknown entry fn is rejected before anything is written"
-        (is (:error (api/build! sess dir :main 'calc.core/nope)))
-        (is (:error (api/build! sess dir :main 'nope.core/run-cli)))
-        (is (:error (api/build! sess dir :main 'unqualified))))
+        (is (:error (external/build! sess dir :main 'calc.core/nope)))
+        (is (:error (external/build! sess dir :main 'nope.core/run-cli)))
+        (is (:error (external/build! sess dir :main 'unqualified))))
       (testing "build! with :main emits src + launcher + executable script"
-        (let [r (api/build! sess dir :main 'calc.core/run-cli)]
+        (let [r (external/build! sess dir :main 'calc.core/run-cli)]
           (is (nil? (:error r)))
           (is (:built r))
           (is (= "calc" (get-in r [:native :binary])))
@@ -80,19 +80,19 @@
                                     (slurp (io/file dir "deps.edn"))))
                          :native))))
       (testing "rebuilding into the same dir (our own deps.edn) is allowed"
-        (is (= "mycalc" (get-in (api/build! sess dir :main 'calc.core/run-cli
+        (is (= "mycalc" (get-in (external/build! sess dir :main 'calc.core/run-cli
                                             :name "mycalc")
                                 [:native :binary]))))
       (testing "a FOREIGN deps.edn blocks the native build (X4 no-clobber)"
         (let [dir3 (str (Files/createTempDirectory "slopp-foreign"
                                                    (make-array FileAttribute 0)))]
           (spit (io/file dir3 "deps.edn") "{:paths [\"lib\"]}\n")
-          (is (:error (api/build! sess dir3 :main 'calc.core/run-cli)))
+          (is (:error (external/build! sess dir3 :main 'calc.core/run-cli)))
           (is (= "{:paths [\"lib\"]}\n" (slurp (io/file dir3 "deps.edn"))))))
       (testing "plain build! emits no native artifacts"
         (let [dir2 (str (Files/createTempDirectory "slopp-plain"
                                                    (make-array FileAttribute 0)))
-              r    (api/build! sess dir2)]
+              r    (external/build! sess dir2)]
           (is (:built r))
           (is (nil? (:native r)))
           (is (not (.exists (io/file dir2 "src" "native"))))
