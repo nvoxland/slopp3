@@ -378,3 +378,31 @@
                                                (nil? agent) (dissoc :agent))})
                                   out))))
                           (group-by :agent relevant)))
+
+(defn dead-ends
+  "The scrapped lines of work in the log — the `:revert` markers — newest
+  first, each `{:at :why :forms :namespaces :undid}`. `match` (a namespace or
+  qualified form, symbol or string) narrows to dead-ends that touched it.
+
+  A dead end that vanished teaches nothing; recorded, it answers 'did someone
+  already try this here, and why did they drop it?' before the work is
+  re-walked."
+  ([store] (dead-ends store nil))
+  ([store match]
+   (let [m     (some-> match str)
+         ns-of (fn [f] (namespace (symbol (str f))))
+         hit?  (fn [d]
+                 (or (nil? m)
+                     (some (fn [f] (or (= m (str f)) (= m (ns-of f))))
+                           (:forms d))))]
+     (->> (:deltas store)
+          (filter #(= :revert (:op %)))
+          (filter hit?)
+          reverse
+          (mapv (fn [d]
+                  (cond-> {:at         (human-time (:at d))
+                           :why        (:why d)
+                           :forms      (vec (:forms d))
+                           :namespaces (vec (distinct (keep #(some-> (ns-of %) symbol)
+                                                            (:forms d))))}
+                    (:undid d) (assoc :undid (:undid d)))))))))

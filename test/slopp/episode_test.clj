@@ -801,3 +801,29 @@
           (is (re-find #"defn f" src) "work up to the done stays")
           (is (not (re-find #"defn g" src)) "work after the done is gone")))
       (finally (api/close! sess)))))
+
+(deftest ^:external reverted-work-is-a-findable-dead-end
+  ;; The whole point of #3: a scrapped exploration should not vanish — it
+  ;; should be discoverable later as "someone tried X here and dropped it
+  ;; because Y", so future work doesn't re-walk it. undo/revert mark a :revert
+  ;; dead-end delta carrying the why + the forms, and query_history surfaces
+  ;; them, filterable by namespace/form.
+  (let [sess (external/open!)
+        me   (:agent-id @sess)]
+    (try
+      (api/ingest! sess 'de.core "(ns de.core)\n\n(defn keep-me [] 1)\n" :agent me)
+      (external/commit-point! sess "baseline" :force true)
+      (api/add-form! sess 'de.core "(defn tried-approach [] :nope)" :prompt "explore X" :agent me)
+      (api/undo! sess :to :last-commit
+                 :prompt "approach X: dead end — the suite is CPU-bound, no win")
+      (testing "the dead-end is listed with its why and the scrapped form"
+        (let [des (query/query-history sess :dead-ends true)]
+          (is (= 1 (count des)) (pr-str des))
+          (let [d (first des)]
+            (is (re-find #"CPU-bound" (:why d)) (pr-str d))
+            (is (some #(re-find #"tried-approach" (str %)) (:forms d)) (pr-str d))
+            (is (some #(= 'de.core %) (:namespaces d)) (pr-str d)))))
+      (testing "filterable to dead-ends that touched a namespace"
+        (is (= 1 (count (query/query-history sess :dead-ends "de.core"))))
+        (is (empty? (query/query-history sess :dead-ends "other.ns"))))
+      (finally (api/close! sess)))))

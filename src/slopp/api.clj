@@ -1338,10 +1338,21 @@
                                :agent agent)]
             (if (:error r)
               r
-              (assoc r
-                     :reverted (count steps)
-                     :undid (mapv :id (filter mine? span))
-                     :skipped-shared shared))))))))
+              (let [undid-ids (mapv :id (filter mine? span))
+                    reverted  (vec (remove (set shared) (map :form (:forms changes))))]
+                ;; mark the dead end so it stays findable: what was scrapped
+                ;; and (if given) why. A vanished exploration teaches nothing.
+                (session/commit-appended!
+                 session
+                 (fn [base] (first (store/record-revert base :why prompt
+                                                        :forms reverted
+                                                        :undid undid-ids
+                                                        :agent agent)))
+                 [])
+                (assoc r
+                       :reverted (count steps)
+                       :undid undid-ids
+                       :skipped-shared shared)))))))))
 
 (defn revert-episode!
   "Scrap the agent's episode: roll every form it changed since its last
@@ -1382,9 +1393,16 @@
                            :agent agent)]
         (if (:error r)
           r
-          (assoc r
-                 :reverted (count steps)
-                 :skipped-shared shared))))))
+          (let [reverted (vec (remove (set shared) (map :form (:forms changes))))]
+            (session/commit-appended!
+             session
+             (fn [base] (first (store/record-revert base :why prompt
+                                                    :forms reverted
+                                                    :agent agent)))
+             [])
+            (assoc r
+                   :reverted (count steps)
+                   :skipped-shared shared)))))))
 
 (defn rename!
   "Rename `ns-sym/old-name` to `new-name` everywhere: ONE coordinated delta over
@@ -2173,20 +2191,26 @@
                        (take 20)
                        (mapv #(-> (select-keys % [:commit :description :at :status])
                                   (update :description orient/snip 110))))
-        verify*   (->> deltas (filter #(= :verify (:op %))) last)]
+        verify*   (->> deltas (filter #(= :verify (:op %))) last)
+        dead      (->> after
+                       (filter #(= :revert (:op %)))
+                       (mapv (fn [d] (cond-> {:why (:why d)
+                                              :forms (vec (:forms d))}
+                                       (:at d) (assoc :at (history/human-time (:at d)))))))]
     (orient/fit-report
-     {:milestones ms
-      :changes changes
-      :suite (when verify*
-               {:as-of (:id verify*)
-                :status (or (get-in verify* [:summary :status])
-                            (:status verify*) :unknown)})
-      :verify (str "writes self-verify; test_run {} re-runs in-image; "
-                   "test_run {:external true} = the full external suite. "
-                   "HANDOFF one-shots (humans/scripts, no session needed): "
-                   "`slopp --call test_run '{\"external\":true}'` and "
-                   "`slopp --call query_commits` — quote these in handoff "
-                   "docs; no need to read skill files for the CLI forms")})))
+     (cond-> {:milestones ms
+             :changes changes
+             :suite (when verify*
+                      {:as-of (:id verify*)
+                       :status (or (get-in verify* [:summary :status])
+                                   (:status verify*) :unknown)})
+             :verify (str "writes self-verify; test_run {} re-runs in-image; "
+                          "test_run {:external true} = the full external suite. "
+                          "HANDOFF one-shots (humans/scripts, no session needed): "
+                          "`slopp --call test_run '{\"external\":true}'` and "
+                          "`slopp --call query_commits` — quote these in handoff "
+                          "docs; no need to read skill files for the CLI forms")}
+       (seq dead) (assoc :dead-ends dead)))))
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):
   :pure (no effect may be reached, incl. an opaque-dep read), :reads (reads OK,

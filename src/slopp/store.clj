@@ -346,6 +346,23 @@
                                         :group group :prompt prompt :agent agent)]
               (recur st' (dec i) (inc moved))
               (recur st (dec i) moved))))))))
+(defn record-revert
+  "Append a `:revert` DEAD-END marker delta — a scrapped line of work,
+  recorded so history can later surface WHAT was tried and WHY it was
+  abandoned instead of the exploration vanishing. `forms` are the qualified
+  names put back, `undid` the delta ids undone, `why` the reverting agent's
+  reason (may be nil — the revert is still marked). Returns [store' delta-id]."
+  [store & {:keys [why forms undid agent]}]
+  (let [[did store'] (gen-id store "d")]
+    [(update store' :deltas conj
+             (cond-> {:id did :parent (:id (last (:deltas store)))
+                      :op :revert :ns '*session* :at (now-ms)}
+               why         (assoc :why why)
+               (seq forms) (assoc :forms (vec forms))
+               (seq undid) (assoc :undid (vec undid))
+               agent       (assoc :agent agent)))
+     did]))
+
 (defn record-done
   "Append a `:done` boundary delta — a unit-of-work marker (and the
   close of `agent`'s episode). `:findings` is the done-processing verdict
@@ -899,7 +916,7 @@
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
     (case (:op d)
-      (:verify :done :merge :turn-begin :turn-end :commit)
+      (:verify :done :merge :turn-begin :turn-end :commit :revert)
       (with-d store)
 
       ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure

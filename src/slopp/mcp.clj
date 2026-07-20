@@ -583,6 +583,11 @@
                                              :hits (query/query-search-history session (:contains a)
                                                                             :limit (:limit a))}
 
+                                            (:dead_ends a)
+                                            {:kind :dead-ends
+                                             :dead-ends (query/query-history
+                                                         session :dead-ends (:dead_ends a))}
+
                                             :else
                                             (query/query-history session
                                                               :ns (some-> (:ns a) symbol)

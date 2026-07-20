@@ -102,12 +102,13 @@
                                :contains {:type "string"}
                                :limit {:type "integer"}}}}
    {:name "query_history"
-    :description "EVERYTHING that happened, one tool: no args = change history (collapse=true for episode rows); {ns name} = one form's life; {ns name at} = TIME-TRAVEL to a past delta/milestone; {at} = was-green-at; {contains} = which asks/prompts touched X. format=text for humans. For summaries/handoffs use report."
+    :description "EVERYTHING that happened, one tool: no args = change history (collapse=true for episode rows); {ns name} = one form's life; {ns name at} = TIME-TRAVEL to a past delta/milestone; {at} = was-green-at; {contains} = which asks/prompts touched X; {dead_ends true} = SCRAPPED explorations (reverts) with their why + the forms they dropped, {dead_ends \"some.ns\"} narrows to ones that touched it — check it before re-walking a path someone already abandoned. format=text for humans. For summaries/handoffs use report."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :at {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
                                :collapse {:type "boolean"}
+                               :dead_ends {:type ["boolean" "string"]}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_changes"
     :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
