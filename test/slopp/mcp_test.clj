@@ -971,3 +971,33 @@
           (is (= :unverified (:status t)) raw)
           (is (= :all-impacted-isolated (:reason t)) raw)))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated a-previews-payload-survives-the-wire
+  ;; The fourth silent loss on this path. :dry-run's payload, :drift and
+  ;; :isolated-pending were each computed correctly and dropped by an
+  ;; allow-list in the dispatch; the fourth was edit_requalify's :in-code,
+  ;; dropped while building the tool meant to be careful about the third.
+  ;;
+  ;; An api-level test cannot catch this — the api was always right. The
+  ;; invariant belongs where the agent reads it: over the wire.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'wp.core
+                   (str "(ns wp.core)\n"
+                        "(defn opts \"O.\" [{:keys [dir]}] dir)\n"
+                        "(defn ^:unused-ok a \"A.\" [] (opts {:dir \"x\"}))\n"
+                        "(defn ^:unused-ok b \"B.\" [m] (opts m))\n"))
+      (let [r (edn/read-string
+               (call! sess "edit_requalify" {:ns "wp.core" :name "opts"
+                                            :dry_run true :verbose true}))]
+        (testing "the preview reports what it WOULD rewrite, by name"
+          (is (some #{'wp.core/opts} (:in-code r)) (pr-str r))
+          (is (some #{'wp.core/a} (:in-code r)) (pr-str r)))
+        (testing "and what it could NOT reach"
+          (is (= '[wp.core/b] (:unknown-shape r)) (pr-str r)))
+        (testing "a preview writes nothing — the property, not the report"
+          (is (re-find #"\{:keys \[dir\]\}"
+                       (get-in (api/query-slice sess 'wp.core 'opts)
+                               [:target :source]))
+              "the arglist must be untouched after a dry run")))
+      (finally (api/close! sess)))))

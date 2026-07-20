@@ -66,3 +66,4 @@
           (str "accepted a cross-ns arity error in a cwd with no .clj-kondo — "
                "which is every user project: " (pr-str r)))
       (is (re-find #"invalid-arity" (:refuse r)) (pr-str r)))))
+

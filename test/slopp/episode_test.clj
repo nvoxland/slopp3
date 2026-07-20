@@ -669,3 +669,32 @@
           (is (re-find #"\(defn b \[\] 2\)" src))
           (is (not (re-find #"defn c" src)))))
       (finally (api/close! sess)))))
+
+(deftest ^:isolated lint-warnings-block-at-done-not-at-the-write
+  ;; D-rule-grain. A write gate may only judge what cannot change as
+  ;; legitimate work continues; `unused-binding` is routinely true of a form
+  ;; mid-edit. Flipping it at the WRITE grain turned 33 assertions red across
+  ;; 14 tests — it also applies to the fixture stores tests build at runtime.
+  ;; At the DONE grain the same finding means something true: this finished
+  ;; code has a dead binding.
+  (let [sess (api/open!)]
+    (try
+      (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [] 1)\n")
+      (testing "the write itself is NOT refused — mid-edit is not a verdict"
+        (let [r (api/add-form! sess 'lg2.core
+                               "(defn ^:unused-ok w \"D.\" [] (let [x 1] 2))"
+                               :prompt "an unused binding")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "but the done point counts it, so it cannot be scrolled past"
+        (let [r (api/done! sess :label "with a warning")]
+          (is (pos? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))
+          (is (some #(and (= :warning (:level %)) (= :unused-binding (:type %)))
+                    (:lint r))
+              (pr-str (:lint r)))))
+      (testing "and a clean namespace closes clean"
+        (api/edit-replace! sess 'lg2.core 'w
+                           "(defn ^:unused-ok w \"D.\" [] (let [x 1] x))"
+                           :prompt "use the binding")
+        (let [r (api/done! sess :label "clean")]
+          (is (zero? (get-in r [:findings :lint-errors])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

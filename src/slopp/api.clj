@@ -2666,7 +2666,7 @@
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
                                :note  "first 5 shown — the milestone gate runs them all"}}))))
-        findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
+        findings (let [lint-errors (count (filter #(#{:error :warning} (:level %)) lint))
       failures    (+ (:fail summary 0) (:error summary 0)
                      (:failures iso 0) (:errors iso 0))
       iso-red?    (contains? #{:red :error} (:status iso))
@@ -2787,7 +2787,18 @@
                 dead   (let [rep (modules/unused-report
                                   st (keys (:namespaces st)))]
                          (concat (:unused rep) (:stale rep)))
-                status (if (seq dead) :red status)
+                ;; lint gates GLOBALLY here too, and at the MILESTONE grain
+                ;; rather than the write grain: `unused-binding` is routinely
+                ;; true of a form mid-edit, so refusing it at write time made
+                ;; red-first TDD and every negative-testing fixture
+                ;; unreachable (33 assertions, 14 tests). A milestone claims
+                ;; the work is finished, which is exactly when it is fair to
+                ;; ask. See D-rule-grain.
+                lintw  (vec (for [n (sort (keys (:namespaces st)))
+                                  f (index/lint (render/render-ns st n))
+                                  :when (#{:error :warning} (:level f))]
+                              (symbol (str n) (str (name (:type f))))))
+                status (if (or (seq dead) (seq lintw)) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
                 tree   (into (sorted-map)
@@ -2800,7 +2811,13 @@
                                    (when (seq dead)
                                      (str " — unused public surface: " (vec dead)
                                           " (delete it, mark ^:unused-ok, or"
-                                          " remove a stale marker)")))
+                                          " remove a stale marker)"))
+                                   (when (seq lintw)
+                                     (str " — lint findings: " lintw
+                                          " (a milestone claims the work is"
+                                          " FINISHED, so warnings count here"
+                                          " even though they never block a"
+                                          " write — mid-edit is not a verdict)")))
                        :status :red :done (:done cp) :test (:test cp)}
                 iso (assoc :isolated iso))
               (mark! head status (cond-> {:done (:done cp)}
