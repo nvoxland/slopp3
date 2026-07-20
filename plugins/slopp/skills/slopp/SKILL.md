@@ -203,10 +203,22 @@ namespaces (`would not cold-load — require CYCLE: a -> b -> a`). Both are
 invisible to in-image verification by construction, which is why a write can
 be refused while every test passes. A cycle usually means a require that is
 no longer referenced: drop it, or move the shared code somewhere both sides
-can depend on. `edit_move_forms` drops the requires IT orphans (a lib whose
-last user just left goes with it), but only those — a require kept for its
-load side effects, like `defmethod` registration, is indistinguishable from
-a dead one, so nothing prunes those for you. Hand-written
+can depend on. `edit_move_forms` drops the requires IT orphans on BOTH
+sides — the source namespace whose last user of a lib just left, and a
+rewritten caller left referencing nothing in the source namespace — but only
+those: a require kept for its load side effects, like `defmethod`
+registration, is indistinguishable from a dead one, so nothing prunes those
+for you. A stale require is worse than untidy — a namespace inherits the
+TIER of everything it requires, so one left behind makes a `:pure` namespace
+report as depending on the shell for something it no longer uses at all.
+
+**Moving a form re-resolves its `::auto-keywords`.** `::foo` is read as
+`:current-namespace/foo`, so the same text means something DIFFERENT after
+`edit_move_forms` — `::analysis` in `a.b` silently becomes `:a.b.c/analysis`
+in its new home. Harmless for a local marker; a live bug when the keyword is
+a persisted key, a map key another namespace reads, a `defmethod` dispatch
+value, or a cache id. Write the keyword out in full when it has to survive
+relocation, and check `::` in anything you move. Hand-written
 `(declare …)` is refused; you never need one. Mutating fns end in `!` (rename
 with the `:suggest` if warned); `^:reads` marks read-only dep calls;
 `^:unsafe` is the dialect escape hatch.

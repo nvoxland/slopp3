@@ -61,6 +61,17 @@ decision stays pure and `=`-testable.
   "this namespace is core" would be unverifiable without reading every form.
   The escape is to MOVE the form — which is the pressure that produces the
   shape.
+
+  **A tier is only as honest as what the namespace REQUIRES.** The write gate
+  checks a namespace's own forms; `full_check` additionally reports
+  core→shell dependencies, because a `:pure` namespace requiring an
+  `:external` one is doing IO transitively whatever its own forms look like.
+  When that fires, the useful question is *which function are they actually
+  reaching for* — often one effectful entry point sits in a namespace that is
+  otherwise pure computation, and the fix is to split THAT namespace so
+  callers depend on the half they use. Splitting off the obviously-pure
+  helpers instead feels principled and can move the number not at all: verify
+  by re-running the check, not by inspecting the new shape.
 - **Caches go through `slopp.cache`.** A hand-rolled memo atom makes a
   semantically-pure projection classify as effectful, and then everything
   depending on it does too. `(cache/cached ::id key thunk)` for a normal memo;

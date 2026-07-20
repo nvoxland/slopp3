@@ -2462,8 +2462,74 @@ should the **9 external** forms (`open!`, `done!`, `commit-point!`, `build!`,
 
 **Do not infer this one.** Decide it, then execute.
 
+**RESOLVED 2026-07-20 (user decision: push the external usage out).** All
+ten IO forms now live in `slopp.api.external`. The stated payoff did NOT
+materialise, and the measurement is the useful part: `cleanup` reports
+`slopp.api` still `{:tier :external, :supports :effects}`, with 50 of its
+62 remaining forms blocking `:internal`. The IO was never those ten forms —
+it is the SESSION. Every mutating operation writes a delta to sqlite and
+drives the image subprocess, so `slopp.api` is an imperative shell by
+construction. That is the correct shape, and the pure core already exists
+beneath it (`.query`, `.shape`, `.modules`, `.review`, `.history`,
+`.breakage`, `.attrs`, `.orient`). Do not re-attempt this for tier reasons.
+
 ### Not yet touched (readability, not architecture)
 
 `edit-group!` (156), `move-forms!` (152), `edit-replace!` (134) — long
 internal forms. And `done!` at 200 lines, worth its own pass: it is the
 most-changed function in the codebase.
+
+## D-analysis-not-io (2026-07-20) — `:analysis` and `:findings` want different worlds
+
+The tier-layering check reported **9 core→shell dependencies** and nothing
+enforced them, which violates the standing "never just warn" rule. The cause
+was one shared kondo pass.
+
+`slopp.index` produced `:analysis` and `:findings` from a single cached run
+against kondo's on-disk cache dir. The two have different honest keys, and
+the store already said so: `run-kondo` was keyed on SOURCE alone *"because
+that is the honest key for `:analysis`"*, while findings carry `:cache-dir`
+and `:fp` precisely because they depend on cross-namespace cache state.
+Sharing the pass made analysis IO — and `analyze` is what nearly the whole
+pure core reaches for, so every one of those namespaces inherited an
+external dependency it did not actually have.
+
+**Verified before restructuring around the claim** (the premise was
+checkable and therefore had to be checked): a warm-cache run and a
+`:cache false` run differ ONLY in `:fixed-arities` on cross-namespace
+var-USAGES. Nothing in slopp reads that — every arity reader
+(`query-outline`, `deps/surface`, `build/arg-style`) takes it from
+var-DEFINITIONS, which are same-source.
+
+Three namespaces now:
+
+| | tier | holds |
+|---|---|---|
+| `slopp.index` | `:external` | the kondo run, cache dir, `lint`, the atoms |
+| `slopp.index.analyze` | `:internal` | cache-free analysis, blessed memo |
+| `slopp.index.derive` | `:pure` | 15 forms deriving facts from analysis |
+
+**The false start is the transferable part.** The first attempt split only
+the pure derivers out — defensible structure, and it discharged **zero** of
+the 9, because callers depend on `slopp.index` for `analyze`, not for the
+derived facts. The split that looks principled is not always the one that
+moves the number. Re-run the check; do not inspect the new shape and infer.
+
+**Cost, measured both sides.** The shared pass existed to hold per-write
+kondo cost at one run; this trades it for two. Benchmarks: calculator
+504→460ms, inventory 114→109, wordstats 147→144, identical token counts —
+no regression. The test that guarded the old invariant was rewritten rather
+than deleted, and now guards the concern that was actually load-bearing:
+neither pass may recompute for the same source.
+
+Layering went **9 → 5**. The remaining five are genuine judgement calls, not
+artifacts: `slopp.api.review` really uses `lint`, `.orient` really uses
+`slopp.db`, `.query`/`.telemetry` really use `slopp.api.rules`.
+
+**Corollary, and it caught four namespaces here:** a stale require is not
+cosmetic. A namespace inherits the TIER of everything it requires, so a
+require left behind after a move makes a `:pure` namespace report as
+depending on the shell for something it no longer uses. `move-forms!` now
+prunes orphaned requires on BOTH sides — source and rewritten caller —
+scoped to the move's own damage, never a blanket prune (a require kept for
+`defmethod` registration is indistinguishable from a dead one).
