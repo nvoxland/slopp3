@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api] [slopp.edit :as edit]))
 
-(deftest ^:isolated outline-and-namespaces                        ; T2
+(deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'o.core
@@ -41,7 +41,7 @@
           (is (:error (api/query-search sess "([")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated batched-source-reads
+(deftest ^:external batched-source-reads
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
@@ -56,7 +56,7 @@
         (is (:error (nth r 3))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-project-since
+(deftest ^:external query-project-since
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
@@ -72,7 +72,7 @@
             (is (seq (:namespaces r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated outline-is-compact-by-default
+(deftest ^:external outline-is-compact-by-default
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'oc.core
@@ -87,7 +87,7 @@
                        :namespaces first :forms first :doc))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-brief-is-the-one-call-dossier
+(deftest ^:external query-brief-is-the-one-call-dossier
   (let [sess (api/open!)]
     (try
       (api/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
@@ -107,7 +107,7 @@
         (is (:error (api/query-brief sess 'qb.a 'nope))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated flow-and-impact-answer-the-thread
+(deftest ^:external flow-and-impact-answer-the-thread
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
@@ -132,7 +132,7 @@
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated draft-test-scaffolds-from-observation
+(deftest ^:external draft-test-scaffolds-from-observation
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dt.core
@@ -149,7 +149,7 @@
           (is (re-find #":TODO-x :TODO-r" (str (:draft r))) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated session-brief-is-the-one-call-orientation
+(deftest ^:external session-brief-is-the-one-call-orientation
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
@@ -172,7 +172,7 @@
           (is (< (count (pr-str r)) 1500) (str (count (pr-str r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated report-composes-the-handoff
+(deftest ^:external report-composes-the-handoff
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
@@ -198,7 +198,7 @@
               (pr-str (mapv :asks (:changes r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated slices-are-source-plus-cards
+(deftest ^:external slices-are-source-plus-cards
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sl.util
@@ -226,7 +226,7 @@
                  (set (map :form (:cards r)))) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated briefs-arrive-task-shaped
+(deftest ^:external briefs-arrive-task-shaped
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'bw.core
@@ -243,7 +243,7 @@
           (is (not-any? #(= 'bw.core/unrelated-thing (:form %)) (:relevant b)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated briefs-roll-up-namespace-families
+(deftest ^:external briefs-roll-up-namespace-families
   (let [sess (api/open!)]
     (try
       (doseq [i (range 1 7)]
@@ -258,7 +258,7 @@
           (is (not-any? #(= 'fam.r01 (:ns %)) (:project b)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-depends-is-the-generic-front-door
+(deftest ^:external query-depends-is-the-generic-front-door
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
@@ -289,10 +289,10 @@
           (is (some #{'dp.base} (:requires r)) (pr-str r))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated review-scan-triages-by-risk
+(deftest ^:external review-scan-triages-by-risk
   ;; a whole-codebase review shouldn't read 800 forms blindly — the store
   ;; knows which are risky. :untested must be STATIC (reachable from any
-  ;; test ns), not trace-only — else an isolated-test codebase looks 100%
+  ;; test ns), not trace-only — else an external-test codebase looks 100%
   ;; untested (the flaw dogfooding caught).
   (let [sess (api/open!)]
     (try
@@ -324,7 +324,7 @@
           (is (contains? (set (:flags (row 'rv.io/orphan!))) :untested))
           (is (contains? (set (:flags (row 'rv.io/orphan!))) :effectful))
           (is (= 3 (:callers (row 'rv.io/orphan!)))))
-        (testing "a fn a TEST ns references is NOT untested (isolated-safe)"
+        (testing "a fn a TEST ns references is NOT untested (external-safe)"
           (let [pr (row 'rv.io/probed!)]
             (is (or (nil? pr)
                     (not (contains? (set (:flags pr)) :untested)))
@@ -335,7 +335,7 @@
           (is (pos? (get-in r [:totals :untested] 0)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-store-is-the-data-oracle
+(deftest ^:external query-store-is-the-data-oracle
   ;; the image answers questions OF the code; query_store answers questions
   ;; ABOUT it — read-only eval over the immutable store value, in the server
   ;; where that value lives. The sanctioned home for ad-hoc analysis that
@@ -385,7 +385,7 @@
                                    sess "(fn [store] (throw (ex-info \"boom\" {})))"))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated review-scan-flags-unused-publics
+(deftest ^:external review-scan-flags-unused-publics
   ;; kondo sees unused PRIVATES per-namespace; unused PUBLICS need the
   ;; whole-store call graph review_scan already builds — zero in-store
   ;; callers on a public defn/def is dead code or unadvertised surface.
@@ -405,7 +405,7 @@
             "entry points are exempt from the unused flag"))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated query-call-invokes-the-oracle
+(deftest ^:external query-call-invokes-the-oracle
   ;; the structured face of query-eval's common case: the reference rides
   ;; as a quoted symbol in a carrier position, args as printable data.
   ;; (The fixture var still carries ^:unused-ok — this driver lives in
@@ -456,7 +456,7 @@
     (is (nil? (edit/pure-eval-refusal
                '(fn [store] (rewrite-clj.node/sexpr (:node (first store)))))))))
 
-(deftest ^:isolated impact-traces-the-map-shape-callers-pass
+(deftest ^:external impact-traces-the-map-shape-callers-pass
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sh.core

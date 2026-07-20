@@ -51,7 +51,7 @@
       (when tw
         (String. (.getBytes (.open repo (.getObjectId tw 0))) "UTF-8")))))
 
-(deftest ^:isolated record-commit-extra-round-trips
+(deftest ^:external record-commit-extra-round-trips
   ;; the schemaless payload carries op-specific extras (P4-m8: :tree, :git-sha)
   (let [st (store/ingest (store/empty-store) 'gp.core seed)
         [st2 d] (store/record-commit st "v1" :agent "alice"
@@ -69,7 +69,7 @@
           (is (= d (first (db/deltas-after conn 0))))
           (finally (.close conn) (rm-rf! dir)))))))
 
-(deftest ^:isolated commit-point-snapshots-the-rendered-tree
+(deftest ^:external commit-point-snapshots-the-rendered-tree
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gp.core seed)
@@ -89,7 +89,7 @@
             (is (nil? (:tree d2))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated projection-mints-deterministic-shas
+(deftest ^:external projection-mints-deterministic-shas
   (let [dir  (temp-dir)
         sess (api/open! {:slopp.api/dir dir})]
     (try
@@ -140,7 +140,7 @@
               (finally (git/close-ctx! ctx2))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated branch-shares-prefix-shas
+(deftest ^:external branch-shares-prefix-shas
   (let [dir  (temp-dir)
         sess (api/open! {:slopp.api/dir dir})]
     (try
@@ -166,7 +166,7 @@
           (finally (git/close-ctx! ctx))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated retroactive-target-is-lossy-but-pinned
+(deftest ^:external retroactive-target-is-lossy-but-pinned
   (let [dir  (temp-dir)
         sess (api/open! {:slopp.api/dir dir})]
     (try
@@ -193,7 +193,7 @@
             (finally (git/close-ctx! ctx)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated forced-red-milestone-carries-status-trailer
+(deftest ^:external forced-red-milestone-carries-status-trailer
   (let [dir  (temp-dir)
         sess (api/open! {:slopp.api/dir dir})]
     (try

@@ -46,7 +46,7 @@
         (is (str/includes? empty-s "["))
         (is (not (str/includes? empty-s "check ")))))))
 
-(deftest ^:isolated drift-flags-a-lying-schema
+(deftest ^:external drift-flags-a-lying-schema
   (let [src (str "(ns demo.sch)\n\n"
                  "(defn ^{:malli/schema [:=> [:cat :int] :int]} honest \"D.\" [x] (inc x))\n\n"
                  "(defn ^{:malli/schema [:=> [:cat :int] :string]} liar \"D.\" [x] (inc x))\n")
@@ -61,7 +61,7 @@
           (is (contains? (first drift) :counterexample))))
       (finally (repl/stop! h)))))
 
-(deftest ^:isolated done-surfaces-schema-drift
+(deftest ^:external done-surfaces-schema-drift
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'sd.core "(ns sd.core)\n(defn seeded \"S.\" [x] x)\n")

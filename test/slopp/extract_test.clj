@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]))
 
-(deftest ^:isolated extract-subform-to-function
+(deftest ^:external extract-subform-to-function
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ex.core
@@ -40,7 +40,7 @@
                                   "(reduce + (taxed-prices tax items))"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated extract-addresses-a-subform-by-anchor
+(deftest ^:external extract-addresses-a-subform-by-anchor
   ;; Extract took the subform's FULL SOURCE TEXT, which made it useless for the
   ;; case it is most needed: pulling a large intricate subform out of a
   ;; god-form means transcribing it exactly into the argument, and that

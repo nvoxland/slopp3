@@ -6,7 +6,7 @@
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
-(deftest ^:isolated rewrite-rules
+(deftest ^:external rewrite-rules
   (testing "kibit-classics, conservative set"
     (is (= "(when x y)"          (normed "(if x y nil)")))
     (is (= "(when x y)"          (normed "(if x y)")))
@@ -26,7 +26,7 @@
                  "(if x y (do a b))"]]
       (is (= src (normed src)) src))))
 
-(deftest ^:isolated done-normalizes-the-working-set
+(deftest ^:external done-normalizes-the-working-set
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'cp.core
@@ -68,7 +68,7 @@
           (is (= :warning (:level (first hits))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated expanded-rules-are-strictly-value-preserving
+(deftest ^:external expanded-rules-are-strictly-value-preserving
   (doseq [[in out] {"(= x nil)"                  "(nil? x)"
                     "(= nil x)"                  "(nil? x)"
                     "(not (nil? x))"             "(some? x)"
@@ -81,7 +81,7 @@
                  "(filter pred xs)"]]
       (is (= src (:src (norm/normalize-source src))) src))))
 
-(deftest ^:isolated done-removes-stale-auto-declare-silently
+(deftest ^:external done-removes-stale-auto-declare-silently
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'dh.core

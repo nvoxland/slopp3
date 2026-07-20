@@ -15,7 +15,7 @@
    "(ns bar\n  (:require [clojure.string :as str]))\n\n(def ^:private secret 42)\n"
    ";; leading comment\n(def a 1)(def b 2)\n\n\n"])
 
-(deftest ^:isolated db-round-trip-is-exact
+(deftest ^:external db-round-trip-is-exact
   (testing "persist -> load reconstructs the store exactly (render + deltas + ids)"
     (doseq [src corpus]
       (let [dir  (temp-dir)
@@ -32,7 +32,7 @@
           (is (= (:next-id s) (:next-id loaded)))
           (.close conn2))))))
 
-(deftest ^:isolated session-survives-restart
+(deftest ^:external session-survives-restart
   (let [dir (temp-dir)
         target (str "(ns demo\n  (:require [clojure.test :refer [deftest is]]))\n"
                     "(defn add [x y] (+ x y))\n"
@@ -62,7 +62,7 @@
             (is (= [6] (api/query-eval sess2 "(demo/add 2 3)")))))
         (finally (api/close! sess2))))))
 
-(deftest ^:isolated module-tiers-survive-persist-and-reload
+(deftest ^:external module-tiers-survive-persist-and-reload
   (testing "declared purity tiers reconstruct through persist! -> load-store"
     (let [dir     (temp-dir)
           conn    (db/open! dir)

@@ -57,11 +57,11 @@
   linking) — manifest deps flow to the native classpath via `-Spath -A:native`;
   with `test?`, adds a `:test` alias putting `test/` on an extra-path AND
   carrying the cognitect test-runner, so `clojure -M:test` runs the project's
-  suite out of the box (the isolated runner builds+runs exactly this).
+  suite out of the box (the external runner builds+runs exactly this).
 
   With `trace?`, BOTH test aliases enter through `slopp.testmain` — the trace
   runner that WRAPS cognitect — so the external tier yields a form trace
-  (#121, the only tier that runs ^:isolated tests). Cognitect stays in
+  (#121, the only tier that runs ^:external tests). Cognitect stays in
   :extra-deps: the runner resolves it there and delegates, leaving the output
   the summary parsers read untouched. Both aliases and not one, because `done`
   runs :test-run narrowed while `commit_point` runs :test full — tracing only

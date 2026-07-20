@@ -12,7 +12,7 @@
        "(defn evaluate [ts] (->> ts (tier #{:* }) (tier #{:+})))\n"
        "(deftest eval-t (is (= 7 (evaluate [1 :+ 2 :* 3]))))\n"))
 
-(deftest ^:isolated edit-group-fixes-multi-form-refactor-in-one-intent
+(deftest ^:external edit-group-fixes-multi-form-refactor-in-one-intent
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gdemo buggy)
@@ -46,7 +46,7 @@
           (is (= [7] (api/query-eval sess "(gdemo/evaluate [1 :+ 2 :* 3])")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated edit-group-is-atomic-on-error
+(deftest ^:external edit-group-is-atomic-on-error
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gdemo buggy)
@@ -69,7 +69,7 @@
           (is (not= [[1 :+ 2]] (api/query-eval sess "(gdemo/tier #{:+} [1 :+ 2])")))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated edit-group-supports-add-and-delete
+(deftest ^:external edit-group-supports-add-and-delete
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'gdemo "(ns gdemo)\n(defn old-helper [x] x)\n")
@@ -85,7 +85,7 @@
         (is (= [nil] (api/query-eval sess "(resolve 'gdemo/old-helper)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated group-writes-report-contract-drift-too
+(deftest ^:external group-writes-report-contract-drift-too
   ;; contract-drift was wired into edit/replace-form only. Every GROUP write —
   ;; edit_group, rename_sweep, edit_move_forms, change_signature, edit_extract
   ;; — goes through apply-group-step, which calls store/replace-node directly

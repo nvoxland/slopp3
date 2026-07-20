@@ -26,7 +26,7 @@
                                :arguments (assoc args :agent agent-name)}})
           [:body :result :content 0 :text]))
 
-(deftest ^:isolated mcp-over-http-speaks-the-protocol
+(deftest ^:external mcp-over-http-speaks-the-protocol
   (let [port 7411
         srv  (http/start-server! port {})]
     (try
@@ -48,7 +48,7 @@
                                       {:code "(m1.core/f 5)"}))))
       (finally (http/stop-server! srv)))))
 
-(deftest ^:isolated two-agents-one-store
+(deftest ^:external two-agents-one-store
   (let [port 7412
         srv  (http/start-server! port {})]
     (try
@@ -73,7 +73,7 @@
           (is (re-find #":agent \"bob\"" hist))))
       (finally (http/stop-server! srv)))))
 
-(deftest ^:isolated attribution-flows-through-every-write-kind
+(deftest ^:external attribution-flows-through-every-write-kind
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'at.core "(ns at.core)\n(defn f [x] x)\n" :agent "ingester")
@@ -88,7 +88,7 @@
         (is (= "renamer"  (by-op :rename))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated fork-edit-merge-end-to-end                     ; m2, the whole story
+(deftest ^:external fork-edit-merge-end-to-end                     ; m2, the whole story
   (let [root  (str (System/getProperty "java.io.tmpdir") "/slopp-m2-" (System/nanoTime))
         a-dir (str root "/main")
         b-dir (str root "/fork")]

@@ -18,7 +18,7 @@
         req (.build (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" port path))))]
     (json/parse-string (.body (.send client req (HttpResponse$BodyHandlers/ofString))) true)))
 
-(deftest ^:isolated http-transport-round-trip
+(deftest ^:external http-transport-round-trip
   (let [port 7399
         srv  (http/start-server! port {})]
     (try

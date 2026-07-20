@@ -19,7 +19,7 @@
   architecture VIEW's graph. A `-test` namespace folds into its subject
   module (module-of strips `-test`), so its fixture deps would manufacture
   cycles that don't exist in production; excluding them tells the truth.
-  Every production module is a key (isolated ones → layer 0). The stored
+  Every production module is a key (external ones → layer 0). The stored
   manifest still carries the test edges — this derivation is for
   layers/cycles, not for enforcement."
   [store rows]

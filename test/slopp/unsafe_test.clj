@@ -9,14 +9,14 @@
             [slopp.edit :as edit]
             [slopp.store :as store]))
 
-(deftest ^:isolated form-symbol-unwraps-meta
+(deftest ^:external form-symbol-unwraps-meta
   (testing "a plain def is named"
     (is (= 'f (store/name-of-source "(defn f [x] x)"))))
   (testing "an ^:unsafe def keeps its name (the load-bearing unwrap)"
     (is (= 'g (store/name-of-source
                "^:unsafe (defn g [x] (binding [*out* *out*] x))")))))
 
-(deftest ^:isolated unsafe-bypasses-dialect-bans
+(deftest ^:external unsafe-bypasses-dialect-bans
   (testing "a plain banned form is rejected (D3)"
     (is (:error (edit/parse-form "(defn h [x] (binding [*out* *out*] x))"))))
   (testing "^:unsafe bypasses D3 (denylisted symbol)"
@@ -30,7 +30,7 @@
   (testing "a NON-unsafe banned form still rejects"
     (is (:error (edit/parse-form "(defn h [] (eval '(+ 1 1)))")))))
 
-(deftest ^:isolated reads-marker-is-orthogonal-to-the-dialect-gate
+(deftest ^:external reads-marker-is-orthogonal-to-the-dialect-gate
   ;; ^:reads suppresses the !-effect naming warning (a read takes no bang);
   ;; it is NOT ^:unsafe and does NOT relax the D3/D4 dialect ban.
   (testing "edit/reads? detects the ^:reads marker"
@@ -44,7 +44,7 @@
       (is (edit/reads? n))
       (is (edit/unsafe? n)))))
 
-(deftest ^:isolated unsafe-form-ingests-loads-and-is-addressable
+(deftest ^:external unsafe-form-ingests-loads-and-is-addressable
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'us.core
@@ -67,7 +67,7 @@
         (is (not (:unsafe? (api/query-symbol sess 'us.core '*tap*)))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated unsafe-survives-done-normalize
+(deftest ^:external unsafe-survives-done-normalize
   ;; done runs slopp.normalize over changed forms — the ^:unsafe marker
   ;; (and the form's addressability) must survive that node-level rewrite
   (let [sess (api/open!)]
@@ -81,7 +81,7 @@
       (is (= [2] (api/query-eval sess "(us.chk/q 1)")))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated import-path-gates-dialect-like-edit
+(deftest ^:external import-path-gates-dialect-like-edit
   ;; the import path (ingest! / ns_create {:source}) must run the SAME dialect
   ;; gate the edit path does. Otherwise host forms enter the store UNMARKED and
   ;; become frozen — the edit path later refuses to modify them (their own body
@@ -128,7 +128,7 @@
                    (pr-str (:warnings r))))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated unsafe-does-not-relax-effect-warnings
+(deftest ^:external unsafe-does-not-relax-effect-warnings
   ;; ^:unsafe opts out of the DIALECT ban only — honest !-labeling is orthogonal
   (let [sess (api/open!)]
     (try
@@ -141,7 +141,7 @@
                  (pr-str ws))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated resolvers-are-denylisted-outside-carriers
+(deftest ^:external resolvers-are-denylisted-outside-carriers
   ;; the enforcement point of the reference-carrier decision: a string or
   ;; quoted symbol is INERT unless something resolves it — so the gate
   ;; blocks the resolvers, not the mentions. Docstrings may name vars;

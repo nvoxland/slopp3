@@ -23,7 +23,7 @@
        "\n"
        "(deftest f-t (is (= 11 (f 1))))\n"))
 
-(deftest ^:isolated concurrent-projection-converges
+(deftest ^:external concurrent-projection-converges
   (let [dir  (temp-dir "slopp-git-conc")
         sess (api/open! {:slopp.api/dir dir})]
     (try
@@ -61,7 +61,7 @@
             (git/close-ctx! ctx2))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated foreign-milestone-served-without-restart
+(deftest ^:external foreign-milestone-served-without-restart
   ;; the m5b operating model: another agent's server shares the store dir;
   ;; its milestones must be served by the git server with NO restart —
   ;; projection reads the journals from disk on every advertisement

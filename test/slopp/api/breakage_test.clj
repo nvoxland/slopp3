@@ -21,7 +21,7 @@
     (is (empty? (breakage/removed-arities '(defn f [x & r] x)
                                           '(defn f [x] x))))))
 
-(deftest ^:isolated done-flags-arity-narrowing-on-a-boundary-fn
+(deftest ^:external done-flags-arity-narrowing-on-a-boundary-fn
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'bc.core
@@ -60,7 +60,7 @@
     (testing "no :=> schema on either side → nothing"
       (is (empty? (breakage/removed-schema-keys '(defn f [m] 1) '(defn f [m] 1)))))))
 
-(deftest ^:isolated done-flags-visibility-and-schema-key-narrowing
+(deftest ^:external done-flags-visibility-and-schema-key-narrowing
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'bc2.core
@@ -90,7 +90,7 @@
     (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export false} f [x] x))))
     (is (false? (breakage/node-boundary? 'app.core.impl '(defn ^{:export nil} f [x] x))))))
 
-(deftest ^:isolated breaking-ok-marks-a-deliberate-break-and-polices-itself
+(deftest ^:external breaking-ok-marks-a-deliberate-break-and-polices-itself
   ;; breaking-changes sat at :advisory because a CORRECT change — privatising a
   ;; fn with no outside callers — was flagged with no escape. A rule you cannot
   ;; discharge has to be ignorable, and an ignorable rule is not a rule.

@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]))
 
-(deftest ^:isolated observe-captures-what-flows-through
+(deftest ^:external observe-captures-what-flows-through
   (let [sess (api/open!)]
     (try
       (api/ingest! sess 'ob.core
@@ -33,7 +33,7 @@
         (is (:error (api/query-observe sess 'ob.core 'area "(def sneaky 1)"))))
       (finally (api/close! sess)))))
 
-(deftest ^:isolated macroexpand-is-a-first-class-question
+(deftest ^:external macroexpand-is-a-first-class-question
   (let [sess (api/open!)]
     (try
       (let [r (api/query-macroexpand sess "(when x y z)")]

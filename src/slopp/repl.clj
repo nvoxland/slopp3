@@ -85,7 +85,7 @@
 
   The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
   whichever slopp/rt.clj is on the READING process's classpath, and that differs
-  by caller: the isolated runner is a built project, so it gets the store's
+  by caller: the external runner is a built project, so it gets the store's
   rendered rt; the MCP server runs from the uberjar, so it gets whatever rt that
   jar was built with — which lags the store by design. Calling a var the older
   copy lacks would break every image the moment the jar fell behind.
