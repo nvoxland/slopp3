@@ -176,11 +176,18 @@
   (substring of prompt/label — and, collapsed, of turn intents). `:limit`
   (default 20). `:collapse true` returns EPISODE rows instead of raw deltas —
   one row per agent-work-unit between done-points, the readable long-term
-  view. All rows carry `:at` (local date-time)."
-  [session & {:keys [ns contains limit collapse format] :or {limit 20}}]
+  view. `:dead-ends true` lists SCRAPPED explorations (the reverts) with their
+  why and the forms they dropped; a namespace/form string narrows to those
+  that touched it. All rows carry `:at` (local date-time)."
+  [session & {:keys [ns contains limit collapse format dead-ends] :or {limit 20}}]
   (let [
         rows
-        (if collapse
+        (cond
+          dead-ends
+          (history/dead-ends (:store @session)
+                             (when (string? dead-ends) dead-ends))
+
+          collapse
           (let [ds       (store/deltas (:store @session))
                 relevant (filter #(or (contains? #{:ingest :add :replace :delete
                                                    :rename :normalize :move :merge}
@@ -190,6 +197,8 @@
                 pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
                 rows     (history/episode-rows relevant)]
             (history/collapse-rows  ds pos rows contains limit))
+
+          :else
           (->> (store/deltas (:store @session))
                reverse
                (filter #(or (nil? ns) (= ns (:ns %))))
