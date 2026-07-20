@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.client :as client])
+            [slopp.git :as git] [slopp.git.client :as client] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -55,7 +55,7 @@
                     (is (= (:pushed r) (.name tip)))
                     (testing "the remote tree is real files: ns + deps.edn"
                       (let [tree (git/tree-at remote (.name tip))]
-                        (is (= (api/query-source sess 'gc.core)
+                        (is (= (query/query-source sess 'gc.core)
                                (get tree "src/gc/core.clj")))
                         (is (contains? tree "deps.edn")))))
                   (finally (.close remote))))))
@@ -70,7 +70,7 @@
                 (let [{:keys [tip]} (client/fetch-remote! repo bare)]
                   (is (string? tip))
                   (let [tree (git/tree-at repo tip)]
-                    (is (= (api/query-source sess 'gc.core)
+                    (is (= (query/query-source sess 'gc.core)
                            (get tree "src/gc/core.clj")))
                     (is (contains? tree "deps.edn"))))
                 (finally (.close repo)))))

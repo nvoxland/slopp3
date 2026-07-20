@@ -3,7 +3,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.db :as db]
-            [slopp.api :as api])
+            [slopp.api :as api] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -47,11 +47,11 @@
     (let [sess2 (api/open! {:slopp.api/dir dir})]
       (try
         (testing "source is reconstructed from the db"
-          (is (re-find #"\(\+ x y 1\)" (api/query-source sess2 'demo))))
+          (is (re-find #"\(\+ x y 1\)" (query/query-source sess2 'demo))))
         (testing "the image was reloaded from the store"
           (is (= [6] (api/query-eval sess2 "(demo/add 2 3)"))))
         (testing "lineage (incl. prompt and verification) survives"
-          (let [lin (api/query-lineage sess2 'demo 'add)]
+          (let [lin (query/query-lineage sess2 'demo 'add)]
             (is (some #(= "off-by-one" (:prompt %)) lin))
             (is (contains? (set (map :op lin)) :ingest)))
           (is (= :verify (:op (last (store/deltas (:store @sess2)))))))

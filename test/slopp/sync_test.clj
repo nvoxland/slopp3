@@ -10,7 +10,7 @@
             [slopp.db :as db]
             [slopp.git :as git]
             [slopp.store :as store]
-            [slopp.sync :as sync])
+            [slopp.sync :as sync] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -66,8 +66,8 @@
         (let [sb (api/open! {:slopp.api/dir dir-b})]
           (try
             (testing "the cloned store carries the source byte-exactly + the remote identity"
-              (is (= (api/query-source sess 'gc.core)
-                     (api/query-source sb 'gc.core)))
+              (is (= (query/query-source sess 'gc.core)
+                     (query/query-source sb 'gc.core)))
               (let [conn (:db @sb)]
                 (is (= (str bare) (db/get-meta conn "git-remote")))
                 (is (= (:pushed p1) (db/get-meta conn "git-base-sha")))))
@@ -133,8 +133,8 @@
                 (is (empty? (:conflicts r)) (pr-str r))
                 (is (= (:pushed p2) (:base r)))
                 (testing "sources converge byte-exactly"
-                  (is (= (api/query-source sa 'gc.core)
-                         (api/query-source sb 'gc.core))))
+                  (is (= (query/query-source sa 'gc.core)
+                         (query/query-source sb 'gc.core))))
                 (testing "the pull marker carries :git-sha (the chain node)"
                   (let [d (->> (store/deltas (:store @sb))
                                (filter #(= :commit (:op %))) last)]
@@ -165,8 +165,8 @@
             (testing "A pulls B's g back"
               (let [r (sync/pull! sa :agent "alice")]
                 (is (nil? (:error r)) (pr-str r))
-                (is (= (api/query-source sb 'gc.core)
-                       (api/query-source sa 'gc.core)))))
+                (is (= (query/query-source sb 'gc.core)
+                       (query/query-source sa 'gc.core)))))
             (finally (api/close! sb)))))
       (finally
         (api/close! sa)
@@ -201,12 +201,12 @@
         (try
           (api/edit-replace! sb 'gc.core 'f "(defn f [x] (+ x 0 1))"
                              :prompt "local tweak" :agent "bob")
-          (let [b-version (api/query-source sb 'gc.core)
+          (let [b-version (query/query-source sb 'gc.core)
                 r         (sync/pull! sb :agent "bob")]
             (is (nil? (:error r)) (pr-str r))
             (testing "the both-edited ns is a conflict; our version stays live"
               (is (= ["src/gc/core.clj"] (mapv :path (:conflicts r))))
-              (is (= b-version (api/query-source sb 'gc.core))))
+              (is (= b-version (query/query-source sb 'gc.core))))
             (testing "push is blocked while conflicts stand"
               (let [p (sync/push! dir-b)]
                 (is (:error p))

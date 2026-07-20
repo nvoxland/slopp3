@@ -6,7 +6,7 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.http :as http] [slopp.api.branch :as branch])
+            [slopp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))
@@ -132,7 +132,7 @@
             (testing "provenance: the merge delta + their agent attribution"
               (is (some #(= :merge (:op %)) (store/deltas (:store @sess))))
               (is (re-find #"forker"
-                           (pr-str (api/query-history sess :contains "double-apply"))))))
+                           (pr-str (query/query-history sess :contains "double-apply"))))))
           ;; 6. merging again is a no-op (idempotent)
           (let [r2 (branch/merge! sess b-dir)]
             (is (zero? (:merged r2)))

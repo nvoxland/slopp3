@@ -8,7 +8,7 @@
             [rewrite-clj.parser]
             [slopp.store :as store]
             [slopp.render]
-            [slopp.api :as api] [slopp.api.branch :as branch]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query]))
 
 (deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")
@@ -33,7 +33,7 @@
             (let [r (api/sync-with-journal! s2)]
               (is (pos? (:synced r 0))))
             (is (= [11] (api/query-eval s2 "(tp.core/f 1)")))
-            (is (re-find #"\(\+ x 10\)" (api/query-source s2 'tp.core))))
+            (is (re-find #"\(\+ x 10\)" (query/query-source s2 'tp.core))))
 
           (testing "and the other direction"
             (api/add-form! s2 'tp.core "(defn g [x] (* 2 (f x)))"
@@ -51,19 +51,19 @@
               (is (nil? (:error r)) (pr-str r))
               (is (nil? (:conflict r))))
             (api/sync-with-journal! s1)
-            (is (re-find #"\(- x 5\)" (api/query-source s1 'tp.core)))
-            (is (re-find #"\(\+ x 100\)" (api/query-source s1 'tp.core))))
+            (is (re-find #"\(- x 5\)" (query/query-source s1 'tp.core)))
+            (is (re-find #"\(\+ x 100\)" (query/query-source s1 'tp.core))))
 
           (testing "a cross-server same-form race surfaces the conflict"
             (api/edit-replace! s1 'tp.core 'h "(defn h [x] :server-1)")
             ;; s2 unsynced: edits the SAME form from a stale base
             (let [r (api/edit-replace! s2 'tp.core 'h "(defn h [x] :server-2)")]
               (is (some? (:conflict r)) (pr-str r)))
-            (is (re-find #":server-1" (api/query-source s1 'tp.core))))
+            (is (re-find #":server-1" (query/query-source s1 'tp.core))))
 
           (testing "provenance shows which server did what"
             (api/sync-with-journal! s2)
-            (let [hist (pr-str (api/query-history s2))]
+            (let [hist (pr-str (query/query-history s2))]
               (is (re-find #"server-1" hist))
               (is (re-find #"server-2" hist))))
           (finally (api/close! s2))))

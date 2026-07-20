@@ -5,7 +5,7 @@
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules])
+            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -81,7 +81,7 @@
                            "^:reads\n(defn peek-json [x] (json/read-str x))")
         (is (not (warns-about? sess 'rd.core 'peek-json))))
       (testing "query_symbol surfaces :reads? (greppable), form still addressable"
-        (let [q (api/query-symbol sess 'rd.core 'peek-json)]
+        (let [q (query/query-symbol sess 'rd.core 'peek-json)]
           (is (:reads? q))
           (is (= 'peek-json (:name q)))))
       (finally (api/close! sess)))))

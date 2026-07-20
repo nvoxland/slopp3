@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.git.server :as server] [slopp.api.branch :as branch])
+            [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]))
@@ -51,7 +51,7 @@
       (let [clone-dir (temp-dir "slopp-git-clone")]
         (with-open [g (clone! (:port srv) clone-dir)]
           (testing "the clone IS the store's rendered source, newest milestone"
-            (is (= (api/query-source sess 'gs.core)
+            (is (= (query/query-source sess 'gs.core)
                    (slurp (io/file clone-dir "src" "gs" "core.clj"))))
             (is (.exists (io/file clone-dir "deps.edn"))))
           (testing "history is the milestone chain, newest first, on main"
@@ -142,7 +142,7 @@
                 (is (str/starts-with? (.getFullMessage wc) "wip:"))
                 (-> g (.checkout) (.setName "wip") (.setCreateBranch true)
                     (.setStartPoint "origin/wip/main") (.call))
-                (is (= (api/query-source sess 'gs.core)
+                (is (= (query/query-source sess 'gs.core)
                        (slurp (io/file clone-dir "src" "gs" "core.clj"))))))))
         (testing "more work moves the wip ref"
           (api/edit-replace! sess 'gs.core 'f "(defn f [x] (int (+ 10 x)))"
@@ -208,7 +208,7 @@
           (let [clone-dir (str (temp-dir "slopp-git-cli-clone") "/clone")
                 res (sh/sh "git" "clone" (:url srv) clone-dir)]
             (is (zero? (:exit res)) (:err res))
-            (is (= (api/query-source sess 'gs.core)
+            (is (= (query/query-source sess 'gs.core)
                    (slurp (io/file clone-dir "src" "gs" "core.clj"))))
             (let [log (sh/sh "git" "-C" clone-dir "log" "--format=%s")]
               (is (str/includes? (:out log) "v1: f ships"))))

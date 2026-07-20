@@ -4,7 +4,7 @@
   semantics; merging down to main rides the m2 causal-delivery engine."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
-            [slopp.api :as api] [slopp.api.branch :as branch]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query]))
 
 (def seed
   (str "(ns br.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -33,7 +33,7 @@
         (let [r (branch/branch-switch! sess "main")]
           (is (= "main" (:switched r))))
         (is (= [2] (api/query-eval sess "(br.core/f 1)")))
-        (is (re-find #"\(inc x\)" (api/query-source sess 'br.core))))
+        (is (re-find #"\(inc x\)" (query/query-source sess 'br.core))))
       (testing "and forward again"
         (branch/branch-switch! sess "feature")
         (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
@@ -58,7 +58,7 @@
           (is (= 2 (:merged r)))
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
           (is (= [4] (api/query-eval sess "(br.core/g 1)")))
-          (is (re-find #"defn h" (api/query-source sess 'br.core)))))
+          (is (re-find #"defn h" (query/query-source sess 'br.core)))))
       (testing "the branch can keep going and merge again exactly"
         (branch/branch-switch! sess "feature")
         (api/edit-replace! sess 'br.core 'g "(defn g [x] (* 3 (f x)))"
@@ -76,7 +76,7 @@
         (api/edit-replace! sess 'br.core 'g "(defn g [x] :main-version)")
         (let [r (branch/branch-merge! sess "feature")]
           (is (= 1 (count (:conflicts r))))
-          (is (re-find #":main-version" (api/query-source sess 'br.core)))))
+          (is (re-find #":main-version" (query/query-source sess 'br.core)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external branch-guards-and-listing

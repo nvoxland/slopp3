@@ -1,6 +1,6 @@
 (ns slopp.api.rules-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set]))
+            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -68,18 +68,18 @@
       (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
         (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
                           :prompt "soften a write gate to advisory")
-        (let [sr (first (filter #(= :schema-refusal (:rule %)) (api/query-rules sess)))]
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (query/query-rules sess)))]
           (is (= :form (:grain sr)) (pr-str sr))
           (is (= :advisory (:severity sr)) (pr-str sr))))
       (testing ":off on a write gate is honored and reported"
         (api/config-file! sess "rules" :key "schema-refusal" :value "off"
                           :prompt "turn it off")
-        (let [sr (first (filter #(= :schema-refusal (:rule %)) (api/query-rules sess)))]
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (query/query-rules sess)))]
           (is (= :off (:severity sr)) (pr-str sr))))
       (testing "a done advisory keeps its full severity range"
         (api/config-file! sess "rules" :key "key-typos" :value "error"
                           :prompt "escalate an advisory")
-        (let [kt (first (filter #(= :key-typos (:rule %)) (api/query-rules sess)))]
+        (let [kt (first (filter #(= :key-typos (:rule %)) (query/query-rules sess)))]
           (is (= :error (:severity kt)) (pr-str kt))))
       (finally (api/close! sess)))))
 

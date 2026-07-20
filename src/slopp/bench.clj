@@ -8,13 +8,13 @@
   to understand context. It grows with the size of the surrounding code."
   (:require [clojure.string :as str]
             [slopp.api :as api]
-            [slopp.render :as render]))
+            [slopp.render :as render] [slopp.api.query :as query]))
 
 (defn reference-query-cost
   "Compare payloads for a 'where is `sym` referenced + show its def' query."
   [session ns-sym sym]
-  (let [refs   (vec (api/query-references session ns-sym sym))
-        symi   (api/query-symbol session ns-sym sym)
+  (let [refs   (vec (query/query-references session ns-sym sym))
+        symi   (query/query-symbol session ns-sym sym)
         source (render/render-ns (:store @session) ns-sym)
         grep   (->> (str/split-lines source)
                     (filter #(str/includes? % (str sym)))
