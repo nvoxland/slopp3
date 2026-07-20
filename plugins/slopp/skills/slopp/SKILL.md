@@ -168,6 +168,19 @@ spot-checking one namespace or test mid-flight. Red runs return
 `:all-failing {file [tests]}` and `:themes` (clustered causes) — read
 those before drilling into blocks.
 
+**A repro can be too minimal.** Red-first protects you only if the test is
+red for the REASON you think. Stripping a bug down to its smallest case can
+strip out the very thing that triggers it, and then a green test reads as
+"not the cause" when it means "not reproduced". A real one from this
+codebase: a crash in a `sort` was minimised to a single-element collection —
+and sorting one element never calls `compare`, so the test passed over a
+live bug and sent the diagnosis in the wrong direction. When a repro comes
+back green, that is a RESULT to explain, not a fact to accept: check that
+the mechanism is still present before concluding the cause is elsewhere.
+Reach for `query_eval` to look at what the code actually sees rather than
+bisecting features by intuition — measuring the analysis found this one
+after four wrong guesses.
+
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
 2× the commentary plain-file agents did, and it was ALL of the remaining
@@ -190,7 +203,10 @@ namespaces (`would not cold-load — require CYCLE: a -> b -> a`). Both are
 invisible to in-image verification by construction, which is why a write can
 be refused while every test passes. A cycle usually means a require that is
 no longer referenced: drop it, or move the shared code somewhere both sides
-can depend on. Hand-written
+can depend on. `edit_move_forms` drops the requires IT orphans (a lib whose
+last user just left goes with it), but only those — a require kept for its
+load side effects, like `defmethod` registration, is indistinguishable from
+a dead one, so nothing prunes those for you. Hand-written
 `(declare …)` is refused; you never need one. Mutating fns end in `!` (rename
 with the `:suggest` if warned); `^:reads` marks read-only dep calls;
 `^:unsafe` is the dialect escape hatch.
