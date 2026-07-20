@@ -511,6 +511,7 @@
                           st (filter #(session/test-ns? st %) nses)))
                 (external-test-run! session))
         red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
+                  (seq layer)                ; core→shell is a failure, not a note
                   (pos? (+ (:fail tests 0) (:error tests 0)))
                   (contains? #{:red :error} (:status iso)))]
     (cond-> {:namespaces (count nses)
@@ -721,6 +722,7 @@
                         :data-version (some-> conn db/data-version)
                         :dir dir :branch "main" :lines {}
                         :test-map (or (session/load-trace conn store) {})
+                        :observed (session/load-observations conn)
                         :agent-id (or agent-id (session/session-identity))
                         :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                         :branch-image-ttl-ms ttl
