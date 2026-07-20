@@ -99,7 +99,7 @@
 ;; M1c: the api ops — reaching the live image classpath + durable round-trip
 
 (deftest ^:external deps-add-hot-loads-into-image
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [pid0 (.pid ^Process (:process (:image @sess)))
             r    (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
@@ -123,7 +123,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external deps-add-validates
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (is (:error (api/deps-add! sess "not-a-symbol" {:mvn/version "1.0"})))
       (is (:error (api/deps-add! sess 'a/b {})))
@@ -132,7 +132,7 @@
 
 (deftest ^:external deps-durable-round-trip-and-branch-inherit
   (let [dir (temp-dir)]
-    (let [sess (api/open! {:slopp.api/dir dir})]
+    (let [sess (external/open! {:slopp.api/dir dir})]
       (try
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
@@ -142,7 +142,7 @@
                  (get (api/deps-list sess) 'org.clojure/data.json))))
         (finally (api/close! sess))))
     (testing "a fresh session over the same dir reloads deps AND its image can use them"
-      (let [sess2 (api/open! {:slopp.api/dir dir})]
+      (let [sess2 (external/open! {:slopp.api/dir dir})]
         (try
           (is (= {:mvn/version "2.5.0"}
                  (get (api/deps-list sess2) 'org.clojure/data.json)))
@@ -209,7 +209,7 @@
       (finally (.close conn)))))
 
 (deftest ^:external deps-add-returns-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [r (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
         (is (some #{'clojure.data.json} (:namespaces r)))
@@ -236,7 +236,7 @@
 
 (deftest ^:external build-native-warns-on-missing-metadata
   (let [dir  (temp-dir)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
@@ -250,7 +250,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external deps-ride-the-mcp-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [call (fn [tool args]
                    (get-in (slopp.mcp/handle!

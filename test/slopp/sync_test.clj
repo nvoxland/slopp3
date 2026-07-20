@@ -48,7 +48,7 @@
   (let [dir-a (temp-dir)
         dir-b (str (temp-dir) "/clone")
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
-        sess  (api/open! {:slopp.api/dir dir-a})]
+        sess  (external/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sess 'gc.core seed)
       (external/commit-point! sess "v1: f ships" :agent "alice")
@@ -63,7 +63,7 @@
             (is (.exists (io/file dir-b ".slopp" "store.db")))
             (is (empty? (clj-files dir-b)))))
 
-        (let [sb (api/open! {:slopp.api/dir dir-b})]
+        (let [sb (external/open! {:slopp.api/dir dir-b})]
           (try
             (testing "the cloned store carries the source byte-exactly + the remote identity"
               (is (= (query/query-source sess 'gc.core)
@@ -108,7 +108,7 @@
   (let [dir-a (temp-dir)
         dir-b (str (temp-dir) "/clone")
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
-        sa    (api/open! {:slopp.api/dir dir-a})]
+        sa    (external/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sa 'gc.core seed)
       (external/commit-point! sa "v1" :agent "alice")
@@ -125,7 +125,7 @@
       (let [p2 (sync/push! dir-a)]
         (is (nil? (:error p2)) (pr-str p2))
 
-        (let [sb (api/open! {:slopp.api/dir dir-b})]
+        (let [sb (external/open! {:slopp.api/dir dir-b})]
           (try
             (testing "B pulls A's v2"
               (let [r (sync/pull! sb :agent "bob")]
@@ -181,7 +181,7 @@
   (let [dir-a (temp-dir)
         dir-b (str (temp-dir) "/clone")
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
-        sa    (api/open! {:slopp.api/dir dir-a})]
+        sa    (external/open! {:slopp.api/dir dir-a})]
     (try
       (api/ingest! sa 'gc.core seed)
       (external/commit-point! sa "v1" :agent "alice")
@@ -197,7 +197,7 @@
       (external/commit-point! sa "v2" :agent "alice")
       (is (nil? (:error (sync/push! dir-a))))
 
-      (let [sb (api/open! {:slopp.api/dir dir-b})]
+      (let [sb (external/open! {:slopp.api/dir dir-b})]
         (try
           (api/edit-replace! sb 'gc.core 'f "(defn f [x] (+ x 0 1))"
                              :prompt "local tweak" :agent "bob")
@@ -247,7 +247,7 @@
         (finally (rm-rf! (.getParentFile (io/file dir)))))))
   (testing "an existing NON-EMPTY store refuses to be clobbered"
     (let [dir  (temp-dir)
-          sess (api/open! {:slopp.api/dir dir})]
+          sess (external/open! {:slopp.api/dir dir})]
       (try
         (api/ingest! sess 'cg.core "(ns cg.core)\n(defn f [] 1)\n")
         (api/close! sess)
@@ -298,7 +298,7 @@
   ;; slopp never touches it — mixed repos without everything living in slopp
   (let [dir  (temp-dir)
         bare (bare-repo! (str (temp-dir) "/remote.git"))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'mo.core "(ns mo.core)\n(defn ^:unused-ok f [] 1)\n")
       (external/commit-point! sess "v1" :agent "a")
@@ -337,7 +337,7 @@
         dir  (temp-dir)]
     (-> (org.eclipse.jgit.api.Git/init) (.setInitialBranch "slopp/main")
         (.setDirectory (io/file work)) (.call) (.close))
-    (let [sess (api/open! {:slopp.api/dir dir})]
+    (let [sess (external/open! {:slopp.api/dir dir})]
       (try
         (api/ingest! sess 'lo.core "(ns lo.core)\n")
         (external/commit-point! sess "v1" :agent "a")
@@ -358,7 +358,7 @@
   ;; repo; the working dir stays the human's main checkout
   (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
         seed-d (temp-dir)
-        sess   (api/open! {:slopp.api/dir seed-d})]
+        sess   (external/open! {:slopp.api/dir seed-d})]
     (try
       ;; seed origin's slopp branch from a store, and main from a "human"
       (api/ingest! sess 'im.core "(ns im.core)\n(defn ^:unused-ok f [] 41)\n")
@@ -382,7 +382,7 @@
               (is (empty? (->> (file-seq (io/file work "src"))
                                (filter #(.isFile ^java.io.File %))))))))
         (testing "the imported store syncs against the LOCAL repo's slopp branch"
-          (let [sw (api/open! {:slopp.api/dir work})]
+          (let [sw (external/open! {:slopp.api/dir work})]
             (try
               (is (= "." (db/get-meta (:db @sw) "git-remote")))
               (api/edit-replace! sw 'im.core 'f "(defn ^:unused-ok f [] 42)"
@@ -408,7 +408,7 @@
   ;; fresh clone; import must treat that as a fresh dir, not refuse it
   (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
         seed-d (temp-dir)
-        sess   (api/open! {:slopp.api/dir seed-d})]
+        sess   (external/open! {:slopp.api/dir seed-d})]
     (try
       (api/ingest! sess 'im2.core "(ns im2.core)\n(defn ^:unused-ok f [] 41)\n")
       (external/commit-point! sess "v1" :agent "a")
@@ -434,7 +434,7 @@
   ;; slopp BRANCH is the marker; plain git repos are never auto-ingested
   (let [origin (bare-repo! (str (temp-dir) "/origin.git"))
         seed-d (temp-dir)
-        sess   (api/open! {:slopp.api/dir seed-d})]
+        sess   (external/open! {:slopp.api/dir seed-d})]
     (try
       (api/ingest! sess 'ai.core "(ns ai.core)\n(defn ^:unused-ok f [] 41)\n")
       (external/commit-point! sess "v1" :agent "a")

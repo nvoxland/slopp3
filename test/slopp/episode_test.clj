@@ -17,7 +17,7 @@
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:external solo-episode-lifecycle
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
@@ -46,7 +46,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external parallel-agents-have-independent-episodes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
@@ -68,7 +68,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external episode-revert-scraps-only-my-unshared-work
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
@@ -96,7 +96,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external turn-trees-from-label-paths                    ; P4-m6.1
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline" :agent "alice")
@@ -125,7 +125,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external turn-markers-bracket-the-history               ; P4-m6.2
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (api/turn-begin! sess :agent "alice"
@@ -166,7 +166,7 @@
   ;; OUT-OF-BAND; the agent's server absorbs it via journal sync (m5b)
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-turn-" (System/nanoTime))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'ep.core seed)
       ;; simulate the UserPromptSubmit hook (separate process in production)
@@ -184,7 +184,7 @@
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
       (api/ingest! sess 'ep.core seed)          ; api-level stays ungated
@@ -225,7 +225,7 @@
 (deftest ^:external hook-json-mode-records-the-exact-user-words    ; the real hook shape
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-hook-" (System/nanoTime))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'ep.core seed)
       ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
@@ -246,7 +246,7 @@
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external history-drill-down-and-text-rendering          ; granularity gaps
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (api/turn-begin! sess :agent "alice" :intent "make f add ten")
@@ -283,7 +283,7 @@
 (deftest ^:external human-history-timestamps-diffs-and-intent-search
   ;; the human-side gaps: WHEN did it happen, WHAT changed (as a diff, not
   ;; two full sources), and finding a turn by what the user actually asked
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ep.core seed)
       (api/turn-begin! sess :agent "alice" :intent "teach h to double, loudly")
@@ -330,7 +330,7 @@
 (deftest ^:external done-always-verifies-the-episode
   ;; the done-point IS the test run — it must verify the episode's changes
   ;; even when normalization has nothing to rewrite
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dv.core
                    (str "(ns dv.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -352,7 +352,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-findings"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'fr.core
                    (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -364,7 +364,7 @@
       (let [r (external/done! sess :label "left red")]
         (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str r)))
       (finally (api/close! sess)))
-    (let [sess2 (api/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.api/dir dir})]
       (try
         (let [b (api/session-brief sess2)]
           (is (= "left red" (get-in b [:last-done :label])) (pr-str (:last-done b)))
@@ -375,7 +375,7 @@
   ;; dogfooding catch: with no trace coverage, done's fallback ran "all
   ;; tests in the CHANGED nses" — which contain none when tests live in a
   ;; separate -test ns. The require-closure bounds the honest fallback.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dr.core "(ns dr.core)\n(defn f \"F.\" [x] (inc x))\n")
       (api/ingest! sess 'dr.core-test
@@ -395,7 +395,7 @@
   ;; response diet for the REPL flow: full failure detail rides ONCE (when a
   ;; test newly goes red); re-running the same red mid-episode compresses to
   ;; :still-red names; recovery reports :went-green. Direction, not repetition.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'er.core
                    (str "(ns er.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -420,7 +420,7 @@
 (deftest ^:external missing-doc-waits-for-the-done-point
   ;; advisories are episode-level concerns: writes stay quiet, the boundary
   ;; names the undocumented public surface once
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'md.core "(ns md.core)\n(defn seeded \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")
@@ -439,7 +439,7 @@
   ;; alarm fatigue that buries real findings. NEW warnings (on forms this
   ;; episode touched) ride :lint in full; carried ones compress to a count
   ;; + form names. Errors are never demoted.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'lc.core
                    (str "(ns lc.core)\n\n"
@@ -461,7 +461,7 @@
   ;; the tier is an implementation detail: done's contract is "everything
   ;; impacted, whatever tier" — ^:external tests reached by the episode's
   ;; changes run in the external JVM without the agent asking.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ti.core "(ns ti.core)\n\n(defn f \"F.\" [x] (* 2 x))\n"
                    :agent "t")
@@ -484,7 +484,7 @@
   ;; silent form collapsed all narrowing, and the ns-grain closure blew a cap
   ;; of 4 on 84.6% of source namespaces. Per-form expansion means the small
   ;; case now RUNS and only a genuinely-wide reach defers.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n"
                    :agent "t")
@@ -520,7 +520,7 @@
   ;; and refuses the milestone. The deliberate escape is ^:unused-ok on the
   ;; name — and a STALE marker (the var IS called now) fails symmetrically,
   ;; so the dial can never rot.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'up.core
                    (str "(ns up.core)\n\n"
@@ -565,7 +565,7 @@
   ;;
   ;; Five test nses reach hub.core/f by require-closure. Exactly one has ever
   ;; touched it. Before #127 done deferred all five and ran nothing.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n" :agent "t")
       (doseq [i (range 5)]
@@ -592,7 +592,7 @@
   ;; "no form named". episode_revert reaches it but is all-or-nothing: it costs
   ;; you every unrelated good change in the episode. undo is DELTA-addressed,
   ;; which is the coordinate system in which a deleted form still exists.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'un.core
                    (str "(ns un.core)\n\n"
@@ -634,7 +634,7 @@
   ;;   full_check— is the STORE clean?                (agent's call)
   ;; A write is mid-work by definition, so `(if x y)` on the way to an else
   ;; branch must land even though it is error-grade at done.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [x] x)\n")
       (testing "a warning-grade finding neither refuses nor counts"
@@ -678,7 +678,7 @@
   ;; untraced form (an ns form, which ns_add_require edits) used to discard the
   ;; evidence for every other form, on 54.4% of real episodes. This pins the
   ;; inverse, so nobody reintroduces selection for speed without deciding to.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'wsa.core "(ns wsa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
                    :agent "t")

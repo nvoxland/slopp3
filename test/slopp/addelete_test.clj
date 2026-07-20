@@ -1,6 +1,6 @@
 (ns slopp.addelete-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def target
   (str "(ns adm\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -8,7 +8,7 @@
        "(deftest add-t (is (= 5 (add 2 3))))\n"))
 
 (deftest ^:external add-form-grows-the-namespace
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'adm target)
       (testing "validation"
@@ -35,7 +35,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external delete-form-removes-everywhere
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'adm target)
       (api/add-form! sess 'adm "(defn triple [x] (* 3 x))")
@@ -56,7 +56,7 @@
   ;; tests exercising it stayed green after the delete, and green-when-red is
   ;; the one direction the D5.1 staleness diagnostics never cross-check
   ;; (suspicious-red? fires on reds). The delete must remove-method.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dmz
                    (str "(ns dmz)\n\n(defmulti area :shape)\n\n"
@@ -80,7 +80,7 @@
   ;; the store said only :sq exists. Tests exercising the old dispatch stayed
   ;; green: the same green-when-red direction as the delete case, reached
   ;; through replace. The old dispatch must be unregistered when it changes.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dmr
                    (str "(ns dmr)\n\n(defmulti area :shape)\n\n"
@@ -106,7 +106,7 @@
   ;; destructive write silently hit whichever happened to come first — that is
   ;; how a live definition got deleted and 13 tests went red. A write that
   ;; cannot tell which element you meant must refuse and show both.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'amb.core
                    (str "(ns amb.core)\n\n"

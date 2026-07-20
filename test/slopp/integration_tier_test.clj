@@ -4,7 +4,7 @@
   shouldn't fire on every edit); explicit test_run / done / commit_point
   include them."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns it.core (:require [clojure.test :refer [deftest is]]))\n\n"
@@ -18,7 +18,7 @@
   (first (api/query-eval sess "@it.core/ran")))
 
 (deftest ^:external integration-tier-skips-fast-path-includes-explicit
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'it.core seed)
       (testing "a fast-path EDIT runs unit tests but SKIPS integration"

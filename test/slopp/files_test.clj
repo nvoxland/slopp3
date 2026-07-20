@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [slopp.api :as api]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
 
 (def wf ".github/workflows/test.yml")
 
@@ -70,7 +70,7 @@
   ;; The store layer is covered above; the API layer was not — and it is the
   ;; layer the file_put/file_get/file_remove wire tools actually call, so its
   ;; validation and session plumbing had no test at all.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "put lands and reports what it wrote"
         (let [r (api/file-put! sess "README.md" "# hello\n" :prompt "seed")]

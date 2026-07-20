@@ -1,9 +1,9 @@
 (ns slopp.observe-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest ^:external observe-captures-what-flows-through
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ob.core
                    (str "(ns ob.core)\n"
@@ -34,7 +34,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external macroexpand-is-a-first-class-question
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [r (api/query-macroexpand sess "(when x y z)")]
         (is (re-find #"\(if x" (:expand-1 r)))

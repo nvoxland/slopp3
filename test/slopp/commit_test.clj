@@ -16,7 +16,7 @@
        "(deftest f-t (is (= 2 (f 1))))\n"))
 
 (deftest ^:external commit-point-marks-a-verified-milestone
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
       (api/edit-replace! sess 'cm.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
@@ -59,7 +59,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external commit-point-green-gate
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
       (api/edit-replace! sess 'cm.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
@@ -80,7 +80,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external retroactive-commit-point
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cm.core seed)
       (api/edit-replace! sess 'cm.core 'f "(defn f [x] (+ x 1))"
@@ -106,7 +106,7 @@
                                        :description "m" :target "d0" :at 1})))))
 
 (deftest ^:external commit-point-rides-the-mcp-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (swap! sess assoc :require-turns? true)
       (api/ingest! sess 'cm.core seed)
@@ -122,7 +122,7 @@
           (is (re-find #"m1" (call "query_commits" {})))))
       (finally (api/close! sess)))))
 (deftest ^:external repeat-milestone-on-unchanged-store-returns-it
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'rm.core :source "(ns rm.core)\n(defn ^:unused-ok f [] 1)\n")
       (let [m1 (external/commit-point! sess "v1" :agent "t")
@@ -142,7 +142,7 @@
   ;; The cost is real and pinned here deliberately: a red ^:external test the
   ;; episode did not touch will NOT stop a milestone. That is the trade for
   ;; not forcing a slow whole-store run on every publish.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'mg.core "(ns mg.core)\n\n(defn f \"F.\" [x] x)\n")
       (api/ingest! sess 'mg.core-test

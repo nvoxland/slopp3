@@ -1,9 +1,9 @@
 (ns slopp.api.modules-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external the-module-surface-is-browsable
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ma.core
                    (str "(ns ma.core)\n"
@@ -56,7 +56,7 @@
   ;; production. The DECLARED manifest keeps them (enforcement); the
   ;; layers/cycles VIEW must reflect production only. Mirrors slopp's own
   ;; adopted-store situation.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       ;; adoption-style setup (gate off) so we can land the cyclic fixture edge
       (swap! sess assoc :adopting? true)
@@ -146,7 +146,7 @@
   ;; is this architecture" already looks, so purity standing belongs there:
   ;; what is declared, and which modules could carry a stricter tier than they
   ;; currently claim.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'pm.core "(ns pm.core)\n(defn add [x y] (+ x y))\n")
       (api/ingest! sess 'pm.edge
@@ -170,7 +170,7 @@
   ;; Tiers became namespace-grained (a pure core one level below an effectful
   ;; module), so "what does this offer?" has to be answerable there too.
   ;; Asking about slopp.api.shape used to error with "no namespaces in module".
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core
                    "(ns sg.core)\n(defn ^:unused-ok top \"T.\" [x] x)\n")

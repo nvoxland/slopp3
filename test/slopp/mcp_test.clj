@@ -28,7 +28,7 @@
           [:result :content 0 :text]))
 
 (deftest ^:external tools-call-end-to-end
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "demo" :source "(ns demo)\n(defn add [x y] (+ x y))\n"})
       (testing "query_source (VFS read)"
@@ -49,7 +49,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external help-and-hints                                ; item 3: weak-model guidance
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "the help tool exists (agents invented the name twice)"
         (let [h (call! sess "help" {})]
@@ -80,7 +80,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external rename-arg-forgiveness                        ; from the symmetric eval
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "ra" :source "(ns ra)\n(defn f [x] x)\n(defn g [x] (f x))\n"})
       (testing "the aliases every eval run guessed first now just work"
@@ -95,7 +95,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external write-op-arg-forgiveness                      ; eval round 2
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "wa" :source "(ns wa)\n(defn f [x] (+ x x 1))\n(defn g [x] (f x))\n"})
       (testing "edit_extract accepts :source for :form; missing gets a real message"
@@ -108,7 +108,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external green-responses-are-terse                     ; B1
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "b1" :source "(ns b1 (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"})
       (call! sess "test_run" {:ns "b1"})
@@ -171,7 +171,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-turnhook"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (swap! sess assoc :require-turns? true)
       (spit (io/file dir ".slopp" "pending-intent")
@@ -202,8 +202,8 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-iso"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        sa  (api/open! {:slopp.api/dir dir})
-        sb  (api/open! {:slopp.api/dir dir})]
+        sa  (external/open! {:slopp.api/dir dir})
+        sb  (external/open! {:slopp.api/dir dir})]
     (try
       (is (not= (:agent-id @sa) (:agent-id @sb)))
       (call! sa "ns_create" {:ns "iso.a" :source "(ns iso.a)\n(defn fa [] 1)\n"})
@@ -215,7 +215,7 @@
         (is (re-find #"defn fa" (call! sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
       (finally (api/close! sa) (api/close! sb)))))
 (deftest ^:external terse-results-carry-forms
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "tf.core" :source "(ns tf.core)\n(defn f [x] x)\n"})
       (testing "replace names its form"
@@ -224,7 +224,7 @@
                                                      :source "(defn f [x] (identity x))"}))))
       (finally (api/close! sess)))))
 (deftest ^:external trimmed-responses-spool-the-full-version
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "sp.core" :source "(ns sp.core)\n(defn f [] 1)\n"})
       (testing "a response over the size gate is trimmed and retrievable"
@@ -246,7 +246,7 @@
         (is (re-find #"no spooled response" (call! sess "query_detail" {:id "r999"}))))
       (finally (api/close! sess)))))
 (deftest ^:external untested-writes-stay-terse-and-honest
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "ut.core" :source "(ns ut.core)\n(defn f [x] x)\n(defn g [x] x)\n"})
       (call! sess "ns_create" {:ns "ut.core-test" :source "(ns ut.core-test (:require [clojure.test :refer [deftest is]] [ut.core :as c]))\n(deftest f-t (is (= 1 (c/f 1))))\n"})
@@ -273,7 +273,7 @@
           (is (not (re-find #":untested" r)) r)))
       (finally (api/close! sess)))))
 (deftest ^:external rename-names-leftover-prose-mentions
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create"
             {:ns "pm.core"
@@ -298,7 +298,7 @@
         _    (sh/sh "git" "init" dir)
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (call! sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn ^:unused-ok f [x] x)\n"})
       (testing "a milestone mirrors into LOCAL git as slopp/<store-branch> (user decision 2026-07-14)"
@@ -316,7 +316,7 @@
         _    (sh/sh "git" "init" dir)
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (call! sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call! sess "commit_point" {:description "first"})
@@ -327,7 +327,7 @@
           (is (re-find #"no worktree" r) r)))
       (finally (api/close! sess)))))
 (deftest ^:external whole-ns-source-is-outline-by-default
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "gt.core" :source "(ns gt.core)\n(defn f [x] (* x 2))\n(defn g [x] (+ x 1))\n"})
       (testing "a bare {ns} read returns the outline + the way in, NOT the dump"
@@ -342,7 +342,7 @@
         (is (re-find #"\(\* x 2\)" (call! sess "query_source" {:ns "gt.core" :full true}))))
       (finally (api/close! sess)))))
 (deftest ^:external rename-sweep-is-one-intent
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create"
             {:ns "sw.zone"
@@ -367,7 +367,7 @@
         (is (re-find #"500" (call! sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
       (finally (api/close! sess)))))
 (deftest ^:external repeated-reads-are-free
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create"
             {:ns "tk.core"
@@ -389,7 +389,7 @@
         (is (re-find #":outline" (call! sess "query_source" {:ns "tk.core"}))))
       (finally (api/close! sess)))))
 (deftest ^:external usage-smells-hint-once
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "sm.a" :source "(ns sm.a)\n(defn f [x] x)\n(defn g [x] x)\n"})
       (call! sess "ns_create" {:ns "sm.b" :source "(ns sm.b)\n(defn h [x] x)\n"})
@@ -414,7 +414,7 @@
                     "slopp-oop-b" (make-array java.nio.file.attribute.FileAttribute 0)))
         _     (sh/sh "git" "init" "--bare" barea)
         _     (sh/sh "git" "init" "--bare" bareb)
-        sess  (api/open! {:slopp.api/dir dir})]
+        sess  (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/commit-point! sess "seed" :agent "t")
@@ -436,7 +436,7 @@
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
         _    (sh/sh "git" "init" "--bare" bare)
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (call! sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call! sess "commit_point" {:description "first"})
@@ -452,7 +452,7 @@
           (sh/sh "git" "clone" bare dir2)
           (sh/sh "git" "-C" dir2 "checkout" "-q" "-b" "work")
           (is (some? (sync/maybe-auto-import! dir2)) "marker must accept slopp/main")
-          (let [s2 (api/open! {:slopp.api/dir dir2})]
+          (let [s2 (external/open! {:slopp.api/dir dir2})]
             (try
               (call! s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn ^:unused-ok g [x] x)\n"})
               (let [r (call! s2 "git_pull" {:branches ["main"] :url bare})]
@@ -466,7 +466,7 @@
             bare2 (str (java.nio.file.Files/createTempDirectory
                         "slopp-nogit-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
             _    (sh/sh "git" "init" "--bare" bare2)
-            s3   (api/open! {:slopp.api/dir d2})]
+            s3   (external/open! {:slopp.api/dir d2})]
         (try
           (call! s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn ^:unused-ok f [x] x)\n"})
           (let [r (call! s3 "commit_point" {:description "no git here"})]
@@ -481,7 +481,7 @@
 (deftest ^:external red-first-rides-the-wire
   ;; the api carried :red-first but the wire's select-keys dropped it —
   ;; an agent would never have seen WHY its spec landed red
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "rw.core"
                               :source "(ns rw.core)\n(defn seed \"S.\" [x] x)\n"})
@@ -500,7 +500,7 @@
 (deftest ^:external read-tools-declare-readonly-on-the-wire
   ;; MCP readOnlyHint: without it, plan-mode clients must treat every tool
   ;; as potentially mutating and prompt — even for query_source
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [tools   (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                             [:result :tools])
@@ -514,7 +514,7 @@
         (is (nil? (get-in by-name ["module_dep" :annotations]))))
       (finally (api/close! sess)))))
 (deftest ^:external the-wire-speaks-done-not-groups
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [names (into #{} (map :name)
                         (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
@@ -525,7 +525,7 @@
         (is (not (contains? names "checkpoint"))))
       (finally (api/close! sess)))))
 (deftest ^:external test-run-wire-guards-the-whole-suite
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "tg.core"
                               :source (str "(ns tg.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -543,7 +543,7 @@
           (is (re-find #"rarely needed" r))))
       (finally (api/close! sess)))))
 (deftest ^:external review-scan-is-on-the-wire-and-read-only
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [tools   (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
                             [:result :tools])
@@ -611,7 +611,7 @@
   ;; drives a real compile error THROUGH the wire under the boundary audit:
   ;; the response must anchor (form + snippet) and carry NO coordinate —
   ;; the audit would throw otherwise, so this pins the compile-error path.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "wce.core" :source "(ns wce.core)\n(defn f [x] x)\n"})
       (let [r (call! sess "edit_replace_form"
@@ -623,7 +623,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external module-purity-rides-the-wire
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create"
             {:ns "wcore" :source "(ns wcore)\n(defn add \"A.\" [x y] (+ x y))\n"})
@@ -650,7 +650,7 @@
   (is (re-find #"\.clj" (str (#'mcp/boundary-leak {:at "foo.clj:42"})))))
 
 (deftest ^:external source-arg-friction
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
       (testing "a misnamed new_source names the real :source param, not a paren/parse error"
@@ -673,7 +673,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-vocabulary-rides-the-wire
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create"
             {:ns "voc"
@@ -689,7 +689,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-rules-rides-the-wire
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [rs (edn/read-string (call! sess "query_rules" {}))]
         (is (>= (count rs) 9) (pr-str rs))
@@ -705,7 +705,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-rule-telemetry-rides-the-wire
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "tl" :source "(ns tl)\n(defn seed \"S.\" [x] x)\n"})
       (call! sess "edit_add_form" {:ns "tl" :source "(defn bare [x] x)" :prompt "undocumented public"})
@@ -724,7 +724,7 @@
   ;; general `cleanup` rather than a declare-specific tool on purpose —
   ;; declares are auto-managed, and the tool surface should not teach an agent
   ;; that it owns them.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [by-name (into {} (map (juxt :name identity))
                           (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
@@ -748,7 +748,7 @@
 (deftest ^:external undo-is-reachable-over-the-wire
   ;; undo must be on the wire to do its job: it is only reached for reflexively
   ;; if it is one call away the moment a write turns out wrong.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [by-name (into {} (map (juxt :name identity))
                           (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
@@ -773,7 +773,7 @@
   ;; query_depends reports :pure back. So an agent naturally sends ":pure",
   ;; which (keyword ":pure") turned into ::pure and got refused. Both
   ;; spellings must land on the same tier.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (doseq [spelling ["pure" ":pure"]]
         (let [r (call! sess "module_purity" {:module "mp.core" :tier spelling
@@ -787,7 +787,7 @@
   ;; god-form ADDS forms, so the count can rise while the codebase improves —
   ;; it did, 50 -> 54, during this sweep. Large forms are a distribution to
   ;; flatten, not a quantity to minimize, so report the shape.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rs.core
                    (str "(ns rs.core)\n\n"
@@ -809,7 +809,7 @@
   ;; flagging it is a finding no one can ever discharge, which is worse than
   ;; not flagging it: it pads the number the sweep is trying to drive to zero.
   ;; defn/defmulti stay flaggable; they are callable.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ut.core
                    (str "(ns ut.core)\n\n"
@@ -833,7 +833,7 @@
   ;; Green must mean "tests ran and passed". Nothing ran is UNVERIFIED — the
   ;; agent's cue to write a test or name one, rather than a habit of running
   ;; test_run manually after every write because the status cannot be trusted.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'uv.core "(ns uv.core)\n")
       (let [r (call! sess "edit_add_form"
@@ -861,7 +861,7 @@
   ;; facts: the first is the agent's to fix by writing a test, the second is a
   ;; slopp bug. They were indistinguishable, which is exactly how the empty
   ;; fallback hid — it looked like an ordinary untested form for months.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'uw.core "(ns uw.core)\n")
       (let [r (call! sess "edit_add_form"
@@ -887,7 +887,7 @@
   ;; ONE intent (change-signature!, rename-sweep!, revert-episode!, undo!,
   ;; sync/apply-ns!) — those intermediates are invalid by construction and
   ;; nobody was asked to reason about them.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (let [by-name (into {} (map (juxt :name identity))
                           (get-in (mcp/handle! sess {:id 2 :method "tools/list"})
@@ -909,7 +909,7 @@
   ;;
   ;; Silently dropping an unrecognised SAFETY flag turns it into a no-op with
   ;; the opposite meaning of what was asked.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dw.core "(ns dw.core)\n(defn f [] {:dw/target 1})\n")
       (let [before (count (store/deltas (:store @sess)))
@@ -932,7 +932,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-isogreen"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       ;; MIXED tiers: a fast test runs, an external one defers
       (call! sess "ns_create" {:ns "iso.core" :source "(ns iso.core)\n(defn f [] 1)\n"})
@@ -980,7 +980,7 @@
   ;;
   ;; An api-level test cannot catch this — the api was always right. The
   ;; invariant belongs where the agent reads it: over the wire.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'wp.core
                    (str "(ns wp.core)\n"

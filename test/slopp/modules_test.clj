@@ -106,7 +106,7 @@
     (testing "same-ns rows are exempt"
       (is (nil? (viol {"b.user" #{}} [(row 'b.user 'b.user)]))))))
 (deftest ^:external the-manifest-follows-ns-renames
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ma.core "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n")
       (api/module-dep! sess "mb.app" "ma.core" :prompt "app uses core")
@@ -129,7 +129,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-modules-adopt"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     ;; land cross-module reality with the gate bypassed (what a bulk import
     ;; does) — manifest stays {}, journal has no :module-edge deltas
     (try
@@ -141,7 +141,7 @@
       (is (= {} (modules/modules-manifest (:store @sess))))
       (finally (api/close! sess)))
     ;; reopen: empty manifest + populated + no edge delta ever = adopt
-    (let [sess2 (api/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.api/dir dir})]
       (try
         (is (= {"kb.app" #{"ka.core"}}
                (modules/modules-manifest (:store @sess2))))
@@ -155,7 +155,7 @@
       (is (= ["a.x" "b.y" "c.z"] (store/module-path m "a.x" "c.z")))
       (is (nil? (store/module-path m "c.z" "a.x")))))
   (testing "an adopted cycle (test folding makes them real) blocks nothing unrelated"
-    (let [sess (api/open!)]
+    (let [sess (external/open!)]
       (try
         ;; simulate adoption having recorded a cycle: api<->db via test folding
         (swap! sess update :store
@@ -182,7 +182,7 @@
     (is (= [["z.leaf"] ["z.top"]]
            (:layers (store/module-layers {"z.top" #{"z.leaf"}}))))))
 (deftest ^:external the-module-lifecycle
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (is (nil? (:error (api/ingest! sess 'ma.core
                                      "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n"))))
@@ -321,7 +321,7 @@
       (is (nil? (modules/tier-refusal (at eff-src :effects) 'app.core 'tick!))))))
 
 (deftest ^:external module-purity-verb
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "declares a tier, folded onto the store"
         (let [r (api/module-tier! sess "app.core" :pure :prompt "keep core pure")]
@@ -339,7 +339,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external purity-gate-refuses-effectful-writes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'pcore "(ns pcore)\n\n(defn add \"A.\" [x y] (+ x y))\n")
       (api/module-tier! sess "pcore" :pure :prompt "core stays pure")
@@ -408,7 +408,7 @@
         (is (nil? (modules/schema-refusal s 'app.core.impl 'handle)))))))
 
 (deftest ^:external schema-require-gate-refuses-boundary-writes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core "(ns sg.core)\n\n(defn seed \"S.\" [x] x)\n")
       (testing "OFF by default: a module-external map-arg fn with no schema lands"
@@ -485,7 +485,7 @@
         (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))))
 
 (deftest ^:external namespaced-keys-gate-refuses-boundary-writes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'nk.core "(ns nk.core)\n\n(defn seed \"S.\" [x] x)\n")
       (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
@@ -563,7 +563,7 @@
         (is (empty? (:advisories gc)))))))
 
 (deftest ^:external advisory-write-gate-warns-but-proceeds
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'aw.core "(ns aw.core)\n\n(defn seed \"S.\" [x] x)\n")
       (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
@@ -586,7 +586,7 @@
   ;; is a claim about the functional CORE, not about the code that drives it.
   ;; Found by cleanup {all true} on slopp's own store, where declaring
   ;; slopp.normalize :pure had already stranded slopp.normalize-test.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'pt.core "(ns pt.core)\n(defn add [x y] (+ x y))\n")
       (api/module-tier! sess "pt.core" :pure :prompt "a pure core")
@@ -610,7 +610,7 @@
   ;; polices itself like ^:ambient-ok / ^:unused-ok: a marker on a fn that has
   ;; no bare boundary keys is itself refused, so it cannot decay into a blanket
   ;; opt-out someone sprinkles to silence the gate.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
       (api/ingest! sess 'fk.core "(ns fk.core)\n")
@@ -650,7 +650,7 @@
   (testing "the purity gate is production-only, and says so in one place"
     (is (= :production (:rule/applies-to (meta #'modules/tier-refusal)))))
   (testing "and the report agrees with the gate by construction"
-    (let [sess (api/open!)]
+    (let [sess (external/open!)]
       (try
         (api/ingest! sess 'ra.core "(ns ra.core)\n(defn add [x y] (+ x y))\n")
         (api/ingest! sess 'ra.core-test "(ns ra.core-test)\n(defn setup! [f] (slurp f))\n")
@@ -673,7 +673,7 @@
   ;; most-shared are Clojure syntax (:require, :as, :when) and slopp's
   ;; universal result vocabulary (:error in 119 forms) — where one shared
   ;; spelling is right and namespacing is pure loss.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
       (api/ingest! sess 'ks.core "(ns ks.core)\n")

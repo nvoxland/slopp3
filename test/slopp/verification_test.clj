@@ -11,7 +11,7 @@
        "(deftest mul-t (is (= 6 (mul 2 3))))\n"))
 
 (deftest ^:external tracing-maps-tests-to-forms
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'vdemo target)
       (let [res (api/test-run! sess 'vdemo)]
@@ -23,7 +23,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external edit-runs-only-affected-tests
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'vdemo target)
       (api/test-run! sess 'vdemo)                          ; builds the trace map
@@ -41,7 +41,7 @@
           (is (= ['vdemo/mul-t] (:affected r)))
           (is (= 1 (:pass (:test r))))))
       (testing "ingest itself seeds the trace map (W1): edits narrow immediately"
-        (let [sess2 (api/open!)]
+        (let [sess2 (external/open!)]
           (try
             (api/ingest! sess2 'vdemo target)
             (let [r (api/edit-replace! sess2 'vdemo 'mul "(defn mul [x y] (* y x))")]
@@ -53,7 +53,7 @@
 (deftest ^:external reload-signature-reds-still-heal              ; D5.1 belt-and-suspenders
   ;; Even when the red IS on an edited path (flip rule says "explained"), an
   ;; unbound-var-style failure smells like staleness and must cross-check.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sig.core
                    (str "(ns sig.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -72,7 +72,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external test-run-fresh-forces-a-cross-check
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'fr.core
                    (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -84,7 +84,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external test-run-only-targets-named-tests
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'vdemo target)
       (let [r (api/test-run! sess 'vdemo :only ['add-t])]
@@ -93,7 +93,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external red-is-cross-checked-on-a-fresh-image
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'vdemo target)
       (testing "staleness flip: image drifts behind the store's back; NOTHING was
@@ -121,7 +121,7 @@
 (deftest ^:external red-results-name-the-implicated-forms
   ;; Rock 2: the system holds the trace map AND the delta — a red write
   ;; result says WHICH changed form each failing test exercises
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'im.core :source "(ns im.core (:require [clojure.test :refer [deftest is]]))\n(defn f [x] (inc x))\n(defn g [x] (dec x))\n(deftest f-t (is (= 2 (f 1))))\n(deftest g-t (is (= 0 (g 1))))\n")
       (api/test-run! sess nil)
@@ -138,13 +138,13 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-trace"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        s1  (api/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! s1 'vdemo target)
       (api/test-run! s1 'vdemo)
       (is (seq (:test-map @s1)))
       (finally (api/close! s1)))
-    (let [s2 (api/open! {:slopp.api/dir dir})]
+    (let [s2 (external/open! {:slopp.api/dir dir})]
       (try
         (testing "a fresh session on the same store starts with the trace warm (Q3)"
           (is (= #{'vdemo/add} (get (:test-map @s2) 'vdemo/add-t))
@@ -172,7 +172,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-affected"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'ia.core "(ns ia.core)\n(defn f \"F.\" [x] (inc x))\n")
       (api/ingest! sess 'ia.core-test
@@ -204,7 +204,7 @@
   ;; the full external suite is the wall-time king (~210s at repo scale,
   ;; run at every milestone) — sharding test nses across parallel JVMs
   ;; must return the same merged truth
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'pa.core
                    (str "(ns pa.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -245,7 +245,7 @@
   ;; seen when the sharded suite nests JVM-spawning tests) is an
   ;; environment failure, not a test failure: test failures PARSE. Retry
   ;; exactly those shards once, serially, and merge honestly.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ds.one-test
                    (str "(ns ds.one-test (:require [clojure.test :refer [deftest is]]))\n\n"
@@ -299,7 +299,7 @@
   ;; end to end — build routes through the store's runner, the runner writes a
   ;; trace beside the build, external-test-run! reads it back and absorbs it —
   ;; with a STUB runner, so it tests the wiring rather than the tracer.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'tt.core
                    (str "(ns tt.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -334,7 +334,7 @@
   ;;
   ;; Stand in for the external runner's tracer: publish a sink the way testmain's
   ;; instrument! does around every external test, then drive a child image.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'vdemo target)
       (let [touched   (atom #{})
@@ -351,7 +351,7 @@
   ;; registrations define no name) plus the defmulti, and NOT for sibling
   ;; methods. Before this, MultiFns were structurally invisible (ifn? but not
   ;; fn?) and a multimethod-heavy project got zero narrowing evidence.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'shapes.core
                    (str "(ns shapes.core)\n\n"
@@ -390,7 +390,7 @@
   ;; evidence — an earlier version of this test asserted it would, and the
   ;; oracle said no. Constructors are plain fns, so ->Sq evidence flows to Sq's
   ;; form (D8 names), and everything method-carrying refuses to narrow.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'geo.core
                    (str "(ns geo.core)\n\n"
@@ -428,7 +428,7 @@
   ;; MCP restart recovered it. Twice.
   ;;
   ;; A repair tool must not require the thing it repairs to be healthy.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rr.core "(ns rr.core)\n(defn f [] 41)\n")
       (is (= [41] (api/query-eval sess "(rr.core/f)")))
@@ -450,7 +450,7 @@
   ;; Naming cannot fix it: slopp.git is covered by slopp.git-projection-test,
   ;; not slopp.git-test. Only the require graph knows. The covering ns here is
   ;; deliberately NOT cv.core-test, so a naming heuristic still finds nothing.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (is (nil? (:error (api/ingest! sess 'cv.core
                                      "(ns cv.core)\n(defn f [] 41)\n"))))
@@ -491,7 +491,7 @@
   ;; A cache keyed on its input is safe by construction; every memo in this
   ;; store is. A HANDLE is keyed on nothing — a resource built once under one
   ;; version of the code and passed back forever after.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'lh.core
                    (str "(ns lh.core)\n\n"

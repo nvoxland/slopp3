@@ -48,7 +48,7 @@
 
 (deftest ^:external query-git-surfaces-the-url-over-mcp
   (let [dir  (temp-dir "slopp-embed-mcp")
-        sess (api/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.api/dir dir})
         call (fn [tool args]
                (get-in (mcp/handle! sess {:id 1 :method "tools/call"
                                          :params {:name tool :arguments args}})

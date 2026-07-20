@@ -9,7 +9,7 @@
     (let [r (edit/parse-form "(defn broken [x")]
       (is (:error r))
       (is (re-find #"unparseable" (:error r)))))
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'er.core "(ns er.core)\n(defn f [x] x)\n")
       (testing "add with unbalanced source: {:error}, nothing committed"
@@ -27,7 +27,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external ingest-is-the-batch-write-for-NEW-namespaces   ; W1 (user decision)
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "a whole namespace lands in one verified write"
         (let [r (api/ingest! sess 'w1.core
@@ -51,7 +51,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external create-ns-and-add-require                     ; F4 + F5
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "create a namespace directly, with requires"
         (let [r (api/create-ns! sess 'fresh.core
@@ -79,7 +79,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external warnings-report-only-whats-new                ; T3
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'w.core)
       (testing "first violation reported in full"
@@ -92,7 +92,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external failed-namespace-load-is-not-silently-committed   ; T4
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "requiring a not-yet-created store ns fails loudly, nothing committed"
         (let [r (api/create-ns! sess 'dep.user :requires ["[dep.lib :as lib]"])]
@@ -105,7 +105,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-eval-is-observe-only                    ; T5
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'g.core "(ns g.core)\n(defn f [x] x)\n")
       (testing "definitions and code mutation are rejected — use edit tools"
@@ -143,7 +143,7 @@
       (is (re-find #"query_source"
                    (:error (edit/missing-form-error store 'mf.core 'zzz)))))))
 (deftest ^:external red-first-specs-land-as-red
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rf.core "(ns rf.core)\n(defn seed \"S.\" [x] x)\n")
       (api/ingest! sess 'rf.core-test
@@ -169,7 +169,7 @@
   ;; the seam is the compile gate, not the command: EVERY write path that
   ;; loads a -test namespace inherits red-first — groups, whole-ns ingest,
   ;; :refer'd bare names, and image restarts with stubs outstanding
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rg.core "(ns rg.core)\n(defn seed \"S.\" [x] x)\n")
       (api/ingest! sess 'rg.core-test
@@ -206,7 +206,7 @@
   ;; REPL-native flow: growing a signature one write at a time must not be
   ;; refused — stale callers are CARRIED to the done-point, not blockers;
   ;; an error inside the form being written still refuses
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg2.core
                    (str "(ns sg2.core)\n"
@@ -242,7 +242,7 @@
   ;; replacing a form with a DIFFERENTLY-NAMED one strands committed callers
   ;; on the old name — the store stops cold-loading (the self-hosting bind
   ;; in miniature). The write must refuse and teach the atomic tool.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rn.core
                    (str "(ns rn.core)\n\n"
@@ -263,7 +263,7 @@
   ;; address — the owning form + a match-ready snippet — not a VFS
   ;; file:line no tool consumes; the coordinate never rides the message.
   ;; (Java interop is the genuine kondo-miss → raw compiler path.)
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ca.core "(ns ca.core)\n\n(defn ok \"O.\" [x] x)\n")
       (let [r (api/edit-replace! sess 'ca.core 'ok
@@ -281,7 +281,7 @@
   ;; pipeline reordering defs above callers — SILENTLY: no refusal, no declare,
   ;; and no ordering signal leaks back (order is store truth, not the agent's
   ;; concern). The reorder is proven by the store order flipping [a b] → [b a].
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ar.core
                    "(ns ar.core)\n\n(defn a \"A.\" [x] x)\n\n(defn b \"B.\" [x] x)\n")
@@ -301,7 +301,7 @@
   ;; the .ideas motivating case: the agent adds a caller anchored ABOVE the
   ;; callee it references. That is a forward ref — the pipeline reorders the
   ;; callee above the caller silently, no declare, no refusal.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cc.core "(ns cc.core)\n\n(defn callee \"C.\" [x] (inc x))\n")
       (testing "adding a caller :before its callee resolves the forward ref"
@@ -318,7 +318,7 @@
   ;; mutual recursion has no legal form order — the pipeline OWNS the declare:
   ;; it inserts a MARKED (declare …) itself so the ns cold-loads. The agent
   ;; never writes one, and no declare key leaks back (like the reorder).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cy.core "(ns cy.core)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
       (testing "editing ping into mutual recursion auto-declares (no refusal)"
@@ -338,7 +338,7 @@
   ;; the pipeline OWNS declares — an agent never writes one. A hand-written
   ;; (declare …) on the EDIT path is refused with teaching; imports (ingest)
   ;; and the pipeline's own inserts are unaffected.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'nd.core "(ns nd.core)\n(defn a [] 1)\n")
       (testing "add_form of a bare declare is refused with teaching"
@@ -356,7 +356,7 @@
   ;; ^:external tests only behave in a FRESH image — the in-image per-write
   ;; run must never execute them (a false green/red); it reports them
   ;; :external-pending. The whole-ns fallback (no trace) is where they leak in.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ir.test
                    (str "(ns ir.test (:require [clojure.test :refer [deftest is]]))\n"
@@ -376,7 +376,7 @@
   ;; A replacement that quietly changes the CONTRACT — losing type hints or a
   ;; docstring, changing arity — should say so. Not refuse: each is a
   ;; legitimate intentional edit. Just never silent.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'dw.core
                    (str "(ns dw.core)\n\n"
@@ -415,7 +415,7 @@
   ;; The answer is the opposite: they are ONE form, so it is ONE edit. Widen
   ;; the match. That belongs in the refusal, where it arrives at the moment of
   ;; need, not only in a skill an agent may not re-read.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'nt.core
                    "(ns nt.core)\n\n(defn f [a b] (+ a b))\n")

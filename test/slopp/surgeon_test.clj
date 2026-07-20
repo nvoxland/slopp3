@@ -2,7 +2,7 @@
   "clj-surgeon-inspired structural ops, slopp-grade: gated, verified,
   recorded. query_deps / fix_declares / ns_rename / edit_move_forms."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def core-src
   (str "(ns sg.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -18,7 +18,7 @@
        "(deftest wrap-t (is (= 8 (wrap 2))))\n"))
 
 (deftest ^:external query-deps-transitive-callee-tree
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
       (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
@@ -32,7 +32,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external fix-declares-moves-and-deletes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'fd.core
                    (str "(ns fd.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -61,7 +61,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external ns-rename-rewrites-the-world
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
       (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
@@ -84,7 +84,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external extract-forms-to-a-new-namespace
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core core-src)
       (testing "guard: moved forms may not call what stays behind"
@@ -111,7 +111,7 @@
   ;; deep child ns, and the parent requires its own child back. Regression
   ;; for the live FileNotFound (the new store-only ns must be loadable when
   ;; the parent's ns form re-evaluates).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'xr.core
                    (str "(ns xr.core)\n\n"
@@ -139,7 +139,7 @@
   ;; THE v1 gap: in a tested codebase everything has external references, so
   ;; no real cluster was movable. v2 rewrites every caller — production AND
   ;; tests — injects requires, and the export dial covers deep targets.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'mvx.core
                    (str "(ns mvx.core)\n\n"
@@ -171,7 +171,7 @@
 (deftest ^:external move-into-an-existing-namespace
   ;; consolidation: the target already exists — moved forms append, the
   ;; stay-behind caller is rewritten, only missing requires are added.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'mve.a
                    (str "(ns mve.a)\n\n"
@@ -194,7 +194,7 @@
   ;; move-forms) is a PHANTOM: it mints an unbound var, so a typo'd unqualified
   ;; call resolves silently instead of failing loudly. It must never BLOCK
   ;; cleanup of the declare around it.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ph.core
                    (str "(ns ph.core)\n"
@@ -215,7 +215,7 @@
   ;; (declared here, defined nowhere, minting an unbound var). Ordering is the
   ;; pipeline's job — and moved nodes keep source order, so a valid subsequence
   ;; of a loading ns cannot even have an internal forward ref.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing "an ordinary multi-form move needs NO declare at all"
         (api/ingest! sess 'mv.core
@@ -251,7 +251,7 @@
   ;; from the first write — but INGESTED code predates those invariants, and
   ;; a legacy declare is otherwise unaddressable (two elements share a name,
   ;; so the name-addressed edit tools cannot reach it).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cu.core
                    (str "(ns cu.core)\n\n"
@@ -280,7 +280,7 @@
   ;; rather than on whoever made it. cleanup reports the standing position
   ;; instead — apply what is mechanical, report what is not. A migration aid:
   ;; the end state is these violations being refused at write time.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'pu.core
                    (str "(ns pu.core)\n\n"
@@ -305,7 +305,7 @@
   ;; written before the advisory was added. That is a migration concern, and
   ;; cleanup is where migration concerns live: apply what is mechanical, report
   ;; what is not. Reports the whole namespace, regardless of what was touched.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'adv.core
                    (str "(ns adv.core)\n\n"
@@ -329,7 +329,7 @@
   ;; that predates a gate was never subject to it; lint, dead public surface
   ;; and missing docstrings ride done and so only ever saw touched forms.
   ;; cleanup is the migration surface, so it reports all of them.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'gap.core
                    (str "(ns gap.core)\n\n"
@@ -350,7 +350,7 @@
   ;; a slopp upgrade that adds a rule, means every namespace needs the tidy
   ;; applied and the whole enforcement surface replayed. Per-namespace is the
   ;; wrong grain for that — you do not know which namespaces predate the rule.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'swa.core
                    (str "(ns swa.core)\n\n"
@@ -368,4 +368,51 @@
         (testing "a namespace with nothing to report is not listed as a finding"
           (is (every? (fn [f] (seq (dissoc f :ns))) (:findings r))
               (pr-str (:findings r)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external move-a-form-with-an-unresolvable-callee
+  ;; End-to-end guard for the crash that made slopp.api/open! unmovable:
+  ;; kondo marks the proxy method body's `run` with the KEYWORD sentinel
+  ;; :clj-kondo/unknown-namespace, which reached a sort over namespace
+  ;; symbols. Shaped like open! — proxy, a metadata map on the name, and TWO
+  ;; libs (with one the sentinel was the only element left, and sorting one
+  ;; element never calls compare). refactor-test/plan-survives-an-unresolvable-callee
+  ;; covers the planner; this covers the executor.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mvm.a
+                   (str "(ns mvm.a\n"
+                        "  (:require [clojure.string :as str]))\n\n"
+                        "(defn ^{:live-handle true} spin\n"
+                        "  \"S.\"\n"
+                        "  [t]\n"
+                        "  (.schedule t (proxy [java.util.TimerTask] []\n"
+                        "                 (run [] (str/upper-case \"x\")))\n"
+                        "               1000 1000))\n"))
+      (let [r (api/move-forms! sess 'mvm.a '[spin] 'mvm.b :export true)]
+        (is (nil? (:error r)) (pr-str r))
+        (is (re-find #"defn.*spin" (query/query-source sess 'mvm.b)))
+        (is (not (re-find #"clj-kondo" (query/query-source sess 'mvm.b)))
+            "the unresolvable callee must not become a require"))
+      (finally (api/close! sess)))))
+
+(deftest ^:external move-drops-the-requires-it-orphans
+  ;; The executor half of refactor-test/plan-drops-requires-the-move-orphans.
+  ;; Moving `f` takes the last user of clojure.string; the require must leave
+  ;; with it, while clojure.set stays because `g` still uses it.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'dr.core
+                   (str "(ns dr.core\n"
+                        "  (:require [clojure.string :as str]\n"
+                        "            [clojure.set :as set]))\n\n"
+                        "(defn f \"F.\" [x] (str/upper-case x))\n\n"
+                        "(defn g \"G.\" [a b] (set/union a b))\n"))
+      (let [r (api/move-forms! sess 'dr.core '[f] 'dr.moved)]
+        (is (nil? (:error r)) (pr-str r))
+        (let [src (query/query-source sess 'dr.core)]
+          (is (not (re-find #"clojure\.string" src))
+              (str "the orphaned require must leave with the form:\n" src))
+          (is (re-find #"clojure\.set" src)
+              (str "a require still in use must stay:\n" src))))
       (finally (api/close! sess)))))

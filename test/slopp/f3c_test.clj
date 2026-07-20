@@ -3,7 +3,7 @@
   F-3c2 query-eval surfaces exceptions, F-3c3 cross-namespace references,
   F-3c5 trace-less group verification covers ALL touched namespaces."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (defn- seed! [sess]
   (api/ingest! sess 'ta.a
@@ -18,7 +18,7 @@
                     "(deftest b-t (is (= 3 (g 1))))\n")))
 
 (deftest ^:external project-wide-test-run                          ; F-3c1
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (seed! sess)
       (testing "no :ns = every namespace's tests, ONE call"
@@ -32,7 +32,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external query-eval-surfaces-errors                     ; F-3c2
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (seed! sess)
       (is (= [3] (api/query-eval sess "(ta.b/g 1)")))   ; values unchanged
@@ -44,7 +44,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external references-cross-namespaces                    ; F-3c3
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (seed! sess)
       (let [refs (query/query-references sess 'ta.a 'f)]
@@ -54,7 +54,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external traceless-group-verification-covers-all-touched-nses ; F-3c5
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (seed! sess)
       ;; a reopened durable session has NO trace map — simulate that state

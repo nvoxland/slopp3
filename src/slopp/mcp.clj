@@ -811,7 +811,7 @@
   ({:content [{:text …}]}; :isError true on tool errors), same as the
   server would send."
   [dir tool arguments]
-  (let [session (api/open! {:slopp.api/dir (str dir)})]
+  (let [session (external/open! {:slopp.api/dir (str dir)})]
     (swap! session assoc :require-turns? true)
     (try
       (try (call-tool! session {:name tool :arguments arguments})
@@ -903,7 +903,7 @@
       (binding [*out* *err*]
         (println (str "slopp: auto-imported " (:namespaces r)
                       " namespaces from the repo's slopp branch")))))
-  (let [session (api/open! (cond-> {:slopp.api/warm-spare? true}
+  (let [session (external/open! (cond-> {:slopp.api/warm-spare? true}
                              dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
     (when dir

@@ -1,6 +1,6 @@
 (ns slopp.api.orient-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.orient :as orient]))
+            [slopp.api :as api] [slopp.api.orient :as orient] [slopp.api.external :as external]))
 
 (deftest fit-report-keeps-reports-under-the-gate
   (let [fat {:milestones [{:commit "d9" :description "m"}]
@@ -27,7 +27,7 @@
       (is (some #(and (:ns %) (number? (:forms %))) (:changes r)) (pr-str (take 3 (:changes r))))
       (is (re-find #"rolled up" (str (:note r))) (pr-str (:note r))))))
 (deftest ^:external form-cards-are-the-interface-view
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cd.core
                    (str "(ns cd.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -50,7 +50,7 @@
 (deftest ^:external cards-carry-observed-examples
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-obs" (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'ob.core
                    "(ns ob.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")

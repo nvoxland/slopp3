@@ -5,14 +5,14 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.session :as session] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.session :as session] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns cc.core)\n"
        "(defn a [x] x)\n(defn b [x] x)\n(defn c [x] x)\n(defn d [x] x)\n"))
 
 (deftest ^:external parallel-different-form-edits-all-land
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cc.core seed)
       (let [results (doall
@@ -38,7 +38,7 @@
       (finally (api/close! sess)))))
 
 ^:unsafe (deftest ^:external same-form-contention-surfaces-a-conflict
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'cc.core seed)
       ;; deterministic contention: between this write's hot-load and its
@@ -76,7 +76,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external revert-restores-a-prior-version
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'rv.core "(ns rv.core)\n(defn f [x] x)\n")
       (api/edit-replace! sess 'rv.core 'f "(defn f [x] (inc x))" :prompt "v2")
@@ -102,7 +102,7 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5a-" (System/nanoTime))]
     (try
-      (let [sess (api/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.api/dir dir})]
         (try
           (api/ingest! sess 'cc.core seed)
           (let [results (doall
@@ -116,7 +116,7 @@
                 (pr-str (mapv #(select-keys % [:error :conflict]) results))))
           (finally (api/close! sess))))
       ;; the journal is the record: a fresh session sees all four writes
-      (let [sess (api/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.api/dir dir})]
         (try
           (let [src (query/query-source sess 'cc.core)]
             (doseq [nm '[a b c d]]

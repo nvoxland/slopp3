@@ -2,7 +2,7 @@
   "Item 5: paredit's valid-tree→valid-tree invariant as ONE content-addressed
   primitive — sub-form edits that never re-transcribe sibling code."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def target
   (str "(ns sf.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -15,7 +15,7 @@
        "  (is (= 1060 (price [{:cents 500} {:cents 500}] 0.01))))\n"))
 
 (deftest ^:external subform-edit-touches-only-what-it-names
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sf.core target)
       (testing "replace one inner expression; siblings and comments untouched"
@@ -51,7 +51,7 @@
   ;; text-mode misses returned a bare error (no :source-now to correct
   ;; against), and exact-text matching is brittle across docstring
   ;; reflows — a whitespace-fuzzy fallback should land the unique match.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'tm.core
                    (str "(ns tm.core)\n\n"
@@ -73,7 +73,7 @@
   ;; refused with the rule — but when the fragment appears in the form, the
   ;; error should SHOW the smallest complete form containing it, so the
   ;; retry needs no re-read.
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'fg.core
                    (str "(ns fg.core)\n\n"

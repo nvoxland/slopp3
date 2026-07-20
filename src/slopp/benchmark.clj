@@ -14,7 +14,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp])
+            [slopp.mcp :as mcp] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [java.time LocalDate]))
@@ -109,7 +109,7 @@
   and public surface is what the boundary gates judge, so an accidental
   `defn` makes an internal fixture shape look like a contract."
   [{:keys [name steps test-ns]}]
-  (let [session (api/open! {:slopp.api/dir (temp-dir) :slopp.api/warm-spare? true})]
+  (let [session (external/open! {:slopp.api/dir (temp-dir) :slopp.api/warm-spare? true})]
     (try
       (let [t0    (System/nanoTime)
             sizes (mapv #(call! session %) steps)

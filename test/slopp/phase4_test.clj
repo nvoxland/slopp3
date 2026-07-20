@@ -6,7 +6,7 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query])
+            [slopp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))
@@ -74,7 +74,7 @@
       (finally (http/stop-server! srv)))))
 
 (deftest ^:external attribution-flows-through-every-write-kind
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'at.core "(ns at.core)\n(defn f [x] x)\n" :agent "ingester")
       (api/edit-replace! sess 'at.core 'f "(defn f [x] (inc x))"
@@ -94,7 +94,7 @@
         b-dir (str root "/fork")]
     (try
       ;; 1. mainline project is born
-      (let [sess (api/open! {:slopp.api/dir a-dir})]
+      (let [sess (external/open! {:slopp.api/dir a-dir})]
         (try
           (api/ingest! sess 'fm.core
                        (str "(ns fm.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -106,7 +106,7 @@
       ;; 2. fork = copy the project dir
       (clojure.java.shell/sh "cp" "-r" a-dir b-dir)
       ;; 3. the fork diverges on its own server (edits g, adds h + a test)
-      (let [sess (api/open! {:slopp.api/dir b-dir})]
+      (let [sess (external/open! {:slopp.api/dir b-dir})]
         (try
           (api/edit-replace! sess 'fm.core 'g "(defn g [x] (f (f x)))"
                              :prompt "double-apply" :agent "forker")
@@ -116,7 +116,7 @@
                          "(deftest h-t (is (= 30 (h 1))))" :agent "forker")
           (finally (api/close! sess))))
       ;; 4. meanwhile mainline diverges on a DIFFERENT form
-      (let [sess (api/open! {:slopp.api/dir a-dir})]
+      (let [sess (external/open! {:slopp.api/dir a-dir})]
         (try
           (api/edit-replace! sess 'fm.core 'f "(defn f [x] (+ 1 x))"
                              :prompt "same behavior, our style" :agent "mainliner")

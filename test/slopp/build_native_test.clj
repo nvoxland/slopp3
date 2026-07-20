@@ -52,7 +52,7 @@
       (is (re-find #"-o \"calc\"" s)))))
 
 (deftest ^:external build-native-t
-  (let [sess (api/open!)
+  (let [sess (external/open!)
         dir  (str (Files/createTempDirectory "slopp-native"
                                              (make-array FileAttribute 0)))]
     (try

@@ -1,12 +1,12 @@
 (ns slopp.trace-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]))
+            [slopp.api :as api] [slopp.api.external :as external]))
 
 (def catch-frames
   "(try (tr.core/outer) (catch Exception e (mapv str (take 4 (.getStackTrace e)))))")
 
 (deftest ^:external stack-traces-map-to-vfs-lines                 ; F6
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'tr.core
                    (str "(ns tr.core)\n"

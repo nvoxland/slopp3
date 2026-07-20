@@ -5,7 +5,7 @@
   Plan tests are pure (ingest stores); the api op is exercised external."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.refactor :as refactor]
-            [slopp.store :as store] [slopp.api :as api]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
 
 (defn- st2 []
   (-> (store/empty-store)
@@ -60,7 +60,7 @@
     (is (nil? (:error plan)) (pr-str plan))
     (is (= ['g] (mapv :name (:caller-steps plan))))))
 (deftest ^:external change-signature-end-to-end
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/create-ns! sess 'cs.e2e
                       :source "(ns cs.e2e (:require [clojure.test :refer [deftest is]]))\n(defn f [x y] (+ x y))\n(defn g [a] (f a 1))\n(deftest g-t (is (= 3 (g 2))))\n")

@@ -915,8 +915,30 @@
             no-alias    (sort (keep (fn [[nsx a]] (when (nil? a) nsx)) alias-of))
             ;; requires the MOVED code needs, copied verbatim from from-ns
             from-specs  (require-specs store from-ns)
+             ;; the requires THIS move orphans: libs the moved forms used
+             ;; that no stay-behind still references. Scoped to the move's
+             ;; own damage on purpose — pruning every unused require would
+             ;; drop one kept for side effects (defmethod registration),
+             ;; which kondo cannot tell from a dead one. A row with no
+             ;; :from-var is ns-level and counts as a stay-behind user.
+             stay-libs   (->> rows (remove #(moved (:from-var %)))
+                              (map :to) (filter symbol?) set)
+             from-require-drops
+             (->> from-specs (map :lib)
+                  (filter (->> moved-rows (map :to) (filter symbol?) set))
+                  (remove stay-libs)
+                  (remove #{from-ns to-ns 'clojure.core})
+                  sort vec)
             needed-libs (->> moved-rows (map :to) distinct
-                             (remove #{from-ns to-ns 'clojure.core nil}) sort)
+                              ;; kondo marks a callee it cannot resolve with
+                              ;; the KEYWORD :clj-kondo/unknown-namespace — a
+                              ;; proxy method body is the usual source. It is
+                              ;; not a library, and it made this sort compare
+                              ;; a keyword against a symbol, which is why
+                              ;; slopp.api/open! (the store's only proxy)
+                              ;; could not be moved at all.
+                              (filter symbol?)
+                              (remove #{from-ns to-ns 'clojure.core nil}) sort)
             need-specs  (mapv (fn [lib]
                                 {:lib lib
                                  :spec (or (some #(when (= (:lib %) lib) (:spec %))
@@ -1007,7 +1029,8 @@
                    :rewrites (into {} (concat from-rw ext-rw))
                    :require-adds require-adds
                    :module-rows module-rows
-                   :removals (vec (sort moved))}
+                   :removals (vec (sort moved))
+                   :from-require-drops from-require-drops}
             new-ns?
             (assoc :new-src
                    (str "(ns " to-ns

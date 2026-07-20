@@ -217,3 +217,51 @@
       (is (re-find #"\(api/open!\)" out) out))
     (testing "nothing else in the source moved"
       (is (= (count (str/split-lines src)) (count (str/split-lines out)))))))
+
+(deftest plan-survives-an-unresolvable-callee
+  ;; kondo marks a call it cannot resolve with the KEYWORD sentinel
+  ;; :clj-kondo/unknown-namespace as the usage's :to — a proxy method body is
+  ;; the common source. That :to flowed into needed-libs, which is sorted, and
+  ;; `compare` threw "Symbol cannot be cast to Keyword". slopp.api/open! was
+  ;; the store's only proxy and so the only form that could not be moved.
+  ;; A non-symbol :to is never a library to require.
+  ;;
+  ;; The second require is LOAD-BEARING: with clojure.core removed the
+  ;; sentinel was the only element left, and sorting one element never calls
+  ;; compare — the first version of this test passed over a live bug.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'px.core
+                             (str "(ns px.core\n"
+                                  "  (:require [clojure.string :as str]))\n\n"
+                                  "(defn spin \"S.\" [t]\n"
+                                  "  (.schedule t (proxy [java.util.TimerTask] []\n"
+                                  "                 (run [] (str/upper-case \"x\")))\n"
+                                  "               1000 1000))\n")))
+        p  (refactor/move-plan st 'px.core '[spin] 'px.moved {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"defn spin" (:new-src p)) (:new-src p))
+    (testing "the unresolvable callee is not mistaken for a library to require"
+      (is (not (re-find #"clj-kondo" (:new-src p))) (:new-src p)))))
+
+(deftest plan-drops-requires-the-move-orphans
+  ;; Sequential-move artifact: `f` leaves and takes the last reference to
+  ;; clojure.string with it, orphaning the require. The cold-load gate refuses
+  ;; the resulting state, so this cost a hand-fix every time. The move should
+  ;; clean up after ITSELF.
+  ;;
+  ;; Scope is deliberate: only libs the MOVED forms were the last users of.
+  ;; Pruning every unused require would happily drop one kept for side effects
+  ;; (defmethod registration), which kondo cannot distinguish.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'dr.core
+                             (str "(ns dr.core\n"
+                                  "  (:require [clojure.string :as str]\n"
+                                  "            [clojure.set :as set]))\n\n"
+                                  "(defn f \"F.\" [x] (str/upper-case x))\n\n"
+                                  "(defn g \"G.\" [a b] (set/union a b))\n")))
+        p  (refactor/move-plan st 'dr.core '[f] 'dr.moved {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (testing "the lib only the moved form used is dropped"
+      (is (= '[clojure.string] (:from-require-drops p))))
+    (testing "a lib the stay-behinds still use is kept"
+      (is (not (contains? (set (:from-require-drops p)) 'clojure.set))))))

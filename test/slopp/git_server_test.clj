@@ -40,7 +40,7 @@
   ;; srv's :port/:url are the only ones that can be trusted — a port chosen
   ;; before binding is a guess another shard can win.
   (let [dir  (temp-dir "slopp-git-server")
-        sess (api/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.api/dir dir})
         srv  (server/start-server! 0 {:dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
@@ -91,7 +91,7 @@
 
 (deftest ^:external empty-store-clones-as-empty-repo
   (let [dir  (temp-dir "slopp-git-empty")
-        sess (api/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.api/dir dir})
         srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
     (try
       (api/ingest! sess 'gs.core seed)   ; content but NO milestones yet
@@ -108,7 +108,7 @@
   ;; a throwaway commit of the LIVE store state whenever it differs from
   ;; the last milestone; tools diff origin/main..origin/wip/main
   (let [dir  (temp-dir "slopp-git-wip")
-        sess (api/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.api/dir dir})
         
         ;; 0 = OS-assigned, atomic; srv's :port/:url are the only trustworthy
         ;; ones — a port chosen before binding is a guess a shard can win (#136)
@@ -163,7 +163,7 @@
   ;; the remote serves clone/fetch only — git-receive-pack is never advertised,
   ;; so any push is refused (edits arrive through slopp's write tools, not push).
   (let [dir  (temp-dir "slopp-git-ro")
-        sess (api/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.api/dir dir})
         srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
     (try
       (api/ingest! sess 'gs.core seed)
@@ -200,7 +200,7 @@
                      (catch Exception _ false))]
     (when git-bin
       (let [dir  (temp-dir "slopp-git-cli")
-            sess (api/open! {:slopp.api/dir dir})
+            sess (external/open! {:slopp.api/dir dir})
             srv  (server/start-server! 0 {:dir dir})]   ; 0 = OS-assigned, atomic (#136)
         (try
           (api/ingest! sess 'gs.core seed)
@@ -235,7 +235,7 @@
   ;; No race needed to pin it: hold the LOOPBACK port, exactly as a rival
   ;; shard's running server does, and the divergence is deterministic.
   (let [dir  (temp-dir "slopp-git-port")
-        sess (api/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gs.core seed)
       (external/commit-point! sess "v1" :agent "alice")

@@ -5,7 +5,7 @@
            [java.nio.file.attribute FileAttribute]))
 
 (deftest ^:external create-ns-modes
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (testing ":source lands a whole namespace in one verified call (folded-in ingest)"
         (let [r (api/create-ns! sess 'cn.core
@@ -29,7 +29,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external operation-surface
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'demo
                    (str "(ns demo)\n"
@@ -99,7 +99,7 @@
 (deftest ^:external build-routes-test-namespaces-to-test-dir
   ;; a normal Clojure layout: production under src/, tests under test/, off the
   ;; default classpath (a :test alias makes them runnable).
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'proj.core "(ns proj.core)\n(defn f [x] (inc x))\n")
       (api/create-ns! sess 'proj.core-test
@@ -139,7 +139,7 @@
       (is (every? #(<= (count (:detail %)) 520) fs))
       (is (= 1 (count (testrun/parse-test-failures out :limit 1)))))))
 (deftest ^:external inline-test-stores-build-a-runnable-suite
-  (let [sess (api/open!)]
+  (let [sess (external/open!)]
     (try
       (api/ingest! sess 'il.core
                    (str "(ns il.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -153,7 +153,7 @@
   ;; #121: the external tier can only trace if the built project carries the
   ;; trace runner. PRESENCE in the store is the condition — a store without it
   ;; must still build a deps.edn that runs, so it stays on plain cognitect.
-  (let [sess (api/open!)
+  (let [sess (external/open!)
         tmp  #(str (java.nio.file.Files/createTempDirectory
                     % (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try

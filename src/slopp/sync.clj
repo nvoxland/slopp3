@@ -136,7 +136,7 @@
               (if (empty? sources)
                 {:error (str "nothing to ingest at " url
                              " — no src/**.clj or test/**.clj on " used)}
-                (let [sess (api/open! {:slopp.api/dir dir})]
+                (let [sess (external/open! {:slopp.api/dir dir})]
                   (try
                     (doseq [[lib coord] (sort-by (comp str key) deps)]
                       (let [r (api/deps-add! sess lib coord :agent agent
@@ -621,10 +621,10 @@
             "clone"  (clone! a b)
             "import" (import! (or a "."))
             "push"   (push! a :url b)
-            "pull"   (let [sess (api/open! {:slopp.api/dir a})]
+            "pull"   (let [sess (external/open! {:slopp.api/dir a})]
                        (try (pull! sess)
                             (finally (api/close! sess))))
-            "test"   (let [sess (api/open! {:slopp.api/dir a})]
+            "test"   (let [sess (external/open! {:slopp.api/dir a})]
                        (try (external/external-test-run! sess)
                             (finally (api/close! sess))))
             {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
