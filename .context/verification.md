@@ -229,6 +229,18 @@ The oracle must never return a false verdict. Everything here serves that.
      would miss `traced-run` — which is exactly why it read `:covered 0`.
      `self-instrument!` records ITSELF explicitly for the same reason; nothing
      else can see the installer.
+   - `inject-rt!` ALSO installs a **parent-death watchdog** (d9279): a daemon
+     thread blocking on `System/in` that `System/exit`s the image on EOF. An
+     image is a ProcessBuilder child; its stdin is a pipe from the parent, so
+     the read returns -1 the instant the parent's fds close — including on
+     SIGKILL/OOM, which no shutdown hook survives. Without it, a shard JVM
+     dying abnormally orphaned its live images (reparented to init, running
+     forever as idle nREPL servers — 118 stranded over ~23h, observed). Do NOT
+     remove it, and keep it EOF-triggered: `nrepl.cmdline` never reads stdin,
+     so the thread owns it uncontended; anything that starts writing to or
+     closing an image's stdin would trip a false exit. Proven by
+     `repl-test/image-dies-with-its-parent` (kill a real parent, assert the
+     grandchild image dies).
    - `image/traced-test-run` calls `image/drain-child-rt!`, which moves
      `rt/drain-self!`'s syms onto `rt/touched-sink` — the atom `instrument!`
      publishes for whichever run is collecting. No sink (the MCP server's own
