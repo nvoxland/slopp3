@@ -46,7 +46,7 @@
   cooldown) lives in track-hint!; messages are suggestions, never refusals."
   [[:test-runs #(>= (:test-runs %) 3)
     "every write already verifies (its result includes :test) — test_run is rarely needed"]
-   [:pre-done-test #(:done-now %)
+   [:pre-done-test :done-now
     "done already runs the affected tests for everything you touched — a pre-flight test_run is redundant; mid-episode runs are for spot-checks"]
    [:history #(>= (:history %) 2)
     "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read"]
