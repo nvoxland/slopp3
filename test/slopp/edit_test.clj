@@ -10,7 +10,7 @@
 
 (defn- ingest [] (store/ingest (store/empty-store) 'demo src))
 
-^:unsafe (deftest ^:external strip-image-reload-removes-reload-only-inside-requires
+^:unsafe (deftest strip-image-reload-removes-reload-only-inside-requires
   (testing ":reload / :reload-all are stripped from require/use forms"
     (is (not (re-find #":reload" (edit/strip-image-reload "(require 'foo :reload)"))))
     (is (not (re-find #":reload" (edit/strip-image-reload "(require '[a :as b] :reload-all)"))))
@@ -27,7 +27,7 @@
   (testing "code with nothing to strip is returned intact"
     (is (= [1 2] (read-string (str "[" (edit/strip-image-reload "1 2") "]"))))))
 
-(deftest ^:external replace-form-happy-path
+(deftest replace-form-happy-path
   (let [s (ingest)
         r (edit/replace-form s 'demo 'add "(defn add [x y] (* x y))"
                              :prompt "make it multiply")]
@@ -60,7 +60,7 @@
   (testing "^:unsafe bypasses the metadata-mutation ban"
     (is (nil? (:error (edit/parse-form "^:unsafe (defn f [] (alter-meta! #'x assoc :foo 1))"))))))
 
-(deftest ^:external replace-form-rejects-non-dialect
+(deftest replace-form-rejects-non-dialect
   (let [s (ingest)]
     (testing "D4: user macros banned"
       (is (:error (edit/replace-form s 'demo 'add "(defmacro add [x] x)"))))
@@ -71,7 +71,7 @@
     (testing "unknown form name"
       (is (:error (edit/replace-form s 'demo 'nope "(defn nope [] 1)"))))))
 
-(deftest ^:external replace-form-flags-effect-violation
+(deftest replace-form-flags-effect-violation
   (let [s (ingest)
         r (edit/replace-form s 'demo 'add "(defn add [a] (swap! a inc))")]
     (testing "D6: effectful body under a non-! name -> warning + suggested fix"

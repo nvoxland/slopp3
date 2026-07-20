@@ -6,7 +6,7 @@
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
-(deftest ^:external rewrite-rules
+(deftest rewrite-rules
   (testing "kibit-classics, conservative set"
     (is (= "(when x y)"          (normed "(if x y nil)")))
     (is (= "(when x y)"          (normed "(if x y)")))
@@ -68,7 +68,7 @@
           (is (= :warning (:level (first hits))))))
       (finally (api/close! sess)))))
 
-(deftest ^:external expanded-rules-are-strictly-value-preserving
+(deftest expanded-rules-are-strictly-value-preserving
   (doseq [[in out] {"(= x nil)"                  "(nil? x)"
                     "(= nil x)"                  "(nil? x)"
                     "(not (nil? x))"             "(some? x)"

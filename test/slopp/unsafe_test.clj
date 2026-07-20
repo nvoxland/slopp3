@@ -12,7 +12,7 @@
 ;; ---------------------------------------------------------------------------
 ;; form-symbol must see through ^:unsafe (else the form is un-addressable)
 
-(deftest ^:external form-symbol-unwraps-meta
+(deftest form-symbol-unwraps-meta
   (testing "a plain def is named"
     (is (= 'f (store/name-of-source "(defn f [x] x)"))))
   (testing "an ^:unsafe def keeps its name (the load-bearing unwrap)"
@@ -22,7 +22,7 @@
 ;; ---------------------------------------------------------------------------
 ;; the dialect gate opt-out
 
-(deftest ^:external unsafe-bypasses-dialect-bans
+(deftest unsafe-bypasses-dialect-bans
   (testing "a plain banned form is rejected (D3)"
     (is (:error (edit/parse-form "(defn h [x] (binding [*out* *out*] x))"))))
   (testing "^:unsafe bypasses D3 (denylisted symbol)"
@@ -36,7 +36,7 @@
   (testing "a NON-unsafe banned form still rejects"
     (is (:error (edit/parse-form "(defn h [] (eval '(+ 1 1)))")))))
 
-(deftest ^:external reads-marker-is-orthogonal-to-the-dialect-gate
+(deftest reads-marker-is-orthogonal-to-the-dialect-gate
   ;; ^:reads suppresses the !-effect naming warning (a read takes no bang);
   ;; it is NOT ^:unsafe and does NOT relax the D3/D4 dialect ban.
   (testing "edit/reads? detects the ^:reads marker"

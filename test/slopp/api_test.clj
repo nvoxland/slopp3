@@ -82,7 +82,7 @@
             (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
       (finally (api/close! sess)))))
 
-(deftest ^:external parse-test-summary-reads-the-runner-line
+(deftest parse-test-summary-reads-the-runner-line
   (testing "a green clojure.test summary"
     (is (= {:ran 46 :assertions 1200 :failures 0 :errors 0 :status :green}
            (testrun/parse-test-summary

@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.boot :as boot]))
 
-(deftest ^:external dependency-order-is-deps-first
+(deftest dependency-order-is-deps-first
   (let [sources {'app.a "(ns app.a)\n(defn f [] 1)\n"
                  'app.b "(ns app.b\n  (:require [app.a :as a]))\n(defn g [] (a/f))\n"
                  'app.c (str "(ns app.c\n  (:require [app.b :as b]\n"
@@ -16,7 +16,7 @@
       (is (< (.indexOf ^java.util.List order 'app.b)
              (.indexOf ^java.util.List order 'app.c))))))
 
-(deftest ^:external dependency-order-is-deterministic-and-cycle-safe
+(deftest dependency-order-is-deterministic-and-cycle-safe
   (testing "ties break by sorted name (deterministic)"
     (is (= '[app.a app.b app.c]
            (boot/dependency-order {'app.c "(ns app.c)" 'app.a "(ns app.a)"
