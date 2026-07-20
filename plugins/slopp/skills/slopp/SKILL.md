@@ -19,7 +19,9 @@ every write is formatted, linted, compile-gated, and test-verified before
 it lands; when your session pauses, a done-point pipeline tidies and
 re-verifies what you touched. Setup/sync/shipping: the `slopp-setup`
 skill. Full result-shape and oracle reference: `reference.md` next to this
-file.
+file. **Before writing non-trivial code or making a design call, read the
+`slopp-style` skill** (functional-core shape, program-to-data, boundary
+contracts, the conventions slopp enforces); reviewing slopp code: `slopp-review`.
 
 ## The loop — and the budget
 
@@ -66,13 +68,29 @@ measurably bleed tokens.
    failing test FIRST, then implement. An `:untested` flag? `draft_test
    {ns name code}` drafts a deftest from OBSERVED calls.
 5. **Say `done {label}` when you believe you're finished.** It runs the
-   AFFECTED TESTS for everything you touched (a pre-flight `test_run` is
-   redundant — mid-episode runs are for spot-checks only), normalizes,
-   lints, and marks the episode boundary; address its findings. If your
-   session pauses first, the hook fires it for you and the findings greet
-   the next session's brief.
-6. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
-   (green-gated) unless the user asks for more.
+   WHOLE in-image suite plus the `^:isolated` tests your changes impact,
+   normalizes, marks the episode boundary, and reports findings; address
+   them. A pre-flight `test_run` is redundant. **`done` REPORTS, it does
+   not refuse** — it records the boundary honestly and tells you "not done
+   yet", so you are never deadlocked by a finding you cannot fix.
+   `commit_point` is what refuses to PUBLISH a red done — and a red done
+   STANDS until new work supersedes it, so you cannot clear it by
+   committing without changing anything.
+   **`done` is EPISODE-scoped**, and its `:scope` field says so every
+   time: lint and dead-surface cover only the namespaces you touched, and
+   the full `^:isolated`/`^:integration` tiers do not run. `full_check`
+   answers the whole-store question — see below. If your session pauses
+   first, the hook fires done for you and the findings greet the next
+   session's brief.
+6. **`full_check` when the episode's scope isn't the question.** Every
+   namespace linted, dead surface store-wide, every test in every tier.
+   NOTHING forces it — not `done`, not `commit_point`. Reach for it when a
+   change was broad, when you DELETED A CALLER (dead surface appears in
+   namespaces you never touched — the one thing episode scope structurally
+   cannot see), or before a commit you want to stand behind.
+7. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
+   (it runs `done` and gates on that verdict — it has no checks of its own)
+   unless the user asks for more.
 
 ## Choosing the write tool
 
@@ -84,6 +102,7 @@ measurably bleed tokens.
 | New form | `edit_add_form` (`before` anchors placement) |
 | Change a whole form | `edit_replace_form` |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
+| A subform edit refused with `unresolved-symbol`/`invalid-arity` | **Widen the match.** The change spans more of the form than you matched — a binding and its use, a loop and its `recur`, an arglist and its body. Match the enclosing form, or `edit_replace_form` the whole thing. **Two edits to ONE form is ONE edit**; this is NOT cross-form atomicity and there is no batch tool for it (the refusal says so too) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
@@ -93,6 +112,7 @@ measurably bleed tokens.
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
+| Declare a module's purity tier | `module_purity {module tier prompt}` — `:pure`/`:reads`/`:effects`; hard-refuses effect-reaching writes into a pure core (functional-core gate) |
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the
@@ -112,11 +132,20 @@ string-eval'd or runtime-resolved entries. The dial polices itself: a
 marker on a var that IS called fails with "remove the flag". Fixture
 namespaces in tests follow the same rule (and edits must KEEP the marker).
 
-**Tiers are not your problem:** `done` runs everything your changes
-impact in EVERY tier — impacted `^:isolated` tests run in the external
-JVM automatically (a large slice defers to the milestone and rides
-findings as `:isolated-pending`), and `commit_point` gates itself on the
-FULL isolated suite. You never run `test_run` as a ritual — it's for
+**Tiers are not your problem:** `done` runs the WHOLE in-image suite plus
+the `^:isolated` tests your changes impact (in the external JVM,
+automatically; a large slice defers and rides findings as
+`:isolated-pending`). `commit_point` has NO checks of its own — it runs
+done and gates on that verdict. There is exactly ONE bar, and it is
+`done`. The whole-store answer is `full_check`, and nothing forces it. **A write's `:status` says which tier actually ran**:
+`:green` = the impacted tests ran and passed · `:partial` = some ran, but
+impacted `^:isolated` ones were DEFERRED (`:isolated-pending` names them —
+a green here would be earned by other tests) · `:unverified` = nothing ran,
+with `:reason` distinguishing `:all-impacted-isolated` (by design, the
+done point runs them) from `:no-covering-tests` (yours to fix) and
+`:scope-ran-nothing` (a slopp bug — report it). Writing an `^:isolated`
+test is `:partial` or `:unverified`, never green — **to see it go red-first
+you must run `test_run {isolated true, only [...]}` yourself.** You never run `test_run` as a ritual — it's for
 spot-checking one namespace or test mid-flight. Red runs return
 `:all-failing {file [tests]}` and `:themes` (clustered causes) — read
 those before drilling into blocks.
@@ -175,7 +204,13 @@ no canned query covers; fully-qualify, no effects/interop)
 · `query_depends {on X, direction?}` — THE dependency question, any
 kind: a namespace, a var (`ns/name`), or a `:keyword`; `:dependents`
 (default) = who uses X (callers, refs, field flow, affected tests);
-`:dependencies` = what X reaches · `query_brief` (the edit dossier) ·
+`:dependencies` = what X reaches. On a var taking or passed a MAP it also
+returns `:shape` — the keys the form READS (destructured, body, `:=>`
+schema, `:or`-optional) against the literal keys its callers PASS, grouped
+by key-set, with the diff in `:mismatch`. **Renaming a key, or asking who
+supplies one, is this read — never a grep.** `:unknown-shape` names the
+callers passing a non-literal: trust `:mismatch` only as far as that list
+is empty · `query_brief` (the edit dossier) ·
 `query_macroexpand`. Re-reads are FREE: an unchanged view returns a tiny
 `:unchanged` stub — re-fetch instead of carrying source in context.
 History is ONE door:
@@ -187,13 +222,13 @@ touched X); `report {since}` for summaries — see reference.md.
 
 session_brief report query_slice query_depends · turn_begin turn_end ·
 query_project query_search query_source query_brief query_history
-query_changes query_eval query_store query_observe
-query_macroexpand query_branches query_commits query_git · ns_create
+query_changes query_eval query_store query_observe query_vocabulary query_rules
+query_rule_telemetry query_macroexpand query_branches query_commits query_git · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
 edit_rename change_signature edit_extract edit_move_forms edit_move
 edit_revert episode_revert fix_declares · branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
-deps_pure · module_dep · file_put file_remove file_list file_get
+deps_pure · module_dep module_purity · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
-test_run draft_test done commit_point restart build help
+test_run draft_test done full_check commit_point restart build help

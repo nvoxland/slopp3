@@ -37,7 +37,9 @@ form) and the whole-namespace import path (`ingest!`/`ns_create {:source}`) via
 The check —
 - **D4:** `defmacro` rejected ("user macros are banned").
 - **D3 denylist** (analysis defeaters): `eval`, `alter-var-root`, `binding`,
-  `gen-class`, `definline`, `read-string`. Extensible — the list is a sample,
+  `gen-class`, `definline`, `read-string`, the resolvers (`requiring-resolve`,
+  `resolve`, `ns-resolve`, `find-var`, `intern`), and the metadata mutators
+  (`alter-meta!`, `reset-meta!` — see below). Extensible — the list is a sample,
   grow it deliberately (and record here).
 - **D7 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
   pipeline OWNS form ordering and declares (auto-avoid-declare). A same-ns
@@ -49,6 +51,24 @@ The check —
   lives in `parse-form` (NOT `dialect-check`), so **imports (`dialect-scan`)
   keep their declares** and the pipeline's own inserts (built via the raw
   parser, not `parse-form`) are unaffected. See `.context/verification.md` S1b.
+
+**D3 — no runtime metadata mutation** (`alter-meta!`/`reset-meta!`, added
+2026-07-18). slopp reads every load-bearing marker (`^:export`, `^:unsafe`,
+`^:reads`, `^:auto-declare`, `:malli/schema`) straight off the STORED node —
+a form's metadata IS its contract. So metadata must be **SOURCE-only truth**:
+mutating a reference's metadata at runtime is invisible to that read, and the
+store would then show one contract while the live var carries another. Refused
+in `dialect-check` with teaching ("write the metadata ON the form"). This lives
+in `dialect-check` (unlike the `declare` prune), so it holds on BOTH the edit
+path and the `dialect-scan` import path. `with-meta`/`vary-meta` return NEW
+values (nothing is mutated in place) and stay legal — the cut is exactly the
+two in-place mutators. Same cheap-for-agents / hard-for-analysis template as the
+resolvers and `declare`: a generator writes the metadata inline for the same
+keystrokes; only a human feels the ceremony. (It is a D3 *denylist* entry, so
+`^:unsafe` bypasses it — the host/`slopp.rt` do mutate metadata as
+instrumentation.) Zero usage in slopp's own store when added, so no adoption
+break. The sandbox (`pure-eval-refusal`) is a SEPARATE property and unchanged —
+per the D3-is-not-a-sandbox decoupling above.
 
 Import is gated identically to edit (fixed 2026-07 via self-host dogfooding):
 before this, `ingest!` skipped the gate, so a host form could enter the store
@@ -139,6 +159,17 @@ WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
     would be wrong. (Consistent with `^:unsafe`/`^:reads`: human assertion wins.)
 - **Known leak:** higher-order fns are effect-polymorphic and can't be soundly
   marked statically — runtime observation covers them.
+- **`#'var` carriers don't propagate:** the effect `call-graph` adds an edge for
+  every usage EXCEPT a `#'var` CARRIER — a non-call reference (kondo marks a call
+  with `:arity`) sitting at a var-quote position (`analyze` attaches `:var-quotes`
+  via `var-quote-positions`, which align with kondo's `:name-row`/`:name-col`). So
+  a var HELD in data — a rule registry carrying `#'some-bang!` — doesn't taint its
+  holder, but a CALL `(f …)`, a bare ALIAS `(def g f)`, and a higher-order
+  value-arg `(map f xs)` all propagate: the latter two are callable-as-`f`, so
+  they stay conservatively effectful. (Excluding *all* non-call refs would be
+  unsound — it drops those two; only the explicit `#'var` carrier convention is
+  excluded.) Reference-tracking for visibility/renames is a separate path
+  (`edit.refs`).
 - **Open (F7, needs user):** stdout (`println`) is currently NOT a leaf —
   matches idiomatic Clojure (print fns aren't bang-named) but sits oddly with
   "external writes." Recommendation on file: keep `!` = mutation per
@@ -160,6 +191,187 @@ greppable, human-discharged, self-limiting move as `^:unsafe` — but
 gate), `^:unsafe` touches ONLY the dialect gate (not the `!` warning); a form
 may carry both. (Self-host finding: slopp's own read-wrappers over jdbc/kondo —
 `db/load-store`, `index/analyze`, … — are exactly this case.)
+
+## Purity tiers — the functional-core gate (D9)
+
+A module may declare a **purity tier** that constrains where effects may live —
+making the functional-core/imperative-shell architecture a mechanical invariant
+rather than a convention. Declared per module (the first two ns segments) via
+`module_purity {module tier prompt}` → a `:module-tier` delta folding into
+`:module-tiers` (module → tier), the register mirroring `:dep-pure`/`:modules`.
+Three tiers:
+
+- **`:pure`** — REFERENTIAL TRANSPARENCY, the strictest tier: no effect (no
+  mutation, no call into an opaque Tier-1 dependency — the M3 boundary) AND no
+  **non-determinism** (`rand` family, `slurp`/`line-seq`/`read-line` — core reads
+  whose result isn't a function of the args; `index/nondeterministic-vars`). These
+  aren't `!`-effects (D6 scopes `!` to modification), but a pure core must be
+  deterministic in its args. Interop non-determinism (`System/currentTimeMillis`)
+  is out of scope — the analyzer sees core vars, not interop (the same D6 gap).
+- **`:reads`** — may reach reads (opaque-dep calls, `^:reads` work) but NOT a
+  mutation (an `effectful-leaves` write or a `!`-named callee).
+- **`:effects`** — unrestricted; the periphery/shell. **A module absent from
+  `:module-tiers` is `:effects`** — tiers are OPT-IN tightening, so enabling the
+  feature breaks nothing and there is NO adoption step (unlike the module
+  manifest, which is on-from-birth and must derive from reality).
+
+**The gate** (`edit.modules/tier-refusal`) rides the per-form write path exactly
+where `module-refusal` does — `edit/replace-form`, `api/add-form!`, and the two
+`api/apply-group-step` branches — and HARD-REFUSES a form whose effect-
+reachability exceeds its module's tier, with a teaching refusal naming the fix.
+Built on `index/effectful-vars`: `:pure` checks the full M3 set
+(`effectful-vars analysis external-ns? pure-vars`), `:reads` checks mutation-only
+(`effectful-vars analysis nil nil`). It inherits D6's single-ns, bang-name-
+propagating soundness — a cross-ns effect is seen only when the callee is
+`!`-named, so honest `!`-naming is what makes the tier gate sound across
+namespaces.
+
+**Discharge:** re-declare the module a looser tier (`module_purity … :effects`) —
+there is no per-form tier escape. **`ingest!` is exempt** (whole-ns import is the
+tolerant path, matching the isolation gate), and declaring `:pure` gates only NEW
+writes — it does not retro-scan existing forms (a declaration-time scan is a
+planned fast-follow; see `ideas/functional-core-gate.md`). Read tiers via
+`query_depends {modules true}`. Persisted as a `module-tiers` meta row (both
+`db/persist!` and `db/append!`); merges last-writer-wins per module. First
+increment shipped 2026-07-17.
+
+## Schema oracle-check — boundary contracts, verified (D9/D2)
+
+A form may carry a **malli function schema** in its defn **name metadata** —
+`(defn ^{:malli/schema [:=> [:cat ArgSchema …] RetSchema]} f …)`, read straight
+off the stored node like `^:export` is (`schema/schema-of`, no eval). At the
+**done-point** slopp runs a **generative** `malli.generator/check` of that schema
+against the form's LIVE implementation and surfaces disagreement as a red
+`:schema-drift` finding — so a schema that drifts from its code becomes a
+verification failure, **not a silent lie** (the D2 amendment's condition #3, and
+why the drift-prone `^:covers` marker was rejected while this is safe). Schemas
+stay **OPTIONAL**: writing one gets it oracle-verified; not writing one costs
+nothing. `mg/check` returns `nil` when the schema holds and a shrunk
+counterexample when it doesn't — that counterexample rides the finding.
+
+**Where the check runs, and why (the two-process split).** malli is an
+**INHERENT** slopp dep — merged into every image's `-Sdeps` in `repl/default-cmd`,
+NOT the project manifest — so it lives **image-side only** (the server/boot JVM
+runs on kernel deps; a store ns that `:require`d malli would fail `load-store!`).
+So the check is a **self-contained eval-string** (`schema/check-string`) that
+`requiring-resolve`s malli in the image and is sent to ANY image (`schema/drift!`
+via `repl/eval!`) — the universal path whether slopp ships as a jar or a native
+binary, and whether the target is slopp's own store or a user project. See
+`ideas/inherent-deps-and-the-self-host-classpath.md`.
+
+**The candidate filter** (`schema/schema-candidates`): a form is checked only when
+it (a) changed this episode, (b) carries a `:=>` schema, and (c) is
+**analyzer-pure** — `index/effectful-vars`'s full M3 boundary set says it reaches
+no effect (`schema/analyzer-pure?`, the same predicate as `tier-refusal`'s
+`:pure` branch). Purity is the **safety gate**: generative `check` CALLS the fn
+with generated inputs, so an effectful fn is never invoked with random data. A
+non-`:=>` schema (a plain `:map`, …) is not a candidate — `mg/check` needs a
+function schema to generate args and check the return. Impl: the deep intra-module
+ns `slopp.api.schema`, called once from `api/done!`.
+
+**Requiring the schema (opt-in) — `edit.modules/schema-refusal`.** A store may
+*require* boundary schemas: a per-form WRITE gate (registered in
+`per-form-write-gates` alongside `module-refusal`/`tier-refusal` — the one-line
+rule-registry seed) that HARD-REFUSES a **module-external** `defn` whose FIRST arg
+is a **destructured map** but which carries **no `:=>` `:malli/schema`**. That is
+the one boundary a slice-limited caller can't infer the shape of — and the gate
+demands exactly the `:=>` shape the oracle-check verifies, so requiring a schema
+can never mean requiring a drift-prone marker (verify-before-require: the check
+shipped first). It is **structural only** (rewrite-clj node inspection — no malli
+server-side, per the two-process split) and **OFF by default**: opt in per store
+with `config_file {path "gates" key "require-boundary-schemas" value "true"}`
+(the flag folds into the store value so the candidate-store gate sees it, and
+projects into git for team transparency). Permissive default = no adoption step
+and no retro-break: enabling gates only NEW writes; an already-landed boundary fn
+without a schema is untouched (the purity-tier lesson). Module-external =
+public in a module-root ns (≤2 segments) or `^:export` in a deeper ns; a private
+or package-private fn is never a module boundary and is never gated.
+
+## Attribute inventory + near-duplicate-key advisory (D9 key hygiene)
+
+Open maps are the data-dynamism default (D2), but their dark side is the **silent
+nil-pun**: a typo'd or synonym key (`:user/emial` for `:user/email`) doesn't error,
+it reads `nil` — the one failure a slice-limited agent can't see. The guardrail is
+a domain-keyword **inventory** and a done-time **advisory**.
+
+- **`slopp.api.attrs/keyword-inventory`** — a DERIVED index `{namespaced-kw ->
+  #{form-ids}}` over all forms (`form-keywords` collects NAMESPACED keywords per
+  form, excluding unqualified keys and destructuring directives `:keys`/`:as`/`:or`;
+  malli schemas in name-metadata aren't traversed, so they don't pollute the
+  vocabulary). It is a **pure function of the forms**, so it is correct on every
+  branch, after every CRDT merge, and at any past revision with NO index-specific
+  merge or history logic — the litmus for indexes over versioned state (see
+  `.context/decisions.md` § Attribute inventory, `ideas/derived-indexes-and-crdt-safety.md`).
+- **`near-duplicate-keys`** — at `done`, a namespaced key a CHANGED form introduces
+  that is (a) new to the store, (b) name length ≥ 4, and (c) exactly one **Damerau**
+  edit (substitution / insert / **transposition** — plain Levenshtein-1 misses
+  transpositions) from an ESTABLISHED same-namespace key (≥ 2 unchanged forms) is
+  surfaced as a `:key-typos` finding `{:used :suggest :seen}`. **Advisory only** —
+  a heuristic, so it never flips `:test-status` (unlike the hard gates and the
+  schema oracle-check). This is the program's first done-time / advisory-grade
+  rule; the per-form write gates are hard-refuse.
+- **`query_vocabulary`** (`attrs/vocabulary` → `api/query-vocabulary`) — the
+  PREVENTION half: browse the domain-keyword vocabulary (namespaced keys, most-
+  used first, optional `ns` prefix) BEFORE coining new ones, so an agent reuses
+  `:user/email` rather than inventing a near-duplicate in the first place.
+  Detection (the advisory) is the safety-net; discoverability is the cure.
+- **`edit.modules/namespaced-keys-refusal`** — the ENFORCEMENT half (the other
+  side of the key-hygiene pair): an opt-in per-form write gate (config file
+  `gates`, key `require-namespaced-keys`, OFF by default) that refuses a
+  module-external `defn` destructuring **unqualified** `:keys` (`{:keys [id]}`) at
+  the boundary — a boundary map should carry namespaced domain keys
+  (`{:some.ns/keys [id]}`). Structural, registered in `per-form-write-gates`,
+  dial-able via `rule-severity`.
+
+## Contract-breakage advisory (D9 — Spec-ulation)
+
+Hickey's *Spec-ulation*: growing an interface (adding an arity, an optional key)
+never breaks a caller; **narrowing** it does. A slice-limited agent editing a fn
+sees the in-store callers (the tests re-run and turn red) but NOT the external
+callers — CLI, wire, another repo — so a narrowing of a **module-external** fn is
+exactly the breakage it can't observe.
+
+- **`slopp.api.breakage`** — at `done`, a CHANGED module-external `defn` whose
+  **fixed-arity surface shrank** vs its state at the last-done baseline
+  (`store/sources-at` the prior `:done` delta) is surfaced as a `:breaking-changes`
+  finding `{:form :removed-arities}`. `fixed-arities` returns nil for variadic or
+  non-`defn` forms (variadic subsumption is deferred, so a refactor to `& args`
+  is never falsely flagged); `removed-arities` is `old − new` (adding is
+  accretion, never flagged). Baseline is the last done, so it fires ONCE — in the
+  episode that narrows.
+- **Advisory only** — like `:key-typos`, it never flips `:test-status` (internal
+  callers already turn the tests red; this covers the invisible external ones).
+- v1 = arity narrowing. Schema-key removal (a `:=>` arg key dropped / an optional
+  key made required) and visibility narrowing (public → private) are the natural
+  next narrowings to add. The boundary predicate mirrors `schema-refusal`'s — a
+  shared `module-external?` could DRY the two.
+
+## Per-store rule severity — the tunable dial (D9)
+
+Every D9 rule has a per-store **severity** a project can dial via a `rules` config
+file: `config_file {path "rules" key <rule> value <severity>}` (git-projecting
+like the `gates` flag). `edit.modules/rule-severity` returns the override, else
+the rule's default; `<rule>` is a write-gate var name (`schema-refusal`,
+`tier-refusal`, …) or a done-advisory key (`key-typos`, `breaking-changes`,
+`schema-drift`). Severities:
+
+- **`:off`** — skip the rule. `gate-refusal` skips an `:off` write gate;
+  `run-done-advisories!` skips an `:off` advisory. A project turns off a gate it
+  can't live with instead of fighting a wall.
+- **`:error`** — for done advisories, flip `test-status` red (block the
+  milestone). Dial `key-typos`/`breaking-changes` up when they matter to you.
+- **`:advisory`** — surface, never block. Dial `schema-drift` down if you want it
+  informational.
+- **`:refuse`** — the write-gate default (hard-refuse).
+
+This is what makes the hard-refuse program **adoptable**: opinions become
+project-tunable, not universal walls (watch force-rate + marker-density — climbing
+means agents are fighting a gate that should be softened here). A write gate
+dialed **`:advisory` warns-but-proceeds** — `edit.modules/gate-check` buckets fired
+gates into `{:refuse :advisories}`, and an `:advisory` teaching rides the write
+result's `:advisories` (surfaced by `edit_replace_form`/`edit_add_form`;
+`edit_group` step advisories are a noted gap). So a write gate is fully dial-able
+`:off`/`:advisory`/`:refuse`, same as the done grain's `:off`/`:advisory`/`:error`.
 
 ## Enforcement stance
 

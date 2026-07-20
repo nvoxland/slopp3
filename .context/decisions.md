@@ -10,14 +10,36 @@ the change here (same commit).
   readable forms with a live oracle. Verification = tests + REPL observation.
   Form-granularity comes from **runtime tracing** (which forms did each test
   exercise), not co-located examples.
-- **D2 — Contracts are an optional, library-agnostic boundary tool.** Shape vs.
-  behavior are different lanes; tests+REPL own behavior/requirements. Nothing
-  contract-library-specific is built in (no Malli/spec coupling); never
-  enforced by the system, anywhere. Lean INTO Clojure's data dynamism — the
-  live oracle is what makes that safe for a limited-context agent.
+- **D2 — Contracts: data-dynamism by default; instrumented open schemas MAY be
+  enforced at the module-external boundary (amended 2026-07-17, see D9).** Shape
+  vs. behavior are different lanes; tests+REPL own behavior/requirements, and
+  internal/private code leans INTO Clojure's data dynamism — the live oracle is
+  what makes loose args safe for a limited-context agent, so schemas are NEVER
+  required there. The original D2 read *"nothing contract-library-specific is
+  built in (no Malli/spec coupling); never enforced by the system, anywhere."*
+  That clause is RELAXED for ONE locus — the exported / module-external boundary
+  (the single place a slice-limited agent can't see producer and consumer
+  together) — under four conditions that make a schema help rather than tax:
+  boundary-scoped (exports only, privates stay schema-free), open by default
+  (accretion preserved — Hickey's require-less/provide-more), oracle-instrumented
+  (drift becomes a RED test, not a silent lie — why the `^:covers` marker was
+  rejected but this is safe), and generative. Malli coupling accepted because
+  malli schemas are plain EDN data — they round-trip through the form store like
+  any value. Full rationale + roadmap: D9 +
+  `ideas/agent-native-best-practice-gates.md`. **SHIPPED 2026-07-17, both
+  channels** (see `.context/dialect.md` § Schema oracle-check): a written `:=>`
+  `:malli/schema` (on the defn name) is generatively oracle-checked against its
+  live impl at `done!` — drift is a red `:schema-drift` finding, never a silent
+  lie (`slopp.api.schema`); and an opt-in per-form write gate
+  (`edit.modules/schema-refusal`, off by default) can REQUIRE that schema on a
+  module-external map-arg fn. Verify shipped before require, so a required schema
+  is always one the oracle checks. Schemas stay optional to write, verified once
+  written.
 - **D3 — Dialect = allow-by-default with a denylist** (analysis defeaters:
   `eval`, `alter-var-root`, `binding`, `gen-class`, `definline`,
-  `read-string`). Keep data dynamism; constrain metaprogramming dynamism.
+  `read-string`; extended with the resolvers 2026-07-16 and the metadata
+  mutators `alter-meta!`/`reset-meta!` 2026-07-18 — both amendments below).
+  Keep data dynamism; constrain metaprogramming dynamism.
 - **D4 — User macros banned** (`defmacro` rejected). Built-in macros fine;
   runtime `macroexpand` remains the oracle for those.
 - **D5 — No purity rule; refresh-vs-restart on an owned process.** Refresh is
@@ -901,6 +923,18 @@ asserted the legacy agent author; the "<git>" fallback now resolves the
 machine's git identity) — fixed by pinning store config in the test. Lesson
 relearned: run the FULL suite after every feature, not targeted probes.
 
+E4 ✅ **Required source args are validated, not silently dropped**
+(2026-07-17, dogfooding friction). `slopp.mcp/call-tool` validated missing
+SYMBOL args (`sym` → "missing required argument :ns") but passed source args
+raw (`(:source a)`), so a misnamed key (`new_source` instead of `source`)
+became nil and fell through to a confusing `expected exactly one top-level
+form, got 0` parse error — reading like a paren bug, not a bad parameter. Now
+a `src` validator mirrors `sym` on `edit_replace_form`/`edit_add_form`/
+`change_signature`: it demands a non-blank source and, if it finds a
+near-miss alias (`new_source`, `new-source`, `src`, …) in the args, names it
+("you passed :new_source; the form source goes in :source"). Guarded by
+`mcp-test/source-arg-friction`.
+
 ## G6 — files manifest + slopp3 is the permanent repo (for now)
 
 G6 ✅ **Non-code files ride the store.** `:files` {path → text} manifest
@@ -1615,6 +1649,23 @@ itself and slopp.boot/-main (the OS boundary). Consequence: in gated
 store code, a string can no longer become a reference — strings are
 inert by construction, which is stronger than any string lint.
 
+Metadata-mutator denylist (2026-07-18, dialect-prunes-human-conveniences
+wave — the template's next cut after `declare`): alter-meta! and reset-meta!
+join the D3 denylist. slopp reads every load-bearing marker (^:export,
+^:unsafe, ^:reads, ^:auto-declare, :malli/schema) straight off the STORED
+node, so a form's metadata IS its contract and must be SOURCE-only truth;
+mutating a reference's metadata at runtime is invisible to that read (store
+says one contract, the live var carries another). Fits the prune template:
+helpful for humans, hard for static analysis, cheap for an agent to give up
+(write the metadata inline for the same keystrokes). Unlike `declare` this
+lives in dialect-check, so it binds BOTH the edit path and the dialect-scan
+import path; the refusal teaches "write the metadata ON the form" and names
+the ^:unsafe escape (host/slopp.rt legitimately mutate metadata as
+instrumentation). with-meta/vary-meta return NEW values and are untouched —
+the cut is exactly the two in-place mutators. Zero usage in slopp's own
+store when added, so no adoption break. Orthogonal to the sandbox
+(pure-eval-refusal), which is a separate property and was not touched.
+
 THE reference graph (2026-07-16, user decision — single source of truth):
 slopp.edit.refs is the ONE place "who references what" lives. Producers
 normalize in at the source (kondo statics + un-required qualified calls,
@@ -1732,3 +1783,466 @@ facto behaviour, but it rules out idiomatic Clojure and fixes nothing for
   nil-`:from-var` kondo usages attribute to the owning form by rendered span.
   Still true: defrecord/deftype method BODIES are unobservable at runtime, and
   callable data (`(def valid? #{...})`) reads `:covered 0` forever.
+
+## D9 — Best-practice gates & skills: encoding agent-native architecture (2026-07-17, user decision)
+
+**Decision:** slopp encodes the Clojure best practices that fit LLM agents
+through TWO channels over one chassis:
+- **Skills** (guidance a machine can't decide) shipped in `plugins/slopp/skills/`
+  so a *user's* agent gets them, not just slopp's — a coding-best-practice skill
+  and a code-review skill (`ideas/ship-review-and-best-practice-skills.md`).
+- **Deterministic gates** (single-form-checkable rules) wired into the write path
+  / `done`, each a client of a per-store-configurable **rule registry**
+  (`ideas/rule-registry.md`) — the chassis that ends the hand-wire-into-three-
+  surfaces pattern (`done!`/`commit_point!`/`review_scan`).
+
+New architectural gates target **hard-refuse-at-write** enforcement, built on the
+proven module-gate template: every hard gate ships (a) an escape marker
+(`^:unsafe`/`^:reads`-style discharge), (b) an adoption story (derive initial
+state from reality so enabling it never retro-breaks working code — the bootstrap
+catch-22), and (c) a teaching refusal that names the exact next tool call. Scope
+is the FULL checkable menu; the sequenced roadmap is
+`ideas/agent-native-best-practice-gates.md`.
+
+**Why:**
+- **slopp already enforces much of "the Clojure way" mechanically** — the dialect
+  gate (D3/D4/D7), `!`-effect labeling (D6), the module system (declared edges,
+  no cycles, recursive visibility, cohesion-decides-location). This program
+  extends that spine rather than starting fresh.
+- **Research validates slopp's bets.** The REPL-as-oracle is the most-corroborated
+  reason practitioners find Clojure good for agents (clojure-mcp/Hauman, Willig,
+  Bille, Nubank); form-addressed editing is the documented cure for the #1
+  failure mode (the paren death-loop). The ONE *measured* negative — a training-
+  data deficit that pulls models toward imperative, non-idiomatic Clojure (Nubank
+  MultiPL-E, Clojure/conj 2024) — is exactly what idiom-enforcing gates +
+  REPL-first skills exist to counter.
+- **Agents are cheap where humans resent ceremony.** A carrier/annotation is the
+  same keystroke count for a generator; only humans feel the tax — so the
+  cost/benefit of "extra structure that aids analysis" flips relative to a
+  human-centric language, PROVIDED the structure is oracle-checked so it can't
+  drift into a lie (`dialect-prunes-human-conveniences.md`).
+
+**Status:** IN PROGRESS. Skills shipped (`slopp-style`, `slopp-review`). THREE
+gates SHIPPED 2026-07-17: **(1) functional-core purity tiers** (`module_purity`
+verb/tool, `edit.modules/tier-refusal`, hard-refuse across add/replace/group; see
+`.context/dialect.md` § Purity tiers — `:pure` also forbids NON-DETERMINISM
+(`rand`/`slurp`, `index/nondeterministic-vars`) so it means referential
+transparency, not just mutation-freedom); **(2) schema-at-boundary** — the generative
+oracle-check (`slopp.api.schema` → `done!`'s `:schema-drift`) plus the opt-in
+`edit.modules/schema-refusal` require-gate (see D2 and `.context/dialect.md` §
+Schema oracle-check); **(3) key hygiene** — a DERIVED attribute inventory
+(`slopp.api.attrs/keyword-inventory`) + a near-duplicate-key advisory
+(`near-duplicate-keys` → `done!`'s `:key-typos`), the program's FIRST done-time /
+advisory-grade rule (the per-form write gates are hard-refuse; this is a heuristic
+that never flips status). See § Attribute inventory below and `.context/dialect.md`;
+**(4) contract-breakage advisory** (`slopp.api.breakage` → `done!`'s
+`:breaking-changes`) — a module-external fn whose fixed-arity surface NARROWS vs
+the last-done baseline is flagged (Spec-ulation: growth is safe, breakage must be
+visible to the external callers a slice can't see). Advisory, v1 = arity narrowing. The rule-registry chassis has its FIRST SEED (2026-07-17):
+`edit.modules/gate-refusal` runs an ordered `per-form-write-gates` registry, held
+as VARS so hot-reload is picked up, and the four write sites now call ONE
+`gate-refusal` dispatch. The seed's thesis is **confirmed**: `schema-refusal`
+joined as a ONE-LINE addition (`[#'module-refusal #'tier-refusal
+#'schema-refusal]`) — a second new gate, one edit, not four. The registry now
+spans a **SECOND GRAIN** (2026-07-17): `slopp.api.rules/done-advisories`, an
+ordered `{:key :severity :check}` registry for the DONE-time findings
+(schema-drift, key-typos, breaking-changes) — `done!` collapsed three hand-wired
+advisory bindings + clauses + a status term into one `run-done-advisories!` loop,
+and **`:severity`** (`:error` flips test-status; `:advisory` never does) is now
+formalized. **PER-STORE SEVERITY CONFIG SHIPPED 2026-07-17** — the dial that makes
+the hard-refuse program adoptable: `edit.modules/rule-severity` reads a per-store
+override from a `rules` config file (`config_file {path "rules" key <rule> value
+<severity>}`, git-projecting), else the rule's default. `gate-refusal` SKIPS a
+write gate dialed `:off`; the done grain skips `:off` advisories and uses the
+EFFECTIVE severity for status, so a project dials `key-typos` up to `:error` or
+`schema-drift` down to `:advisory`. This is what lets a project turn off a gate it
+can't live with instead of fighting a wall — and unblocks the opinionated gates
+(require-namespaced, hard-refuse-breakage) by making them tunable. **UNIFIED
+CATALOG + `query_rules` SHIPPED 2026-07-17**: `slopp.api.rules/rule-catalog` is
+one declarative `{:rule :grain :severity :escape :teach}` catalog of every rule
+across both grains; `query_rules` projects it with each rule's effective per-store
+severity (the queryable "what's enforced here, at what grade, how to discharge"
+surface), drift-guarded against both registries via `edit.modules/write-gate-names`.
+**Follow-ups SHIPPED 2026-07-18** (post-review): write-gate **advisory-downgrade**
+(`edit.modules/gate-check` → `{:refuse :advisories}`; an `:advisory` write gate
+warns-but-proceeds, teaching on the write result's `:advisories`); a **DRY** of the
+boundary/arglist logic into shared `module-external?` + `fn-arglists` (fixing a
+first-arity-only blind spot); the **carrier-taint** D6 fix (`call-graph` adds an
+edge for every usage EXCEPT a `#'var` carrier — a non-call ref at a var-quote
+position, via `analyze`'s `:var-quotes` — so a var held in data doesn't propagate
+effects while a call / bare alias / higher-order value-arg still does; dropped the
+`^:reads` workarounds); and two more done-advisories
+(`:ambient-state` — a global `(def _ (atom …))`; `:bare-throw` — a boundary fn
+throwing a constructed non-`ex-info` exception). Nine rules now ride the two
+registries. **Rule telemetry** (`slopp.api.telemetry/rule-telemetry` →
+`query_rule_telemetry`) makes the severity dial measurable: read-only over the
+delta log, per-rule fire-rate + discharge (`:discharged` vs `:persisted`) +
+escape-marker density + dials — the demand signal the plan wanted, with no new
+instrumentation (diagnostic only, not an auto-tuning control loop). Still ahead:
+the EXECUTION-level shape-unification of the two
+registries and the `commit_point!`/`review_scan` grains (`ideas/rule-registry.md`).
+Design note (D6 interaction, RESOLVED): a data registry carrying a `#'bang-fn`
+check ref used to be flagged effectful (carrier-taint), which forced `^:reads`
+onto `done-advisories` + `status-affecting-fired?`; the carrier-taint fix (above)
+removed both — the analyzer now distinguishes a `#'var` carrier position from a
+call.
+Remaining waves are picked on demand, each with its own red/green TDD through the
+slopp tools. The named gates (purity tiers ✓, schema-at-boundary) have the user
+as the demand instrument; the wider menu should still earn hard-refuse via
+dogfooding (watch force-rate + marker-density — climbing metrics mean agents are
+fighting a gate, the signal to soften severity per store). Design note learned by
+building the first gate: **default new gates to permissive + opt-in** (absent =
+ungated) — it makes the adoption/migration step disappear (purity tiers needed no
+adoption, unlike the on-from-birth module manifest).
+
+**Relation to prior decisions:**
+- **Amends D2** — schemas become enforceable at the module-external boundary
+  (open, instrumented, generative). See D2's amended text.
+- **Extends D6** — the `!` naming gate generalizes to `*earmuffs*` (dynamic vars)
+  and `?` (predicates).
+- **Compatible with D5** — D5's "no purity rule" governs the RELOAD strategy
+  (refresh-vs-restart), NOT architecture. The functional-core purity-tier gate is
+  a per-module *locale* rule for where effects may live; it neither requires
+  purity for reload nor contradicts D5. Recorded here so the two aren't conflated.
+- **Builds on** the module system (the `^:export`/recursive-visibility predicate
+  is the public/private cut every boundary rule rides) and `index/effectful-vars`
+  (the effect closure the purity gate consumes).
+
+## Inherent deps — slopp ships them, separate from the project manifest (2026-07-17, user decision)
+
+**Decision:** libraries that slopp-the-tool needs for its OWN image-side features
+are **inherent deps** (`repl/inherent-deps` — currently `nrepl` + `malli`), merged
+into every image's `-Sdeps` in `repl/default-cmd` **after** the project manifest
+(so slopp's versions win a collision). They are NOT project dependencies: never in
+`deps_list`, never `deps_remove`-able, centrally versioned (an upgrade reaches
+every existing install with no per-store migration).
+
+**Why:** malli belongs to slopp, not the user — putting it in the manifest
+(`deps_add`) was wrong: it showed in `deps_list`, was removable by accident, and
+got pinned per-store. Inherent deps fix all three, and the mechanism generalizes
+to any future slopp-owned image-side library.
+
+**The load-bearing constraint (the two-process split):** the image is ALWAYS a
+`clojure -Sdeps` subprocess (`start!` → `default-cmd` → `clojure-bin`), whether
+slopp ships as a jar or a native binary — so inherent deps resolve from maven at
+image launch exactly like manifest deps; it is real-deployment-correct, not a
+self-host hack. But the **server/boot JVM runs on kernel deps only** — a store ns
+that `:require`d an inherent lib would fail `load-store!`. So any feature needing
+an inherent lib must run **image-side** (eval-injected / feature-detected), never
+server-side. This is why the schema oracle-check is a self-contained eval-string
+and the write-time require-gate stays structural. Litmus for every future gate
+that reaches for a library: **can it run image-side? If not, it costs a kernel
+dep.** Full finding: `ideas/inherent-deps-and-the-self-host-classpath.md`.
+
+## Attribute inventory — a DERIVED index, not folded state (2026-07-17, user-guided)
+
+**Decision:** the domain-keyword/attribute inventory (`slopp.api.attrs/keyword-inventory`,
+`{namespaced-kw -> #{form-ids}}`) that backs the key-hygiene gate (D9 §(3)) is a
+**derived view** — a pure function of the stored forms, recomputed when needed —
+NOT a folded, persisted store field.
+
+**Why (the reusable litmus):** the deciding constraint was that it must work with
+the history-accessible / CRDT / multi-branch model. Because `inventory = f(forms)`:
+- **CRDT merge** already reconciles FORMS (`store.merge/merge-logs` + `replay-delta`);
+  `inventory(merged) = f(merged-forms)` follows for free. A folded index would need
+  a bespoke CRDT merge (union per-form-id sets to match `f`), and any mismatch
+  silently drifts.
+- **History** is free: `inventory-at-N = f(forms-at-N)`. A folded index would need
+  per-delta snapshots.
+- There is **no single form-mutation chokepoint** (~7 store fns + every
+  `replay-delta` case + merge), so incremental folding is a large, drift-prone
+  surface.
+
+So the litmus for any future index: **derivable from the forms the store already
+versions ⇒ DERIVE it** (optionally cache behind a store-version key — a pure
+optimization, never independent CRDT/history state). Contrast `:module-tiers` /
+`:deps` / `:files` / `:config`, which ARE folded+persisted — correctly, because
+they are independent DECLARATIONS, not derivable from the forms. SQLite fuzzy
+matching (spellfix1/editdist3/soundex) was considered for the near-match and
+rejected: loadable native extensions the bundled driver lacks, wrong dataflow
+(the check reads the in-memory value, not the db), and no scale need — a
+pure-Clojure Damerau-1 suffices. Full reasoning:
+`ideas/derived-indexes-and-crdt-safety.md`.
+
+---
+
+## D-gates-required (2026-07-19) — every rule is blocking; zero advisories
+
+**Decision.** All nine rules in the registry are now REQUIRED: 4 write gates at
+`:refuse` (module, tier, schema, namespaced-keys) and 5 done-time checks at
+`:error` (schema-drift, key-typos, breaking-changes, ambient-state, bare-throw).
+No rule sits at `:advisory`. Milestone d7763.
+
+**Why, and the rule it establishes:** an advisory an agent can scroll past is
+not a rule — it is documentation with a nag. But a rule cannot be made blocking
+until it is DISCHARGEABLE, and two were not:
+
+- **`breaking-changes`** was dialled back to `:advisory` because privatising a
+  fn with no outside callers — a correct change — was flagged with no escape.
+  Now escapable via `^:breaking-ok` on the name. Like the other markers it
+  polices itself (a marker on a changed form that narrowed NOTHING reports
+  `:stale-marker`), and that self-check sits deliberately OUTSIDE the
+  "was a boundary at baseline" filter: once a narrowing lands the new baseline
+  is already private, so a boundary-guarded check would never see it again.
+- **`require-namespaced-keys`** had one violation, `api/open!`, with 60 call
+  sites. A store-wide `rename_sweep` could not do it (`:dir` names three
+  different things in this store) and 60 hand edits was worse. Discharged by
+  building the missing capability — `edit_requalify` / `api/requalify-boundary-keys!`
+  — which rewrites a boundary fn's arglist destructuring AND every caller's map
+  literal as one intent.
+
+**The litmus this leaves:** before making a rule blocking, ask what a person who
+hits it LEGITIMATELY is supposed to do. If the answer is "an edit nobody can
+reasonably perform", the missing tool is the actual work — the severity is a
+one-line config change afterwards. The rule's own docstring already warned that
+an undischargeable rule trains people to ignore the channel.
+
+**Two things the enabling exposed, both worth remembering:**
+
+1. **A gate does not verify what it does not inspect.** `require-namespaced-keys`
+   reads ARGLISTS, so a stale CALL SITE is invisible to it. After the requalify,
+   the check that actually mattered was an independent scan for any map literal
+   still handing `open!` an unqualified key. A clean gate would have felt like
+   proof and been none.
+2. **Syntactic rewriters cannot see through a binding, and must say so.**
+   `mcp/-main` and `http/-main` build their options with `cond->`; both were
+   correctly reported as `:unknown-shape` and patched by hand. Unqualified there
+   would have started the server EPHEMERAL with no store directory — silently.
+   Any operation of this kind must NAME what it could not reach rather than
+   report a clean sweep over a partial one.
+
+**Effectful boundary schemas are unverified by construction.** `analyzer-pure?`
+excludes anything reaching an effect or non-determinism from the generative
+`mg/check`, so `repl/start!` and `api/open!` carry `:=>` schemas nothing tests —
+required by a gate that cannot validate them. Their docstrings say so. Keeping
+them honest is a discipline, not a guarantee.
+
+---
+
+## D-rule-grain (2026-07-19, REVISED 2026-07-20) — two grains, and `done` means done
+
+**Superseded design (recorded because it was wrong in an instructive way):** an
+earlier version of this decision described THREE checking grains — write, done,
+and milestone — and moved warning-level lint to the milestone. That was wrong,
+and the evidence arrived within one session: with two enforcement points, five
+`:error` advisories were blocking at `done` and completely invisible at the
+milestone, because `commit-point!` recomputed status from raw test counts and
+never read `:findings`. **Two bars drift. They drifted here in hours.**
+
+### The design
+
+There are **two** places a rule may live.
+
+| grain | asks | mechanism |
+|---|---|---|
+| **write** | is this FORM well-formed? | REFUSES — the write does not land |
+| **done** | is this CODEBASE good? | REPORTS — records the boundary with findings |
+
+A check belongs at the WRITE grain only if it is decidable from the form
+ITSELF and its verdict cannot change as legitimate work continues: a macro
+def, a denylisted symbol, an undeclared cross-module call, a boundary contract
+with no schema. Nothing else. The write grain must never treat
+work-in-progress as a defect — **a red test can never be a done point**, and
+red-first TDD lands specs referencing vars that do not exist yet.
+
+Everything else is `done`, and `done` is STORE-WIDE and absolute: it runs the
+entire in-image unit suite, all impacted integration and isolated tests, and
+scans every namespace for lint and dead public surface. Not the episode's
+namespaces — the whole store. You cannot outrun a standing problem by editing
+somewhere else.
+
+**`done` REPORTS; it does not refuse.** It records the episode boundary
+honestly with its findings and says, in effect, *"no, you are not done — fix
+these and call done again."* An agent that genuinely cannot fix a finding is
+not deadlocked: the boundary is still recorded, red, in history. The real
+block is `commit_point`, which refuses to PUBLISH a red done. You may record
+where you got to; you may not ship it.
+
+### The milestone is not a grain
+
+`commit_point` has **no checks of its own**. It runs `done!`, adds the one
+thing done deliberately skips (the full isolated tier, which spawns JVMs), and
+gates on done's verdict. Nothing is re-judged. Keeping a second set of scans
+there is what produced the drift above, and a second bar is somewhere to
+accidentally put a check that then does not apply at `done` — which is the
+failure this design exists to prevent.
+
+`done` therefore states its one omission in EVERY result
+(`:isolated-suite "not run at done …"`). An unstated omission reads as
+coverage, and that is how a green status comes to mean less than the agent
+thinks it does.
+
+### How the write/done split was learned (2026-07-19)
+
+Warning-level clj-kondo lint was flipped to REFUSE at the write grain, having
+measured zero warnings across all 115 namespaces. It turned 33 assertions red
+across 14 tests. Two causes:
+
+1. **Wrong population measured.** The production store had zero, but a write
+   gate applies to every write — including the fixture stores tests BUILD AT
+   RUNTIME, which legitimately carry `unused-referred-var` (a three-line
+   fixture doing `:refer [deftest is testing]`) and `unused-binding`.
+2. **Wrong grain.** `unused-binding` is a WORK-IN-PROGRESS property. It is
+   routinely, correctly true of a form mid-edit.
+
+Same rule at the done grain: green, zero collisions.
+
+**Two reusable lessons:**
+
+- **Measure the population the rule will actually apply to**, not the one that
+  is convenient to count. Every earlier flip in this sweep happened to have a
+  production-only population, so this failure mode stayed hidden until a rule
+  applied to writes-in-general.
+- **A gate broad enough to catch everything will catch the tests that verify
+  the gates.** `rules-test/done-surfaces-ambient-state-and-bare-throw` exists
+  precisely to write rule-violating code. Targeted gates coexist with that; a
+  blanket write-grain bar does not.
+
+### Consequences accepted
+
+- `done` is slower — it runs the whole in-image suite (166 tests here, vs ~68
+  for the impacted slice). Deliberate: impacted-only answered the weaker
+  question *"does what I touched still work"*, which is not what the word
+  claims. Impacted SELECTION was also itself a source of misses (one untraced
+  form used to collapse the whole narrowing, on 54.4% of real episodes), and
+  running everything retires that machinery.
+- Absolute rather than diffed, because this repo is the only slopp codebase
+  and there is no legacy to deadlock. A store adopting slopp with pre-existing
+  findings would be red at every `done` until clean — acceptable, because
+  `done` reports rather than refuses, so nothing is blocked meanwhile.
+
+---
+
+## D-kondo-config (2026-07-20) — slopp owns the linter config, and `:level` means "can this be legitimate mid-edit?"
+
+**Decision.** `slopp.index/kondo-config` is a static def, shipped with slopp,
+passed EXPLICITLY to `kondo/run!`. It is not a file in the user's repo, not a
+per-store knob, and not something a project configures — linter levels are
+part of slopp's definition of clean code, like the dialect and the rule
+registry.
+
+**Why explicit rather than letting kondo resolve it:** kondo otherwise reads
+config relative to the process CWD. That is the bug #134 fixed for the
+*cache* — findings that varied by which directory the process happened to
+start in. The tree is fileless, so a store cloned elsewhere must lint
+identically or `done` means different things on different machines.
+
+**The tiering rule — one question decides everything:**
+
+> Could a form legitimately look like this MID-EDIT, on the way to something
+> correct?
+
+- **No → `:error`.** Blocks at every grain. Refusing immediately saves a
+  wasted episode.
+- **Yes → `:warning`.** `done` LISTS it (`:lint-warnings`) for the agent to
+  judge; nothing refuses it.
+- **Measured worthless → `:off`,** with the numbers recorded in place.
+
+This puts the write/done grain split (D-rule-grain) into ONE declaration.
+Both consumers simply read `:level` — `edit/lint-refusals` gates writes on
+`:error`, `done!` counts `:error` and lists `:warning`. An earlier attempt
+introduced a separate `write-blocking-lint` TYPE set alongside the levels;
+it was deleted, because a second declaration of "what blocks" is a second
+place for the two to disagree — the exact failure mode that hid five
+`:error` advisories from the milestone.
+
+**The tiering was chosen by the SUITE, not by taste.** Promoting every linter
+to `:error` broke 13 assertions across 7 tests, in three distinct ways, and
+each failure named a linter that is legitimately true mid-edit:
+
+| broke | linter | why it is legitimate mid-edit |
+|---|---|---|
+| red-first TDD | `:unused-binding` etc. | a spec names a not-yet-written fn |
+| module lifecycle | `:unresolved-namespace` | a legitimate forward reference |
+| carried-lint compression | `:redundant-let` | pre-existing, untouched forms |
+
+Those failures map one-to-one onto the warning tier. When a promoted linter
+breaks a test, the test is usually right: it is demonstrating a legitimate
+intermediate state.
+
+**Two linters were measured and rejected outright**, recorded in the config
+so the rationale is not re-derived:
+
+- `:shadowed-var` — 156 findings, **81 of them the parameter `agent`**
+  shadowing `clojure.core/agent`, which this codebase never calls. The rule
+  an agent actually wants is "a symbol means one thing in one form", but the
+  linter cannot distinguish "shadows something unused" from "shadows a fn
+  used in this very form", and the volume is slopp's own domain vocabulary.
+  Enforcing it renames the RIGHT words to prevent a hazard that has not bitten.
+- `:unsorted-required-namespaces` — 62 findings, and the wrong TOOL. Require
+  order is mechanical: the normalizer should SORT it. **Never warn about what
+  a tool can fix.**
+
+**Two were added for slopp-specific reasons, both measuring zero:**
+
+- `:unused-value` — a value computed and DISCARDED in non-tail position is
+  the language-level form of the bug that bit this codebase four times at the
+  wire layer (computed, then dropped by an allow-list).
+- `:missing-else-branch` — `(if x y)` returns an implicit nil, and this
+  project's signature failure is a plausible wrong value rather than a crash.
+
+**Caching:** the lint memo now includes a config fingerprint (`:cfg`).
+Without it, editing a linter level silently did nothing until restart — the
+config is part of the world a finding is true under, alongside the cache dir
+and the dependency fingerprint.
+
+---
+
+## D-full-check (2026-07-20) — `done` is episode-scoped; the whole store is one explicit call
+
+**Supersedes the store-wide half of D-rule-grain.** That decision made `done`
+absolute — every namespace linted, dead surface store-wide. This walks that
+back: `done` answers *did the work I just did come out clean*, which is the
+question an agent can act on. Whether the STORE is clean is a different and
+much slower question, and it is `full_check`'s.
+
+| | scope | forced? |
+|---|---|---|
+| write | this form's coherence (`edit/write-coherence-lint`) | yes, refuses |
+| `done` | the episode: whole in-image suite + impacted `^:isolated`; lint + dead surface over TOUCHED namespaces | automatic, REPORTS |
+| `full_check` | every namespace, every tier (in-image, `^:integration`, `^:isolated`) | **never** — agent's call |
+| `commit_point` | nothing of its own; gates on done's verdict | — |
+
+`full_check` also retires any need for an integration-only or lint-only
+tool: one call, everything, no tier flags to get wrong.
+
+**`done` states its scope in EVERY result** (`:scope`), naming what it did
+NOT cover and pointing at `full_check`. An unstated omission reads as
+coverage — that is how a green status comes to mean less than the agent
+thinks it does.
+
+### The cost, accepted explicitly
+
+Nothing automatically verifies the whole store before publishing. A red
+`^:isolated` test the episode never touched will not stop a milestone, and
+`commit-test/the-milestone-forces-no-whole-store-check` PINS that, so it is a
+test someone must consciously change rather than a silent gap.
+
+The trigger worth internalising is **"you deleted a caller"**: dead public
+surface appears in namespaces the episode never touched, which is the one
+thing episode scope structurally cannot see. That is in the `:scope` reminder
+and the tool description.
+
+### The hole this opened, and the fix
+
+Episode scope plus a milestone with no checks of its own meant **a red done
+could be laundered by committing**: `done` reports red → ignore it →
+`commit_point` runs a fresh `done` → nothing changed since → `:test-status
+:none` → publishes green. Found by `episode-test/unused-publics-gate-the-done`.
+
+`api/last-judged-done` fixes it: an empty done judges NOTHING, so the last
+real verdict stands until new work supersedes it. It returns the whole
+findings map rather than a status, so a standing red can still NAME what was
+wrong — a refusal that cannot say why is one an agent cannot act on.
+
+### Two calibration notes, both learned by breaking the suite
+
+- **`:unresolved-var` must NOT block a write.** It is kondo-default
+  `:warning`; promoting it into the write-coherence set broke red-first TDD,
+  because a spec naming a fn in another namespace that does not exist yet is
+  exactly what red-first IS.
+- **Never warn about what a tool can fix — and check whether one already
+  does.** A test asserting `missing-else-branch` counts at `done` kept failing
+  with zero errors: the NORMALIZER rewrites `(if y 2)` → `(when y 2)` before
+  lint runs. The linter is harmless but redundant there. Worth auditing
+  `:redundant-fn-wrapper` and `:single-key-in` for the same overlap.

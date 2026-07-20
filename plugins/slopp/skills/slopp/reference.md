@@ -45,6 +45,11 @@ code; runtime state it perturbs is disposable (`restart` rebuilds).
   `deps_pure` the var/namespace/lib, or tag the form `^:reads` (reads take
   no bang). `^:unsafe` opts one form out of the dialect gate (macros,
   `binding`, `eval` …) — the greppable last resort; doesn't silence `!`.
+- **Purity tiers** (the functional-core gate): `module_purity {module tier}` —
+  `:pure` (no effect reachable), `:reads` (reads ok, no mutation), `:effects`
+  (unrestricted periphery). Once declared, the write gate HARD-REFUSES an
+  effect-reaching form in that module. Undeclared = `:effects` (ungated). Read
+  tiers via `query_depends {modules true}`.
 
 ## History as a query surface
 

@@ -25,9 +25,14 @@ for design decisions, system mechanics, gotchas, and conventions.
   Don't re-litigate silently — revisit explicitly, and record the change.
 - **Red/green TDD, always.** Tests first, watch them fail, then implement —
   through the edit tools (per-write verification reports the red/green).
-  `done` runs impacted tests in EVERY tier (incl. `^:isolated`, capped +
-  reported); `commit_point` green-gates on the FULL isolated suite itself —
-  no manual `test_run` ritual before either.
+  `done` runs the whole in-image suite plus impacted `^:isolated` tests and
+  REPORTS rather than refuses; `commit_point` has no checks of its own and
+  gates on done's verdict, so there is exactly ONE bar. A red done STANDS
+  until new work supersedes it. `done` is EPISODE-scoped (its `:scope` field
+  says so); **`full_check`** is the whole store — every namespace, every
+  tier — and nothing forces it. Reach for it on a broad change, after
+  deleting a caller, or before a commit you want to stand behind. No manual
+  `test_run` ritual.
 - **Never credit Claude/AI in commit messages or PRs.** No Co-Authored-By
   trailers, no "Generated with" footers.
 - **Dogfooding is a standing practice:** build real things through slopp
