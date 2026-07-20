@@ -43,7 +43,7 @@
     :escape "declare the edge (module_dep) or respect visibility (^:export / restructure)"
     :teach "a cross-module call needs a declared edge and must respect recursive visibility"}
    {:rule :tier-refusal :grain :form :severity :refuse
-    :escape "module_purity {module tier :reads/:effects}, or move the effect/non-determinism to a periphery ns"
+    :escape "module_purity {module tier :internal/:external}, or move the effect into an :external namespace (:internal may mutate in-process, e.g. a memo through slopp.cache)"
     :teach "a form's effect or non-determinism exceeds its module's declared purity tier"}
    {:rule :schema-refusal :grain :form :severity :refuse
     :escape "add a :=> :malli/schema, or config_file {path gates key require-boundary-schemas unset true}"
