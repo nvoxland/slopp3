@@ -559,3 +559,50 @@
                (is (= :error (:status r))
                    (pr-str (select-keys r [:status :exit :note])))))))
       (finally (api/close! sess)))))
+
+(deftest ^:external full-check-affected-narrows-only-the-external-tier
+  ;; full_check is ~190s and ~187s of that is the external suite (299 image
+  ;; boots). Today there are two speeds: done (episode) and full_check
+  ;; (everything), and a broad change wants something in between.
+  ;;
+  ;; The split is deliberate: lint, dead surface, layering and the in-image
+  ;; suite stay WHOLE-STORE — measured at ~5-7s, so narrowing them buys nothing
+  ;; and would cost exactly the coverage full_check exists for. Only the
+  ;; expensive tier narrows, and the result says so, because an unstated
+  ;; omission reads as coverage (D-full-check).
+  (let [sess (external/open!)
+        mk   (fn [nsx v]
+               ;; SUFFIX-convention tests, not inline: the external runner's
+               ;; generated :test alias assumes the -test suffix and REPLs out
+               ;; on inline-test projects (finding Q13)
+               (api/ingest! sess nsx
+                            (str "(ns " nsx ")\n(defn f \"F.\" [x] (+ x " v "))\n"))
+               (api/ingest! sess (symbol (str nsx "-test"))
+                            (str "(ns " nsx "-test (:require [" nsx " :as t]\n"
+                                 "                          [clojure.test :refer [deftest is]]))\n"
+                                 "(deftest ^:external f-t (is (= (+ 1 " v ") (t/f 1))))\n")))]
+    (try
+      (mk 'fa.one 1)
+      (mk 'fa.two 2)
+      ;; assert the baseline LANDS — `affected` measures from the last
+      ;; milestone, so a refused commit silently degrades this to "everything"
+      (let [c (external/commit-point! sess "baseline")]
+        (is (:commit c) (str "fixture: baseline must land — "
+                             (pr-str (dissoc c :test :findings)))))
+      (api/edit-replace! sess 'fa.one 'f "(defn f \"F.\" [x] (inc x))"
+                         :prompt "touch one namespace only")
+      (let [r   (external/full-check! sess :affected true)
+            sel (set (map str (get-in r [:external :affected :selected])))]
+        (testing "the external tier narrows to what the change can reach"
+          (is (seq sel) (pr-str (:external r)))
+          (is (contains? sel "fa.one-test") (pr-str sel))
+          (is (not (contains? sel "fa.two-test"))
+              (str "an untouched namespace's external tests must not run: "
+                   (pr-str sel))))
+        (testing "the static half still covers the WHOLE store"
+          (is (= (count (:namespaces (:store @sess))) (:namespaces r))
+              "lint/dead-surface/layering stay store-wide — they are cheap"))
+        (testing "and the result SAYS the tier was narrowed"
+          (is (re-find #"(?i)narrowed" (str (:scope r)))
+              (str "an unstated omission reads as coverage: " (pr-str (:scope r))))))
+      (finally (api/close! sess)))))

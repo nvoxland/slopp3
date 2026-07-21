@@ -700,7 +700,7 @@
                                                          :agent (:agent a))
                                     (select-keys [:error :test :affected :delta])
                                     (summarize (:verbose a))))
-      "full_check" (text! (external/full-check! session))
+      "full_check" (text! (external/full-check! session :affected (:affected a)))
       "edit_requalify" (text! (-> (api/requalify-boundary-keys!
                                    session (sym :ns) (sym :name)
                                    :to-ns (or (:to-ns a) (:to_ns a))
