@@ -24,15 +24,24 @@
 
 ;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
 
-^:reads (defn- open-conn [dir]
+^:reads (defn- open-conn
+  "The store db under `dir`, or NIL when `dir` has no store yet.
+
+  A read must never CREATE: the kernel boots in whatever directory the MCP
+  client launched the server in, so an unadopted project has to stay
+  untouched (D-serving-is-not-adoption). This runs before
+  `slopp.mcp/-main`, which is why gating the server layer alone was not
+  enough — boot got there first and made the store the server then found.
+  Materialization belongs to the first write (`api.session/ensure-db!`)."
+  [dir]
   (let [f (io/file dir ".slopp" "store.db")]
-    (io/make-parents f)
-    (let [conn (jdbc/get-connection
-                (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
-      ;; the live watcher polls a db a live writer owns; without a busy timeout
-      ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
-      (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
-      conn)))
+    (when (.exists f)
+      (let [conn (jdbc/get-connection
+                  (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+        ;; the live watcher polls a db a live writer owns; without a busy timeout
+        ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
+        (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
+        conn))))
 
 ^:reads (defn store-sources
   "{ns-sym source} for every namespace in the store db — byte-exact (each
@@ -89,19 +98,25 @@
   order: load-string each rendered source + a *loaded-libs* stamp. Returns the
   {ns source} map that was loaded. A load failure is rethrown NAMING the
   namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
-  is useless on the one code path with no oracle behind it."
+  is useless on the one code path with no oracle behind it.
+
+  A dir with NO store loads nothing and returns {} — same shape as a store
+  that exists and is empty. Serving an unadopted dir is legal and leaves it
+  untouched; the caller decides whether an empty program is worth a warning."
   [dir]
-  (with-open [conn (open-conn dir)]
-    (let [sources (store-sources conn)]
-      (doseq [ns-sym (dependency-order sources)]
-        (try (load-string (get sources ns-sym))
-             (catch Throwable t
-               (throw (ex-info (str "slopp.boot: failed to load namespace "
-                                    ns-sym " from the store at " dir
-                                    ": " (.getMessage t))
-                               {:ns ns-sym :dir dir} t))))
-        (stamp-loaded! ns-sym))
-      sources)))
+  (if-let [c (open-conn dir)]
+    (with-open [conn c]
+      (let [sources (store-sources conn)]
+        (doseq [ns-sym (dependency-order sources)]
+          (try (load-string (get sources ns-sym))
+               (catch Throwable t
+                 (throw (ex-info (str "slopp.boot: failed to load namespace "
+                                      ns-sym " from the store at " dir
+                                      ": " (.getMessage t))
+                                 {:ns ns-sym :dir dir} t))))
+          (stamp-loaded! ns-sym))
+        sources))
+    {}))
 
 ;; --- live mode: track the store, reload changed nses into this jvm ---
 
@@ -125,7 +140,11 @@
   source), which the dialect denylist bans for ordinary code — here it is the
   whole point."
   [dir & {:keys [interval-ms] :or {interval-ms 500}}]
-  (let [conn (open-conn dir)]
+  (let [conn (loop []
+             ;; an unadopted dir has no store until its first write
+             ;; materializes one — WAIT for it rather than dying at boot
+             (or (open-conn dir)
+                 (do (Thread/sleep (long interval-ms)) (recur))))]
     (loop [dv (data-version conn), prev (store-sources conn)]
       (let [[dv' prev']
             (try
@@ -198,9 +217,17 @@
       ;; namespaces; without this the real error surfaced downstream as
       ;; requiring-resolve's "Could not locate …__init.class" — say it here
       (when (empty? sources)
-        (log! "slopp.boot: WARNING — the store at " dir " is EMPTY (no"
-              " namespaces loaded). Wrong directory? Expected a populated"
-              " " dir "/.slopp/store.db.")))
+        ;; two different situations, and only one is a mistake: an EMPTY
+        ;; store means someone pointed at the wrong dir, while NO store is
+        ;; the ordinary case for a dir that never adopted slopp — the
+        ;; server is expected to serve those and leave them alone
+        (if (.exists (io/file dir ".slopp" "store.db"))
+          (log! "slopp.boot: the store at " dir " has no namespaces yet —"
+                " a freshly adopted store, or the wrong directory (a"
+                " populated one lives at " dir "/.slopp/store.db).")
+          (log! "slopp.boot: no slopp store at " dir " — serving an"
+                " unadopted directory and leaving it untouched. Your first"
+                " write creates " dir "/.slopp/store.db."))))
     (when live?
       (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
         (.setDaemon true)

@@ -3,7 +3,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.db :as db]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -74,3 +74,25 @@
             loaded (db/load-store conn2)]
         (is (= {"app.core" :pure} (:module-tiers loaded)))
         (.close conn2)))))
+
+(deftest ^:external a-storeless-dir-materializes-on-the-first-write
+  ;; The MCP server is launched in whatever dir the editor has open, so
+  ;; opening a session must not COLONISE a project that never asked for
+  ;; slopp. The store appears on the first real write and not before —
+  ;; which is what the slopp-setup skill has always promised.
+  (let [dir  (temp-dir)
+        sdir (io/file dir ".slopp")
+        sess (external/open! {:slopp.api/dir dir})]
+    (try
+      (testing "opening a session on a storeless dir writes nothing to disk"
+        (is (not (.exists sdir))
+            ".slopp/ must not be created just by serving a dir"))
+      (testing "the first real write materializes the store"
+        (api/ingest! sess 'demo "(ns demo)\n(defn add [x y] (+ x y))\n")
+        (is (.exists (io/file sdir "store.db"))))
+      (finally (api/close! sess)))
+    (testing "and that write is durable — a fresh session reads it back"
+      (let [sess2 (external/open! {:slopp.api/dir dir})]
+        (try
+          (is (re-find #"\(\+ x y\)" (query/query-source sess2 'demo)))
+          (finally (api/close! sess2)))))))

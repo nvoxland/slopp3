@@ -174,6 +174,11 @@
         sess (external/open! {:slopp.api/dir dir})]
     (try
       (swap! sess assoc :require-turns? true)
+      ;; open! no longer creates .slopp/ just by serving — the store is
+      ;; materialized by the first write. The real hook only writes
+      ;; pending-intent into an already-adopted dir, so make the dir it
+      ;; would have found rather than relying on open! to leave one.
+      (io/make-parents (io/file dir ".slopp" "pending-intent"))
       (spit (io/file dir ".slopp" "pending-intent")
             "{\"session-id\":\"sess-abc123\",\"prompt\":\"add a widget feature\"}")
       (let [r (edn/read-string

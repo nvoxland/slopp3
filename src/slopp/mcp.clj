@@ -949,6 +949,14 @@
   durable (store at <dir>/.slopp/store.db); without it the session is
   ephemeral. Serving a git checkout that carries a slopp BRANCH with an
   absent/empty store AUTO-IMPORTS it first (zero-ceremony onboarding).
+
+  Serving a dir that is NOT slopp-managed writes NOTHING there: the server
+  is launched in whatever directory the editor has open, so adoption has to
+  be something you do, not something that happens to you. The store is
+  created by the first real write (`slopp.api.session/ensure-db!`), and
+  until then the git listener stays down too — opening its context would
+  create the very store this is avoiding.
+
   A durable session ALSO opens an in-process git smart-HTTP listener on a
   dir-derived port (localhost) — a READ-ONLY remote (clone/fetch of
   milestones) any git client can point at with no external daemon;
@@ -964,7 +972,7 @@
   (let [session (external/open! (cond-> {:slopp.api/warm-spare? true}
                              dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
-    (when dir
+    (when (and dir (:db @session))
       (try
         (let [srv (server/start-server! (server/derived-port dir) {:dir dir})]
           (swap! session assoc :git-server srv :git-url (:url srv))

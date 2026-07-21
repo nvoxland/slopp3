@@ -107,6 +107,26 @@
                   (format "(intern '%s '%s (fn [& _] (throw (ex-info \"red-first stub: %s is speced but not implemented\" {:red-first '%s}))))"
                           (namespace q) (name q) q q)))
     (when (seq missing) missing)))
+(defn- ensure-db!
+  "The session's journal connection, CREATING the store on first use when the
+  session has a dir but no store yet.
+
+  This is the only place a directory becomes slopp-managed implicitly, and
+  it is deliberately on the WRITE path: `external/open!` no longer creates a
+  store just because the MCP server was launched somewhere, so a session on
+  an unadopted dir runs cache-only until real work arrives. Returns nil for
+  a dirless session, which stays ephemeral forever."
+  [session]
+  (or (:db @session)
+      (when-let [dir (:dir @session)]
+        (let [conn (db/open! dir)
+              s    (swap! session update :db #(or % conn))]
+          ;; a concurrent writer may have won the race — keep the winner's
+          ;; connection and release ours rather than leaking it
+          (when-not (identical? conn (:db s))
+            (.close ^java.sql.Connection conn))
+          (:db s)))))
+
 (defn try-commit!
   "Commit base→st' — JOURNAL-FIRST for durable sessions (m5a storage
   inversion): the new deltas + the full element rows of `nses` land in ONE
@@ -116,7 +136,7 @@
   True iff committed; false = the head/cache moved — caller refreshes and
   rebases, or surfaces contention."
   [session base st' nses]
-  (if-let [conn (:db @session)]
+  (if-let [conn (ensure-db! session)]
     (if (db/append! conn st'
                     (drop (count (store/deltas base)) (store/deltas st'))
                     (vec nses)
