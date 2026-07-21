@@ -64,7 +64,7 @@
                                :args {:type "array"}}
                   :required ["sym"]}}
    {:name "query_store"
-    :description "The STORE-VALUE oracle: one read-only (fn [store] ...) evaluated over the current immutable store value — ad-hoc analysis ABOUT the codebase (form counts, metadata sweeps, custom aggregation) that no canned query covers. Fully-qualify everything (slopp.store/forms, slopp.render/render-ns, slopp.index/analyze ...); no effects/defs/interop/IO; results must print small. timeout_ms default 10000."
+    :description "The STORE-VALUE oracle: one read-only (fn [store] ...) evaluated over the current immutable store value — ad-hoc analysis ABOUT the codebase (form counts, metadata sweeps, custom aggregation) that no canned query covers. Fully-qualify everything (slopp.store/forms, slopp.render/render-ns, slopp.index.analyze/analyze ...); no effects/defs/interop/IO; results must print small. timeout_ms default 10000."
     :inputSchema {:type "object"
                   :properties {:code {:type "string"}
                                :timeout_ms {:type "integer"}}

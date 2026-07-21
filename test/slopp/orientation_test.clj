@@ -433,6 +433,14 @@
       (is (not (re-find #"(?i)carrier|late-ref" msg))
           (str "store-code advice is nonsense for a throwaway query: " msg))))
 
+  (testing "static interop is an arbitrary-code escape the sandbox must refuse"
+    (doseq [code ['(fn [store] (java.nio.file.Files/delete
+                                (java.nio.file.Paths/get "x" (make-array String 0))))
+                  '(fn [store] (clojure.lang.RT/loadResourceScript "evil.clj"))
+                  '(fn [store] (System/setProperty "x" "y"))]]
+      (is (edit/pure-eval-refusal code)
+          (str "static interop must be refused: " (pr-str code)))))
+
   (testing "ordinary analysis still passes"
     (is (nil? (edit/pure-eval-refusal
                '(fn [store] (map :name (slopp.store/forms store 'x))))))

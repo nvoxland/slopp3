@@ -210,3 +210,23 @@
       (is (:store (edit/replace-form s 'rr.core 'a "(defn c [] 42)"))))
     (testing "replacing a form in place still lands"
       (is (:store (edit/replace-form s 'rr.core 'a "(defn a [] 42)"))))))
+
+(deftest dialect-gate-closes-the-qualification-and-metadata-holes
+  (let [s (ingest)]
+    (testing "a clojure.core-qualified banned sym is refused like the bare one"
+      (is (:error (edit/replace-form s 'demo 'add "(defn add [x] (clojure.core/eval x))")))
+      (is (:error (edit/replace-form s 'demo 'add "(defn add [x] (clojure.core/read-string x))"))))
+    (testing "eval-equivalents load-string/load-file/load-reader are banned"
+      (is (:error (edit/replace-form s 'demo 'add "(defn add [s] (load-string s))")))
+      (is (:error (edit/replace-form s 'demo 'add "(defn add [s] (load-file s))"))))
+    (testing "defmacro is refused when qualified or nested, not just at the head"
+      (is (:error (edit/replace-form s 'demo 'add "(clojure.core/defmacro add [x] x)")))
+      (is (:error (edit/replace-form s 'demo 'add "(defn add [x] (defmacro m [y] y))"))))
+    (testing "a banned sym smuggled into literal metadata is refused"
+      (is (:error (edit/replace-form s 'demo 'add "(def add ^{:h eval} [1])"))))
+    (testing "the SAFE reader (clojure.edn/read-string) still passes"
+      (is (nil? (:error (edit/replace-form s 'demo 'add
+                                           "(defn add [x] (clojure.edn/read-string x))")))))
+    (testing "an ordinary var whose NAME collides but is a different ns still passes"
+      (is (nil? (:error (edit/replace-form s 'demo 'add
+                                           "(defn add [x] (my.lib/resolve x))")))))))

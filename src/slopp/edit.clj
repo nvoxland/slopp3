@@ -16,22 +16,52 @@
   '#{defmacro})
 
 ^:unsafe (def ^:private banned-syms
-  "D3 — the analysis-defeater denylist (extensible). The RESOLVERS
-  (requiring-resolve, resolve, ns-resolve, find-var, intern) are here per
-  the reference-carrier decision: mentions of var names in strings or
+  "D3 — the analysis-defeater denylist (extensible), matched by NAME against a
+  bare or `clojure.core/`-qualified symbol (see `banned-sym?`): a
+  same-named var in ANOTHER namespace — `clojure.edn/read-string` (the SAFE
+  reader), a user's `my.app/resolve` — is a different var and passes. The
+  RESOLVERS (requiring-resolve, resolve, ns-resolve, find-var, intern) are
+  here per the reference-carrier decision: mentions of var names in strings or
   quoted symbols are INERT data, so the gate blocks the moment they could
   BECOME a var — carriers (store/late-ref) or ^:unsafe are the sanctioned
-  paths. The METADATA MUTATORS (alter-meta!, reset-meta!) are here because
-  slopp reads markers (^:export, ^:unsafe, ^:reads, :malli/schema) straight
-  off the STORED node — metadata must be SOURCE-only truth, so mutating a
-  reference's metadata at runtime (invisible to analysis) is refused;
-  with-meta/vary-meta return NEW values and are unaffected."
+  paths. The EVAL-EQUIVALENTS (eval, read-string, load-string, load-file,
+  load-reader) and `defmacro` are here because they defeat static analysis
+  whether written bare, qualified, or nested inside another form. The METADATA
+  MUTATORS (alter-meta!, reset-meta!) are here because slopp reads markers
+  (^:export, ^:unsafe, ^:reads, :malli/schema) straight off the STORED node —
+  metadata must be SOURCE-only truth, so mutating a reference's metadata at
+  runtime (invisible to analysis) is refused; with-meta/vary-meta return NEW
+  values and are unaffected."
   '#{eval alter-var-root binding gen-class definline read-string
+     load-string load-file load-reader defmacro
      requiring-resolve resolve ns-resolve find-var intern
      alter-meta! reset-meta!})
 
-(defn- all-symbols [node]
-  (filter symbol? (tree-seq coll? seq (n/sexpr node))))
+(defn- banned-sym?
+  "Is `sym` a D3-denylisted core operator? Matched by NAME against a bare or
+  `clojure.core/`-qualified symbol — the qualified form of `eval` is as much
+  an analysis-defeater as the bare one, while a same-named var in another
+  namespace (`clojure.edn/read-string`, `my.app/resolve`) is a different var
+  and clean. The refusal text promises exactly this behavior; the whole-symbol
+  set lookup it replaced delivered only the bare case."
+  [sym]
+  (and (symbol? sym)
+       (contains? banned-syms (symbol (name sym)))
+       (let [ns (namespace sym)]
+         (or (nil? ns) (= "clojure.core" ns)))))
+
+(defn- all-symbols
+  "Every symbol reachable in the form's sexpr, INCLUDING those inside literal
+   metadata maps: `^{:h eval} x` compile-time-evaluates its metadata, so a
+   banned symbol there is as live as one in the body — and a `tree-seq` over
+   the sexpr alone never descends into metadata."
+  [node]
+  (let [branch? (fn [x] (or (coll? x)
+                            (and (instance? clojure.lang.IObj x) (meta x))))
+        kids    (fn [x] (concat (when (instance? clojure.lang.IObj x)
+                                  (some-> (meta x) list))
+                                (when (coll? x) (seq x))))]
+    (filter symbol? (tree-seq branch? kids (n/sexpr node)))))
 
 (defn unsafe?
   "Does the top-level form carry `^:unsafe` metadata? The greppable,
@@ -52,9 +82,11 @@
   (boolean (:reads (meta (n/sexpr node)))))
 
 (def ^:private local-binder-heads
-  "Heads that introduce LOCAL names. Built partly from strings for the same
-  reason `pair-binding-heads` is: naming binding/with-redefs as symbols would
-  trip D3 in this very namespace."
+  "Heads that introduce LOCAL names. Built partly from strings: `binding` is
+  D3-denylisted, so writing it as a symbol here would trip the dialect gate in
+  this very namespace. `with-redefs`/`with-local-vars` are NOT denylisted
+  (tests rely on `with-redefs` for mocking); they ride the string list only
+  for consistency with `binding`."
   (into '#{defn defn- fn fn* let let* loop loop* doseq for if-let when-let
            if-some when-some with-open}
         (map symbol)
@@ -88,21 +120,37 @@
   Shared by the single-form edit gate (`parse-form`) and the whole-namespace
   import gate (`dialect-scan`) so both paths reject identically."
   [node]
-  (when-not (unsafe? node) (let [s    (n/sexpr node)
+  (when-not (unsafe? node)
+    (let [s    (n/sexpr node)
           head (when (seq? s) (first s))]
       (cond
+        ;; a reader conditional sexprs as (read-string "#?…") — give it its
+        ;; OWN message rather than the confusing denylist one. Detected by the
+        ;; head's NAME so this gate never mentions the banned symbol itself.
+        (and (seq? s) (symbol? head) (= "read-string" (name head)) (= 2 (count s))
+             (string? (second s)) (str/starts-with? (str/triml (second s)) "#?"))
+        (str "dialect (D3): reader conditionals (#?/#?@) are not allowed in"
+             " stored code — slopp is single-dialect, so a form must read the"
+             " same everywhere. Write the one branch this store targets.")
+
         (contains? banned-heads head)
         (str "dialect (D4): user macros are banned — " head)
-        (some banned-syms (all-symbols node))
-        (let [hit (first (filter banned-syms (all-symbols node)))]
+
+        (some banned-sym? (all-symbols node))
+        (let [hit (first (filter banned-sym? (all-symbols node)))]
           (str "dialect (D3): denylisted symbol used — " hit
                (cond
+                 (= "defmacro" (name hit))
+                 (str " — user macros are banned (D4) wherever they appear, not"
+                      " just at a form's head; write a function, or a"
+                      " data-driven form the analyzer can read")
+
                  (local-name? s hit)
                  (str " — you are using it as a LOCAL name, which cannot invoke"
-                      " clojure.core/" hit " at all (locals shadow); the gate"
-                      " matches symbol NAMES regardless of position, so RENAME"
-                      " the local (binding → bnd, eval → ev) — ^:unsafe is the"
-                      " wrong tool here")
+                      " clojure.core/" (name hit) " at all (locals shadow); the"
+                      " gate matches symbol NAMES regardless of position, so"
+                      " RENAME the local (binding → bnd, eval → ev) — ^:unsafe"
+                      " is the wrong tool here")
 
                  (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
                   (name hit))
@@ -131,9 +179,9 @@
   gate for the store-value oracle (query_store), which must never write.
   Conservative, quote-pruned symbol walk (refs/walk-pruned) refusing:
   `!`-enders (the effect convention), def-family and redefinition forms,
-  java interop (method calls, constructors — arbitrary IO hides there),
-  and an explicit denylist of IO/eval/binding entry points. Pure analysis
-  needs none of those.
+  java interop (method calls, constructors, AND static calls on a class-like
+  namespace — arbitrary IO hides in all of them), and an explicit denylist of
+  IO/eval/binding entry points. Pure analysis needs none of those.
 
   This list is SELF-SUFFICIENT on purpose. The RESOLVERS
   (requiring-resolve/resolve/ns-resolve/find-var) are the subtle ones: they
@@ -145,7 +193,15 @@
   different reason entirely — keeping STORED code statically analyzable. A
   security property must not rest on a coincidence in someone else's list, so
   the sandbox now names them itself; see orientation-test/
-  sandbox-refuses-resolver-escapes, which fails if that stops being true."
+  sandbox-refuses-resolver-escapes, which fails if that stops being true.
+
+  Static interop is the same shape of hole: `(java.nio.file.Files/delete …)`
+  and `(clojure.lang.RT/loadResourceScript …)` are symbols whose NAMESPACE is
+  a class, not one of the exact strings a denylist can enumerate — so the gate
+  refuses ANY symbol whose namespace segment names a class (a segment starting
+  uppercase, Java convention). Pure math on `Math/*` is caught by the same
+  rule; query_store is for store analysis, and the docstring promises no
+  interop."
   [x]
   (let [deny (set (str/split (str "spit slurp eval read-string load-string"
                                   " load-file load require use import intern"
@@ -163,6 +219,11 @@
                              #" "))
         deny-ns #{"System" "java.lang.System" "clojure.java.io"
                   "clojure.java.shell" "java.io" "java.nio.file"}
+        class-like-ns? (fn [nsp]
+                         (when nsp
+                           (let [seg (peek (str/split nsp #"\."))]
+                             (boolean (and (seq seg)
+                                           (Character/isUpperCase ^char (first seg)))))))
         bad? (fn [f]
                (when (symbol? f)
                  (let [nm (name f)]
@@ -170,13 +231,14 @@
                              (str/starts-with? nm ".")
                              (str/ends-with? nm ".")
                              (contains? deny nm)
-                             (contains? deny-ns (namespace f)))
+                             (contains? deny-ns (namespace f))
+                             (class-like-ns? (namespace f)))
                      [f]))))]
     (when-let [f (first (refs/walk-pruned bad? x))]
       (str "query_store is READ-ONLY analysis over the immutable store value — "
            f " is refused (no effects, no defs, no interop, no IO/eval). "
            "Pure clojure.core plus slopp's pure fns (slopp.store/forms, "
-           "slopp.render/render-ns, slopp.index/analyze ...) cover the "
+           "slopp.render/render-ns, slopp.index.analyze/analyze ...) cover the "
            "analysis space"))))
 (defn observe-gate
   "nil if `code` is observation-only; an error string if it (re)defines
