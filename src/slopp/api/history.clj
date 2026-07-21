@@ -230,6 +230,13 @@
                 (when (:agent c) (str " [" (:agent c) "]"))
                 (when (= :red (:status c)) "  (RED)")
                 (when (:at c) (str "  @ " (:at c))))])
+        (contains? row :why)   ; a dead-end row: {:at :why :forms :namespaces :undid}
+        [(str "DEAD-END"
+              (when (:why row) (str " \"" (:why row) "\""))
+              (when (seq (:forms row)) (str "  dropped: " (str/join " " (:forms row))))
+              (when (seq (:undid row)) (str "  (undid " (str/join " " (:undid row)) ")"))
+              (when (:at row) (str "  @ " (:at row))))]
+
         :else
         [(str (:id row) " " (:op row)
               (when (:agent row) (str " [" (:agent row) "]"))

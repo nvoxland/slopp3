@@ -93,7 +93,8 @@
                        e    (store/forms st nsx)
                        :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
                        :when (and (seq? s)
-                                  (contains? '#{defn defmacro def} (first s))
+                                  (contains? #{"defn" "defmacro" "def" "defmulti" "defprotocol"}
+                                             (str (first s)))
                                   (symbol? (second s))
                                   (not (:private (meta (second s))))
                                   (or (not deep?)
