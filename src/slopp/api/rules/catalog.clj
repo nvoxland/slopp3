@@ -45,6 +45,9 @@
    {:rule :stale-reference :grain :done :severity :advisory
     :escape "fix the prose (or the reference) so the name resolves — the text is teaching, and teaching that lies costs a failed call to discover"
     :teach "a docstring/teach-string names a.b/c where namespace a.b is in this store but has no form c — a rename or move left the prose behind (gates never see a var inside a string)"}
+   {:rule :retired-vocabulary :grain :done :severity :advisory
+    :escape "route through the normalizer, or ^:legacy-ok on the name if this form IS the normalizer (it polices itself — a marker that mixes nothing is reported stale)"
+    :teach "a form ENUMERATES a retired vocabulary (two retired members, or one beside its replacement) — a second copy that missed the rename; declare yours with config_file {path vocabulary key <old> value <new>}"}
    {:rule :shell-widening :grain :done :severity :advisory
     :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
     :teach "this episode declared a namespace :external/:internal — the functional CORE got smaller, and only you know whether it had to"}
