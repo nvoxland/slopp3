@@ -151,7 +151,7 @@
       (api/ingest! sess 'pm.core "(ns pm.core)\n(defn add [x y] (+ x y))\n")
       (api/ingest! sess 'pm.edge
                    "(ns pm.edge)\n(defn roll [] (rand))\n")
-      (let [r (query/query-depends sess nil :modules true)]
+      (let [r (query/query-depends sess nil :modules true :detail true)]
         (testing "a module whose code is clean is reported as tightenable"
           (is (= :pure (get-in r [:purity :could-tighten "pm.core" :supports]))
               (pr-str (:purity r))))
@@ -161,7 +161,7 @@
               (pr-str (:purity r)))))
       (testing "once declared, it is reported as declared and no longer offered"
         (api/module-tier! sess "pm.core" :pure :prompt "clean core")
-        (let [r (query/query-depends sess nil :modules true)]
+        (let [r (query/query-depends sess nil :modules true :detail true)]
           (is (= :pure (get-in r [:purity :declared "pm.core"])) (pr-str r))
           (is (nil? (get-in r [:purity :could-tighten "pm.core"])) (pr-str r))))
       (finally (api/close! sess)))))
@@ -225,4 +225,34 @@
       (is (= :internal
              (get-in (api/module-tier! sess "lv.core" :reads :prompt "legacy in")
                      [:tiers "lv.core"])))
+      (finally (api/close! sess)))))
+
+(deftest ^:external module-graph-defaults-compact-and-expands-on-detail
+  ;; :could-tighten is an ADOPTION worklist — which modules could carry a
+  ;; stricter tier. It is one-time information, but it rode every
+  ;; query_depends {modules true} response: measured at 2,304 of 5,584 chars
+  ;; (41%) on the eval9 seed, byte-identical across three calls in one
+  ;; lifetime. Names by default answer "which?"; the per-module
+  ;; :declared/:supports detail is one flag away.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'ct.core "(ns ct.core)\n(defn ^:unused-ok add \"A.\" [x y] (+ x y))\n")
+      (api/ingest! sess 'ct.edge "(ns ct.edge)\n(defn ^:unused-ok roll \"R.\" [] (rand))\n")
+      (testing "default: could-tighten names only, and it says where the detail is"
+        (let [r  (query/query-depends sess nil :modules true)
+              ct (get-in r [:purity :could-tighten])]
+          (is (vector? ct) (str "expected a name vector, got: " (pr-str ct)))
+          (is (some #{"ct.core"} ct) (pr-str ct))
+          (is (every? string? ct) (pr-str ct))
+          (is (re-find #"(?i)detail" (str (get-in r [:purity :note])))
+              (pr-str (:purity r)))))
+      (testing "detail true: the full per-module worklist comes back"
+        (let [r  (query/query-depends sess nil :modules true :detail true)
+              ct (get-in r [:purity :could-tighten])]
+          (is (map? ct) (pr-str ct))
+          (is (= :pure (get-in ct ["ct.core" :supports])) (pr-str ct))))
+      (testing "the architecture answer is unaffected by the default"
+        (let [r (query/query-depends sess nil :modules true)]
+          (is (some? (:layers r)))
+          (is (map? (:manifest r)))))
       (finally (api/close! sess)))))

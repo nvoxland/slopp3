@@ -2165,14 +2165,13 @@
                         vec
                         not-empty))]
     (cond-> {:project project
-             :loop (str "work like a REPL: small writes (edit_replace_form / "
-                        "edit_add_form / edit_subform — each self-verifies against "
-                        "the live image; mid-episode reds are normal TDD state); "
-                        "probe with query_eval; spot-check with targeted test_run; "
-                        "call done {label} when you believe you're finished — it "
-                        "runs the affected tests + lint + tidy for you; ONE "
-                        "commit_point {description} closes the user-visible chunk. "
-                        "Results are self-describing: act on them, don't narrate them.")}
+             ;; the loop is taught in full by the slopp SKILL; the brief only needs to
+             ;; NAME it. Measured: 472 chars, byte-identical in all 5 sessions of an
+             ;; eval9 lifetime — orientation should carry what CHANGED, not re-teach
+             ;; what the skill already said.
+             :loop (str "small verified writes → done {label} at each finish point"
+                        " → ONE commit_point. Results are self-describing: act on"
+                        " them, don't narrate them. (Full loop: the slopp skill.)")}
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
       relevant   (assoc :relevant relevant))))

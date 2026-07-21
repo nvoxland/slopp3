@@ -570,6 +570,7 @@
       "query_depends" (text! (told! session name a
                                         (query/query-depends session (:on a)
                                                           :modules (:modules a)
+                                                          :detail (:detail a)
                                                           :direction (if (= "dependencies" (:direction a))
                                                                        :dependencies :dependents))))
       "session_brief" (text! (let [b    (api/session-brief session)

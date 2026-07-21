@@ -41,7 +41,8 @@
     :inputSchema {:type "object"
                   :properties {:on {:type "string"}
                                :direction {:type "string" :enum ["dependents" "dependencies"]}
-                               :modules {:type "boolean"}}}}
+                               :modules {:type "boolean"}
+                               :detail {:type "boolean"}}}}
    {:name "review_scan"
     :description "REVIEW TRIAGE for a whole codebase (or one :ns): every form the store thinks is RISKY — untested (no covering test), unused (public with ZERO in-store callers — dead code or unadvertised surface; whole scans only), effectful (!), high-blast (many callers), large, lint-flagged, or undocumented public surface — RISK-RANKED so you read the dangerous forms first. One pass; :top rows carry :form/:risk/:flags/:callers/:covered; drill in with query_slice. Run a test_run first so :untested is populated."
     :inputSchema {:type "object"
