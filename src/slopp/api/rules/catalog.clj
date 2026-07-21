@@ -44,5 +44,5 @@
     :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
    {:rule :shell-widening :grain :done :severity :advisory
     :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
-    :teach "this episode declared a namespace :effects/:reads — the functional CORE got smaller, and only you know whether it had to"}
+    :teach "this episode declared a namespace :external/:internal — the functional CORE got smaller, and only you know whether it had to"}
    ])

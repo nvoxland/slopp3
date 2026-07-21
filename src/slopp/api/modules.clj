@@ -162,19 +162,25 @@
   adopting the gate on a codebase that predates it. A module is judged by its
   weakest production namespace, since the tier binds all of them.
 
+  Tiers rank and report in the canonical vocabulary
+  (:pure/:internal/:external); stores that predate the rename may carry
+  :reads/:effects, which normalize on read.
+
   Test namespaces are excluded: they exercise effects on purpose and would
   veto every module."
   [store]
-  (let [rank   {:pure 0 :reads 1 :effects 2}
+  (let [rank   modules/tier-order
         prod   (remove #(str/ends-with? (str %) "-test")
                        (keys (:namespaces store)))
         tiers  (:module-tiers store)
         by-mod (group-by modules/module-of prod)]
-    {:declared (into (sorted-map) tiers)
+    {:declared (into (sorted-map)
+                     (map (fn [[m t]] [m (modules/canonical-tier t)]))
+                     tiers)
      :could-tighten
      (into (sorted-map)
            (keep (fn [[m ns-list]]
-                   (let [declared (get tiers m :effects)
+                   (let [declared (modules/canonical-tier (get tiers m :external))
                          supports (last (sort-by rank
                                                  (map #(:supports
                                                         (modules/tier-report store %))

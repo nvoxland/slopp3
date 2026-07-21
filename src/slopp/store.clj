@@ -23,8 +23,8 @@
   ;; :modules  module → #{declared dep modules} — fold of :module-edge
   ;;           deltas; {} from birth (enforcement always on), nil only in
   ;;           stores loaded from a pre-module db (open! adopts them)
-  ;; :module-tiers module → purity tier (:pure/:reads/:effects) — fold of
-  ;;           :module-tier deltas; a module absent from the map is :effects
+  ;; :module-tiers module → purity tier (:pure/:internal/:external) — fold of
+  ;;           :module-tier deltas; a module absent from the map is :external
   ;;           (unrestricted), so tiers are opt-in tightening (D9)
   {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}
    :modules {} :module-tiers {}})
@@ -727,10 +727,10 @@
                   :else cur))
               nil upto))))
 (defn record-module-tier
-  "Declare a module's purity TIER (:pure/:reads/:effects) — the per-module
+  "Declare a module's purity TIER (:pure/:internal/:external) — the per-module
   register behind the functional-core gate (D9): one :module-tier delta
   carrying its why (:prompt); last write per module wins. A module absent
-  from :module-tiers (or declared :effects) is unrestricted. Returns
+  from :module-tiers (or declared :external) is unrestricted. Returns
   [store' delta]."
   [store module tier & {:keys [prompt agent]}]
   (let [[did store'] (gen-id store "d")

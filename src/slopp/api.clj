@@ -2213,17 +2213,19 @@
        (seq dead) (assoc :dead-ends dead)))))
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):
-  :pure (no effect may be reached, incl. an opaque-dep read), :reads (reads OK,
-  no mutation), :effects (unrestricted — the periphery). One :module-tier delta
-  carrying its why (:prompt); last write per module wins. Declaring :effects
-  (or never declaring) leaves a module ungated. Read tiers via query_depends
-  {modules true}."
+  :pure (referentially transparent), :internal (may mutate IN-PROCESS state
+  only — a memo, a registry), :external (IO — the periphery; unrestricted).
+  Legacy spellings :reads/:effects are accepted and stored canonically as
+  :internal/:external. One :module-tier delta carrying its why (:prompt); last
+  write per module wins. Declaring :external (or never declaring) leaves a
+  module ungated. Read tiers via query_depends {modules true}."
   [session module tier & {:keys [prompt agent]}]
   (let [module (str module)
         ;; every surface — this docstring, the tool description, query_depends'
         ;; output — spells tiers WITH the colon, so accept that spelling too
         ;; rather than turning ":pure" into ::pure and refusing it
-        tier   (keyword (str/replace (name (or tier "")) #"^:" ""))
+        tier   (edit.modules/canonical-tier
+                (keyword (str/replace (name (or tier "")) #"^:" "")))
         ;; namespace grain, not just module grain: a pure CORE routinely lives
         ;; one level below an effectful module (slopp.api holds seven fully-pure
         ;; namespaces). At module grain that core cannot be named, so nothing
@@ -2236,7 +2238,7 @@
                    " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
                    (pr-str module))}
 
-      (not (#{:pure :internal :external :reads :effects} tier))
+      (not (#{:pure :internal :external} tier))
       {:error (str "tier must be :pure, :internal, or :external — got "
                    (pr-str tier)
                    ". :pure = referentially transparent; :internal = may mutate"

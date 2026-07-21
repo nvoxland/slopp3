@@ -106,9 +106,11 @@
              changed)))
 (defn shell-widening-check
   "Namespaces this EPISODE moved into (or further toward) the shell — a new
-   `:effects`/`:reads` declaration, or a loosening of an existing one.
+   `:external`/`:internal` declaration, or a loosening of an existing one.
+   Tier spellings normalize on read, so stores that predate the
+   :internal/:external rename fire it the same way.
 
-   Declaring a namespace `:effects` makes the functional CORE smaller. That is
+   Declaring a namespace `:external` makes the functional CORE smaller. That is
    sometimes exactly right and sometimes the path of least resistance when a
    gate refuses a write, and the moment to ask is while the reason is still in
    the agent's context — not at review time, when nobody remembers.
@@ -129,16 +131,18 @@
                                (get edit.modules/tier-order (or was t) 2)))]
     (vec (for [d recent
                :when (= :module-tier (:op d))
-               :let [t (:tier d) was (prior (:module d))]
+               :let [t   (edit.modules/canonical-tier (:tier d))
+                     was (edit.modules/canonical-tier (prior (:module d)))]
                ;; a FIRST declaration fires too. An undeclared namespace is already
-               ;; effectively :effects, so this is not a loosening — but writing
+               ;; effectively :external, so this is not a loosening — but writing
                ;; the declaration down IS the decision, and the decision is what
                ;; deserves the question.
-               :when (and (contains? #{:reads :effects} t)
+               :when (and (contains? #{:internal :external} t)
                           (or (nil? was) (looser? t was)))]
            {:ns (symbol (str (:module d)))
             :tier t
-            :why (str (:module d) " became SHELL (:" (name t) ") this episode"
+            :why (str (:module d) " moved toward the SHELL (:" (name t) ") this"
+                      " episode"
                       (when was (str ", loosened from :" (name was)))
                       " — the core got smaller. Did the effect have to live"
                       " there, or does it belong in an existing shell"

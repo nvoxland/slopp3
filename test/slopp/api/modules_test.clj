@@ -193,3 +193,36 @@
       (testing "and a name matching nothing still says so"
         (is (:error (modules/module-surface sess "sg.nope"))))
       (finally (api/close! sess)))))
+
+(deftest purity-standing-accepts-canonical-tier-spellings
+  ;; d9157 standardized :internal/:external, but the reporting arm's rank table
+  ;; still spoke only the retired vocabulary, so (rank :internal) came back nil
+  ;; and query_depends {modules true} crashed with an NPE on any store carrying
+  ;; a current-vocabulary tier. Both spellings must be readable; answers come
+  ;; back canonical.
+  (let [pure-src  "(ns cv.core)\n(defn add [x y] (+ x y))\n"
+        with-tier (fn [tier]
+                    (-> (store/empty-store)
+                        (store/ingest 'cv.core pure-src)
+                        (store/record-module-tier "cv.core" tier)
+                        first))]
+    (testing "a canonical :internal declaration ranks instead of crashing"
+      (is (= {:declared :internal :supports :pure}
+             (get-in (modules/purity-standing (with-tier :internal))
+                     [:could-tighten "cv.core"]))))
+    (testing "a legacy :reads declaration reads back canonical"
+      (is (= {:declared :internal :supports :pure}
+             (get-in (modules/purity-standing (with-tier :reads))
+                     [:could-tighten "cv.core"]))))))
+
+(deftest ^:external module-tier-records-canonical-spelling
+  ;; module_purity accepts :reads/:effects as legacy spellings, but recording
+  ;; them raw is how mixed vocabulary entered the store and broke every reader
+  ;; that ranked tiers. Legacy in, canonical stored.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'lv.core "(ns lv.core)\n(defn add [x y] (+ x y))\n")
+      (is (= :internal
+             (get-in (api/module-tier! sess "lv.core" :reads :prompt "legacy in")
+                     [:tiers "lv.core"])))
+      (finally (api/close! sess)))))
