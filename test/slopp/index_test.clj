@@ -209,3 +209,22 @@
       (is (empty? (seq (.listFiles f)))
           "analysis must leave kondo's cache dir untouched")
       (finally (reset! index/kondo-cache-dir prev)))))
+
+(deftest var-quote-in-call-position-propagates-effects
+  (testing "((#'save! 1)) is a CALL — the caller reaches the effect"
+    (let [an (analyze/analyze
+              (str "(ns vq)\n"
+                   "(defn save! [x] (swap! x inc))\n"
+                   "(defn sneak [x] (#'save! x))\n"))
+          eff (derive/effectful-vars an)]
+      (is (contains? eff 'vq/sneak)
+          "a var-quote call let the effect escape into a would-be pure fn")))
+  (testing "a var-quote HELD as data is still a carrier — it does not taint"
+    (let [an (analyze/analyze
+              (str "(ns vq2)\n"
+                   "(defn save! [x] (swap! x inc))\n"
+                   "(def registry {:fn #'save!})\n"
+                   "(defn holder [] registry)\n"))
+          eff (derive/effectful-vars an)]
+      (is (not (contains? eff 'vq2/holder))
+          "a #'var carried in data must not propagate the effect"))))

@@ -699,3 +699,42 @@
                                          "(defn plain [id] id)"
                                          :prompt "no map arg")))))
       (finally (api/close! sess)))))
+
+(deftest purity-gate-sees-console-io-and-watch-mutation
+  (let [at (fn [src tier]
+             (first (store/record-module-tier
+                     (store/ingest (store/empty-store) 'app.core src)
+                     "app.core" tier)))]
+    (testing ":pure refuses a form that reaches console IO (println is an effect)"
+      (let [t (at "(ns app.core)\n\n(defn shout \"S.\" [x] (println x))\n" :pure)]
+        (is (modules/tier-refusal t 'app.core 'shout)
+            "println breaks referential transparency but entered :pure")))
+    (testing ":pure refuses a form that reaches add-watch (registry mutation)"
+      (let [t (at "(ns app.core)\n\n(defn spy \"S.\" [a] (add-watch a :k identity))\n" :pure)]
+        (is (modules/tier-refusal t 'app.core 'spy)
+            "add-watch mutates the watch registry but entered :pure")))
+    (testing ":internal STILL allows println (in-process, capturable)"
+      (let [tp (at "(ns app.core)\n\n(defn shout \"S.\" [x] (println x))\n" :internal)]
+        (is (nil? (modules/tier-refusal tp 'app.core 'shout)))))))
+
+(deftest late-ref-into-the-shell-is-a-layering-violation
+  ;; the dialect gate ROUTES agents to (store/late-ref 'ns/name) to break a
+  ;; load cycle — but the quoted target is invisible to both the require graph
+  ;; (layering) and effect derivation (the symbol is pruned). So a :pure core
+  ;; namespace could reach IO in an :external namespace with NO gate firing,
+  ;; defeating d9157's "core must not depend on the shell".
+  (let [st (-> (store/empty-store)
+               (store/ingest 'app.io "(ns app.io)\n\n(defn ^:unused-ok read! \"R.\" [p] (slurp p))\n")
+               (store/ingest 'app.core
+                             (str "(ns app.core (:require [slopp.store :as store]))\n\n"
+                                  "(defn ^:unused-ok pull \"P.\" [p]\n"
+                                  "  ((store/late-ref 'app.io/read!) p))\n"))
+               (store/record-module-tier "app.io" :external) first
+               (store/record-module-tier "app.core" :pure) first)]
+    (testing "layering flags a late-ref from a non-external ns into an :external one"
+      (let [v (modules/layering-violations st 'app.core :pure)]
+        (is (some #(= 'app.io (:requires %)) v)
+            (str "late-ref into the shell slipped past layering: " (pr-str v)))))
+    (testing "a late-ref BETWEEN external namespaces is fine (both shell)"
+      (let [st2 (first (store/record-module-tier st "app.core" :external))]
+        (is (empty? (modules/layering-violations st2 'app.core :external)))))))

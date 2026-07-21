@@ -507,6 +507,25 @@
    done-time shell-widening advisory asks whether a tier got LOOSER."
   {:pure 0 :internal 1 :external 2})
 
+(defn- late-ref-target-nses
+  "Target namespaces `ns-sym` reaches through `(store/late-ref 'ns/name)` — a
+  disguised require the ns-form's `:require` clause deliberately omits (to
+  break a load cycle). Layering must count them, or a core namespace can
+  reach the shell through a carrier invisible to the require graph. Matched by
+  the carrier NAME (`late-ref`) regardless of alias, like `refs/carrier-refs`."
+  [store ns-sym]
+  (into #{}
+        (for [e    (store/forms store ns-sym)
+              :when (:name e)
+              node  (tree-seq coll? seq
+                              (try (n/sexpr (:node e)) (catch Exception _ nil)))
+              :when (and (seq? node) (symbol? (first node))
+                         (= "late-ref" (name (first node))))
+              a     (rest node)
+              :when (and (seq? a) (= 'quote (first a))
+                         (symbol? (second a)) (namespace (second a)))]
+          (symbol (namespace (second a))))))
+
 (defn ^:export layering-violations
   "Namespaces required by `ns-sym` that reach OUTSIDE the process while
    `ns-sym` claims not to, as `[{:requires :tier} …]`. Empty when it layers.
@@ -524,16 +543,20 @@
    CROSS-NAMESPACE effect only when the callee is `!`-named (D6's documented
    soundness bound), so a core namespace calling a non-bang IO fn in an edge
    namespace slips through it entirely. Layering reads the REQUIRE graph, so
-   it holds regardless of naming discipline."
+   it holds regardless of naming discipline — AND the `(store/late-ref …)`
+   carrier graph, so a disguised require into the shell cannot slip past it
+   either (the dialect gate routes agents to late-ref for load cycles)."
   [store ns-sym tier]
   (let [norm canonical-tier
-        mine  (norm tier)]
+        mine (norm tier)]
     (if (= mine :external)
       []
-      (vec (for [req  (store/ns-requires store ns-sym)
-                 :let [rt (norm (tier-for store req))]
-                 :when (= rt :external)]
-             {:requires req :tier rt})))))
+      (let [targets (into (set (store/ns-requires store ns-sym))
+                          (late-ref-target-nses store ns-sym))]
+        (vec (for [req  (sort targets)
+                   :let [rt (norm (tier-for store req))]
+                   :when (= rt :external)]
+               {:requires req :tier rt}))))))
 
 (defn ^:export tier-violations
   "The forms ALREADY in `module` that would violate `tier`, as

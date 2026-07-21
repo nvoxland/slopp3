@@ -3,9 +3,19 @@
             [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]))
 
-(def ^:export effectful-leaves
+^:unsafe (def ^:export effectful-leaves
   "Fixed anchor set: core primitives that modify in-process or external state
-  (D6 scope = modification). Extensible; reads / non-determinism are NOT here."
+  (D6 scope = modification). Extensible; reads / non-determinism are NOT here.
+
+  Console IO (`println` &c) and watch registration are here but deliberately
+  NOT in `external-leaves`: they break referential transparency (so `:pure`
+  forbids them) yet are capturable/resettable in-process (`with-out-str`, a
+  registry reset), so they need no test isolation and `:internal` allows them,
+  exactly like `swap!`.
+
+  `^:unsafe` because the set names `clojure.core/alter-var-root` as DATA — the
+  dialect denylist matches it by name/core, so listing effect names here has
+  the same standing as `banned-syms`/`observe-banned`."
   '#{clojure.core/swap! clojure.core/reset! clojure.core/swap-vals!
      clojure.core/reset-vals! clojure.core/compare-and-set!
      clojure.core/vreset! clojure.core/vswap!
@@ -13,6 +23,9 @@
      clojure.core/commute clojure.core/send clojure.core/send-off
      clojure.core/deliver clojure.core/conj! clojure.core/disj!
      clojure.core/assoc! clojure.core/dissoc! clojure.core/pop!
+     clojure.core/add-watch clojure.core/remove-watch
+     clojure.core/println clojure.core/prn clojure.core/print
+     clojure.core/printf clojure.core/pr
      clojure.core/spit clojure.core/delete-file})
 
 (defn ^:export node
@@ -213,22 +226,34 @@
         (if (= nd nd') nd (recur nd'))))))
 
 (defn ^:export var-quote-positions
-  "The positions `[row col]` of the SYMBOL inside every `#'var` var-quote in
-   `source` — these align with kondo's `:name-row`/`:name-col` for the usage. Lets
-   `call-graph` exclude a var HELD as a carrier (a `#'var` in data, e.g. a rule
-   registry) from effect propagation while KEEPING a bare value reference — an
-   alias `(def g effectful-fn)` or a higher-order arg `(map effectful-fn xs)` — which
-   is callable-as-the-var and must stay conservatively effectful."
+  "The positions `[row col]` of the SYMBOL inside every `#'var` var-quote HELD
+   AS DATA in `source` — a carrier (a `#'var` in a registry, a higher-order
+   arg). A var-quote in the HEAD of a LIST is EXCLUDED: `(#'f x)` derefs the
+   var and CALLS it, so it must propagate effects like any call (kondo sets no
+   `:arity` there, so `call-graph` cannot tell it from a carrier without this).
+   These align with kondo's `:name-row`/`:name-col` for the usage, so
+   `call-graph` excludes a carrier from effect propagation while KEEPING a
+   called var-quote and a bare value reference."
   [source]
   (let [root (try (p/parse-string-all source) (catch Exception _ nil))]
     (if-not root
       #{}
-      (into #{}
-            (comp (filter #(= :var (n/tag %)))
-                  (keep (fn [vq]
-                          (let [m (meta (first (n/children vq)))]
-                            (when (and (:row m) (:col m)) [(:row m) (:col m)])))))
-            (tree-seq n/inner? n/children root)))))
+      (let [pos-of  (fn [vq] (let [m (meta (first (n/children vq)))]
+                               (when (and (:row m) (:col m)) [(:row m) (:col m)])))
+            ;; a var-quote at the HEAD of a list is a CALL, not a carrier
+            called  (into #{}
+                          (comp (filter #(= :list (n/tag %)))
+                                (keep (fn [lst]
+                                        (let [h (first (filter n/sexpr-able?
+                                                               (n/children lst)))]
+                                          (when (and h (= :var (n/tag h)))
+                                            (pos-of h))))))
+                          (tree-seq n/inner? n/children root))]
+        (into #{}
+              (comp (filter #(= :var (n/tag %)))
+                    (keep pos-of)
+                    (remove called))
+              (tree-seq n/inner? n/children root))))))
 
 (def ^:export kondo-config
   "SLOPP'S OWN clj-kondo configuration — static, shipped with slopp, applied to

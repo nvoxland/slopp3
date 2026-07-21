@@ -524,6 +524,7 @@
         ;; check effect-reachability cannot make, since that sees a cross-ns
         ;; effect only when the callee is `!`-named.
         layer (vec (for [n nses
+                         :when (not (str/ends-with? (str n) "-test"))
                          :let [t (edit.modules/tier-for st n)]
                          v (edit.modules/layering-violations st n t)]
                      {:ns n :tier t :requires (:requires v) :requires-tier (:tier v)}))
