@@ -51,8 +51,11 @@ if [ "${1:-}" = "--doctor" ]; then
   if [ -f ".slopp/store.db" ]; then
     if [ -n "${SLOPP_JAR:-}" ] || [ -f "$JAR" ]; then
       probe_jar="${SLOPP_JAR:-$JAR}"
-      if out=$(java -jar "$probe_jar" --call query_namespaces 2>/dev/null | tail -1); then
-        say "ok " "store probe: query_namespaces -> ${out:0:60}…"
+      # query_project, not query_namespaces — the latter has never been a
+      # tool, so this probe reported FAIL on every healthy install with a
+      # store. A self-check that names a tool must name a real one.
+      if out=$(java -jar "$probe_jar" --call query_project 2>/dev/null | tail -1); then
+        say "ok " "store probe: query_project -> ${out:0:60}…"
       else
         say "FAIL" "store at .slopp/store.db but the probe call failed"; rc=1
       fi
