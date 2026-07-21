@@ -408,7 +408,9 @@
                     (external-test-run! session :only iso-only)
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
-                               :note  "first 5 shown — the milestone gate runs them all"}}))))
+                               :note  (str "first 5 shown — over the per-done cap, so these"
+                                           " deferred; test_run {external true} or"
+                                           " full_check runs them all")}}))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
       lint-warns  (vec (for [f lint :when (= :warning (:level f))]
                          (select-keys f [:form :type :message])))
@@ -614,21 +616,17 @@
                   :status (:status last-d)
                   :description (:description last-d)
                   :note "nothing changed since this milestone — returning it"})
-          (let [cp     (done! session :label description :agent agent
-                            :external? false) ; the external tier runs below
+          (let [cp     (done! session :label description :agent agent)
+                ;; done runs the impacted ^:external slice itself (:external?
+                ;; defaults true), so the milestone's done is a REAL done — not
+                ;; one weakened to skip the tier the in-image suite already
+                ;; skips. The milestone still runs no WHOLE-store check (that is
+                ;; `full_check`, the agent's call, per D-full-check): a red
+                ;; ^:external test the episode never TOUCHED does not stop it,
+                ;; but one this episode touched does — exactly what a standalone
+                ;; done catches. :force skips straight to an honest red.
                 st     (:store @session)
                 head   (:id (last (store/deltas st)))
-                ;; the ONE thing done does not do: the whole external suite.
-                ;; Run it when the store has any ^:external tests (fixture
-                ;; stores without them skip the tier); :force skips straight
-                ;; to honest red
-                ;; NOT FORCED. The milestone runs no whole-store check of its own —
-                ;; `full_check` exists for that and is the agent's call. A
-                ;; milestone records what the done point verified; it does not
-                ;; independently re-judge, because two enforcement points
-                ;; drift (five :error advisories were once blocking at done
-                ;; and invisible here).
-                iso    nil
                 ;; done's OWN verdict — it already accounts for failures, the
                 ;; :error advisories, store-wide lint and store-wide dead
                 ;; surface. Believe it rather than re-deriving a weaker answer.
@@ -642,7 +640,6 @@
                           (api/last-judged-done st))
                 status  (or (:test-status verdict) (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
-                status (if (contains? #{:red :error} (:status iso)) :red status)
                 ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
                 ;; so the git projection is a pure function of this marker delta
                 tree   (into (sorted-map)
@@ -654,27 +651,25 @@
                 ;; :scope and :lint-warnings are INFORMATIONAL — always present,
                 ;; never a reason. Listing them as things that fired made a
                 ;; refusal say "scope" instead of "unused-public".
-                wrong  (->> (dissoc verdict :test-status :external-suite
+                wrong  (->> (dissoc verdict :test-status
                                     :scope :lint-warnings :failures)
                             (remove (fn [[_ v]] (or (and (number? v) (zero? v))
                                                     (and (coll? v) (empty? v)))))
                             (map (comp name key))
                             sort vec)]
             (if (and (= :red status) (not force))
-              (cond-> {:error (str "verification is RED — milestone refused"
-                                   (when (seq wrong)
-                                     (str " — " (str/join ", " wrong)))
-                                   ". Your work is at its done-point; the full"
-                                   " list is in :findings — and if this done"
-                                   " judged nothing (no writes since the last"
-                                   " one), the RED verdict of that earlier done"
-                                   " still stands. Fix and retry, or :force"
-                                   " true to record a red milestone honestly.")
-                       :status :red :done (:done cp) :test (:test cp)
-                       :findings verdict}
-                iso (assoc :external iso))
-              (mark! head status (cond-> {:done (:done cp)}
-                                   iso (assoc :external iso))
+              {:error (str "verification is RED — milestone refused"
+                           (when (seq wrong)
+                             (str " — " (str/join ", " wrong)))
+                           ". Your work is at its done-point; the full"
+                           " list is in :findings — and if this done"
+                           " judged nothing (no writes since the last"
+                           " one), the RED verdict of that earlier done"
+                           " still stands. Fix and retry, or :force"
+                           " true to record a red milestone honestly.")
+               :status :red :done (:done cp) :test (:test cp)
+               :findings verdict}
+              (mark! head status {:done (:done cp)}
                      (cond-> (merge {:tree tree} extra)
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
