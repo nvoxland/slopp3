@@ -1981,7 +1981,7 @@
 ^:reads (defn file-get
   "A manifest file's content — current, or as of a past delta via `:at`
   (a delta id or commit-point id resolves through its :target like
-  query_form_at). Returns {:path :content} | {:error}."
+  query_history {ns name at}). Returns {:path :content} | {:error}."
   [session path & {:keys [at]}]
   (let [st (:store @session)]
     (if at
@@ -1999,7 +1999,7 @@
 
 ^:reads (defn file-history!
   "Every tracked version of a manifest file, oldest first, with provenance —
-  the file counterpart of query_form_history."
+  the file counterpart of query_history {ns name}."
   [session path]
   (let [h (store/file-history (:store @session) (str path))]
     (if (seq h)
@@ -2215,7 +2215,7 @@
 ^:reads (defn report
   "The handoff/summary composite (ratio push): milestones, net form-level
   changes with their recorded ASKS, and the last verification state — the
-  history fan-out (query_history + query_search_history + query_changes +
+  history fan-out (query_history + query_history {contains} + query_changes +
   query_commits + git diffs) as ONE deterministic read. `:since` = a
   delta/milestone id; `:contains` filters asks/descriptions."
   [session & {:keys [since contains limit] :or {limit 50}}]
