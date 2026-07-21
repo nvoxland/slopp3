@@ -5,13 +5,13 @@
 
 ^:unsafe (def ^:export effectful-leaves
   "Fixed anchor set: core primitives that modify in-process or external state
-  (D6 scope = modification). Extensible; reads / non-determinism are NOT here.
+  (D6 scope = modification). Extensible; reads / non-determinism / console
+  output are NOT here.
 
-  Console IO (`println` &c) and watch registration are here but deliberately
-  NOT in `external-leaves`: they break referential transparency (so `:pure`
-  forbids them) yet are capturable/resettable in-process (`with-out-str`, a
-  registry reset), so they need no test isolation and `:internal` allows them,
-  exactly like `swap!`.
+  Watch registration IS here (it mutates a registry, and a fn that installs a
+  watch should carry the `!`), but console output is NOT — see
+  `console-leaves`: `!` means MUTATION by convention, so printing gets its own
+  axis that blocks `:pure` without demanding a bang.
 
   `^:unsafe` because the set names `clojure.core/alter-var-root` as DATA — the
   dialect denylist matches it by name/core, so listing effect names here has
@@ -24,8 +24,6 @@
      clojure.core/deliver clojure.core/conj! clojure.core/disj!
      clojure.core/assoc! clojure.core/dissoc! clojure.core/pop!
      clojure.core/add-watch clojure.core/remove-watch
-     clojure.core/println clojure.core/prn clojure.core/print
-     clojure.core/printf clojure.core/pr
      clojure.core/spit clojure.core/delete-file})
 
 (defn ^:export node
@@ -212,6 +210,38 @@
     (loop [eff (set (for [[n ts] edges :when (some anchor? ts)] n))]
       (let [eff' (into eff (for [[n ts] edges :when (some eff ts)] n))]
         (if (= eff eff') eff (recur eff'))))))
+
+(def ^:export console-leaves
+  "Core primitives that write to the console (`*out*`/`*err*`). A THIRD axis
+  alongside effects and non-determinism, and deliberately separate from both:
+
+  - NOT in `effectful-leaves`, because `!` means MUTATION by convention and
+    idiomatic Clojure never bang-names a print fn. Putting them there made the
+    D6 advisory demand `run-cli!` of every printing function (the wire-cost
+    benchmark caught it as +53 out-tokens on the one app that prints).
+  - Still forbidden in `:pure`, because printing is an observable side effect —
+    a referentially transparent core cannot do it.
+  - Allowed in `:internal`: capturable and resettable in-process
+    (`with-out-str`), needing no test isolation, so it never reaches
+    `external-leaves` either.
+
+  Exactly the shape `nondeterministic-leaves` already has: blocks `:pure`,
+  demands no bang."
+  '#{clojure.core/println clojure.core/prn clojure.core/print
+     clojure.core/printf clojure.core/pr
+     clojure.core/print-str clojure.core/newline clojure.core/flush})
+
+(defn ^:export console-vars
+  "Set of user var nodes that transitively reach a `console-leaves` anchor —
+   console output — over the call graph (monotonic fixpoint, cycle-safe;
+   mirrors `nondeterministic-vars`). What the `:pure` tier adds on top of the
+   effect and non-determinism checks; NOT consulted by the `!`-naming rule."
+  [analysis]
+  (let [edges   (call-graph analysis)
+        anchor? (fn [t] (contains? console-leaves t))]
+    (loop [cs (set (for [[n ts] edges :when (some anchor? ts)] n))]
+      (let [cs' (into cs (for [[n ts] edges :when (some cs ts)] n))]
+        (if (= cs cs') cs (recur cs'))))))
 
 (defn ^:export nondeterministic-vars
   "Set of user var nodes that transitively reach a `nondeterministic-leaves`
