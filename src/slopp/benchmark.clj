@@ -125,7 +125,10 @@
       (finally (api/close! session)))))
 
 (defn- git-sha []
-  (str/trim (:out (sh/sh "git" "rev-parse" "--short" "HEAD"))))
+  (let [r (sh/sh "git" "rev-parse" "--short" "HEAD")]
+    (if (zero? (:exit r))
+      (str/trim (:out r))
+      "unknown")))
 
 (def ^:private results-file "benchmarks/results.md")
 
@@ -135,7 +138,9 @@
     (spit results-file
           (str "# Benchmark history\n\n"
                "Wall + token cost of building each sample app through the MCP surface\n"
-               "(`clojure -M -m slopp.benchmark`; see `.context/dogfooding.md`).\n"
+               "(via the boot kernel, since the tree is fileless:\n"
+               "`clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main`;\n"
+               "see `.context/dogfooding.md`).\n"
                "Rows are comparable only within the same script version (v).\n\n"
                "| date | sha | app | v | steps | wall ms | tok in | tok out |\n"
                "|---|---|---|---|---|---|---|---|\n")))

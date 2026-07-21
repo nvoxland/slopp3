@@ -27,8 +27,12 @@
 ^:reads (defn- open-conn [dir]
   (let [f (io/file dir ".slopp" "store.db")]
     (io/make-parents f)
-    (jdbc/get-connection
-     (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))))
+    (let [conn (jdbc/get-connection
+                (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+      ;; the live watcher polls a db a live writer owns; without a busy timeout
+      ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
+      (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
+      conn)))
 
 ^:reads (defn store-sources
   "{ns-sym source} for every namespace in the store db — byte-exact (each
@@ -80,15 +84,22 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
-(defn load-store!
+^:unsafe (defn load-store!
   "Load every namespace of the store at `dir` into the CURRENT JVM, dependency
   order: load-string each rendered source + a *loaded-libs* stamp. Returns the
-  {ns source} map that was loaded."
+  {ns source} map that was loaded. A load failure is rethrown NAMING the
+  namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
+  is useless on the one code path with no oracle behind it."
   [dir]
   (with-open [conn (open-conn dir)]
     (let [sources (store-sources conn)]
       (doseq [ns-sym (dependency-order sources)]
-        (load-string (get sources ns-sym))
+        (try (load-string (get sources ns-sym))
+             (catch Throwable t
+               (throw (ex-info (str "slopp.boot: failed to load namespace "
+                                    ns-sym " from the store at " dir
+                                    ": " (.getMessage t))
+                               {:ns ns-sym :dir dir} t))))
         (stamp-loaded! ns-sym))
       sources)))
 
@@ -97,27 +108,54 @@
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
-(defn watch-live!
+^:unsafe (defn watch-live!
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
   green-gate means only compilable code ever loads. Caveat: long-lived instances
-  (servers, background threads) keep their old closure code until re-created."
+  (servers, background threads) keep their old closure code until re-created.
+
+  Resilient by construction: the ENTIRE poll body is guarded, so a transient
+  store error (contention, a swapped db file) logs and RETRIES instead of
+  killing the daemon and serving stale code forever. The version baseline
+  advances only when every changed namespace reloaded — a failed one keeps its
+  OLD source in the baseline AND holds the version back, so the next poll
+  retries it rather than treating it as already seen.
+
+  ^:unsafe: the store loader IS load-string (it evaluates rendered store
+  source), which the dialect denylist bans for ordinary code — here it is the
+  whole point."
   [dir & {:keys [interval-ms] :or {interval-ms 500}}]
   (let [conn (open-conn dir)]
     (loop [dv (data-version conn), prev (store-sources conn)]
-      (Thread/sleep (long interval-ms))
-      (let [dv2 (data-version conn)]
-        (if (= dv dv2)
-          (recur dv prev)
-          (let [now     (store-sources conn)
-                changed (filter #(not= (get prev %) (get now %)) (dependency-order now))]
-            (doseq [ns-sym changed]
-              (try (load-string (get now ns-sym))
-                   (stamp-loaded! ns-sym)
-                   (catch Throwable t
-                     (log! "live-reload failed for " ns-sym ": " (.getMessage t)))))
-            (when (seq changed) (log! "live-reloaded: " (str/join " " changed)))
-            (recur dv2 now)))))))
+      (let [[dv' prev']
+            (try
+              (Thread/sleep (long interval-ms))
+              (let [dv2 (data-version conn)]
+                (if (= dv dv2)
+                  [dv prev]
+                  (let [now     (store-sources conn)
+                        changed (filter #(not= (get prev %) (get now %))
+                                        (dependency-order now))
+                        failed  (reduce (fn [failed ns-sym]
+                                          (try (load-string (get now ns-sym))
+                                               (stamp-loaded! ns-sym)
+                                               failed
+                                               (catch Throwable t
+                                                 (log! "live-reload failed for " ns-sym
+                                                       ": " (.getMessage t))
+                                                 (conj failed ns-sym))))
+                                        #{} changed)
+                        loaded  (remove failed changed)]
+                    (when (seq loaded)
+                      (log! "live-reloaded: " (str/join " " loaded)))
+                    ;; a failed ns keeps its OLD source so it still looks changed,
+                    ;; and holding dv back keeps the version-change branch firing
+                    [(if (seq failed) dv dv2)
+                     (reduce #(assoc %1 %2 (get prev %2)) now failed)])))
+              (catch Throwable t
+                (log! "live-reload poll error (continuing): " (.getMessage t))
+                [dv prev]))]
+        (recur dv' prev')))))
 
 ;; --- entry ---
 
@@ -155,7 +193,14 @@
   [& args]
   (let [{:keys [dir live? main args]} (parse-args args)]
     (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
-    (load-store! dir)
+    (let [sources (load-store! dir)]
+      ;; a typo'd dir CREATES an empty .slopp/store.db and loads zero
+      ;; namespaces; without this the real error surfaced downstream as
+      ;; requiring-resolve's "Could not locate …__init.class" — say it here
+      (when (empty? sources)
+        (log! "slopp.boot: WARNING — the store at " dir " is EMPTY (no"
+              " namespaces loaded). Wrong directory? Expected a populated"
+              " " dir "/.slopp/store.db.")))
     (when live?
       (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
         (.setDaemon true)
