@@ -2490,7 +2490,7 @@
   A call site counts only when its head RESOLVES to the target: the defining
   ns's own name, the caller's alias for it, or the fully-qualified symbol.
   Matching by bare name instead silently included `slopp.db/open!` alongside
-  `slopp.api/open!` — caught by a dry-run reporting 62 forms and 24 unknowns
+  `slopp.api.external/open!` — caught by a dry-run reporting 62 forms and 24 unknowns
   where the caller graph said 60 and 4.
 
   Reports `:unknown-shape`: callers passing a non-literal (`(open! opts)`),

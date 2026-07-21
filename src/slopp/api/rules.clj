@@ -149,6 +149,53 @@
                       " namespace, with the pure part left in core? Accept by"
                       " doing nothing; this asks once.")}))))
 
+(defn stale-reference-check
+  "Done-advisory: changed forms whose STRINGS name a var that no longer
+   exists — a docstring, teach string, or tool description pointing at
+   `a.b/c` where namespace `a.b` is in this store but form `c` is not.
+
+   The gates cannot see this: a var named inside a string is not a
+   reference, so renames and moves leave the prose behind. It then ships as
+   CONFIDENT WRONG GUIDANCE — the d9077 case shipped the pre-move address of
+   `analyze` in two places after the form moved from slopp.index into
+   slopp.index.analyze, and an agent following the refusal's own advice got an
+   unresolved var. Stale teaching
+   is worse than missing teaching, and it costs a failed call to discover.
+
+   PRECISION: only fires when the NAMESPACE exists in the store. A string
+   mentioning `clojure.core/eval` or any third-party var can never fire,
+   because that namespace was never a store namespace — so the check has no
+   false positives on external references, which is what lets it stay quiet
+   enough to be believed."
+  [_session st* changed]
+  (let [nses (:namespaces st*)
+        ;; a qualified symbol: at least one dot in the namespace, so bare
+        ;; `foo/bar` aliases and prose like `and/or` never match
+        ;; the lookbehind excludes a qualified KEYWORD (:slopp.api/dir) — prose
+        ;; names those constantly and they are not vars. A rule that cries wolf
+        ;; is a rule nobody reads, so precision comes before reach here.
+        pat  #"(?<![:\w.-])([a-z][a-zA-Z0-9.-]*\.[a-zA-Z0-9.-]+)/([a-zA-Z0-9*+!?<>=_-]+)"]
+    (vec (distinct
+          (for [fid   changed
+                :let  [e (store/form-by-id st* fid)]
+                :when e
+                :let  [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                text  (filter string? (tree-seq coll? seq s))
+                [_ nsx nm] (re-seq pat text)
+                :let  [ns-sym (symbol nsx)]
+                ;; only a namespace THIS store owns — external libs are unknown
+                ;; to it and must never fire
+                :when (contains? nses ns-sym)
+                :when (nil? (store/form-named st* ns-sym (symbol nm)))]
+            {:form (symbol (str (store/ns-of-form-id st* fid))
+                           (str (or (:name e) (:id e))))
+             :names (str nsx "/" nm)
+             :teach (str "the text names " nsx "/" nm " but " ns-sym
+                         " has no form " nm " — it moved, was renamed, or"
+                         " never existed. Fix the prose or the reference;"
+                         " guidance that lies costs a failed call to"
+                         " discover.")})))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -183,6 +230,14 @@
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
    {:key :bare-throw       :severity :advisory :check #'bare-throw-check
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
+   ;; teaching that LIES: a string naming a var the store no longer has. Gates
+   ;; can't see a var inside a string, so renames/moves leave the prose behind
+   ;; and it ships as confident wrong guidance (d9077 shipped
+   ;; slopp.index/analyze in two places after the form moved).
+   {:key :stale-reference :severity :advisory :check #'stale-reference-check
+    :fires-on (str "(ns rf.core)\n"
+                   "(defn live [x] x)\n"
+                   "(defn teach \"see rf.core/gone for details\" [x] x)\n")}
    ;; the one entry that is a QUESTION, not a verdict — and therefore the one
    ;; that is legitimately :advisory. The system cannot know whether an effect
    ;; belonged in the namespace that was just widened; only the agent who did

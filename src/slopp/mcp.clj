@@ -878,7 +878,7 @@
       (finally (api/close! session)))))
 ^:unsafe
 (defn ^:entry-point call-main!
-  "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main):
+  "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main!):
   <dir> <tool> [args] — one tool call, result text on stdout, exit 1 on a
   tool error. args is JSON, EDN, or @file (parse-call-args)."
   [& [dir tool args-str]]

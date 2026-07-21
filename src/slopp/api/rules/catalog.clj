@@ -42,6 +42,9 @@
    {:rule :bare-throw :grain :done :severity :advisory
     :escape "return data / (ex-info …) at the boundary, or accept the throw"
     :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
+   {:rule :stale-reference :grain :done :severity :advisory
+    :escape "fix the prose (or the reference) so the name resolves — the text is teaching, and teaching that lies costs a failed call to discover"
+    :teach "a docstring/teach-string names a.b/c where namespace a.b is in this store but has no form c — a rename or move left the prose behind (gates never see a var inside a string)"}
    {:rule :shell-widening :grain :done :severity :advisory
     :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
     :teach "this episode declared a namespace :external/:internal — the functional CORE got smaller, and only you know whether it had to"}

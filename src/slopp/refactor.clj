@@ -1099,11 +1099,11 @@
 (defn requalify-call-args
   "Qualify key `key-name` with `to-ns` in the map LITERAL passed as argument 1
   to calls of the target fn in `src`. `heads` is the SET of head spellings that
-  resolve to that fn in this source's namespace — `#{\"slopp.api/open!\"
-  \"api/open!\"}`, plus the bare name only inside the defining ns.
+  resolve to that fn in this source's namespace — `#{\"slopp.api.external/open!\"
+  \"external/open!\"}`, plus the bare name only inside the defining ns.
 
   Matching on the bare NAME instead was the bug this signature exists to
-  prevent: `slopp.db/open!` and `slopp.api/open!` share a name, and a name-only
+  prevent: `slopp.db/open!` and `slopp.api.external/open!` share a name, and a name-only
   match rewrote calls to both. It showed up only because a dry-run reported 62
   forms where the caller graph said 60.
 

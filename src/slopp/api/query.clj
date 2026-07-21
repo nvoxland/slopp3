@@ -550,7 +550,7 @@
 (defn ^:export coverage-view
   "The `:covered-by` shape both `query-impact` and `query-brief` report:
    `{:count n :tests [first 8] :more k}`. Capped because a central form is
-   covered by HUNDREDS of tests — `slopp.api/open!` by 284 — and printing
+   covered by HUNDREDS of tests — `slopp.api.external/open!` by 284 — and printing
    them all pushed the keys the caller actually asked for past the response
    trim, making a working answer read as a broken one. The remainder is
    COUNTED, never silently dropped."
