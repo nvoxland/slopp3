@@ -211,6 +211,85 @@
                            ". Fix the prose or the reference; guidance that"
                            " lies costs a failed call to discover.")}))))))
 
+(defn retired-vocabulary-check
+  "Done-advisory: changed forms holding a SECOND, stale copy of a vocabulary
+   the store has retired. Reads `config \"vocabulary\"` — `{retired current}`,
+   e.g. `{\"reads\" \"internal\" \"effects\" \"external\"}`.
+
+   Fires only when a form MIXES a retired member with a CANONICAL one, and
+   that co-occurrence is the whole precision argument. Measured on this store:
+   a bare `:reads` appears in four production forms and every one is the
+   still-valid `^:reads` MARKER — a different concept that happens to share a
+   name with the retired tier. Name-matching alone would be four false
+   positives out of five, which is the trap CLAUDE.md rule 4 warns about
+   directly. A form that ranks `{:pure 0 :reads 1 :effects 2}` is unambiguous:
+   it is enumerating the vocabulary, and it is out of date.
+
+   That form is exactly how the tier rename shipped a live crash — the gate
+   was migrated, the reporting arm kept its own rank table, and
+   `query_depends {modules true}` NPE'd on any store carrying a canonical
+   tier.
+
+   `^:legacy-ok` on the NAME discharges it for the one form that must hold
+   both — the normalizer itself — and polices itself: a marker on a form that
+   mixes nothing is reported stale, so it cannot decay into decoration.
+
+   A retired-ONLY set is caught too, by the same rule: `#{:reads :effects}` —
+   the filter that made the shell-widening advisory silently dead, matching a
+   value nothing could produce any more — enumerates two retired members and
+   fires. Co-occurrence with a replacement was the first design and it MISSED
+   that case, because `:pure` is canonical without being a replacement value.
+
+   BOUND: a form holding exactly ONE retired member is never flagged. That is
+   the deliberate price of not drowning the four legitimate `^:reads` marker
+   forms, and it is why `:fires-on` discipline on the rule registry still
+   matters as the second line of defence."
+  [_session st* changed]
+  (let [vocab   (get-in st* [:config "vocabulary" :values])
+        retired (into #{} (map keyword) (keys vocab))
+        current (into #{} (map keyword) (vals vocab))]
+    (if (empty? vocab)
+      []
+      (vec (keep
+            (fn [fid]
+              ;; -test namespaces EXERCISE legacy spellings on purpose — pinning
+              ;; that legacy-in still resolves is exactly their job. Exempting
+              ;; them matches tier-violations and full-check!'s layer loop;
+              ;; without it, six of this store's seven findings are tests doing
+              ;; the right thing.
+              (when-let [e (when-not (str/ends-with?
+                                      (str (store/ns-of-form-id st* fid)) "-test")
+                             (store/form-by-id st* fid))]
+                (let [s    (try (n/sexpr (:node e)) (catch Exception _ nil))
+                      kws  (into #{} (filter keyword?) (tree-seq coll? seq s))
+                      old  (seq (filter retired kws))
+                      ;; ENUMERATION is the signal: two retired members in one form, or one
+                      ;; beside its own replacement. A LONE retired keyword is left
+                      ;; alone — on this store every bare :reads is the still-valid
+                      ;; ^:reads marker, a different concept sharing a name.
+                      mix? (and old (or (>= (count old) 2) (some current kws)))
+                      ok?  (boolean (and (seq? s) (symbol? (second s))
+                                         (:legacy-ok (meta (second s)))))
+                      q    (symbol (str (store/ns-of-form-id st* fid))
+                                   (str (or (:name e) (:id e))))]
+                  (cond
+                    (and mix? (not ok?))
+                    {:form q
+                     :retired (vec (sort old))
+                     :teach (str q " enumerates the vocabulary with retired"
+                                 " spellings " (vec (sort old)) " alongside"
+                                 " current ones — a second copy that did not"
+                                 " get the memo. Route through the normalizer,"
+                                 " or mark the form ^:legacy-ok if it IS the"
+                                 " normalizer. (Retired → current: "
+                                 (pr-str vocab) ")")}
+
+                    (and ok? (not mix?))
+                    {:form q :stale-marker true
+                     :teach (str q " carries ^:legacy-ok but mixes no retired"
+                                 " vocabulary — remove the flag")}))))
+            changed)))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -253,6 +332,14 @@
     :fires-on (str "(ns rf.core)\n"
                    "(defn live [x] x)\n"
                    "(defn teach \"see rf.core/gone for details\" [x] x)\n")}
+   ;; a SECOND copy of a vocabulary the store retired — the shape that shipped
+   ;; a live NPE (a rank table still spelling the old tiers) and that made
+   ;; shell-widening silently dead (a match set nothing could satisfy).
+   {:key :retired-vocabulary :severity :advisory :check #'retired-vocabulary-check
+    :selftest-note (str "needs a store-level `vocabulary` config to have anything"
+                        " retired — a source-only fixture cannot carry one;"
+                        " covered by rules-test/"
+                        "retired-vocabulary-catches-the-second-copy-not-the-marker")}
    ;; the one entry that is a QUESTION, not a verdict — and therefore the one
    ;; that is legitimately :advisory. The system cannot know whether an effect
    ;; belonged in the namespace that was just widened; only the agent who did

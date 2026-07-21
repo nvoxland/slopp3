@@ -285,3 +285,44 @@
                      nil st (mapv :id (store/forms st 'sr.typo))))]
       (is (= "sr.typo/charge" (:suggest f)) (pr-str f))
       (is (re-find #"did you mean" (str (:teach f))) (pr-str f)))))
+
+(deftest retired-vocabulary-catches-the-second-copy-not-the-marker
+  ;; The tier rename migrated the gate and left the reporting arm holding its
+  ;; own rank table — which NPE'd a live tool. The signal is a form ENUMERATING
+  ;; the vocabulary with stale members, not the bare keyword: on this store a
+  ;; lone :reads is the still-valid ^:reads MARKER in four production forms.
+  (let [cfg (fn [st] (assoc-in st [:config "vocabulary" :values]
+                               {"reads" "internal" "effects" "external"}))
+        one (fn [src] (let [st (cfg (store/ingest (store/empty-store) 'rv.core src))]
+                        (rules/retired-vocabulary-check
+                         nil st (mapv :id (store/forms st 'rv.core)))))]
+    (testing "a rank table mixing retired and current spellings fires"
+      (let [f (first (one (str "(ns rv.core)\n"
+                               "(defn ^:unused-ok rank [] {:pure 0 :reads 1 :effects 2})\n")))]
+        (is (some? f) "the stale second copy must be caught")
+        (is (= [:effects :reads] (:retired f)) (pr-str f))))
+    (testing "a retired-ONLY filter fires too — this is how a rule went silently dead"
+      ;; shell-widening matched (contains? #{:reads :effects} t) against tier
+      ;; values that were all canonical by then, so it could never fire again
+      ;; and looked exactly like a clean codebase.
+      (let [f (first (one (str "(ns rv.core)\n"
+                               "(defn ^:unused-ok widened? [t]\n"
+                               "  (contains? #{:reads :effects} t))\n")))]
+        (is (some? f) "a legacy-only match set is a second copy too")))
+    (testing "a lone retired keyword does NOT fire — it is the marker, not the tier"
+      (is (empty? (one (str "(ns rv.core)\n"
+                            "(defn ^:unused-ok reads? [m] (:reads m))\n")))
+          "bare :reads is the ^:reads marker in real code — 4 of 5 uses on this store"))
+    (testing "the normalizer discharges with ^:legacy-ok"
+      (is (empty? (one (str "(ns rv.core)\n"
+                            "(defn ^:unused-ok ^:legacy-ok norm [t]\n"
+                            "  ({:reads :internal :effects :external} t t))\n")))))
+    (testing "and the marker polices itself when it stops earning its keep"
+      (let [f (first (one (str "(ns rv.core)\n"
+                               "(defn ^:unused-ok ^:legacy-ok clean [x] x)\n")))]
+        (is (:stale-marker f) (pr-str f))))
+    (testing "no declared vocabulary means no findings at all"
+      (let [st (store/ingest (store/empty-store) 'rv.none
+                             "(ns rv.none)\n(defn ^:unused-ok r [] {:pure 0 :reads 1})\n")]
+        (is (empty? (rules/retired-vocabulary-check
+                     nil st (mapv :id (store/forms st 'rv.none)))))))))

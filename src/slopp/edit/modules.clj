@@ -309,7 +309,7 @@
                " ^:foreign-keys; or opt out with config_file: path `gates` key"
                " `require-namespaced-keys` unset true"))))))
 
-(defn ^:export canonical-tier
+(defn ^:export ^:legacy-ok canonical-tier
   "Canonical spelling of a purity tier: the retired :reads/:effects map to
   :internal/:external; canonical spellings (and nil) pass through. Normalize at
   every boundary that READS a recorded tier — stores that predate the rename
