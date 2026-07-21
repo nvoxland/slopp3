@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze]))
+            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -156,6 +156,13 @@
   true :status :ran :assertions :failures :errors :exit} plus :failing +
   :all-failing {file [tests]} + :themes (clustered causes) when red.
 
+  Every runner is BOUNDED (testrun/run-cmd!) — a hung ^:external test used
+  to wedge done! and the milestone gate forever. A green summary is only
+  trusted when the JVM also exited zero: a runner that printed green then
+  died (System/exit in teardown, OOM in a shutdown hook) is :error, not
+  :green. The throwaway build dir is deleted when the run ends, whatever
+  the outcome — it used to leak a full materialized project per run.
+
   Also ABSORBS the run's form trace (#121) when the build carried the trace
   runner: this is the only tier that ever executes an ^:external test, so it
   is the only place their test→form evidence can come from. Silent — the
@@ -184,88 +191,104 @@
                                            (.availableProcessors (Runtime/getRuntime))))
             shard-nses (when (and (> par 1) (seq full-set)) full-set)
             ;; narrowed runs need the filter-free alias: the :test alias bakes
-            ;; -r ".*" (inline tests, Q13) which UNIONS with -n and defeats it
+            ;; -r \".*\" (inline tests, Q13) which UNIONS with -n and defeats it
             alias (or alias
                       (if (or ns aff (seq only) (seq nses) (seq shard-nses))
                         ":test-run" ":test"))
             dir (str (java.nio.file.Files/createTempDirectory
                       "slopp-external"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))
-            b   (build! session dir)]
-        (if (:error b)
-          b
-          (let [result
-                (if (seq shard-nses)
-                  (let [shards (->> (map-indexed vector shard-nses)
-                                    (group-by #(mod (first %) par))
-                                    vals
-                                    (mapv #(mapv second %)))
-                        runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
-                                     shards)
-                        outs0  (mapv deref runs)
-                        ;; a shard with NO parseable summary is a JVM-level death
-                        ;; (fork pressure, OOM) — test failures PARSE. Retry those
-                        ;; shards once, SERIALLY, off the concurrent storm.
-                        dead?  (fn [o] (nil? (testrun/parse-test-summary
-                                              (str (:out o) "\n" (:err o)))))
-                        outs   (mapv (fn [grp o]
-                                       (if (dead? o) (testrun/run-shard! alias dir grp) o))
-                                     shards outs0)
-                        retries (count (filter dead? outs0))
-                        out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
-                        sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
-                    (if (some nil? sums)
-                      (cond-> {:external true :exit (apply max (map :exit outs))
-                               :status :error
-                               :shards (count shards)
-                               :output (->> (str/split-lines out)
-                                            (remove str/blank?)
-                                            (take-last 12) (str/join "\n"))}
-                        (pos? retries) (assoc :shard-retries retries))
-                      (let [merged {:ran        (reduce + (map :ran sums))
-                                    :assertions (reduce + (map :assertions sums))
-                                    :failures   (reduce + (map :failures sums))
-                                    :errors     (reduce + (map :errors sums))}
-                            red?   (pos? (+ (:failures merged) (:errors merged)))]
-                        (cond-> (merge {:external true
-                                        :exit (apply max (map :exit outs))
-                                        :shards (count shards)
-                                        :status (if red? :red :green)}
-                                       merged
-                                       (when aff {:affected aff})
-                                       (when (pos? retries) {:shard-retries retries}))
-                          red? (assoc :failing (testrun/parse-test-failures out)
-                                      :all-failing (testrun/failing-test-rollup out))
-                          (and red? (seq (testrun/failure-themes out)))
-                          (assoc :themes (testrun/failure-themes out))))))
-                  (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
-                               ns         (conj "-n" (str ns))
-                               (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
-                               aff        (into (mapcat #(vector "-n" (str %))
-                                                        (:selected aff)))
-                               (seq only) (into (mapcat #(vector "-v" (str %)) only)))
-                        r    (apply sh/sh (concat args [:dir dir]))
-                        out  (str (:out r) "\n" (:err r))
-                        s    (testrun/parse-test-summary out)]
-                    (merge {:external true :exit (:exit r)}
-                           (when aff {:affected aff})
-                           (cond
-                             (nil? s)           {:status :error
-                                                 :output (->> (str/split-lines out)
-                                                              (remove str/blank?)
-                                                              (take-last 8) (str/join "\n"))}
-                             (= :red (:status s)) (cond-> (assoc s
-                                                                 :failing (testrun/parse-test-failures out)
-                                                                 :all-failing (testrun/failing-test-rollup out))
-                                                    (seq (testrun/failure-themes out))
-                                                    (assoc :themes (testrun/failure-themes out)))
-                             :else s))))]
-            ;; #121: ONE absorb point for BOTH branches — the external tier is
-            ;; the only place an ^:external test ever runs, so a trace missed
-            ;; here is missed forever. nil when the build carried no runner, so
-            ;; untraced stores behave exactly as before.
-            (session/absorb-trace! session (testrun/read-traces dir))
-            result))))))
+                      (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (try
+          (let [b (build! session dir)]
+            (if (:error b)
+              b
+              (let [result
+                    (if (seq shard-nses)
+                      (let [shards (->> (map-indexed vector shard-nses)
+                                        (group-by #(mod (first %) par))
+                                        vals
+                                        (mapv #(mapv second %)))
+                            runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
+                                         shards)
+                            outs0  (mapv deref runs)
+                            ;; a shard with NO parseable summary is a JVM-level death
+                            ;; (fork pressure, OOM) — test failures PARSE. Retry those
+                            ;; shards once, SERIALLY, off the concurrent storm.
+                            dead?  (fn [o] (nil? (testrun/parse-test-summary
+                                                  (str (:out o) "\n" (:err o)))))
+                            outs   (mapv (fn [grp o]
+                                           (if (dead? o) (testrun/run-shard! alias dir grp) o))
+                                         shards outs0)
+                            retries (count (filter dead? outs0))
+                            out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
+                            sums   (mapv #(testrun/parse-test-summary (str (:out %) "\n" (:err %))) outs)]
+                        (if (some nil? sums)
+                          (cond-> {:external true :exit (apply max (map :exit outs))
+                                   :status :error
+                                   :shards (count shards)
+                                   :output (->> (str/split-lines out)
+                                                (remove str/blank?)
+                                                (take-last 12) (str/join "\n"))}
+                            (pos? retries) (assoc :shard-retries retries))
+                          (let [merged {:ran        (reduce + (map :ran sums))
+                                        :assertions (reduce + (map :assertions sums))
+                                        :failures   (reduce + (map :failures sums))
+                                        :errors     (reduce + (map :errors sums))}
+                                exit   (apply max (map :exit outs))
+                                red?   (pos? (+ (:failures merged) (:errors merged)))]
+                            (cond-> (merge {:external true
+                                            :exit exit
+                                            :shards (count shards)
+                                            :status (cond red?        :red
+                                                          (pos? exit) :error
+                                                          :else       :green)}
+                                           merged
+                                           (when aff {:affected aff})
+                                           (when (pos? retries) {:shard-retries retries}))
+                              (and (not red?) (pos? exit))
+                              (assoc :note (str "summaries parsed green but a runner"
+                                                " JVM exited nonzero — not trusting"
+                                                " the green"))
+                              red? (assoc :failing (testrun/parse-test-failures out)
+                                          :all-failing (testrun/failing-test-rollup out))
+                              (and red? (seq (testrun/failure-themes out)))
+                              (assoc :themes (testrun/failure-themes out))))))
+                      (let [args (cond-> [repl/clojure-bin (str "-M" alias)]
+                                   ns         (conj "-n" (str ns))
+                                   (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
+                                   aff        (into (mapcat #(vector "-n" (str %))
+                                                            (:selected aff)))
+                                   (seq only) (into (mapcat #(vector "-v" (str %)) only)))
+                            r    (testrun/run-cmd! args dir)
+                            out  (str (:out r) "\n" (:err r))
+                            s    (testrun/parse-test-summary out)]
+                        (merge {:external true :exit (:exit r)}
+                               (when aff {:affected aff})
+                               (cond
+                                 (nil? s)           {:status :error
+                                                     :output (->> (str/split-lines out)
+                                                                  (remove str/blank?)
+                                                                  (take-last 8) (str/join "\n"))}
+                                 (= :red (:status s)) (cond-> (assoc s
+                                                                     :failing (testrun/parse-test-failures out)
+                                                                     :all-failing (testrun/failing-test-rollup out))
+                                                        (seq (testrun/failure-themes out))
+                                                        (assoc :themes (testrun/failure-themes out)))
+                                 (pos? (:exit r))
+                                 (assoc s :status :error
+                                        :note (str "summary parsed green but the JVM"
+                                                   " exited nonzero — not trusting"
+                                                   " the green"))
+                                 :else s))))]
+                ;; #121: ONE absorb point for BOTH branches — the external tier is
+                ;; the only place an ^:external test ever runs, so a trace missed
+                ;; here is missed forever. nil when the build carried no runner, so
+                ;; untraced stores behave exactly as before.
+                (session/absorb-trace! session (testrun/read-traces dir))
+                result)))
+          (finally
+            ;; a full materialized project per run; nothing else ever deletes it
+            (branch/delete-dir! (io/file dir))))))))
 
 (defn ^:export done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
@@ -691,82 +714,92 @@
 (defn ^:export ^{:live-handle true
         :malli/schema
         [:=> [:cat [:? [:map
-                        [:dir {:optional true} [:maybe :some]]
-                        [:warm-spare? {:optional true} [:maybe :boolean]]
-                        [:branch-image-ttl-ms {:optional true} [:maybe :int]]
-                        [:agent-id {:optional true} [:maybe :string]]]]]
+                        [:slopp.api/dir {:optional true} [:maybe :some]]
+                        [:slopp.api/warm-spare? {:optional true} [:maybe :boolean]]
+                        [:slopp.api/branch-image-ttl-ms {:optional true} [:maybe :int]]
+                        [:slopp.api/agent-id {:optional true} [:maybe :string]]]]]
          :any]}
   open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
-  when `:dir` is given and it has history, empty otherwise. `:warm-spare? true`
-  keeps a spare image warming in the background so restarts are near-instant.
-  `:agent-id` (default: session-identity) keys every delta/turn/episode this
-  session writes.
+  when `:slopp.api/dir` is given and it has history, empty otherwise.
+  `:slopp.api/warm-spare? true` keeps a spare image warming in the background
+  so restarts are near-instant. `:slopp.api/agent-id` (default:
+  session-identity) keys every delta/turn/episode this session writes.
+
+  The option keys are QUALIFIED — `{:slopp.api/dir …}` — and the schema, the
+  destructure, and every call site agree. (The schema once documented bare
+  `:dir` while the destructure required the qualified key, so a caller
+  trusting it silently opened an EMPTY store — on the busiest entry point in
+  the store.)
 
   The `:=>` schema is DOCUMENTATION, not a verified claim: this fn boots a
   JVM, so `analyzer-pure?` excludes it from the generative oracle-check.
 
-  These option keys are still UNQUALIFIED, knowingly: 60 call sites pass
-  `{:dir …}`, and `:dir` means three different things across this store, so
-  no store-wide sweep can do it safely. Requalifying a boundary key needs a
-  TARGETED tool (the keys in maps passed as arg 1 to ONE fn) — until that
-  exists, `require-namespaced-keys` stays off with this as its only
-  violation."
+  The session atom is built FIRST and every resource lands in it as it comes
+  up, so the single failure path is `close!` — which is per-resource safe.
+  Before this, a throw during the image-load loop abandoned the booted image,
+  the warming spare, the reaper timer, and the SQLite connection: the atom
+  never reached the caller, so nothing could ever release them."
   ([] (open! {}))
   ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare?]}]
    (let [conn    (when dir (db/open! dir))
-         store   (or (some-> conn db/load-store) (store/empty-store))
-         image   (repl/start! {:slopp.repl/deps (:deps store)})
-         ttl     (or branch-image-ttl-ms 600000)
-         session (atom {:store store :image image :db conn
-                        :data-version (some-> conn db/data-version)
-                        :dir dir :branch "main" :lines {}
-                        :test-map (or (session/load-trace conn store) {})
-                        :observed (session/load-observations conn)
-                        :agent-id (or agent-id (session/session-identity))
-                        :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
-                        :branch-image-ttl-ms ttl
-                        :warm-spare? (boolean warm-spare?)})]
-     ;; #134: kondo's cross-ns cache follows the STORE, not the process cwd.
-     ;; Unset, kondo resolves it from cwd — so cross-ns findings existed only
-     ;; where a .clj-kondo/ happened to sit beside the process, and a user
-     ;; project's :carried stale-caller gate silently found nothing. A dirless
-     ;; session gets an owned temp dir rather than inheriting whatever is there.
-     ;; The atom is process-global: two sessions on different stores in ONE
-     ;; process share the last opener's dir, which `index/lint` handles by
-     ;; re-passing on a dir change — correct, just not memoized across them.
-     (reset! index/kondo-cache-dir
-             (if dir
-               (str (io/file dir ".slopp" "kondo-cache"))
-               (str (java.nio.file.Files/createTempDirectory
-                     "slopp-kondo"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))))
-     (session/start-spare! session)
-     ;; m4: parked branch images retire after sitting idle for the TTL
-     (let [t      (java.util.Timer. "slopp-branch-reaper" true)
-           period (long (max 1000 (quot ttl 3)))]
-       (.schedule t
-                  (proxy [java.util.TimerTask] []
-                    (run [] (try (api/reap-idle-images! session)
-                                 (catch Throwable _))))
-                  period period)
-       (swap! session assoc :reaper t))
-     (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
-       (when-let [err (image/load-ns! image store ns-sym)]
-         ;; a store carrying red-first specs still opens — stub and retry
-         (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
-                        (nil? (image/load-ns! image store ns-sym)))
-           (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
-     ;; module adoption: a populated store from a pre-module db (:modules
-     ;; nil) gets its manifest derived from reality, once — fresh stores
-     ;; are born with {} and enforcement already on
-     (when (and conn (seq (:namespaces store))
-                (or (nil? (:modules store))
-                    ;; an EMPTY manifest on a populated store whose journal has
-                    ;; never seen a :module-edge delta = pre-adoption (the
-                    ;; journal is the record of truth; a user who retracted
-                    ;; edges has retraction deltas)
-                    (and (empty? (:modules store))
-                         (not-any? #(= :module-edge (:op %)) (:deltas store)))))
-       (api/adopt-modules! session :agent (or agent-id "slopp")))
-     session)))
+         session (atom {:db conn :dir dir :branch "main" :lines {}})]
+     (try
+       (let [store (or (some-> conn db/load-store) (store/empty-store))
+             image (repl/start! {:slopp.repl/deps (:deps store)})
+             ttl   (or branch-image-ttl-ms 600000)]
+         (swap! session assoc
+                :store store :image image
+                :data-version (some-> conn db/data-version)
+                :test-map (or (session/load-trace conn store) {})
+                :observed (session/load-observations conn)
+                :agent-id (or agent-id (session/session-identity))
+                :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
+                :branch-image-ttl-ms ttl
+                :warm-spare? (boolean warm-spare?))
+         ;; #134: kondo's cross-ns cache follows the STORE, not the process cwd.
+         ;; Unset, kondo resolves it from cwd — so cross-ns findings existed only
+         ;; where a .clj-kondo/ happened to sit beside the process, and a user
+         ;; project's :carried stale-caller gate silently found nothing. A dirless
+         ;; session gets an owned temp dir rather than inheriting whatever is there.
+         ;; The atom is process-global: two sessions on different stores in ONE
+         ;; process share the last opener's dir, which `index/lint` handles by
+         ;; re-passing on a dir change — correct, just not memoized across them.
+         (reset! index/kondo-cache-dir
+                 (if dir
+                   (str (io/file dir ".slopp" "kondo-cache"))
+                   (str (java.nio.file.Files/createTempDirectory
+                         "slopp-kondo"
+                         (make-array java.nio.file.attribute.FileAttribute 0)))))
+         (session/start-spare! session)
+         ;; m4: parked branch images retire after sitting idle for the TTL
+         (let [t      (java.util.Timer. "slopp-branch-reaper" true)
+               period (long (max 1000 (quot ttl 3)))]
+           (.schedule t
+                      (proxy [java.util.TimerTask] []
+                        (run [] (try (api/reap-idle-images! session)
+                                     (catch Throwable _))))
+                      period period)
+           (swap! session assoc :reaper t))
+         (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
+           (when-let [err (image/load-ns! image store ns-sym)]
+             ;; a store carrying red-first specs still opens — stub and retry
+             (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
+                            (nil? (image/load-ns! image store ns-sym)))
+               (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
+         ;; module adoption: a populated store from a pre-module db (:modules
+         ;; nil) gets its manifest derived from reality, once — fresh stores
+         ;; are born with {} and enforcement already on
+         (when (and conn (seq (:namespaces store))
+                    (or (nil? (:modules store))
+                        ;; an EMPTY manifest on a populated store whose journal has
+                        ;; never seen a :module-edge delta = pre-adoption (the
+                        ;; journal is the record of truth; a user who retracted
+                        ;; edges has retraction deltas)
+                        (and (empty? (:modules store))
+                             (not-any? #(= :module-edge (:op %)) (:deltas store)))))
+           (api/adopt-modules! session :agent (or agent-id "slopp")))
+         session)
+       (catch Throwable t
+         (api/close! session)
+         (throw t))))))

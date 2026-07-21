@@ -293,7 +293,7 @@
                      :prompt "non-determinism")
       (testing "non-determinism blocks :pure, and the blocker is named"
         (let [r (api/cleanup! sess 'pu.core)]
-          (is (= :reads (get-in r [:purity :supports])) (pr-str r))
+          (is (= :internal (get-in r [:purity :supports])) (pr-str r))
           (is (= '[pu.core/roll] (get-in r [:purity :blocking :pure]))
               (pr-str r))))
       (finally (api/close! sess)))))

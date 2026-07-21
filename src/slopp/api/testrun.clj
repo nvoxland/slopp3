@@ -1,6 +1,5 @@
 (ns slopp.api.testrun
-  (:require [clojure.java.shell :as sh]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [slopp.repl :as repl] [slopp.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn]))
 
@@ -89,13 +88,44 @@
   [n cores]
   (max 1 (min 4 (quot cores 2) (quot n 8))))
 
+(def shard-timeout-ms
+  "Upper bound for one test-runner JVM. A hung ^:external test used to block
+  sh/sh forever — wedging done! and the milestone gate with it. Test failures
+  PARSE; the only thing this deadline ever kills is a JVM that stopped
+  talking."
+  (* 20 60 1000))
+
+(defn ^{:export "slopp.verification"} run-cmd!
+  "Run `cmd` (a seq of strings) in `dir`, sh-shaped {:exit :out :err}, killed
+  at `timeout-ms` (destroy, then destroyForcibly): :exit 124 and no parseable
+  summary, which the shard-death retry treats honestly as a dead JVM. Output
+  is drained on its own thread so a chatty child cannot fill the pipe and
+  deadlock the wait."
+  ([cmd dir] (run-cmd! cmd dir shard-timeout-ms))
+  ([cmd dir timeout-ms]
+   (let [pb   (doto (ProcessBuilder. ^java.util.List (mapv str cmd))
+                (.directory (io/file dir))
+                (.redirectErrorStream true))
+         proc (.start pb)
+         out  (future (slurp (.getInputStream proc)))]
+     (if (.waitFor proc timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
+       {:exit (.exitValue proc) :out (deref out 10000 "") :err ""}
+       (do (.destroy proc)
+           (when-not (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)
+             (.destroyForcibly proc))
+           {:exit 124
+            :out (str (deref out 1000 "")
+                      "\n[slopp] test runner exceeded " timeout-ms "ms — killed")
+            :err ""})))))
+
 (defn ^{:export "slopp.verification"} run-shard!
   "Shell one test shard: a fresh `clojure -M<alias>` over `grp`'s namespaces
-  in the materialized `dir`. The seam the shard-death retry rides."
+  in the materialized `dir`, bounded by `shard-timeout-ms` via `run-cmd!`.
+  The seam the shard-death retry rides."
   [alias dir grp]
-  (apply sh/sh (concat [repl/clojure-bin (str "-M" alias)]
-                       (mapcat #(vector "-n" (str %)) grp)
-                       [:dir dir])))
+  (run-cmd! (concat [repl/clojure-bin (str "-M" alias)]
+                    (mapcat #(vector "-n" (str %)) grp))
+            dir))
 (defn ^{:export "slopp.verification"} read-traces
   "Merge the form traces this run's shards wrote into the built `dir` (#121):
   {qualified-test-sym #{qualified-form-sym ...}}, or **nil** when none were

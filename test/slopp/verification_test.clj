@@ -518,3 +518,44 @@
                                   :prompt "ordinary map, not a handle")]
           (is (nil? (:image-rebuilt r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest run-cmd-kills-a-runner-that-stopped-talking
+  ;; run-shard! and the serial branch blocked in sh/sh with no bound — one
+  ;; hung ^:external test wedged done! and the milestone gate indefinitely,
+  ;; and killing the server orphaned the runner. The deadline kills the
+  ;; child; exit 124 with no parseable summary is what the shard-death
+  ;; retry already treats as a dead JVM.
+  (let [t0 (System/currentTimeMillis)
+        r  (testrun/run-cmd! ["sleep" "60"] "." 400)]
+    (is (= 124 (:exit r)) (pr-str r))
+    (is (< (- (System/currentTimeMillis) t0) 10000)
+        "the kill must come from the deadline, not the child exiting")
+    (is (re-find #"killed" (str (:out r))))))
+
+(deftest ^:external a-green-summary-with-a-dead-jvm-is-not-green
+  ;; Status was derived purely from output text: a runner that printed its
+  ;; green summary then died nonzero (System/exit in teardown, OOM in a
+  ;; shutdown hook) reported :status :green. The exit code must cross-check
+  ;; the parse in BOTH branches.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'gx.one-test
+                   (str "(ns gx.one-test (:require [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest a-t (is (= 1 1)))\n"))
+      (api/ingest! sess 'gx.two-test
+                   (str "(ns gx.two-test (:require [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest b-t (is (= 2 2)))\n"))
+      (let [green-out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."]
+        (testing "sharded: green summaries with a nonzero max exit is :error"
+          (with-redefs-fn {#'testrun/run-shard!
+                           (fn [_ _ _] {:exit 137 :out green-out :err ""})}
+            #(let [r (external/external-test-run! sess :parallel 2)]
+               (is (= :error (:status r))
+                   (pr-str (select-keys r [:status :exit :note]))))))
+        (testing "serial: a green summary with a nonzero exit is :error"
+          (with-redefs-fn {#'testrun/run-cmd!
+                           (fn [_ _] {:exit 137 :out green-out :err ""})}
+            #(let [r (external/external-test-run! sess :ns 'gx.one-test)]
+               (is (= :error (:status r))
+                   (pr-str (select-keys r [:status :exit :note])))))))
+      (finally (api/close! sess)))))

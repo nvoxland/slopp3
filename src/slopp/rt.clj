@@ -284,3 +284,22 @@
   (let [s @self-touched]
     (reset! self-touched #{})
     s))
+
+(defn install-parent-watchdog!
+  "Start the parent-death watchdog in THIS process, install-once by thread
+  name. Stdin is a pipe from the parent JVM, so EOF means the parent's fds
+  closed — and EOF is a LEVEL, not an edge: a parent that died before this
+  ran still reads as EOF, so a late install fires immediately. nrepl images
+  board it on their launch command line; test runners call this from
+  testmain; both go through the same name guard, so however many surfaces
+  run it, exactly one thread results."
+  []
+  (when-not (some #(= "slopp-parent-watchdog" (.getName ^Thread %))
+                  (keys (Thread/getAllStackTraces)))
+    (doto (Thread. (fn [] (try (while (not (neg? (.read System/in))))
+                               (catch Throwable _))
+                     (System/exit 0))
+                   "slopp-parent-watchdog")
+      (.setDaemon true)
+      (.start)))
+  nil)

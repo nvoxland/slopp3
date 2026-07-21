@@ -74,3 +74,55 @@
           (some-> (java.lang.ProcessHandle/of img-pid)
                   (.orElse nil)
                   (.destroyForcibly)))))))
+
+(deftest read-port-times-out-on-a-silent-child
+  ;; The deadline was only checked BETWEEN lines; .readLine blocked with no
+  ;; bound, so a child that booted silently and hung never tripped the
+  ;; timeout — open!, start-spare!, and close! (deref'ing the spare) all
+  ;; wedged forever. The read itself must be bounded.
+  (let [pipe (java.io.PipedWriter.)
+        rdr  (java.io.BufferedReader. (java.io.PipedReader. pipe))]
+    (try
+      (let [f (future (try (#'repl/read-port rdr 300) (catch Exception e e)))
+            r (deref f 3000 :hung)]
+        (is (not= :hung r) "read-port blocked past its deadline")
+        (is (instance? clojure.lang.ExceptionInfo r) (pr-str r))
+        (is (re-find #"did not report a port" (str (ex-message r)))))
+      (finally (.close pipe)))))
+
+(deftest the-watchdog-boards-before-nrepl
+  ;; The watchdog was installed by inject-rt! only after spawn, port-read,
+  ;; connect, and rt load — so a parent killed during that window (or any
+  ;; throw in it) left a JVM that nothing would ever reap, the exact class
+  ;; d9279 closed. clojure.main treats -e as an init-opt, so the watchdog can
+  ;; board on the child's own command line, before nrepl even starts.
+  (let [cmd   (#'repl/default-cmd nil)
+        e-idx (.indexOf ^java.util.List cmd "-e")
+        m-idx (.indexOf ^java.util.List cmd "-m")]
+    (is (nat-int? e-idx) (pr-str cmd))
+    (is (< e-idx m-idx) "the watchdog -e must precede nrepl's -m")
+    (is (re-find #"slopp-parent-watchdog" (str (nth cmd (inc e-idx))))
+        (pr-str cmd))))
+
+(deftest ^:external a-failed-boot-never-abandons-the-child-jvm
+  ;; Any throw between spawn and watchdog install used to ABANDON a running
+  ;; child: start! had no try/catch and never destroyed the process, and
+  ;; nrepl.cmdline never reads stdin, so the orphan outlived even parent
+  ;; death. The failure path owns the kill; the pid rides the ex-info so this
+  ;; test can verify the child is actually gone.
+  (let [ex (try (repl/start! {:slopp.repl/cmd ["sleep" "60"]
+                              :slopp.repl/timeout-ms 500})
+                nil
+                (catch Exception e e))]
+    (is (some? ex) "a portless child must fail the boot")
+    (let [pid (:pid (ex-data ex))]
+      (is (some? pid) (str "boot failure must carry the child pid: " ex))
+      (when pid
+        (loop [n 0]
+          (let [oh    (java.lang.ProcessHandle/of pid)
+                alive (and (.isPresent oh)
+                           (.isAlive ^java.lang.ProcessHandle (.get oh)))]
+            (cond
+              (not alive) (is true)
+              (< n 20)    (do (Thread/sleep 100) (recur (inc n)))
+              :else       (is false "child still alive after a failed boot"))))))))

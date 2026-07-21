@@ -74,18 +74,22 @@
   Always call it — an owned image is a JVM subprocess, so a dropped session
   leaks one. `(try … (finally (api/close! sess)))` is the shape every test and
   entry point uses. Safe on a partially-built session: each resource is
-  released only if present."
+  released only if present, and each release is ISOLATED — a throwing close
+  (broken transport, a spare whose boot failed) must not leak everything
+  after it. The spare deref is bounded: boot itself is bounded by start!'s
+  timeout, so the cap only guards a wedged future thread."
   [session]
-  (repl/stop! (:image @session))
-  (when-let [spare (:spare @session)]
-    (repl/stop! @spare))                          ; reap even if still booting
-  (when-let [^java.sql.Connection conn (:db @session)]
-    (.close conn))
-  (doseq [[_ line] (:lines @session)]
-    (when-let [img (:image line)] (repl/stop! img))
-    (when-let [^java.sql.Connection c (:conn line)]
-      (.close c)))
-  (when-let [^java.util.Timer t (:reaper @session)] (.cancel t))
+  (letfn [(safely! [f] (try (f) (catch Throwable _ nil)))]
+    (safely! #(repl/stop! (:image @session)))
+    (safely! #(when-let [spare (:spare @session)]
+                (repl/stop! (deref spare 65000 nil))))   ; reap even if still booting
+    (safely! #(when-let [^java.sql.Connection conn (:db @session)]
+                (.close conn)))
+    (doseq [[_ line] (:lines @session)]
+      (safely! #(when-let [img (:image line)] (repl/stop! img)))
+      (safely! #(when-let [^java.sql.Connection c (:conn line)]
+                  (.close c))))
+    (safely! #(when-let [^java.util.Timer t (:reaper @session)] (.cancel t))))
   nil)
 
 (defn sync-with-journal!

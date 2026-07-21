@@ -50,6 +50,7 @@
   each test touches; write the trace, then exit on cognitect's own verdict.
   Args are cognitect's, untouched and forwarded."
   [& args]
+  (rt/install-parent-watchdog!)
   (let [ctr-test  (requiring-resolve 'cognitect.test-runner/test)
         cli-opts  @(requiring-resolve 'cognitect.test-runner/cli-options)
         parse     (requiring-resolve 'clojure.tools.cli/parse-opts)

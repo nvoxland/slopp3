@@ -135,3 +135,13 @@
           (is (contains? @touched 'rt-probe.attr/area))
           (is (not-any? #{'rt-probe.attr/f7} @touched)))
         (finally (rt/restore! originals))))))
+
+(deftest the-runner-watchdog-installs-once
+  ;; Test-runner JVMs carried NO parent-death watchdog (it lived only in the
+  ;; image-boot path), so a hung or orphaned runner survived its parent — the
+  ;; same leak class d9279 closed for images. The install is guarded by
+  ;; thread name: however many surfaces run it, exactly one thread results.
+  (rt/install-parent-watchdog!)
+  (rt/install-parent-watchdog!)
+  (is (= 1 (count (filter #(= "slopp-parent-watchdog" (.getName ^Thread %))
+                          (keys (Thread/getAllStackTraces)))))))
