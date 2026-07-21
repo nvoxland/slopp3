@@ -233,3 +233,29 @@
         (is (empty? (edit.modules/layering-violations (:store @sess) 'lz.mid :reads)))
         (is (seq (edit.modules/layering-violations (:store @sess) 'ly.core :pure))))
       (finally (api/close! sess)))))
+
+(deftest ^:external full-check-layer-loop-exempts-test-namespaces
+  ;; A -test namespace nested UNDER a declared-:pure module inherits :pure via
+  ;; tier-for's prefix walk — but it makes no purity claim (tier-violations
+  ;; exempts -test at declaration for exactly this reason). full-check!'s layer
+  ;; loop iterated ALL namespaces, so the test's legitimate fixture require of
+  ;; a shell namespace flipped the whole store red — permanently, on any module
+  ;; you declared a tier for.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'pl.core.io
+                   "(ns pl.core.io)\n(defn ^:unused-ok read-cfg \"IO.\" [p] (slurp p))\n")
+      (api/module-tier! sess "pl.core.io" :external :prompt "the shell leaf")
+      (api/ingest! sess 'pl.core "(ns pl.core)\n(defn ^:unused-ok f \"P.\" [x] (inc x))\n")
+      (api/module-tier! sess "pl.core" :pure :prompt "pure core")
+      ;; a nested test that legitimately exercises the shell leaf
+      (api/ingest! sess 'pl.core.io-test
+                   (str "(ns pl.core.io-test (:require [pl.core.io :as io]\n"
+                        "                              [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest reads (is (nil? (try (io/read-cfg \"/nope\") (catch Exception _ nil)))))\n"))
+      (testing "the nested test's fixture require does not appear as a layering violation"
+        (let [r (external/full-check! sess)
+              v (:tier-layering r)]
+          (is (not-any? #(= 'pl.core.io-test (:ns %)) v)
+              (str "a -test namespace was flagged by the layer loop: " (pr-str v)))))
+      (finally (api/close! sess)))))
