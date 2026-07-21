@@ -125,3 +125,33 @@
                                  :prompt "same contract")]
           (is (empty? (:drift r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external group-steps-inherit-the-destructive-write-guards
+  ;; apply-group-step called store/replace-node and store/remove-form directly,
+  ;; so the group path skipped refusals every single-form write has: the
+  ;; ambiguity refusal (two forms bearing one name silently edited the FIRST),
+  ;; the rename-onto-existing collision (two live definitions of one name) —
+  ;; and nothing anywhere refused deleting the (ns …) form itself, which
+  ;; renders a headless file that still cold-loads.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'gg.core "(ns gg.core)\n(defn a [] 1)\n(defn b [] 2)\n")
+      (testing "a group replace may not rename onto an existing name"
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'gg.core :name 'a
+                                   :source "(defn b [] 99)"}]
+                                 :prompt "collide")]
+          (is (re-find #"already exists" (str (:error r))) (pr-str r))))
+      (testing "a group delete may not behead the namespace"
+        (let [r (api/edit-group! sess
+                                 [{:action :delete :ns 'gg.core :name 'gg.core}]
+                                 :prompt "behead")]
+          (is (re-find #"(?i)ns form" (str (:error r))) (pr-str r))))
+      (testing "a group replace refuses an ambiguous name instead of editing the first"
+        (api/ingest! sess 'gg.amb "(ns gg.amb)\n(declare x)\n(defn x [] 1)\n")
+        (let [r (api/edit-group! sess
+                                 [{:action :replace :ns 'gg.amb :name 'x
+                                   :source "(defn x [] 2)"}]
+                                 :prompt "ambiguous")]
+          (is (re-find #"(?i)ambiguous" (str (:error r))) (pr-str r))))
+      (finally (api/close! sess)))))
