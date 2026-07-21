@@ -1460,7 +1460,7 @@
             ;; hint below, since `fee`/`zone` are usually domain words too.
             changeset    (merge code-cs
                                 (refactor/qualified-mention-changeset
-                                 st qold qnew code-cs))
+                                 st {qold qnew} code-cs))
             [st' delta]  (store/apply-changeset st :rename ns-sym changeset
                                                 :prompt prompt :agent agent
                                                 :extra {:old old-name :new new-name})
@@ -1717,6 +1717,21 @@
                 ;; caller-before-callee behind a declare that STAYS BEHIND, so
                 ;; the target can land with a forward ref — resolve-cold-load
                 ;; reorders it (or inserts the pipeline's own MARKED declare
+                ;; 4d. the PROSE follows the move: a docstring naming
+                ;; from-ns/x must become to-ns/x. Qualified references only —
+                ;; a bare name may be a domain word. This is the d9077 class
+                ;; at its source: `analyze` moved namespaces and two guidance
+                ;; surfaces kept naming its pre-move address.
+                st4 (let [cs (refactor/qualified-mention-changeset
+                              st4
+                              (into {} (for [nm (:moved plan)]
+                                         [(symbol (str from-ns) (str nm))
+                                          (symbol (str to-ns) (str nm))]))
+                              {})]
+                      (if (seq cs)
+                        (first (store/apply-changeset st4 :move-forms from-ns cs
+                                                      :prompt prompt :agent agent))
+                        st4))
                 ;; for a genuine cycle). Same one call fix-declares! makes.
                 st4 (if-let [rz (edit/resolve-cold-load
                                  st4 to-ns
@@ -1788,7 +1803,18 @@
       {:error (str new " already exists")}
 
       :else
-      (let [changeset (refactor/ns-rename-changeset st old new)
+      (let [code-cs   (refactor/ns-rename-changeset st old new)
+            ;; every form of the renamed ns is re-addressed, so prose naming
+            ;; old/x must follow to new/x — qualified references only; a bare
+            ;; name may be a domain word
+            changeset (merge code-cs
+                             (refactor/qualified-mention-changeset
+                              st
+                              (into {} (for [e (store/forms st old)
+                                             :when (:name e)]
+                                         [(symbol (str old) (str (:name e)))
+                                          (symbol (str new) (str (:name e)))]))
+                              code-cs))
             [st1 delta] (store/apply-changeset st :rename-ns old changeset
                                                :prompt (or prompt (str "rename ns "
                                                                        old " → " new))

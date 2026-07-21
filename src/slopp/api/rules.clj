@@ -187,14 +187,29 @@
                 ;; to it and must never fire
                 :when (contains? nses ns-sym)
                 :when (nil? (store/form-named st* ns-sym (symbol nm)))]
-            {:form (symbol (str (store/ns-of-form-id st* fid))
-                           (str (or (:name e) (:id e))))
-             :names (str nsx "/" nm)
-             :teach (str "the text names " nsx "/" nm " but " ns-sym
-                         " has no form " nm " — it moved, was renamed, or"
-                         " never existed. Fix the prose or the reference;"
-                         " guidance that lies costs a failed call to"
-                         " discover.")})))))
+            (let [;; the commonest cause is a MOVE: same name, new home. That needs no
+                  ;; fuzzy matching at all — just ask who has this name now.
+                  moved (first (for [[other _] nses
+                                     :when (not= other ns-sym)
+                                     :when (store/form-named st* other (symbol nm))]
+                                 (str other "/" nm)))
+                  ;; otherwise a TYPO: one Damerau edit inside the named ns
+                  typo  (when-not moved
+                          (first (for [f     (store/forms st* ns-sym)
+                                       :when (:name f)
+                                       :when (attrs/edit-1? nm (str (:name f)))]
+                                   (str ns-sym "/" (:name f)))))]
+              {:form (symbol (str (store/ns-of-form-id st* fid))
+                             (str (or (:name e) (:id e))))
+               :names (str nsx "/" nm)
+               :suggest (or moved typo)
+               :teach (str "the text names " nsx "/" nm " but " ns-sym
+                           " has no form " nm
+                           (cond moved (str " — it now lives at " moved)
+                                 typo  (str " — did you mean " typo "?")
+                                 :else " — it moved, was renamed, or never existed")
+                           ". Fix the prose or the reference; guidance that"
+                           " lies costs a failed call to discover.")}))))))
 
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of

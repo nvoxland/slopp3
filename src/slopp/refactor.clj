@@ -1220,39 +1220,44 @@
         sym "A-Za-z0-9*+!_'?<>=/.&%$:#-"]   ; symbol constituents; '-' last = literal
     (re-pattern (str "(?<![" sym "])" q "(?![" sym "])"))))
 (defn qualified-mention-changeset
-  "{form-id new-node} rewriting the QUALIFIED reference `old-q` to `new-q`
-  inside STRING LITERALS across the store — docstrings, teach strings, tool
-  descriptions. `base` is an in-flight changeset ({form-id node}) whose nodes
-  take precedence over the store's, so this composes with a positional rename
-  instead of fighting it.
+  "{form-id new-node} rewriting QUALIFIED references inside STRING LITERALS
+  across the store, given `renames` as `{old-qsym new-qsym …}` — docstrings,
+  teach strings, tool descriptions. `base` is an in-flight changeset
+  ({form-id node}) whose nodes take precedence over the store's, so this
+  composes with a positional rewrite instead of fighting it.
+
+  A MAP, not a pair, because the operations that strand prose most often move
+  many names at once: `edit_move_forms` and `ns_rename` re-address every form
+  they touch, and the d9077 case — prose left naming a form's pre-move
+  namespace — was a MOVE.
 
   Only QUALIFIED references are rewritten, and that is the whole safety
   argument: `a.b/c` in prose can only mean that var, while a bare `c` is
-  usually a domain word (`zone`, `open`) that must not be touched — those stay
-  a reported `:mentions` hint for a human to judge. Code positions are already
-  handled positionally by `rename-changeset`; this pass deliberately edits
+  usually a domain word (`zone`, `fee`, `open`) that must not be touched —
+  those stay a reported `:mentions` hint for a human to judge. Code positions
+  are handled positionally by the caller's own changeset; this pass edits
   string literals ONLY.
 
   Without it, a rename or move leaves its own documentation pointing at an
   address that no longer resolves — teaching that lies, which ships silently
   because no gate can see a var inside a string."
-  [store old-q new-q base]
-  (let [pat (symbol-mention-re old-q)]
+  [store renames base]
+  (let [pairs (vec (for [[o n] renames] [(symbol-mention-re o) (str n)]))
+        fix   (fn [s] (reduce (fn [acc [pat rep]] (str/replace acc pat rep)) s pairs))]
     (into {}
           (for [ns-sym (keys (:namespaces store))
                 e      (store/elements store ns-sym)
                 :when  (:id e)
                 :let   [node (get base (:id e) (:node e))]
-                :when  (and node (str/includes? (n/string node) (str old-q)))
+                :when  (and node
+                            (let [txt (n/string node)]
+                              (some #(str/includes? txt (str %)) (keys renames))))
                 :let   [out (-> (z/of-node node)
                                 (z/prewalk
                                  (fn [zl] (and (= :token (z/tag zl))
                                                (string? (z/sexpr zl))
-                                               (re-find pat (z/sexpr zl))))
-                                 (fn [zl] (z/replace
-                                           zl
-                                           (n/string-node
-                                            (str/replace (z/sexpr zl) pat (str new-q))))))
+                                               (not= (z/sexpr zl) (fix (z/sexpr zl)))))
+                                 (fn [zl] (z/replace zl (n/string-node (fix (z/sexpr zl))))))
                                 z/root)]
                 :when  (not= (n/string out) (n/string node))]
             [(:id e) out]))))

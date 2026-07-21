@@ -259,3 +259,29 @@
         (is (empty? (rules/stale-reference-check
                      nil st4 (mapv :id (store/forms st4 'sr.kw))))
             "a qualified keyword in prose must not be read as a var")))))
+
+(deftest stale-reference-suggests-where-it-went
+  ;; A finding that only says "this doesn't resolve" hands the agent a hunt.
+  ;; The two real causes each have a cheap answer: a MOVE (same name, new
+  ;; namespace — exact lookup, no fuzzy matching needed, and the commonest
+  ;; case) and a TYPO (one Damerau edit inside the named namespace).
+  (testing "a moved form is located by name"
+    (let [st (-> (store/empty-store)
+                 (store/ingest 'sr.home "(ns sr.home)\n(defn ^:unused-ok gone \"G.\" [x] x)\n")
+                 (store/ingest 'sr.old
+                               (str "(ns sr.old)\n"
+                                    "(defn ^:unused-ok teach \"see sr.old/gone\" [x] x)\n")))
+          f  (first (rules/stale-reference-check
+                     nil st (mapv :id (store/forms st 'sr.old))))]
+      (is (= "sr.home/gone" (:suggest f)) (pr-str f))
+      (is (re-find #"now lives at sr\.home/gone" (str (:teach f))) (pr-str f))))
+  (testing "a typo gets a did-you-mean"
+    (let [st (-> (store/empty-store)
+                 (store/ingest 'sr.typo
+                               (str "(ns sr.typo)\n"
+                                    "(defn ^:unused-ok charge \"C.\" [x] x)\n"
+                                    "(defn ^:unused-ok teach \"see sr.typo/charg\" [x] x)\n")))
+          f  (first (rules/stale-reference-check
+                     nil st (mapv :id (store/forms st 'sr.typo))))]
+      (is (= "sr.typo/charge" (:suggest f)) (pr-str f))
+      (is (re-find #"did you mean" (str (:teach f))) (pr-str f)))))

@@ -317,3 +317,38 @@
         (testing "the BARE domain word is left alone for a human to judge"
           (is (re-find #"fee is also a domain word" src) src)))
       (finally (api/close! sess)))))
+
+(deftest ^:external move-and-ns-rename-carry-qualified-prose
+  ;; The d9077 case itself: a form MOVES namespace and the prose keeps naming
+  ;; its old address, so the guidance resolves to nothing. A move re-addresses
+  ;; every form it touches, which is why the rewrite takes a map of renames.
+  (let [sess (external/open!)]
+    (try
+      (testing "edit_move_forms: prose naming the pre-move address follows"
+        (api/ingest! sess 'mv.src
+                     (str "(ns mv.src)\n"
+                          "(defn ^:unused-ok helper \"H.\" [x] x)\n"))
+        (api/ingest! sess 'mv.doc
+                     (str "(ns mv.doc)\n"
+                          "(defn ^:unused-ok teach \"call mv.src/helper first\" [x] x)\n"))
+        (let [r (api/move-forms! sess 'mv.src ["helper"] 'mv.dest
+                                 :prompt "move helper out")]
+          (is (nil? (:error r)) (pr-str r)))
+        (let [src (query/query-source sess 'mv.doc)]
+          (is (re-find #"mv\.dest/helper" src) src)
+          (is (not (re-find #"mv\.src/helper" src))
+              (str "prose kept the pre-move address: " src))))
+      (testing "ns_rename: prose naming the old namespace follows"
+        (api/ingest! sess 'nr.old
+                     (str "(ns nr.old)\n"
+                          "(defn ^:unused-ok calc \"C.\" [x] x)\n"))
+        (api/ingest! sess 'nr.doc
+                     (str "(ns nr.doc)\n"
+                          "(defn ^:unused-ok teach \"see nr.old/calc for the rule\" [x] x)\n"))
+        (let [r (api/ns-rename! sess 'nr.old 'nr.new :prompt "rename the ns")]
+          (is (nil? (:error r)) (pr-str r)))
+        (let [src (query/query-source sess 'nr.doc)]
+          (is (re-find #"nr\.new/calc" src) src)
+          (is (not (re-find #"nr\.old/calc" src))
+              (str "prose kept the old namespace: " src))))
+      (finally (api/close! sess)))))
