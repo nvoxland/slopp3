@@ -352,10 +352,11 @@
   stands before you assert anything about it.
 
   Returns `{:tier <declared> :supports :pure|:internal|:external :blocking
-  {...}}` — `:blocking :pure` lists this namespace's forms reaching an effect
-  or non-determinism, `:blocking :internal` those reaching OUTSIDE the process
-  (IO, opaque external deps). Same classification as `tier-refusal`, and the
-  answer is canonical whatever spelling the store carries.
+  {...}}` — `:blocking :pure` lists this namespace's forms reaching an effect,
+  non-determinism, or CONSOLE OUTPUT (the three axes `:pure` forbids),
+  `:blocking :internal` those reaching OUTSIDE the process (IO, opaque external
+  deps). Same classification as `tier-refusal`, and the answer is canonical
+  whatever spelling the store carries.
 
   A MIGRATION aid: the end state is these violations being refused at write
   time, at which point a standing report has no one left to inform."
@@ -365,9 +366,10 @@
         eff-any  (derive/effectful-vars analysis dep-nses (:dep-pure store))
         eff-ext  (derive/externally-effectful-vars analysis dep-nses (:dep-pure store))
         nondet   (derive/nondeterministic-vars analysis)
+        console  (derive/console-vars analysis)
         here?    #(= (str ns-sym) (namespace %))
         blocking (fn [vs] (vec (sort (filter here? vs))))
-        b-pure   (blocking (into (set eff-any) nondet))
+        b-pure   (blocking (into (set eff-any) (concat nondet console)))
         b-int    (blocking eff-ext)]
     {:tier     (canonical-tier (get (:module-tiers store) (module-of ns-sym) :external))
      :supports (cond (empty? b-pure) :pure
@@ -412,6 +414,7 @@
                        (derive/effectful-vars analysis dep-nses (:dep-pure candidate))
                        (derive/externally-effectful-vars analysis dep-nses (:dep-pure candidate)))
             nondet   (when (= tier :pure) (derive/nondeterministic-vars analysis))
+            console  (when (= tier :pure) (derive/console-vars analysis))
             vnode    (symbol (str ns-sym) (str form-name))]
         (cond
           (contains? eff vnode)
@@ -432,7 +435,16 @@
                " is what lets the generative schema check run on it. Move the"
                " non-determinism to an :external namespace, or loosen the"
                " tier with module_purity {module \"" ns-sym
-               "\" tier :internal} (say why)"))))))
+               "\" tier :internal} (say why)")
+
+          (and console (contains? console vnode))
+          (str ns-sym "/" form-name " reaches CONSOLE OUTPUT (println/prn) but"
+               " " ns-sym " is declared :pure — printing is an observable side"
+               " effect, so a referentially transparent core cannot do it."
+               " Return the string and let a caller print it, or loosen the"
+               " tier with module_purity {module \"" ns-sym
+               "\" tier :internal} (say why). Note this does NOT ask for a `!`"
+               " name: `!` means MUTATION, and printing is not one"))))))
 
 (def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a

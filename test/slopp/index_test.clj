@@ -228,3 +228,24 @@
           eff (derive/effectful-vars an)]
       (is (not (contains? eff 'vq2/holder))
           "a #'var carried in data must not propagate the effect"))))
+
+(deftest console-io-blocks-pure-without-demanding-a-bang
+  ;; `!` means MUTATION by convention — idiomatic Clojure never bang-names a
+  ;; print fn, and dialect.md carries that as a recorded decision. But console
+  ;; IO still breaks referential transparency, so the :pure tier must see it.
+  ;; Two axes, like nondeterminism: rand/slurp block :pure without demanding a
+  ;; bang either.
+  (let [an (analyze/analyze
+            (str "(ns c)\n"
+                 "(defn evaluate [s] (count s))\n"
+                 "(defn run-cli [args] (println (evaluate args)))\n"))]
+    (testing "printing does NOT demand a ! name"
+      (is (not-any? #(= 'c/run-cli (:var %)) (derive/effect-violations an))
+          (pr-str (mapv :var (derive/effect-violations an)))))
+    (testing "but the :pure tier still sees it as console output"
+      (is (contains? (derive/console-vars an) 'c/run-cli)))
+    (testing "and a transitive caller of a printing fn is seen too"
+      (is (contains? (derive/console-vars an) 'c/run-cli)))
+    (testing "a real MUTATION still demands the !"
+      (let [an2 (analyze/analyze "(ns c2)\n(defn bump [a] (swap! a inc))\n")]
+        (is (some #(= 'c2/bump (:var %)) (derive/effect-violations an2)))))))
