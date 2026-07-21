@@ -204,3 +204,58 @@
         (let [r (external/done! sess :label "still green")]
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest stale-reference-check-flags-prose-that-lies
+  ;; The failure CLAUDE.md rule 4 exists to prevent, and which this session hit
+  ;; four times: a docstring/teach-string names `a.b/c`, `c` moves or is
+  ;; renamed, and the prose keeps pointing at the old address. Gates never see
+  ;; it — a var inside a STRING is not a reference — so it ships, and an agent
+  ;; that follows the guidance pays a failed call to learn it was wrong.
+  ;;
+  ;; Precision comes from requiring the NAMESPACE to exist in the store: a
+  ;; string naming clojure.core/eval or some external lib can never fire,
+  ;; because that namespace was never in the store to begin with.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'sr.core
+                             (str "(ns sr.core)\n"
+                                  "(defn ^:unused-ok live \"L.\" [x] x)\n"
+                                  "(defn ^:unused-ok teach\n"
+                                  "  \"see sr.core/gone for the details\"\n"
+                                  "  [x] x)\n")))
+        fids (mapv :id (store/forms st 'sr.core))
+        found (rules/stale-reference-check nil st fids)]
+    (testing "a string naming a var that does not exist in an EXISTING ns fires"
+      (is (seq found) (pr-str found))
+      (is (some #(re-find #"sr\.core/gone" (str %)) found) (pr-str found)))
+    (testing "a string naming a var that DOES exist is clean"
+      (let [st2 (-> (store/empty-store)
+                    (store/ingest 'sr.ok
+                                  (str "(ns sr.ok)\n"
+                                       "(defn ^:unused-ok live \"L.\" [x] x)\n"
+                                       "(defn ^:unused-ok teach \"use sr.ok/live here\" [x] x)\n")))]
+        (is (empty? (rules/stale-reference-check
+                     nil st2 (mapv :id (store/forms st2 'sr.ok))))
+            "a resolvable reference must not fire")))
+    (testing "an EXTERNAL namespace never fires — it was never in the store"
+      (let [st3 (-> (store/empty-store)
+                    (store/ingest 'sr.ext
+                                  (str "(ns sr.ext)\n"
+                                       "(defn ^:unused-ok teach\n"
+                                       "  \"clojure.core/eval and clojure.java.io/file are banned\"\n"
+                                       "  [x] x)\n")))]
+        (is (empty? (rules/stale-reference-check
+                     nil st3 (mapv :id (store/forms st3 'sr.ext))))
+            "external libs are not store namespaces — zero false positives")))
+    (testing "a qualified KEYWORD is not a var reference and must not fire"
+      ;; measured on slopp's own store: 4 of the first 10 hits were prose
+      ;; naming :slopp.api/dir-style option keys. A rule that cries wolf is a
+      ;; rule nobody reads.
+      (let [st4 (-> (store/empty-store)
+                    (store/ingest 'sr.kw
+                                  (str "(ns sr.kw)\n"
+                                       "(defn ^:unused-ok teach\n"
+                                       "  \"call sites pass {:sr.kw/dir d :sr.kw/agent-id a}\"\n"
+                                       "  [x] x)\n")))]
+        (is (empty? (rules/stale-reference-check
+                     nil st4 (mapv :id (store/forms st4 'sr.kw))))
+            "a qualified keyword in prose must not be read as a var")))))
