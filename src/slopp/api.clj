@@ -548,6 +548,7 @@
   expression that itself no longer evaluates."
   [session ns-sym nm & {:keys [prompt agent]}]
   (or
+   (edit/ns-form-delete-error ns-sym nm)
    (edit/ambiguous-form-error (:store @session) ns-sym nm)
    (let [victim  (store/form-named (:store @session) ns-sym nm)
          vsexpr  (when victim (try (n/sexpr (:node victim)) (catch Exception _ nil)))
@@ -590,26 +591,42 @@
   `:text true` for raw-text matches — a small change INSIDE a big form
   without re-transcribing it), and :require (one require clause into the ns
   form). Subform/require compute the new source and reduce to :replace, so
-  every gate (dialect, Q7 isolation, Q9 teaching errors) rides along."
+  every gate (dialect, Q7 isolation, Q9 teaching errors) rides along.
+  :replace and :delete carry the same destructive-write guards as the
+  single-form paths — ambiguity, rename-collision, ns-form protection —
+  since undo!/revert-episode!/sweeps all ride through here."
   [st gid prompt agent {:keys [action ns name source before match text] :as step}]
   (case action
     :replace (let [{:keys [node error]} (edit/parse-form source)
                    iso (when node
-                         (edit/isolation-refusal (edit/require-aliases st ns) node))]
+                         (edit/isolation-refusal (edit/require-aliases st ns) node))
+                   nm' (some-> node store/form-symbol)
+                   ambiguous (edit/ambiguous-form-error st ns name)
+                   collision (when (and nm' (not= nm' name))
+                               (let [hit (store/form-named st ns nm')
+                                     old (store/form-named st ns name)]
+                                 (when (and hit (not= (:id hit) (:id old)))
+                                   {:error (str nm' " already exists in " ns
+                                                " — a replace may not RENAME "
+                                                name " onto an existing form"
+                                                " (two definitions would answer"
+                                                " to one name). Delete or rename"
+                                                " one of them first.")})))]
                (cond
+                 ambiguous ambiguous
                  error {:error error}
                  iso   {:error iso}
+                 collision collision
                  :else
                  (if-let [[st' d] (store/replace-node st ns name node
                                                       :prompt prompt :group gid
                                                       :agent agent)]
-                   (let [nm' (store/form-symbol node)]
-                     (if-let [merr (edit.modules/gate-refusal st' ns (or nm' name))]
-                       {:error merr}
-                       {:store st' :delta d
-                        :hot (if (and nm' (not= nm' name))
-                               [:load-unmap (:form-id d) ns name]
-                               [:load (:form-id d)])}))
+                   (if-let [merr (edit.modules/gate-refusal st' ns (or nm' name))]
+                     {:error merr}
+                     {:store st' :delta d
+                      :hot (if (and nm' (not= nm' name))
+                             [:load-unmap (:form-id d) ns name]
+                             [:load (:form-id d)])})
                    (edit/missing-form-error st ns name))))
     :add     (let [{:keys [node error]} (edit/parse-form source)
                    nm (some-> node store/form-symbol)
@@ -648,11 +665,13 @@
                                      {:action :replace :ns ns :name ns
                                       :source (:src r)})))
                {:error (str "no namespace " ns " (ingest it first)")})
-    :delete  (if-let [[st' d] (store/remove-form st ns name
-                                                 :prompt prompt :group gid
-                                                 :agent agent)]
-               {:store st' :delta d :hot [:unmap ns name]}
-               (edit/missing-form-error st ns name))
+    :delete  (or (edit/ns-form-delete-error ns name)
+                 (edit/ambiguous-form-error st ns name)
+                 (if-let [[st' d] (store/remove-form st ns name
+                                                     :prompt prompt :group gid
+                                                     :agent agent)]
+                   {:store st' :delta d :hot [:unmap ns name]}
+                   (edit/missing-form-error st ns name)))
     :move    (if-let [[st' d] (store/move-form st ns name before
                                                :prompt prompt :agent agent)]
                {:store st' :delta d :hot nil}
@@ -729,7 +748,10 @@
 
               (not (session/try-commit! session base0 st
                                 (vec (distinct (map :ns steps)))))
-              {:conflict {:reason "store changed during multi-form op — retry"}}
+              (do ;; the group's forms are already hot-loaded — never leave the loser's
+      ;; code answering for the winner's store
+      (session/fresh-image! session)
+      {:conflict {:reason "store changed during multi-form op — retry"}})
 
               :else
               (let [image    (:image @session)
@@ -1336,7 +1358,7 @@
           (let [r (edit-group! session steps
                                :prompt (or prompt (str "undo back to " from))
                                :agent agent)]
-            (if (:error r)
+            (if (or (:error r) (:conflict r))
               r
               (let [undid-ids (mapv :id (filter mine? span))
                     reverted  (vec (remove (set shared) (map :form (:forms changes))))]
@@ -1391,7 +1413,7 @@
                                        (str "revert episode"
                                             (when agent (str " of " agent))))
                            :agent agent)]
-        (if (:error r)
+        (if (or (:error r) (:conflict r))
           r
           (let [reverted (vec (remove (set shared) (map :form (:forms changes))))]
             (session/commit-appended!
@@ -1457,7 +1479,8 @@
         (if-let [err (:err (session/hot-load-all! session st' ordered-ids))]
           (edit/compile-error st' err "rename failed to compile: ")
           (if-not (session/try-commit! session st st' (vec touched-nses))
-            {:conflict {:reason "store changed during rename — retry"}}
+            (do (session/fresh-image! session)
+              {:conflict {:reason "store changed during rename — retry"}})
             (do
               (swap! session update :test-map session/rename-in-trace qold qnew)
               (session/persist-trace! session)
@@ -1714,7 +1737,8 @@
               (do (session/fresh-image! session)
                   (edit/compile-error st4 load-err "move failed to compile: "))
               (if-not (session/try-commit! session st st4 touched)
-                {:conflict {:reason "store changed during move — retry"}}
+                (do (session/fresh-image! session)
+                    {:conflict {:reason "store changed during move — retry"}})
                 (do (doseq [nm (:removals plan)]
                       (repl/eval! (:image @session)
                                   (format "(ns-unmap '%s '%s)" from-ns nm)))

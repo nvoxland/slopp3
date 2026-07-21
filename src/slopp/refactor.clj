@@ -866,6 +866,10 @@
         collisions (when-not new-ns?
                      (filter #(store/form-named store to-ns %) (sort moved)))]
     (cond
+      (empty? moved)
+      {:error (str "nothing to move — form-names is empty; name the forms to"
+                   " move out of " from-ns)}
+
       (seq missing)
       {:error (str "no such forms in " from-ns ": " (vec missing))}
 

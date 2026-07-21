@@ -281,7 +281,12 @@
           (let [base (:store @session)
                 cur  (some-> (target-node base) n/string)]
             (if (and (pos? attempt) (not= orig cur))
-              conflict
+              ;; the loser's code is already hot-loaded, and each durable
+              ;; session has its OWN image — the winner's hot-load happened in
+              ;; another process. Reboot from the refreshed store so nothing
+              ;; verifies against code the journal rejected.
+              (do (when loaded? (fresh-image! session))
+                  conflict)
               (let [out (transform base)]
                 (if (:error out)
                   out
@@ -313,7 +318,9 @@
                                        (or healed? (boolean (:healed load-res)))
                                        (or stubbed (:stubbed load-res))
                                        (or carried (:carried load-res))))))))))))))
-      ;; ephemeral: the pure transform reruns INSIDE swap! — starvation-free
+      ;; ephemeral: the pure transform reruns INSIDE swap! — starvation-free.
+      ;; No image heal on conflict here: ephemeral writers share ONE image, so
+      ;; the competitor's own hot-load already put the winner's code in it.
       (let [base0 (:store @session)
             out0  (transform base0)]
         (if (:error out0)

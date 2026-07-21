@@ -124,3 +124,36 @@
                   (str nm " lost from the journal"))))
           (finally (api/close! sess))))
       (finally (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+^:unsafe (deftest ^:external a-lost-race-does-not-leave-the-loser-in-the-image
+  ;; Every conflict return runs AFTER hot-load. With TWO writers on one store,
+  ;; the loser's own image holds its rejected code while the journal holds the
+  ;; winner's — so the loser session's next verification runs against code the
+  ;; store threw away. A lost race must heal the losing image back to what the
+  ;; store holds.
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-heal-" (System/nanoTime))]
+    (try
+      (let [a (external/open! {:slopp.api/dir dir})]
+        (try
+          (api/ingest! a 'ch.core
+                       "(ns ch.core)\n(defn ^:unused-ok f \"D.\" [x] :original)\n")
+          (let [b (external/open! {:slopp.api/dir dir})]
+            (try
+              (let [fired (atom false)
+                    r (binding [session/*pre-commit-hook*
+                                (fn [] (when (compare-and-set! fired false true)
+                                         (binding [session/*pre-commit-hook* nil]
+                                           (api/edit-replace! b 'ch.core 'f
+                                                              "(defn ^:unused-ok f \"D.\" [x] :winner)"
+                                                              :prompt "raced in first"))))]
+                        (api/edit-replace! a 'ch.core 'f
+                                           "(defn ^:unused-ok f \"D.\" [x] :loser)"
+                                           :prompt "loses the race"))]
+                (is (some? (:conflict r)) (pr-str r))
+                (testing "the losing session's image answers with the winner"
+                  (is (= [:winner] (api/query-eval a "(ch.core/f 1)"))
+                      "the image kept the loser's code after the conflict")))
+              (finally (api/close! b))))
+          (finally (api/close! a))))
+      (finally (clojure.java.shell/sh "rm" "-rf" dir)))))

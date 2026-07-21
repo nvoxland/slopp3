@@ -292,3 +292,12 @@
       (is (= '[cr.only] (:caller-require-drops p))))
     (testing "a caller that still uses a stay-behind keeps it"
       (is (not (contains? (set (:caller-require-drops p)) 'cr.both))))))
+
+(deftest plan-refuses-an-empty-move
+  ;; move-plan with [] passed every check (nothing missing, no collisions, no
+  ;; cycles — vacuously) and planned a brand-new EMPTY target namespace that
+  ;; the executor would happily commit.
+  (let [s (store/ingest (store/empty-store) 'mv.solo
+                        "(ns mv.solo)\n(defn ^:unused-ok u \"D.\" [] 1)\n")
+        p (refactor/move-plan s 'mv.solo [] 'mv.ghost {})]
+    (is (:error p) (pr-str p))))

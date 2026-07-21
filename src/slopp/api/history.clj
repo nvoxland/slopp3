@@ -167,22 +167,26 @@
   The inverse of an `:added` form is a delete, of a `:modified` form a replace
   with its prior source, and of a `:deleted` form an ADD of the source the log
   still holds — which is why delta-addressed undo reaches a deleted form at all
-  and name-addressed revert cannot."
+  and name-addressed revert cannot.
+
+  Namespace creation has no inverse: the (ns …) form itself is never deleted
+  (every delete path refuses that as a destructive-write guard), so reverting
+  an :ingest empties the namespace but leaves its shell in place."
   [changes others]
   (let [{shared true mine false} (group-by #(contains? others (:form-id %))
                                            (:forms changes))]
     {:shared (mapv :form shared)
      :steps  (vec (keep (fn [{:keys [form status was]}]
-                          (when (namespace form)   ; anonymous forms: skip
-                            (let [ns-sym (symbol (namespace form))
-                                  nm     (symbol (name form))]
-                              (case status
-                                :modified {:action :replace :ns ns-sym
-                                           :name nm :source was}
-                                :added    {:action :delete :ns ns-sym
-                                           :name nm}
-                                :deleted  {:action :add :ns ns-sym
-                                           :source was}))))
+                          (let [ns-sym (symbol (namespace form))
+                                nm     (symbol (name form))]
+                            (case status
+                              :modified {:action :replace :ns ns-sym
+                                         :name nm :source was}
+                              :added    (when-not (= (str ns-sym) (str nm))
+                                          {:action :delete :ns ns-sym
+                                           :name nm})
+                              :deleted  {:action :add :ns ns-sym
+                                         :source was})))
                         mine))}))
 
 (defn render-history-text

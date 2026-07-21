@@ -760,6 +760,18 @@
       (conj {:kind :arity-changed
              :detail {:was (arits old-node) :now (arits new-node)}}))))
 
+(defn ns-form-delete-error
+  "Refuse deleting the (ns …) form itself. A namespace without its ns form
+  renders as a headless file that still COLD-LOADS (the forms compile into
+  whatever namespace preceded them), so nothing downstream catches it.
+  Returns {:error msg} or nil; the shared guard for every delete path."
+  [ns-sym form-name]
+  (when (= (str ns-sym) (str form-name))
+    {:error (str "cannot delete the ns form of " ns-sym
+                 " — a namespace must keep its (ns …) form (rendering and"
+                 " cold-load depend on it). Delete the namespace's other forms"
+                 " instead; the shell stays.")}))
+
 (defn replace-form
   "Pure edit: validate `new-source` (one dialect-legal form) and replace the form
   named `form-name` in `ns-sym`, keeping its id and appending a `:replace` delta.
@@ -767,14 +779,30 @@
   resulting namespace) or {:error msg}.
 
   Refuses outright when `form-name` addresses TWO elements — the shared
-  chokepoint for that check, so every caller of the pure edit inherits it."
+  chokepoint for that check, so every caller of the pure edit inherits it.
+  Also refuses a replace that RENAMES the form onto a name another form
+  already bears (mirroring rename!'s collision check): landing it leaves two
+  definitions answering to one name — cold-load passes (redefinition is only a
+  warning) and every later name-addressed edit refuses as ambiguous."
   [store ns-sym form-name new-source & {:keys [prompt agent]}]
   (let [ambiguous (ambiguous-form-error store ns-sym form-name)
-        {:keys [node error]} (parse-form new-source)]
+        {:keys [node error]} (parse-form new-source)
+        new-name  (when node (store/form-symbol node))
+        collision (when (and new-name (not= new-name form-name))
+                    (let [hit (store/form-named store ns-sym new-name)
+                          old (store/form-named store ns-sym form-name)]
+                      (when (and hit (not= (:id hit) (:id old)))
+                        {:error (str new-name " already exists in " ns-sym
+                                     " — a replace may not RENAME " form-name
+                                     " onto an existing form (two definitions"
+                                     " would answer to one name). Delete or"
+                                     " rename one of them first.")})))]
     (cond
       ambiguous ambiguous
 
       error {:error error}
+
+      collision collision
 
       (isolation-refusal (require-aliases store ns-sym) node)
       {:error (isolation-refusal (require-aliases store ns-sym) node)}

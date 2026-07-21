@@ -193,3 +193,20 @@
       (let [e (check "(defn f [] (binding [*out* nil] (prn 1)))")]
         (is (some? e) (pr-str e))
         (is (not (re-find #"LOCAL" (str e))) (str e))))))
+
+(deftest replace-refuses-renaming-onto-an-existing-form
+  ;; rename! and :add both refuse a name collision, but the replace path only
+  ;; checked stranded callers — a replace that RENAMED a form onto an existing
+  ;; name silently landed two definitions of that name, cold-load passed
+  ;; (redefinition is only a kondo warning), and every later name-addressed
+  ;; edit refused as ambiguous with a cleanup hint that cannot fix it. Same
+  ;; refusal as rename!, at the shared chokepoint.
+  (let [s (store/ingest (store/empty-store) 'rr.core
+                        "(ns rr.core)\n(defn a [] 1)\n(defn b [] 2)\n")]
+    (testing "renaming onto an existing name refuses"
+      (let [r (edit/replace-form s 'rr.core 'a "(defn b [] 99)")]
+        (is (re-find #"already exists" (str (:error r))) (pr-str r))))
+    (testing "an honest rename to a FRESH name still lands"
+      (is (:store (edit/replace-form s 'rr.core 'a "(defn c [] 42)"))))
+    (testing "replacing a form in place still lands"
+      (is (:store (edit/replace-form s 'rr.core 'a "(defn a [] 42)"))))))
