@@ -34,33 +34,68 @@
   '{nrepl/nrepl   {:mvn/version "1.3.1"}
     metosin/malli {:mvn/version "0.17.0"}})
 
+(def ^:private watchdog-src
+  "Source for the parent-death watchdog thread, evaluated INSIDE the child.
+  The child's stdin is a pipe from the parent, so a daemon thread blocked on
+  System/in sees EOF the moment the parent's fds close — no shutdown hook
+  catches an abnormal parent death, but the OS closing the pipe does. The
+  install is guarded by thread NAME so it lands exactly once however many
+  surfaces run it (the launch command boards it at birth; inject-rt! re-runs
+  it as the safety net for images started with a custom :cmd)."
+  (str "(do (when-not (some #(= \"slopp-parent-watchdog\" (.getName %))"
+       " (keys (Thread/getAllStackTraces)))"
+       " (doto (Thread. (fn [] (try (while (not (neg? (.read System/in))))"
+       " (catch Throwable _)) (System/exit 0)) \"slopp-parent-watchdog\")"
+       " (.setDaemon true) (.start))) nil)"))
+
 (defn- default-cmd
   "The target image launch command: Clojure + nREPL, plus the store's external
   dependency manifest (`deps`, lib→coord) merged into `-Sdeps` so store code
   that requires those libs compiles (trust Tier 1). `inherent-deps` (nREPL,
   malli) are merged LAST so slopp-the-tool's own image deps are always present
-  at slopp's versions — regardless of the project manifest."
+  at slopp's versions — regardless of the project manifest.
+
+  The parent-death watchdog rides `-e` (a clojure.main INIT opt, so it runs
+  before `-m` starts nREPL): the child can never exist without its reaper,
+  closing the boot-window orphan class — a parent killed between spawn and
+  nREPL connect used to leave a JVM nothing would ever reap."
   ([] (default-cmd nil))
   ([deps]
    [clojure-bin "-Sdeps"
     (pr-str {:deps (merge deps inherent-deps)})
-    "-M" "-m" "nrepl.cmdline"]))
+    "-M" "-e" watchdog-src "-m" "nrepl.cmdline"]))
 
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-image" (make-array FileAttribute 0))))
 
 (defn- read-port
-  "Block reading the subprocess's merged output until it announces its port."
+  "Read the subprocess's merged output until it announces its port, bounded by
+  `timeout-ms`. Char-at-a-time behind `.ready` so the DEADLINE governs even
+  when the child goes silent mid-line — `.readLine` blocked unboundedly, and a
+  child that booted quietly and hung wedged every caller up the stack."
   [^BufferedReader rdr timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
-    (loop []
-      (when (> (System/currentTimeMillis) deadline)
-        (throw (ex-info "owned image did not report a port in time" {})))
-      (if-let [line (.readLine rdr)]
-        (if-let [m (re-find #"port (\d+)" line)]
-          (Long/parseLong (second m))
-          (recur))
-        (throw (ex-info "owned image ended before reporting a port" {}))))))
+    (loop [sb (StringBuilder.)]
+      (cond
+        (> (System/currentTimeMillis) deadline)
+        (throw (ex-info "owned image did not report a port in time" {}))
+
+        (.ready rdr)
+        (let [c (.read rdr)]
+          (cond
+            (neg? c)
+            (throw (ex-info "owned image ended before reporting a port" {}))
+
+            (= c (int \newline))
+            (if-let [m (re-find #"port (\d+)" (str sb))]
+              (Long/parseLong (second m))
+              (recur (StringBuilder.)))
+
+            :else
+            (recur (doto sb (.append (char c))))))
+
+        :else
+        (do (Thread/sleep 25) (recur sb))))))
 
 ^:unsafe (defn eval!
   "Eval `code` in the image; returns a vector of returned values, read as data
@@ -80,8 +115,8 @@
 
 (defn- inject-rt!
   "Load slopp's runtime support (slopp.rt — traced test execution) into the
-  image, install a parent-death watchdog, wrap rt against itself (#126), then
-  return to `user`. Every owned image carries all of it.
+  image, ensure the parent-death watchdog is aboard, wrap rt against itself
+  (#126), then return to `user`. Every owned image carries all of it.
 
   The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
   whichever slopp/rt.clj is on the READING process's classpath, and that differs
@@ -95,19 +130,13 @@
   inside; it is already on the stack by then, which is exactly why it measured
   zero covering tests while 213 exercised it.
 
-  The WATCHDOG closes a subprocess leak: a ProcessBuilder child is orphaned,
-  not killed, when its parent JVM dies abnormally (OOM, SIGKILL, a killed
-  test_run) — no shutdown hook can catch that. The child's stdin is a pipe from
-  the parent, so a daemon thread blocked on `System/in` sees EOF the moment the
-  parent's fds close, and exits the image. `nrepl.cmdline` never reads stdin,
-  so the thread owns it uncontended."
+  The WATCHDOG (see `watchdog-src`) normally boards the child's own command
+  line, before nREPL starts — this re-run is the safety net for images
+  launched with a custom :cmd; the name guard makes it land exactly once."
   [handle]
   (eval! handle (slurp (io/resource "slopp/rt.clj")))
   (eval! handle "(when-let [f (resolve 'slopp.rt/self-instrument!)] (f))")
-  (eval! handle
-         (str "(doto (Thread. (fn [] (try (while (not (neg? (.read System/in))))"
-              " (catch Throwable _)) (System/exit 0)) \"slopp-parent-watchdog\")"
-              " (.setDaemon true) (.start))"))
+  (eval! handle watchdog-src)
   (eval! handle "(in-ns 'user)")
   handle)
 
@@ -127,6 +156,11 @@
   unlike the handle this returns, whose keys are internal and read in the
   body by `eval!`/`stop!` rather than destructured at any boundary.
 
+  Any throw after the spawn (port timeout, connect failure, rt load) DESTROYS
+  the child before rethrowing — with a custom :cmd the watchdog may not be
+  aboard yet, and an abandoned nrepl JVM outlives even parent death. The
+  ex-info carries the child :pid so the cleanup is verifiable.
+
   The `:=>` schema is DOCUMENTATION here, not a verified claim: this fn
   spawns a JVM, so `analyzer-pure?` excludes it from the generative
   oracle-check. Nothing will catch it drifting from the impl — keep it
@@ -138,14 +172,19 @@
          pb  (doto (ProcessBuilder. ^java.util.List cmd)
                (.redirectErrorStream true)
                (.directory (io/file dir)))
-         proc (.start pb)
-         rdr  (io/reader (.getInputStream proc))
-         port (read-port rdr timeout-ms)
-         conn (nrepl/connect :port port)
-         client (nrepl/client conn 30000)
-         session (nrepl/new-session client)]
-     (inject-rt! {:process proc :port port :conn conn :client client
-                  :session session :reader rdr :dir dir}))))
+         proc (.start pb)]
+     (try
+       (let [rdr  (io/reader (.getInputStream proc))
+             port (read-port rdr timeout-ms)
+             conn (nrepl/connect :port port)
+             client (nrepl/client conn 30000)
+             session (nrepl/new-session client)]
+         (inject-rt! {:process proc :port port :conn conn :client client
+                      :session session :reader rdr :dir dir}))
+       (catch Throwable t
+         (.destroyForcibly proc)
+         (throw (ex-info (str "image boot failed: " (ex-message t))
+                         {:pid (.pid proc)} t)))))))
 
 ^:unsafe (defn eval-checked!
   "Like `eval!` but surfaces evaluation errors instead of silently dropping
@@ -205,12 +244,17 @@
   opaque handle from `start!` — see `eval!` for why it is not destructured.
   Tolerates a partially-built or foreign-shaped handle: each resource is
   released only if present, which is what lets `restart!` rebuild from a
-  broken one."
+  broken one.
+
+  The PROCESS goes first: closing a broken transport can throw, and a throw
+  must never save the child. destroyForcibly backs the 5s graceful window."
   [image]
-  (when-let [^java.io.Closeable conn (:conn image)] (.close conn))
   (when-let [^Process process (:process image)]
     (.destroy process)
-    (.waitFor process 5 TimeUnit/SECONDS))
+    (when-not (.waitFor process 5 TimeUnit/SECONDS)
+      (.destroyForcibly process)))
+  (when-let [^java.io.Closeable conn (:conn image)]
+    (try (.close conn) (catch Exception _)))
   nil)
 
 (defn restart!
