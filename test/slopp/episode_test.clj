@@ -858,3 +858,40 @@
           (is (some #(re-find #"rename zone to region" (str %)) is*)
               (pr-str is*))))
       (finally (api/close! sess)))))
+
+(deftest ^:external query-changes-takes-named-span-anchors
+  ;; query_changes is the only surface that carries CODE (:was/:now per form),
+  ;; but `from` demanded a delta id — so a handoff asking "show me what changed
+  ;; across this whole lifetime, with code" had to hunt for the id first.
+  ;; eval9 measured the result: 6 query_history calls, then ~20k chars of
+  ;; `git diff`/`git show` when the hunt didn't pay off. undo! already solved
+  ;; this shape with :last-commit/:last-done; the span reader gets the same
+  ;; vocabulary plus :start for the whole log.
+  (let [sess (external/open!)
+        src  (str "(ns sp.core (:require [clojure.test :refer [deftest is]]))\n"
+                  "(defn f [x] (inc x))\n"
+                  "(defn ^:unused-ok g [x] (dec x))\n"
+                  "(deftest f-t (is (= 2 (f 1))))\n")]
+    (try
+      (api/ingest! sess 'sp.core src)
+      (api/edit-replace! sess 'sp.core 'f "(defn f [x] (+ x 1))"
+                         :prompt "first change" :agent "alice")
+      (let [c (external/commit-point! sess "a milestone" :agent "alice")]
+        (is (:commit c) (str "fixture: the milestone must land — " (pr-str (dissoc c :test :findings)))))
+      (api/edit-replace! sess 'sp.core 'g "(defn ^:unused-ok g [x] :after-commit)"
+                         :prompt "post-milestone change" :agent "alice")
+      (testing ":start spans the whole log and carries the code"
+        (let [c  (query/query-changes sess :from :start)
+              fs (set (map :form (:forms c)))]
+          (is (contains? fs 'sp.core/f) (pr-str fs))
+          (is (contains? fs 'sp.core/g) (pr-str fs))
+          (is (some :now (:forms c)) "the span must carry source, not just names")))
+      (testing ":last-commit spans only work after the milestone"
+        (let [c  (query/query-changes sess :from :last-commit)
+              fs (set (map :form (:forms c)))]
+          (is (contains? fs 'sp.core/g) (pr-str fs))
+          (is (not (contains? fs 'sp.core/f))
+              (str "f predates the milestone: " (pr-str fs)))))
+      (testing "an anchor with nothing to point at says so instead of throwing"
+        (is (map? (query/query-changes sess :from :last-done))))
+      (finally (api/close! sess)))))

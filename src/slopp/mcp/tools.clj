@@ -111,7 +111,7 @@
                                :dead_ends {:type ["boolean" "string"]}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_changes"
-    :description "Net per-form diffs + red/green arc: your open episode (default), or any past span (:from/:to delta ids); format=text for humans."
+    :description "THE code-level change view — net per-form diffs (:was/:now) + red/green arc. Your open episode by default, or a span via :from/:to. :from takes NAMED ANCHORS as well as delta ids: \"start\" (the whole lifetime), \"last-commit\" (since the last milestone), \"last-done\". This is what answers 'show me what changed, WITH the code' — reach for it instead of shelling out to git diff; format=text renders line diffs."
     :inputSchema {:type "object"
                   :properties {:from {:type "string"} :to {:type "string"}
                                :format {:type "string" :enum ["edn" "text"]}}}}])

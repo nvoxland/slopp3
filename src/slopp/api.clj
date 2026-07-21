@@ -2242,7 +2242,12 @@
                       {:as-of (:id verify*)
                        :status (or (get-in verify* [:summary :status])
                                    (:status verify*) :unknown)})
-             :verify (str "writes self-verify; test_run {} re-runs in-image; "
+             ;; the report is names + asks; the CODE lives one call away.
+             ;; Say so here, or a handoff goes hunting in `git diff` (eval9
+             ;; measured ~20k chars of it) for something slopp already has.
+             :code "query_changes {from \"start\"} = every form's :was/:now across this lifetime (or from \"last-commit\"); format=text for line diffs"
+             :verify (str "writes self-verify; test_run {all true} re-runs the "
+                          "whole in-image suite (bare {} only returns guidance); "
                           "test_run {:external true} = the full external suite. "
                           "HANDOFF one-shots (humans/scripts, no session needed): "
                           "`slopp --call test_run '{\"external\":true}'` and "
