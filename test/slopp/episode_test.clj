@@ -827,3 +827,34 @@
         (is (= 1 (count (query/query-history sess :dead-ends "de.core"))))
         (is (empty? (query/query-history sess :dead-ends "other.ns"))))
       (finally (api/close! sess)))))
+
+(deftest ^:external report-carries-the-verbatim-user-asks
+  ;; report is THE handoff composite, but it only carried per-form :asks (the
+  ;; agent's own write prompts). A handoff's first question is "what was the
+  ;; USER asking for?" — recorded verbatim on turn-begin. Without it in the
+  ;; report, eval9's handoff step shelled out to
+  ;; `sqlite3 .slopp/store.db "select payload from deltas where op='turn-begin'"`
+  ;; — reading the journal by hand is the product failing its own ledger claim.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'rp.core seed)
+      (api/turn-begin! sess :agent "alice"
+                       :intent "add rush-order support to checkout"
+                       :user "nathan")
+      (api/edit-replace! sess 'rp.core 'f "(defn f [x] (+ x 7))"
+                         :prompt "bump the rate" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      (api/turn-begin! sess :agent "alice"
+                       :intent "then rename zone to region everywhere"
+                       :user "nathan")
+      (api/edit-replace! sess 'rp.core 'g "(defn g [x] :renamed)"
+                         :prompt "rename step" :agent "alice")
+      (api/turn-end! sess :agent "alice")
+      (testing "report lists the verbatim user asks, newest work included"
+        (let [r  (api/report sess)
+              is* (:intents r)]
+          (is (some #(re-find #"rush-order support" (str %)) is*)
+              (pr-str is*))
+          (is (some #(re-find #"rename zone to region" (str %)) is*)
+              (pr-str is*))))
+      (finally (api/close! sess)))))

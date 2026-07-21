@@ -78,6 +78,44 @@
               (coll? v)   (some scan v)
               :else       nil))]
     (scan x)))
+(defn- fit-payload
+  "Shrink `x` to at most `budget` characters by dropping whole ITEMS from the
+  top level, returning `{:body <edn string> :note \"kept of total\"}` — or nil
+  when `x` has no items to drop (a scalar/string; the caller falls back).
+
+  Why item-wise: the old trim was `(subs s 0 budget)`, a blind cut through the
+  middle of a structure. For a collection response — history rows, changes,
+  commits — that yields UNPARSEABLE edn, so the agent's only recovery is
+  `query_detail` for the whole payload. Measured in eval9: an 8,367-char
+  trimmed history read plus a 21,676-char re-fetch, i.e. the trim cost 30k
+  chars where returning the full payload would have cost 21k. A prefix of
+  COMPLETE items parses, is immediately usable, and lets the follow-up be
+  narrow instead of total."
+  [x budget]
+  (let [fit (fn [items open close]
+              ;; longest prefix of whole items that fits, +2 for the delimiters
+              (loop [kept [], used (+ 2 (count open) (count close)), more (seq items)]
+                (if-let [it (first more)]
+                  (let [s (+ 1 (count (pr-str it)))]
+                    (if (> (+ used s) budget)
+                      kept
+                      (recur (conj kept it) (+ used s) (next more))))
+                  kept)))]
+    (cond
+      (and (sequential? x) (seq x))
+      (let [kept (fit x "[" "]")]
+        (when (seq kept)
+          {:body (pr-str (vec kept))
+           :note (str (count kept) " of " (count x) " shown")}))
+
+      (and (map? x) (seq x))
+      (let [kept (fit (seq x) "{" "}")]
+        (when (seq kept)
+          {:body (pr-str (into {} kept))
+           :note (str (count kept) " of " (count x) " keys shown")}))
+
+      :else nil)))
+
 (defn- text! [x]
   (when @strict-boundary?
     (when-let [leak (boundary-leak x)]
@@ -95,12 +133,26 @@
         out     (if (and (= full slimmed) (<= (count full) 8000))
                   full
                   (if-let [sess *spool-session*]
-                    (let [id   (spool! sess full)
-                          body (if (<= (count slimmed) 8000)
-                                 slimmed
-                                 (subs slimmed 0 8000))]
-                      (str body "\n[trimmed — query_detail {:id \"" id
-                           "\"} returns the full response]"))
+                    (let [id  (spool! sess full)
+                          fit (when (> (count slimmed) 8000)
+                                (fit-payload (trim-failure-strings x) 7800))]
+                      (cond
+                        ;; slimming alone got it under the gate — send it whole
+                        (<= (count slimmed) 8000)
+                        (str slimmed "\n[trimmed — query_detail {:id \"" id
+                             "\"} returns the full response]")
+
+                        ;; drop whole ITEMS: the body stays parseable and usable,
+                        ;; so a follow-up can be narrow instead of a full re-fetch
+                        fit
+                        (str (:body fit) "\n[" (:note fit)
+                             " — query_detail {:id \"" id "\"} returns all]")
+
+                        ;; nothing to drop (a single huge string/scalar)
+                        :else
+                        (str (subs slimmed 0 8000)
+                             "\n[trimmed — query_detail {:id \"" id
+                             "\"} returns the full response]")))
                     (if (<= (count slimmed) 8000) slimmed full)))]
     {:content [{:type "text" :text out}]}))
 

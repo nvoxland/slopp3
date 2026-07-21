@@ -1001,3 +1001,31 @@
                                [:target :source]))
               "the arglist must be untouched after a dry run")))
       (finally (api/close! sess)))))
+
+(deftest a-trimmed-payload-stays-parseable-and-says-what-it-dropped
+  ;; The trim used to be (subs s 0 8000) — a blind mid-structure cut. For a
+  ;; collection response (query_history rows, changes, commits) that leaves
+  ;; UNPARSEABLE edn, so the agent's only recovery is query_detail for the
+  ;; whole thing: the trim COSTS more than not trimming. Drop whole ITEMS
+  ;; instead, and say how many, so the body is usable as-is.
+  (let [rows (vec (for [i (range 200)]
+                    {:id (str "d" i) :op :replace :ns 'app.core
+                     :prompt (str "a reasonably wordy recorded intent number " i)}))]
+    (testing "a sequential payload keeps COMPLETE rows and parses back"
+      (let [{:keys [body note]} (#'mcp/fit-payload rows 2000)
+            back (edn/read-string body)]
+        (is (vector? back) body)
+        (is (pos? (count back)))
+        (is (< (count back) 200) "it must actually drop rows")
+        (is (every? #(= #{:id :op :ns :prompt} (set (keys %))) back)
+            "every kept row must be WHOLE — no half-cut map")
+        (is (<= (count body) 2000))
+        (is (re-find #"200" (str note)) note)))
+    (testing "a map payload keeps whole entries and parses back"
+      (let [m (into {} (for [i (range 200)]
+                         [(keyword (str "k" i)) (str "value number " i)]))
+            {:keys [body]} (#'mcp/fit-payload m 1000)]
+        (is (map? (edn/read-string body)) body)
+        (is (<= (count body) 1000))))
+    (testing "a scalar has no items to drop — caller falls back"
+      (is (nil? (#'mcp/fit-payload 42 100))))))

@@ -2224,7 +2224,17 @@
                        (filter #(= :revert (:op %)))
                        (mapv (fn [d] (cond-> {:why (:why d)
                                               :forms (vec (:forms d))}
-                                       (:at d) (assoc :at (history/human-time (:at d)))))))]
+                                       (:at d) (assoc :at (history/human-time (:at d)))))))
+        ;; the USER's verbatim asks, recorded on turn-begin. A handoff's first
+        ;; question is "what was I asked to do?", and per-form :asks answer a
+        ;; different one (what each write intended). Without these, handoffs
+        ;; read the journal by hand — eval9 shelled out to sqlite3 on
+        ;; .slopp/store.db to get exactly this.
+        intents   (->> after
+                       (filter #(= :turn-begin (:op %)))
+                       (keep :intent)
+                       distinct
+                       (mapv #(orient/snip % 160)))]
     (orient/fit-report
      (cond-> {:milestones ms
              :changes changes
@@ -2238,7 +2248,8 @@
                           "`slopp --call test_run '{\"external\":true}'` and "
                           "`slopp --call query_commits` — quote these in handoff "
                           "docs; no need to read skill files for the CLI forms")}
-       (seq dead) (assoc :dead-ends dead)))))
+       (seq intents) (assoc :intents intents)
+       (seq dead)    (assoc :dead-ends dead)))))
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):
   :pure (referentially transparent), :internal (may mutate IN-PROCESS state
