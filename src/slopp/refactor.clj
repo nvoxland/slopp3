@@ -1209,3 +1209,13 @@
             (recur (z/next z)))
 
           :else (recur (z/next z)))))))
+
+(defn ^:export symbol-mention-re
+  "A regex matching `nm` as a whole SYMBOL token in prose or a string — bounded
+  by symbol-constituent characters rather than `\\b`, which is a word boundary
+  and so never fires at a name's punctuation edge (`valid?`, `->row`). Used to
+  surface leftover prose/string mentions after a rename."
+  [nm]
+  (let [q   (java.util.regex.Pattern/quote (str nm))
+        sym "A-Za-z0-9*+!_'?<>=/.&%$:#-"]   ; symbol constituents; '-' last = literal
+    (re-pattern (str "(?<![" sym "])" q "(?![" sym "])"))))

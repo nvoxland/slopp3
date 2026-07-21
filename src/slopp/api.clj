@@ -1495,7 +1495,7 @@
                 (session/commit-appended! session
                                   #(store/record-verification % ns-sym summary)
                                   [])
-                (let [pat      (re-pattern (str "\\b" (java.util.regex.Pattern/quote (str old-name)) "\\b"))
+                (let [pat      (refactor/symbol-mention-re old-name)
                       mentions (->> (for [nsx (sort (keys (:namespaces st')))
                                           e   (store/forms st' nsx)
                                           :when (some #(re-find pat %)

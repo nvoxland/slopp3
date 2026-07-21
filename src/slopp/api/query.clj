@@ -64,7 +64,12 @@
                                      ns-sym nm))
                  (sort (keys (:namespaces st)))))))
 
-(defn ^:export label-ancestors [agent-label]
+(defn ^:export label-ancestors
+  "The ancestor prefixes of a `/`-delimited agent label, root-first:
+  \"a/b/c\" → (\"a\" \"a/b\" \"a/b/c\"). A sub-agent labels itself by appending to
+  its parent's path, so `turn-intents` walks these prefixes to resolve a
+  delta's enclosing turn through its root agent's `turn-begin`."
+  [agent-label]
   (when agent-label
     (let [parts (clojure.string/split agent-label #"/")]
       (map #(clojure.string/join "/" (take (inc %) parts))

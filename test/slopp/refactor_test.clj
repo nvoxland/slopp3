@@ -301,3 +301,15 @@
                         "(ns mv.solo)\n(defn ^:unused-ok u \"D.\" [] 1)\n")
         p (refactor/move-plan s 'mv.solo [] 'mv.ghost {})]
     (is (:error p) (pr-str p))))
+
+(deftest symbol-mention-re-handles-non-word-boundaries
+  (testing "a trailing-? name is matched as a whole token"
+    (is (re-find (refactor/symbol-mention-re "valid?") "check (valid? x) here"))
+    (is (re-find (refactor/symbol-mention-re "valid?") "the docstring mentions valid? plainly")))
+  (testing "a leading-punctuation name is matched"
+    (is (re-find (refactor/symbol-mention-re "->row") "call (->row m) now")))
+  (testing "an ordinary hyphenated name still matches"
+    (is (re-find (refactor/symbol-mention-re "bulk-rate") "\"bulk-rate applies\"")))
+  (testing "it does NOT match inside a larger symbol token"
+    (is (nil? (re-find (refactor/symbol-mention-re "rate") "bulk-rate")))
+    (is (nil? (re-find (refactor/symbol-mention-re "valid") "valid?")))))

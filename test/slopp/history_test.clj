@@ -239,3 +239,20 @@
                         [:result :content 0 :text])]
           (is (str/includes? r "bump to two"))))
       (finally (api/close! sess)))))
+
+(deftest ^:external dead-ends-render-as-text-not-blank-delta-lines
+  ;; query_history {dead_ends true, format text} ran the delta renderer over
+  ;; dead-end rows, which carry :why/:forms/:undid and none of the delta keys,
+  ;; so it printed blank lines. The why must survive.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'de.core "(ns de.core)\n\n(defn ^:unused-ok a [x] x)\n")
+      (api/add-form! sess 'de.core "(defn ^:unused-ok b [x] (inc x))"
+                     :prompt "add b" :agent "u")
+      (api/undo! sess :prompt "the warm-pool idea did not pan out" :agent "u")
+      (testing "the dead-end's why survives the text rendering"
+        (let [txt (query/query-history sess :dead-ends true :format "text")]
+          (is (string? txt) (pr-str txt))
+          (is (re-find #"warm-pool idea did not pan out" txt) txt)
+          (is (re-find #"(?i)dead" txt) txt)))
+      (finally (api/close! sess)))))
