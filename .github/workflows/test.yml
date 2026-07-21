@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: slopp
+          ref: slopp/main
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: slopp
+          ref: slopp/main
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

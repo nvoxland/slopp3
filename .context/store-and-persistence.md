@@ -76,6 +76,15 @@
 - `load-store` reconstructs the entire in-memory store (returns nil if empty).
   `api/open! {:dir ...}` loads it AND replays every namespace into a fresh
   image.
+- **`db/open!` creates; `db/open! dir {:create? false}` returns nil instead**
+  (D-serving-is-not-adoption). The MCP server is launched in whatever dir the
+  editor has open, so a caller that merely ASKS whether a dir is slopp-managed
+  must not answer yes on its behalf. `external/open!` uses `{:create? false}`
+  and a session on an unadopted dir carries `:db` nil — the pre-existing
+  ephemeral path. `api.session/ensure-db!`, on the commit path, materializes
+  the store at the first real write; it is the ONLY implicit adoption in the
+  system. When you add a caller of `db/open!`, decide which one it is: a
+  question takes `{:create? false}`, a write takes the default.
 
 ## Rendering (`slopp.render`)
 

@@ -12,10 +12,14 @@ import sys
 
 try:
     d = json.load(sys.stdin)
-    os.makedirs(".slopp", exist_ok=True)
-    with open(".slopp/pending-intent", "w") as f:
-        json.dump({"session-id": d.get("session_id", ""),
-                   "prompt": d.get("prompt", "")}, f)
+    # Only a slopp-managed dir is written to. This hook fires on every prompt
+    # in EVERY project the plugin is enabled for, so an unconditional
+    # makedirs colonised repos that never adopted slopp — one .slopp/ per
+    # project, holding nothing but this file. No store, no intent to capture.
+    if os.path.exists(".slopp/store.db"):
+        with open(".slopp/pending-intent", "w") as f:
+            json.dump({"session-id": d.get("session_id", ""),
+                       "prompt": d.get("prompt", "")}, f)
 except Exception:
     pass
 

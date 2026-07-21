@@ -11,6 +11,60 @@ check whether a rule still earns its cost. Nothing here is authoritative
 about current behaviour — a finding describes the system on the day it was
 written.
 
+## Review sweep 2026-07-20 — adversarial whole-store review + fixes
+
+A six-agent adversarial review of the whole store (each reader verifying its
+findings against the live image), then fixed across eight milestones
+(d9432..d9660). What it surfaced, grouped by where the defect lived:
+
+- **Vocabulary migration was half-done and it crashed a live tool.** The
+  d9077/d9157 tier rename (`:reads`/`:effects` → `:internal`/`:external`)
+  migrated the write gates but not the reporting arm: `purity-standing` still
+  ranked with the retired table, so `query_depends {modules true}` NPE'd on any
+  store carrying a canonical tier. A shared `canonical-tier` normalizer now
+  backs every reader, and `module-tier!` stores canonically. LESSON: a rename
+  enforced by some consumers but read by others drifts silently — the ones that
+  only READ a value (a keyword in a rank map, a filter set) are invisible to the
+  gate that renamed it. This is the keyword-as-second-class-reference problem
+  (`ideas/keywords-are-second-class-references.md`) as a live incident.
+- **The functional-core gate had reachable holes.** `:pure` admitted console IO
+  (`println`), watch mutation (`add-watch`), a var-quote CALL `(#'f x)` (kondo
+  sets no `:arity`, so it read as a data carrier), and a `(store/late-ref …)`
+  into the shell (invisible to both the require graph and effect derivation — and
+  the dialect gate ROUTES agents to late-ref). The D3 dialect denylist matched
+  whole symbols, so `(clojure.core/eval x)` sailed past while `(eval x)` was
+  refused, and banned symbols hid in literal metadata. All closed; the
+  read-only `query_store` sandbox also admitted static interop
+  (`Files/delete`), now refused.
+- **The milestone gate was quietly weaker than a plain done.** `commit-point!`
+  called `done!` with `:external? false`, so a milestone skipped the impacted
+  `^:external` slice a standalone done runs — reproduced laundering a touched red
+  external test green. Fixed to a real done; `decisions.md` D-full-check now
+  spells out that "touched" is load-bearing. (A pinned test had drifted to pin
+  the bug; rewritten to pin the decision.)
+- **The edit pipeline could corrupt name-addressing and lie about reverts.** A
+  replace that RENAMED a form onto an existing name landed two definitions of
+  one name; the group path skipped the ambiguity refusal; deleting a `(ns …)`
+  form was allowed (and `undo!` of an ingest generated exactly that); `undo!`
+  reported success on a conflicted group. All guarded; every lost-race conflict
+  now heals the image (the loser's code was hot-loaded, and a two-writer store
+  kept the losing image answering with rejected code).
+- **The process shell leaked JVMs.** The parent-death watchdog (d9279) installed
+  too late — any throw in the spawn→connect→inject window abandoned an nrepl JVM
+  that outlives parent death; it now boards the child's launch command line.
+  `read-port`'s timeout wasn't enforced during a blocking read; the external test
+  runner was unbounded and watchdog-less; `close!`/`open!` leaked on a partial
+  failure. All fixed.
+- **Two false-positive fixes I DIDN'T make, and why.** Defaulting `done!`'s agent
+  to the session id (to close a nil-agent "footgun") broke 42 tests — the
+  direct-API convention is nil-consistent by design; reverted. The nil-agent
+  laundering is unreachable via the wire. LESSON: `full_check` caught both the
+  chunk-1 stale-test regression and this over-fix — a broad change to shared
+  machinery is exactly when the whole-store gate earns its cost.
+
+The friction of doing all this THROUGH slopp (where it slowed vs helped, and
+larger rethinks) is logged in `ideas/dogfooding-agent-frictions.md`.
+
 ## F — user-test findings (status)
 
 F1 failure-details in results ✅ · F2 atomic edit groups ✅ (calculator bench
@@ -763,3 +817,42 @@ framework/dependency/HTTP complexity. The reference-carrier phase-2
 "per-library carrier adapters for framework config" is part of the deferred
 set. Don't build framework/HTTP support speculatively — revisit when the
 project explicitly turns to it.
+
+## W — the plugin colonised every project it was enabled in (2026-07-21, user report)
+
+Reported by the user as "other projects are getting `.slopp` dirs created and
+stuff maybe changing in there." The plugin was enabled in the user's GLOBAL
+`enabledPlugins`, so its MCP server and hooks loaded in every project opened.
+Measured across their checkouts before the fix:
+
+| dir | state |
+|---|---|
+| `metabase/metabase` | 0 elements, 0 namespaces, **128** `"session pause"` checkpoint deltas |
+| `metabase/metabase-4` | 0 elements, **31** checkpoints |
+| `metabase/metabase-3` | 0 elements, **10** checkpoints |
+| `bundlebase` | pristine auto-created store (4096-byte db), never written |
+| `metabase-2`, `oxplow` | bare `.slopp/` holding only `pending-intent` |
+
+Six repos, ~9 months of accumulation, and **not one byte of code in any of
+them** — every delta was a session-pause checkpoint written by the `Stop`
+hook into a store that existed only because serving had created it.
+
+Three findings worth carrying:
+
+1. **A footprint bug hides from its own tests.** Every store-level test passed
+   throughout: they all ran on temp dirs where creating `.slopp/` was
+   invisible and expected. The invariant nothing asserted was the ABSENCE of a
+   write. The regression test now asserts exactly that (`db-test/
+   a-storeless-dir-materializes-on-the-first-write`), and it went red on
+   `(not (.exists sdir))` — the one claim the old suite had no way to make.
+2. **A probe that creates what it probes.** `sync/empty-store?` opens the db
+   to ask whether a dir's store is empty — and creating on open meant the
+   question wrote the answer. It survived only because its caller
+   short-circuits on `.exists` first. Asking should never be a write; that is
+   now enforced by `{:create? false}`.
+3. **The docs were right and the code was wrong.** `slopp-setup` had promised
+   "creates an empty store on the first write" since it was written. Nobody
+   checked the claim against the implementation, and the gap ran for months.
+   Shipped prose is a testable assertion about behaviour — the P1 self-
+   description gates check that prose names real tools, but not yet that it
+   describes real behaviour.

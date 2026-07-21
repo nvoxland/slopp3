@@ -50,9 +50,17 @@ measurably bleed tokens.
    dumps are outline-by-default (`full: true` = the rare escape). Never
    re-read what you just wrote. In a LARGE codebase, delegate broad
    comprehension questions to the `slopp-reader` subagent — it returns
-   conclusions; your context should hold decisions, not source. For summaries/handoffs/audits: `report {since}` composes
-   milestones + changes + asks + verification + alignment in one read —
-   never stitch history calls or re-verify via worktrees/raw store.db.
+   conclusions; your context should hold decisions, not source.
+   **For summaries/handoffs/audits: `report` is TERMINAL, not a starting
+   point.** One read already carries `:intents` (the USER's verbatim asks,
+   recorded per turn), `:milestones`, `:changes` with their recorded `:asks`,
+   `:dead-ends`, the suite state, and `:code` — the follow-up that carries
+   source. Narrow it with `report {contains "eco"}`; do NOT re-ask
+   `query_history {contains …}` once per feature (measured: four such calls
+   at ~6k each, re-deriving what one report already held). The code itself is
+   `query_changes {from "start"}` — every form's `:was`/`:now` across the
+   lifetime, `format: "text"` for line diffs — never `git diff`, and never
+   raw `store.db`.
 3. **Write with intent; trust the verification.** Every write takes a
    one-line `prompt`. The response carries the affected tests' result —
    `test_run` after an edit is redundant. Red results carry `:failures`

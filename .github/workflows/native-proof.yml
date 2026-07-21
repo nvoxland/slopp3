@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: slopp
+          ref: slopp/main
       - uses: graalvm/setup-graalvm@v1
         with:
           java-version: '21'

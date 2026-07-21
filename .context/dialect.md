@@ -35,12 +35,26 @@ entry paths — the single-form edit path via `parse-form` (exactly ONE top-leve
 form) and the whole-namespace import path (`ingest!`/`ns_create {:source}`) via
 `edit/dialect-scan`, which runs it over every form of the ingested namespace.
 The check —
-- **D4:** `defmacro` rejected ("user macros are banned").
-- **D3 denylist** (analysis defeaters): `eval`, `alter-var-root`, `binding`,
-  `gen-class`, `definline`, `read-string`, the resolvers (`requiring-resolve`,
+- **D4:** `defmacro` rejected ("user macros are banned") — caught wherever it
+  appears (bare, qualified `clojure.core/defmacro`, or nested), not just at a
+  form's head, since it also rides the D3 name-matcher.
+- **D3 denylist** (analysis defeaters): `eval`, the eval-equivalents
+  `read-string`/`load-string`/`load-file`/`load-reader`, `alter-var-root`,
+  `binding`, `gen-class`, `definline`, the resolvers (`requiring-resolve`,
   `resolve`, `ns-resolve`, `find-var`, `intern`), and the metadata mutators
   (`alter-meta!`, `reset-meta!` — see below). Extensible — the list is a sample,
   grow it deliberately (and record here).
+  - **Matched by NAME against a bare OR `clojure.core/`-qualified symbol**
+    (`banned-sym?`), so `(clojure.core/eval x)` is caught like `(eval x)` while a
+    same-named var in ANOTHER namespace — `clojure.edn/read-string` (the SAFE
+    reader), a user's `my.app/resolve` — is a different var and passes. The scan
+    (`all-symbols`) also descends into LITERAL METADATA (`^{:h eval} x`
+    compile-time-evaluates its metadata), so a banned symbol can't hide there.
+  - **Analysis code that NAMES a banned symbol as DATA** (a head-filter set, an
+    effect-anchor set) trips this matcher — mark the form `^:unsafe` (as
+    `banned-syms`/`effectful-leaves` do) or, cleaner, compare head names as
+    STRINGS (`(= "defmacro" (str (first s)))`) so no banned symbol appears in
+    source. See `ideas/dogfooding-agent-frictions.md` P6.
 - **D7 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
   pipeline OWNS form ordering and declares (auto-avoid-declare). A same-ns
   forward ref is resolved by reordering definitions above their callers, or —
@@ -160,21 +174,33 @@ WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
 - **Known leak:** higher-order fns are effect-polymorphic and can't be soundly
   marked statically — runtime observation covers them.
 - **`#'var` carriers don't propagate:** the effect `call-graph` adds an edge for
-  every usage EXCEPT a `#'var` CARRIER — a non-call reference (kondo marks a call
-  with `:arity`) sitting at a var-quote position (`analyze` attaches `:var-quotes`
-  via `var-quote-positions`, which align with kondo's `:name-row`/`:name-col`). So
-  a var HELD in data — a rule registry carrying `#'some-bang!` — doesn't taint its
-  holder, but a CALL `(f …)`, a bare ALIAS `(def g f)`, and a higher-order
-  value-arg `(map f xs)` all propagate: the latter two are callable-as-`f`, so
-  they stay conservatively effectful. (Excluding *all* non-call refs would be
-  unsound — it drops those two; only the explicit `#'var` carrier convention is
-  excluded.) Reference-tracking for visibility/renames is a separate path
+  every usage EXCEPT a `#'var` CARRIER — a var-quote HELD AS DATA. `analyze`
+  attaches `:var-quotes` via `var-quote-positions`, which returns only the
+  data-carrier var-quotes: a var-quote in the HEAD of a list is EXCLUDED, because
+  `(#'f x)` derefs the var and CALLS it (kondo sets no `:arity` there, so without
+  this it looked like a carrier and the effect escaped — the fix that closed that
+  hole). So a var HELD in data — a rule registry carrying `#'some-bang!` —
+  doesn't taint its holder, but a CALL `(f …)`, a var-quote call `(#'f …)`, a
+  bare ALIAS `(def g f)`, and a higher-order value-arg `(map f xs)` all
+  propagate. Reference-tracking for visibility/renames is a separate path
   (`edit.refs`).
-- **Open (F7, needs user):** stdout (`println`) is currently NOT a leaf —
-  matches idiomatic Clojure (print fns aren't bang-named) but sits oddly with
-  "external writes." Recommendation on file: keep `!` = mutation per
-  convention; if console IO matters, surface it as separate `:effects` info
-  rather than a naming rule.
+- **Console IO is its OWN axis (`console-leaves`/`console-vars`), not an effect.**
+  `println`/`prn`/`print`/`printf`/`pr` block `:pure` — printing is an
+  observable side effect, so a referentially transparent core cannot do it —
+  but they are NOT in `effectful-leaves`, so the D6 `!`-naming rule never
+  demands `run-cli!` of a printing function. This is exactly the shape
+  `nondeterministic-leaves` already has (`rand`/`slurp` block `:pure` and
+  demand no bang), and it honours the standing F7 recommendation: **`!` means
+  MUTATION**; console IO is surfaced as separate tier information, not as a
+  naming rule. They are not in `external-leaves` either — capturable in-process
+  (`with-out-str`), needing no test isolation, so `:internal` allows them.
+  *(Learned the hard way: putting them in `effectful-leaves` drove BOTH
+  consumers, and the wire-cost benchmark caught the spurious advisory as +53
+  out-tokens on the one sample app that prints.)*
+- **Watch mutation IS an effect.** `add-watch`/`remove-watch` sit in
+  `effectful-leaves`: they mutate a registry, so `:pure` forbids them AND a fn
+  installing a watch should carry the `!`. `:internal` allows them, like
+  `swap!`.
 
 ### `^:reads` — the per-form `!`-name override
 

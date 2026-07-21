@@ -1044,9 +1044,19 @@ thinks it does.
 ### The cost, accepted explicitly
 
 Nothing automatically verifies the whole store before publishing. A red
-`^:isolated` test the episode never touched will not stop a milestone, and
-`commit-test/the-milestone-forces-no-whole-store-check` PINS that, so it is a
-test someone must consciously change rather than a silent gap.
+`^:isolated`/`^:external` test the episode never TOUCHED will not stop a
+milestone, and `commit-test/the-milestone-forces-no-whole-store-check` PINS
+that, so it is a test someone must consciously change rather than a silent gap.
+
+The word **touched** is load-bearing. "Gates on done's verdict" means the
+milestone's `done!` is a *real* done — `:external? true`, so it runs the
+impacted `^:external` slice exactly as a standalone `done` does. A milestone
+therefore DOES stop over a red `^:external` test this episode touched
+(`commit-test/a-milestone-catches-a-touched-red-external-test`); it is only the
+UNTOUCHED corner that rides through to `full_check`. A 2026-07-20 review found
+`commit-point!` had regressed to calling `done!` with `:external? false` — a
+milestone weaker than a plain done, laundering a touched red external green.
+Fixed; the two commit-tests above pin both halves.
 
 The trigger worth internalising is **"you deleted a caller"**: dead public
 surface appears in namespaces the episode never touched, which is the one
@@ -1363,3 +1373,47 @@ depending on the shell for something it no longer uses. `move-forms!` now
 prunes orphaned requires on BOTH sides — source and rewritten caller —
 scoped to the move's own damage, never a blanket prune (a require kept for
 `defmethod` registration is indistinguishable from a dead one).
+
+## D-serving-is-not-adoption (2026-07-21) — the store is created by the first WRITE, never by serving
+
+The MCP server is launched by the editor in whatever directory the user has
+open. `api/open!` called `db/open!` unconditionally, and `db/open!` creates —
+so **every project a user opened got a `.slopp/store.db`**, whether or not
+they had ever heard of slopp. Three writers compounded it: the server created
+the store, the plugin's `UserPromptSubmit` hook did `makedirs(".slopp")`
+unconditionally to drop `pending-intent`, and the `Stop` hook — correctly
+gated on the store existing, which the first two guaranteed — then wrote a
+`"session pause"` checkpoint at every session end, forever, into a store with
+no code in it. Measured damage in `findings-log.md`.
+
+**The decision: opening a session ASKS whether a dir is slopp-managed; it
+never answers yes on the dir's behalf.** `db/open!` takes `{:create? false}`
+and returns nil when there is no store; `external/open!` uses it, and a
+session on an unadopted dir runs cache-only with `:db` nil — which is the
+already-tested ephemeral path, not a new one. `api.session/ensure-db!` on the
+commit path materializes the store at the first real write. That is the ONLY
+place a directory becomes slopp-managed implicitly.
+
+Three things had to follow the store rather than the dir, and each was a
+separate leak:
+- the kondo cache dir (`external/open!` keyed it on `dir`, so an unadopted
+  dir still got a `.slopp/kondo-cache`) — now keyed on `conn`;
+- the git smart-HTTP listener (`git/open-ctx!` opens its own connection, and
+  would have recreated exactly the store being avoided) — `mcp/-main` now
+  starts it only for a session that has one;
+- `turn/append-marker!`, the hook-driven CLI path, which opened its own
+  connection too. A marker is provenance ABOUT a store; with no store it is a
+  no-op, never an adoption.
+
+**This makes the code match its own shipped documentation.** The `slopp-setup`
+skill has always told users "the server creates an empty store on the first
+write" — the behaviour it described was the intended one all along, and only
+the implementation disagreed.
+
+**Accepted cost, and it is the honest trade.** In a genuinely fresh dir the
+prompt hook writes no `pending-intent` (it now requires a store too), so the
+first write is refused with `no open turn — call turn_begin {intent: …}`. One
+extra explicit call, once per new project, and the provenance is *better* for
+it: the agent supplies the user's verbatim ask rather than the hook inferring
+it. Rejected the alternative of auto-opening a turn for storeless sessions —
+it would silently attribute a project's very first write to nothing.

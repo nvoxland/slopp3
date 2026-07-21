@@ -27,7 +27,19 @@ history.
 ## Starting fresh
 
 Nothing to do: the plugin's server runs in your project directory and creates
-an empty store on the first write. Add `.slopp/` to `.gitignore`.
+the store on your first WRITE. Add `.slopp/` to `.gitignore`.
+
+**Serving a directory does not adopt it.** With the plugin enabled, the server
+starts in every project you open — and in one that has no store it writes
+NOTHING to disk: no `.slopp/`, no git listener, no session-pause checkpoints.
+So an unadopted repo stays untouched, and you can leave the plugin enabled
+globally without it turning up in unrelated projects.
+
+The one consequence to expect in a brand-new project: the prompt hook has no
+store to record intent against yet, so your first write is refused with
+`no open turn — call turn_begin {intent: <the user's verbatim ask>} first`.
+Make that call and continue; it's once per project, and from then on turns
+open themselves.
 
 ## Importing a repo that's published this way
 

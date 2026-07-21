@@ -24,25 +24,38 @@
 
 ;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
 
-^:reads (defn- open-conn [dir]
-  (let [f (io/file dir ".slopp" "store.db")]
-    (io/make-parents f)
-    (jdbc/get-connection
-     (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))))
+^:reads (defn- open-conn
+          "The store db under `dir`, or NIL when `dir` has no store yet.
+
+  A read must never CREATE: the kernel boots in whatever directory the MCP
+  client launched the server in, so an unadopted project has to stay
+  untouched (D-serving-is-not-adoption). This runs before `slopp.mcp/-main`,
+  which is why gating the server layer alone was not enough — boot got there
+  first and made the store the server then found. Materialization belongs to
+  the first write (`api.session/ensure-db!`)."
+          [dir]
+          (let [f (io/file dir ".slopp" "store.db")]
+            (when (.exists f)
+              (let [conn (jdbc/get-connection
+                          (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+      ;; the live watcher polls a db a live writer owns; without a busy timeout
+      ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
+                (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
+                conn))))
 
 ^:reads (defn store-sources
-  "{ns-sym source} for every namespace in the store db — byte-exact (each
+          "{ns-sym source} for every namespace in the store db — byte-exact (each
   `elements.source` is a form's canonical CST string; concatenated by pos it IS
   render-ns output). A schema-less db (brand-new dir) is an EMPTY store — the
   served program's own open creates the schema."
-  [conn]
-  (if (empty? (jdbc/execute! conn ["SELECT name FROM sqlite_master
+          [conn]
+          (if (empty? (jdbc/execute! conn ["SELECT name FROM sqlite_master
                                     WHERE type='table' AND name='elements'"]))
-    {}
-    (reduce (fn [m row]
-              (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
             {}
-            (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"]))))
+            (reduce (fn [m row]
+                      (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
+                    {}
+                    (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"]))))
 
 ;; --- dependency order (internal requires only) ---
 
@@ -83,14 +96,27 @@
 (defn load-store!
   "Load every namespace of the store at `dir` into the CURRENT JVM, dependency
   order: load-string each rendered source + a *loaded-libs* stamp. Returns the
-  {ns source} map that was loaded."
+  {ns source} map that was loaded. A load failure is rethrown NAMING the
+  namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
+  is useless on the one code path with no oracle behind it.
+
+  A dir with NO store loads nothing and returns {} — same shape as a store
+  that exists and is empty. Serving an unadopted dir is legal and leaves it
+  untouched; the caller decides whether an empty program is worth a warning."
   [dir]
-  (with-open [conn (open-conn dir)]
-    (let [sources (store-sources conn)]
-      (doseq [ns-sym (dependency-order sources)]
-        (load-string (get sources ns-sym))
-        (stamp-loaded! ns-sym))
-      sources)))
+  (if-let [c (open-conn dir)]
+    (with-open [conn c]
+      (let [sources (store-sources conn)]
+        (doseq [ns-sym (dependency-order sources)]
+          (try (load-string (get sources ns-sym))
+               (catch Throwable t
+                 (throw (ex-info (str "slopp.boot: failed to load namespace "
+                                      ns-sym " from the store at " dir
+                                      ": " (.getMessage t))
+                                 {:ns ns-sym :dir dir} t))))
+          (stamp-loaded! ns-sym))
+        sources))
+    {}))
 
 ;; --- live mode: track the store, reload changed nses into this jvm ---
 
@@ -101,23 +127,50 @@
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
   green-gate means only compilable code ever loads. Caveat: long-lived instances
-  (servers, background threads) keep their old closure code until re-created."
+  (servers, background threads) keep their old closure code until re-created.
+
+  Resilient by construction: the ENTIRE poll body is guarded, so a transient
+  store error (contention, a swapped db file) logs and RETRIES instead of
+  killing the daemon and serving stale code forever. The version baseline
+  advances only when every changed namespace reloaded — a failed one keeps its
+  OLD source in the baseline AND holds the version back, so the next poll
+  retries it rather than treating it as already seen."
   [dir & {:keys [interval-ms] :or {interval-ms 500}}]
-  (let [conn (open-conn dir)]
+  (let [conn (loop []
+               ;; an unadopted dir has no store until its first write
+               ;; materializes one — WAIT for it rather than dying at boot
+               (or (open-conn dir)
+                   (do (Thread/sleep (long interval-ms)) (recur))))]
     (loop [dv (data-version conn), prev (store-sources conn)]
-      (Thread/sleep (long interval-ms))
-      (let [dv2 (data-version conn)]
-        (if (= dv dv2)
-          (recur dv prev)
-          (let [now     (store-sources conn)
-                changed (filter #(not= (get prev %) (get now %)) (dependency-order now))]
-            (doseq [ns-sym changed]
-              (try (load-string (get now ns-sym))
-                   (stamp-loaded! ns-sym)
-                   (catch Throwable t
-                     (log! "live-reload failed for " ns-sym ": " (.getMessage t)))))
-            (when (seq changed) (log! "live-reloaded: " (str/join " " changed)))
-            (recur dv2 now)))))))
+      (let [[dv' prev']
+            (try
+              (Thread/sleep (long interval-ms))
+              (let [dv2 (data-version conn)]
+                (if (= dv dv2)
+                  [dv prev]
+                  (let [now     (store-sources conn)
+                        changed (filter #(not= (get prev %) (get now %))
+                                        (dependency-order now))
+                        failed  (reduce (fn [failed ns-sym]
+                                          (try (load-string (get now ns-sym))
+                                               (stamp-loaded! ns-sym)
+                                               failed
+                                               (catch Throwable t
+                                                 (log! "live-reload failed for " ns-sym
+                                                       ": " (.getMessage t))
+                                                 (conj failed ns-sym))))
+                                        #{} changed)
+                        loaded  (remove failed changed)]
+                    (when (seq loaded)
+                      (log! "live-reloaded: " (str/join " " loaded)))
+                    ;; a failed ns keeps its OLD source so it still looks changed,
+                    ;; and holding dv back keeps the version-change branch firing
+                    [(if (seq failed) dv dv2)
+                     (reduce #(assoc %1 %2 (get prev %2)) now failed)])))
+              (catch Throwable t
+                (log! "live-reload poll error (continuing): " (.getMessage t))
+                [dv prev]))]
+        (recur dv' prev')))))
 
 ;; --- entry ---
 
@@ -155,7 +208,22 @@
   [& args]
   (let [{:keys [dir live? main args]} (parse-args args)]
     (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
-    (load-store! dir)
+    (let [sources (load-store! dir)]
+      ;; a typo'd dir CREATES an empty .slopp/store.db and loads zero
+      ;; namespaces; without this the real error surfaced downstream as
+      ;; requiring-resolve's "Could not locate …__init.class" — say it here
+      (when (empty? sources)
+        ;; two different situations, and only one is a mistake: an EMPTY
+        ;; store means someone pointed at the wrong dir, while NO store is
+        ;; the ordinary case for a dir that never adopted slopp — the
+        ;; server is expected to serve those and leave them alone
+        (if (.exists (io/file dir ".slopp" "store.db"))
+          (log! "slopp.boot: the store at " dir " has no namespaces yet —"
+                " a freshly adopted store, or the wrong directory (a"
+                " populated one lives at " dir "/.slopp/store.db).")
+          (log! "slopp.boot: no slopp store at " dir " — serving an"
+                " unadopted directory and leaving it untouched. Your first"
+                " write creates " dir "/.slopp/store.db."))))
     (when live?
       (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
         (.setDaemon true)
