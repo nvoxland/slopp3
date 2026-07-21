@@ -134,33 +134,59 @@
           (is (re-find #"nothing changed" (str (:note m2))))))
       (finally (api/close! sess)))))
 (deftest ^:external the-milestone-forces-no-whole-store-check
-  ;; CHANGED CONTRACT. The milestone used to run the full ^:external suite and
-  ;; refuse on it. It no longer does: it runs `done!` and gates on that
-  ;; verdict, nothing more. `full_check` is the whole-store answer and is the
-  ;; agent's call — including before a commit.
+  ;; CONTRACT (D-full-check): the milestone runs `done!` and gates on that
+  ;; verdict — the impacted ^:external slice included, since that IS what a
+  ;; standalone done runs. What it does NOT do is run the WHOLE external suite;
+  ;; `full_check` is the whole-store answer and is the agent's call.
   ;;
-  ;; The cost is real and pinned here deliberately: a red ^:external test the
-  ;; episode did not touch will NOT stop a milestone. That is the trade for
-  ;; not forcing a slow whole-store run on every publish.
+  ;; The cost is pinned here deliberately: a red ^:external test the episode
+  ;; never TOUCHED will not stop a milestone (only full_check catches it). A
+  ;; TOUCHED red one does — a-milestone-catches-a-touched-red-external-test.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mg.core "(ns mg.core)\n\n(defn f \"F.\" [x] x)\n")
-      (api/ingest! sess 'mg.core-test
-                   (str "(ns mg.core-test (:require [mg.core :as core]\n"
-                        "                           [clojure.test :refer [deftest is]]))\n\n"
-                        "(deftest ^:external f-t (is (= :nope (core/f 1))))\n"))
-      (testing "the milestone records without running the external tier itself"
-        (let [r (external/commit-point! sess "no forced whole-store check")]
-          (is (:commit r) (pr-str (dissoc r :test)))
-          (is (nil? (:external r)) (pr-str (:external r)))))
-      (testing "full_check is where the red external spec surfaces"
+      (api/ingest! sess 'mg.bad "(ns mg.bad)\n\n(defn f \"F.\" [x] x)\n")
+      (api/ingest! sess 'mg.bad-test
+                   (str "(ns mg.bad-test (:require [mg.bad :as bad]\n"
+                        "                          [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest ^:external f-t (is (= :nope (bad/f 1))))\n"))
+      ;; record the red spec as an honest red milestone; now it sits in the
+      ;; store, and the NEXT episode does not touch it
+      (external/commit-point! sess "known-red corner" :force true)
+      (testing "unrelated work milestones green over the untouched red corner"
+        (api/ingest! sess 'mg.ok "(ns mg.ok)\n\n(defn ^:unused-ok g \"G.\" [x] (inc x))\n")
+        (let [r (external/commit-point! sess "unrelated work")]
+          (is (:commit r) (pr-str (dissoc r :test :findings)))
+          (is (not= :red (:status r)) (pr-str (dissoc r :test :findings)))))
+      (testing "full_check is where the untouched red external spec surfaces"
         (let [r (external/full-check! sess)]
           (is (= :red (:status r)) (pr-str (dissoc r :lint :warnings)))
           (is (= :red (:status (:external r))) (pr-str (:external r)))))
       (testing "and once the spec is honest, full_check is green"
-        (api/edit-replace! sess 'mg.core-test 'f-t
-                           "(deftest ^:external f-t (is (= 1 (core/f 1))))"
+        (api/edit-replace! sess 'mg.bad-test 'f-t
+                           "(deftest ^:external f-t (is (= 1 (bad/f 1))))"
                            :prompt "fix the spec")
         (let [r (external/full-check! sess)]
           (is (= :green (:status r)) (pr-str (dissoc r :lint :warnings)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-milestone-catches-a-touched-red-external-test
+  ;; D-full-check: `done` runs the impacted ^:external slice, and a milestone
+  ;; "gates on done's verdict". So a red ^:external test the episode TOUCHED
+  ;; must stop the milestone — only an UNTOUCHED one is exempt (that is what
+  ;; full_check is for). commit-point! passed done! :external? false, making
+  ;; the milestone's done SKIP the external tier the in-image suite already
+  ;; skips — so going straight to a milestone (no prior standalone done to
+  ;; carry a verdict) landed green over exactly the red a plain done catches.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mt.core "(ns mt.core)\n\n(defn f \"F.\" [x] x)\n")
+      (api/ingest! sess 'mt.core-test
+                   (str "(ns mt.core-test (:require [mt.core :as core]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest ^:external f-t (is (= :nope (core/f 1))))\n"))
+      (testing "the milestone runs the impacted external tier and refuses"
+        (let [r (external/commit-point! sess "should refuse")]
+          (is (= :red (:status r)) (pr-str (dissoc r :test :findings)))
+          (is (:error r) (pr-str (dissoc r :test :findings)))
+          (is (empty? (api/query-commits sess)) "no green milestone was minted")))
       (finally (api/close! sess)))))
