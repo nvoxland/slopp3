@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1029,3 +1029,48 @@
         (is (<= (count body) 1000))))
     (testing "a scalar has no items to drop — caller falls back"
       (is (nil? (#'mcp/fit-payload 42 100))))))
+
+(deftest ^:external slopp-prose-never-names-a-tool-that-does-not-exist
+  ;; The self-description half of P1. Gates see var references; they do not see
+  ;; a TOOL NAME in a docstring, a tool description, or an error message — so a
+  ;; consolidated or removed tool leaves its name behind in the very surfaces
+  ;; agents read to learn what to call.
+  ;;
+  ;; Measured before this test existed: 11 dead names in production prose,
+  ;; including query_impact/query_flow/query_references inside query_depends'
+  ;; OWN description, two in the cheat-sheet, and query_outline in a
+  ;; missing-form ERROR — which fires exactly when someone is already lost.
+  (let [sess (external/open! {:slopp.api/dir "."})]
+    (try
+      (let [known  (into #{} (map :name) tools/tools)
+            ;; two exclusions, both deliberate rather than convenient:
+            ;;   git_map    — a SQLITE TABLE, not a tool (every use is in the
+            ;;                sha-mapping code; the prefix alone lies here)
+            ;;   edit_group — documented as DELIBERATELY not on the wire, so
+            ;;                prose naming its absence is correct
+            exempt #{"git_map" "edit_group"}
+            pat    #"\b((?:query|edit|ns|module|deps|branch|git|turn|config|file)_[a-z0-9_]+)"
+            st     (:store @sess)
+            bad    (vec (distinct
+                         (for [nsx  (keys (:namespaces st))
+                               :when (not (str/ends-with? (str nsx) "-test"))
+                               e    (store/forms st nsx)
+                               :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                               text (filter string? (tree-seq coll? seq s))
+                               [_ nm] (re-seq pat text)
+                               :when (not (known nm))
+                               :when (not (exempt nm))]
+                           (str nm " named by " nsx "/" (:name e)))))]
+        (testing "the detector still fires — a check that cannot fail is not a check"
+          ;; the discipline done-advisories enforce with :fires-on. This guard
+          ;; went green by FIXING 11 real names; without a positive case it
+          ;; would look identically healthy if the pattern or the registry
+          ;; lookup silently broke.
+          (is (re-find pat "see query_nonexistent_thing {x} for details"))
+          (is (not (known "query_nonexistent_thing")))
+          (is (known "query_depends") "the registry lookup must recognise a REAL tool"))
+        (is (empty? bad)
+            (str "prose names " (count bad) " tool(s) that do not exist — an"
+                 " agent following this guidance pays a failed call to find"
+                 " out: " (pr-str bad))))
+      (finally (api/close! sess)))))

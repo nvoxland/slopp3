@@ -466,7 +466,7 @@
 
 (defn missing-form-error
   "Q9: a 'no form named X' that TEACHES — names near-miss forms in the ns (or
-  points at query_outline) so the next call succeeds instead of guessing.
+  points at query_project) so the next call succeeds instead of guessing.
   Returns the whole {:error msg} map; every no-such-form site shares it."
   [store ns-sym nm]
   (let [names (keep :name (store/forms store ns-sym))

@@ -21,7 +21,9 @@
       (-> c (update :test-runs (if (:external args) identity inc))
           (assoc :searches 0))
 
-      (#{"query_history" "query_search_history" "query_changes"} tool)
+      ;; report is a history read too — it composes the same fan-out, so a
+      ;; handoff that stitches report + query_history should still register
+      (#{"query_history" "query_changes" "report"} tool)
       (update c :history inc)
 
       (and (= tool "query_source") (:full args))

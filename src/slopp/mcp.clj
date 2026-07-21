@@ -920,7 +920,7 @@
 (defn- tools-note!
   "The notifications/tools/list_changed message when the tool registry has
   DRIFTED from what this session last advertised (a live reload renamed or
-  added a tool — edit_move_forms replaced edit_extract_ns mid-session and no
+  added a tool — edit_move_forms replaced an earlier extract-to-namespace tool mid-session and no
   client could see it), else nil. Emitting updates the baseline, so each
   drift notifies exactly once. No baseline (tools/list never served) → nil."
   [session]

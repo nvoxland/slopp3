@@ -37,7 +37,7 @@
                                :match {:type "string"} :window {:type "integer"}}
                   :required ["ns" "name"]}}
    {:name "query_depends"
-    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true reads the MODULE system: alone = the manifest (declared edges + standing debt); with on=<module> = that module's SURFACE (public fns + exported deep vars with sig/doc, its deps, its consumers) — the cheap browse before calling into a module. Ask this first; query_impact/query_flow/query_references give depth."
+    :description "THE generic dependency question: what depends on X — a namespace (who requires it + qualified refs), a var ns/name (blast radius), or a :keyword (field flow). modules=true reads the MODULE system: alone = the manifest (declared edges + standing debt); with on=<module> = that module's SURFACE (public fns + exported deep vars with sig/doc, its deps, its consumers) — the cheap browse before calling into a module. Ask this first; query_slice {ns name} and query_brief {ns name} give per-form depth."
     :inputSchema {:type "object"
                   :properties {:on {:type "string"}
                                :direction {:type "string" :enum ["dependents" "dependencies"]}
@@ -487,7 +487,7 @@
 TURN:    turn_begin {agent, intent: <user's verbatim ask>} FIRST -- writes are
          refused without an open turn; turn_end {agent} when done (red is ok)
 ORIENT:  query_project (everything, one call) · query_search {pattern} (the grep)
-         query_symbol {ns name} (one form's source) · query_references {ns name}
+         query_source {targets [{ns name}]} (form source) · query_depends {on ns/name}
 OBSERVE: query_eval {code} (your REPL: call anything; cannot redefine code)
          query_observe {ns name code} (capture args/returns flowing through a fn)
 WRITE:   work like a REPL: small individual writes, each verifies and returns

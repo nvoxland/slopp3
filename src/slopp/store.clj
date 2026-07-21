@@ -693,7 +693,7 @@
 (defn file-history
   "Every tracked version of manifest file `path`, oldest first:
   [{:delta :op :at :agent :prompt :bytes}] (bytes absent on remove) — the
-  file counterpart of query_form_history, read straight off the delta log."
+  file counterpart of query_history {ns name}, read straight off the delta log."
   [store path]
   (into []
         (keep (fn [d]
@@ -709,7 +709,7 @@
         (:deltas store)))
 (defn file-at
   "Manifest file `path`'s content as of delta `at-id` (inclusive), or nil
-  (absent / removed / unknown delta) — the file counterpart of query_form_at."
+  (absent / removed / unknown delta) — the file counterpart of query_history {ns name at}."
   [store path at-id]
   (let [upto (reduce (fn [acc d]
                        (let [acc (conj acc d)]
