@@ -317,6 +317,39 @@
       (rest (drop-while #(not= b (:id %)) ds))
       ds)))
 
+(defn- span-anchor
+  "Resolve a NAMED span anchor to the delta id a span should START at:
+  `:start` (the whole log), `:last-commit` (work since the last milestone),
+  `:last-done` (work since the last done) — the same vocabulary `undo!`
+  accepts, as keyword or wire string. Anything else passes through as a
+  literal delta id.
+
+  Why: `from` used to demand a raw delta id, so \"what changed across this
+  lifetime, with code\" began with a hunt through `query_history` for the
+  right id — and when the hunt didn't pay off, agents left for `git diff`
+  (eval9 measured ~20k chars of it in one handoff step). An anchor that
+  points at nothing resolves to nil, which falls back to the episode view
+  rather than throwing."
+  [st from]
+  (let [ds     (store/deltas st)
+        named? (fn [ks] (contains? ks from))
+        ;; the delta AFTER the last marker — the span starts with the work
+        ;; that FOLLOWS the milestone/done, not the marker itself
+        after  (fn [pred]
+                 (when-let [m (last (filter pred ds))]
+                   (:id (second (drop-while #(not= (:id m) (:id %)) ds)))))]
+    (cond
+      (named? #{:start "start" ":start"})
+      (:id (first ds))
+
+      (named? #{:last-commit "last-commit" ":last-commit"})
+      (after #(= :commit (:op %)))
+
+      (named? #{:last-done "last-done" ":last-done"})
+      (after #(= :done (:op %)))
+
+      :else from)))
+
 (defn ^:export query-changes
   "The agent's EPISODE — everything since `:agent`'s last done: net
   per-form diffs (:was/:now), the step list, and the verification arc. The
@@ -325,6 +358,7 @@
   renders it as a human story with LINE diffs instead of full sources."
   [session & {:keys [agent from to format]}]
   (let [st       (:store @session)
+        from     (span-anchor st from)
         boundary (if from
                    ;; historical span: `from`/`to` are delta ids (e.g. from a
                    ;; collapsed history row); boundary = just BEFORE `from`
