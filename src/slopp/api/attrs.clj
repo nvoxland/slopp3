@@ -39,7 +39,7 @@
              acc elements))
    {} (:namespaces store)))
 
-(defn- edit-1?
+(defn edit-1?
   "True iff `a` and `b` are exactly ONE Damerau-Levenshtein edit apart: a single
    substitution, a single insertion/deletion, or a single ADJACENT TRANSPOSITION
    (`email`/`emial`) — transpositions are among the commonest keyword typos, so
