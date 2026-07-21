@@ -137,10 +137,11 @@
       (testing "the tier is NOT recorded — a refused declaration must not land"
         (is (nil? (get (:module-tiers (:store @sess)) "tv.core"))
             (pr-str (:module-tiers (:store @sess)))))
-      (testing ":effects is always declarable — it asserts nothing"
+      (testing ":external is always declarable — it asserts nothing"
         (let [r (api/module-tier! sess "tv.core" :effects :prompt "periphery")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= :effects (get (:module-tiers (:store @sess)) "tv.core")))))
+          (is (= :external (get (:module-tiers (:store @sess)) "tv.core"))
+              "legacy :effects in, canonical :external stored")))
       (testing "and a genuinely pure module declares clean"
         (api/ingest! sess 'tp.core
                      "(ns tp.core)\n(defn ^:unused-ok f \"Pure.\" [x] (* 2 x))\n")

@@ -180,17 +180,19 @@
                " explaining why it cannot have one")))))
 
 (deftest ^:external done-asks-about-a-newly-widened-shell
-  ;; Declaring a namespace :effects makes the CORE smaller. That is sometimes
+  ;; Declaring a namespace :external makes the CORE smaller. That is sometimes
   ;; right and sometimes the path of least resistance, and the moment to ask is
   ;; while the reason is still in context. It fires only for the episode that
   ;; declared it, so it prompts once and cannot decay into standing noise.
+  ;; Declarations here use the CANONICAL vocabulary — the advisory went dead
+  ;; when the filter kept testing only the retired spellings.
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sw.core
                    "(ns sw.core)\n(defn ^:unused-ok grab \"E.\" [p] (slurp p))\n")
       (external/done! sess :label "baseline")
-      (testing "declaring a namespace :effects raises the question at done"
-        (api/module-tier! sess "sw.core" :effects :prompt "needs to read a file")
+      (testing "declaring a namespace :external raises the question at done"
+        (api/module-tier! sess "sw.core" :external :prompt "needs to read a file")
         (let [f (get-in (external/done! sess :label "widened") [:findings :shell-widening])]
           (is (some #(= 'sw.core (:ns %)) f) (pr-str f))
           (is (re-find #"(?i)shell" (str (:why (first f)))) (pr-str f))))
@@ -198,7 +200,7 @@
         (let [f (get-in (external/done! sess :label "later") [:findings :shell-widening])]
           (is (nil? f) (pr-str f))))
       (testing "and it is advisory: a question does not turn the done red"
-        (api/module-tier! sess "sw.other" :effects :prompt "another edge")
+        (api/module-tier! sess "sw.other" :external :prompt "another edge")
         (let [r (external/done! sess :label "still green")]
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
