@@ -511,7 +511,7 @@
 
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
   [...] :test {...} :external {...} :status :green|:red}."
-  [session]
+  [session & {:keys [affected]}]
   (let [st    (:store @session)
         nses  (sort (keys (:namespaces st)))
         lint  (vec (for [n nses
@@ -533,9 +533,14 @@
         tests (session/run-verification! session (vec nses) nil
                                          :include-integration? true
                                          :boundary? true)
+        ;; ONLY this tier narrows. Measured: the external suite is ~187s of a
+        ;; ~190s full_check (299 image boots), while lint + dead surface +
+        ;; layering + the in-image suite together are ~5-7s. Narrowing the
+        ;; cheap half would buy nothing and cost exactly the coverage
+        ;; full_check exists for.
         iso   (when (seq (session/external-test-nses
                           st (filter #(session/test-ns? st %) nses)))
-                (external-test-run! session))
+                (external-test-run! session :affected affected))
         red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
                   (seq layer)                ; core→shell is a failure, not a note
                   (pos? (+ (:fail tests 0) (:error tests 0)))
@@ -545,6 +550,11 @@
              :lint-warnings (count warns)
              :test tests
              :status (if red? :red :green)}
+      affected (assoc :scope (str "lint, dead surface, layering and the in-image"
+                                  " suite covered ALL " (count nses) " namespaces;"
+                                  " the ^:external tier was narrowed to the tests"
+                                  " that changes since the last milestone can"
+                                  " reach. Drop :affected for the whole tier"))
       (seq errs)          (assoc :lint errs)
       (seq warns)         (assoc :warnings warns)
             (seq layer)         (assoc :tier-layering layer
