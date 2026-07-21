@@ -674,7 +674,7 @@
   → the field's flow. Dependencies: var → the transitive callee tree; ns
   → its requires. `:modules true` (no `on`) → the module graph (:manifest=DECLARED, :layers/:cycles=PRODUCTION-only; declared
   edges + any standing debt). One tool to ask — results carry :kind."
-  [session on & {:keys [direction modules] :or {direction :dependents}}]
+  [session on & {:keys [direction modules detail] :or {direction :dependents}}]
   (let [st (:store @session)]
     (if modules
       (if (seq (str on))
@@ -700,7 +700,20 @@
                                    manifest)
                    :layers (:layers graph)
                    :debt (modules/module-debt st rows)
-                   :purity (modules/purity-standing st)}
+                   :purity (let [p (modules/purity-standing st)]
+                             ;; :could-tighten is a one-time ADOPTION worklist, but it
+                             ;; rode every response: 2,304 of 5,584 chars (41%) on the
+                             ;; eval9 seed, byte-identical across three calls in one
+                             ;; lifetime. Names answer "which modules?"; the per-module
+                             ;; :declared/:supports detail is one flag away.
+                             (if detail
+                               p
+                               (cond-> (assoc p :could-tighten
+                                              (vec (sort (keys (:could-tighten p)))))
+                                 (seq (:could-tighten p))
+                                 (assoc :note (str "could-tighten lists module NAMES —"
+                                                   " query_depends {modules true, detail true}"
+                                                   " adds each one's declared/supports")))))}
             (seq (:cycles graph))
             (assoc :cycles (:cycles graph))
 
