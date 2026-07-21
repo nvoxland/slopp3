@@ -1219,3 +1219,41 @@
   (let [q   (java.util.regex.Pattern/quote (str nm))
         sym "A-Za-z0-9*+!_'?<>=/.&%$:#-"]   ; symbol constituents; '-' last = literal
     (re-pattern (str "(?<![" sym "])" q "(?![" sym "])"))))
+(defn qualified-mention-changeset
+  "{form-id new-node} rewriting the QUALIFIED reference `old-q` to `new-q`
+  inside STRING LITERALS across the store — docstrings, teach strings, tool
+  descriptions. `base` is an in-flight changeset ({form-id node}) whose nodes
+  take precedence over the store's, so this composes with a positional rename
+  instead of fighting it.
+
+  Only QUALIFIED references are rewritten, and that is the whole safety
+  argument: `a.b/c` in prose can only mean that var, while a bare `c` is
+  usually a domain word (`zone`, `open`) that must not be touched — those stay
+  a reported `:mentions` hint for a human to judge. Code positions are already
+  handled positionally by `rename-changeset`; this pass deliberately edits
+  string literals ONLY.
+
+  Without it, a rename or move leaves its own documentation pointing at an
+  address that no longer resolves — teaching that lies, which ships silently
+  because no gate can see a var inside a string."
+  [store old-q new-q base]
+  (let [pat (symbol-mention-re old-q)]
+    (into {}
+          (for [ns-sym (keys (:namespaces store))
+                e      (store/elements store ns-sym)
+                :when  (:id e)
+                :let   [node (get base (:id e) (:node e))]
+                :when  (and node (str/includes? (n/string node) (str old-q)))
+                :let   [out (-> (z/of-node node)
+                                (z/prewalk
+                                 (fn [zl] (and (= :token (z/tag zl))
+                                               (string? (z/sexpr zl))
+                                               (re-find pat (z/sexpr zl))))
+                                 (fn [zl] (z/replace
+                                           zl
+                                           (n/string-node
+                                            (str/replace (z/sexpr zl) pat (str new-q))))))
+                                z/root)]
+                :when  (not= (n/string out) (n/string node))]
+            [(:id e) out]))))
+

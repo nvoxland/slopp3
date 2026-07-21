@@ -289,3 +289,31 @@
         (testing "the non-literal call site is NAMED, not silently skipped"
           (is (= '[rq.core/b] (:unknown-shape r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external rename-carries-qualified-prose-references
+  ;; A qualified reference in a docstring is unambiguous — `a.b/c` can only
+  ;; mean that var — so a rename can move it mechanically. Leaving it behind
+  ;; is how documentation starts lying: no gate sees a var inside a string, so
+  ;; the stale address ships and costs the next agent a failed call.
+  ;; A BARE mention stays a :mentions hint — `zone` in prose may be a domain
+  ;; word, and only a human can judge that.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'qp.core
+                   (str "(ns qp.core)\n"
+                        "(defn ^:unused-ok fee \"F.\" [x] x)\n"
+                        "(defn ^:unused-ok teach\n"
+                        "  \"call qp.core/fee for the rate; fee is also a domain word\"\n"
+                        "  [x] (fee x))\n"))
+      (let [r (api/rename! sess 'qp.core 'fee 'charge :prompt "fee -> charge")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [src (query/query-source sess 'qp.core)]
+        (testing "the QUALIFIED prose reference followed the rename"
+          (is (re-find #"qp\.core/charge" src) src)
+          (is (not (re-find #"qp\.core/fee" src))
+              (str "a stale qualified reference survived: " src)))
+        (testing "the code reference followed too (positional rename, unchanged)"
+          (is (re-find #"\(charge x\)" src) src))
+        (testing "the BARE domain word is left alone for a human to judge"
+          (is (re-find #"fee is also a domain word" src) src)))
+      (finally (api/close! sess)))))

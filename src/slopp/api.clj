@@ -1454,7 +1454,13 @@
       {:error (str new-name " already exists in " ns-sym)}
 
       :else
-      (let [changeset    (refactor/rename-changeset st ns-sym old-name new-name)
+      (let [code-cs      (refactor/rename-changeset st ns-sym old-name new-name)
+            ;; QUALIFIED references in prose follow mechanically — `a.b/c` in a
+            ;; docstring can only mean that var. BARE mentions stay a :mentions
+            ;; hint below, since `fee`/`zone` are usually domain words too.
+            changeset    (merge code-cs
+                                (refactor/qualified-mention-changeset
+                                 st qold qnew code-cs))
             [st' delta]  (store/apply-changeset st :rename ns-sym changeset
                                                 :prompt prompt :agent agent
                                                 :extra {:old old-name :new new-name})
