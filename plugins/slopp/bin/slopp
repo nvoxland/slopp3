@@ -8,8 +8,8 @@
 # Fetches and caches the versioned jar on first run; java 21+ required.
 set -euo pipefail
 
-VERSION="v0.1.2"
-SHA256="85b1be6f7b274af7ac2bfaedeb35413f664a2e315a7b7f147399e133541849de"
+VERSION="v0.2.0"
+SHA256="23b5274f68e9ead2fd075adbd88cc4abb69fa56d8e5f8fbc0ee166ff4c72ba7c"
 JAR_URL="https://github.com/nvoxland/slopp3/releases/download/${VERSION}/slopp.jar"
 
 CACHE="${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/slopp}"
