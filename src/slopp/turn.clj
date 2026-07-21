@@ -17,7 +17,10 @@
             [slopp.store :as store]))
 
 ^:unsafe (defn- append-marker! [dir kind agent intent]
-  (let [conn (db/open! dir)]
+  ;; {:create? false}: the hooks fire this in whatever dir the session
+  ;; happens to be in. A marker is provenance ABOUT a store — where there
+  ;; is none, it is a no-op, never an adoption.
+  (if-let [conn (db/open! dir {:create? false})]
     (try
       (loop [n 0]
         (let [st (or (db/load-store conn) (store/empty-store))
@@ -30,7 +33,9 @@
             (if (< n 10)
               (recur (inc n))
               (binding [*out* *err*] (println "contention — giving up"))))))
-      (finally (.close ^java.sql.Connection conn)))))
+      (finally (.close ^java.sql.Connection conn)))
+    (binding [*out* *err*]
+      (println "no slopp store at" dir "— turn" (name kind) "not recorded"))))
 
 ^:unsafe (defn -main "CLI: append a turn marker to `dir`'s journal — the identity boundary an
   agent's episodes hang off.

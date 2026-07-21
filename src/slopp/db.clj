@@ -20,24 +20,34 @@
             [rewrite-clj.node :as n]))
 
 (defn open!
-  "Open (creating if needed) the store db under `dir`; returns the connection."
-  ^java.sql.Connection [dir]
-  (let [f (io/file dir ".slopp" "store.db")]
-    (io/make-parents f)
-    (let [conn (jdbc/get-connection
-                (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
-      (jdbc/execute! conn ["PRAGMA journal_mode=WAL"])
-      (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
-      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
+  "Open (creating if needed) the store db under `dir`; returns the connection.
+
+  `{:create? false}` returns NIL instead of creating one when `dir` has no
+  store yet — for callers that merely ASK whether a dir is slopp-managed.
+  The MCP server is launched in whatever directory the editor has open, so
+  an unconditional create colonises every project a user opens: an empty
+  `.slopp/store.db` appears, and from then on the session-pause hook has
+  something to write checkpoints into. Serving is a question, not an
+  adoption; the store is materialized by the first real write."
+  (^java.sql.Connection [dir] (open! dir nil))
+  (^java.sql.Connection [dir {:keys [create?] :or {create? true}}]
+   (let [f (io/file dir ".slopp" "store.db")]
+     (when (or create? (.exists f))
+       (io/make-parents f)
+       (let [conn (jdbc/get-connection
+                   (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+         (jdbc/execute! conn ["PRAGMA journal_mode=WAL"])
+         (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
                               k TEXT PRIMARY KEY, v TEXT NOT NULL)"])
-      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
                               seq     INTEGER PRIMARY KEY AUTOINCREMENT,
                               id      TEXT UNIQUE NOT NULL,
                               op      TEXT NOT NULL,
                               ns      TEXT NOT NULL,
                               payload TEXT NOT NULL)"])
-      (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS deltas_ns ON deltas(ns)"])
-      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS elements (
+         (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS deltas_ns ON deltas(ns)"])
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS elements (
                               ns      TEXT NOT NULL,
                               pos     INTEGER NOT NULL,
                               kind    TEXT NOT NULL,
@@ -45,23 +55,23 @@
                               name    TEXT,
                               source  TEXT NOT NULL,
                               PRIMARY KEY (ns, pos))"])
-      ;; content-addressed dependency analysis (P4-deps M4/M6), keyed by
-      ;; "lib@version" — a surface/native verdict is a pure fn of the coord
-      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS dep_surface (
+         ;; content-addressed dependency analysis (P4-deps M4/M6), keyed by
+         ;; "lib@version" — a surface/native verdict is a pure fn of the coord
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS dep_surface (
                               id      TEXT PRIMARY KEY,
                               surface TEXT,
                               native  TEXT)"])
-      ;; git-pull conflicts, held OFF the journal (G-series): the raw remote
-      ;; file + provenance, kept until the agent resolves — the journal only
-      ;; ever holds slopp-valid forms
-      (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS quarantine (
+         ;; git-pull conflicts, held OFF the journal (G-series): the raw remote
+         ;; file + provenance, kept until the agent resolves — the journal only
+         ;; ever holds slopp-valid forms
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS quarantine (
                               path    TEXT PRIMARY KEY,
                               ns      TEXT,
                               source  TEXT,
                               sha     TEXT NOT NULL,
                               reason  TEXT NOT NULL,
                               at      INTEGER NOT NULL)"])
-      conn)))
+         conn)))))
 
 (defn persist!
   "Write one mutation atomically: the delta, the (full) current element rows of

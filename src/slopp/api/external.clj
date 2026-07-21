@@ -748,7 +748,7 @@
   never reached the caller, so nothing could ever release them."
   ([] (open! {}))
   ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare?]}]
-   (let [conn    (when dir (db/open! dir))
+   (let [conn    (when dir (db/open! dir {:create? false}))
          session (atom {:db conn :dir dir :branch "main" :lines {}})]
      (try
        (let [store (or (some-> conn db/load-store) (store/empty-store))
@@ -772,8 +772,11 @@
          ;; process share the last opener's dir, which `index/lint` handles by
          ;; re-passing on a dir change — correct, just not memoized across them.
          (reset! index/kondo-cache-dir
-                 (if dir
+                 (if conn
                    (str (io/file dir ".slopp" "kondo-cache"))
+                   ;; no store here (yet): a session on an unadopted dir must
+                   ;; not leave a kondo-cache behind either — the whole point
+                   ;; of the deferred store is an untouched directory
                    (str (java.nio.file.Files/createTempDirectory
                          "slopp-kondo"
                          (make-array java.nio.file.attribute.FileAttribute 0)))))
