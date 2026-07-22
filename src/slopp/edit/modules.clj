@@ -708,6 +708,36 @@
                  " behind a :post/:put/:delete endpoint's :web/effects, or"
                  " return the change as data")))))))
 
+(defn ^:export ^{:rule/applies-to :production} web-unknown-group
+  "The policy-vocabulary gate (D-web): an endpoint's `:web/auth` may only
+  name groups the `capabilities` config defines (`groups.<name>.…` keys) —
+  a typo'd group would silently deny every request forever, the authz twin
+  of the nil-pun. Walks composite policies ([:any …]/[:all …]). Inert
+  until `web-enabled?`. Returns a teaching string, or nil when clean."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [m (web-name-meta e)]
+        (when (:web/path m)
+          (let [known (into #{}
+                            (keep #(second (re-matches #"groups\.([^.]+)\..*" (str %))))
+                            (keys (get-in candidate [:config "capabilities" :values] {})))
+                named (fn named [p]
+                        (cond
+                          (and (vector? p) (= :group (first p))) [(second p)]
+                          (and (vector? p) (#{:any :all} (first p))) (mapcat named (rest p))
+                          :else nil))
+                missing (remove known (named (:web/auth m)))]
+            (when (seq missing)
+              (str ns-sym "/" form-name " grants by group "
+                   (pr-str (vec missing)) " but the capabilities config"
+                   " defines no such group"
+                   (when (seq known)
+                     (str " (configured: " (str/join ", " (sort known)) ")"))
+                   " — config_file {path \"capabilities\" key \"groups."
+                   (first missing) ".members\" value \"…\"} defines it, or fix"
+                   " the name"))))))))
+
 (def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
@@ -719,7 +749,7 @@
   HTTP (`web-enabled?`)."
   [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal
    #'web-auth-refusal #'web-route-collision #'web-undeclared-effect
-   #'web-unsafe-get])
+   #'web-unsafe-get #'web-unknown-group])
 
 (defn ^:export write-gate-names
   "The keyword rule-names of the registered per-form write gates (from the var

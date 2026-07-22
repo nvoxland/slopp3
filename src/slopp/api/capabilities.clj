@@ -137,15 +137,37 @@
 
 (defn config-refusal
   "The `capabilities` config write gate: a teaching error for an unknown
-  key or a value that fails its registry type, nil when the write may
-  land. An unknown key MUST refuse — a typo'd capability that silently
-  does nothing is the nil-pun failure this registry exists to kill."
+  key, a value that fails its registry type, or a CREDENTIAL-shaped literal
+  — nil when the write may land. An unknown key MUST refuse (a typo'd
+  capability that silently does nothing is the nil-pun failure this
+  registry exists to kill). A secret literal must refuse too: this config
+  is tracked and git-projected, so `auth.*` credential positions (a
+  `…token…`/`…secret` key, or a `:secret` entry in the value) take
+  `env:NAME` indirections only; `password-hash` is exempt — a hash IS the
+  safe form."
   [k v]
-  (if-let [entry (find-entry k)]
-    (check-value entry v)
-    (str k " is not a capability — query_capabilities lists every setting"
-         " with its type, default, and effective value; known keys/patterns: "
-         (str/join ", " (map :key registry)))))
+  (let [k (str k) v (str v)
+        credential-key? (and (str/starts-with? k "auth.")
+                             (re-find #"(token|secret)s?(\.|$)" k))
+        secret-entry (second (re-find #":secret\s+\"([^\"]*)\"" v))
+        literal? (fn [s] (and (seq (str s))
+                              (not (str/starts-with? (str s) "env:"))))]
+    (if-let [entry (find-entry k)]
+      (or (check-value entry v)
+          (cond
+            (and credential-key? (nil? secret-entry) (not (str/includes? v ":"))
+                 (literal? v))
+            (str k " holds a literal credential — this config is tracked and"
+                 " git-projected, so secrets go through the environment:"
+                 " value \"env:SOME_NAME\", and the deployment sets SOME_NAME")
+
+            (and (str/starts-with? k "auth.") secret-entry (literal? secret-entry))
+            (str k " embeds a literal :secret — this config is tracked and"
+                 " git-projected, so secrets go through the environment:"
+                 " :secret \"env:SOME_NAME\", and the deployment sets SOME_NAME")))
+      (str k " is not a capability — query_capabilities lists every setting"
+           " with its type, default, and effective value; known keys/patterns: "
+           (str/join ", " (map :key registry))))))
 
 (defn report
   "The `query_capabilities` payload: `{:settings [...] :patterns [...]}`.

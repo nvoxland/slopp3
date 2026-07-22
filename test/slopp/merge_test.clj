@@ -220,3 +220,32 @@
       (is (< (.indexOf src "defn gate") (.indexOf src "defn c")) src))
     (testing "no conflicts — different work, the granularity dodge"
       (is (empty? (:conflicts r)) (pr-str (:conflicts r))))))
+
+(deftest empty-changeset-replay-skips-instead-of-nil-store
+  (let [b      (base)
+        [t1 _] (store/apply-changeset b :normalize 'm.core
+                                      {(:id (store/form-named b 'm.core 'c))
+                                       (p/parse-string "(defn c [x] (inc x))")}
+                                      :prompt "their normalize")
+        ours   (first (store/remove-form b 'm.core 'c :prompt "we deleted c"))
+        r      (merge/merge-logs ours t1)]
+    (is (some? (:next-id (:store r)))
+        "the store survives an all-absent changeset replay")
+    (is (re-find #"defn a" (render/render-ns (:store r) 'm.core)))))
+
+(deftest replace-aliasing-a-foreign-ns-form-skips-not-nils
+  (let [b     (base)
+        ours  (store/ingest b 'o.x "(ns o.x)\n(defn ox [] 1)\n")
+        fid   (:id (store/form-named ours 'm.core 'b))
+        theirs (update b :deltas conj
+                       {:id "d9000" :parent (:id (last (:deltas b)))
+                        :op :replace :ns 't.y :form-id fid
+                        :sources {fid "(defn ty [] 3)"}
+                        :prompt "an unmapped cross-line id alias" :at 1})
+        r     (merge/merge-logs ours theirs)]
+    (is (some? (:next-id (:store r)))
+        "the store survives an aliased :replace")
+    (testing "our aliased form is untouched"
+      (is (re-find #"defn b" (render/render-ns (:store r) 'm.core))))
+    (testing "the skip is noted, not silent"
+      (is (some #(= :replace (:skipped %)) (:notes r)) (pr-str (:notes r))))))

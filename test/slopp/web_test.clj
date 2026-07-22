@@ -57,3 +57,27 @@
       (testing "the declared policy refuses over http-kit exactly as over jdk"
         (is (= 401 (.statusCode resp))))
       (finally (web/stop! srv)))))
+
+(deftest ^:external auth-round-trips-over-the-wire
+  (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
+                         :web/adapter :http-kit
+                         :web/port 0
+                         :web/auth-config {:auth/providers [:bearer]
+                                           :auth/bearer {"ada" {:secret "tok-ada"
+                                                                :groups ["dev"]}}}})
+        http (java.net.http.HttpClient/newHttpClient)
+        GET (fn [path & [token]]
+              (let [b (cond-> (java.net.http.HttpRequest/newBuilder)
+                        true (.uri (java.net.URI/create
+                                    (str "http://127.0.0.1:" (:port srv) path)))
+                        token (.header "Authorization" (str "Bearer " token)))]
+                (.statusCode (.send http (.build b)
+                                    (java.net.http.HttpResponse$BodyHandlers/ofString)))))]
+    (try
+      (testing "anonymous → 401; wrong token → 401; the right token → 200 (t-mine checks sub=owner)"
+        (is (= 401 (GET "/w/mine/ada")))
+        (is (= 401 (GET "/w/mine/ada" "wrong")))
+        (is (= 200 (GET "/w/mine/ada" "tok-ada")))
+        (testing "and enforce still 403s the wrong owner, authenticated or not"
+          (is (= 403 (GET "/w/mine/someone-else" "tok-ada")))))
+      (finally (web/stop! srv)))))

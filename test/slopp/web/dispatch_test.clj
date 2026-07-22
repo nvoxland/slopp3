@@ -49,3 +49,20 @@
       (let [r (dispatch/handle! ctx {:request-method :post :uri "/rogue"})]
         (is (= 500 (:status r)))
         (is (empty? @performed))))))
+
+(deftest dispatch-resolves-identity-from-auth-config
+  (let [ctx {:web/routes [{:handler (fn [req] {:status 200
+                                               :body {:sub (:web/sub (:web/identity req))}})
+                           :method :get :path "/who" :auth :authenticated}]
+             :web/auth-config {:auth/providers [:bearer]
+                               :auth/bearer {"ci" {:secret "tok-9" :groups ["ci"]}}}}]
+    (testing "a bearer header authenticates through the configured providers"
+      (let [r (dispatch/handle! ctx {:request-method :get :uri "/who"
+                                     :headers {"authorization" "Bearer tok-9"}})]
+        (is (= 200 (:status r)) (pr-str r))
+        (is (= "ci" (:sub (:body r))))))
+    (testing "anonymous stays 401"
+      (is (= 401 (:status (dispatch/handle! ctx {:request-method :get :uri "/who"})))))
+    (testing "a pre-resolved :web/identity is respected over resolution"
+      (is (= "pre" (:sub (:body (dispatch/handle! ctx {:request-method :get :uri "/who"
+                                                       :web/identity {:web/sub "pre"}}))))))))

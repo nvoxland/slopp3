@@ -25,21 +25,24 @@
 
 (defn ^{:malli/schema [:=> [:cat [:map
                                   [:web/namespaces [:sequential :symbol]]
-                                  [:web/perform-ctx {:optional true} :any]]]
+                                  [:web/perform-ctx {:optional true} :any]
+                                  [:web/auth-config {:optional true} [:maybe :map]]]]
                        [:map
                         [:web/routes [:vector :map]]
                         [:web/read-performers :map]
                         [:web/effect-performers :map]]]}
   context
   "Assemble the dispatch context from `{:web/namespaces [ns-syms]
-  :web/perform-ctx <passed to every performer>}`: the route table and both
-  performer vocabularies derive from the namespaces' VAR metadata — the
-  same contract the store gates enforced at write time."
-  [{:web/keys [namespaces perform-ctx]}]
-  {:web/routes (routes/from-namespaces namespaces)
-   :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
-   :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
-   :web/perform-ctx perform-ctx})
+  :web/perform-ctx <passed to every performer>
+  :web/auth-config <the provider config identity resolves through>}`: the
+  route table and both performer vocabularies derive from the namespaces'
+  VAR metadata — the same contract the store gates enforced at write time."
+  [{:web/keys [namespaces perform-ctx auth-config]}]
+  (cond-> {:web/routes (routes/from-namespaces namespaces)
+           :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
+           :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
+           :web/perform-ctx perform-ctx}
+    auth-config (assoc :web/auth-config auth-config)))
 
 (defn handle!
   "Run one request through the FULL pipeline — route, policy, declared
@@ -53,7 +56,8 @@
                                   [:web/adapter {:optional true} :keyword]
                                   [:web/host {:optional true} :string]
                                   [:web/port {:optional true} :int]
-                                  [:web/perform-ctx {:optional true} :any]]]
+                                  [:web/perform-ctx {:optional true} :any]
+                                  [:web/auth-config {:optional true} [:maybe :map]]]]
                        :map]}
   serve!
   "Assemble `context` from the opts and serve it: `{:web/namespaces […]

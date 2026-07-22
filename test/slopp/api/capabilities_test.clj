@@ -106,3 +106,20 @@
     (testing "wildcard patterns are listed as patterns, not as settable rows"
       (is (nil? (row "http.static.*")))
       (is (some #(= "http.static.*" (:key %)) (:patterns rep))))))
+
+(deftest secret-literals-refuse-in-capabilities
+  (testing "a literal secret in an auth.* credential key refuses"
+    (is (re-find #"env:" (str (caps/config-refusal
+                               "auth.bearer.tokens.ci"
+                               "{:secret \"hunter2\" :groups [\"ci\"]}"))))
+    (is (re-find #"env:" (str (caps/config-refusal
+                               "auth.oidc.client-secret" "abc123")))))
+  (testing "an env: indirection passes"
+    (is (nil? (caps/config-refusal
+               "auth.bearer.tokens.ci"
+               "{:secret \"env:CI_TOKEN\" :groups [\"ci\"]}")))
+    (is (nil? (caps/config-refusal "auth.oidc.client-secret" "env:OIDC_SECRET"))))
+  (testing "a password HASH is the safe form, not a secret literal"
+    (is (nil? (caps/config-refusal
+               "auth.static.users.alice"
+               "{:password-hash \"9f86d08...\" :groups [\"admin\"]}")))))

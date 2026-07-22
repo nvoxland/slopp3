@@ -51,3 +51,24 @@
                             "(defn ^{:web/method :get :web/path \"/w\" :web/auth :public} gw \"G.\" [req]\n"
                             "  (swap! store-atom assoc :hit req))"))]
         (is (re-find #"mutation" (str (modules/web-unsafe-get s 'shop.more 'gw))))))))
+
+(deftest web-unknown-group-guards-the-policy-vocabulary
+  (let [s0 (store/ingest (store/empty-store) 'shop.api "(ns shop.api)\n\n(defn seed \"S.\" [x] x)\n")
+        on (-> s0
+               (store/record-config-put "capabilities" :manifest "http.enabled" "true") first
+               (store/record-config-put "capabilities" :manifest "groups.admin.members" "alice") first)
+        land (fn [st form-src]
+               (store/ingest st 'shop.more (str "(ns shop.more)\n\n" form-src "\n")))]
+    (testing "a policy naming a configured group lands"
+      (let [s (land on "(defn ^{:web/method :get :web/path \"/a\" :web/auth [:group \"admin\"]} a \"A.\" [req] req)")]
+        (is (nil? (modules/web-unknown-group s 'shop.more 'a)))))
+    (testing "a typo'd group refuses with the configured vocabulary in the teaching"
+      (let [s (land on "(defn ^{:web/method :get :web/path \"/b\" :web/auth [:group \"admn\"]} b \"B.\" [req] req)")]
+        (is (re-find #"admn" (str (modules/web-unknown-group s 'shop.more 'b))))
+        (is (re-find #"admin" (str (modules/web-unknown-group s 'shop.more 'b))))))
+    (testing "composite policies are walked"
+      (let [s (land on "(defn ^{:web/method :get :web/path \"/c\" :web/auth [:any :authenticated [:group \"ghost\"]]} c \"C.\" [req] req)")]
+        (is (re-find #"ghost" (str (modules/web-unknown-group s 'shop.more 'c))))))
+    (testing "inert until http.enabled"
+      (let [s (land s0 "(defn ^{:web/method :get :web/path \"/d\" :web/auth [:group \"ghost\"]} d \"D.\" [req] req)")]
+        (is (nil? (modules/web-unknown-group s 'shop.more 'd)))))))

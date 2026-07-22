@@ -39,6 +39,9 @@
    {:rule :web-unsafe-get :grain :form :severity :refuse
     :escape "make it :post/:put/:delete, drop the declared effects, or return the change as data from a non-safe endpoint"
     :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until http.enabled)"}
+   {:rule :web-unknown-group :grain :form :severity :refuse
+    :escape "config_file {path \"capabilities\" key \"groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
+    :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until http.enabled)"}
    {:rule :schema-drift :grain :done :severity :error
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}

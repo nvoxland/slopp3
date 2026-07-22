@@ -1,5 +1,5 @@
 (ns slopp.web.dispatch
-  (:require [slopp.web.router :as router]))
+  (:require [slopp.web.router :as router] [slopp.web.auth :as auth]))
 
 (defn authorized?
   "Does `identity` ({:web/sub … :web/groups #{…}} or nil) satisfy `policy`?
@@ -39,17 +39,24 @@
   "The whole request pipeline, callable in-process — request map in,
   response map out; the socket is an adapter's concern. `ctx`:
   {:web/routes [rows] :web/read-performers {kind→f}
-   :web/effect-performers {kind→f} :web/perform-ctx <passed to performers>}.
+   :web/effect-performers {kind→f} :web/perform-ctx <passed to performers>
+   :web/auth-config <the provider config identity resolves through>}.
 
-  Order is the guarantee: ROUTE (404) → POLICY over the already-resolved
-  :web/identity (401 unauthenticated / 403 unauthorized — the handler is
-  unreachable un-checked) → declared :web/reads fetched via the app's read
-  performers → the handler, with :path-params and the fetched :web/reads on
-  the request → the response's :web/effects interpreted through the app's
-  effect performers (validated all-or-nothing). Every failure is response
-  DATA, never a throw."
+  Order is the guarantee: IDENTITY (resolved through :web/auth-config when
+  the request carries none — a pre-resolved :web/identity is respected) →
+  ROUTE (404) → POLICY (401 unauthenticated / 403 unauthorized — the
+  handler is unreachable un-checked) → declared :web/reads fetched via the
+  app's read performers → the handler, with :path-params, :web/deps (the
+  perform-ctx as a value) and the fetched :web/reads on the request → the
+  response's :web/effects interpreted through the app's effect performers
+  (validated all-or-nothing). Every failure is response DATA — an ex-info
+  carrying :web/status maps to it; anything else is a 500."
   [ctx req]
-  (let [row (router/match (:web/routes ctx)
+  (let [req (if (or (:web/identity req) (nil? (:web/auth-config ctx)))
+              req
+              (assoc req :web/identity
+                     (auth/resolve-identity (:web/auth-config ctx) req)))
+        row (router/match (:web/routes ctx)
                           (:request-method req) (:uri req))]
     (cond
       (nil? row)
@@ -62,7 +69,7 @@
 
       :else
       (let [req' (assoc req :path-params (:path-params row)
-                          :web/deps (:web/perform-ctx ctx))
+                        :web/deps (:web/perform-ctx ctx))
             fetch (fn [[alias [kind path]]]
                     (if-let [f (get (:web/read-performers ctx) kind)]
                       [alias (f (:web/perform-ctx ctx) (get-in req' path))]

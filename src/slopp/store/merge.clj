@@ -231,13 +231,26 @@
                             changed new-nses (conj applied (:id d)))
 
                       :else
-                      (let [[st' _] (store/replace-node st ns-sym (:name cur)
-                                                  (p/parse-string src)
-                                                  :prompt (:prompt d)
-                                                  :agent (:agent d))]
-                        (done (tag-merged st' (:id d)) idmap (inc merged)
-                              conflicts notes (conj changed fid) new-nses
-                              (conj applied (:id d))))))
+                      ;; the resolved form must LIVE in the delta's ns — an
+                      ;; unmapped cross-line id can alias a different
+                      ;; namespace's form (a round-tripped copy of our own
+                      ;; work), and replacing through that alias nils the
+                      ;; store via replace-node's miss (the wave-3 merge)
+                      (let [rr (when (= (str ns-sym)
+                                        (str (store/ns-of-form-id st fid)))
+                                 (store/replace-node st ns-sym (:name cur)
+                                                     (p/parse-string src)
+                                                     :prompt (:prompt d)
+                                                     :agent (:agent d)))]
+                        (if rr
+                          (done (tag-merged (first rr) (:id d)) idmap (inc merged)
+                                conflicts notes (conj changed fid) new-nses
+                                (conj applied (:id d)))
+                          (done st idmap merged conflicts
+                                (conj notes {:skipped :replace :form fid
+                                             :ns ns-sym
+                                             :reason "form-id aliases a different namespace's form (cross-line id collision)"})
+                                changed new-nses (conj applied (:id d)))))))
 
                   :delete
                   (let [ns-sym (:ns d)

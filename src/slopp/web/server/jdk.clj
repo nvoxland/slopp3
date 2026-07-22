@@ -20,6 +20,7 @@
   (let [raw (slurp (.getRequestBody ex))]
     {:request-method (keyword (.toLowerCase (.getRequestMethod ex)))
      :uri (.getPath (.getRequestURI ex))
+     :remote-addr (.getHostAddress (.getAddress (.getRemoteAddress ex)))
      :query-string (.getQuery (.getRequestURI ex))
      :headers (into {}
                     (map (fn [[k vs]] [(.toLowerCase (str k)) (first vs)]))

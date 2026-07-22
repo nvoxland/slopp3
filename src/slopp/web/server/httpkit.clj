@@ -9,7 +9,7 @@
   a JSON body to DATA (a handler never sees an InputStream)."
   [ring-req]
   (let [raw (some-> (:body ring-req) slurp)]
-    (assoc (select-keys ring-req [:request-method :uri :query-string :headers])
+    (assoc (select-keys ring-req [:request-method :uri :query-string :headers :remote-addr])
            :body (when-not (str/blank? (str raw))
                    (try (json/parse-string raw true)
                         (catch Exception _ raw))))))
