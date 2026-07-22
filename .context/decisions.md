@@ -1522,3 +1522,25 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   (mirrored — boot must load `server.httpkit`).
 - **Static assets: content-addressed blob table** (sha256 → bytes), `:files`
   values polymorphic, deltas carry the sha (wave 4).
+  **Wave 4 SHIPPED 2026-07-22 (on main directly — bidirectional branch
+  merges are paused until the #16 causality redesign):** `record-file-put`
+  takes `:encoding "base64"` + `:content-type`; the manifest entry becomes
+  `{:sha :content-type :bytes}` with bytes in the `:blobs` cache and the
+  `blobs` db table (same tx via `put-blobs!`, INSERT OR IGNORE); the delta
+  carries the sha only. `store/file-content` is the ONE polymorphic
+  accessor; `file_put`/`file_get` speak base64 on the wire; the git tree
+  and `build!` emit real bytes (`insert-tree!` accepts byte arrays, the
+  projection threads a blob reader); `merge-logs` unions theirs' blobs.
+  Serving: `slopp.web.static/mount-routes` (mounts + a reader → `:public`
+  GET rows answering `:web/raw` responses both adapters write verbatim —
+  no JSON wrapping), wired in `slopp.http` from `http.static.*`
+  capabilities over the store, so an edited asset hot-serves under
+  `--live`. LATENT BUG FIXED en route (frictions #21): merge-logs' unknown-
+  op default silently SKIPPED every `:config-put`/`:file-put` — main had
+  lost its whole capabilities config across three wave merges; state-
+  carrying non-code ops now replay through `store/replay-delta`
+  (key/path-grain last-writer-wins), guarded by
+  `merge-test/config-and-files-cross-the-merge`. Deferred: single-segment
+  mount files only (the router's declared param scope), blob pruning via
+  `cleanup` (blobs are immortal-by-default, the git model), and
+  `-H:IncludeResources` (wave 5).
