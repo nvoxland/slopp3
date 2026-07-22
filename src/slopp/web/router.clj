@@ -1,7 +1,7 @@
 (ns slopp.web.router
   (:require [clojure.string :as str]))
 
-(defn match
+(defn ^{:export "slopp.api"} match
   "Match `method` + `uri` against `routes` (rows carrying :method :path
   :handler, the query_routes shape). Returns the matched row with
   `:path-params` merged ({:id \"42\"} for \"/api/users/:id\"), or nil. A

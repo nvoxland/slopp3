@@ -42,9 +42,15 @@
    {:rule :web-unknown-group :grain :form :severity :refuse
     :escape "config_file {path \"capabilities\" key \"groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
     :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until http.enabled)"}
+{:rule :web-react-attrs :grain :form :severity :refuse
+    :escape "spell it as HTML (:class, :for), replace handlers with a link/form targeting an endpoint, or dial it down (config_file {path \"rules\" key \"web-react-attrs\" value \"advisory\"}) for a map that is genuinely not an element"
+    :teach "a literal hiccup element carries a React attribute name (:className, :htmlFor, :onClick…) — browsers silently ignore unknown attributes, so it ships and does nothing (inert until http.enabled)"}
    {:rule :web-public-mutation :grain :done :severity :advisory
     :escape "tighten :web/auth, or accept it — a deliberately public write surface (signup, webhook) is legitimate and this asks per changed form"
     :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until http.enabled)"}
+{:rule :web-dangling-route-refs :grain :done :severity :error
+    :escape "fix the path, add the endpoint or static asset, or ^{:web/external-path \"why\"} on the RENDERING form when something outside this store serves it (dynamic paths report as :unresolved via query_routes, never as findings)"
+    :teach "a rendered link/form targets a path no declared route or static mount serves — the UI nil-pun: it ships and 404s (inert until http.enabled)"}
    {:rule :schema-drift :grain :done :severity :error
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}

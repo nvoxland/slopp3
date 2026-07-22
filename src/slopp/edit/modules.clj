@@ -750,6 +750,38 @@
                    (first missing) ".members\" value \"…\"} defines it, or fix"
                    " the name"))))))))
 
+(defn- web-react-attrs
+  "Per-form write gate (D-web-html): a literal hiccup element carrying a
+  React attribute name — `:className`, `:htmlFor`, an `:onClick`-style
+  handler, `:dangerouslySetInnerHTML`. Browsers silently IGNORE unknown
+  attributes, so the mistake ships and does nothing. Scoped to maps in
+  position 2 of a keyword-tag vector (a JSON-ish payload map is not an
+  element); inert until `web-enabled?`. Returns a teaching string, or nil."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate ns-sym form-name)]
+      (let [react->fix {:className ":class"
+                        :htmlFor ":for"
+                        :dangerouslySetInnerHTML "[:html/raw \"…\"] (string literal only)"}
+            handler? (fn [k] (re-matches #"on[A-Z].*" (name k)))
+            sx (try (n/sexpr (:node e)) (catch Exception _ nil))
+            hit (first (for [v (tree-seq coll? seq sx)
+                             :when (and (vector? v)
+                                        (keyword? (first v))
+                                        (map? (second v)))
+                             k (keys (second v))
+                             :when (and (keyword? k) (nil? (namespace k))
+                                        (or (react->fix k) (handler? k)))]
+                         k))]
+        (when hit
+          (str "React attribute " hit " in a hiccup element — "
+               (if-let [fix (react->fix hit)]
+                 (str "use " fix)
+                 (str "server-rendered pages have no event handlers; "
+                      "a link or form targeting an endpoint replaces it"))
+               ". Browsers silently ignore unknown attributes, so this would "
+               "ship and do nothing."))))))
+
 (def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
@@ -761,7 +793,7 @@
   HTTP (`web-enabled?`)."
   [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal
    #'web-auth-refusal #'web-route-collision #'web-undeclared-effect
-   #'web-unsafe-get #'web-unknown-group])
+   #'web-unsafe-get #'web-unknown-group #'web-react-attrs])
 
 (defn ^:export write-gate-names
   "The keyword rule-names of the registered per-form write gates (from the var

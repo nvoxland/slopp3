@@ -1,5 +1,5 @@
 slopp.addelete: slopp.api slopp.store
-slopp.api: slopp.boot slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store slopp.testmain
+slopp.api: slopp.boot slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store slopp.testmain slopp.web
 slopp.bench: slopp.api slopp.render slopp.store
 slopp.benchmark: slopp.api slopp.mcp
 slopp.branch: slopp.api slopp.store

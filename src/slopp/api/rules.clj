@@ -2,7 +2,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -311,6 +311,18 @@
                         :web/effects (vec (:web/effects m))}))))
                changed))))
 
+(defn dangling-route-refs-check
+  "Done-advisory (D-web-html): rendered links/forms targeting a path no
+   declared route or static mount serves — the UI nil-pun: it ships and
+   404s. Fires STORE-WIDE, like dead surface, because deleting a route
+   dangles an UNCHANGED form's link. Inert until http.enabled. Dynamic
+   (:unresolved) refs never appear here — they must not flip status — and
+   stay answerable via `api.web/dangling-route-refs`; the `^{:web/external-path
+   \"why\"}` marker on the rendering form discharges."
+  [_session st* _changed]
+  (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
+    (vec (:dangling (api.web/dangling-route-refs st*)))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -372,6 +384,8 @@
    ;; the question grade, like shell-widening: only the author knows
    {:key :web-public-mutation :severity :advisory :check #'web-public-mutation-check
     :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
+{:key :web-dangling-route-refs :severity :error :check #'dangling-route-refs-check
+    :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
    ])
 
 (defn run-done-advisories!
