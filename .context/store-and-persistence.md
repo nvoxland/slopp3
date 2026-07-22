@@ -106,14 +106,40 @@
   Before this, appends used a single `\n` — the dogfooding papercut where added
   forms jammed together (`ideas/git-bridge-friction.md` 1b).
 
+## The fold-field registry (`slopp.store.fields`, D-fold-field-registry)
+
+ONE declaration site per store op / fold-field; the old seven hand-edited
+sites derive from it:
+
+- `field-registry`: field → `:init` (seeds `empty-store`), `:meta-key`
+  (the db meta row `write-snapshot!` writes and `load-store` reads),
+  `:normalize` (load-time canonicalization — retired tier spellings die
+  here), `:absent-nil?` (:modules' pre-module marker: never defaulted,
+  never written while nil).
+- `op-registry`: op → `:fold` (THE fold — `record-*`, `replay-delta`, and
+  merge replay all call it; they cannot drift), `:merge` (`:replay` =
+  last-writer-wins through the fold; `:bespoke` = merge-logs keeps a
+  semantic arm), `:sample`/`:crossed` (the GENERATED merge round-trip test
+  in `slopp.store.fields-test` — an op cannot register without proving it
+  crosses a merge).
+- `markers` / `element-ops` classify the rest. merge-logs REFUSES an op no
+  set knows (never a silent skip — that once cost three waves of dropped
+  config); replay-delta full-reloads it (safe: load-store reads meta rows).
+- ADDING AN OP = one registry entry (+ a `record-*` writer that calls
+  `fields/fold`). Nothing else: persistence, replay, merge, and the
+  round-trip proof all follow from the entry.
+- `db/write-snapshot!` is the single transaction tail `persist!`/`append!`
+  share — element rows + next-id + registry meta rows + blobs.
+
 ## Gotchas
 
 - Delta payloads must stay plain EDN data (no CST nodes, no objects).
 - If you add a delta op with a new key, nothing else is needed for
   persistence (payload column is schemaless) — but decide whether
   `query-lineage` should match it (it matches `:form-id` and `:form-ids`),
-  and add no-content marker ops to `replay-delta`'s marker case (else
-  foreign-journal sync falls through to a full reload). `:commit` (P4-m7
+  and register the op in `slopp.store.fields` (a marker op joins `markers`,
+  else foreign-journal sync falls through to a full reload and a merge
+  REFUSES it). `:commit` (P4-m7
   milestones) is a marker — since P4-m8 its payload also carries `:tree`
   (byte-exact rendered {ns source} snapshot) and, on imports, `:git-sha`.
 - **External dependency manifest (P4-deps):** `:deps-add`/`:deps-remove` are

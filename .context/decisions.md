@@ -1626,3 +1626,45 @@ conflicts became 2, both genuine divergence. Bidirectional branch flow is
 unblocked. Deliberately NOT done: lineage-aware conflict prose ("their
 edit builds on your v2") and milestone-marker travel (#9) — both
 recorded, neither load-bearing.
+
+## D-fold-field-registry (2026-07-22) — one declaration site per store op
+
+Every cross-cutting store concept gets exactly ONE declaration site
+(`slopp.store.fields`), and the sites that used to hand-copy it now derive:
+
+- **`field-registry`** — fold-field → `:init` (seeds `empty-store`; every
+  field now seeded, closing the :files/:config/:blobs absent-until-first-
+  write nil-pun), `:meta-key` (persist!/append!/load-store's row),
+  `:normalize` (applied at load — retired vocabulary canonicalizes),
+  `:absent-nil?` (the :modules pre-module adoption marker is never
+  defaulted or overwritten).
+- **`op-registry`** — delta op → `:fold` (THE fold: `record-*`,
+  `replay-delta`, and merge replay all call it, so in-memory, foreign-sync
+  and merge state can never drift), `:merge` strategy (`:replay` =
+  last-writer-wins through the fold; `:bespoke` = merge-logs keeps a
+  semantic arm — deps version resolution, module-edge union), and a
+  `:sample`/`:crossed` pair.
+- **The harness is GENERATED.** `fields-test/every-registered-op-crosses-
+  a-merge` runs each op's sample through a real fork + `merge-logs` and
+  asserts `:crossed` — registering an op without merge semantics is
+  structurally impossible, which permanently closes the class where merges
+  silently dropped every config/file delta for three waves (frictions #21:
+  the unknown-op default was a quiet skip).
+- **Unknown ops REFUSE the merge** with teaching naming the registry —
+  never guess with, or silently drop, someone's state. `markers` and
+  `element-ops` classify everything else; a new marker op registers once
+  or foreign sync full-reloads on every sighting.
+- **Retired tier spellings are dead in fold state** (frictions #5): the
+  one `canonical-tier` mapping lives in the registry
+  (`edit.modules/canonical-tier` delegates), the `:module-tier` fold and
+  the db load both normalize through it, and the surviving `:effects` row
+  (`slopp.bench`) was re-declared canonically. Deltas keep the author's
+  spelling verbatim — history is honest, state is canonical.
+- **`db/write-snapshot!`** is the one transaction tail `persist!` and
+  `append!` share — the copy-pasted meta-row blocks whose silent-miss
+  failure mode (survives tests, vanishes on the live server's restart) the
+  registry idea file documented are gone.
+
+Element/delta/blob storage stays bespoke (the registry covers the
+meta-row folds, per the idea file's scope). `ideas/store-fold-field-
+registry.md` is closed by this entry.
