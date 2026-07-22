@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -180,4 +180,55 @@
           (let [d (slurp (java.io.File. dir "deps.edn"))]
             (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" d))) d)
             (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" d))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external query-commits-rows-carry-title-lines
+  ;; frictions #7: needing ONE sha fetched five multi-paragraph milestone
+  ;; descriptions — the TOP rung already carried the whole story, inverting
+  ;; the ladder. Rows carry the title line (+ :more-lines); the full prose
+  ;; is one drill-down away via {commit "dN"}.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'qc.core "(ns qc.core)\n(defn ^:unused-ok f [x] x)\n")
+      (external/done! sess :label "w")
+      (external/commit-point! sess
+                              "The title line\n\nThe body paragraph that must not ride the list.")
+      (let [rows (api/query-commits sess)
+            row  (first rows)]
+        (testing "the list rung is title lines"
+          (is (= "The title line" (:description row)) (pr-str row))
+          (is (pos? (:more-lines row 0)) (pr-str row)))
+        (testing "the drill-down rung is one full milestone"
+          (let [full (api/query-commits sess :commit (:commit row))]
+            (is (map? full))
+            (is (re-find #"body paragraph" (:description full)) (pr-str full)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external ns-delete-retires-an-empty-unreferenced-namespace
+  ;; frictions #10: there was NO ns deletion — a mistaken scaffold rode
+  ;; every projection and build forever, plus lint noise from its unused
+  ;; requires. Retirement mirrors creation: refuse while forms remain
+  ;; (naming them), refuse while required (naming the requirers), then one
+  ;; :ns-delete delta and the husk is gone from store, image, and rows.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'nd.gone "(ns nd.gone)\n(defn ^:unused-ok f [x] x)\n")
+      (api/ingest! sess 'nd.user (str "(ns nd.user (:require [nd.gone :as g]))\n"
+                                      "(defn ^:unused-ok h [x] x)\n"))
+      (testing "forms remaining → refused, named"
+        (let [r (api/delete-ns! sess 'nd.gone)]
+          (is (re-find #"\bf\b" (str (:error r))) (pr-str r))
+          (is (re-find #"edit_delete_form" (str (:error r))))))
+      (api/delete-form! sess 'nd.gone 'f :prompt "clear the husk")
+      (testing "still required → refused, requirer named"
+        (let [r (api/delete-ns! sess 'nd.gone)]
+          (is (re-find #"nd\.user" (str (:error r))) (pr-str r))
+          (is (re-find #"ns_remove_require" (str (:error r))))))
+      (let [rr (api/remove-require! sess 'nd.user 'nd.gone :prompt "unwire")]
+        (is (nil? (:error rr)) (pr-str rr)))
+      (testing "empty and unreferenced → deleted everywhere"
+        (let [r (api/delete-ns! sess 'nd.gone :prompt "retire the scaffold")]
+          (is (= "nd.gone" (:deleted r)) (pr-str r)))
+        (is (nil? (get-in (:store @sess) [:namespaces 'nd.gone])))
+        (is (= :ns-delete (:op (last (store/deltas (:store @sess)))))))
       (finally (api/close! sess)))))

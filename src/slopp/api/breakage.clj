@@ -60,6 +60,33 @@
         n (arg-map-keys new-form)]
     (if (and o n) (set/difference o n) #{})))
 
+(defn- discharged-by-history?
+  "A NEWLY-added ^:breaking-ok (absent at the last-done baseline) may be
+  discharging a narrowing an EARLIER done already flagged — the baseline
+  advanced at that same done, so comparing against it alone reads the late
+  marker as stale (frictions #15; a merge-delivered narrowing made that the
+  common case, and the escape was unusable exactly when it was needed).
+  Walk prior done baselines newest-first (bounded by the caller): at the
+  FIRST one where the form existed UNMARKED, answer whether the form
+  narrowed between there and now; marked baselines are skipped (the marker
+  cannot vouch for itself)."
+  [store fid ns-sym new-form prior-done-ids]
+  (boolean
+   (first
+    (some (fn [did]
+            (when-let [old-src (get (store/sources-at store did) fid)]
+              (when-let [old (try (n/sexpr (p/parse-string old-src))
+                                  (catch Exception _ nil))]
+                (when-not (and (symbol? (second old))
+                               (:breaking-ok (meta (second old))))
+                  ;; first unmarked sighting DECIDES — wrap the verdict so
+                  ;; a false answer still terminates the walk
+                  [(and (node-boundary? ns-sym old)
+                        (boolean (or (seq (removed-arities old new-form))
+                                     (seq (removed-schema-keys old new-form))
+                                     (not (node-boundary? ns-sym new-form)))))]))))
+          prior-done-ids))))
+
 (defn breaking-changes
   "The episode's likely CONTRACT BREAKAGES: a CHANGED `defn` that WAS
    module-external at the last-done baseline and whose surface NARROWED — Hickey's
@@ -115,8 +142,25 @@
                               narrowed? (> (count finding) 1)]
                           (cond
                             (and marked? narrowed?) nil
-                            marked? {:form qsym :stale-marker true
-                                     :note (str qsym " carries ^:breaking-ok but"
-                                                " narrowed nothing — remove the flag")}
+                            marked?
+                            ;; a marker ALREADY at the baseline had its
+                            ;; discharge — remove-the-flag discipline stands;
+                            ;; a marker ADDED SINCE may be discharging what an
+                            ;; earlier done flagged (the baseline advanced at
+                            ;; that same done — frictions #15), so it earns a
+                            ;; bounded look past the baseline
+                            (let [marked-old? (and (symbol? (second old-form))
+                                                   (:breaking-ok (meta (second old-form))))
+                                  prior (->> (store/deltas store)
+                                             (filter #(= :done (:op %)))
+                                             (map :id)
+                                             butlast
+                                             reverse
+                                             (take 12))]
+                              (when-not (and (not marked-old?)
+                                       (discharged-by-history? store fid ns-sym
+                                                               new-form prior)) {:form qsym :stale-marker true
+                                 :note (str qsym " carries ^:breaking-ok but"
+                                            " narrowed nothing — remove the flag")}))
                             narrowed? finding)))))))
               changed-fids))))))

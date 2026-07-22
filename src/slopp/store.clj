@@ -922,6 +922,23 @@
       (-> (cond-> core lead (conj lead))
           (conj form-elem {:kind :sep :node (n/newlines 1)})))))
 
+(defn record-ns-delete
+  "Remove namespace `ns-sym` from the store — ONE `:ns-delete` delta. The
+  caller (api/delete-ns!) owns the refusals (non-empty, still required);
+  this is the dumb journal write, like every record-*. Persisting with
+  `nses [ns-sym]` clears the element rows (persist!'s delete-always).
+  Returns [store' delta]."
+  [store ns-sym & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :ns-delete :ns ns-sym :at (now-ms)}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(-> store'
+         (update :namespaces dissoc ns-sym)
+         (update :deltas conj delta))
+     delta]))
+
 (defn replay-delta
   "Apply a FOREIGN delta from the SAME journal (linear history — ids are
   authoritative, nothing remaps) onto a trailing cached store. Returns the
@@ -1013,6 +1030,15 @@
                              (into (subvec elems 0 idx)
                                    (subvec elems (+ idx (if drop-next? 2 1)))))
                            elems)))))
+
+        :ns-delete
+        ;; the writer removed an EMPTY husk; a trailing cache whose copy has
+        ;; grown content since is divergent — full reload gives db truth
+        (let [ns-sym (:ns d)
+              forms* (seq (filter #(and (= :form (:kind %))
+                                        (not= (:name %) ns-sym))
+                                  (get-in store [:namespaces ns-sym :elements])))]
+          (when-not forms* (with-d (update store :namespaces dissoc ns-sym))))
 
         ;; :ingest / :move / anything unregistered → full reload
         nil))))

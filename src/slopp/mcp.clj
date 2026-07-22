@@ -444,16 +444,20 @@
                                       " (ephemeral session, or the port"
                                       " couldn't bind)")}))))
    "query_commits"
-   (fn [session _a _sym]
-     (text! (let [rows (api/query-commits session)
-                  conn (:db @session)
-                  al   (when (and conn (:dir @session))
-                         (sync/alignment (:dir @session) "."
-                                         (str "slopp/" (:branch @session))
-                                         rows))]
-              (if al
-                {:commits rows :alignment al}
-                rows))))
+   (fn [session a _sym]
+     (text! (if (:commit a)
+              ;; the drill-down rung: ONE milestone, full description
+              (or (api/query-commits session :commit (:commit a))
+                  {:error (str "no milestone " (:commit a))})
+              (let [rows (api/query-commits session)
+                    conn (:db @session)
+                    al   (when (and conn (:dir @session))
+                           (sync/alignment (:dir @session) "."
+                                           (str "slopp/" (:branch @session))
+                                           rows))]
+                (if al
+                  {:commits rows :alignment al}
+                  rows)))))
    "merge_from"
    (fn [session a _sym]
      (text! (branch/merge! session (:dir a))))})
@@ -743,10 +747,16 @@
                                                     ;; these made dry-run look like a no-op
                                                     :dry-run :in-code :in-strings :note])
                                       (summarize (:verbose a)))))
-      "edit_subform" (let [match (or (:match a) (:from a))
-                                src   (or (:source a) (:to a))]
+      "edit_subform" (let [match (or (:match a) (:from a) (:after a))
+                                src   (if (:after a)
+                                        ;; anchor mode: INSERT after a complete
+                                        ;; neighbor — the commonest let-binding
+                                        ;; splice, pre-composed so the caller
+                                        ;; never shapes a half-open match
+                                        (str (:after a) "\n" (or (:source a) (:to a)))
+                                        (or (:source a) (:to a)))]
                             (when-not (and (or match (:where a)) src)
-                              (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it), plus :source" {})))
+                              (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it) OR :after (a complete neighboring form to insert behind), plus :source" {})))
                             (text! (-> (api/edit-subform! session (sym :ns)
                                             (symbol (or (:form a) (:name a)
                                                         (throw (ex-info "edit_subform needs :form (the containing form's name; :name works too)" {}))))
@@ -841,6 +851,9 @@
                                          " tests itself. Whole suite in-image: {all true};"
                                          " external merge gate: {external true}.")}))
       
+      "ns_delete" (text! (api/delete-ns! session (sym :ns)
+                                              :prompt (:prompt a)
+                                              :agent (:agent a)))
       "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))

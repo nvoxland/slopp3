@@ -126,3 +126,36 @@
           (is (= ['bok.core.impl/kept] (mapv :form f)) (pr-str f))
           (is (:stale-marker (first f)) (pr-str f))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-marker-added-after-the-finding-discharges-it
+  ;; frictions #15: the advisory fires at the done that first SEES the
+  ;; narrowing, and the baseline advances AT that same done — so a marker
+  ;; added in the NEXT episode compared against the already-narrowed source
+  ;; and read as "narrowed nothing — stale". The discharge was unusable
+  ;; exactly when the narrowing arrived unmarked (most commonly delivered
+  ;; by a merge). A NEWLY-ADDED marker now looks past the last baseline: if
+  ;; the form narrowed since it was last seen unmarked, the marker
+  ;; discharges. An ALREADY-PRESENT marker keeps the remove-the-flag
+  ;; discipline (the sibling test's third block).
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'bak.core.impl
+                   (str "(ns bak.core.impl)\n"
+                        "(defn ^:export ^:unused-ok f \"F.\" [x] x)\n"))
+      (external/done! sess :label "baseline")
+      (api/edit-replace! sess 'bak.core.impl 'f
+                         "(defn ^:unused-ok f \"F.\" [x] x)"
+                         :prompt "narrow, unmarked — as a merge would deliver it")
+      (testing "the unmarked narrowing is flagged, honestly"
+        (let [r (external/done! sess :label "the red done")]
+          (is (= ['bak.core.impl/f]
+                 (mapv :form (get-in r [:findings :breaking-changes])))
+              (pr-str (:findings r)))))
+      (testing "the marker added ONE EPISODE LATE discharges, not stales"
+        (api/edit-replace! sess 'bak.core.impl 'f
+                           "(defn ^:breaking-ok ^:unused-ok f \"F.\" [x] x)"
+                           :prompt "discharge the narrowing the last done flagged")
+        (let [r (external/done! sess :label "marked late")]
+          (is (nil? (get-in r [:findings :breaking-changes]))
+              (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

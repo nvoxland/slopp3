@@ -259,3 +259,31 @@
           (is (not-any? #(= 'pl.core.io-test (:ns %)) v)
               (str "a -test namespace was flagged by the layer loop: " (pr-str v)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external requiring-an-undeclared-ns-from-a-tiered-one-teaches-at-the-write
+  ;; frictions #4: wiring a NEW deep ns into a :pure consumer was accepted by
+  ;; the write and by done, then full_check went red on :tier-layering two
+  ;; gates later — a brand-new ns defaults to :external. The moment the
+  ;; declaration is cheap is the write that creates the dependency, so THAT
+  ;; result now carries the teaching.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tw.core "(ns tw.core)\n(defn ^:unused-ok f [x] x)\n")
+      (api/module-tier! sess "tw.core" :pure :prompt "core is pure")
+      (api/ingest! sess 'tw.util "(ns tw.util)\n(defn ^:unused-ok g [x] x)\n")
+      (testing "a tiered ns gaining an UNDECLARED dep is taught at the write"
+        (let [r (api/add-require! sess 'tw.core "[tw.util :as u]" :prompt "wire")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (:tier-note r)) (pr-str (keys r)))
+          (is (re-find #"module_purity" (str (:tier-note r))) (:tier-note r))
+          (is (re-find #"tw\.util" (str (:tier-note r))) (:tier-note r))))
+      (api/ingest! sess 'tw.led "(ns tw.led)\n(defn ^:unused-ok h [x] x)\n")
+      (api/module-tier! sess "tw.led" :pure :prompt "declared at creation")
+      (testing "declared-at-creation keeps the write quiet"
+        (let [r (api/add-require! sess 'tw.core "[tw.led :as l]" :prompt "wire")]
+          (is (nil? (:tier-note r)) (pr-str (:tier-note r)))))
+      (testing "an untiered consumer stays quiet — nothing to lose"
+        (api/ingest! sess 'tw.free "(ns tw.free)\n(defn ^:unused-ok k [x] x)\n")
+        (let [r (api/add-require! sess 'tw.free "[tw.util :as u]" :prompt "wire")]
+          (is (nil? (:tier-note r)) (pr-str (:tier-note r)))))
+      (finally (api/close! sess)))))

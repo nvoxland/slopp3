@@ -161,6 +161,22 @@
                         (conj notes {:skipped :trivia :delta (:id d)})
                         changed new-nses (conj applied (:id d)))
 
+                  :ns-delete
+                  ;; they removed an empty husk. Apply only when OUR copy is
+                  ;; also empty (or already gone) — content we grew since is
+                  ;; not deletable by their housekeeping
+                  (let [nsx (:ns d)
+                        live (seq (filter #(not= (:name %) nsx)
+                                          (store/forms st nsx)))]
+                    (if live
+                      (done st idmap merged conflicts
+                            (conj notes {:skipped :ns-delete :ns nsx
+                                         :reason "our copy holds forms theirs never saw"})
+                            changed new-nses (conj applied (:id d)))
+                      (done (update st :namespaces dissoc nsx)
+                            idmap (inc merged) conflicts notes changed new-nses
+                            (conj applied (:id d)))))
+
                   :deps-add
                   ;; a foreign dep declaration. No divergence (new lib or same
                   ;; coord) → land it. Divergence of two mvn versions → auto-

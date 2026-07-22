@@ -325,6 +325,18 @@
   [tier]
   (fields/canonical-tier tier))
 
+(defn ^:export tier-declared?
+  "True when ANY tier declaration covers `ns-sym` — itself or an enclosing
+  prefix. Distinct from tier-for, which answers :external for the
+  undeclared: the distinction matters exactly once, at the write that makes
+  a TIERED ns depend on a new one — the moment a declaration is cheap and
+  the context is loaded (add-require!'s teaching)."
+  [store ns-sym]
+  (let [tiers (:module-tiers store)
+        segs  (str/split (str ns-sym) #"\.")]
+    (boolean (some #(get tiers (str/join "." (take % segs)))
+                   (range (count segs) 0 -1)))))
+
 (defn ^:export tier-for
   "The purity tier governing `ns-sym`: the MOST SPECIFIC declaration wins —
    the namespace itself, then each enclosing prefix, then its module, then

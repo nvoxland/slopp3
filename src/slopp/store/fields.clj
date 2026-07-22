@@ -161,8 +161,10 @@
 (def element-ops
   "Form/namespace CONTENT ops — the bespoke replay/merge machinery owns
   them (:trivia merges as a deliberate skip: cosmetic payload, form-id
-  aliasing risk)."
-  #{:ingest :replace :add :delete :rename :normalize :move :trivia})
+  aliasing risk; :ns-delete removes an EMPTY namespace — replay dissocs or
+  full-reloads, and the merge applies it only when the receiving side's
+  copy is also empty)."
+  #{:ingest :replace :add :delete :rename :normalize :move :trivia :ns-delete})
 
 (defn fold
   "Apply the ONE registered fold for a field-carrying delta to `store` —

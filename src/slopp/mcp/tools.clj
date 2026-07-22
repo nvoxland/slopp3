@@ -182,7 +182,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Small change INSIDE a big form. match = ONE exact subform or pair (a missed/ambiguous match returns :source-now — correct and resend, no read needed); text: true matches raw text (strings/docstrings) EXACTLY as :source-now shows it — no extra escaping, backslashes literal; whitespace runs are equivalent (reflowed docstrings match); OR where: {key value} addresses the unique MAP containing those entries (registry rows by :name — no exact text needed). The replacement may splice several forms."
+    :description "Small change INSIDE a big form. match = ONE exact subform or pair (a missed/ambiguous match returns :source-now — correct and resend, no read needed); text: true matches raw text (strings/docstrings) EXACTLY as :source-now shows it — no extra escaping, backslashes literal; where: {key value} addresses the unique MAP containing those entries (registry rows by :name — no exact text needed); OR after: a COMPLETE neighboring form/pair — source is INSERTED right behind it (the let-binding splice without shaping a half-open match). The replacement may splice several forms."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
@@ -259,6 +259,12 @@
                   :properties {:old {:type "string"} :new {:type "string"}
                                :prompt {:type "string"}}
                   :required ["old" "new"]}}
+   {:name "ns_delete"
+    :description "Retire a namespace: refuses while any form remains (edit_delete_form them first — each deletion verified) or any other ns still requires it (ns_remove_require) — then removes the empty husk from store, image, and every projection. One :ns-delete delta; say WHY in prompt."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["ns"]}}
    {:name "edit_move_forms"
     :description "Move forms to another namespace, NEW or EXISTING — the general relocation refactor. Callers EVERYWHERE (prod + tests) are rewritten to alias-qualified calls and gain the require; moved defs are publicized (module visibility is the boundary); the target gets only the requires the moved code uses; dependency direction is analyzed (a two-way split refuses — a real cycle). export: true marks moved vars ^:export for a deep target with outside callers. One atomic group, verified."
     :inputSchema {:type "object"
@@ -436,8 +442,8 @@
 (def sync-tools
   "Git-sync tool descriptors: push/pull/clone/conflicts and remotes. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
   [{:name "query_commits"
-    :description "Milestones, newest first (targets plug into query_changes from/to). With a git remote configured, :alignment PROVES whether the slopp branch head is the latest milestone's projection — trust it; no worktree/sqlite cross-checks."
-    :inputSchema {:type "object" :properties {}}}
+    :description "Milestones, newest first — TITLE lines only (+ :more-lines); {commit \"dN\"} drills into ONE full description (targets plug into query_changes from/to). With a git remote configured, :alignment PROVES whether the slopp branch head is the latest milestone's projection — trust it; no worktree/sqlite cross-checks."
+    :inputSchema {:type "object" :properties {:commit {:type "string"}}}}
    {:name "query_git"
     :description "This session's git view: the embedded read-only listener URL + the saved external remote."
     :inputSchema {:type "object" :properties {}}}
@@ -530,5 +536,5 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
   (into single-write-tools
         ["edit_delete_form" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
-         "done" "commit_point" "deps_add" "deps_remove" "deps_pure"
-         "change_signature"]))
+         "ns_delete" "done" "commit_point" "deps_add" "deps_remove"
+         "deps_pure" "change_signature"]))

@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities]))
+            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -853,15 +853,41 @@
   Forwards `:agent` (#132): without it the delta landed agent-nil and the edit
   never entered ANY agent's episode — `done` never linted, normalized, or
   verified an ns_add_require at the boundary. Found by the collapse fix's own
-  e2e: the ns-form change it staged simply never arrived."
+  e2e: the ns-form change it staged simply never arrived.
+
+  Attaches `:tier-note` when a TIERED namespace gains an in-store dep no
+  declaration covers: undeclared defaults :external, so the consumer's tier
+  claim dies at the next full_check's layering pass — and the write that
+  creates the dependency is the one moment the declaration is cheap and the
+  author's context is loaded (frictions #4: the signal used to arrive two
+  gates late)."
   [session ns-sym require-str & {:keys [prompt agent]}]
   (if-let [f (store/form-named (:store @session) ns-sym ns-sym)]
     (let [r (edit/add-require-source (n/string (:node f)) require-str)]
       (if (:error r)
         r
-        (edit-replace! session ns-sym ns-sym (:src r)
-                       :prompt (or prompt (str "add require " require-str))
-                       :agent agent)))
+        (let [res (edit-replace! session ns-sym ns-sym (:src r)
+                                 :prompt (or prompt (str "add require " require-str))
+                                 :agent agent)
+              st  (:store @session)
+              lib (try (let [spec (edn/read-string (str require-str))]
+                         (cond (vector? spec) (first spec)
+                               (symbol? spec) spec))
+                       (catch Exception _ nil))
+              note (when (and (nil? (:error res)) lib
+                              (contains? (:namespaces st) lib)
+                              (edit.modules/tier-declared? st ns-sym)
+                              (contains? #{:pure :internal}
+                                         (edit.modules/tier-for st ns-sym))
+                              (not (edit.modules/tier-declared? st lib)))
+                     (str ns-sym " is declared " (edit.modules/tier-for st ns-sym)
+                          " and now depends on UNDECLARED " lib " (defaults"
+                          " :external — full_check's tier-layering will flag"
+                          " this). Declare it while the context is loaded:"
+                          " module_purity {module \"" lib "\" tier \"...\"} —"
+                          " a new ns's tier is cheapest at creation."))]
+          (cond-> res
+            note (assoc :tier-note note)))))
     {:error (str "no namespace " ns-sym " (create it first)")}))
 
 (defn remove-require!
@@ -1135,28 +1161,40 @@
 
 ^:reads (defn query-commits
   "Milestones, newest first:
-  [{:commit :description :target :status :agent :at :sha}]. Commit `:target`
-  ids plug straight into query-changes :from/:to for between-milestone
-  diffs. `:sha` (P4-m8) is the milestone's git commit id — present once the
-  git projection has minted it (imported markers carry theirs from birth)."
-  [session]
+  [{:commit :description :target :status :agent :at :sha}]. The list rung
+  carries each description's TITLE LINE only (+ :more-lines when a body
+  follows) — needing one sha used to fetch five whole milestone essays;
+  `:commit \"dN\"` returns that ONE milestone with its full description.
+  Commit `:target` ids plug straight into query-changes :from/:to for
+  between-milestone diffs. `:sha` (P4-m8) is the milestone's git commit id —
+  present once the git projection has minted it (imported markers carry
+  theirs from birth)."
+  [session & {:keys [commit]}]
   (let [{:keys [dir]} @session
         shas (when dir
                (try (with-open [conn (db/open! dir)]
                       (db/commit-shas conn))
-                    (catch Exception _ nil)))]
-    (->> (store/deltas (:store @session))
-         (filter #(= :commit (:op %)))
-         reverse
-         (mapv (fn [d]
-                 (cond-> {:commit      (:id d)
-                          :description (:description d)
-                          :target      (:target d)
-                          :status      (:status d)
-                          :at          (history/human-time (:at d))}
-                   (:agent d) (assoc :agent (:agent d))
-                   (or (:git-sha d) (get shas (:id d)))
-                   (assoc :sha (or (:git-sha d) (get shas (:id d))))))))))
+                    (catch Exception _ nil)))
+        rows (->> (store/deltas (:store @session))
+                  (filter #(= :commit (:op %)))
+                  reverse
+                  (mapv (fn [d]
+                          (cond-> {:commit      (:id d)
+                                   :description (:description d)
+                                   :target      (:target d)
+                                   :status      (:status d)
+                                   :at          (history/human-time (:at d))}
+                            (:agent d) (assoc :agent (:agent d))
+                            (or (:git-sha d) (get shas (:id d)))
+                            (assoc :sha (or (:git-sha d) (get shas (:id d))))))))]
+    (if commit
+      (first (filter #(= (str commit) (:commit %)) rows))
+      (mapv (fn [row]
+              (let [lines (str/split-lines (str (:description row)))
+                    body  (count (remove str/blank? (rest lines)))]
+                (cond-> (assoc row :description (first lines))
+                  (pos? body) (assoc :more-lines body))))
+            rows))))
 
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
@@ -2662,3 +2700,44 @@
               dry-run        (assoc report :dry-run true)
               :else          (let [r (edit-group! session steps :prompt why :agent agent)]
                                (if (:error r) r (merge r report))))))))))
+
+(defn delete-ns!
+  "Remove namespace `ns-sym` from the store — the retirement half creation
+  never had (a mistaken scaffold used to ride every projection and build
+  forever). Refuses while the namespace holds any form beyond its ns decl
+  (delete those first — each deletion individually verified) or while any
+  other namespace still requires it (ns_remove_require first). On success:
+  one :ns-delete delta, element rows cleared by the persist, and the image
+  drops the namespace so a stale require fails fast."
+  [session ns-sym & {:keys [prompt agent]}]
+  (let [st (:store @session)]
+    (cond
+      (nil? (get-in st [:namespaces ns-sym]))
+      {:error (str "no namespace " ns-sym)}
+
+      (seq (remove #(= (:name %) ns-sym) (store/forms st ns-sym)))
+      (let [held (keep :name (remove #(= (:name %) ns-sym)
+                                     (store/forms st ns-sym)))]
+        {:error (str ns-sym " still holds "
+                     (count (remove #(= (:name %) ns-sym) (store/forms st ns-sym)))
+                     " form(s)"
+                     (when (seq held) (str " (" (str/join ", " held) ")"))
+                     " — delete them first (edit_delete_form); ns_delete"
+                     " removes only an empty namespace")})
+
+      :else
+      (let [requirers (vec (sort (for [other (keys (:namespaces st))
+                                       :when (and (not= other ns-sym)
+                                                  (some #{ns-sym}
+                                                        (store/ns-requires st other)))]
+                                   other)))]
+        (if (seq requirers)
+          {:error (str ns-sym " is still required by " (str/join ", " requirers)
+                       " — ns_remove_require them first")}
+          (do (session/commit-appended!
+               session
+               #(first (store/record-ns-delete % ns-sym :prompt prompt :agent agent))
+               [ns-sym])
+              (repl/eval! (:image @session)
+                          (format "(remove-ns '%s)" ns-sym))
+              {:deleted (str ns-sym)}))))))
