@@ -354,7 +354,8 @@ episode. Reverting before a `commit_point` leaves the milestone history clean
 session_brief report query_slice query_depends · turn_begin turn_end ·
 query_project query_search query_source query_brief query_history
 query_changes query_eval query_store query_observe query_call query_vocabulary
-query_rules query_rule_telemetry query_macroexpand query_branches query_commits
+query_rules query_rule_telemetry query_capabilities query_macroexpand
+query_branches query_commits
 query_git query_detail review_scan · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia

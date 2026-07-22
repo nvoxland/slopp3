@@ -93,6 +93,11 @@ ordinary git.
   history-tracked like code and rendered into every projection. Format
   `manifest` covers `META-INF/MANIFEST.MF`: set `Main-Class`/`X-Slopp-Main`
   once and the repo's uberjar boots with a zero-arg `java -jar slopp.jar`.
+- The `capabilities` path is the project's app manifest — `app.name`,
+  `app.version`, `app.main` (the entry point `build` uses when no `:main`
+  arg is passed). Every key is registry-declared: writes validate with
+  teaching, and `query_capabilities` lists each setting with its type,
+  default, and effective value.
 - `file_put {path, content}` — genuinely opaque files that must ride the
   projection (build scripts). Keep external-system config (CI workflows,
   READMEs) on the human branch instead — only config the app itself consumes

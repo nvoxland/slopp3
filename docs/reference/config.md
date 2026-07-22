@@ -34,6 +34,27 @@ one. A project adopting slopp on an existing codebase is the case for dialing
 things down while it migrates -- `cleanup {all: true}` is the sweep that tells
 you how much there is.
 
+## The capabilities file
+
+`config_file {path "capabilities"}` is the project's app manifest and opt-in
+surface: what the application is called (`app.name`, `app.version`), its
+entry point (`app.main` -- `build` uses it when no `:main` argument is
+passed), and, as the web waves land, whether it serves HTTP and how.
+
+Unlike a free-form config file, every `capabilities` key is declared in a
+registry with a type, a default, and a doc line. That buys two things:
+
+- **Writes validate.** An unknown key or a value that fails its type is
+  refused at the write, with teaching -- a typo'd setting can never silently
+  do nothing.
+- **Reads never nil-pun.** `query_capabilities` lists every setting with its
+  default and its effective value; a registered key always has an answer.
+
+```clj
+config_file {path "capabilities" key "app.main" value "myapp.core/-main"}
+query_capabilities {}
+```
+
 ## Structured config files
 
 `config_file` stores semantic key/values with per-key history and serializes

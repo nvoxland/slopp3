@@ -26,6 +26,7 @@ a running server, and is always current for the version you are on.
 | `review_scan` | Whole-codebase review triage, risk-ranked: untested, unused, effectful, high-blast, large, lint-flagged, undocumented. |
 | `query_rules` | The enforcement catalog: every rule, its grain, its effective severity, how to discharge it. |
 | `query_rule_telemetry` | Fire rates and discharge patterns per rule, plus escape-marker density. |
+| `query_capabilities` | Every capability setting: type, default, effective value, what's set. Writes to the `capabilities` config validate against this registry. |
 
 ## The oracle
 

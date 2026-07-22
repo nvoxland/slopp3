@@ -453,3 +453,28 @@ Two transports share the SAME dispatch (`mcp/handle`):
   identity stamped ON the milestone marker at commit_point time (G5);
   unset or "<git>" defers to `git config` in the project dir. Determinism:
   identity lives on the marker, never read from config at projection time.
+
+## The capability registry (`slopp.api.capabilities`, D-web wave 0)
+
+The `capabilities` config file is the store's APP MANIFEST + opt-in surface
+(what kind of application this is: name/version/entry point, whether it
+serves HTTP, ports, auth providers, groups). It rides the ordinary `:config`
+CRDT (G9) — the new thing is the DECLARED registry: one entry per key
+(`{:key :type :default :doc}`, wildcards like `auth.static.*` /
+`groups.*.members`), from which everything derives:
+
+- `find-entry`/`check-value` — `config_file {path "capabilities"}` VALIDATES
+  at write: unknown keys and type-failing values refuse with teaching
+  (`config-refusal`). A typo'd key must never silently do nothing.
+- `effective store k` — parsed stored value else the declared default; a
+  registered key with a default never nil-puns.
+- `report` → `query_capabilities` (read-only tool): every setting with
+  default, effective value, and provenance; wildcard families as
+  `:patterns`. The `query_rules` shape, applied to configuration.
+- `build!` falls back to `app.main`/`app.name` when its args are absent —
+  the entry point is store state, not a tool argument.
+
+`:type` is a small STRUCTURAL vocabulary (`:string :boolean :int :enum
+:set-of :qualified-symbol :csv`), deliberately not malli — this ns loads in
+the server/boot JVM (kernel deps only; the two-process split). Extending the
+vocabulary = a case in `check-value` + the parser in `effective`, in one ns.

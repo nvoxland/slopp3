@@ -1417,3 +1417,51 @@ extra explicit call, once per new project, and the provenance is *better* for
 it: the agent supplies the user's verbatim ask rather than the hook inferring
 it. Rejected the alternative of auto-opening a turn for storeless sessions —
 it would silently attribute a project's very first write to nothing.
+
+## D-web (2026-07-22) — web applications: the boundary program applied to HTTP
+
+The deferral in `ideas/deferred-framework-and-http.md` is lifted; the design
+center is a THIRD-PARTY developer building an arbitrary web app through slopp
+(slopp's own endpoints are the dogfood, never the design driver). Settled, to
+be built in waves on the `web` store branch (plan of record: the approved
+web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
+
+- **Capability registry (wave 0, SHIPPED 2026-07-22).** A store declares what
+  kind of application it is in a `capabilities` config file riding the
+  EXISTING `:config` CRDT (G9 — no new fold-field). What is new is the
+  DECLARED registry (`slopp.api.capabilities/registry`): one entry per key —
+  `{:key :type :default :doc}` — from which the validator, the effective-value
+  read, and `query_capabilities` all derive (the rule-catalog shape, applied
+  to configuration). Types are a small STRUCTURAL vocabulary, not malli:
+  this ns loads in the server/boot JVM, kernel deps only (the two-process
+  split; the schema-refusal precedent). Write-time validation: `config_file`
+  on the capabilities path REFUSES unknown keys (a typo'd capability that
+  silently does nothing is the nil-pun failure the registry exists to kill)
+  and type-failing values, with teaching. `app.main`/`app.name` persist the
+  app manifest — `build!` falls back to them, so the entry point is store
+  state, not a tool argument. `http.enabled` (default false) is the master
+  opt-in every web rule will be gated on: a store that never opts in is
+  untouched (the purity-tier adoption lesson).
+- **An endpoint is a `defn` with `:web/*` metadata** (method, path, auth,
+  schema) — no macro, no dialect change, no central route table. Metadata is
+  read straight off the stored node like `^:export`/`:malli/schema`, so every
+  existing gate applies and routes enumerate with zero eval.
+- **Request/response maps stay RING-shaped**; slopp namespaces only what it
+  ADDS (`:web/identity`, `:web/effects`, `:web/reads`, …). The training-data
+  prior is an asset, not a hazard; the novelty budget is spent on
+  effects/reads-as-data and declared auth only.
+- **Handlers are pushed pure**: reads declared as data (`:web/reads` naming
+  app-defined `^{:web/read k}` performers), writes returned as data
+  (`:web/effects` naming `^{:web/effect k}` performers), the dispatcher
+  interprets both — slopp never learns domain vocabulary. Escape ladder:
+  declared reads → read capability → `^:web/effectful` (`:external` ns).
+- **Auth is declared on the form** (`:web/auth`, default-deny via the
+  `web-auth-refusal` gate) and enforced by the dispatcher before the handler
+  is reachable; providers/groups live in the capabilities config; secrets are
+  `env:NAME` indirections.
+- **Server: http-kit default adapter** (native-proven, ring-compatible,
+  WebSockets), `:jdk` kept as the zero-dep fallback, Helidon/hirundo the
+  named in-process-TLS upgrade path, ring-jetty rejected (native-image
+  breakage). The adapter is a capability key behind a one-function seam.
+- **Static assets: content-addressed blob table** (sha256 → bytes), `:files`
+  values polymorphic, deltas carry the sha (wave 4).
