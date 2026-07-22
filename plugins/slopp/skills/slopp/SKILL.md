@@ -18,8 +18,7 @@ hooks handle them — never call `turn_begin` unless a write is refused);
 every write is formatted, linted, compile-gated, and test-verified before
 it lands; when your session pauses, a done-point pipeline tidies and
 re-verifies what you touched. Setup/sync/shipping: the `slopp-setup`
-skill. Full result-shape and oracle reference: `reference.md` next to this
-file. **Before writing non-trivial code or making a design call, read the
+skill. **Before writing non-trivial code or making a design call, read the
 `slopp-style` skill** (functional-core shape, program-to-data, boundary
 contracts, the conventions slopp enforces); reviewing slopp code: `slopp-review`.
 
@@ -62,7 +61,8 @@ measurably bleed tokens.
    lifetime, `format: "text"` for line diffs — never `git diff`, and never
    raw `store.db`.
 3. **Write with intent; trust the verification.** Every write takes a
-   one-line `prompt`. The response carries the affected tests' result —
+   one-line `prompt`: ONE logical change per write, and say WHY — history
+   quality is intent quality. The response carries the affected tests' result —
    `test_run` after an edit is redundant. Red results carry `:failures`
    inline plus `:implicated` (which of YOUR changes each failing test
    exercises) — start debugging there. **Your work is already verified —
@@ -257,6 +257,59 @@ where it belongs. `edit_move_forms` relocates a cluster in one verified
 intent (callers everywhere rewritten, requires added, `export: true` for a
 deep target with outside callers).
 
+## Result keys
+
+Green and quiet compresses to `{:ok true :delta "d42" :test {:ran 2 :pass 5
+:status :green :scope :affected} :affected 2}`. `:status` is EXPLICIT — never
+infer red/green from a result's SHAPE. `verbose: true` on any write returns the
+full map.
+
+- `:scope` — `:affected` (only the tests exercising your change ran) vs `:all`.
+  `:affected` — how many re-ran; `:all` = no trace map yet.
+- `:status :partial` — impacted `^:external` tests were DEFERRED, and
+  `:external-pending` names them. `:unverified` — nothing ran; `:reason` says
+  which kind, and a zero-test run also carries `:coverage :none`.
+- `:failures` — expected/actual/exception per failure. Diagnose from the
+  response; a follow-up `test_run` re-derives what you already have.
+  `:implicated` — which of YOUR changes each failing test exercises.
+- `:red-first` — the not-yet-written vars a new spec named (stubbed to fail
+  honestly). `:carried-errors` — stale callers a signature change left behind.
+  `:still-red` / `:went-green` — which reds persisted, which cleared.
+- `:staleness-healed true` — the red was image staleness, already healed.
+  `:image-healed true` — the image was rebuilt under you. `:fresh-confirmed
+  true` (red path) — the red survived a fresh image, so it is real.
+- `:untested true` — nothing exercises the form you changed; `draft_test`.
+- `:warnings` — `!`-naming violations YOU introduced; fix with `edit_rename`
+  per the `:suggest`. `:existing-warnings n` counts older ones.
+- `:drift` — a finding surfaced on the WRITE precisely so you see it before
+  calling `done`.
+- `:manual` (change_signature) — references it could NOT rewrite (higher-order
+  uses); handle those with `edit_subform`.
+- `:dry-run` (rename_sweep) — `:in-code` / `:in-strings`, nothing written.
+- `:conflicts` (merge) — ours kept, theirs surfaced; the payload IS current
+  live source, so resolve straight from it.
+- `:source-now` — your match missed or was ambiguous. Correct from it and
+  resend; no read needed.
+- `:hint` — a one-line workflow nudge, at most once per session.
+
+## Effects, deps, escape hatches
+
+- `deps_add` a library, then require it normally (hot classpath add, no
+  restart). `deps.edn` is GENERATED — never hand-edit it.
+- Calls into an opaque dep count as EFFECTFUL: name the caller `!`, or
+  `deps_pure` the var/namespace/lib, or tag the form `^:reads` (reads take no
+  bang).
+- `^:unsafe` opts ONE form out of the dialect gate — the greppable last resort.
+  It does not silence `!`-naming. The honest case is analysis code that NAMES a
+  banned symbol as data; comparing head names as strings avoids the marker
+  entirely.
+- **Every memo goes through `slopp.cache`.** That is what keeps `:internal`
+  checkable — an ad-hoc atom is indistinguishable from arbitrary mutation.
+  `without-caching!` bypasses for a test; `reset-all!` clears every cache.
+- `build {dir}` materializes plain files (absolute path, outside the repo);
+  with `main` it also emits a GraalVM native-image recipe. Repo sync, uberjars,
+  config files, CI: the `slopp-setup` skill.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
@@ -283,7 +336,7 @@ History is ONE door:
 `query_history` routes by args ({} episodes · {ns name} a form's life ·
 {ns name at} time-travel · {at} was-green-at · {contains} which asks
 touched X · {dead_ends true} the SCRAPPED explorations, {dead_ends "some.ns"}
-those that touched it); `report {since}` for summaries — see reference.md.
+those that touched it); `report {since, contains}` for summaries and handoffs.
 
 **When you hit a dead end, revert cleanly and say WHY.** `undo` walks back
 your OWN writes by delta — `{deltas n}` for the last n, or `{to :last-commit}`
@@ -300,12 +353,14 @@ episode. Reverting before a `commit_point` leaves the milestone history clean
 
 session_brief report query_slice query_depends · turn_begin turn_end ·
 query_project query_search query_source query_brief query_history
-query_changes query_eval query_store query_observe query_vocabulary query_rules
-query_rule_telemetry query_macroexpand query_branches query_commits query_git · ns_create
+query_changes query_eval query_store query_observe query_call query_vocabulary
+query_rules query_rule_telemetry query_macroexpand query_branches query_commits
+query_git query_detail review_scan · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
-edit_rename change_signature edit_extract edit_move_forms edit_move
-edit_revert episode_revert fix_declares · branch_create branch_switch
+edit_rename change_signature rename_sweep edit_requalify edit_extract
+edit_move_forms edit_move edit_revert undo episode_revert cleanup ·
+branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep module_purity · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
