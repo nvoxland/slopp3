@@ -1459,6 +1459,16 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   are `:web/effects`/`:web/reads` NAMESPACED — bare `:effects`/`:reads` trips
   the retired-tier-vocabulary advisory, and slopp namespacing what it adds is
   the standing §2 rule anyway.
+  **Merged to main 2026-07-22** — after the branch dogfood fixed the merge
+  pipeline itself: `merge-logs` replays `:move` deltas (order is
+  load-bearing since D7, the "cosmetic" premise predated it);
+  `merge-into-session!` loads new namespaces and existing namespaces'
+  changed forms in ONE interleaved dependency-ordered pass (a new
+  downstream ns must compile against just-merged upstream forms); dead
+  changed-ids (added-then-deleted on the branch) are pruned and
+  `hot-load-form!` guards vanished forms; the one-shot CLI's errors carry
+  their cause chain and stack. Full friction narrative:
+  `ideas/web-wave-frictions.md`.
 - **Request/response maps stay RING-shaped**; slopp namespaces only what it
   ADDS (`:web/identity`, `:web/effects`, `:web/reads`, …). The training-data
   prior is an asset, not a hazard; the novelty budget is spent on
