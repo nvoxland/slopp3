@@ -115,6 +115,24 @@
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
+(defonce boot-info
+  ;; the host's own currency record — session_brief reads it (through the
+  ;; late-ref carrier; absent in processes that didn't boot from a store) to
+  ;; answer "which code is this server actually running": :snapshot mode =
+  ;; the store AT LAUNCH, :live mode = launch + successful reloads of
+  ;; MAIN-journal commits. A branch line's writes live in its own
+  ;; mini-journal and are DELIBERATELY invisible to the watcher — host code
+  ;; tracks the main line; branch serving behavior is verified in the image
+  ;; or a fresh JVM. Keys: :dir :mode :booted-at, then :last-reload-at
+  ;; :reloads :failed maintained by watch-live!.
+  (atom nil))
+
+(defn current-boot-info
+  "The boot-info record, or nil — the fn face session_brief reaches through
+  a late-ref carrier (an atom cannot be a carrier target)."
+  []
+  @boot-info)
+
 ^:unsafe (defn watch-live!
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
@@ -159,6 +177,14 @@
                         loaded  (remove failed changed)]
                     (when (seq loaded)
                       (log! "live-reloaded: " (str/join " " loaded)))
+                    ;; keep the currency record honest: a failed ns stays
+                    ;; listed until a later poll reloads it (it also holds
+                    ;; the version baseline back, below)
+                    (swap! boot-info
+                           #(when % (-> %
+                                        (assoc :last-reload-at (System/currentTimeMillis)
+                                               :failed (vec (sort failed)))
+                                        (update :reloads (fnil + 0) (count loaded)))))
                     ;; a failed ns keeps its OLD source so it still looks changed,
                     ;; and holding dv back keeps the version-change branch firing
                     [(if (seq failed) dv dv2)
@@ -201,6 +227,9 @@
     clojure -M -m slopp.boot . --main slopp.sync/-main push . <url>"
   [& args]
   (let [{:keys [dir live? main args]} (parse-args args)]
+    (reset! boot-info {:dir dir
+                       :mode (if live? :live :snapshot)
+                       :booted-at (System/currentTimeMillis)})
     (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
     (let [sources (load-store! dir)]
       ;; a typo'd dir CREATES an empty .slopp/store.db and loads zero

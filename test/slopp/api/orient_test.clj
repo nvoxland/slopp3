@@ -89,3 +89,36 @@
               (str "a reopened session must still carry observed examples: " (pr-str c)))
           (is (some #(re-find #"100" %) (:examples c)) (pr-str c)))
         (finally (api/close! sess2))))))
+
+(deftest host-brief-reads-the-currency-record
+  ;; frictions #8 (three sightings): which code the serving host actually
+  ;; runs was invisible and line-entangled — every incident began with not
+  ;; knowing. The brief now says it: snapshot hosts name the deltas they
+  ;; cannot be running, live hosts stay quiet unless a reload failed, and a
+  ;; branch line teaches that host code tracks the MAIN journal only.
+  (testing "no record (a non-boot process) → nil, section absent"
+    (is (nil? (orient/host-brief nil 0 false))))
+  (testing "snapshot mode names the deltas the host cannot be running"
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 3 false)]
+      (is (= :snapshot (:mode h)))
+      (is (re-find #"3 delta" (:note h)))
+      (is (re-find #"restart" (:note h)))))
+  (testing "snapshot mode with nothing since boot says current, plainly"
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 0 false)]
+      (is (re-find #"launch" (:note h)))))
+  (testing "live on main with clean reloads is QUIET — no note, no noise"
+    (let [h (orient/host-brief {:mode :live :booted-at 100 :last-reload-at 200
+                                :reloads 4 :failed []}
+                               0 false)]
+      (is (= :live (:mode h)))
+      (is (nil? (:note h)))
+      (is (nil? (:failed h)))))
+  (testing "live on a BRANCH teaches the main-journal blindness"
+    (let [h (orient/host-brief {:mode :live :booted-at 100} 0 true)]
+      (is (re-find #"branch" (:note h)))
+      (is (re-find #"image" (:note h)))))
+  (testing "failed reloads are NAMED — a silent hold-back is the old bug"
+    (let [h (orient/host-brief {:mode :live :booted-at 100 :failed '[a.core]}
+                               0 false)]
+      (is (= '[a.core] (:failed h)))
+      (is (re-find #"(?i)failed" (:note h))))))

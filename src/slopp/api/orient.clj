@@ -89,3 +89,40 @@
                   (update :changes #(vec (take 20 %)))
                   (assoc :note (str "rolled up by namespace, showing 20 of "
                                     (count rolled) " — {contains} narrows"))))))))))
+
+(defn ^:export host-brief
+  "The serving host's code-currency section for session_brief, as data —
+  pure assembly over the kernel's boot-info record (`info`), the count of
+  deltas landed after the host booted, and whether the session is on a
+  branch line. Nil `info` (a process that didn't boot from a store) → nil,
+  the section simply absent.
+
+  The stances it teaches: a :snapshot host serves LAUNCH-time code, so
+  post-boot deltas are inert until restart; a :live host tracks the MAIN
+  journal only (a branch line's writes reload the image, never the host);
+  a reload failure is NAMED, because a silently held-back namespace is how
+  three debugging arcs started."
+  [info deltas-since-boot on-branch?]
+  (when info
+    (let [failed (seq (:failed info))
+          note   (cond
+                   failed
+                   (str "live-reload FAILED for " (str/join ", " failed)
+                        " — the host still runs their previous code; the next"
+                        " poll retries, and the failure is in the server log")
+
+                   (= :snapshot (:mode info))
+                   (if (pos? (or deltas-since-boot 0))
+                     (str deltas-since-boot " delta(s) landed after this server"
+                          " booted — snapshot mode serves launch-time code, so"
+                          " serving-machinery changes are inert until restart")
+                     "host code = the store at launch (snapshot mode)")
+
+                   on-branch?
+                   (str "host code tracks the MAIN journal — this branch line's"
+                        " writes hot-reload the image only; verify branch"
+                        " serving behavior there or in a fresh JVM"))]
+      (cond-> {:mode (:mode info) :booted-at (:booted-at info)}
+        (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
+        failed                 (assoc :failed (vec failed))
+        note                   (assoc :note note)))))

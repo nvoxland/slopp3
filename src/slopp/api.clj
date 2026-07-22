@@ -2188,7 +2188,10 @@
   user's verbatim words, via the prompt hook or turn_begin) is mined
   against form names, deterministically, and the top matches ride as
   interface CARDS under :relevant. The agent starts working instead of
-  orienting."
+  orienting. :host is the serving process's code-currency record
+  (orient/host-brief over the kernel's boot-info, reached through the
+  late-ref carrier — absent when this process didn't boot from a store):
+  which code the host actually runs, and what a restart would change."
   [session]
   (let [st       (:store @session)
         nss      (sort (keys (:namespaces st)))
@@ -2214,6 +2217,17 @@
                       (-> (select-keys d [:label :at :findings])
                           (assoc :note (str "the last done-point left problems —"
                                             " address them or tell the user why not")))))
+        ;; the kernel ns exists only in a process that booted from a store
+        ;; (the dev server, a jar launch) — reach it through the carrier and
+        ;; treat any failure as absence, never an error
+        host     (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
+                                      (catch Throwable _ nil))]
+                   (orient/host-brief
+                    info
+                    (count (filter #(> (:at % 0) (:booted-at info 0))
+                                   (store/deltas st)))
+                    (boolean (when-let [b (:branch @session)]
+                               (not= "main" (str b))))))
         intent   (:last-intent @session)
         stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
                    "tell" "every" "should" "their" "them" "than" "then" "they"
@@ -2249,6 +2263,7 @@
                         " them, don't narrate them. (Full loop: the slopp skill.)")}
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
+      host       (assoc :host host)
       relevant   (assoc :relevant relevant))))
 
 ^:reads (defn report
