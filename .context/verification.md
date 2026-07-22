@@ -13,7 +13,7 @@ The oracle must never return a false verdict. Everything here serves that.
      (in-image); `slopp.testmain` wraps cognitect's runner with it (external,
      item 7). The runners genuinely differ; the wrapping must never be copied,
      because a second tracer is a second truth.
-   - `traced-run` drops `^:isolated` tests **unconditionally, by design** —
+   - `traced-run` drops `^:external` tests **unconditionally, by design** —
      they spawn images and would recurse in-image. That is not an oversight to
      "fix": the external tier is where they run, and it traces them there.
    - **Two copies of `slopp.rt` exist** and each has its own consumer: the
@@ -25,6 +25,23 @@ The oracle must never return a false verdict. Everything here serves that.
      store copy legitimately carries `^:entry-point` markers the file has no
      use for. Nothing enforces this; they HAVE drifted
      (`ideas/rt-is-duplicated-file-and-store.md`). Change both.
+     **Measured and repaired 2026-07-21** (diff the file against a `build!`
+     of the store — that is the check, and it takes one command). Two real
+     breaks had accumulated, neither of them prose:
+     - the file filtered the in-image runner with `(remove (comp :isolated
+       meta))` while the store used `:external`, so canonically-tagged
+       `^:external` tests were NOT filtered by the file copy — the exact
+       false-green the tier rename exists to prevent;
+     - `install-parent-watchdog!` (the subprocess-leak fix) was in the store
+       and **missing entirely from the file** — a surface break, not a drift.
+       Nothing broke today only because `repl/inject-rt!` evals
+       `watchdog-src` separately and `testmain` runs against a BUILT project's
+       rt; a future caller resolving it on the injected copy would have died
+       in a `main`-checkout run.
+     Both fixed; surface is 13 = 13 again and the residual diff is exactly the
+     store-only analysis markers (`^:entry-point` ×2, `^:ambient-ok` ×2) plus
+     form order. The lesson stands: a MISSING FORM is the failure mode this
+     duplication produces, and no test can catch it (see the idea file).
    - Failure details (F1) are captured by rebinding clojure.test's dynamic
      `report` multimethod — **`:test` counting stays in `test-var` itself;
      the custom report must inc `:pass/:fail/:error` counters**. Bounded:
@@ -104,7 +121,7 @@ The oracle must never return a false verdict. Everything here serves that.
    `:agent`, so their deltas were agent-nil and **never entered any episode**
    — an ns_add_require was invisible to `done`'s lint/normalize/verification
    entirely. Fixed at both the api and the MCP wire.
-   **The cap is on TESTS (40), not namespaces**, because `isolated-test-run!`'s
+   **The cap is on TESTS (40), not namespaces**, because `external-test-run!`'s
    `:only` and `:nses` do NOT compose — the sharded branch calls
    `run-shard!` with the ns group and never passes `only`, so passing both
    would silently run whole namespaces. A `:only` run is one serial JVM
@@ -143,7 +160,7 @@ The oracle must never return a false verdict. Everything here serves that.
    `traced-test-run` take `skip-integration?`, default on for edits) so an
    external-system test — a DB dep behind a capability — doesn't fire on
    every keystroke and a red one never blocks an edit. `test_run`,
-   `checkpoint`, and `commit_point` pass `:include-integration? true` and run
+   `done`, and `commit_point` pass `:include-integration? true` and run
    them. It's a plain runtime-meta filter; `affected-tests` is unaffected
    (skipped tests just never enter the trace).
 4. **Warm spare.** `{:warm-spare? true}` keeps a `future`-started image
@@ -156,7 +173,7 @@ The oracle must never return a false verdict. Everything here serves that.
    Hot-loading into the LIVE image cannot see forward references — the vars
    already exist there — so a write could commit a namespace that
    boot/restart/a fresh image cannot load (found the hard way: a
-   replace-before-add edit_group; the next `fresh-image!` crashed). Every
+   replace-before-add multi-form write; the next `fresh-image!` crashed). Every
    content/order write path (`rebased-write!` both branches, `edit-group!`,
    `move-form!`) statically checks the CANDIDATE's rendered namespaces
    before touching the image: any same-ns var usage positioned (row, col)
@@ -190,15 +207,15 @@ The oracle must never return a false verdict. Everything here serves that.
    theirs grows a new forward use of it — and the merge is refused before
    the image is touched.
 
-7. **Isolated tier (`isolated-test-run!`).** Builds the store to a temp dir
-   and shells `clojure -M:test` (cognitect runner) — the ONLY tier that
-   executes `^:isolated` tests, because they spawn images/subprocesses and
+7. **External tier (`api.external/external-test-run!`).** Builds the store to
+   a temp dir and shells `clojure -M:test` (cognitect runner) — the ONLY tier
+   that executes `^:external` tests, because they spawn images/subprocesses and
    would recurse in-image. `:ns`/`:only` narrow the run (cognitect `-n`/`-v`)
    and a red run returns `:failing [{:test :detail}]` blocks parsed from the
    output (`parse-test-failures`) — targeted red/green loops without
    rebuilding by hand (Q2).
    **The external tier TRACES (#121, 2026-07-16).** It is the only tier that
-   ever runs an `^:isolated` test, so it is the only place their test→form
+   ever runs an `^:external` test, so it is the only place their test→form
    evidence can come from — before this, 69% of slopp's own suite (257/370
    deftests) produced ZERO runtime evidence and `slopp.api/done!` itself read
    `:warranty {:covered 0}`. `slopp.testmain` is the built project's entry
@@ -266,17 +283,18 @@ The oracle must never return a false verdict. Everything here serves that.
    either — at depth 3–4 across 376 tests everything is "covered" (p90 = 227
    tests, measured 2026-07-17).
    **The skip is REPORTED, not silent (`traced-run!`, 2026-07-16).**
-   `slopp.rt/traced-run` has dropped `^:isolated` tests unconditionally since
-   d980 (`true (remove (comp :isolated meta))`) — they have never executed
+   `slopp.rt/traced-run` has dropped external-tier tests unconditionally since
+   d980 (`true (remove (comp :external meta))`; the tag was spelled
+   `^:isolated` until D-external-test-tier renamed it) — they have never executed
    in-image, and that half was never broken. What WAS broken: the skip was
-   SILENT. An `^:isolated` test entering the impacted set — most easily the
+   SILENT. An `^:external` test entering the impacted set — most easily the
    just-added/edited test var itself, or any test in a whole-ns fallback run —
    was dropped, and the summary reported the OTHER tests' green with no
    mention that the one you just wrote never ran. (Repro: adding an
-   `^:isolated` deftest returned `:test {:ran 2 :pass 5 :status :green}` — two
-   unrelated tests; the new one was dropped, and the isolated run was red.)
+   `^:external` deftest returned `:test {:ran 2 :pass 5 :status :green}` — two
+   unrelated tests; the new one was dropped, and the external run was red.)
    Now `traced-run!` partitions the scope with `session/test-var-tiers` and
-   attaches the deferred ones as `:isolated-pending` on the summary (compressed
+   attaches the deferred ones as `:external-pending` on the summary (compressed
    to count+sample; suppressed at the done boundary, which runs them for real).
    So a per-write `:test` never claims green while quietly dropping the test
    the agent is working on.
@@ -287,7 +305,7 @@ The oracle must never return a false verdict. Everything here serves that.
 8. **The isolation gate (Q7, `edit/isolation-refusal`).** Every replace/add
    path refuses an UNTAGGED deftest that calls a spawning var
    (`edit/spawning-vars`, resolved through the ns's require aliases via
-   `edit/require-aliases`) — the refusal names the fix (`^:isolated`).
+   `edit/require-aliases`) — the refusal names the fix (`^:external`).
    Without the gate such a test hangs in-image verification with nothing
    pointing at why. `ns_create`/import stay exempt (whole-ns ingestion is
    the tolerant path).

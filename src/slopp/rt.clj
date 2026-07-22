@@ -98,7 +98,7 @@
   THE one instrumentation mechanism (#121). Two runners ride it and they
   genuinely differ: `traced-run` wraps its own per-var loop for the in-image
   tier; the built project's trace runner wraps cognitect's runner for the
-  external tier (the only tier that executes ^:isolated tests). The wrapping
+  external tier (the only tier that executes ^:external tests). The wrapping
   itself must never be copied — a second tracer is a second truth.
 
   MULTIMETHODS are wrapped at their METHOD TABLE (#129): a MultiFn is `ifn?`
@@ -257,11 +257,11 @@
                        ;; (external-system tests — a DB dep shouldn't fire on
                        ;; every edit); done/commit/test_run include them
                        skip-integration? (remove (comp :integration meta))
-                       ;; ^:isolated tests spawn their own images/JVMs — they
+                       ;; ^:external tests spawn their own images/JVMs — they
                        ;; NEVER run in-image (recursion). Unconditional BY
                        ;; DESIGN, not an oversight: the external trace runner
                        ;; is where they run, and it traces them there (#121).
-                       true (remove (comp :isolated meta))
+                       true (remove (comp :external meta))
                        only (filter (comp (set only) :name meta)))
             counters (ref t/*initial-report-counters*)
             record   (fn [m]
@@ -291,3 +291,22 @@
       (finally
         (restore! originals)))))
 
+
+(defn install-parent-watchdog!
+  "Start the parent-death watchdog in THIS process, install-once by thread
+  name. Stdin is a pipe from the parent JVM, so EOF means the parent's fds
+  closed — and EOF is a LEVEL, not an edge: a parent that died before this
+  ran still reads as EOF, so a late install fires immediately. nrepl images
+  board it on their launch command line; test runners call this from
+  testmain; both go through the same name guard, so however many surfaces
+  run it, exactly one thread results."
+  []
+  (when-not (some #(= "slopp-parent-watchdog" (.getName ^Thread %))
+                  (keys (Thread/getAllStackTraces)))
+    (doto (Thread. (fn [] (try (while (not (neg? (.read System/in))))
+                               (catch Throwable _))
+                     (System/exit 0))
+                   "slopp-parent-watchdog")
+      (.setDaemon true)
+      (.start)))
+  nil)
