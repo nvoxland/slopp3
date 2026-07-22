@@ -121,6 +121,16 @@ The oracle must never return a false verdict. Everything here serves that.
    `:agent`, so their deltas were agent-nil and **never entered any episode**
    — an ns_add_require was invisible to `done`'s lint/normalize/verification
    entirely. Fixed at both the api and the MCP wire.
+   **The dominant untraced form now has a semantic rule (2026-07-22,
+   frictions #2):** an ns-form edit that only ADDED alias-only require specs
+   (`[lib :as a]`, no :refer) of in-store namespaces with no method-carrying
+   forms selects ZERO tests (`session/inert-ns-require-change?`, consulted by
+   both `impacted-tests` and the write path) — an unused alias changes the
+   resolution of nothing, and the old require-closure fallback billed 331
+   external tests for it on slopp.api. Every other ns-form shape (removals,
+   :refer, out-of-store libs, a required ns whose load registers defmethods)
+   keeps the conservative closure fallback; the guards are in
+   `session-test/an-alias-only-require-addition-impacts-nothing`.
    **The cap is on TESTS (40), not namespaces**, because `external-test-run!`'s
    `:only` and `:nses` do NOT compose — the sharded branch calls
    `run-shard!` with the ns group and never passes `only`, so passing both
@@ -210,10 +220,21 @@ The oracle must never return a false verdict. Everything here serves that.
 7. **External tier (`api.external/external-test-run!`).** Builds the store to
    a temp dir and shells `clojure -M:test` (cognitect runner) — the ONLY tier
    that executes `^:external` tests, because they spawn images/subprocesses and
-   would recurse in-image. `:ns`/`:only` narrow the run (cognitect `-n`/`-v`)
-   and a red run returns `:failing [{:test :detail}]` blocks parsed from the
-   output (`parse-test-failures`) — targeted red/green loops without
-   rebuilding by hand (Q2).
+   would recurse in-image. `:ns`/`:only` narrow the run (cognitect `-n`/`-v`;
+   an `:only` run ALSO passes `-n` per named var's namespace — cognitect's var
+   filter only resolves vars in DISCOVERED namespaces and its default regex is
+   `-test$`, so a named test anywhere else was unresolvable) and a red run
+   returns `:failing [{:test :detail}]` blocks parsed from the output
+   (`parse-test-failures`) — targeted red/green loops without rebuilding by
+   hand (Q2). Crash tails (`:output`) cross the wire through
+   `testrun/anchor-output` — file.clj:LINE loses the line suffix, per the
+   boundary audit.
+   **`external/spot-run!` is the tier-aware spot-check (2026-07-22, frictions
+   #1)** behind `test_run {ns ..}/{only ..}`: it partitions the named targets
+   with `test-var-tiers` and runs in-image members in-image, `^:external`
+   members in ONE serial external JVM — red/green on a single external test
+   costs one targeted fresh run, not a whole-ns detour. Unresolvable entries
+   stay in-image where the 0-matched teaching lives.
    **The external tier TRACES (#121, 2026-07-16).** It is the only tier that
    ever runs an `^:external` test, so it is the only place their test→form
    evidence can come from — before this, 69% of slopp's own suite (257/370

@@ -170,9 +170,10 @@ a green here would be earned by other tests) · `:unverified` = nothing ran,
 with `:reason` distinguishing `:all-impacted-external` (by design, the
 done point runs them) from `:no-covering-tests` (yours to fix) and
 `:scope-ran-nothing` (a slopp bug — report it). Writing an `^:external`
-test is `:partial` or `:unverified`, never green — **to see it go red-first
-you must run `test_run {external true, only [...]}` yourself.** You never run `test_run` as a ritual — it's for
-spot-checking one namespace or test mid-flight. Red runs return
+test is `:partial` or `:unverified`, never green — **to see it go red-first,
+`test_run {only ["ns/the-test"]}`: a named `^:external` target runs in its
+own tier automatically (one serial fresh JVM).** You never run `test_run`
+as a ritual — it's for spot-checking one namespace or test mid-flight. Red runs return
 `:all-failing {file [tests]}` and `:themes` (clustered causes) — read
 those before drilling into blocks.
 
