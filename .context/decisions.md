@@ -1592,16 +1592,37 @@ is closed in `merge-logs` itself:
   replays normally.
 - **Fids resolve to live forms.** Ping-pong accumulates `:id-map` entries
   whose targets die while the original id lives on; every arm now resolves
-  through `live-fid` (the mapped id first, the original as fallback, each
-  checked against a live form) so a stale mapping cannot silently drop an
-  edit as "we deleted it; they edited it".
+  through `live-fid` (the mapped id first, then the INVERSE of their own
+  recorded `:id-map` — an edit they made to their copy of our form lands
+  back on our original, since the id spaces bifurcate at the first remap
+  and never re-join — then the original id, each checked against a live
+  form) so a stale mapping cannot silently drop an edit as "we deleted it;
+  they edited it".
 - **Duplicate names refuse.** A merge candidate holding two same-named
   forms in one namespace is corrupt by construction (last-definition-wins
   shadows silently: the image runs one form while every name-keyed read
   shows the other) — the merge returns `{:error}` naming the collisions
   instead of landing.
+- **Edits fast-forward when we haven't moved.** The both-touched conflict
+  arm compares our current content against `their-base` — the last source
+  THEIR log held for the form before the edit. Equal means their edit
+  builds on exactly what we have (a creation-touch or a converged round
+  trip), so it applies instead of conflicting. Only genuine divergence —
+  both sides moved past the shared base — conflicts.
+- **Partial replays are not imposters.** The recreated-source guard
+  compares by SUBSET, not equality: our replayed copy of a delivered delta
+  may hold fewer sources (forms that didn't resolve here), which is honest
+  history; recreation means the copy carries content the original never
+  had. The identity-mismatch error carries `:fork-point` so callers can
+  tell it from "no shared history" — one masked the other once.
+- **Conflicts coalesce per form.** Successive theirs-ops on one diverged
+  form land as ONE conflict (fid-keyed `note-conflict`, newest theirs
+  wins) — a form edited sixteen times upstream is one decision for the
+  reader, not sixteen rows burying the real signal.
 
 Each fix is guarded by a merge-test modeling the production failure that
-motivated it. Bidirectional branch flow is unblocked. Deliberately NOT
-done: lineage-aware conflict prose ("their edit builds on your v2") and
-milestone-marker travel (#9) — both recorded, neither load-bearing.
+motivated it. Acceptance on the real web←main resync: 33 residual
+conflicts became 2, both genuine divergence. Bidirectional branch flow is
+unblocked. Deliberately NOT done: lineage-aware conflict prose ("their
+edit builds on your v2") and milestone-marker travel (#9) — both
+recorded, neither load-bearing.
