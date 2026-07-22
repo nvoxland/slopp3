@@ -86,14 +86,14 @@
     (is (= (str "<!DOCTYPE html><html>"
                 "<head><meta charset=\"utf-8\"><title>T &amp; t&apos;s</title></head>"
                 "<body><main>b</main></body></html>")
-           (html/render (html/page {:title "T & t's"} [:main "b"])))))
-  (testing ":lang and extra :head elements ride the shell"
+           (html/render (html/page {:html/title "T & t's"} [:main "b"])))))
+  (testing ":html/lang and extra :html/head elements ride the shell"
     (is (= (str "<!DOCTYPE html><html lang=\"en\">"
                 "<head><meta charset=\"utf-8\"><title>T</title>"
                 "<link href=\"/assets/app.css\" rel=\"stylesheet\">"
                 "</head>"
                 "<body><p>x</p></body></html>")
            (html/render
-            (html/page {:title "T" :lang "en"
-                        :head [[:link {:rel "stylesheet" :href "/assets/app.css"}]]}
+            (html/page {:html/title "T" :html/lang "en"
+                        :html/head [[:link {:rel "stylesheet" :href "/assets/app.css"}]]}
                        [:p "x"]))))))

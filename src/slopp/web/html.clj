@@ -82,7 +82,7 @@
     (seq? x) (map prepare x)
     :else x))
 
-(defn render
+(defn ^:export render
   "Hiccup data → HTML string. Text and attribute values escape by default
   (the hiccup 2.x contract, pinned by slopp.web.html-test); tag and
   attribute names are validated; javascript:/data: URLs in
@@ -91,7 +91,7 @@
   [hiccup]
   (str (h/html {:mode :html} (prepare hiccup))))
 
-(defn html-response
+(defn ^:export html-response
   "Ring response serving rendered hiccup as text/html. :web/raw true — both
   adapters write the body verbatim. opts may carry :status and extra
   :headers; Content-Type stays ours."
@@ -102,13 +102,20 @@
     :headers (merge headers {"Content-Type" "text/html; charset=utf-8"})
     :body    (render hiccup)}))
 
-(defn page
-  "A full-page hiccup shell: doctype, charset meta, escaped :title, optional
-  :lang and extra :head elements. Returns hiccup DATA (a seq — the doctype
-  rides [:html/raw]); emits NO inline script or style, so a strict
-  Content-Security-Policy works without carve-outs (apps set their own CSP
-  header)."
-  [{:keys [title head lang]} & body]
+(defn ^:export
+  ^{:malli/schema [:=> [:cat [:map
+                              [:html/title {:optional true} :string]
+                              [:html/head {:optional true} [:sequential :any]]
+                              [:html/lang {:optional true} :string]]
+                        [:* :any]]
+                   [:sequential :any]]}
+  page
+  "A full-page hiccup shell: doctype, charset meta, escaped :html/title,
+  optional :html/lang and extra :html/head elements. Returns hiccup DATA
+  (a seq — the doctype rides [:html/raw]); emits NO inline script or
+  style, so a strict Content-Security-Policy works without carve-outs
+  (apps set their own CSP header)."
+  [{:html/keys [title head lang]} & body]
   (list [:html/raw "<!DOCTYPE html>"]
         [:html (cond-> {} lang (assoc :lang lang))
          (into [:head

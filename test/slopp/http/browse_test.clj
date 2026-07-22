@@ -1,0 +1,38 @@
+(ns slopp.http.browse-test
+  "The store browser through the PORTLESS pipeline: route → policy →
+  declared reads → handler, against an in-memory fixture store. The
+  escaping assertion is a SECURITY test — the browser renders arbitrary
+  store source."
+  (:require [clojure.test :refer [deftest is testing]]
+            [slopp.http.browse :as browse]
+            [slopp.store :as store]
+            [slopp.web :as web]))
+
+(deftest the-pipeline-serves-the-browser-portlessly
+  (let [st  (store/ingest (store/empty-store) 'demo.core
+                          "(ns demo.core)\n\n(defn hello \"Says <hi> & more.\" [x] x)\n")
+        ctx (web/context {:web/namespaces ['slopp.http.browse]
+                          :web/perform-ctx {:session (atom {:store st})}})]
+    (testing "the index → namespace → source click-path"
+      (let [r (web/handle! ctx {:request-method :get :uri "/store"})]
+        (is (= 200 (:status r)))
+        (is (true? (:web/raw r)))
+        (is (re-find #"<a href=\"/store/ns/demo\.core\">demo\.core</a>" (:body r))))
+      (let [r (web/handle! ctx {:request-method :get :uri "/store/ns/demo.core"})]
+        (is (= 200 (:status r)))
+        (is (re-find #"<a href=\"/store/source/demo\.core/hello\">hello</a>" (:body r))))
+      (let [r (web/handle! ctx {:request-method :get :uri "/store/source/demo.core/hello"})]
+        (is (= 200 (:status r)))
+        (testing "SECURITY: arbitrary store source arrives escaped"
+          (is (re-find #"&lt;hi&gt; &amp; more" (:body r)))
+          (is (not (re-find #"<hi>" (:body r)))))))
+    (testing "a missing namespace or form is a 404, not a blank page"
+      (is (= 404 (:status (web/handle! ctx {:request-method :get :uri "/store/ns/no.pe"}))))
+      (is (= 404 (:status (web/handle! ctx {:request-method :get
+                                            :uri "/store/source/no.pe/x"})))))))
+
+(deftest handlers-answer-404-as-data
+  (testing "a nil read means not-found, answered as a data map"
+    (is (= 404 (:status (browse/store-ns-page {:web/reads {}}))))
+    (is (= 404 (:status (browse/store-source-page
+                         {:web/reads {} :path-params {:ns "x" :name "y"}}))))))
