@@ -1,14 +1,48 @@
 (ns slopp.web.auth
   (:require [clojure.string :as str] [clojure.edn :as edn] [cheshire.core :as json]))
 
-(defn sha256-hex
-  "SHA-256 of `s` as lowercase hex — the v1 password hash for the static
-  provider (JDK-only; swap for bcrypt/argon2 when a store's threat model
-  demands it — the config carries a hash either way)."
-  [s]
-  (let [d (.digest (java.security.MessageDigest/getInstance "SHA-256")
-                   (.getBytes (str s) "UTF-8"))]
-    (apply str (map #(format "%02x" %) d))))
+(defn- pbkdf2
+  "PBKDF2WithHmacSHA256 of `password` with `salt` bytes over `iterations`,
+  256-bit output — JDK-only, native-image safe, deterministic."
+  [password ^bytes salt iterations]
+  (let [spec (javax.crypto.spec.PBEKeySpec.
+              (.toCharArray (str password)) salt (int iterations) 256)
+        skf  (javax.crypto.SecretKeyFactory/getInstance "PBKDF2WithHmacSHA256")]
+    (.getEncoded (.generateSecret skf spec))))
+
+(defn verify-password
+  "True if `password` matches the encoded `stored` PBKDF2 hash
+  (`pbkdf2$<iterations>$<salt-b64>$<hash-b64>`): parse, recompute, and
+  compare in CONSTANT TIME (MessageDigest/isEqual). A malformed or nil
+  `stored` returns false, never throws (review W6)."
+  [password stored]
+  (boolean
+   (try
+     (let [[algo iters salt-b64 hash-b64] (str/split (str stored) #"\$")]
+       (when (and (= "pbkdf2" algo) salt-b64 hash-b64)
+         (let [dec  (java.util.Base64/getDecoder)
+               salt (.decode dec ^String salt-b64)
+               want (.decode dec ^String hash-b64)
+               got  (pbkdf2 password salt (Long/parseLong iters))]
+           (java.security.MessageDigest/isEqual want got))))
+     (catch Exception _ false))))
+
+(def ^:private pbkdf2-iterations 210000)
+
+(defn hash-password
+  "A salted, iterated PBKDF2 hash of `password`, encoded
+  `pbkdf2$<iterations>$<salt-b64>$<hash-b64>` — the static provider's stored
+  password-hash, generated with a fresh random 16-byte salt per call. The
+  capabilities config is git-projected, so the stored hash must resist
+  offline cracking; unsalted SHA-256 did not (review W6)."
+  [password]
+  (let [salt (byte-array 16)
+        _    (.nextBytes (java.security.SecureRandom.) salt)
+        enc  (.withoutPadding (java.util.Base64/getEncoder))
+        hash (pbkdf2 password salt pbkdf2-iterations)]
+    (str "pbkdf2$" pbkdf2-iterations "$"
+         (.encodeToString enc salt) "$"
+         (.encodeToString enc hash))))
 
 (defn- secret-value
   "Resolve a configured secret: \"env:NAME\" reads through `getenv` (a map
@@ -32,20 +66,27 @@
 
 (defn- bearer-identity
   "Authorization: Bearer <token> against `:auth/bearer` ({name {:secret
-  :groups}}), secrets env-indirect. nil = no claim."
+  :groups}}), secrets env-indirect. nil = no claim. The token compare is
+  CONSTANT TIME (MessageDigest/isEqual) so a byte-by-byte timing side
+  channel can't recover the secret (review W6)."
   [config req {:keys [getenv]}]
   (let [h (get-in req [:headers "authorization"] "")]
     (when (str/starts-with? h "Bearer ")
       (let [tok (subs h 7)]
         (some (fn [[nm {:keys [secret groups]}]]
-                (when (and (seq tok) (= tok (secret-value secret getenv)))
+                (when (and (seq tok)
+                           (java.security.MessageDigest/isEqual
+                            (.getBytes tok "UTF-8")
+                            (.getBytes (str (secret-value secret getenv)) "UTF-8")))
                   {:web/sub nm :web/groups (set groups)
                    :web/provider :bearer}))
               (:auth/bearer config))))))
 
 (defn- static-identity
   "Authorization: Basic base64(user:pass) against `:auth/static`
-  ({user {:password-hash :groups}}). nil = no claim."
+  ({user {:password-hash :groups}}). nil = no claim. The stored
+  password-hash is a salted PBKDF2 digest, verified in constant time
+  (review W6)."
   [config req _opts]
   (let [h (get-in req [:headers "authorization"] "")]
     (when (str/starts-with? h "Basic ")
@@ -54,8 +95,7 @@
                          (catch Exception _ nil))
             [user pass] (when decoded (str/split decoded #":" 2))
             {:keys [password-hash groups]} (get (:auth/static config) user)]
-        (when (and password-hash pass
-                   (= password-hash (sha256-hex pass)))
+        (when (and password-hash pass (verify-password pass password-hash))
           {:web/sub user :web/groups (set groups)
            :web/provider :static})))))
 
@@ -63,16 +103,19 @@
   "Identity headers from a TRUSTED upstream only (`:auth/proxy` {:trusted
   #{addrs} :user-header :groups-header}): the cheapest bridge to any
   external identity system, safe exactly because trust is pinned to the
-  remote address. nil = no claim."
+  remote address. nil = no claim. Header names are lowercased at lookup —
+  adapters normalize request header keys to lowercase, so a canonically-
+  cased config (`X-Forwarded-User`) must still match (review W7)."
   [config req _opts]
   (let [{:keys [trusted user-header groups-header]} (:auth/proxy config)
-        user (get-in req [:headers (str user-header)])]
+        hdr  (fn [h] (when h (get-in req [:headers (str/lower-case (str h))])))
+        user (hdr user-header)]
     (when (and (contains? (set trusted) (:remote-addr req))
                (seq (str user)))
       {:web/sub (str user)
        :web/groups (into #{}
                          (remove str/blank?)
-                         (str/split (str (get-in req [:headers (str groups-header)] ""))
+                         (str/split (str (or (hdr groups-header) ""))
                                     #","))
        :web/provider :proxy-header})))
 
@@ -166,8 +209,11 @@
 (defn- verify-jwt
   "Verify a decoded JWT against `{:issuer :audience :jwks [jwk …]}` at
   `now` (epoch seconds): RS256 signature against the kid-matched JWK (any
-  key when the header names none), then issuer, expiry, and audience when
-  configured. Returns the CLAIMS or nil — never throws."
+  key when the header names none), then issuer, expiry, and AUDIENCE.
+  Audience validation is MANDATORY (a resource server must reject tokens
+  minted for another client): an unconfigured `:audience` denies every
+  token, a configured one must match the token's `:aud` (review W2).
+  Returns the CLAIMS or nil — never throws."
   [{:keys [header claims signed-bytes signature]} {:keys [issuer audience jwks]} now]
   (try
     (let [kid  (:kid header)
@@ -185,11 +231,13 @@
                  (= (str issuer) (str (:iss claims)))
                  (number? (:exp claims))
                  (< (long now) (long (:exp claims)))
-                 (or (nil? audience)
-                     (let [aud (:aud claims)]
-                       (if (coll? aud)
-                         (some #(= (str audience) (str %)) aud)
-                         (= (str audience) (str aud))))))
+                 ;; unset audience → deny (never accept an unscoped token);
+                 ;; set → the token's aud (scalar or array) must contain it
+                 (seq (str audience))
+                 (let [aud (:aud claims)]
+                   (if (coll? aud)
+                     (some #(= (str audience) (str %)) aud)
+                     (= (str audience) (str aud)))))
         claims))
     (catch Exception _ nil)))
 

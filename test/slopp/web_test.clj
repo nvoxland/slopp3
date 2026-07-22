@@ -133,3 +133,23 @@
       (is (some? (:content (rdr "clojure/version.properties")))))
     (testing "missing everywhere is nil"
       (is (nil? (rdr "public/nope.js"))))))
+
+(deftest ^:external built-app-reader-refuses-path-traversal
+  ;; review W5: the reader built File(root, path) with no containment check,
+  ;; so `../secret` escaped root. Contained today only by the router's
+  ;; single-segment accident — the reader itself must refuse traversal, since
+  ;; it is ^:export public surface and the docstring flags the single-segment
+  ;; constraint as temporary.
+  (let [base (str (java.nio.file.Files/createTempDirectory
+                   "slopp-trav" (make-array java.nio.file.attribute.FileAttribute 0)))
+        pub  (java.io.File. base "public")
+        _    (.mkdirs pub)
+        _    (spit (java.io.File. pub "ok.txt") "fine")
+        _    (spit (java.io.File. base "secret.txt") "TOP SECRET")
+        rdr  (static/file-or-resource-reader (str pub))]
+    (testing "an in-root file still serves"
+      (is (= "fine" (String. ^bytes (:content (rdr "ok.txt")) "UTF-8"))))
+    (testing "a traversal to a file ABOVE root is refused (nil)"
+      (is (nil? (rdr "../secret.txt")))
+      (is (nil? (rdr "../../etc/hosts")))
+      (is (nil? (rdr "sub/../../secret.txt"))))))

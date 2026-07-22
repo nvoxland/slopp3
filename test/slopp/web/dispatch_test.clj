@@ -66,3 +66,79 @@
     (testing "a pre-resolved :web/identity is respected over resolution"
       (is (= "pre" (:sub (:body (dispatch/handle! ctx {:request-method :get :uri "/who"
                                                        :web/identity {:web/sub "pre"}}))))))))
+
+(deftest empty-composite-policies-fail-closed
+  ;; review W1: `(every? pred '())` is true, so [:all] (an empty conjunction)
+  ;; authorized EVERYONE incl. anonymous — the one degenerate policy that
+  ;; failed OPEN while [:any]/[:group]/nil all denied. A composite with no
+  ;; sub-policies must deny.
+  (testing "[:all] with no sub-policies denies (anonymous and authenticated)"
+    (is (not (dispatch/authorized? [:all] nil)))
+    (is (not (dispatch/authorized? [:all] {:web/sub "x" :web/groups #{}}))))
+  (testing "[:any] with no sub-policies denies"
+    (is (not (dispatch/authorized? [:any] nil))))
+  (testing "non-empty composites still work"
+    (is (dispatch/authorized? [:all :authenticated] {:web/sub "x"}))
+    (is (not (dispatch/authorized? [:all :authenticated [:group "admin"]] {:web/sub "x"})))
+    (is (dispatch/authorized? [:any [:group "a"] [:group "b"]] {:web/groups #{"b"}}))))
+
+(deftest handler-cannot-emit-an-undeclared-effect-kind
+  ;; review W4: run-effects! validated only against the app-wide performer
+  ;; set, never the ROUTE's declared :web/effects — so a handler could emit
+  ;; any kind a performer provides, incl. a write from a route that declared
+  ;; none (or a :get that web-unsafe-get "proved" safe). The static gate
+  ;; sees only what it can read in the handler body; the runtime must bound
+  ;; effects to the route's declaration.
+  (let [performed (atom [])
+        ctx {:web/routes [{:handler (fn [_] {:status 200
+                                             :web/effects [[:danger/write "pwned"]]})
+                           :method :get :path "/x" :auth :public
+                           :web/effects nil}]   ; declares NO effects
+             :web/effect-performers {:danger/write (fn [_ v] (swap! performed conj v))}}]
+    (testing "an effect kind the route did not declare is refused, nothing performed"
+      (reset! performed [])
+      (let [r (dispatch/handle! ctx {:request-method :get :uri "/x"})]
+        (is (= 500 (:status r)) (pr-str r))
+        (is (empty? @performed))))))
+
+(deftest error-responses-do-not-leak-internal-detail
+  ;; review W3: the catch returned raw ex-message + the whole ex-data (minus
+  ;; :web/status). A 500 disclosed lib exception messages (paths); a handler
+  ;; ex-info disclosed whatever it carried. Unexpected errors get a generic
+  ;; body; deliberate boundary errors surface their message and ONLY a
+  ;; :web/public allowlist.
+  (let [ctx {:web/routes
+             [{:handler (fn [_] (throw (java.io.FileNotFoundException. "/etc/shadow (nope)")))
+               :method :get :path "/boom" :auth :public}
+              {:handler (fn [_] (throw (ex-info "bad request"
+                                               {:web/status 400
+                                                :db/password "hunter2"
+                                                :web/public {:field "email"}})))
+               :method :get :path "/bad" :auth :public}]}]
+    (testing "an UNEXPECTED error is a generic 500 — no message, no data leak"
+      (let [r (dispatch/handle! ctx {:request-method :get :uri "/boom"})]
+        (is (= 500 (:status r)))
+        (is (not (re-find #"shadow|etc" (str (:body r)))) (pr-str r))))
+    (testing "a DELIBERATE boundary error surfaces its message + only :web/public"
+      (let [r (dispatch/handle! ctx {:request-method :get :uri "/bad"})]
+        (is (= 400 (:status r)))
+        (is (= "bad request" (:error (:body r))))
+        (is (= {:field "email"} (:data (:body r))))
+        (is (not (re-find #"hunter2|password" (str (:body r)))) (pr-str r))))))
+
+(deftest bounded-body-caps-the-request-read
+  ;; review W8: both adapters slurp the whole body unbounded (JDK → heap/OOM
+  ;; DoS; http-kit falls back to its own default), and the configured
+  ;; http.max-body-bytes was read by nothing. The shared bounded reader caps
+  ;; it and signals overflow so the adapter can answer 413.
+  (let [in (fn [s] (java.io.ByteArrayInputStream. (.getBytes (str s) "UTF-8")))]
+    (testing "a body within the cap reads through"
+      (is (= "hello" (:body (dispatch/bounded-body-string (in "hello") 1024)))))
+    (testing "a body over the cap signals :too-large, does not return content"
+      (let [r (dispatch/bounded-body-string (in (apply str (repeat 100 "x"))) 10)]
+        (is (:too-large r))
+        (is (nil? (:body r)))))
+    (testing "nil stream is an empty body, never a throw"
+      (is (nil? (:body (dispatch/bounded-body-string nil 1024)))))
+    (testing "exactly-at-cap is allowed"
+      (is (= "12345" (:body (dispatch/bounded-body-string (in "12345") 5)))))))

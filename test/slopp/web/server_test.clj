@@ -37,3 +37,26 @@
                           (java.net.http.HttpResponse$BodyHandlers/ofString))]
           (is (= 401 (.statusCode resp)))))
       (finally (jdk/stop! srv)))))
+
+(deftest ^:external jdk-adapter-caps-the-request-body
+  ;; review W8: an over-cap POST body must get 413, not buffer unbounded.
+  (let [ctx {:web/routes [{:handler (fn [_] {:status 201 :body {:ok true}})
+                           :method :post :path "/u" :auth :public}]
+             :web/max-body-bytes 32}
+        srv (jdk/start! ctx {:host "127.0.0.1" :port 0})
+        base (str "http://127.0.0.1:" (:port srv))
+        http (java.net.http.HttpClient/newHttpClient)
+        POST (fn [body]
+               (.statusCode
+                (.send http
+                       (-> (java.net.http.HttpRequest/newBuilder)
+                           (.uri (java.net.URI/create (str base "/u")))
+                           (.POST (java.net.http.HttpRequest$BodyPublishers/ofString body))
+                           (.build))
+                       (java.net.http.HttpResponse$BodyHandlers/ofString))))]
+    (try
+      (testing "a small body is accepted"
+        (is (= 201 (POST "{\"a\":1}"))))
+      (testing "a body over the cap is 413"
+        (is (= 413 (POST (apply str (repeat 200 "x"))))))
+      (finally (jdk/stop! srv)))))

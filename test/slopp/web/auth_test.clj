@@ -5,7 +5,7 @@
 (deftest providers-resolve-identity
   (let [config {:auth/providers [:bearer :static :proxy-header]
                 :auth/bearer {"ci" {:secret "env:T_CI_TOKEN" :groups ["ci"]}}
-                :auth/static {"alice" {:password-hash (slopp.web.auth/sha256-hex "s3cret")
+                :auth/static {"alice" {:password-hash (auth/hash-password "s3cret")
                                        :groups ["admin"]}}
                 :auth/proxy {:trusted #{"10.0.0.1"}
                              :user-header "x-forwarded-user"
@@ -86,21 +86,98 @@
         now  1784700000
         config {:auth/providers [:oidc]
                 :auth/oidc {:issuer "https://idp.test"
+                            :audience "slopp-app"      ; audience is mandatory (W2)
                             :jwks [jwk]
                             :groups-claim "roles"}}
         rid  (fn [token]
                (auth/resolve-identity config
                                       {:headers {"authorization" (str "Bearer " token)}}
                                       :now now))]
-    (testing "a valid token resolves: sub + the configured groups claim"
-      (let [id (rid (sign {:iss "https://idp.test" :sub "ada"
+    (testing "a valid token (matching aud) resolves: sub + the configured groups claim"
+      (let [id (rid (sign {:iss "https://idp.test" :sub "ada" :aud "slopp-app"
                            :exp (+ now 3600) :roles ["admin" "dev"]}))]
         (is (= "ada" (:web/sub id)) (pr-str id))
         (is (= #{"admin" "dev"} (:web/groups id)))
         (is (= :oidc (:web/provider id)))))
-    (testing "expiry, wrong issuer, tampering, and garbage are all anonymous"
-      (is (nil? (rid (sign {:iss "https://idp.test" :sub "ada" :exp (- now 10)}))))
-      (is (nil? (rid (sign {:iss "https://evil.test" :sub "ada" :exp (+ now 3600)}))))
-      (is (nil? (rid (str (sign {:iss "https://idp.test" :sub "ada"
+    (testing "expiry, wrong issuer, wrong audience, tampering, and garbage are all anonymous"
+      (is (nil? (rid (sign {:iss "https://idp.test" :sub "ada" :aud "slopp-app" :exp (- now 10)}))))
+      (is (nil? (rid (sign {:iss "https://evil.test" :sub "ada" :aud "slopp-app" :exp (+ now 3600)}))))
+      (is (nil? (rid (sign {:iss "https://idp.test" :sub "ada" :aud "OTHER-app" :exp (+ now 3600)}))))
+      (is (nil? (rid (str (sign {:iss "https://idp.test" :sub "ada" :aud "slopp-app"
                                  :exp (+ now 3600)}) "tampered"))))
       (is (nil? (rid "not-a-jwt"))))))
+
+(deftest proxy-header-lookup-is-case-insensitive
+  ;; review W7: adapters lowercase all request header names, but an operator
+  ;; naturally configures `auth.proxy.user-header = X-Forwarded-User`, stored
+  ;; verbatim — so the lookup missed the lowercased key and the trusted-proxy
+  ;; provider was silently non-functional (fails closed, but broken).
+  (let [config {:auth/providers [:proxy-header]
+                :auth/proxy {:trusted #{"10.0.0.1"}
+                             ;; CANONICAL casing, as a human writes it
+                             :user-header "X-Forwarded-User"
+                             :groups-header "X-Forwarded-Groups"}}
+        req    {:remote-addr "10.0.0.1"
+                ;; adapters deliver header names lowercased
+                :headers {"x-forwarded-user" "alice"
+                          "x-forwarded-groups" "dev,sre"}}
+        id     (auth/resolve-identity config req)]
+    (testing "a canonically-cased header config still resolves the lowercased request header"
+      (is (= "alice" (:web/sub id)) (pr-str id))
+      (is (= #{"dev" "sre"} (:web/groups id))))))
+
+(deftest passwords-are-salted-and-iterated
+  ;; review W6: static passwords were unsalted single-round SHA-256, stored
+  ;; as password-hash in the git-projected capabilities config — trivially
+  ;; crackable offline. A salted, iterated KDF (PBKDF2, JDK/native-safe) is
+  ;; the real fix; the same password hashes DIFFERENTLY each time.
+  (testing "the same password yields DIFFERENT hashes (random per-hash salt)"
+    (is (not= (auth/hash-password "s3cret") (auth/hash-password "s3cret"))))
+  (testing "the stored format is not a bare sha-256 hex (48/64-char) digest"
+    (is (re-find #"^pbkdf2\$" (auth/hash-password "s3cret"))))
+  (testing "verify-password round-trips the right password and rejects the wrong one"
+    (let [h (auth/hash-password "s3cret")]
+      (is (auth/verify-password "s3cret" h))
+      (is (not (auth/verify-password "wrong" h)))
+      (is (not (auth/verify-password "s3cret" "pbkdf2$1$AAAA$BBBB")))))
+  (testing "a malformed stored hash rejects, never throws"
+    (is (not (auth/verify-password "x" "garbage")))
+    (is (not (auth/verify-password "x" nil)))))
+
+(deftest oidc-requires-a-configured-audience
+  ;; review W2: when auth.oidc.audience was unset, verify-jwt accepted ANY
+  ;; validly-signed unexpired token from the issuer — incl. one minted for a
+  ;; different client (confused-deputy / cross-audience replay). Audience
+  ;; validation is mandatory for a resource server: unset → deny; set → the
+  ;; token's aud must match.
+  (let [kp   (.generateKeyPair (doto (java.security.KeyPairGenerator/getInstance "RSA")
+                                 (.initialize 2048)))
+        pub  ^java.security.interfaces.RSAPublicKey (.getPublic kp)
+        b64u (fn [^bytes bs] (.encodeToString (.withoutPadding (java.util.Base64/getUrlEncoder)) bs))
+        enc  (fn [m] (b64u (.getBytes (cheshire.core/generate-string m) "UTF-8")))
+        sign (fn [claims]
+               (let [h (enc {:alg "RS256" :typ "JWT" :kid "k1"})
+                     p (enc claims)
+                     body (str h "." p)
+                     sig (doto (java.security.Signature/getInstance "SHA256withRSA")
+                           (.initSign (.getPrivate kp))
+                           (.update (.getBytes body "UTF-8")))]
+                 (str body "." (b64u (.sign sig)))))
+        jwk  {:kty "RSA" :kid "k1"
+              :n (b64u (.toByteArray (.getModulus pub)))
+              :e (b64u (.toByteArray (.getPublicExponent pub)))}
+        now  1784700000
+        rid  (fn [config token]
+               (auth/resolve-identity config
+                                      {:headers {"authorization" (str "Bearer " token)}}
+                                      :now now))
+        base {:auth/providers [:oidc]
+              :auth/oidc {:issuer "https://idp.test" :jwks [jwk]}}
+        tok  (fn [aud] (sign {:iss "https://idp.test" :sub "ada"
+                              :exp (+ now 3600) :aud aud}))]
+    (testing "audience UNSET → a valid, correctly-signed token is DENIED"
+      (is (nil? (rid base (tok "any-app")))))
+    (testing "audience SET → only a matching aud resolves"
+      (let [config (assoc-in base [:auth/oidc :audience] "my-app")]
+        (is (some? (rid config (tok "my-app"))))
+        (is (nil? (rid config (tok "other-app"))))))))

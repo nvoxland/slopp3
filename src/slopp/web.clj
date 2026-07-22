@@ -27,6 +27,7 @@
                                   [:web/namespaces [:sequential :symbol]]
                                   [:web/routes {:optional true} [:vector :map]]
                                   [:web/perform-ctx {:optional true} :any]
+                                  [:web/max-body-bytes {:optional true} :int]
                                   [:web/auth-config {:optional true} [:maybe :map]]]]
                        [:map
                         [:web/routes [:vector :map]]
@@ -36,15 +37,18 @@
   "Assemble the dispatch context from `{:web/namespaces [ns-syms]
   :web/routes [extra rows — static mounts, programmatic routes]
   :web/perform-ctx <passed to every performer>
+  :web/max-body-bytes <request-body cap, default 1 MiB — the http.max-body-bytes
+  capability an app threads in>
   :web/auth-config <the provider config identity resolves through>}`: the
   route table and both performer vocabularies derive from the namespaces'
   VAR metadata — the same contract the store gates enforced at write time —
   with the explicit rows appended."
-  [{:web/keys [namespaces routes perform-ctx auth-config]}]
+  [{:web/keys [namespaces routes perform-ctx max-body-bytes auth-config]}]
   (cond-> {:web/routes (into (routes/from-namespaces namespaces) routes)
            :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
            :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
-           :web/perform-ctx perform-ctx}
+           :web/perform-ctx perform-ctx
+           :web/max-body-bytes (or max-body-bytes 1048576)}
     auth-config (assoc :web/auth-config auth-config)))
 
 (defn handle!

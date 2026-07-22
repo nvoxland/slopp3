@@ -15,19 +15,23 @@
   "The ring-shaped request off an exchange: :request-method (lowercase
   keyword), :uri, :query-string, :headers ({lower-name first-value}), and
   :body — JSON parsed to DATA when present (decode is the framework's job;
-  a handler never sees an InputStream)."
-  [^HttpExchange ex]
-  (let [raw (slurp (.getRequestBody ex))]
-    {:request-method (keyword (.toLowerCase (.getRequestMethod ex)))
-     :uri (.getPath (.getRequestURI ex))
-     :remote-addr (.getHostAddress (.getAddress (.getRemoteAddress ex)))
-     :query-string (.getQuery (.getRequestURI ex))
-     :headers (into {}
-                    (map (fn [[k vs]] [(.toLowerCase (str k)) (first vs)]))
-                    (.getRequestHeaders ex))
-     :body (when-not (str/blank? raw)
-             (try (json/parse-string raw true)
-                  (catch Exception _ raw)))}))
+  a handler never sees an InputStream). Reads at most `max-bytes`; over
+  that, returns `::too-large` so the handler answers 413 instead of
+  buffering an unbounded body into heap (review W8)."
+  [^HttpExchange ex max-bytes]
+  (let [{:keys [body too-large]} (dispatch/bounded-body-string (.getRequestBody ex) max-bytes)]
+    (if too-large
+      ::too-large
+      {:request-method (keyword (.toLowerCase (.getRequestMethod ex)))
+       :uri (.getPath (.getRequestURI ex))
+       :remote-addr (.getHostAddress (.getAddress (.getRemoteAddress ex)))
+       :query-string (.getQuery (.getRequestURI ex))
+       :headers (into {}
+                      (map (fn [[k vs]] [(.toLowerCase (str k)) (first vs)]))
+                      (.getRequestHeaders ex))
+       :body (when-not (str/blank? (str body))
+               (try (json/parse-string body true)
+                    (catch Exception _ body)))})))
 
 (defn- respond-raw!
   [^HttpExchange ex status content-type body]
@@ -43,23 +47,29 @@
   "Serve `ctx` (the dispatch context — routes + performers) on
   {:host :port}: ONE catch-all handler doing request-map →
   `dispatch/handle!` → JSON. Port 0 binds ephemeral; the returned
-  {:server :port} carries the real one. `stop!` takes the return."
+  {:server :port} carries the real one. `stop!` takes the return. A body
+  over `ctx`'s :web/max-body-bytes gets a 413 (review W8)."
   [ctx {:keys [host port] :or {host "127.0.0.1" port 8080}}]
-  (let [server (HttpServer/create (InetSocketAddress. (str host) (int port)) 0)]
+  (let [max-body (:web/max-body-bytes ctx 1048576)
+        server (HttpServer/create (InetSocketAddress. (str host) (int port)) 0)]
     (.createContext server "/"
                     (reify HttpHandler
                       (handle [_ ex]
                         (try
-                          (let [resp (dispatch/handle! ctx (request-map ex))]
-                            (if (:web/raw resp)
-                              (respond-raw! ex (int (or (:status resp) 200))
-                                            (get (:headers resp) "Content-Type")
-                                            (:body resp))
-                              (respond! ex (int (or (:status resp) 200))
-                                        (json/generate-string (:body resp)))))
-                          (catch Exception e
+                          (let [req (request-map ex max-body)]
+                            (if (= ::too-large req)
+                              (respond! ex 413 (json/generate-string
+                                                {:error "request body too large"}))
+                              (let [resp (dispatch/handle! ctx req)]
+                                (if (:web/raw resp)
+                                  (respond-raw! ex (int (or (:status resp) 200))
+                                                (get (:headers resp) "Content-Type")
+                                                (:body resp))
+                                  (respond! ex (int (or (:status resp) 200))
+                                            (json/generate-string (:body resp)))))))
+                          (catch Exception _
                             (respond! ex 500 (json/generate-string
-                                              {:error (ex-message e)})))))))
+                                              {:error "internal server error"})))))))
     (.start server)
     {:server server :port (.getPort (.getAddress server))}))
 

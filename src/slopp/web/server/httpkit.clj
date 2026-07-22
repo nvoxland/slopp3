@@ -6,32 +6,44 @@
 
 (defn- request-map
   "The request envelope off http-kit's ring map: keep the ring keys, decode
-  a JSON body to DATA (a handler never sees an InputStream)."
-  [ring-req]
-  (let [raw (some-> (:body ring-req) slurp)]
-    (assoc (select-keys ring-req [:request-method :uri :query-string :headers :remote-addr])
-           :body (when-not (str/blank? (str raw))
-                   (try (json/parse-string raw true)
-                        (catch Exception _ raw))))))
+  a JSON body to DATA (a handler never sees an InputStream). Reads at most
+  `max-bytes` — over that, returns `::too-large` so the adapter answers 413
+  instead of buffering an unbounded body (review W8)."
+  [ring-req max-bytes]
+  (let [{:keys [body too-large]} (dispatch/bounded-body-string (:body ring-req) max-bytes)]
+    (if too-large
+      ::too-large
+      (assoc (select-keys ring-req [:request-method :uri :query-string :headers :remote-addr])
+             :body (when-not (str/blank? (str body))
+                     (try (json/parse-string body true)
+                          (catch Exception _ body)))))))
 
 (defn ^{:export "slopp.web"} start!
   "Serve `ctx` (the dispatch context) via http-kit on {:host :port} — the
   production default adapter (ring-compatible, WebSocket-capable,
   native-image proven). Port 0 binds ephemeral; the returned
-  {:server :port} carries the real one. `stop!` takes the return."
+  {:server :port} carries the real one. `stop!` takes the return. Requests
+  whose body exceeds `ctx`'s :web/max-body-bytes get a 413 (review W8)."
   [ctx {:keys [host port] :or {host "127.0.0.1" port 8080}}]
-  (let [server (hk/run-server
+  (let [max-body (:web/max-body-bytes ctx 1048576)
+        server (hk/run-server
                 (fn [ring-req]
-                  (let [resp (try (dispatch/handle! ctx (request-map ring-req))
-                                  (catch Exception e
-                                    {:status 500 :body {:error (ex-message e)}}))]
-                    (if (:web/raw resp)
-                      {:status (or (:status resp) 200)
-                       :headers (:headers resp {})
-                       :body (:body resp)}
-                      {:status (or (:status resp) 200)
+                  (let [req (try (request-map ring-req max-body)
+                                 (catch Exception _ ::too-large))]
+                    (if (= ::too-large req)
+                      {:status 413
                        :headers {"Content-Type" "application/json"}
-                       :body (json/generate-string (:body resp))})))
+                       :body (json/generate-string {:error "request body too large"})}
+                      (let [resp (try (dispatch/handle! ctx req)
+                                      (catch Exception _
+                                        {:status 500 :body {:error "internal server error"}}))]
+                        (if (:web/raw resp)
+                          {:status (or (:status resp) 200)
+                           :headers (:headers resp {})
+                           :body (:body resp)}
+                          {:status (or (:status resp) 200)
+                           :headers {"Content-Type" "application/json"}
+                           :body (json/generate-string (:body resp))})))))
                 {:ip (str host) :port (int port) :legacy-return-value? false})]
     {:server server :port (hk/server-port server)}))
 

@@ -41,21 +41,32 @@
   CLASSPATH RESOURCE (a native binary carrying its assets via
   -H:IncludeResources). Returns {:content <bytes> :content-type <from the
   extension>} or nil. A live-store app uses a store-backed reader instead
-  (slopp.http/start-server!)."
+  (slopp.http/start-server!).
+
+  CONTAINED: the resolved file's canonical path must stay under `root`, and
+  a `..` traversal segment is refused outright (review W5) — the reader
+  defends itself rather than trusting the caller's route shape, which the
+  single-segment router constraint only accidentally provides."
   [root]
-  (fn [path]
-    (let [ext  (let [i (.lastIndexOf (str path) ".")]
-                 (when (pos? i) (subs (str path) (inc i))))
-          typ  (get content-types ext)
-          f    (java.io.File. (str root) (str path))
-          from (fn [^java.io.InputStream in]
-                 (with-open [in in
-                             out (java.io.ByteArrayOutputStream.)]
-                   (.transferTo in out)
-                   {:content (.toByteArray out) :content-type typ}))]
-      (cond
-        (.isFile f) (from (java.io.FileInputStream. f))
-        :else (when-let [r (.getResourceAsStream
-                            (.getContextClassLoader (Thread/currentThread))
-                            (str path))]
-                (from r))))))
+  (let [root-canon (.getCanonicalFile (java.io.File. (str root)))
+        prefix     (str (.getPath root-canon) java.io.File/separator)]
+    (fn [path]
+      (let [ext  (let [i (.lastIndexOf (str path) ".")]
+                   (when (pos? i) (subs (str path) (inc i))))
+            typ  (get content-types ext)
+            f    (.getCanonicalFile (java.io.File. root-canon (str path)))
+            in-root? (or (= f root-canon)
+                         (.startsWith (str (.getPath f)) prefix))
+            traversal? (boolean (re-find #"(?:^|[/\\])\.\.(?:[/\\]|$)" (str path)))
+            from (fn [^java.io.InputStream in]
+                   (with-open [in in
+                               out (java.io.ByteArrayOutputStream.)]
+                     (.transferTo in out)
+                     {:content (.toByteArray out) :content-type typ}))]
+        (cond
+          traversal? nil
+          (and in-root? (.isFile f)) (from (java.io.FileInputStream. f))
+          :else (when-let [r (.getResourceAsStream
+                              (.getContextClassLoader (Thread/currentThread))
+                              (str path))]
+                  (from r)))))))

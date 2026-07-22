@@ -1,11 +1,14 @@
 (ns slopp.web.dispatch
-  (:require [slopp.web.router :as router] [slopp.web.auth :as auth]))
+  (:require [slopp.web.router :as router] [slopp.web.auth :as auth] [clojure.string :as str]))
 
 (defn authorized?
   "Does `identity` ({:web/sub … :web/groups #{…}} or nil) satisfy `policy`?
   The :web/auth grammar: :public | :authenticated | [:group \"g\"] |
   [:any p…] | [:all p…]. A nil policy DENIES — runtime default-deny,
-  matching the web-auth-refusal write gate. Pure set logic; no macro."
+  matching the web-auth-refusal write gate. An EMPTY composite ([:all] /
+  [:any] with no sub-policies) also DENIES: a conjunction over nothing is
+  vacuously true, so [:all] would otherwise authorize everyone (review W1).
+  Pure set logic; no macro."
   [policy identity]
   (cond
     (= :public policy) true
@@ -15,7 +18,8 @@
     (and (vector? policy) (= :any (first policy)))
     (boolean (some #(authorized? % identity) (rest policy)))
     (and (vector? policy) (= :all (first policy)))
-    (every? #(authorized? % identity) (rest policy))
+    (and (seq (rest policy))
+         (every? #(authorized? % identity) (rest policy)))
     :else false))
 
 (defn- run-effects!
@@ -48,9 +52,14 @@
   handler is unreachable un-checked) → declared :web/reads fetched via the
   app's read performers → the handler, with :path-params, :web/deps (the
   perform-ctx as a value) and the fetched :web/reads on the request → the
-  response's :web/effects interpreted through the app's effect performers
-  (validated all-or-nothing). Every failure is response DATA — an ex-info
-  carrying :web/status maps to it; anything else is a 500."
+  response's :web/effects interpreted through the app's effect performers,
+  BOUNDED by the route's declared :web/effects (a handler cannot emit a kind
+  its route did not declare — the runtime half of web-unsafe-get /
+  web-undeclared-effect, which see only the static handler body; review W4).
+  Every failure is response DATA — an ex-info carrying :web/status maps to
+  it and surfaces its message plus ONLY a :web/public allowlist; any other
+  exception is a GENERIC 500 with the detail logged server-side, never in
+  the body (review W3)."
   [ctx req]
   (let [req (if (or (:web/identity req) (nil? (:web/auth-config ctx)))
               req
@@ -75,19 +84,68 @@
                       [alias (f (:web/perform-ctx ctx) (get-in req' path))]
                       (throw (ex-info (str "no performer for read kind " kind)
                                       {:web/read kind}))))
+            declared (set (:web/effects row))
             resp (try
                    (let [reads (when-let [decl (:web/reads row)]
                                  (into {} (map fetch) decl))
                          resp  ((:handler row)
-                                (cond-> req' reads (assoc :web/reads reads)))]
-                     (or (when-let [effects (seq (:web/effects resp))]
-                           (when-let [err (run-effects!
+                                (cond-> req' reads (assoc :web/reads reads)))
+                         effects (seq (:web/effects resp))
+                         undeclared (seq (remove #(contains? declared (first %))
+                                                 effects))]
+                     (cond
+                       ;; a kind the ROUTE never declared — the static gate
+                       ;; can't see a handler that computes its effects, so
+                       ;; the dispatcher refuses before running any of them
+                       undeclared
+                       {:status 500
+                        :body {:error (str "endpoint emitted undeclared effect kind(s) "
+                                           (str/join ", " (map first undeclared))
+                                           " — declare them in :web/effects or drop them")}}
+
+                       effects
+                       (or (when-let [err (run-effects!
                                            (:web/effect-performers ctx)
                                            (:web/perform-ctx ctx) effects)]
-                             {:status 500 :body err}))
-                         resp))
+                             {:status 500 :body err})
+                           resp)
+
+                       :else resp))
                    (catch Exception e
-                     {:status (or (:web/status (ex-data e)) 500)
-                      :body {:error (ex-message e)
-                             :data (not-empty (dissoc (ex-data e) :web/status))}}))]
+                     (let [data (ex-data e)]
+                       (if-let [status (:web/status data)]
+                         ;; a DELIBERATE boundary error: its message and only
+                         ;; an explicit :web/public allowlist reach the client
+                         {:status status
+                          :body (cond-> {:error (ex-message e)}
+                                  (contains? data :web/public)
+                                  (assoc :data (:web/public data)))}
+                         ;; anything else is unexpected — log the detail,
+                         ;; return nothing that discloses internals
+                         (do (.println System/err
+                                       (str "slopp.web: unhandled "
+                                            (.getName (class e)) " — "
+                                            (ex-message e)))
+                             {:status 500 :body {:error "internal server error"}})))))]
         resp))))
+
+(defn bounded-body-string
+  "Read up to `max-bytes` from InputStream `in` as a UTF-8 string. Returns
+  {:body s-or-nil} within the cap, or {:too-large true} the moment the
+  stream exceeds it — the request-body DoS guard both adapters share
+  (review W8: an unbounded slurp is bounded only by heap). A nil stream is
+  an empty body."
+  [in max-bytes]
+  (if (nil? in)
+    {:body nil}
+    (let [buf (java.io.ByteArrayOutputStream.)
+          arr (byte-array 8192)
+          lim (long max-bytes)]
+      (with-open [^java.io.InputStream in in]
+        (loop []
+          (let [n (.read in arr)]
+            (cond
+              (neg? n) {:body (when (pos? (.size buf))
+                                (String. (.toByteArray buf) "UTF-8"))}
+              (> (+ (.size buf) n) lim) {:too-large true}
+              :else (do (.write buf arr 0 n) (recur)))))))))
