@@ -76,10 +76,21 @@
                       :class-dir  class-dir
                       :ns-compile [(symbol main)]}))
     (b/uber (cond-> {:class-dir class-dir
-                     :uber-file jar-file
+                     :uber-file (str jar-file ".building")
                      :basis     basis
                      :main      (symbol main)}
               extra (assoc :manifest extra)))
+    ;; ATOMIC swap: writing the final path directly TRUNCATES the inode a
+    ;; running server has open — its lazy classloads then read a shifted zip
+    ;; and every server-side op fails (the jar-swap corruption). A rename
+    ;; replaces the PATH while the old inode survives for whoever holds it:
+    ;; the running server keeps serving its jar; the next launch gets this one.
+    (java.nio.file.Files/move
+     (.toPath (io/file (str jar-file ".building")))
+     (.toPath (io/file jar-file))
+     (into-array java.nio.file.CopyOption
+                 [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                  java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
     (println "built" jar-file "Main-Class:" main)))
 
 ;; ---------------------------------------------------------------------------

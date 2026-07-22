@@ -56,7 +56,14 @@ SLOPP_JAR=$PWD/target/slopp.jar  # what the plugin's bin/slopp honours
 ```
 
 `.claude/settings.json` sets `SLOPP_LIVE=1`. Rebuild the jar only for
-kernel or dependency changes — everything else is store code and hot-reloads.
+kernel or dependency changes — everything else is store code and hot-reloads
+(main-line writes, your own included; a BRANCH line's writes reload the
+image only — session_brief's `:host` section states what the server is
+actually running). Rebuilding under a running server is safe: `uber` builds
+aside and atomically renames, so the live process keeps its old jar inode
+and the next launch gets the new one. Note `slopp.boot` is file AND store
+namespace (like `slopp.rt`) and the jar bundles the STORE copy — kernel
+edits go to both.
 
 ## Test
 

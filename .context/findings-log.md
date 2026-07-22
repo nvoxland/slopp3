@@ -856,3 +856,19 @@ Three findings worth carrying:
    Shipped prose is a testable assertion about behaviour — the P1 self-
    description gates check that prose names real tools, but not yet that it
    describes real behaviour.
+
+## 2026-07-22 — #8 re-diagnosed: the host reloads its own main-line writes; branches were the blindness
+
+Probed on the live dev server (which predated the day's changes): a
+freshly-edited serving-machinery path (spot-run!) answered on the running
+host WITHOUT a restart — the host hot-reloads its own session's commits.
+SQLite `PRAGMA data_version` is per-connection and the watcher's connection
+sees the session connection's commits, same process or not. The three #8
+incidents all happened on the web BRANCH: branch writes land in
+`.slopp/branches/<name>/`'s mini-journal, which `watch-live!` (watching
+only `<dir>/.slopp/store.db`) never opens. Corrected operational rule:
+**host code = the main journal, live (self-writes included); a branch
+line's writes reload the image only — verify branch serving behavior in
+the image or a fresh JVM.** The `:host` section of session_brief now
+states mode, staleness, failed reloads, and the branch teaching, so the
+next currency question is one read instead of a debugging arc.
