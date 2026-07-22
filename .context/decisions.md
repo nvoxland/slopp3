@@ -1029,8 +1029,8 @@ much slower question, and it is `full_check`'s.
 | | scope | forced? |
 |---|---|---|
 | write | this form's coherence (`edit/write-coherence-lint`) | yes, refuses |
-| `done` | the episode: whole in-image suite + impacted `^:isolated`; lint + dead surface over TOUCHED namespaces | automatic, REPORTS |
-| `full_check` | every namespace, every tier (in-image, `^:integration`, `^:isolated`) | **never** — agent's call |
+| `done` | the episode: whole in-image suite + impacted `^:external`; lint + dead surface over TOUCHED namespaces | automatic, REPORTS |
+| `full_check` | every namespace, every tier (in-image, `^:integration`, `^:external`) | **never** — agent's call |
 | `commit_point` | nothing of its own; gates on done's verdict | — |
 
 `full_check` also retires any need for an integration-only or lint-only
@@ -1044,7 +1044,7 @@ thinks it does.
 ### The cost, accepted explicitly
 
 Nothing automatically verifies the whole store before publishing. A red
-`^:isolated`/`^:external` test the episode never TOUCHED will not stop a
+`^:external` test the episode never TOUCHED will not stop a
 milestone, and `commit-test/the-milestone-forces-no-whole-store-check` PINS
 that, so it is a test someone must consciously change rather than a silent gap.
 

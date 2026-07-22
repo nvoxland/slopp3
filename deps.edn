@@ -14,7 +14,7 @@
         org.slf4j/slf4j-nop     {:mvn/version "2.0.16"}}
 
  ;; No :test alias: the working tree is FILELESS (the store is the source).
- ;; The suite runs via test_run {:isolated true} — build! to a temp dir whose
+ ;; The suite runs via test_run {external true} — build! to a temp dir whose
  ;; generated deps.edn carries its own runnable :test alias.
  :aliases
  {:nrepl {:main-opts ["-m" "nrepl.cmdline"]}

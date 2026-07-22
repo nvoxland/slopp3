@@ -39,7 +39,7 @@ never re-emitted as churn). EDN stays the agent-facing default.
 files don't. One analysis pass builds the call graph + lint, then every
 form is scored on review-relevant signal and RISK-RANKED: `:untested`
 (STATIC — not reachable from any test namespace in the call graph, so it
-survives `^:isolated` tests that never touch the in-image trace map; the
+survives `^:external` tests that never touch the in-image trace map; the
 trace refines it when warm), `:unused` (public defn/def with ZERO
 in-store callers — dead code or unadvertised/entry surface; whole scans
 only, since a scoped graph can't see every caller; `-main`, privates, and
@@ -75,7 +75,7 @@ verified history:
   distinct.
 - `query-search-history {pattern :limit}` — **DELTA-LOG SEARCH** ("which
   prompts touched auth?"): case-insensitive substring over each delta's
-  prompt, checkpoint label, commit/turn description, turn-end note, AND its
+  prompt, done label, commit/turn description, turn-end note, AND its
   enclosing turn intent (`turn-intents`), newest-first. Each hit carries the
   forms it touched (ns/name qsyms, names resolved as of that delta) + `:at`
   — drill in with `query-form-at`/`query-lineage`. Distinct from
@@ -87,10 +87,11 @@ verified history:
   version (reuses `diff-lines`). EDN rows also now carry `:at`. The
   agent-facing default stays EDN.
 
-Ordering note: `query-search-history` sits above `human-time`'s `defn-`, and
-`query-form-history` above `render-form-history-text`/`status-after` — all in
-the top-of-file `declare`. A fresh-JVM `clojure -M:test` (not the warm REPL)
-is what catches a missing one.
+Ordering note: these forms must be DEFINED above their callers, which is no
+longer anyone's job to maintain — the write pipeline reorders definitions
+itself and mints any `^{:auto-declare …}` it needs, and a hand-written
+`declare` is refused. The cold-load gate is what catches a bad order now, at
+write time, instead of a fresh JVM catching it later.
 
 ## Write surface (each = tracked delta(s) + hot-reload + verification + provenance)
 
@@ -157,7 +158,7 @@ is what catches a missing one.
   through the image is covered. The isolated suite (fresh JVM, no image)
   still refuses until implementation — the short red-first window is the
   point.
-- `isolated-test-run!` extras: `:parallel` shards a full/affected run
+- `external-test-run!` extras: `:parallel` shards a full/affected run
   across JVMs (one build, round-robin ns shards, merged summary — 1.9×
   at N=4). Defaults to AUTO (`auto-parallel`: serial below ~8 test nses,
   else n/8 capped at 4 and half the cores); explicit N overrides, a
@@ -168,17 +169,15 @@ is what catches a missing one.
   (no baked `-r` — cognitect's runner UNIONS -r with -n, which silently
   defeated `:ns` narrowing before). Red results carry `:failing`,
   `:all-failing` {file [tests]}, and `:themes` (cause phrases clustered
-  by distinct-test coverage). MCP `edit_group` supports staged
-  construction (stage open/add/commit/drop — one atomic group across
-  several calls).
-- `done!` — THE done-point (see decisions.md terminology). Formerly: deterministically
-  normalizes every form changed since the last checkpoint (`slopp.normalize`,
+  by distinct-test coverage).
+- `done!` — THE done-point (see decisions.md terminology). Deterministically
+  normalizes every form changed since the last done point (`slopp.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),
   commits ONE `:normalize` group delta, hot-reloads + re-verifies affected
-  tests, records a labeled `:checkpoint` delta. Never rewrites silently
+  tests, records a labeled `:done` delta. Never rewrites silently
   mid-edit — only at this explicit call. Add rules deliberately (they must be
   provably behavior-preserving) and note them in the normalize ns.
-- `commit-point!` — MILESTONE (P4-m7): the checkpoint pipeline, then a
+- `commit-point!` — MILESTONE (P4-m7): the done pipeline, then a
   `:commit` marker at the result with a human `description`. Green-gated
   (`:force` records `:status :red` honestly); `:target` = retroactive pure
   marker (no `:tree`). Since P4-m8 the marker snapshots the rendered
@@ -279,7 +278,7 @@ DIFFERENT-form writes rebase and all land (the granularity dodge, made real);
 if the target form itself changed since the op began → `{:conflict ...}`
 (C5's MV-register semantics, Phase-1 face). The compile gate runs once before
 commit (form content is invariant across rebases). Multi-form ops
-(group/rename/extract/checkpoint) guard with conflict-on-contention rather
+(group/rename/extract/done) guard with conflict-on-contention rather
 than rebasing. Persistence is ORDERED via a per-session agent
 (`persist-async!` — element rows derive from the current store at execution
 time, so they never regress); `close!` awaits the queue. The image needs no
@@ -365,9 +364,9 @@ Two transports share the SAME dispatch (`mcp/handle`):
   publishing is explicit (`git_push`; first URL saved as default, never
   rewritten by one-off pushes).
   `edit_rename` results carry `:mentions` — prose/string occurrences of
-  the old name the structural rename can't rewrite — and `edit_group`
-  steps now include `:subform` (+`:text`) and `:require`, so the
-  follow-up fixes are one atomic call.
+  the old name the structural rename can't rewrite — and the internal
+  `edit-group!` changeset steps include `:subform` (+`:text`) and
+  `:require`, so a rewriter's follow-up fixes ride one atomic group.
 - **Rock 4 reads:** `query-flow` (boundary-guarded keyword scan — every
   form a field touches, with lines) and `query-impact` (kondo var-usages:
   `:arity` present = call site, absent = value/higher-order ref; plus

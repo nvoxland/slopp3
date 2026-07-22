@@ -395,8 +395,8 @@ project-tunable, not universal walls (watch force-rate + marker-density — clim
 means agents are fighting a gate that should be softened here). A write gate
 dialed **`:advisory` warns-but-proceeds** — `edit.modules/gate-check` buckets fired
 gates into `{:refuse :advisories}`, and an `:advisory` teaching rides the write
-result's `:advisories` (surfaced by `edit_replace_form`/`edit_add_form`;
-`edit_group` step advisories are a noted gap). So a write gate is fully dial-able
+result's `:advisories` (surfaced by `edit_replace_form`/`edit_add_form`). So a
+write gate is fully dial-able
 `:off`/`:advisory`/`:refuse`, same as the done grain's `:off`/`:advisory`/`:error`.
 
 ## Enforcement stance

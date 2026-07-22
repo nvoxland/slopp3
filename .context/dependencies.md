@@ -82,7 +82,7 @@ writes share the same bang-named var), tag the CALLER `^:reads` (per-form) so it
 - **`^:integration` test tier.** Tag a deftest `^:integration` (on the test
   NAME) and the **fast per-write path skips it** — an external-system test (a
   DB behind a capability) doesn't fire on every edit, and a red one never
-  blocks an edit. `test_run`/`checkpoint`/`commit_point` run them.
+  blocks an edit. `test_run`/`done`/`commit_point` run them.
 - **Capability injection (convention, NOT enforced).** Keep the functional
   core pure and push effects to a thin shell: **pass the DB connection / clock
   / HTTP client in as a value (a capability)** rather than reaching for an
