@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate]))
+            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2012,7 +2012,10 @@
   the file format (`:manifest` → sorted `K: V` lines). Set a key
   (`:key`+`:value`, `:format` on first touch, default :manifest), remove one
   (`:key`+`:unset true`), or read (path only: values + rendered preview).
-  The module manifest is NOT a config file — module_dep is its verb."
+  The module manifest is NOT a config file — module_dep is its verb. The
+  `capabilities` path validates through the capability registry
+  (`capabilities/config-refusal`): unknown keys and type-failing values are
+  refused with teaching before any delta lands."
   [session path & {:keys [key value unset format prompt agent]}]
   (let [entry (get-in (:store @session) [:config (str path)])]
     (cond
@@ -2030,14 +2033,17 @@
             {:path (str path) :unset (str key)}))
 
       (and key (some? value))
-      (let [fmt (or (some-> format clojure.core/keyword)
-                    (:format entry) :manifest)]
-        (session/commit-appended! session
-                          #(first (store/record-config-put % path fmt key value
-                                                           :prompt prompt
-                                                           :agent agent))
-                          [])
-        {:path (str path) :key (str key) :value (str value) :format fmt})
+      (if-let [refusal (when (= "capabilities" (str path))
+                         (capabilities/config-refusal (str key) (str value)))]
+        {:error refusal}
+        (let [fmt (or (some-> format clojure.core/keyword)
+                      (:format entry) :manifest)]
+          (session/commit-appended! session
+                            #(first (store/record-config-put % path fmt key value
+                                                             :prompt prompt
+                                                             :agent agent))
+                            [])
+          {:path (str path) :key (str key) :value (str value) :format fmt}))
 
       key
       (if-let [v (get-in entry [:values (str key)])]

@@ -11,7 +11,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog] [slopp.api.capabilities :as capabilities]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -885,3 +885,12 @@
    commit-point id from `query_commits`) windows it."
   [session & {:keys [since]}]
   (telemetry/rule-telemetry (:store @session) :since since))
+
+(defn ^:export query-capabilities
+  "Every capability setting for THIS store: the declared registry joined with
+   the stored `capabilities` config — per setting the default, the EFFECTIVE
+   value, and (when set) the raw stored string; wildcard families ride as
+   `:patterns`. Set one with `config_file {path \"capabilities\" key <k> value
+   <v>}` — capability writes validate against the registry at write time."
+  [session]
+  (capabilities/report (:store @session)))

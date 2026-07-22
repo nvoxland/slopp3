@@ -99,3 +99,28 @@
           (is (= {:paths ["src"]}
                  (edn/read-string (slurp (io/file dir2 "deps.edn")))))))
       (finally (api/close! sess)))))
+
+(deftest ^:external build-reads-the-app-manifest
+  (let [sess (external/open!)
+        dir  (str (Files/createTempDirectory "slopp-appmain"
+                                             (make-array FileAttribute 0)))]
+    (try
+      (api/ingest! sess 'calc.core
+                   (str "(ns calc.core)\n"
+                        "(defn run-cli [args]\n"
+                        "  (doseq [a args] (println a)))\n"))
+      (testing "with app.main + app.name set, build! needs no arguments"
+        (api/config-file! sess "capabilities" :key "app.main" :value "calc.core/run-cli"
+                          :prompt "persist the entry point")
+        (api/config-file! sess "capabilities" :key "app.name" :value "mycalc"
+                          :prompt "persist the app name")
+        (let [r (external/build! sess dir)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= "mycalc" (get-in r [:native :binary])) (pr-str r))
+          (is (.exists (io/file dir "src" "native" "main.clj")))))
+      (testing "explicit arguments still override the configured manifest"
+        (let [dir2 (str (Files/createTempDirectory "slopp-appmain2"
+                                                   (make-array FileAttribute 0)))
+              r (external/build! sess dir2 :main 'calc.core/run-cli :name "other")]
+          (is (= "other" (get-in r [:native :binary])) (pr-str r))))
+      (finally (api/close! sess)))))

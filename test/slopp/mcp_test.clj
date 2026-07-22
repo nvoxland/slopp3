@@ -1105,3 +1105,53 @@
                  " agent following this guidance pays a failed call to find"
                  " out: " (pr-str bad))))
       (finally (api/close! sess)))))
+
+(deftest ^:external query-capabilities-rides-the-wire
+  (let [sess (external/open!)]
+    (try
+      (let [rep (edn/read-string (call! sess "query_capabilities" {}))
+            row (fn [rep k] (some #(when (= k (:key %)) %) (:settings rep)))]
+        (testing "an untouched store reports every setting at its default"
+          (is (false? (:effective (row rep "http.enabled"))) (pr-str (row rep "http.enabled")))
+          (is (= 8080 (:effective (row rep "http.port"))))
+          (is (not (:set (row rep "http.port"))))
+          (is (some #(= "http.static.*" (:key %)) (:patterns rep))))
+        (testing "a config_file set is reflected as effective + set"
+          (call! sess "config_file" {:path "capabilities" :key "http.port" :value "7357"
+                                     :prompt "port for the wire test"})
+          (let [rep (edn/read-string (call! sess "query_capabilities" {}))
+                port (row rep "http.port")]
+            (is (= 7357 (:effective port)) (pr-str port))
+            (is (true? (:set port)))
+            (is (= "7357" (:value port))))))
+      (testing "the tool is advertised read-only"
+        (is (contains? tools/read-only-tools "query_capabilities")))
+      (finally (api/close! sess)))))
+
+(deftest ^:external branch-milestones-mirror-the-branch-line
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-bpub" (make-array java.nio.file.attribute.FileAttribute 0)))
+        _    (sh/sh "git" "init" dir)
+        _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
+                    "commit" "--allow-empty" "-m" "root")
+        sess (external/open! {:slopp.api/dir dir})
+        rev  (fn [ref] (clojure.string/trim (:out (sh/sh "git" "-C" dir "rev-parse" ref))))]
+    (try
+      (call! sess "ns_create" {:ns "bp.core" :source "(ns bp.core)\n(defn ^:unused-ok f [x] x)\n"})
+      (call! sess "commit_point" {:description "trunk milestone"})
+      (call! sess "branch_create" {:name "feature"})
+      (call! sess "edit_add_form" {:ns "bp.core" :source "(defn ^:unused-ok g [x] x)"
+                                   :prompt "branch work"})
+      (let [r      (call! sess "commit_point" {:description "branch milestone"})
+            pushed (:pushed (:published (edn/read-string r)))
+            trunk  (rev "refs/heads/slopp/main")
+            head   (rev "refs/heads/slopp/feature")]
+        (is (re-find #"slopp/feature" r) r)
+        (testing "the mirrored ref carries the BRANCH milestone, not the fork point"
+          (is (not= trunk head) (str "slopp/feature stuck at the fork-point sha " head))
+          (is (= pushed head) (str ":published claims " pushed " but git has " head))
+          (is (re-find #"defn \^:unused-ok g"
+                       (:out (sh/sh "git" "-C" dir "show"
+                                    "refs/heads/slopp/feature:src/bp/core.clj")))
+              "the branch work must be IN the mirrored tree")))
+      (finally (api/close! sess)))))

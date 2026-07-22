@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch]))
+            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -40,12 +40,17 @@
   native-binary recipe (O4): a generated gen-class launcher at
   src/native/main.clj, a `:native` deps alias, and an executable
   build-native.sh that GraalVM-compiles the project to a self-contained
-  binary `:name` (default: the entry ns's first segment)."
+  binary `:name` (default: the entry ns's first segment). `:main` and `:name`
+  FALL BACK to the persisted app manifest — the `app.main` / `app.name`
+  capability settings — so a store that declares its entry point builds with
+  no arguments; explicit args override."
   [session dir & {:keys [main force] bin-name :name}]
   (let [f        (io/file dir)
         target   (.getCanonicalFile f)
         cwd      (.getCanonicalFile (io/file "."))
         st       (:store @session)
+        main     (or main (capabilities/effective st "app.main"))
+        bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
         deps     (:deps st)
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))

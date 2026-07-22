@@ -81,8 +81,10 @@
                     summary             (assoc :test summary))
                   t0)))))))))
 
-(defn line-dir
-  "Where a branch line persists in a durable session."
+(defn ^:export line-dir
+  "Where a branch line persists in a durable session. Exported: the git
+  mirror (`slopp.sync/publish-local!`) projects a branch milestone from the
+  LINE's own journal, so it needs the line's location."
   [dir nm]
   (str (io/file dir ".slopp" "branches" nm)))
 
