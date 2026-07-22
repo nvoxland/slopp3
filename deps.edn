@@ -11,7 +11,10 @@
         com.github.seancorfield/next.jdbc {:mvn/version "1.3.955"}
         org.xerial/sqlite-jdbc  {:mvn/version "3.47.1.0"}
         org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.3.0.202506031305-r"}
-        org.slf4j/slf4j-nop     {:mvn/version "2.0.16"}}
+        org.slf4j/slf4j-nop     {:mvn/version "2.0.16"}
+        ;; D-web: mirrors the store manifest — slopp.web.server.httpkit is
+        ;; store code the boot kernel must be able to load
+        http-kit/http-kit       {:mvn/version "2.8.0"}}
 
  ;; No :test alias: the working tree is FILELESS (the store is the source).
  ;; The suite runs via test_run {external true} — build! to a temp dir whose

@@ -346,8 +346,21 @@ naming a `^{:web/read <kind>}` performer — the framework fetches BEFORE the
 handler, so a unit test just passes the value. Writes: RETURN
 `{:web/effects [[<kind> & args]…]}` as data and let the dispatcher run the
 marked performer — the test asserts `=` on data, no mocks. An endpoint that
-must perform effects directly marks `^:web/effectful` and lives in an
-`:external` namespace (the escape, not the default).
+must perform effects directly declares `:web/effectful true` (ON the name,
+with the rest of the contract) and lives in an `:external` namespace (the
+escape, not the default); its dependencies arrive as `:web/deps` on the
+request, never as ambient state.
+
+**Run it: the `slopp.web` runtime.** `(web/serve! {:web/namespaces ['my.api]
+:web/port 8080})` scans the namespaces' var metadata (the same contract the
+gates enforced), serves on http-kit (`:web/adapter :jdk` = zero-dep
+fallback). Tests never need it: `(web/handle! (web/context {:web/namespaces
+['my.api]}) request-map)` runs the ENTIRE pipeline — route, policy,
+declared reads, handler, effect interpretation — portlessly. In-handler
+guards: `(web/enforce (= owner sub))` throws a 403-mapped ex-info (no bang —
+your handler stays analyzer-pure); `(web/authorized? policy identity)`
+answers booleans. Test namespaces' endpoint-shaped forms are FIXTURES —
+they neither report in query_routes nor claim paths.
 
 ## Questions → the oracle
 

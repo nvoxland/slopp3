@@ -1486,5 +1486,22 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   WebSockets), `:jdk` kept as the zero-dep fallback, Helidon/hirundo the
   named in-process-TLS upgrade path, ring-jetty rejected (native-image
   breakage). The adapter is a capability key behind a one-function seam.
+  **Wave 2 SHIPPED 2026-07-22:** the `slopp.web` module — `router`
+  (`:pure`), `routes` (var-metadata scan, `:internal` — the universal route
+  source: live store, jar, and native binary all answer from var meta),
+  `dispatch` (`:external`, the shell by declaration: route → policy →
+  declared reads → handler → all-or-nothing effect interpretation, failures
+  as data, ex-info `:web/status` mapping), the facade (`context`/`handle!`/
+  `enforce`/`authorized?`/`serve!`/`stop!`), and BOTH adapters behind the
+  seam. `slopp.http`'s `/call`, `/mcp`, `/metrics` are declared endpoints
+  served through the facade (wire-compatible — the old transport tests pass
+  unchanged), and slopp's own store runs `http.enabled = true`. Design
+  corrections learned landing it: `enforce` not `require!` (a throwing
+  guard mutates nothing; a bang would falsely taint every pure handler
+  doing row-level authz); test namespaces' endpoint-shaped forms are
+  FIXTURES (excluded from rows so they neither report nor claim paths);
+  the `:web/effectful` marker must live ON THE NAME with the rest of the
+  contract; http-kit rides both the store manifest AND kernel deps.edn
+  (mirrored — boot must load `server.httpkit`).
 - **Static assets: content-addressed blob table** (sha256 → bytes), `:files`
   values polymorphic, deltas carry the sha (wave 4).
