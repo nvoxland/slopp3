@@ -1,6 +1,6 @@
 (ns slopp.web.auth-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web.auth :as auth]))
+            [slopp.web.auth :as auth] [cheshire.core :as cjson]))
 
 (deftest providers-resolve-identity
   (let [config {:auth/providers [:bearer :static :proxy-header]
@@ -65,3 +65,42 @@
       (is (= #{"alice" "bob"} (get-in cfg [:auth/groups "admin"]))))
     (testing "non-auth keys are ignored"
       (is (nil? (:http.port cfg))))))
+
+(deftest oidc-verifies-rs256-bearer-jwts
+  (let [kp   (.generateKeyPair (doto (java.security.KeyPairGenerator/getInstance "RSA")
+                                 (.initialize 2048)))
+        pub  ^java.security.interfaces.RSAPublicKey (.getPublic kp)
+        b64u (fn [^bytes bs] (.encodeToString (.withoutPadding (java.util.Base64/getUrlEncoder)) bs))
+        enc  (fn [m] (b64u (.getBytes (cheshire.core/generate-string m) "UTF-8")))
+        sign (fn [claims]
+               (let [h (enc {:alg "RS256" :typ "JWT" :kid "k1"})
+                     p (enc claims)
+                     body (str h "." p)
+                     sig (doto (java.security.Signature/getInstance "SHA256withRSA")
+                           (.initSign (.getPrivate kp))
+                           (.update (.getBytes body "UTF-8")))]
+                 (str body "." (b64u (.sign sig)))))
+        jwk  {:kty "RSA" :kid "k1"
+              :n (b64u (.toByteArray (.getModulus pub)))
+              :e (b64u (.toByteArray (.getPublicExponent pub)))}
+        now  1784700000
+        config {:auth/providers [:oidc]
+                :auth/oidc {:issuer "https://idp.test"
+                            :jwks [jwk]
+                            :groups-claim "roles"}}
+        rid  (fn [token]
+               (auth/resolve-identity config
+                                      {:headers {"authorization" (str "Bearer " token)}}
+                                      :now now))]
+    (testing "a valid token resolves: sub + the configured groups claim"
+      (let [id (rid (sign {:iss "https://idp.test" :sub "ada"
+                           :exp (+ now 3600) :roles ["admin" "dev"]}))]
+        (is (= "ada" (:web/sub id)) (pr-str id))
+        (is (= #{"admin" "dev"} (:web/groups id)))
+        (is (= :oidc (:web/provider id)))))
+    (testing "expiry, wrong issuer, tampering, and garbage are all anonymous"
+      (is (nil? (rid (sign {:iss "https://idp.test" :sub "ada" :exp (- now 10)}))))
+      (is (nil? (rid (sign {:iss "https://evil.test" :sub "ada" :exp (+ now 3600)}))))
+      (is (nil? (rid (str (sign {:iss "https://idp.test" :sub "ada"
+                                 :exp (+ now 3600)}) "tampered"))))
+      (is (nil? (rid "not-a-jwt"))))))

@@ -42,6 +42,9 @@
    {:rule :web-unknown-group :grain :form :severity :refuse
     :escape "config_file {path \"capabilities\" key \"groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
     :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until http.enabled)"}
+   {:rule :web-public-mutation :grain :done :severity :advisory
+    :escape "tighten :web/auth, or accept it — a deliberately public write surface (signup, webhook) is legitimate and this asks per changed form"
+    :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until http.enabled)"}
    {:rule :schema-drift :grain :done :severity :error
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}

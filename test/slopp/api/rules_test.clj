@@ -326,3 +326,23 @@
                              "(ns rv.none)\n(defn ^:unused-ok r [] {:pure 0 :reads 1})\n")]
         (is (empty? (rules/retired-vocabulary-check
                      nil st (mapv :id (store/forms st 'rv.none)))))))))
+
+(deftest public-mutation-asks-at-done
+  (let [src (str "(ns pm.api)\n\n"
+                 "(defn ^{:web/method :post :web/path \"/signup\" :web/auth :public\n"
+                 "        :web/effects [:user/insert]} signup \"S.\" [req] req)\n\n"
+                 "(defn ^{:web/method :post :web/path \"/admin\" :web/auth :authenticated\n"
+                 "        :web/effects [:user/insert]} admin \"A.\" [req] req)\n\n"
+                 "(defn ^{:web/method :get :web/path \"/ping\" :web/auth :public} ping \"P.\" [req] req)\n")
+        s0  (store/ingest (store/empty-store) 'pm.api src)
+        on  (first (store/record-config-put s0 "capabilities" :manifest
+                                            "http.enabled" "true"))
+        ids (mapv :id (store/forms on 'pm.api))
+        f   (fn [st] (rules/web-public-mutation-check nil st ids))]
+    (testing "a public endpoint declaring effect kinds fires, naming the kinds"
+      (let [r (f on)]
+        (is (= 1 (count r)) (pr-str r))
+        (is (= 'pm.api/signup (:form (first r))))
+        (is (= [:user/insert] (:web/effects (first r))))))
+    (testing "inert until http.enabled"
+      (is (empty? (f s0))))))

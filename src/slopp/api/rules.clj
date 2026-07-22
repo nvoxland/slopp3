@@ -291,6 +291,26 @@
                                  " vocabulary — remove the flag")}))))
             changed)))))
 
+(defn web-public-mutation-check
+  "Done-advisory (D-web): a CHANGED endpoint whose policy is :public and
+   which declares `:web/effects` kinds — a publicly-writable surface should
+   be a decision someone made, not an omission. Fires per form with the
+   declared kinds; inert until the store opts into HTTP (http.enabled).
+   v1 reads the DECLARATION; a public endpoint mutating without declaring
+   is web-unsafe-get's (GET) or the effects-vocabulary's territory."
+  [_session st* changed]
+  (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
+    (vec (keep (fn [fid]
+                 (when-let [e (store/form-by-id st* fid)]
+                   (let [m (edit.modules/web-name-meta e)]
+                     (when (and (:web/path m)
+                                (= :public (:web/auth m))
+                                (seq (:web/effects m)))
+                       {:form (symbol (str (store/ns-of-form-id st* fid))
+                                      (str (:name e)))
+                        :web/effects (vec (:web/effects m))}))))
+               changed))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -348,6 +368,10 @@
    ;; once and cannot become a standing warning to scroll past.
    {:key :shell-widening  :severity :advisory :check #'shell-widening-check
     :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
+   ;; a publicly-writable endpoint should be a decision, not an omission —
+   ;; the question grade, like shell-widening: only the author knows
+   {:key :web-public-mutation :severity :advisory :check #'web-public-mutation-check
+    :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
    ])
 
 (defn run-done-advisories!
