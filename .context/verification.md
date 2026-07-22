@@ -177,6 +177,21 @@ The oracle must never return a false verdict. Everything here serves that.
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the
    spare — never leak child JVMs.
+   **Async image boot (2026-07-22).** `open! {:slopp.api/async-image? true}`
+   (on for the MCP server) returns as soon as the store VALUE is loaded and
+   boots the image on a background daemon thread — `initialize` no longer
+   waits on the N-namespace load, so a slow/contended startup can't race the
+   client's MCP connect timeout (the concurrent-session failure). The oracle
+   invariant is preserved, not weakened: the ready-promise is delivered only
+   after the ENTIRE load loop, and image-consuming tools `api/await-image!`
+   it (which also rethrows a background boot failure — a store whose image
+   can't load now connects and serves READS, failing oracle ops with the
+   captured error, rather than the server dying silently). The MCP dispatch
+   gates on `mcp.tools/image-free-tools`: store-value reads serve during the
+   boot window, everything else awaits. `sync-with-journal!` no-ops until the
+   image exists (nothing to hot-reload; the store value is already current).
+   The DEFAULT path stays synchronous — every test and non-server caller gets
+   a fully-loaded image on `open!` return, unchanged.
 5. **Provenance.** Every verification lands as a `:verify` delta with the
    summary (incl. `:failures`, `:staleness-detected`/`:fresh-confirmed`).
 6. **Cold-load gate (S1b, `edit/cold-load-errors` → `index/forward-refs`).**

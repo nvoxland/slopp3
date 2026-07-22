@@ -47,6 +47,18 @@ clojure -M -m slopp.boot . --live
 into the running process, so an edit you just committed is live in the server
 that made it. `--snapshot` freezes at startup instead.
 
+**Startup is async (concurrent sessions).** The MCP server completes its
+`initialize` handshake as soon as the store VALUE loads and boots the image
+(the child JVM that loads every namespace — the slow part) on a background
+thread (`open!`'s `:slopp.api/async-image?`, on for the server). Read-only
+store tools serve immediately; oracle and write tools `await` the boot on
+first use. This is what keeps a second session on the same store dir from
+racing the client's MCP connect timeout while the first session is busy (e.g.
+mid-`full_check`) — the store is SQLite-WAL + append-CAS multi-process by
+design, so two live sessions share it and each hot-reloads the other's
+commits. If a startup still fails under heavy load, bump `MCP_TIMEOUT` (ms)
+in `.claude/settings.json`.
+
 In this repo the server is normally the **plugin's**, running the local jar
 rather than the pinned release:
 
