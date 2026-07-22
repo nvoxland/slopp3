@@ -381,7 +381,14 @@
                                                   (:form-id (:delta r))))
                 edited   (into #{qform}
                                (when new-nm [(symbol (str ns-sym) (str new-nm))]))
-                affected (session/affected-tests session ns-sym nm)
+                affected (or (session/affected-tests session ns-sym nm)
+                             ;; an alias-only require addition is semantically
+                             ;; inert — verify NOTHING rather than the whole
+                             ;; namespace reach (frictions #2); [] is honest
+                             ;; (:coverage :none), never a claimed green
+                             (when (session/inert-ns-require-change?
+                                    (:store @session) (:form-id (:delta r)))
+                               []))
                 untested (and (nil? affected) (seq (:test-map @session))
                                (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
                                              (str/triml new-source))))
@@ -948,8 +955,8 @@
     (session/with-ms (cond-> summary
                (and only' (zero? (:test summary 0)))
                (assoc :note (str "0 tests matched :only " (vec only)
-                                 " — check the names; ^:external tests only run"
-                                 " under test_run {:external true}")))
+                                 " — check the names (a named ^:external test"
+                                 " routes to the external tier automatically)")))
              t0)))
 
 (defn fix-declares!

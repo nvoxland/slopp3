@@ -147,3 +147,11 @@
       (->> fs
            (map #(edn/read-string (slurp %)))
            (apply merge-with into)))))
+
+(defn anchor-output
+  "Runner output made boundary-safe: file.clj:LINE coordinates lose the line
+  suffix (a bare file name is not a coordinate and passes the response
+  audit; agents anchor by name + snippet, and a crash tail's value is the
+  MESSAGE, not the line number)."
+  [s]
+  (str/replace (str s) #"(\.clj[cx]?):\d+(?::\d+)?" "$1"))

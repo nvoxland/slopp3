@@ -822,10 +822,10 @@
                          ;; almost always the redundant "confirm everything" the
                          ;; done-point already does — make ALL explicit, and teach
                          (or (:ns a) (seq (:only a)))
-                         (api/test-run! session
-                                        (when (:ns a) (sym :ns))
-                                        :only (some->> (:only a) (mapv symbol))
-                                        :fresh (:fresh a))
+                         (external/spot-run! session
+                                             :ns (when (:ns a) (sym :ns))
+                                             :only (some->> (:only a) (mapv symbol))
+                                             :fresh (:fresh a))
 
                          (:all a)
                          (assoc (api/test-run! session nil :fresh (:fresh a))

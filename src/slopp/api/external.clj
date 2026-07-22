@@ -237,7 +237,8 @@
                                    :shards (count shards)
                                    :output (->> (str/split-lines out)
                                                 (remove str/blank?)
-                                                (take-last 12) (str/join "\n"))}
+                                                (take-last 12) (str/join "\n")
+                                                testrun/anchor-output)}
                             (pos? retries) (assoc :shard-retries retries))
                           (let [merged {:ran        (reduce + (map :ran sums))
                                         :assertions (reduce + (map :assertions sums))
@@ -267,6 +268,15 @@
                                    (seq nses) (into (mapcat #(vector "-n" (str %)) nses))
                                    aff        (into (mapcat #(vector "-n" (str %))
                                                             (:selected aff)))
+                                   ;; -n rides along with -v: cognitect's var
+                                   ;; filter only resolves vars in DISCOVERED
+                                   ;; namespaces, and the default discovery
+                                   ;; regex is -test$ — a named test living
+                                   ;; anywhere else was unresolvable
+                                   (seq only) (into (mapcat #(vector "-n" %)
+                                                            (distinct
+                                                             (keep #(namespace (symbol (str %)))
+                                                                   only))))
                                    (seq only) (into (mapcat #(vector "-v" (str %)) only)))
                             r    (testrun/run-cmd! args dir)
                             out  (str (:out r) "\n" (:err r))
@@ -277,7 +287,8 @@
                                  (nil? s)           {:status :error
                                                      :output (->> (str/split-lines out)
                                                                   (remove str/blank?)
-                                                                  (take-last 8) (str/join "\n"))}
+                                                                  (take-last 8) (str/join "\n")
+                                                                  testrun/anchor-output)}
                                  (= :red (:status s)) (cond-> (assoc s
                                                                      :failing (testrun/parse-test-failures out)
                                                                      :all-failing (testrun/failing-test-rollup out))
@@ -821,3 +832,55 @@
        (catch Throwable t
          (api/close! session)
          (throw t))))))
+
+(defn ^:export spot-run!
+  "The tier-aware SPOT-CHECK behind test_run {ns ..}/{only ..}: each named
+  target runs in ITS tier — in-image members through the traced, diagnosed
+  in-image runner, ^:external members through ONE serial external JVM
+  (build + cognitect -v), which is the targeted fresh run the red/green
+  loop on an external test needs (naming one used to match 0 tests
+  in-image and teach a manual whole-ns detour). No external member named →
+  exactly the in-image run of api/test-run!. Entries that cannot be
+  tier-resolved (unqualified without :ns, unknown names) stay on the
+  in-image side, where the 0-matched teaching still applies."
+  [session & {:keys [ns only fresh]}]
+  (let [st       (:store @session)
+        ns-sym   (some-> ns symbol)
+        tiers    (memoize (fn [tns] (session/test-var-tiers st tns)))
+        qual     (fn [o] (let [s (str o)]
+                           (if (str/includes? s "/")
+                             (symbol s)
+                             (when ns-sym (symbol (str ns-sym) s)))))
+        ext?     (fn [q] (let [tns (symbol (namespace q))
+                               nm  (symbol (name q))]
+                           (boolean (some #(= nm %) (:external (tiers tns))))))
+        pairs    (map (fn [o] [o (qual o)]) only)
+        ext      (cond
+                   (seq only) (vec (for [[_ q] pairs :when (and q (ext? q))] q))
+                   ns-sym     (mapv #(symbol (str ns-sym) (str %))
+                                    (:external (tiers ns-sym)))
+                   :else      [])
+        img-only (seq (for [[o q] pairs :when (not (and q (ext? q)))] o))
+        img?     (cond
+                   (seq only) (boolean img-only)
+                   ns-sym     (boolean (seq (:image (tiers ns-sym))))
+                   :else      true)]
+    (cond
+      (empty? ext)
+      (api/test-run! session ns-sym :only only :fresh fresh)
+
+      (not img?)
+      (assoc (external-test-run! session :only ext)
+             :note "external-tier spot-check — ran in one fresh serial JVM")
+
+      :else
+      (let [img (api/test-run! session ns-sym :only img-only :fresh fresh)
+            ex  (external-test-run! session :only ext)]
+        ;; the external members RAN — the in-image side's pending note about
+        ;; them would contradict the result beside it
+        {:image    (dissoc img :note :external-pending)
+         :external ex
+         :status   (if (or (pos? (:fail img 0)) (pos? (:error img 0))
+                           (not= :green (:status ex)))
+                     :red
+                     :green)}))))

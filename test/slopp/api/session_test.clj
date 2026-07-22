@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external] [rewrite-clj.parser :as p]))
 
 (deftest ^:external heal-path-replays-candidate-namespaces
   ;; the extract_ns live failure: hot-load-all!'s heal boots a FRESH image
@@ -179,3 +179,45 @@
     (testing "a deleted fid is skipped, not an error"
       (is (= '[pf.a-test/f-t]
              (session/impacted-tests sess st [(fid 'pf.a 'f) "f999"]))))))
+
+(deftest an-alias-only-require-addition-impacts-nothing
+  ;; frictions #2: ns_add_require on a hub namespace invalidated every
+  ;; external test in its closure (331 on slopp.api) though an added alias
+  ;; changes the resolution of NOTHING. The ns-form fallback is now
+  ;; SEMANTIC — an added-requires-only diff, alias-only specs, each added
+  ;; ns in-store with no method-carrying forms → zero impacted tests.
+  ;; Everything else keeps the conservative whole-closure fallback.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'ir.a "(ns ir.a)\n\n(defn f \"F.\" [x] x)\n")
+                (store/ingest 'ir.m (str "(ns ir.m)\n\n(defmulti area :kind)\n\n"
+                                         "(defmethod area :sq [s] s)\n"))
+                (store/ingest 'ir.b (str "(ns ir.b (:require [clojure.string :as s]))\n\n"
+                                         "(defn h \"H.\" [x] (s/trim x))\n"))
+                (store/ingest 'ir.b-test
+                              (str "(ns ir.b-test (:require [ir.b :as b]\n"
+                                   "                        [clojure.test :refer [deftest is]]))\n\n"
+                                   "(deftest h-t (is (= \"1\" (b/h \" 1 \"))))\n")))
+        sess (atom {:store st :test-map {'ir.b-test/h-t #{'ir.b/h}}})
+        edit (fn [src] (first (store/replace-node st 'ir.b 'ir.b
+                                                  (p/parse-string src)
+                                                  :prompt "t")))
+        fid  (:id (store/form-named st 'ir.b 'ir.b))]
+    (testing "adding an alias-only in-store require impacts nothing"
+      (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
+                           "                   [ir.a :as a]))"))]
+        (is (= [] (session/impacted-tests sess st' [fid])))))
+    (testing "an added :refer is NOT inert — it can change resolution"
+      (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
+                           "                   [ir.a :refer [f]]))"))]
+        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+    (testing "an added ns carrying defmethods is NOT inert — loading registers"
+      (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
+                           "                   [ir.m :as m]))"))]
+        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+    (testing "an out-of-store lib is NOT inert — load effects unknown"
+      (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
+                           "                   [clojure.set :as cset]))"))]
+        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+    (testing "a require REMOVAL is NOT inert"
+      (let [st' (edit "(ns ir.b)")]
+        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))))

@@ -748,6 +748,55 @@
                          (filter #(iso (symbol (name %))) syms)))
                      (group-by (comp symbol namespace) tests)))))
 
+(defn- prior-source
+  "The source `fid` held immediately BEFORE the newest delta that touched it,
+  read from the journal — nil when unknown (created by ingest, or touched
+  only once), which callers treat conservatively."
+  [store fid]
+  (->> (rseq (:deltas store))
+       (keep #(get (:sources %) fid))
+       (drop 1)
+       first))
+
+(defn inert-ns-require-change?
+  "True when the newest change to ns FORM `fid` only ADDED require specs that
+  cannot change the resolution or load behavior of anything already
+  compiled: alias-only vectors (`[lib :as a]`) naming IN-STORE namespaces
+  with no method-carrying forms. Everything else — :refer (resolution can
+  shift), removals or renames, out-of-store libs (load effects unknown), a
+  required ns whose LOAD registers defmethods, any non-require edit — is not
+  inert. Conservative by construction: an unreadable or unknown prior source
+  answers false.
+
+  frictions #2: ns_add_require on slopp.api invalidated 331 external tests
+  for an edit whose blast radius is zero — the require-closure fallback
+  treated a require-list touch as a code change to the whole namespace."
+  [store fid]
+  (let [read* (fn [s] (try (edn/read-string (str s)) (catch Exception _ nil)))
+        e     (store/form-by-id store fid)
+        new   (some-> e :node n/string read*)
+        old   (read* (prior-source store fid))
+        req?  (fn [c] (and (seq? c) (= :require (first c))))
+        reqs  (fn [form] (set (mapcat rest (filter req? (drop 2 form)))))
+        rest* (fn [form] (remove req? (drop 2 form)))]
+    (boolean
+     (and (seq? old) (seq? new)
+          (= 'ns (first old) (first new))
+          (= (second old) (second new))
+          (= (rest* old) (rest* new))
+          (set/subset? (reqs old) (reqs new))
+          (let [added (set/difference (reqs new) (reqs old))]
+            (and (seq added)
+                 (every? (fn [spec]
+                           (and (vector? spec)
+                                (symbol? (first spec))
+                                (even? (count (rest spec)))
+                                (every? #(= :as %) (take-nth 2 (rest spec)))
+                                (contains? (:namespaces store) (first spec))
+                                (not-any? store/method-carrying?
+                                          (store/forms store (first spec)))))
+                         added)))))))
+
 (defn impacted-tests
   "Every test var the changed form-ids can affect, decided PER FORM (#132):
   a form with trace evidence contributes exactly its observed tests; a form
@@ -760,10 +809,14 @@
   the tracer can never see — 43.2% an NS FORM (ns_add_require edits one),
   28% a data def — so the collapse was the common case, not the corner.
 
-  Equally sound: `test-nses-reaching` over a union of namespaces IS the union
-  of the per-namespace calls (the closure intersection distributes), so the
-  untraced forms select exactly what the global fallback selected for them,
-  while traced forms keep their narrow sets instead of being dragged along."
+  The dominant untraced form is the ns form, and its commonest edit is an
+  alias-only require addition — SEMANTICALLY inert, so it contributes
+  NOTHING instead of its whole closure (inert-ns-require-change?,
+  frictions #2). Every other untraced shape keeps the closure fallback:
+  `test-nses-reaching` over a union of namespaces IS the union of the
+  per-namespace calls (the closure intersection distributes), so untraced
+  forms select exactly what the global fallback selected for them, while
+  traced forms keep their narrow sets."
   [session store changed]
   (let [reach (memoize
                (fn [ns-sym]
@@ -775,9 +828,15 @@
                 (mapcat (fn [fid]
                           (if-let [e (store/form-by-id store fid)]
                             (let [ns-sym (store/ns-of-form-id store fid)]
-                              (or (affected-tests session ns-sym
-                                                  (or (:name e) (symbol (:id e))))
-                                  (reach ns-sym)))
+                              (cond
+                                (and (= (:name e) ns-sym)
+                                     (inert-ns-require-change? store fid))
+                                []
+
+                                :else
+                                (or (affected-tests session ns-sym
+                                                    (or (:name e) (symbol (:id e))))
+                                    (reach ns-sym))))
                             []))
                         changed))))))
 

@@ -1180,3 +1180,25 @@
       (testing "the tool is advertised read-only"
         (is (contains? tools/read-only-tools "query_routes")))
       (finally (api/close! sess)))))
+
+(deftest ^:external spot-check-runs-external-tests-in-their-tier
+  ;; frictions #1: red/green on ONE ^:external test used to cost a manual
+  ;; whole-ns fresh-JVM detour — test_run {only [...]} matched 0 tests and
+  ;; taught it. A spot-check that NAMES its targets now runs each target in
+  ;; its own tier: in-image members in-image, ^:external members in ONE
+  ;; serial external JVM.
+  (let [sess (external/open!)]
+    (try
+      (call! sess "ns_create"
+             {:ns "spot"
+              :source "(ns spot (:require [clojure.test :refer [deftest is]]))\n(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n(deftest ^:external f-ext (is (= 2 (f 2))))\n"})
+      (testing "an :only naming an ^:external test runs it externally, for real"
+        (let [r (call! sess "test_run" {:only ["spot/f-ext"]})]
+          (is (re-find #":external" r) r)
+          (is (re-find #":ran 1" r) r)
+          (is (not (re-find #"0 tests matched" r)) r)))
+      (testing "a mixed-ns spot-check runs BOTH tiers and reports both"
+        (let [r (call! sess "test_run" {:ns "spot"})]
+          (is (re-find #":image" r) r)
+          (is (re-find #":external" r) r)))
+      (finally (api/close! sess)))))
