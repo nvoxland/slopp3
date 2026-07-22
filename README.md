@@ -98,9 +98,11 @@ on GitHub — is the tested workflow.
 ## Tests
 
 Two tiers, by tag on the test name: plain/`^:integration` tests run
-**in-image** on every affected write; `^:isolated` tests (they spawn their
-own JVMs) run only via `test_run {:isolated true}`, which materializes the
-store into a temp dir and runs `clojure -M:test` there. CI runs both faces:
+**in-image** on every affected write; `^:external` tests (they exercise IO
+and spawn their own JVMs) run via `test_run {external true}`, which
+materializes the store into a temp dir and runs `clojure -M:test` there.
+`done` runs the impacted external tests automatically; `full_check` runs
+every tier over the whole store. CI runs both faces:
 
 - **test-files** — the suite straight from this repo's files.
 - **test-via-slopp** — the pushed code imports *itself* into a fresh store
@@ -135,6 +137,13 @@ Execution config (like the jar's `META-INF/MANIFEST.MF`) isn't a tracked
 text file either: the store holds semantic key/values per config path
 (`config_file` — per-key history, like forms) and the projection serializes
 them into the right format on every push.
+
+## Docs and development
+
+User-facing documentation lives in `docs/` (MkDocs Material) — concepts,
+guides, the tool index, and a release blog. See [DEV.md](./DEV.md) for
+running the dev server, the test tiers, benchmarks, and a one-liner that
+builds and serves the docs site locally.
 
 ## Status
 

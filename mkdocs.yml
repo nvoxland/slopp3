@@ -1,0 +1,133 @@
+site_name: slopp
+site_description: An agent-native Clojure codebase system -- code lives in a verified, provenance-tracked store of top-level forms, not in files.
+site_author: Nathan Voxland
+site_url: https://nvoxland.github.io/slopp3/
+repo_name: nvoxland/slopp3
+repo_url: https://github.com/nvoxland/slopp3
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+dev_addr: '0.0.0.0:8000'
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    # Dark mode (default)
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    # Light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Why slopp: why.md
+  - Getting Started:
+      - Install: getting-started/install.md
+      - Your first session: getting-started/first-session.md
+      - Concepts: getting-started/concepts.md
+  - Guide:
+      - The store: guide/store.md
+      - Editing forms: guide/editing.md
+      - Verification: guide/verification.md
+      - Done points and milestones: guide/done-and-milestones.md
+      - History and provenance: guide/history.md
+      - Modules and purity tiers: guide/modules-and-tiers.md
+      - Branches and merging: guide/branches.md
+      - Working with git: guide/git.md
+      - Dependencies and config: guide/deps-and-config.md
+      - CLI and CI: guide/cli.md
+  - Reference:
+      - Tool index: reference/tools.md
+      - The dialect: reference/dialect.md
+      - Store configuration: reference/config.md
+  - Philosophy:
+      - Why the form is the unit: philosophy/the-form-is-the-unit.md
+      - The image is the oracle: philosophy/the-image-is-the-oracle.md
+      - Against files: philosophy/against-files.md
+  - Blog:
+      - blog/index.md
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - blog:
+      blog_dir: blog
+      post_date_format: long
+      archive: true
+      categories: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nvoxland/slopp3
+
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Copyright &copy; 2026 Nathan Voxland

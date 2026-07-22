@@ -1,5 +1,6 @@
 /.cpcache/
 /target/
+/site/
 /.clj-kondo/.cache/
 .slopp/
 *.class

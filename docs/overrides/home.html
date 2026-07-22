@@ -1,0 +1,128 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+
+  <section class="sl-hero">
+    <svg class="sl-hero__watermark" viewBox="0 0 200 120" fill="none" aria-hidden="true">
+      <path d="M52 14C20 34 20 86 52 106" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+      <path d="M148 14C180 34 180 86 148 106" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+      <rect x="66" y="26" width="68" height="12" rx="6" fill="currentColor"/>
+      <rect x="66" y="48" width="52" height="12" rx="6" fill="currentColor" opacity="0.72"/>
+      <rect x="66" y="70" width="60" height="12" rx="6" fill="currentColor" opacity="0.5"/>
+      <rect x="66" y="92" width="38" height="12" rx="6" fill="currentColor" opacity="0.3"/>
+    </svg>
+    <div class="sl-hero__inner">
+      <div>
+        <div class="sl-hero__brand">
+          <img class="sl-hero__logo" src="assets/logo.svg" alt="slopp logo">
+          <span>slopp</span>
+        </div>
+        <h1 class="sl-hero__title">
+          The unit of everything is<br>the <span class="paren">(</span><em>form</em><span class="paren">)</span>.
+        </h1>
+        <p class="sl-hero__sub">
+          An agent-native Clojure codebase. Your code lives in a store, not in
+          <code>.clj</code> files. Every write is compile-gated, test-verified
+          and stamped with the intent that produced it, against a live JVM
+          image that has been running your program the whole time.
+        </p>
+        <div class="sl-hero__cta">
+          <a href="why/" class="primary">Why slopp &nbsp;-&gt;</a>
+          <a href="getting-started/install/" class="ghost">Install</a>
+          <a href="https://github.com/nvoxland/slopp3" class="ghost">GitHub</a>
+        </div>
+      </div>
+
+      <div class="sl-wire">
+        <div class="sl-wire__bar"><span class="sl-wire__dot"></span> one write, over MCP</div>
+<pre class="sl-wire__body"><span class="c">;; the agent addresses code by name -- no path, no line numbers</span>
+edit_subform <span class="v">{</span><span class="k">ns</span>    <span class="s">"invoice.total"</span>
+              <span class="k">form</span>  <span class="s">"line-total"</span>
+              <span class="k">match</span> <span class="s">"(* qty price)"</span>
+              <span class="k">source</span> <span class="s">"(* qty price (- 1 discount))"</span>
+              <span class="k">prompt</span> <span class="s">"apply the line discount"</span><span class="v">}</span>
+
+<span class="c">;; back: it compiled, hot-loaded, and the tests that</span>
+<span class="c">;; actually exercise this form re-ran</span>
+<span class="v">{</span><span class="k">:ok</span> true
+ <span class="k">:delta</span> <span class="s">"d1841"</span>
+ <span class="k">:test</span> <span class="v">{</span><span class="k">:ran</span> 3 <span class="k">:pass</span> 11 <span class="k">:status</span> <span class="g">:green</span> <span class="k">:scope</span> :affected<span class="v">}</span>
+ <span class="k">:affected</span> 3<span class="v">}</span>
+</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="sl-section">
+    <h2>what you get</h2>
+    <p class="sl-section__lede">
+      slopp is one bet carried all the way down: make the top-level form the
+      atom of editing, storage, hot-reload, verification and history, and the
+      authoring loop gets both faster and harder to fool.
+    </p>
+    <div class="sl-grid">
+      <div class="sl-card">
+        <h3>No files to edit</h3>
+        <p>Namespaces are ordered forms in a SQLite delta journal. A VFS renders <code>.clj</code> text on demand; <code>build</code> materializes files only when outside tooling needs them.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Address code by name</h3>
+        <p>Namespace plus form name. Reads return one form with interface cards for everything it calls. Nothing on the wire ever carries a line number.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Verified before it lands</h3>
+        <p>Dialect gate, compile into the live image, cold-load check, lint refusal, then the tests that exercise the touched forms. A failed gate commits nothing.</p>
+      </div>
+      <div class="sl-card">
+        <h3>The image is the oracle</h3>
+        <p>A persistent JVM runs your code. Behaviour questions get answered by running it -- <code>query_eval</code>, <code>query_call</code>, <code>query_observe</code> -- instead of by reading callers.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Intent is stored, not guessed</h3>
+        <p>Every delta carries the agent, its stated reason, and the user's verbatim ask. Replay a form's life, time-travel to any point, or find the dead ends someone already walked.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Architecture that is enforced</h3>
+        <p>Modules with declared edges, package-private deep namespaces, and purity tiers that hard-refuse an effect reaching into a pure core.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Merges at form grain</h3>
+        <p>Branches are O(1) snapshots and merging is delta replay. Different-form work lands, identical changes converge, same-form divergence is a real conflict.</p>
+      </div>
+      <div class="sl-card">
+        <h3>Still a git repo</h3>
+        <p>Milestones project into ordinary git commits on a branch slopp owns. Push, pull, review PRs; edits made on GitHub come back through a form-granular 3-way merge.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sl-section">
+    <h2>the loop</h2>
+    <p class="sl-section__lede">
+      A whole task is usually 10-20 tool calls. The mechanical parts -- turns,
+      identity, formatting, ordering, test selection -- are the system's job,
+      not yours.
+    </p>
+    <div class="sl-loop">
+      <div><strong>session_brief</strong> One small call: namespaces, form names, recent milestones and what was asked for.</div>
+      <div><strong>query_slice</strong> The form you are about to change, plus cards for everything it reaches.</div>
+      <div><strong>edit_*</strong> Small writes, REPL style. Each one verifies itself and reports.</div>
+      <div><strong>done</strong> At every point you think a piece of work is finished. Tidies, lints, re-verifies, reports.</div>
+      <div><strong>commit_point</strong> The milestone a human diffs and reverts to -- green-gated, and a git commit.</div>
+    </div>
+  </section>
+
+  <div class="sl-quiet">
+    <p>slopp is experimental and self-hosted: it has been developed through
+    itself since the store flip, and
+    <a href="https://github.com/nvoxland/slopp3">its published repo</a> is a
+    projection of its own store. Expect sharp edges.</p>
+  </div>
+{% endblock %}
+
+{% block content %}{% endblock %}
+
+{% block footer %}
+  {{ super() }}
+{% endblock %}

@@ -1,0 +1,24 @@
+# Toolchain for the documentation site (mkdocs.yml + docs/).
+#
+# slopp is a JVM project: Java and the Clojure CLI are the only things a
+# developer here should have to install. The docs site is MkDocs Material,
+# which is Python -- so it lives in a container rather than on your machine.
+#
+#   docker build -f Dockerfile.docs -t slopp-docs .
+#   docker run --rm -p 8000:8000 -v "$PWD:/docs" slopp-docs
+#       -> live preview on http://127.0.0.1:8000/slopp3/ (NOT the bare root:
+#          mkdocs serve mounts under site_url's path so local paths match
+#          production), reloads as you edit
+#   docker run --rm -v "$PWD:/docs" slopp-docs build --strict
+#       -> one-shot build into site/ (gitignored); --strict makes broken
+#          internal links and bad config FAIL rather than warn
+#
+# The base image ships mkdocs, mkdocs-material and pymdown-extensions, which
+# is everything mkdocs.yml asks for -- the blog plugin is part of Material.
+# Adding a plugin outside that set? pip install it below, don't ask readers
+# to install anything locally.
+FROM squidfunk/mkdocs-material:9.7.7
+
+# ENTRYPOINT is `mkdocs`, so arguments to `docker run` are mkdocs subcommands
+# and the default is `serve`. mkdocs.yml sets dev_addr 0.0.0.0:8000 so the
+# port is reachable from outside the container.
