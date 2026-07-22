@@ -1482,6 +1482,23 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   `web-auth-refusal` gate) and enforced by the dispatcher before the handler
   is reachable; providers/groups live in the capabilities config; secrets are
   `env:NAME` indirections.
+  **Wave 3 core SHIPPED 2026-07-22:** `slopp.web.auth` (`:internal`) —
+  three providers (bearer, static basic-auth with sha-256 verify,
+  proxy-header gated on trusted `:remote-addr`), first-claim-wins in
+  declared order, config group augmentation, env-indirect secrets through
+  an injectable `getenv` seam; `dispatch/handle!` resolves identity through
+  `:web/auth-config` when the request carries none (a pre-resolved identity
+  is respected); `config-from-values` is the ONE parser from capabilities
+  strings to runtime config; `web-unknown-group` gates the policy
+  vocabulary (a typo'd group is the authz nil-pun) and the capabilities
+  gate refuses credential literals (`web-secret-literal` behavior — the
+  config is git-projected). Proven 401/403/200 over the wire on http-kit.
+  DEFERRED, deliberately: OIDC (last per plan, with its own native-image
+  proof) and the `web-public-mutation` done-advisory. ALSO: the resync
+  surfaced a merge bug minting a DUPLICATE form name via the rename
+  interplay (frictions #19 — image ran the stale shadow while reads showed
+  the fresh form; repaired by id-addressed delete, engine fix owed with
+  #16).
 - **Server: http-kit default adapter** (native-proven, ring-compatible,
   WebSockets), `:jdk` kept as the zero-dep fallback, Helidon/hirundo the
   named in-process-TLS upgrade path, ring-jetty rejected (native-image
