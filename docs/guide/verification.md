@@ -61,7 +61,8 @@ Other keys you will see:
 - `:drift` -- a finding surfaced on the write so you see it before `done`.
 
 Writing an `^:external` test is `:partial` or `:unverified`, never green. To
-watch it go red first, run `test_run {external true, only [...]}` yourself.
+watch it go red first, `test_run {only ["ns/the-test"]}` — a named
+`^:external` target runs in its own tier automatically, one serial fresh JVM.
 
 ## Test selection is measured
 

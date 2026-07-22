@@ -240,7 +240,12 @@ then write the code). Deeper namespaces (`x.y.z`) are package-private
 to `x.y.*`; the `:export` dial on a defn widens it — `^:export` hoists
 it into the module's public surface, `^{:export "x.y.z"}` exposes it to
 that subtree only. An edge that closes a cycle is refused (the cycle is
-named). Read the whole architecture in one call: `query_depends {modules
+named). **Red-first specs targeting a package-private ns go in a
+SAME-PACKAGE test ns** (`x.y.z` spec → `x.y.z-test` or another `x.y.*`
+test ns): an outside spec naming not-yet-existing deep vars hits the
+visibility gate before its stubs can land, and the escape it teaches
+(mark the target `^:export`) is impossible for a var that doesn't exist
+yet. Read the whole architecture in one call: `query_depends {modules
 true}` — manifest, topological :layers, :cycles, :unused-edges (dead
 declarations), standing debt; browse what a module OFFERS (public fns +
 exports, deps, consumers) before calling into it: `query_depends
@@ -410,7 +415,7 @@ query_changes query_eval query_store query_observe query_call query_vocabulary
 query_rules query_rule_telemetry query_capabilities query_routes
 query_macroexpand query_branches query_commits
 query_git query_detail review_scan · ns_create
-ns_add_require ns_remove_require ns_rename · edit_add_form
+ns_add_require ns_remove_require ns_rename ns_delete · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
 edit_rename change_signature rename_sweep edit_requalify edit_extract
 edit_move_forms edit_move edit_revert undo episode_revert cleanup ·

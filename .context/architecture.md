@@ -111,7 +111,8 @@
 | ns | Role |
 |---|---|
 | `slopp.store` | pure form store + delta log + episode snapshots (`sources-at`); public toolkit (`gen-id`, `now-ms`, `qform`, `suffix-touched`) serves the deep packages |
-| `slopp.store.merge` | the merge ENGINE (deep, world-exported): `merge-logs` delta-log replay with causal delivery, MV conflicts, semver auto-resolution, merge markers |
+| `slopp.store.fields` | the fold-field/op REGISTRY (deep, :pure): one declaration per field/op drives empty-store seeds, THE shared fold (record/replay/merge), db meta rows, merge strategy, and the generated round-trip proof (D-fold-field-registry) |
+| `slopp.store.merge` | the merge ENGINE (deep, world-exported): `merge-logs` delta-log replay with causal delivery, MV conflicts, semver auto-resolution, merge markers; unregistered ops REFUSE |
 | `slopp.render` | VFS: store → source (lossless, memoized); `element-offsets` maps positions back to elements |
 | `slopp.db` | the journal: SQLite WAL, conditional `append!`, `data-version`, `load-store`; `persist!` only for branch snapshots |
 | `slopp.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.rt` |

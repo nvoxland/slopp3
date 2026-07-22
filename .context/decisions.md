@@ -1668,3 +1668,34 @@ Every cross-cutting store concept gets exactly ONE declaration site
 Element/delta/blob storage stays bespoke (the registry covers the
 meta-row folds, per the idea file's scope). `ideas/store-fold-field-
 registry.md` is closed by this entry.
+
+## D-episode-grain (2026-07-22) — discharge windows look past the baseline; milestones do not travel
+
+Two decisions from the frictions-architecture program's episode wave:
+
+- **A NEWLY-added `^:breaking-ok` discharges against history.** The
+  breaking-changes advisory fires at the done that first sees a narrowing,
+  and the baseline advances AT that done — so a marker added one episode
+  late (the only possibility when the narrowing arrives via a merge)
+  compared against the already-narrowed source and read as stale; the
+  escape was unusable exactly when it was needed (frictions #15). Now: a
+  marker ABSENT at the last-done baseline earns a bounded walk of prior
+  done baselines (newest first, ≤12, skipping marked sightings — the
+  marker cannot vouch for itself); if the form narrowed since it was last
+  seen unmarked, the marker discharges silently. A marker ALREADY present
+  at the baseline keeps the remove-the-flag discipline unchanged — the
+  self-policing that stops markers decaying into permanent opt-outs.
+- **Milestone markers deliberately do NOT travel through merges**
+  (frictions #9, now settled): a branch merge is a squash — main's history
+  stays at main's own milestone cadence, the branch line keeps its fine
+  grain while it lives, and merge-logs' `{:skipped :commit}` note is the
+  honest record. Replaying `:commit` markers would mint mid-merge git
+  commits whose `:tree` snapshots never existed on the receiving line.
+  Revisit only if branch lines become long-lived archives rather than
+  integrate-and-delete work lines.
+
+Not built, recorded in `ideas/episode-grain.md`: promoting the episode to
+a first-class journal object (changeset atomicity in merges, episode-grain
+provenance queries). The concrete asks that motivated it are served — 
+edit-group!/edit_move_forms are the changeset grain for writes, and the
+discharge window above.
