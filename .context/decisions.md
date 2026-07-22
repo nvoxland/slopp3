@@ -1577,3 +1577,31 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   small gaps, recorded: HEAD requests don't route (a HEAD-as-GET mapping
   is a one-liner when wanted); the jar needs a rebuild for the kernel
   change (deferred past the #16 arc to dodge the #17 jar-swap).
+
+## D-merge-causality (2026-07-22) — round trips are causal
+
+The branch dogfood's standing hazard (frictions #16/#19, three failure
+modes on record: false conflicts, silent drops, duplicate-name corruption)
+is closed in `merge-logs` itself:
+
+- **Returning work converges.** A theirs-suffix delta whose `:merged-from`
+  names one of OUR OWN deltas — content-matched by the same sorted-sources
+  comparison the imposter guard uses — is our work coming back from a
+  prior merge of us, and is skipped silently at suffix construction. A
+  copy they EDITED after receiving is a separate, untagged delta and still
+  replays normally.
+- **Fids resolve to live forms.** Ping-pong accumulates `:id-map` entries
+  whose targets die while the original id lives on; every arm now resolves
+  through `live-fid` (the mapped id first, the original as fallback, each
+  checked against a live form) so a stale mapping cannot silently drop an
+  edit as "we deleted it; they edited it".
+- **Duplicate names refuse.** A merge candidate holding two same-named
+  forms in one namespace is corrupt by construction (last-definition-wins
+  shadows silently: the image runs one form while every name-keyed read
+  shows the other) — the merge returns `{:error}` naming the collisions
+  instead of landing.
+
+Each fix is guarded by a merge-test modeling the production failure that
+motivated it. Bidirectional branch flow is unblocked. Deliberately NOT
+done: lineage-aware conflict prose ("their edit builds on your v2") and
+milestone-marker travel (#9) — both recorded, neither load-bearing.
