@@ -402,3 +402,28 @@
       (is (re-find #":t3" (str (:theirs (first (:conflicts r)))))))
     (testing "ours stays live"
       (is (re-find #":ours" (render/render-ns (:store r) 'm.core))))))
+
+(deftest merged-state-deltas-get-fresh-ids-not-verbatim
+  ;; the durable-merge corruption: both lines do config/deps/tier work from
+  ;; the SAME fork → the same next-id → the merge landed theirs' delta
+  ;; VERBATIM, minting a duplicate delta id that db/append!'s UNIQUE
+  ;; constraint rejects — a permanent, misleading "store changed during
+  ;; merge — retry" on every real branch that touched capabilities/deps/
+  ;; tiers on both sides. Ephemeral merge tests never reached append!, so
+  ;; nothing caught it. The merge must re-mint state deltas with a fresh id.
+  (let [b      (base)
+        ours   (first (store/record-config-put b "capabilities" :manifest "http.port" "8080"))
+        theirs (first (store/record-config-put b "capabilities" :manifest "http.enabled" "true"))
+        {:keys [store]} (merge/merge-logs ours theirs :from "branch:web#x")
+        ids    (mapv :id (store/deltas store))
+        base-ids (set (map :id (store/deltas ours)))
+        tail   (drop (count (store/deltas ours)) ids)]
+    (testing "the merged journal has NO duplicate delta ids"
+      (is (= (count ids) (count (distinct ids))) (pr-str ids)))
+    (testing "the appendable tail (what db/append! inserts) collides with nothing already committed"
+      (is (empty? (filter base-ids tail)) (pr-str tail)))
+    (testing "the crossed config still converges (state, not just ids)"
+      (is (= "true" (get-in store [:config "capabilities" :values "http.enabled"])))
+      (is (= "8080" (get-in store [:config "capabilities" :values "http.port"]))))
+    (testing "the re-minted delta keeps provenance to theirs"
+      (is (some :merged-from (drop (count (store/deltas ours)) (store/deltas store)))))))

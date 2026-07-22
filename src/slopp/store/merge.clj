@@ -438,13 +438,22 @@
                   ;; unknown op: never guess with someone's code
                   (cond
                     (fields/replay-merge-op? op)
-                    ;; state-carrying non-code ops replay through the ONE fold —
-                    ;; path/key-grain last-writer-wins (main once lost its whole
-                    ;; web config to a silent skip here); binary file-put BYTES
-                    ;; ride the end-of-merge :blobs union
-                    (done (or (store/replay-delta st d) st)
-                          idmap (inc merged) conflicts notes changed new-nses
-                          (conj applied (:id d)))
+                    ;; state-carrying non-code ops cross path/key-grain
+                    ;; last-writer-wins (main once lost its whole web config to
+                    ;; a silent skip here); binary file-put BYTES ride the
+                    ;; end-of-merge :blobs union. The delta is RE-MINTED with a
+                    ;; fresh id + :merged-from — landing theirs' id verbatim
+                    ;; duplicated it against our own post-fork delta of the same
+                    ;; number (both lines allocate from the same counter), which
+                    ;; db/append!'s UNIQUE id rejected, failing every durable
+                    ;; branch merge that touched config/deps/tiers on both sides
+                    (let [[nid st1] (store/gen-id st "d")
+                          d'  (assoc d :id nid
+                                     :parent (:id (last (:deltas st1)))
+                                     :merged-from (:id d))
+                          st2 (update (fields/fold st1 d') :deltas conj d')]
+                      (done st2 idmap (inc merged) conflicts notes changed
+                            new-nses (conj applied (:id d))))
 
                     (contains? fields/markers op)
                     ;; line-scoped bookkeeping does not travel — milestones

@@ -243,3 +243,26 @@
                  (get-in @sess [:store :deps 'http-kit/http-kit])))
           (is (= [true] (api/query-eval sess "(dp.web/server-fn?)")))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-durable-merge-with-config-on-both-sides-persists
+  ;; H1 end to end: the pure merge test proves the journal has no dup id;
+  ;; this proves the DURABLE path — db/append!'s UNIQUE-id insert — actually
+  ;; commits when both lines set a capabilities key from the same fork (the
+  ;; exact shape that failed permanently before the re-mint fix).
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'cb.core seed)
+      (branch/branch! sess "feature")
+      (api/config-file! sess "capabilities" :key "http.port" :value "9090"
+                        :prompt "branch sets a port")
+      (branch/branch-switch! sess "main")
+      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+                        :prompt "main enables http")
+      (testing "the merge COMMITS (no permanent 'store changed during merge')"
+        (let [r (branch/branch-merge! sess "feature")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:conflict r)) (pr-str r))))
+      (testing "both keys survive the durable round trip"
+        (is (= "9090" (:value (api/config-file! sess "capabilities" :key "http.port"))))
+        (is (= "true" (:value (api/config-file! sess "capabilities" :key "http.enabled")))))
+      (finally (api/close! sess)))))
