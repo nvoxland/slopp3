@@ -1732,3 +1732,85 @@ a first-class journal object (changeset atomicity in merges, episode-grain
 provenance queries). The concrete asks that motivated it are served — 
 edit-group!/edit_move_forms are the changeset grain for writes, and the
 discharge window above.
+
+## D-web-html (2026-07-22) — server-rendered UI: hiccup pages, UI→route integrity
+
+The HTML story for D-web apps. The deciding question was representation:
+hiccup vs "actual HTML". It collapses on inspection — slopp pages are
+functions of data (`:web/reads` → response), and raw HTML cannot express a
+loop or a conditional, so native HTML storage really means HTML **plus a
+template language**: a third language living in strings, invisible to the
+refs graph, unevaluable by the oracle, with its own injection surface.
+Hiccup is the only representation where a page IS a top-level form and
+inherits the whole machinery — form-grain deltas, provenance, rename
+sweeps, the dialect gate, covering tests, `web/handle!` as the render
+oracle — for free. Two supporting facts: HTML5 parsing is error-RECOVERING
+by spec, so "malformed HTML" does not exist as a write-time signal (the
+Clojure reader gives hiccup balance-checking free), and the LLM failure
+modes in hiccup are narrow and mechanically checkable, where template-
+in-string errors are caught by nothing. htmx was deliberately dropped from
+the wave: it is not a representation (it is an optional JS enhancement via
+attributes), nothing in this design depends on it, and plain links + forms
++ full-page renders are the simpler model. Decisions:
+
+- **hiccup 2.0.0 as a dependency, wrapped by an owned strictness layer**
+  (user call — reuse the dep's logic rather than own a renderer).
+  `slopp.web.html/render` = validation walk → `[:html/raw]` transform →
+  hiccup serialization. The slim jar goes 3→4 deps (`build.clj`
+  slim-deps + the store manifest). The security tests PIN the dep's
+  escaping contract so a hiccup upgrade that changes behavior turns red.
+  Probing the dep first (query_eval) surfaced why the wrapper is
+  load-bearing: hiccup renders crafted tag/attr NAMES verbatim (a real
+  injection door), silently `str`s a map in child position, and does no
+  URL-scheme checking.
+- **The strictness layer**: tag/attr names validated (throw, not escape);
+  `javascript:`/`data:` refused in `href src action formaction` (escaping
+  cannot neutralize a URL scheme); teaching errors for map-in-child-
+  position (→ `cond->`) and vector-as-grouping (→ seqs); `[:html/raw s]`
+  string-only, kept as DATA in forms and converted to hiccup's raw wrapper
+  only at render, so pages stay `=`-testable and the ref walker sees
+  literals. Escaping tests are labeled SECURITY.
+- **`page` shell opts are `:html/`-namespaced** (`:html/title` etc.) — the
+  namespaced-keys boundary gate demanded it and it matches the `:web/*`
+  envelope convention. The shell emits no inline script/style: strict-CSP
+  compatible by construction; apps set their own CSP header.
+- **UI→route referential integrity, analysis-side** (`slopp.api.web`):
+  `ui-route-refs` (a derived pure fn of forms — the keyword-inventory
+  litmus, so correct across branches/merges/history) classifies literal
+  `:href`/`:action` values `:exact`/`:prefix`/`:unresolved`;
+  `dangling-route-refs` joins through `slopp.web.router/match` (scoped
+  `^{:export "slopp.api"}` + the new `module_dep slopp.api → slopp.web`
+  edge — one matcher truth) plus `http.static.*` mounts with file
+  EXISTENCE. `query_routes` rows gain `:rendered-by`. The key set covers
+  href/action today; hx-* verbs slot in if htmx is ever adopted.
+- **`web-dangling-route-refs` done-advisory, `:error` default,
+  store-wide** — like dead surface, because deleting a route dangles an
+  UNCHANGED form's link. Inert until `http.enabled`; discharged by fixing
+  the path, adding the route/asset, or `^{:web/external-path "why"}` on
+  the rendering form. Dynamic refs are NAMED (`:unresolved` via
+  `api.web/dangling-route-refs`) but never findings — an `:error` key has
+  no non-flipping finding lane (friction #4 in
+  `ideas/html-wave-frictions.md`).
+- **`web-react-attrs` write gate, refuse-grade** — `:className`,
+  `:htmlFor`, `on[A-Z]*`, `:dangerouslySetInnerHTML` in a literal map in
+  position 2 of a keyword-tag vector. The silent-failure class: browsers
+  ignore unknown attributes. Scoping to element position keeps JSON-ish
+  payload maps out; the per-store dial is the escape.
+- **Fragment auth stance carried forward**: every endpoint declares
+  `:web/auth`; the browser dogfood's `/store*` endpoints are `:public`
+  WITH the recorded justification (the co-hosted `/call`+`/mcp` expose
+  strictly more).
+- **Dogfood**: `slopp.http.browse` — the read-only store browser
+  (`/store`, `/store/ns/:ns`, `/store/source/:ns/:name`) in the server
+  module (never rides the slim jar), plain links, full-page renders,
+  arbitrary store source through the escaper as a standing security
+  exercise; wired into `start-server!`'s `:web/namespaces`.
+
+Deferred, deliberately: htmx (additive hx-* attributes + one static blob
+when an app wants partial updates; `ideas/htmx-hiccup-ui.md` keeps that
+half), build-time static generation (`:web/static true` materialization —
+a serving strategy, not a representation change), an image-side
+html→hiccup conversion tool (build on pasted-HTML friction), an
+oversized-page-defn advisory, a CSP capability key, and ClojureScript
+(`ideas/clojurescript-client-code.md`, escalation after htmx). Wave
+frictions: `ideas/html-wave-frictions.md`.

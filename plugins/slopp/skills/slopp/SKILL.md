@@ -383,6 +383,44 @@ password compares are constant-time, and **OIDC requires a configured
 server must not accept cross-audience tokens). Row-level authz is still yours:
 slopp does not taint-track a handler returning another tenant's rows.
 
+**HTML pages are hiccup — store forms, not template files (D-web-html).** A
+page or component is a `defn` returning hiccup data; `slopp.web.html/render`
+serializes it (hiccup 2.x underneath, escape-by-default), `html-response`
+wraps it as a `text/html` RING map, and `page` is the full-document shell
+(`{:html/title … :html/lang … :html/head […]}` + body — doctype and charset
+included, NO inline script or style, so a strict CSP needs no carve-outs).
+The rules that matter:
+
+- **Attrs are position 2, always a map or absent.** Compute conditional
+  attrs — `(cond-> {:class "todo"} done? (update :class str " done"))`;
+  `(when p {…})` in position 2 is a vanishing CHILD when p is false.
+- **Everything escapes; never pre-escape.** `[:html/raw s]` is the ONE
+  bypass (string payload only). The renderer refuses crafted tag/attr
+  NAMES and `javascript:`/`data:` URLs in `href`/`src`/`action` — those
+  survive escaping, so they throw instead.
+- **A vector is an element; a seq splices.** Repeat with `for`/`map`;
+  never group siblings in a vector.
+- **No React names** — `:class` not `:className`, `:for` not `:htmlFor`,
+  no `:onClick`-style handlers (the `web-react-attrs` gate refuses them:
+  browsers silently ignore unknown attributes, so the mistake ships and
+  does nothing).
+- **Component-per-defn.** A thin page shell composing small component fns —
+  that is the merge grain, the test grain, and each component stays
+  `=`-testable data.
+- **Check `query_routes` before writing a link or form path.** Literal
+  `:href`/`:action` values are INDEXED: route rows carry `:rendered-by`
+  (who links here), and `done` fails on a path nothing serves
+  (`web-dangling-route-refs`). `(str "/prefix/" x)` checks by prefix; a
+  fully dynamic path is reported `:unresolved`, never counted clean.
+  Served by something outside this store? `^{:web/external-path "why"}`
+  on the rendering form discharges.
+- **See a page without a server:** `(web/handle! (web/context
+  {:web/namespaces ['my.ui]}) {:request-method :get :uri "/x"})` via
+  `query_eval` — the full pipeline, rendered HTML in the response map.
+  Test on data first (call the handler with a synthetic `{:web/reads …}`
+  request); pin one rendered string per component. Under `--live`, an
+  edited page hot-serves — browser F5, no build step.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
