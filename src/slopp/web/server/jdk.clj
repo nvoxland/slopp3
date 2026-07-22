@@ -29,6 +29,16 @@
              (try (json/parse-string raw true)
                   (catch Exception _ raw)))}))
 
+(defn- respond-raw!
+  [^HttpExchange ex status content-type body]
+  (let [^bytes bs (if (bytes? body)
+                    body
+                    (.getBytes (str body) "UTF-8"))]
+    (when content-type
+      (.add (.getResponseHeaders ex) "Content-Type" (str content-type)))
+    (.sendResponseHeaders ex status (alength bs))
+    (doto (.getResponseBody ex) (.write bs) (.close))))
+
 (defn ^{:export "slopp.web"} start!
   "Serve `ctx` (the dispatch context — routes + performers) on
   {:host :port}: ONE catch-all handler doing request-map →
@@ -41,8 +51,12 @@
                       (handle [_ ex]
                         (try
                           (let [resp (dispatch/handle! ctx (request-map ex))]
-                            (respond! ex (int (or (:status resp) 200))
-                                      (json/generate-string (:body resp))))
+                            (if (:web/raw resp)
+                              (respond-raw! ex (int (or (:status resp) 200))
+                                            (get (:headers resp) "Content-Type")
+                                            (:body resp))
+                              (respond! ex (int (or (:status resp) 200))
+                                        (json/generate-string (:body resp)))))
                           (catch Exception e
                             (respond! ex 500 (json/generate-string
                                               {:error (ex-message e)})))))))

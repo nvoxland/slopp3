@@ -1924,10 +1924,12 @@
        last))
 
 (defn file-put!
-  "Track a NON-CODE file on the store's files manifest (README, .github
-  workflows, …) — it rides every projected tree, so slopp pushes never
-  delete it from the remote. Returns {:path :bytes}."
-  [session path content & {:keys [prompt agent]}]
+  "Track a NON-CODE file on the store's files manifest — it rides every
+  projected tree, so slopp pushes never delete it from the remote. TEXT by
+  default; `:encoding \"base64\"` decodes `content` to BYTES and stores them
+  content-addressed (`:content-type` labels them). Returns {:path :bytes}
+  (+ :sha for binary)."
+  [session path content & {:keys [prompt agent encoding content-type]}]
   (cond
     (str/blank? (str path))
     {:error "file_put needs a :path"}
@@ -1935,12 +1937,21 @@
     (nil? content)
     {:error "file_put needs :content"}
 
+    (and encoding (not= "base64" (str encoding)))
+    {:error (str "unknown :encoding " encoding " — omit it for text, or"
+                 " \"base64\" for binary")}
+
     :else
-    (do (session/commit-appended! session
-                          #(first (store/record-file-put % path content
-                                                         :prompt prompt :agent agent))
-                          [])
-        {:path (str path) :bytes (count (str content))})))
+    (let [st' (session/commit-appended! session
+                        #(first (store/record-file-put % path content
+                                                       :prompt prompt :agent agent
+                                                       :encoding encoding
+                                                       :content-type content-type))
+                        [])
+          e   (get (:files st') (str path))]
+      (if (map? e)
+        {:path (str path) :bytes (:bytes e) :sha (:sha e)}
+        {:path (str path) :bytes (count (str content))}))))
 
 (defn file-remove!
   "Drop `path` from the files manifest. Returns {:removed path} | {:error}."
@@ -1980,10 +1991,25 @@
 
 ^:reads (defn file-get
   "A manifest file's content — current, or as of a past delta via `:at`
-  (a delta id or commit-point id resolves through its :target like
-  query_history {ns name at}). Returns {:path :content} | {:error}."
+  (a delta id or commit-point id resolves through its :target). Text →
+  {:path :content}; binary → {:path :content <base64> :encoding \"base64\"
+  :content-type :sha} (bytes from the in-memory cache, else the db — a
+  foreign-synced entry). Returns {:error} for unknown paths."
   [session path & {:keys [at]}]
-  (let [st (:store @session)]
+  (let [st (:store @session)
+        b64 (fn [^bytes bs] (.encodeToString (java.util.Base64/getEncoder) bs))
+        resolved (fn [entry]
+                   (if (map? entry)
+                     (let [bs (or (get (:blobs st) (:sha entry))
+                                  (some-> (:db @session)
+                                          (db/get-blob (:sha entry))))]
+                       (if bs
+                         {:path (str path) :content (b64 bs)
+                          :encoding "base64"
+                          :content-type (:content-type entry) :sha (:sha entry)}
+                         {:error (str path " is a binary entry whose blob "
+                                      (:sha entry) " is not in this store")}))
+                     {:path (str path) :content entry}))]
     (if at
       (let [at-id (or (some (fn [d] (when (and (= :commit (:op d)) (= at (:id d)))
                                       (:target d)))
@@ -1991,10 +2017,10 @@
                       at)
             c     (store/file-at st (str path) at-id)]
         (if (some? c)
-          {:path (str path) :at at :content c}
+          (assoc (resolved c) :at at)
           {:error (str path " has no content at " at)}))
-      (if-let [c (get (:files st) (str path))]
-        {:path (str path) :content c}
+      (if-let [e (get (:files st) (str path))]
+        (resolved e)
         {:error (str path " is not on the files manifest")}))))
 
 ^:reads (defn file-history!

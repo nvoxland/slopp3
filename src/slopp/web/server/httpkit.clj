@@ -25,9 +25,13 @@
                   (let [resp (try (dispatch/handle! ctx (request-map ring-req))
                                   (catch Exception e
                                     {:status 500 :body {:error (ex-message e)}}))]
-                    {:status (or (:status resp) 200)
-                     :headers {"Content-Type" "application/json"}
-                     :body (json/generate-string (:body resp))}))
+                    (if (:web/raw resp)
+                      {:status (or (:status resp) 200)
+                       :headers (:headers resp {})
+                       :body (:body resp)}
+                      {:status (or (:status resp) 200)
+                       :headers {"Content-Type" "application/json"}
+                       :body (json/generate-string (:body resp))})))
                 {:ip (str host) :port (int port) :legacy-return-value? false})]
     {:server server :port (hk/server-port server)}))
 

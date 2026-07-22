@@ -341,10 +341,12 @@
                                :value {:type "string"}}
                   :required ["key"]}}
    {:name "file_put"
-    :description "Track a non-code file on the files manifest (rides every projected tree)."
+    :description "Track a non-code file on the files manifest (rides every projected tree). Text by default; encoding \"base64\" stores BINARY content-addressed (content-type labels it) — the journal carries only the sha."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
                                :content {:type "string"}
+                               :encoding {:type "string"}
+                               :content-type {:type "string"}
                                :prompt {:type "string"}}
                   :required ["path" "content"]}}
    {:name "file_remove"

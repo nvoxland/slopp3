@@ -13,18 +13,37 @@
   (:require [slopp.api :as api]
             [slopp.mcp :as mcp]
             [slopp.api.external :as external]
-            [slopp.web :as web]))
+            [slopp.web :as web] [slopp.store :as store] [slopp.db :as db] [slopp.web.static :as static]))
 
 (defn start-server!
   "Start the transport on `port` over a fresh session (`opts` as api/open!):
-  the declared endpoints of THIS namespace (/call, /mcp, /metrics) served
-  through the web facade — the transport is the first consumer of the same
-  machinery every slopp web app gets. Returns {:server :session :calls}
-  for stop-server!."
+  the declared endpoints of THIS namespace (/call, /mcp, /metrics) plus any
+  `http.static.*` capability mounts, served through the web facade — the
+  transport is the first consumer of the same machinery every slopp web app
+  gets. Static assets read from the STORE (text or content-addressed
+  bytes), so under --live an edited asset serves without a rebuild.
+  Returns {:server :session :calls} for stop-server!."
   [port opts]
   (let [session (external/open! opts)
         calls   (atom [])
+        mounts  (into {}
+                      (keep (fn [[k v]]
+                              (when-let [[_ mount] (re-matches #"http\.static\.(.+)"
+                                                               (str k))]
+                                [mount (str v)])))
+                      (get-in (:store @session)
+                              [:config "capabilities" :values]))
+        reader  (fn [path]
+                  (let [st (:store @session)
+                        {:keys [content content-type] :as e}
+                        (store/file-content st path)]
+                    (when e
+                      {:content (or content
+                                    (some-> (:db @session)
+                                            (db/get-blob (:sha e))))
+                       :content-type content-type})))
         srv     (web/serve! {:web/namespaces ['slopp.http]
+                             :web/routes (static/mount-routes mounts reader)
                              :web/host "127.0.0.1"
                              :web/port port
                              :web/perform-ctx {:session session :calls calls}})]

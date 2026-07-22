@@ -124,16 +124,23 @@
   namespaces under test/ — same layout as build!), the generated deps.edn
   (carrying the store's Tier-1 manifest `deps` and, when the project has tests,
   a :test alias, so a clone is runnable), every non-code file from the
-  `files` manifest, and every structured CONFIG entry rendered to its format
-  (they all ride EVERY projected tree, so a slopp push never deletes them)."
-  [tree-map deps files configs]
+  `files` manifest — BINARY entries ({:sha …}) resolved to real bytes via
+  `blob-of` (sha → bytes; a missing blob projects its entry EDN, visible
+  rather than silent) — and every structured CONFIG entry rendered to its
+  format (they all ride EVERY projected tree, so a slopp push never deletes
+  them)."
+  [tree-map deps files configs blob-of]
   (into (sorted-map)
         (concat [["deps.edn" (build/deps-edn false deps
                                              (boolean (some render/test-ns? (keys tree-map))))]]
                 (map (fn [[ns-sym src]]
                        [(render/source-path ns-sym) src])
                      tree-map)
-                files
+                (map (fn [[p entry]]
+                       [p (if (map? entry)
+                            (or (blob-of (:sha entry)) (pr-str entry))
+                            entry)])
+                     files)
                 (map (fn [[p entry]] [p (store/render-config entry)]) configs))))
 
 (defn- backfill-tree
@@ -202,13 +209,16 @@
        (when (= :red (:status d)) "Slopp-Status: red\n")))
 
 (defn- insert-tree!
-  "Blobs + git tree for a {path content} map; returns the tree ObjectId."
+  "Blobs + git tree for a {path content} map (content: string or BYTES —
+  binary assets project as real bytes); returns the tree ObjectId."
   [^ObjectInserter ins paths]
   (let [dc (DirCache/newInCore)
         b  (.builder dc)]
-    (doseq [[^String path ^String content] paths]
-      (let [blob (.insert ins Constants/OBJ_BLOB
-                          (.getBytes content StandardCharsets/UTF_8))]
+    (doseq [[^String path content] paths]
+      (let [^bytes bs (if (bytes? content)
+                        content
+                        (.getBytes ^String content StandardCharsets/UTF_8))
+            blob (.insert ins Constants/OBJ_BLOB bs)]
         (.add b (doto (DirCacheEntry. path)
                   (.setFileMode FileMode/REGULAR_FILE)
                   (.setObjectId blob)))))
@@ -230,9 +240,9 @@
   projection rebuildable (which is why the author identity, the files
   manifest, and the structured config live ON the marker, never in ambient
   state)."
-  [^Repository repo parent-sha d tree-map]
+  [^Repository repo parent-sha d tree-map blob-of]
   (with-open [ins (.newObjectInserter repo)]
-    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d) (:files d) (:config d)))
+    (let [tree-id (insert-tree! ins (commit-paths tree-map (:deps d) (:files d) (:config d) blob-of))
           at      (Instant/ofEpochMilli (long (:at d)))
           who     (commit-author d)
             ;; reflection-free ctors matter: reflective JGit calls resolve
@@ -294,7 +304,8 @@
                                          (db/rendered-sources conn)
                                          (db/deps conn)
                                          (db/files conn)
-                                         (db/config-files conn)))
+                                         (db/config-files conn)
+                                         #(db/get-blob conn %)))
               tip     (ObjectId/fromString tip-sha)
               m-tree  (with-open [rw (RevWalk. repo)]
                         (.getId (.getTree (.parseCommit rw tip))))]
@@ -351,7 +362,8 @@
                       (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
                pinned
                (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
-                     sha  (insert-commit! repo parent d tree)]
+                     sha  (insert-commit! repo parent d tree
+                                          #(db/get-blob map-conn %))]
                  (record-sha! map-conn (:id d) fp sha line-label)
                  sha))))
          parent))

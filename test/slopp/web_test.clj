@@ -1,6 +1,6 @@
 (ns slopp.web-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web :as web]))
+            [slopp.web :as web] [slopp.web.static :as static]))
 
 (defn ^{:web/method :get :web/path "/w/mine/:owner" :web/auth :authenticated}
   t-mine
@@ -80,4 +80,40 @@
         (is (= 200 (GET "/w/mine/ada" "tok-ada")))
         (testing "and enforce still 403s the wrong owner, authenticated or not"
           (is (= 403 (GET "/w/mine/someone-else" "tok-ada")))))
+      (finally (web/stop! srv)))))
+
+(deftest ^:external static-mounts-serve-raw-bytes
+  (let [png (byte-array [(byte -119) 80 78 71 9 8 7])
+        reader (fn [path]
+                 (get {"public/logo.png" {:content png :content-type "image/png"}
+                       "public/app.css"  {:content "body{}" :content-type "text/css"}}
+                      path))
+        rows (static/mount-routes {"/assets" "public"} reader)
+        srv  (web/serve! {:web/namespaces []
+                          :web/routes rows
+                          :web/adapter :http-kit
+                          :web/port 0})
+        http (java.net.http.HttpClient/newHttpClient)
+        GET  (fn [path]
+               (let [resp (.send http
+                                 (-> (java.net.http.HttpRequest/newBuilder)
+                                     (.uri (java.net.URI/create
+                                            (str "http://127.0.0.1:" (:port srv) path)))
+                                     (.build))
+                                 (java.net.http.HttpResponse$BodyHandlers/ofByteArray))]
+                 {:status (.statusCode resp)
+                  :type (.orElse (.firstValue (.headers resp) "content-type") nil)
+                  :body (.body resp)}))]
+    (try
+      (testing "bytes round-trip with their content type, no JSON wrapping"
+        (let [r (GET "/assets/logo.png")]
+          (is (= 200 (:status r)))
+          (is (= "image/png" (:type r)))
+          (is (java.util.Arrays/equals png ^bytes (:body r)))))
+      (testing "text assets serve as their own media type"
+        (let [r (GET "/assets/app.css")]
+          (is (= "text/css" (:type r)))
+          (is (= "body{}" (String. ^bytes (:body r) "UTF-8")))))
+      (testing "an unknown file is a 404"
+        (is (= 404 (:status (GET "/assets/nope.js")))))
       (finally (web/stop! srv)))))

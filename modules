@@ -20,7 +20,7 @@ slopp.eval-findings: slopp.api slopp.store
 slopp.evalseed: slopp.api
 slopp.extract: slopp.api
 slopp.f3c: slopp.api
-slopp.files: slopp.api slopp.store
+slopp.files: slopp.api slopp.db slopp.store
 slopp.git: slopp.build slopp.db slopp.render slopp.store
 slopp.git-client: slopp.api slopp.git
 slopp.git-concurrency: slopp.api slopp.git
@@ -29,7 +29,7 @@ slopp.git-projection: slopp.api slopp.db slopp.git slopp.store
 slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
-slopp.http: slopp.api slopp.mcp slopp.web
+slopp.http: slopp.api slopp.db slopp.mcp slopp.store slopp.web
 slopp.image: slopp.render slopp.repl slopp.rt slopp.store
 slopp.index: slopp.cache
 slopp.integration-tier: slopp.api

@@ -665,21 +665,44 @@
                      (update :deltas conj delta))
                  delta]))))))))
 
+(defn sha256-of
+  "SHA-256 of a byte array as lowercase hex — the blob address."
+  [^bytes bs]
+  (let [d (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)]
+    (apply str (map #(format "%02x" %) d))))
+
 (defn record-file-put
-  "Track a NON-CODE file (README, .github workflows, …) on the store's
-  `:files` manifest ({path → text}) — these ride every projected tree, so
-  they survive slopp pushes. ONE state-carrying `:file-put` delta (replay
-  reconstructs the manifest incrementally, like :deps-add). Returns
-  [store' delta]."
-  [store path text & {:keys [prompt agent]}]
+  "Track a NON-CODE file on the store's `:files` manifest — these ride every
+  projected tree, so they survive slopp pushes. TEXT (the default):
+  {path → string}, delta carries :content. BINARY (`:encoding \"base64\"`):
+  the decoded bytes are CONTENT-ADDRESSED into `:blobs` ({sha → bytes}) and
+  the manifest entry is `{:sha :content-type :bytes}` — the delta carries
+  the sha and size, NEVER the payload, so a large asset costs the journal
+  ~60 bytes and identical content converges on one blob. ONE state-carrying
+  `:file-put` delta either way (replay reconstructs the manifest
+  incrementally, like :deps-add; blob BYTES persist via the db's blobs
+  table, not the journal). Returns [store' delta]."
+  [store path text & {:keys [prompt agent encoding content-type]}]
   (let [[did store'] (gen-id store "d")
+        binary? (= "base64" (str encoding))
+        bs      (when binary?
+                  (.decode (java.util.Base64/getDecoder) (str text)))
+        sha     (when binary? (sha256-of bs))
+        entry   (if binary?
+                  (cond-> {:sha sha :bytes (count bs)}
+                    content-type (assoc :content-type (str content-type)))
+                  (str text))
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :file-put :ns '*session* :at (now-ms)
-                       :path (str path) :content (str text)}
+                       :path (str path)}
+                (not binary?) (assoc :content (str text))
+                binary?       (assoc :sha sha :bytes (count bs))
+                (and binary? content-type) (assoc :content-type (str content-type))
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]
     [(-> store'
-         (assoc-in [:files (str path)] (str text))
+         (assoc-in [:files (str path)] entry)
+         (cond-> binary? (assoc-in [:blobs sha] bs))
          (update :deltas conj delta))
      delta]))
 
@@ -716,6 +739,19 @@
                   nil)))
         (:deltas store)))
 
+(defn file-content
+  "Manifest file `path` resolved through the polymorphic entry — the ONE
+  accessor, so no consumer branches on the shape. Text → {:content
+  <string>}; binary → {:content <bytes> :content-type …} with the bytes
+  from the `:blobs` cache (`:content` nil when the blob isn't cached
+  in-memory — a foreign-synced entry; the session layer's db fallback owns
+  that). nil when the path isn't on the manifest."
+  [store path]
+  (when-let [e (get (:files store) (str path))]
+    (if (map? e)
+      (assoc e :content (get (:blobs store) (:sha e)))
+      {:content e})))
+
 (defn file-at
   "Manifest file `path`'s content as of delta `at-id` (inclusive), or nil
   (absent / removed / unknown delta) — the file counterpart of query_history {ns name at}."
@@ -728,7 +764,10 @@
       (reduce (fn [cur d]
                 (cond
                   (and (= :file-put (:op d)) (= (str path) (:path d)))
-                  (:content d)
+                  (if (:sha d)
+                    (cond-> {:sha (:sha d) :bytes (:bytes d)}
+                      (:content-type d) (assoc :content-type (:content-type d)))
+                    (:content d))
 
                   (and (= :file-remove (:op d)) (= (str path) (:path d)))
                   nil
@@ -946,7 +985,12 @@
                                    (fnil (if (:pure d) conj disj) #{}) (:sym d)))
 
       :module-tier (with-d (assoc-in store [:module-tiers (:module d)] (:tier d)))
-      :file-put    (with-d (assoc-in store [:files (:path d)] (:content d)))
+      :file-put    (with-d (assoc-in store [:files (:path d)]
+                                     (if (:sha d)
+                                       (cond-> {:sha (:sha d) :bytes (:bytes d)}
+                                         (:content-type d)
+                                         (assoc :content-type (:content-type d)))
+                                       (:content d))))
       :file-remove (with-d (update store :files dissoc (:path d)))
 
       :config-put

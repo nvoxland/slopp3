@@ -347,7 +347,9 @@
    "file_put"
    (fn [session a _sym]
      (text! (api/file-put! session (:path a) (:content a)
-                                        :prompt (:prompt a) :agent (:agent a))))
+                           :prompt (:prompt a) :agent (:agent a)
+                           :encoding (:encoding a)
+                           :content-type (:content-type a))))
    "file_remove"
    (fn [session a _sym]
      (text! (api/file-remove! session (:path a)

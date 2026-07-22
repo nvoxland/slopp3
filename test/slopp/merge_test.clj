@@ -249,3 +249,30 @@
       (is (re-find #"defn b" (render/render-ns (:store r) 'm.core))))
     (testing "the skip is noted, not silent"
       (is (some #(= :replace (:skipped %)) (:notes r)) (pr-str (:notes r))))))
+
+(deftest config-and-files-cross-the-merge
+  (let [b      (base)
+        png    (byte-array [(byte -119) 80 78 71 1 2 3])
+        b64    (.encodeToString (java.util.Base64/getEncoder) png)
+        theirs (-> b
+                   (store/record-config-put "capabilities" :manifest
+                                            "http.enabled" "true") first
+                   (store/record-file-put "public/a.png" b64
+                                          :encoding "base64"
+                                          :content-type "image/png") first
+                   (store/record-file-put "NOTES.md" "hello\n") first)
+        ours   (store/ingest b 'o.side "(ns o.side)\n(defn ^:unused-ok f [x] x)\n")
+        r      (merge/merge-logs ours theirs)]
+    (testing "config crosses"
+      (is (= "true" (get-in (:store r)
+                            [:config "capabilities" :values "http.enabled"]))))
+    (testing "a text file crosses"
+      (is (= "hello\n" (get-in (:store r) [:files "NOTES.md"]))))
+    (testing "a binary file crosses WITH its bytes"
+      (let [{:keys [content content-type]}
+            (store/file-content (:store r) "public/a.png")]
+        (is (= "image/png" content-type))
+        (is (java.util.Arrays/equals png ^bytes content))))
+    (testing "nothing about them is 'skipped'"
+      (is (not-any? #(#{:config-put :file-put} (:skipped %)) (:notes r))
+          (pr-str (:notes r))))))

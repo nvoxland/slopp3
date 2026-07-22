@@ -71,55 +71,12 @@
                               sha     TEXT NOT NULL,
                               reason  TEXT NOT NULL,
                               at      INTEGER NOT NULL)"])
+         ;; content-addressed binary assets (D-web wave 4): bytes live HERE,
+         ;; the journal carries only shas — a large asset costs the log ~60B
+         (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS blobs (
+                              sha   TEXT PRIMARY KEY,
+                              bytes BLOB NOT NULL)"])
          conn)))))
-
-(defn persist!
-  "Write one mutation atomically: the delta, the (full) current element rows of
-  the namespaces it touched, and the id counter. Namespaces are small; rewriting
-  a ns's rows per edit keeps the write-through trivially correct. Multi-ns
-  mutations (e.g. a cross-ns rename) pass the touched `nses` explicitly."
-  ([conn store delta] (persist! conn store delta [(:ns delta)]))
-  ([conn store delta nses]
-   (jdbc/with-transaction [tx conn]
-     (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
-                        (:id delta) (name (:op delta)) (str (:ns delta))
-                        (pr-str (dissoc delta :id :op :ns))])
-     (doseq [ns-sym nses]
-       ;; delete ALWAYS: a ns absent from the store (renamed away) must have
-       ;; its rows purged, not linger for the next reopen
-       (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
-       (doseq [[pos e] (map-indexed vector
-                                    (get-in store [:namespaces ns-sym :elements]))]
-         (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
-                             VALUES (?,?,?,?,?,?)"
-                            (str ns-sym) pos (name (:kind e)) (:id e)
-                            (some-> (:name e) str) (n/string (:node e))])))
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (str (:next-id store))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:deps store {}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:dep-ns store {}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:dep-pure store #{}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:module-tiers store {}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:files store {}))])
-     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
-                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                        (pr-str (:config store {}))])
-     (when (:modules store)
-       (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
-                           ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                          (pr-str (:modules store))])))
-   nil))
 
 ^:reads (defn data-version
   "SQLite's cheap foreign-commit detector: this value changes when ANOTHER
@@ -127,67 +84,6 @@
   looked — our own writes through this connection don't bump it."
   [conn]
   (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
-
-(defn append!
-  "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
-  element rows of `nses`, + the id counter) in ONE transaction, iff the
-  journal head still equals `expected-head` (nil for an empty log). Returns
-  true on commit; false if the head moved or the db was busy — the caller
-  refreshes its cache and rebases. SQLite (WAL) serializes writers across
-  threads AND processes, which is what makes the shared-storage multi-server
-  split possible."
-  [conn store new-deltas nses expected-head]
-  (try
-    (jdbc/with-transaction [tx conn]
-      (let [head (:deltas/id (jdbc/execute-one!
-                              tx ["SELECT id FROM deltas ORDER BY seq DESC LIMIT 1"]))]
-        (when (not= head expected-head)
-          (throw (ex-info "journal head moved" {::head-moved true})))
-        (doseq [d new-deltas]
-          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
-                             (:id d) (name (:op d)) (str (:ns d))
-                             (pr-str (dissoc d :id :op :ns))]))
-        (doseq [ns-sym nses]
-          ;; delete ALWAYS: a ns absent from the store (renamed away) must
-          ;; have its rows purged, not linger for the next reopen
-          (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
-          (doseq [[pos e] (map-indexed vector
-                                       (get-in store [:namespaces ns-sym :elements]))]
-            (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
-                                VALUES (?,?,?,?,?,?)"
-                               (str ns-sym) pos (name (:kind e)) (:id e)
-                               (some-> (:name e) str) (n/string (:node e))])))
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (str (:next-id store))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:deps store {}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:dep-ns store {}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:dep-pure store #{}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:module-tiers store {}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:files store {}))])
-        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
-                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                           (pr-str (:config store {}))])
-        (when (:modules store)
-          ;; nil = pre-module session; writing a default here would destroy
-          ;; the adoption marker before open! ever sees it
-          (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
-                              ON CONFLICT(k) DO UPDATE SET v = excluded.v"
-                             (pr-str (:modules store))]))
-        true))
-    (catch clojure.lang.ExceptionInfo e
-      (if (::head-moved (ex-data e)) false (throw e)))
-    (catch java.sql.SQLException _ false)))
 
 (defn- parse-node
   "Re-parse one element's canonical serialization (its source text) back to its
@@ -298,6 +194,140 @@
               :meta/v edn/read-string)
       {}))
 
+(defn put-blobs!
+  "Write `blobs` ({sha → bytes}) INSERT OR IGNORE — content-addressed, so
+  rewriting an existing sha is a no-op. Callable inside a transaction."
+  [tx blobs]
+  (doseq [[sha ^bytes bs] blobs]
+    (jdbc/execute! tx ["INSERT OR IGNORE INTO blobs (sha, bytes) VALUES (?,?)"
+                       (str sha) bs])))
+
+(defn append!
+  "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
+  element rows of `nses`, + the id counter) in ONE transaction, iff the
+  journal head still equals `expected-head` (nil for an empty log). Returns
+  true on commit; false if the head moved or the db was busy — the caller
+  refreshes its cache and rebases. SQLite (WAL) serializes writers across
+  threads AND processes, which is what makes the shared-storage multi-server
+  split possible."
+  [conn store new-deltas nses expected-head]
+  (try
+    (jdbc/with-transaction [tx conn]
+      (let [head (:deltas/id (jdbc/execute-one!
+                              tx ["SELECT id FROM deltas ORDER BY seq DESC LIMIT 1"]))]
+        (when (not= head expected-head)
+          (throw (ex-info "journal head moved" {::head-moved true})))
+        (doseq [d new-deltas]
+          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+                             (:id d) (name (:op d)) (str (:ns d))
+                             (pr-str (dissoc d :id :op :ns))]))
+        (doseq [ns-sym nses]
+          ;; delete ALWAYS: a ns absent from the store (renamed away) must
+          ;; have its rows purged, not linger for the next reopen
+          (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
+          (doseq [[pos e] (map-indexed vector
+                                       (get-in store [:namespaces ns-sym :elements]))]
+            (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
+                                VALUES (?,?,?,?,?,?)"
+                               (str ns-sym) pos (name (:kind e)) (:id e)
+                               (some-> (:name e) str) (n/string (:node e))])))
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (str (:next-id store))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:deps store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:dep-ns store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:dep-pure store #{}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:module-tiers store {}))])
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:files store {}))])
+        (put-blobs! tx (:blobs store {}))
+        (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str (:config store {}))])
+        (when (:modules store)
+          ;; nil = pre-module session; writing a default here would destroy
+          ;; the adoption marker before open! ever sees it
+          (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                              ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                             (pr-str (:modules store))]))
+        true))
+    (catch clojure.lang.ExceptionInfo e
+      (if (::head-moved (ex-data e)) false (throw e)))
+    (catch java.sql.SQLException _ false)))
+
+(defn persist!
+  "Write one mutation atomically: the delta, the (full) current element rows of
+  the namespaces it touched, and the id counter. Namespaces are small; rewriting
+  a ns's rows per edit keeps the write-through trivially correct. Multi-ns
+  mutations (e.g. a cross-ns rename) pass the touched `nses` explicitly."
+  ([conn store delta] (persist! conn store delta [(:ns delta)]))
+  ([conn store delta nses]
+   (jdbc/with-transaction [tx conn]
+     (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+                        (:id delta) (name (:op delta)) (str (:ns delta))
+                        (pr-str (dissoc delta :id :op :ns))])
+     (doseq [ns-sym nses]
+       ;; delete ALWAYS: a ns absent from the store (renamed away) must have
+       ;; its rows purged, not linger for the next reopen
+       (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
+       (doseq [[pos e] (map-indexed vector
+                                    (get-in store [:namespaces ns-sym :elements]))]
+         (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
+                             VALUES (?,?,?,?,?,?)"
+                            (str ns-sym) pos (name (:kind e)) (:id e)
+                            (some-> (:name e) str) (n/string (:node e))])))
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (str (:next-id store))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('deps', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:deps store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-ns', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:dep-ns store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('dep-pure', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:dep-pure store #{}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:module-tiers store {}))])
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('files', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:files store {}))])
+     (put-blobs! tx (:blobs store {}))
+     (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('config', ?)
+                         ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                        (pr-str (:config store {}))])
+     (when (:modules store)
+       (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('modules', ?)
+                           ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                          (pr-str (:modules store))])))
+   nil))
+
+^:reads (defn get-blob
+  "The bytes stored under `sha`, or nil — the sessionless read (git
+  projection, build) and the session cache's fallback."
+  [conn sha]
+  (some-> (jdbc/execute-one! conn ["SELECT bytes FROM blobs WHERE sha = ?" (str sha)])
+          :blobs/bytes))
+
+^:reads (defn all-blobs
+  "Every stored blob as {sha → bytes} — load-store's read into the
+  in-memory `:blobs` cache."
+  [conn]
+  (into {}
+        (map (fn [r] [(:blobs/sha r) (:blobs/bytes r)]))
+        (jdbc/execute! conn ["SELECT sha, bytes FROM blobs"])))
+
 ^:reads (defn files
   "The store's non-code files manifest ({path → text}), read straight from
   meta — for the git projection paths that need it without a session."
@@ -324,6 +354,7 @@
                            conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
      :deps       (deps conn)
      :files      (files conn)
+     :blobs      (all-blobs conn)
      :config     (config-files conn)
      ;; nil (row absent) = a pre-module db — open! adopts it by deriving
      ;; the manifest from the actual dependency graph

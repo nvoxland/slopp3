@@ -100,10 +100,14 @@
     (let [file (io/file target (render/source-path ns-sym))]
       (io/make-parents file)
       (spit file (render/render-ns st ns-sym))))
-  (doseq [[path text] (:files st)]
+  (doseq [[path entry] (:files st)]
     (let [file (io/file target (str path))]
       (io/make-parents file)
-      (spit file text)))
+      (if (map? entry)
+        ;; a binary asset: real bytes from the content-addressed cache
+        (when-let [^bytes bs (get (:blobs st) (:sha entry))]
+          (io/copy bs file))
+        (spit file entry))))
   (doseq [[path entry] (cond-> (:config st)
                                (modules/modules-config-entry st)
                                (assoc "modules" (modules/modules-config-entry st)))]

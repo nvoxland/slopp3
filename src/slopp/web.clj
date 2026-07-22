@@ -25,6 +25,7 @@
 
 (defn ^{:malli/schema [:=> [:cat [:map
                                   [:web/namespaces [:sequential :symbol]]
+                                  [:web/routes {:optional true} [:vector :map]]
                                   [:web/perform-ctx {:optional true} :any]
                                   [:web/auth-config {:optional true} [:maybe :map]]]]
                        [:map
@@ -33,12 +34,14 @@
                         [:web/effect-performers :map]]]}
   context
   "Assemble the dispatch context from `{:web/namespaces [ns-syms]
+  :web/routes [extra rows — static mounts, programmatic routes]
   :web/perform-ctx <passed to every performer>
   :web/auth-config <the provider config identity resolves through>}`: the
   route table and both performer vocabularies derive from the namespaces'
-  VAR metadata — the same contract the store gates enforced at write time."
-  [{:web/keys [namespaces perform-ctx auth-config]}]
-  (cond-> {:web/routes (routes/from-namespaces namespaces)
+  VAR metadata — the same contract the store gates enforced at write time —
+  with the explicit rows appended."
+  [{:web/keys [namespaces routes perform-ctx auth-config]}]
+  (cond-> {:web/routes (into (routes/from-namespaces namespaces) routes)
            :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
            :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
            :web/perform-ctx perform-ctx}

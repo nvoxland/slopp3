@@ -354,10 +354,22 @@
                           changed new-nses (conj applied (:id d))))
 
                 ;; unknown op: never guess with someone's code
+                  (:config-put :config-unset :file-put :file-remove)
+                  ;; state-carrying non-code ops replay through the ONE fold —
+                  ;; a branch's capabilities config and assets must cross,
+                  ;; path/key-grain last-writer-wins like :module-tier (main
+                  ;; once lost its whole web config to the skip below); binary
+                  ;; file-put BYTES ride the end-of-merge :blobs union
+                  (done (or (store/replay-delta st d) st)
+                        idmap (inc merged) conflicts notes changed new-nses
+                        (conj applied (:id d)))
+
+                  ;; unknown op: never guess with someone's code
                   (done st idmap merged conflicts
                         (conj notes {:skipped (:op d) :delta (:id d)})
                         changed new-nses (conj applied (:id d))))]
             (recur st ds idmap merged conflicts notes changed new-nses applied))
-          {:store st :merged merged :conflicts conflicts :notes notes
+          {:store (update st :blobs #(merge (:blobs theirs) (or % {})))
+           :merged merged :conflicts conflicts :notes notes
            :changed-form-ids (vec (distinct changed)) :new-nses new-nses
            :applied applied :id-map idmap :fork-point fork-point})))))

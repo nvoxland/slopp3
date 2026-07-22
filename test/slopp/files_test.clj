@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.db :as db] [next.jdbc :as jdbc]))
 
 (def wf ".github/workflows/test.yml")
 
@@ -96,4 +96,98 @@
         (is (re-find #"needs :content" (str (:error (api/file-put! sess "a.txt" nil)))))
         (is (re-find #"not on the files manifest"
                      (str (:error (api/file-remove! sess "nope.txt"))))))
+      (finally (api/close! sess)))))
+
+(deftest binary-files-are-content-addressed
+  (let [base  (store/empty-store)
+        png   (byte-array [(byte -119) 80 78 71 13 10 26 10 0 1 2 3])
+        b64   (.encodeToString (java.util.Base64/getEncoder) png)
+        [s1 d1] (store/record-file-put base "public/logo.png" b64
+                                       :encoding "base64"
+                                       :content-type "image/png"
+                                       :prompt "an asset")]
+    (testing "the manifest entry is content-addressed, not inline"
+      (let [e (get-in s1 [:files "public/logo.png"])]
+        (is (map? e))
+        (is (string? (:sha e)))
+        (is (= "image/png" (:content-type e)))
+        (is (= (count png) (:bytes e)))))
+    (testing "the delta carries the sha and size, never the payload"
+      (is (= (get-in s1 [:files "public/logo.png" :sha]) (:sha d1)))
+      (is (nil? (:content d1)))
+      (is (= (count png) (:bytes d1))))
+    (testing "the bytes live in the :blobs cache under their sha"
+      (is (java.util.Arrays/equals png
+                                   ^bytes (get-in s1 [:blobs (:sha d1)]))))
+    (testing "replay reconstructs the entry from the delta"
+      (let [e (get-in (store/replay-delta base d1) [:files "public/logo.png"])]
+        (is (= (:sha d1) (:sha e)))
+        (is (= "image/png" (:content-type e)))))
+    (testing "identical content converges on ONE blob whatever the path"
+      (let [[s2 d2] (store/record-file-put s1 "other/copy.png" b64
+                                           :encoding "base64"
+                                           :content-type "image/png")]
+        (is (= (:sha d1) (:sha d2)))
+        (is (= 1 (count (:blobs s2))))))
+    (testing "file-content resolves text AND binary uniformly"
+      (let [[s3 _] (store/record-file-put s1 "README.md" "hello\n")]
+        (is (= "hello\n" (:content (store/file-content s3 "README.md"))))
+        (let [{:keys [content content-type]} (store/file-content s3 "public/logo.png")]
+          (is (= "image/png" content-type))
+          (is (java.util.Arrays/equals png ^bytes content)))))))
+
+(deftest ^:external blob-bytes-survive-the-db
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-blobs" (make-array java.nio.file.attribute.FileAttribute 0)))
+        conn (db/open! dir)
+        png  (byte-array [(byte -119) 80 78 71 13 10 26 10 42 7])
+        b64  (.encodeToString (java.util.Base64/getEncoder) png)
+        [s1 d1] (store/record-file-put (store/empty-store) "public/a.png" b64
+                                       :encoding "base64" :content-type "image/png")]
+    (db/persist! conn s1 d1)
+    (testing "load-store restores the blob cache and the entry"
+      (let [st (db/load-store conn)]
+        (is (= (:sha d1) (get-in st [:files "public/a.png" :sha])))
+        (let [{:keys [content content-type]} (store/file-content st "public/a.png")]
+          (is (= "image/png" content-type))
+          (is (java.util.Arrays/equals png ^bytes content)))))
+    (testing "the journal payload is sha-only — no base64 in the deltas table"
+      (let [payloads (map :deltas/payload
+                          (jdbc/execute! conn ["SELECT payload FROM deltas"]))]
+        (is (not-any? #(re-find #"iVBOR|AAEC" (str %)) payloads))))
+    (testing "get-blob answers without a session (the projection's path)"
+      (is (java.util.Arrays/equals png ^bytes (db/get-blob conn (:sha d1)))))))
+
+(deftest ^:external binary-file-api-round-trip
+  (let [sess (external/open!)
+        png  (byte-array [(byte -119) 80 78 71 99 100 101])
+        b64  (.encodeToString (java.util.Base64/getEncoder) png)]
+    (try
+      (testing "binary put reports the content address"
+        (let [r (api/file-put! sess "public/i.png" b64
+                               :encoding "base64" :content-type "image/png"
+                               :prompt "asset")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= (count png) (:bytes r)))
+          (is (string? (:sha r)))))
+      (testing "binary get returns base64 + content-type"
+        (let [r (api/file-get sess "public/i.png")]
+          (is (= "base64" (:encoding r)))
+          (is (= "image/png" (:content-type r)))
+          (is (java.util.Arrays/equals
+               png (.decode (java.util.Base64/getDecoder) (str (:content r)))))))
+      (testing "text stays text"
+        (api/file-put! sess "NOTES.md" "plain\n")
+        (let [r (api/file-get sess "NOTES.md")]
+          (is (= "plain\n" (:content r)))
+          (is (nil? (:encoding r)))))
+      (testing "build! materializes the asset as real bytes"
+        (api/ingest! sess 'bf.core "(ns bf.core)\n(defn ^:unused-ok f [x] x)\n")
+        (let [dir (str (java.nio.file.Files/createTempDirectory
+                        "slopp-binbuild" (make-array java.nio.file.attribute.FileAttribute 0)))
+              r   (external/build! sess dir)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (java.util.Arrays/equals
+               png (java.nio.file.Files/readAllBytes
+                    (.toPath (java.io.File. dir "public/i.png")))))))
       (finally (api/close! sess)))))
