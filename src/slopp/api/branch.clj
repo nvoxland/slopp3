@@ -17,6 +17,11 @@
         base (:store @session)
         r    (merge/merge-logs base theirs :from from-label)]
     (cond
+      (:error r)
+      ;; the engine's own error (identity mismatch) speaks for itself —
+      ;; checking fork-point first once masked it as "no shared history"
+      (select-keys r [:error :fork-point])
+
       (nil? (:fork-point r))
       {:error "stores share no history — not a fork/branch of this project"}
 

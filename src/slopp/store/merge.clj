@@ -76,9 +76,13 @@
                                                           od))]
                              ;; compare CONTENT — replay remaps the form-id
                              ;; keys, so only the source texts are stable
-                             (when (and (:sources d)
-                                        (not= (sort (vals (:sources d)))
-                                              (sort (vals (:sources copy)))))
+                             ;; A PARTIAL replay (some forms didn't resolve
+                             ;; here, so our copy holds a SUBSET) is honest
+                             ;; delivered history; recreation means the copy
+                             ;; carries content the original NEVER had.
+                             (when (and (:sources copy)
+                                        (not (every? (set (map str (vals (:sources d))))
+                                                     (map str (vals (:sources copy))))))
                                d)))
                          dropped)
         ;; #16 round-trip causality: a theirs-delta tagged :merged-from
@@ -100,17 +104,48 @@
         ;; died while the ORIGINAL id lives on — resolve to the first LIVE
         ;; candidate (mapped first, then the original) so a stale entry
         ;; cannot silently drop an edit as "we deleted it"
+        ;; their :merge deltas recorded {our-fid → their-copy-id}; INVERTED,
+        ;; an edit they made to their COPY resolves back onto our ORIGINAL
+        ;; (the id spaces bifurcate at the first remap and never re-join)
+        inverse-map (into {}
+                          (comp (filter #(= :merge (:op %)))
+                                (mapcat :id-map)
+                                (map (fn [[k v]] [v k])))
+                          td)
         live-fid   (fn [st idmap fid0]
-                     (let [mapped (get idmap fid0)]
-                       (cond
-                         (and mapped (store/form-by-id st mapped)) mapped
-                         (store/form-by-id st fid0) fid0
-                         :else (or mapped fid0))))
+                     (or (some #(when (and % (store/form-by-id st %)) %)
+                               [(get idmap fid0) (get inverse-map fid0) fid0])
+                         (get idmap fid0)
+                         fid0))
+        ;; the content THEIR line held for `fid0` just before delta `d` —
+        ;; the base their edit built on. When OUR current content equals it,
+        ;; their edit FAST-FORWARDS ours (we haven't moved since they copied
+        ;; us), so a creation-touch alone is not a conflict.
+        their-base (fn [d fid0]
+                     (->> td
+                          (take-while #(not= (:id %) (:id d)))
+                          reverse
+                          (some (fn [pd] (get (:sources pd) fid0)))))
+        ;; successive theirs-ops on ONE diverged form COALESCE into a single
+        ;; conflict reflecting the NEWEST theirs — sixteen rows for one form
+        ;; bury the real signal (fid-keyed; deps/rename conflicts unaffected)
+        note-conflict (fn [conflicts c]
+                        (if-let [ix (first (keep-indexed
+                                            (fn [ix e]
+                                              (when (and (:fid e)
+                                                         (= (:fid e) (:fid c)))
+                                                ix))
+                                            conflicts))]
+                          (assoc conflicts ix c)
+                          (conj conflicts c)))
         touched    (store/suffix-touched (remove :merged-from ours-sfx))]
     (if imposter
       {:error (str "merge identity mismatch: delta " (:id imposter)
                    " looks like a recreated fork/branch at the same"
-                   " path/name — use a fresh path (or a new branch)")}
+                   " path/name — use a fresh path (or a new branch)")
+       ;; the fork point rides the error so callers can tell "identity
+       ;; mismatch" from "no shared history" — one masked the other once
+       :fork-point fork-point}
       (loop [st ours, dds (seq theirs-sfx), idmap idmap0, merged 0,
              conflicts [], notes [], changed [], new-nses [], applied []]
         (if-let [d (first dds)]
@@ -234,23 +269,31 @@
                     (cond
                       (nil? cur)                               ; deleted on our side
                       (done st idmap merged
-                            (conj conflicts {:form (store/qform st ns-sym fid0 theirs)
-                                             :ns ns-sym :delta (:id d)
-                                             :ours nil :theirs src
-                                             :reason "we deleted it; they edited it"})
+                            (note-conflict conflicts
+                                           {:form (store/qform st ns-sym fid0 theirs)
+                                            :ns ns-sym :delta (:id d) :fid fid
+                                            :ours nil :theirs src
+                                            :reason "we deleted it; they edited it"})
                             notes changed new-nses applied)
 
                       (= (n/string (:node cur)) src)           ; converged
                       (done st idmap merged conflicts notes changed new-nses
                             (conj applied (:id d)))
 
-                      (and (touched fid) (not (contains? (set changed) fid)))
+                      (and (touched fid) (not (contains? (set changed) fid))
+                           ;; FAST-FORWARD: when our current content equals
+                           ;; the base THEIR edit built on (their log's last
+                           ;; prior source for this form), we haven't moved
+                           ;; since they copied us — taking their edit is
+                           ;; safe, and a creation-touch alone never conflicts
+                           (not= (n/string (:node cur)) (their-base d fid0)))
                       (done st idmap merged
-                            (conj conflicts {:form (store/qform st ns-sym fid0 theirs)
-                                             :ns ns-sym :delta (:id d)
-                                             :ours (n/string (:node cur))
-                                             :theirs src
-                                             :reason "both sides edited this form"})
+                            (note-conflict conflicts
+                                           {:form (store/qform st ns-sym fid0 theirs)
+                                            :ns ns-sym :delta (:id d) :fid fid
+                                            :ours (n/string (:node cur))
+                                            :theirs src
+                                            :reason "both sides edited this form"})
                             notes changed new-nses applied)
 
                       (nil? (:name cur))
@@ -293,10 +336,11 @@
 
                       (touched fid)
                       (done st idmap merged
-                            (conj conflicts {:form (store/qform st ns-sym fid0 theirs)
-                                             :ns ns-sym :delta (:id d)
-                                             :ours (n/string (:node cur)) :theirs nil
-                                             :reason "we edited it; they deleted it"})
+                            (note-conflict conflicts
+                                           {:form (store/qform st ns-sym fid0 theirs)
+                                            :ns ns-sym :delta (:id d) :fid fid
+                                            :ours (n/string (:node cur)) :theirs nil
+                                            :reason "we edited it; they deleted it"})
                             notes changed new-nses applied)
 
                       :else

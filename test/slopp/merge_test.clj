@@ -321,3 +321,84 @@
     (testing "the merge refuses rather than landing two forms named b"
       (is (some? (:error r)) (pr-str (dissoc r :store)))
       (is (re-find #"duplicate" (str (:error r)))))))
+
+(deftest partial-replay-copies-are-not-imposters
+  (let [b   (base)
+        fa  (:id (store/form-named b 'm.core 'a))
+        fb  (:id (store/form-named b 'm.core 'b))
+        ;; theirs: a two-form changeset delta
+        theirs (update b :deltas conj
+                       {:id "d900" :parent (:id (last (:deltas b)))
+                        :op :rename :ns 'm.core :form-ids [fa fb]
+                        :sources {fa "(defn a2 [x] x)" fb "(defn b2 [x] (a2 x))"}
+                        :old 'a :new 'a2 :at 1})
+        ;; ours: a PRIOR merge delivered d900, but the replay was PARTIAL —
+        ;; our copy carries only ONE of the two sources
+        ours (-> b
+                 (update :deltas conj
+                         {:id "d800" :parent (:id (last (:deltas b)))
+                          :op :rename :ns 'm.core :form-ids [fa]
+                          :sources {fa "(defn a2 [x] x)"}
+                          :merged-from "d900" :at 2})
+                 (update :deltas conj
+                         {:id "d801" :parent "d800"
+                          :op :merge :ns '*session* :from "branch:t#T"
+                          :applied ["d900"] :at 3 :merged 1}))
+        r    (merge/merge-logs ours theirs :from "branch:t#T")]
+    (testing "the partial copy is delivered history, not an identity mismatch"
+      (is (nil? (:error r)) (pr-str (:error r)))))
+  (testing "a TRUE imposter (copy content the original never had) still errors, with :fork-point"
+    (let [b   (base)
+          fa  (:id (store/form-named b 'm.core 'a))
+          theirs (update b :deltas conj
+                         {:id "d900" :parent (:id (last (:deltas b)))
+                          :op :rename :ns 'm.core :form-ids [fa]
+                          :sources {fa "(defn recreated [x] :new-line)"}
+                          :at 1})
+          ours (-> b
+                   (update :deltas conj
+                           {:id "d800" :parent (:id (last (:deltas b)))
+                            :op :rename :ns 'm.core :form-ids [fa]
+                            :sources {fa "(defn old-work [x] :dead-line)"}
+                            :merged-from "d900" :at 2})
+                   (update :deltas conj
+                           {:id "d801" :parent "d800"
+                            :op :merge :ns '*session* :from "branch:t#T"
+                            :applied ["d900"] :at 3 :merged 1}))
+          r    (merge/merge-logs ours theirs :from "branch:t#T")]
+      (is (some? (:error r)))
+      (is (some? (:fork-point r)) "the error result names the fork point so callers never mask it"))))
+
+(deftest edits-to-their-copies-land-on-our-originals
+  (let [b     (base)
+        ours  (store/ingest b 'w.core "(ns w.core)\n(defn ^:unused-ok orig [x] :v1)\n")
+        fx    (:id (store/form-named ours 'w.core 'orig))
+        ;; main is BUSY first, so the replay of our ingest REMAPS ids
+        main0 (store/ingest b 'm.busy "(ns m.busy)\n(defn ^:unused-ok mb [x] x)\n")
+        r1    (merge/merge-logs main0 ours :from "branch:web#W")
+        main1 (first (merge/record-merge (:store r1) "branch:web#W" r1))
+        fy    (:id (store/form-named main1 'w.core 'orig))
+        main2 (first (store/replace-node main1 'w.core 'orig
+                                         (p/parse-string "(defn ^:unused-ok orig [x] :v2)")
+                                         :prompt "their evolution"))
+        r2    (merge/merge-logs ours main2 :from "branch:main#M")]
+    (testing "the ids genuinely bifurcated (the replay remapped)"
+      (is (not= fx fy) (str fx " vs " fy)))
+    (testing "their edit resolves through the INVERSE of their recorded id-map"
+      (is (empty? (:conflicts r2)) (pr-str (:conflicts r2)))
+      (is (re-find #":v2" (render/render-ns (:store r2) 'w.core))))))
+
+(deftest successive-edits-to-a-diverged-form-coalesce-into-one-conflict
+  (let [b      (base)
+        ours   (replace! b 'a "(defn a [x] :ours)")
+        theirs (-> b
+                   (replace! 'a "(defn a [x] :t1)")
+                   (replace! 'a "(defn a [x] :t2)")
+                   (replace! 'a "(defn a [x] :t3)"))
+        r      (merge/merge-logs ours theirs)]
+    (testing "one conflict, not three"
+      (is (= 1 (count (:conflicts r))) (pr-str (:conflicts r))))
+    (testing "it carries the NEWEST theirs"
+      (is (re-find #":t3" (str (:theirs (first (:conflicts r)))))))
+    (testing "ours stays live"
+      (is (re-find #":ours" (render/render-ns (:store r) 'm.core))))))
