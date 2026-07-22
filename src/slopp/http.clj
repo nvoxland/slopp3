@@ -1,81 +1,34 @@
 (ns slopp.http
   "Tiny localhost JSON-over-HTTP transport over the SAME dispatch as MCP —
   for CLI/scripting access (curl) and harness-driven evals. Binds 127.0.0.1
-  only; JDK HttpServer, no added deps.
+  only. Since D-web wave 2 the endpoints are DECLARED (:web/* metadata on
+  the fns below) and served through the slopp.web facade — the transport is
+  the first consumer of the same machinery every slopp web app gets.
 
     POST /call    {\"name\": tool, \"arguments\": {...}}  -> {\"result\": text}
+    POST /mcp     JSON-RPC (native MCP; notifications -> 202)
     GET  /metrics -> {\"calls\": [{:tool :t :in :out} ...]}  (payload sizes)
 
   Entry: clojure -M -m slopp.http <port> [project-dir]"
-  (:require [cheshire.core :as json]
-            [slopp.api :as api]
-            [slopp.mcp :as mcp] [slopp.api.external :as external])
-  (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
-           [java.net InetSocketAddress]))
-
-(defn- respond! [^HttpExchange ex status ^String body]
-  (let [bytes (.getBytes body "UTF-8")]
-    (.add (.getResponseHeaders ex) "Content-Type" "application/json")
-    (.sendResponseHeaders ex status (alength bytes))
-    (doto (.getResponseBody ex) (.write bytes) (.close))))
-
-(defn- handler! ^HttpHandler [f]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (f ex)
-        (catch Exception e
-          (respond! ex 500 (json/generate-string {:error (ex-message e)})))))))
+  (:require [slopp.api :as api]
+            [slopp.mcp :as mcp]
+            [slopp.api.external :as external]
+            [slopp.web :as web]))
 
 (defn start-server!
-  "Start the transport on `port` over a fresh session (`opts` as api/open!).
-  Returns {:server :session :calls} for stop-server!."
+  "Start the transport on `port` over a fresh session (`opts` as api/open!):
+  the declared endpoints of THIS namespace (/call, /mcp, /metrics) served
+  through the web facade — the transport is the first consumer of the same
+  machinery every slopp web app gets. Returns {:server :session :calls}
+  for stop-server!."
   [port opts]
   (let [session (external/open! opts)
         calls   (atom [])
-        server  (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
-    (.createContext server "/call"
-                    (handler!
-                     (fn [^HttpExchange ex]
-                       (let [raw  (slurp (.getRequestBody ex))
-                             req  (json/parse-string raw true)
-                             resp (mcp/handle! session
-                                              {:id 1 :method "tools/call"
-                                               :params {:name (:name req)
-                                                        :arguments (:arguments req)}})
-                             text (get-in resp [:result :content 0 :text] "")]
-                         (swap! calls conj {:tool (:name req)
-                                            :t (System/currentTimeMillis)
-                                            :in (count raw) :out (count text)})
-                         (respond! ex 200 (json/generate-string {:result text}))))))
-    ;; Phase 4 m1: native MCP over streamable HTTP — N MCP clients (Claude
-    ;; Code, Codex) share this ONE session/store/image. Single JSON response
-    ;; per POST (legal per the streamable-HTTP spec); notifications → 202.
-    (.createContext server "/mcp"
-                    (handler!
-                     (fn [^HttpExchange ex]
-                       (if (not= "POST" (.getRequestMethod ex))
-                         (respond! ex 405 (json/generate-string
-                                           {:error "POST JSON-RPC only"}))
-                         (let [raw  (slurp (.getRequestBody ex))
-                               req  (json/parse-string raw true)
-                               resp (mcp/handle! session req)]
-                           (when (= "tools/call" (:method req))
-                             (swap! calls conj
-                                    {:tool (get-in req [:params :name])
-                                     :t (System/currentTimeMillis)
-                                     :in (count raw)
-                                     :out (count (str (get-in resp [:result :content 0 :text])))}))
-                           (if (nil? resp)               ; notification
-                             (do (.sendResponseHeaders ex 202 -1)
-                                 (.close (.getResponseBody ex)))
-                             (respond! ex 200 (json/generate-string resp))))))))
-    (.createContext server "/metrics"
-                    (handler!
-                     (fn [^HttpExchange ex]
-                       (respond! ex 200 (json/generate-string {:calls @calls})))))
-    (.start server)
-    {:server server :session session :calls calls}))
+        srv     (web/serve! {:web/namespaces ['slopp.http]
+                             :web/host "127.0.0.1"
+                             :web/port port
+                             :web/perform-ctx {:session session :calls calls}})]
+    {:server srv :session session :calls calls}))
 
 (defn stop-server!
   "Stop the HTTP transport and close the session it serves, returning nil.
@@ -84,7 +37,7 @@
   the caller builds). Closing the session is the part that matters: it reaps
   the owned image subprocess."
   [srv]
-  (.stop ^HttpServer (:server srv) 0)
+  (web/stop! (:server srv))
   (api/close! (:session srv))
   nil)
 
@@ -99,3 +52,48 @@
     (swap! session assoc :require-turns? true))  ; real servers enforce turns
   (println (str "slopp http transport on 127.0.0.1:" (or port "7357")))
   @(promise))
+
+(defn ^{:web/method :post :web/path "/call" :web/auth :public
+        :web/effectful true}
+  call-endpoint!
+  "POST /call {name arguments} → {:result <tool text>}: one tool dispatch,
+  the curl/scripting transport. :web/effectful — it dispatches into
+  `mcp/handle!`, which edits the store; the session and the metrics atom
+  arrive as `:web/deps` (a value, never ambient state)."
+  [req]
+  (let [{:keys [session calls]} (:web/deps req)
+        body (:body req)
+        resp (mcp/handle! session {:id 1 :method "tools/call"
+                                   :params {:name (:name body)
+                                            :arguments (:arguments body)}})
+        text (get-in resp [:result :content 0 :text] "")]
+    (swap! calls conj {:tool (:name body)
+                       :t (System/currentTimeMillis)
+                       :in (count (pr-str body)) :out (count text)})
+    {:status 200 :body {:result text}}))
+
+(defn ^{:web/method :post :web/path "/mcp" :web/auth :public
+        :web/effectful true}
+  mcp-endpoint!
+  "POST /mcp: native MCP JSON-RPC over streamable HTTP — N clients share
+  this ONE session/store/image (Phase 4 m1). A notification (nil dispatch
+  result) answers 202 with no body, per the streamable-HTTP spec."
+  [req]
+  (let [{:keys [session calls]} (:web/deps req)
+        rpc (:body req)
+        resp (mcp/handle! session rpc)]
+    (when (= "tools/call" (:method rpc))
+      (swap! calls conj {:tool (get-in rpc [:params :name])
+                         :t (System/currentTimeMillis)
+                         :in (count (pr-str rpc))
+                         :out (count (str (get-in resp [:result :content 0 :text])))}))
+    (if (nil? resp)
+      {:status 202}
+      {:status 200 :body resp})))
+
+(defn ^{:web/method :get :web/path "/metrics" :web/auth :public} metrics-endpoint
+  "GET /metrics → {:calls [{:tool :t :in :out} …]}: per-call payload sizes.
+  A deref is a READ — no bang, and exactly what web-unsafe-get allows a
+  GET to do."
+  [req]
+  {:status 200 :body {:calls (deref (:calls (:web/deps req)))}})

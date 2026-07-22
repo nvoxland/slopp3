@@ -42,7 +42,12 @@
         (is (true? (:enabled rep)))
         (is (= 2 (count (:routes rep))))
         (is (= #{:user/insert} (:effect-kinds rep)))
-        (is (= #{:user/by-id} (:read-kinds rep)))))))
+        (is (= #{:user/by-id} (:read-kinds rep)))))
+    (testing "a test namespace's endpoint-shaped form is a fixture, not surface"
+      (let [s2 (store/ingest on 'shop.api-test
+                             (str "(ns shop.api-test)\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/fixture\"} fx \"F.\" [req] req)\n"))]
+        (is (= 2 (count (:routes (web/routes-report s2)))))))))
 
 (deftest ^:external web-gates-ride-the-write-path
   (let [sess (external/open!)]

@@ -28,6 +28,18 @@
             load-err (or ;; cold-load first (S1b): two individually-legal lines can
                       ;; interleave into a forward ref — refuse before the
                       ;; image is touched
+                      (let [new-deps (reduce dissoc (:deps st')
+                                             (keys (:deps base)))]
+                        ;; deps the merge brings (a branch's deps_add): their
+                        ;; jars must reach the image BEFORE the load phase, or
+                        ;; every merged ns requiring them fails FileNotFound
+                        ;; (the wave-2 http-kit merge)
+                        (when (seq new-deps)
+                          (when-let [r (repl/add-libs! (:image @session)
+                                                       new-deps)]
+                            (str "the merge brings dependencies the image"
+                                 " could not hot-add: " (pr-str new-deps)
+                                 " — " (:err r)))))
                       (edit/cold-load-errors
                        st'
                        (filter #(contains? (:namespaces st') %)

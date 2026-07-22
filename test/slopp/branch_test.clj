@@ -224,3 +224,22 @@
           (is (some? (store/form-named (:store @sess) 'up.web 'h)))
           (is (= [2] (api/query-eval sess "(up.web/h 1)")))))
       (finally (api/close! sess)))))
+
+(deftest ^:external merge-hot-adds-the-branch-deps-before-loading
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'dp.core "(ns dp.core)\n\n(defn ^:unused-ok f \"F.\" [x] x)\n")
+      (branch/branch! sess "deps-feat")
+      (let [r (api/deps-add! sess 'http-kit/http-kit {:mvn/version "2.8.0"})]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/create-ns! sess 'dp.web
+                              :source "(ns dp.web (:require [org.httpkit.server :as hk]))\n\n(defn ^:unused-ok server-fn? \"S.\" [] (fn? hk/run-server))\n")]
+        (is (nil? (:error r)) (pr-str r)))
+      (branch/branch-switch! sess "main")
+      (testing "the merge hot-adds the branch's deps before loading its namespaces"
+        (let [r (branch/branch-merge! sess "deps-feat")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= {:mvn/version "2.8.0"}
+                 (get-in @sess [:store :deps 'http-kit/http-kit])))
+          (is (= [true] (api/query-eval sess "(dp.web/server-fn?)")))))
+      (finally (api/close! sess)))))

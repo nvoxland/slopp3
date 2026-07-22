@@ -587,10 +587,14 @@
 (defn ^:export web-endpoint-rows
   "Every `:web/path` form in `store`: `{:ns :name :form-id :meta}` rows —
   the single route traversal; the collision gate and `slopp.api.web` both
-  build on it. A pure function of the store value."
+  build on it. TEST namespaces are excluded: their endpoint-shaped forms
+  are fixtures, not servable surface, and a fixture must neither report in
+  query_routes nor claim a path against a production endpoint. A pure
+  function of the store value."
   [store]
   (vec
    (for [nsx (sort (keys (:namespaces store)))
+         :when (not (render/test-ns? nsx))
          e   (store/forms store nsx)
          :when (:name e)
          :let [m (web-name-meta e)]
