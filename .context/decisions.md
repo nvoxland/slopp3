@@ -1544,3 +1544,15 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   mount files only (the router's declared param scope), blob pruning via
   `cleanup` (blobs are immortal-by-default, the git model), and
   `-H:IncludeResources` (wave 5).
+- **Wave 5 partial SHIPPED 2026-07-22:** the native recipe carries assets —
+  `native-script` copies manifest paths into `classes/` (resources on the
+  compile classpath) and passes `-H:IncludeResources`, so a binary serves
+  its own files; `static/file-or-resource-reader` is the built-app reader
+  (filesystem under the app root first, classpath resource fallback,
+  extension-derived types) — one `mount-routes` reader works for jar and
+  native alike. THE WAVE-5 TAIL, deliberately together: the slim
+  `io.github.nvoxland/slopp-web` jar (user apps' dep), the native-proof CI
+  extension that consumes it (a sample web app with an asset, compiled and
+  curled), and `slopp.boot` add-libs for store manifests — plus wave 3's
+  OIDC. Each needs the release surface the others define; shipping them as
+  one arc beats four stubs.
