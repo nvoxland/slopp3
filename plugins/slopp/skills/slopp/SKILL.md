@@ -368,6 +368,21 @@ your handler stays analyzer-pure); `(web/authorized? policy identity)`
 answers booleans. Test namespaces' endpoint-shaped forms are FIXTURES —
 they neither report in query_routes nor claim paths.
 
+**Security posture the runtime enforces** (not just the write gates): auth is
+default-deny and an empty `[:all]`/`[:any]` policy DENIES; the dispatcher
+bounds a response's effects to the route's declared `:web/effects` (a handler
+cannot emit an undeclared kind, even one a performer provides); error bodies
+are redacted — an `ex-info` with `:web/status` surfaces its message plus only
+a `:web/public` allowlist, anything else is a generic 500 (detail logged, not
+returned); request bodies are capped (default 1 MiB — thread
+`:web/max-body-bytes` from the `http.max-body-bytes` capability into
+`serve!`); the static asset reader contains paths under its root. Auth: static
+passwords are salted PBKDF2 (`web/hash-password`/`verify-password`), bearer and
+password compares are constant-time, and **OIDC requires a configured
+`auth.oidc.audience`** — an unset audience denies every token (a resource
+server must not accept cross-audience tokens). Row-level authz is still yours:
+slopp does not taint-track a handler returning another tenant's rows.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`

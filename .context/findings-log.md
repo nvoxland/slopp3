@@ -872,3 +872,47 @@ line's writes reload the image only — verify branch serving behavior in
 the image or a fresh JVM.** The `:host` section of session_brief now
 states mode, staleness, failed reloads, and the branch teaching, so the
 next currency question is one read instead of a debugging arc.
+
+## 2026-07-22 — adversarial code review of the friction waves + D-web, all fixed
+
+Four independent read-only reviewers (store core, verification loop, web,
+host/surface), each VERIFYING findings in the live image, plus a triage
+pass. Every finding below landed with a red test modelling the defect.
+
+**One HIGH, mine this session:** the fold-field registry refactor routed
+state-carrying merge deltas (config/deps/tier/file) through `replay-delta`,
+which re-conj'd them with THEIR verbatim id. Both lines of a fork allocate
+from the same counter, so a durable branch merge that touched
+capabilities/deps/tiers on both sides produced a duplicate delta id →
+`db/append!`'s UNIQUE constraint failed the merge PERMANENTLY with a
+misleading "store changed during merge". Ephemeral merge tests never reach
+`append!`, so nothing caught it. Fixed by re-minting each crossed state
+delta (fresh id + `:merged-from`), guarded by a pure journal-integrity test
+AND a durable end-to-end branch merge.
+
+**Verification-loop false-greens (mine):** `inert-ns-require-change?`
+classified two behaviour-changing edits as inert (a method-free lib whose
+require-CLOSURE loads defmethods; an ns-form metadata edit `edn/read-string`
+silently dropped) → `done` skipped external tests. Now walks the closure,
+reads metadata-preserving, and diffs against the last-done baseline.
+
+**Data-loss (mine):** `ns_delete` identified the ns decl by NAME at three
+sites, so a `(def x)` in ns `x` was mistaken for it → the namespace dropped
+with a form still in it. Structural `body-forms` helper now used everywhere.
+
+**Other regressions (mine):** `edit_subform :after` + `:match` duplicated
+the neighbor (now refuses the combination); a late `^:breaking-ok` stopped
+discharging across an intervening done (now discharges vs any wider unmarked
+baseline); host-brief note precedence + delta counting.
+
+**D-web security (pre-existing, all fixed):** `[:all]` empty-policy
+auth-bypass; runtime effect-declaration not enforced; error-body ex-data
+leak; unsalted git-projected password hashes + non-constant-time compares;
+mandatory-OIDC-audience gap; static reader traversal (latent, contained
+today by the single-segment router); `http.max-body-bytes` never enforced
+(DoS); proxy-header casing. See `.context/decisions.md` D-web hardening.
+
+**Non-finding recorded:** the registry data-defs read `:covered 0` in
+review_scan (callable-data-invisible trace limit) — coverage is structural
+via the generated merge harness, not absent. The module-edge nil-marker
+clobber is unreachable (open! adopts before any write).

@@ -1578,6 +1578,39 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   is a one-liner when wanted); the jar needs a rebuild for the kernel
   change (deferred past the #16 arc to dodge the #17 jar-swap).
 
+**Security hardening (2026-07-22, from an adversarial code review).** The
+write gates prove a route's contract statically; these close the RUNTIME
+gaps the static analyzer can't see, each with a red test modelling the
+hole:
+- **Auth fails closed at every degenerate point.** An empty `[:all]`
+  policy authorized everyone (`(every? pred '())` is vacuously true) — it
+  now denies, like `[:any]`/`[:group]`/nil already did.
+- **Effects are bounded at runtime by the route's declaration.** The
+  static `web-unsafe-get`/`web-undeclared-effect` gates see only the
+  handler body; the dispatcher now refuses a response effect kind the
+  route's `:web/effects` never declared (a `:get` returning a write is
+  stopped even when a performer exists).
+- **Error bodies are redacted.** An `ex-info` with `:web/status` surfaces
+  its message plus ONLY a `:web/public` allowlist; any other exception is
+  a generic 500 with the detail logged, never returned (no `ex-message` /
+  `ex-data` disclosure).
+- **Bodies are bounded.** Both adapters read at most `:web/max-body-bytes`
+  (default 1 MiB, the `http.max-body-bytes` capability) and answer 413 —
+  the unbounded slurp was a heap-exhaustion DoS, and the configured limit
+  had been dead.
+- **Crypto.** Static passwords are salted, iterated PBKDF2
+  (JDK/native-safe, `web/hash-password`/`verify-password`) not unsalted
+  SHA-256 — the hash rides the git-projected config, so it must resist
+  offline cracking; bearer and password compares are constant-time
+  (`MessageDigest/isEqual`). **OIDC audience is mandatory**: an unset
+  `auth.oidc.audience` denies every token (a resource server must reject
+  cross-audience tokens); a set one must match `:aud`.
+- **Static traversal is contained** in the reader (canonical path under
+  root + a `..`-segment refusal), not left to the router's single-segment
+  accident, which the reader's own docstring flagged as temporary.
+- **Proxy header lookup is case-insensitive** — adapters lowercase header
+  keys, so a canonically-cased `auth.proxy.user-header` config now matches.
+
 ## D-merge-causality (2026-07-22) — round trips are causal
 
 The branch dogfood's standing hazard (frictions #16/#19, three failure
