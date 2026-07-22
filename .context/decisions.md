@@ -1446,6 +1446,19 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   schema) — no macro, no dialect change, no central route table. Metadata is
   read straight off the stored node like `^:export`/`:malli/schema`, so every
   existing gate applies and routes enumerate with zero eval.
+  **Wave 1 SHIPPED 2026-07-22:** the `:web/*` markers are declared edges in
+  the reference graph (`declared-refs` — `:web-endpoint`/`:web-effect`/
+  `:web-read`, so endpoints and performers never trip the unused gate);
+  `query_routes` (via `slopp.api.web`, `:pure`) reports the surface from the
+  SAME shared derivations (`edit.modules/web-endpoint-rows`/`web-performers`)
+  the four new write gates check — `web-auth-refusal` (default-deny),
+  `web-route-collision`, `web-undeclared-effect`, `web-unsafe-get` (a safe
+  method may neither declare effect kinds nor reach a mutation) — registered
+  in `per-form-write-gates`, cataloged, severity-dialable, and all inert
+  until `http.enabled`. Design note learned landing it: the route-row keys
+  are `:web/effects`/`:web/reads` NAMESPACED — bare `:effects`/`:reads` trips
+  the retired-tier-vocabulary advisory, and slopp namespacing what it adds is
+  the standing §2 rule anyway.
 - **Request/response maps stay RING-shaped**; slopp namespaces only what it
   ADDS (`:web/identity`, `:web/effects`, `:web/reads`, …). The training-data
   prior is an asset, not a hazard; the novelty budget is spent on

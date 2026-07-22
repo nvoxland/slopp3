@@ -27,6 +27,7 @@ a running server, and is always current for the version you are on.
 | `query_rules` | The enforcement catalog: every rule, its grain, its effective severity, how to discharge it. |
 | `query_rule_telemetry` | Fire rates and discharge patterns per rule, plus escape-marker density. |
 | `query_capabilities` | Every capability setting: type, default, effective value, what's set. Writes to the `capabilities` config validate against this registry. |
+| `query_routes` | The declared web surface: every endpoint's method, path, auth policy and handler, plus the derived effect/read vocabularies. Empty with teaching until `http.enabled`. |
 
 ## The oracle
 

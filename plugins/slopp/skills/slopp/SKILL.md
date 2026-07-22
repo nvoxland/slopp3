@@ -310,6 +310,45 @@ full map.
   with `main` it also emits a GraalVM native-image recipe. Repo sync, uberjars,
   config files, CI: the `slopp-setup` skill.
 
+## Web applications (D-web)
+
+Opt in once: `config_file {path "capabilities" key "http.enabled" value
+"true"}` (every capability key is registry-declared — `query_capabilities`
+lists them all with types and defaults; a typo'd key or bad value refuses at
+the write). A store that never opts in has no web surface and no web rules.
+
+**An endpoint is one `defn` carrying its whole contract in name metadata** —
+no route table, no macro:
+
+```clj
+(defn ^{:web/method :get
+        :web/path   "/api/users/:id"
+        :web/auth   [:group "admin"]
+        :web/reads  {:user [:user/by-id [:path-params :id]]}
+        :malli/schema [:=> [:cat Req] Resp]}
+  get-user "One user." [{:keys [path-params] :web/keys [reads]}] …)
+```
+
+Request/response maps are RING-shaped (`:request-method` `:uri` `:body` /
+`:status` `:headers` `:body` as data); everything slopp adds is
+`:web/`-namespaced. `query_routes` lists the whole surface: every method,
+path, policy, handler, and the derived effect/read vocabularies.
+
+**Write gates** (all inert until `http.enabled`; dial via `rules` config):
+- every endpoint DECLARES `:web/auth` — `:public` is typed out, never implied
+- one method+path has one owner (collision refuses at the write)
+- a `:get`/`:head` endpoint is SAFE: no `:web/effects`, no reachable mutation
+- `:web/effects` may only name kinds a `^{:web/effect <kind>}` performer
+  provides
+
+**Keep handlers pure.** Reads: declare `:web/reads {alias [<kind> <req-path>]}`
+naming a `^{:web/read <kind>}` performer — the framework fetches BEFORE the
+handler, so a unit test just passes the value. Writes: RETURN
+`{:web/effects [[<kind> & args]…]}` as data and let the dispatcher run the
+marked performer — the test asserts `=` on data, no mocks. An endpoint that
+must perform effects directly marks `^:web/effectful` and lives in an
+`:external` namespace (the escape, not the default).
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
@@ -354,8 +393,8 @@ episode. Reverting before a `commit_point` leaves the milestone history clean
 session_brief report query_slice query_depends · turn_begin turn_end ·
 query_project query_search query_source query_brief query_history
 query_changes query_eval query_store query_observe query_call query_vocabulary
-query_rules query_rule_telemetry query_capabilities query_macroexpand
-query_branches query_commits
+query_rules query_rule_telemetry query_capabilities query_routes
+query_macroexpand query_branches query_commits
 query_git query_detail review_scan · ns_create
 ns_add_require ns_remove_require ns_rename · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
