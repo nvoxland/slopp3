@@ -27,6 +27,18 @@
                 " worklist. A deliberate HOUSE rule, stricter than Clojure practice,"
                 " which defaults to unqualified keys: the argument for bare keys assumes"
                 " context disambiguates, and an agent reads one form")}
+   {:rule :web-auth-refusal :grain :form :severity :refuse
+    :escape "declare :web/auth on the endpoint (:public typed out, :authenticated, or [:group \"<name>\"]) — or dial the rule down and let auth.default-policy govern"
+    :teach "an endpoint (:web/path) must declare its auth policy — default-deny: an unsecured route is a visible decision, never an omission (inert until http.enabled)"}
+   {:rule :web-route-collision :grain :form :severity :refuse
+    :escape "change the path or method, or extend the existing handler (query_routes lists every claim)"
+    :teach "one method+path has one owning endpoint — a duplicate route refuses at the write instead of surprising at startup (inert until http.enabled)"}
+   {:rule :web-undeclared-effect :grain :form :severity :refuse
+    :escape "define a performer per kind ((defn ^{:web/effect <kind>} name! [ctx …] …)) or reuse an existing kind (query_routes lists the vocabulary)"
+    :teach "an endpoint's :web/effects may only name kinds a marked performer provides — a typo'd kind fails at the write, not at the first request (inert until http.enabled)"}
+   {:rule :web-unsafe-get :grain :form :severity :refuse
+    :escape "make it :post/:put/:delete, drop the declared effects, or return the change as data from a non-safe endpoint"
+    :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until http.enabled)"}
    {:rule :schema-drift :grain :done :severity :error
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}

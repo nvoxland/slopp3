@@ -11,7 +11,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog] [slopp.api.capabilities :as capabilities]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -894,3 +894,13 @@
    <v>}` — capability writes validate against the registry at write time."
   [session]
   (capabilities/report (:store @session)))
+
+(defn ^:export query-routes
+  "The store's declared web surface: `http.enabled`, every endpoint row
+   (method, path, auth policy, handler, declared `:web/effects`/`:web/reads`,
+   schema presence, the `^:web/effectful` escape), and the derived
+   effect/read vocabularies — the SAME derivations the web write gates
+   enforce, so what this shows is what the gates guaranteed. Disabled →
+   `{:enabled false}` with the opt-in teaching."
+  [session]
+  (web/routes-report (:store @session)))

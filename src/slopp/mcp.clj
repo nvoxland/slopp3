@@ -677,6 +677,7 @@
       "query_vocabulary" (text! (told! session name a (query/query-vocabulary session :ns (:ns a))))
       "query_rules" (text! (told! session name a (query/query-rules session)))
       "query_capabilities" (text! (told! session name a (query/query-capabilities session)))
+      "query_routes" (text! (told! session name a (query/query-routes session)))
       "query_rule_telemetry" (text! (told! session name a (query/query-rule-telemetry session :since (:since a))))
       "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
                                                        (src :source) :prompt (:prompt a)
@@ -881,14 +882,24 @@
   engine and the fallback when no MCP connection exists. Opens a durable
   session, dispatches ONE tool call, closes. Returns the wire result map
   ({:content [{:text …}]}; :isError true on tool errors), same as the
-  server would send."
+  server would send. An unexpected throw reports its CAUSE CHAIN and top
+  stack frames — a bare message localizes nothing in a one-shot process."
   [dir tool arguments]
   (let [session (external/open! {:slopp.api/dir (str dir)})]
     (swap! session assoc :require-turns? true)
     (try
       (try (call-tool! session {:name tool :arguments arguments})
            (catch Exception e
-             (assoc (text! (str "error: " (ex-message e))) :isError true)))
+             (let [chain (take 4 (iterate #(some-> ^Throwable % .getCause) e))
+                   msgs  (into [] (comp (take-while some?)
+                                        (map #(str (.getSimpleName (class %))
+                                                   ": " (ex-message %))))
+                               chain)
+                   root  (last (take-while some? chain))
+                   frames (mapv str (take 6 (.getStackTrace ^Throwable root)))]
+               (assoc (text! (str "error: " (str/join " <- " msgs)
+                                  "\n  at " (str/join "\n     " frames)))
+                      :isError true))))
       (finally (api/close! session)))))
 
 ^:unsafe

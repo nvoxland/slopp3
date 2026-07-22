@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.api.branch :as branch]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -481,23 +481,27 @@
   refs/heads/slopp/<store-branch> (user decision 2026-07-14): every
   commit_point lands in local git automatically, so the repo durably
   carries the slopp history; REMOTE publishing stays explicit (git_push).
-  A non-main `store-branch` projects from the LINE's own journal
-  (`branch/line-dir` — the branch's milestones live there, not in the main
-  store.db; projecting the main journal is how a branch milestone once
-  mirrored as its fork-point sha and reported OK). Never reads or writes
-  the git-remote default. nil when `dir` isn't a git checkout; push
-  refusals surface as {:error} (e.g. the mirror branch is checked out)."
+  ONE projection algorithm: `ensure-projected!` (inside `push-to-remote!`)
+  already projects main + every on-disk branch line onto this ctx with the
+  store's graft base — so a non-main `store-branch` just names its OWN
+  projected ref as the push SOURCE (`:branch`). (Two earlier bugs here:
+  omitting `:branch` pushed main's ref onto every mirror; a line-dir ctx
+  re-projected the branch without the main db's graft meta and minted a
+  divergent, non-fast-forward chain.) Never reads or writes the git-remote
+  default. nil when `dir` isn't a git checkout; push refusals surface as
+  {:error} (e.g. the mirror branch is checked out)."
   [dir store-branch]
   (when (.exists (io/file dir ".git"))
-    (let [line?   (and store-branch (not= "main" (str store-branch)))
-          src     (if line? (branch/line-dir dir store-branch) dir)
-          ctx     (git/open-ctx! src)
-          mirror  (str "slopp/" (or store-branch "main"))]
+    (let [ctx     (git/open-ctx! dir)
+          line    (or store-branch "main")
+          mirror  (str "slopp/" line)]
       (try
         (if (= mirror (checked-out-branch (str dir)))
           {:error (str "refs/heads/" mirror " is checked out — cannot mirror onto"
                        " a live working tree")}
-          (assoc (client/push-to-remote! ctx (str dir) :remote-branch mirror)
+          (assoc (client/push-to-remote! ctx (str dir)
+                                         :branch line
+                                         :remote-branch mirror)
                  :branch mirror))
         (finally (git/close-ctx! ctx))))))
 

@@ -35,14 +35,37 @@
                                 (concat (keep :ns (drop (count (store/deltas base))
                                                         (store/deltas st')))
                                         (:new-nses r)))))
-                      ;; new namespaces first, dependency order
-                      (some (fn [ns-sym]
-                              (when (contains? (set (:new-nses r)) ns-sym)
-                                (image/load-ns! (:image @session) st' ns-sym)))
-                            (store/ns-dependency-order st'))
-                      ;; then every changed form (compile gate, heals)
-                      (:err (session/hot-load-all! session st'
-                                           (:changed-form-ids r))))]
+                      ;; ONE dependency-ordered pass, new-ns loads and
+                      ;; changed-form hot-loads INTERLEAVED: a new ns that
+                      ;; calls forms the merge just added to an EXISTING
+                      ;; upstream ns must compile against those forms, so
+                      ;; the upstream's changes reach the image first
+                      ;; (loading all new nses before any changed form is
+                      ;; how a merged wave failed on its own new gates)
+                      (let [new?  (set (:new-nses r))
+                            ;; a form added AND deleted on their side leaves
+                            ;; a DEAD id in changed-form-ids — nothing to
+                            ;; load (the wave-1 merge NPEd on exactly this)
+                            live  (filterv #(store/form-by-id st' %)
+                                           (:changed-form-ids r))
+                            by-ns (group-by #(store/ns-of-form-id st' %)
+                                            live)]
+                        (or (some (fn [ns-sym]
+                                    (cond
+                                      (new? ns-sym)
+                                      (image/load-ns! (:image @session) st' ns-sym)
+
+                                      (seq (get by-ns ns-sym))
+                                      (:err (session/hot-load-all! session st'
+                                                           (get by-ns ns-sym)))
+
+                                      :else nil))
+                                  (store/ns-dependency-order st'))
+                            ;; live ids whose ns lookup still missed keep
+                            ;; the whole-batch path
+                            (when-let [rest-ids (seq (get by-ns nil))]
+                              (:err (session/hot-load-all! session st'
+                                                   rest-ids))))))]
         (if load-err
           (do (session/fresh-image! session)
               (edit/compile-error st' load-err "merge failed to compile: "))
@@ -81,10 +104,8 @@
                     summary             (assoc :test summary))
                   t0)))))))))
 
-(defn ^:export line-dir
-  "Where a branch line persists in a durable session. Exported: the git
-  mirror (`slopp.sync/publish-local!`) projects a branch milestone from the
-  LINE's own journal, so it needs the line's location."
+(defn line-dir
+  "Where a branch line persists in a durable session."
   [dir nm]
   (str (io/file dir ".slopp" "branches" nm)))
 

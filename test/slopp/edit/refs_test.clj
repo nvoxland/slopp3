@@ -155,3 +155,22 @@
           r  (refs/cold-load-order st 'co.ok)]
       (is (nil? (:cycle r)))
       (is (= '[co.ok a b] (mapv #(:name (store/form-by-id st %)) (:order r)))))))
+
+(deftest web-declarations-are-edges-from-the-outside-world
+  (let [st (-> (store/empty-store)
+               (store/ingest 'w.api
+                             (str "(ns w.api)\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/api/users/:id\"} get-user \"U.\" [req] req)\n\n"
+                                  "(defn ^{:web/effect :user/insert} insert-user! \"I.\" [ctx row] row)\n\n"
+                                  "(defn ^{:web/read :user/by-id} user-by-id \"R.\" [ctx id] id)\n\n"
+                                  "(defn plain \"P.\" [x] x)\n")))]
+    (testing "an endpoint form is declared-invoked by the dispatcher"
+      (let [r (first (refs/refs-to st 'w.api/get-user))]
+        (is (= :declared (:via r)) (pr-str r))
+        (is (= :web-endpoint (:marker r)))
+        (is (= :external (:from-ns r)))))
+    (testing "effect and read performers are declared-invoked by the interpreter"
+      (is (= :web-effect (:marker (first (refs/refs-to st 'w.api/insert-user!)))))
+      (is (= :web-read (:marker (first (refs/refs-to st 'w.api/user-by-id))))))
+    (testing "an unmarked form gains no edge"
+      (is (empty? (refs/refs-to st 'w.api/plain))))))

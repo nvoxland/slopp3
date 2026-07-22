@@ -93,6 +93,9 @@
    {:name "query_capabilities"
     :description "Every capability setting for this store: the declared registry (type, default, doc) joined with the stored `capabilities` config — effective values, what's set, and the wildcard families (http.static.*, auth.<provider>.*, groups.*.members). Set with config_file {path capabilities key <k> value <v>}; writes validate against the registry."
     :inputSchema {:type "object" :properties {}}}
+   {:name "query_routes"
+    :description "The store's declared WEB surface: every endpoint (method, path, auth policy, handler, declared :web/effects / :web/reads, schema presence) plus the derived effect/read performer vocabularies — the same derivations the web write gates enforce. Empty with teaching until http.enabled."
+    :inputSchema {:type "object" :properties {}}}
    {:name "query_rule_telemetry"
     :description "The D9 rules' FIRE-RATE + DISCHARGE signal for this store — the demand signal the severity dial is set by. Per rule: how often it fires (dones/instances), whether findings get :discharged (fixed) or :persisted (keep recurring = ignored/friction); plus escape-marker density (agents opting out via ^:unsafe/^:reads/^:unused-ok) and the current dials. Read-only history analysis over the delta log. Optional since (a delta/commit id from query_commits) windows it."
     :inputSchema {:type "object" :properties {:since {:type "string"}}}}])
@@ -472,7 +475,7 @@
     "query_observe" "query_macroexpand" "query_branches" "query_history"
     "query_changes" "query_commits" "query_git" "session_brief" "report"
     "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules" "query_rule_telemetry"
-    "query_capabilities"
+    "query_capabilities" "query_routes"
     "help" "deps_list" "file_list" "file_get" "file_history"})
 
 (def tools

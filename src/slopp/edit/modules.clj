@@ -454,58 +454,6 @@
                "\" tier :internal} (say why). Note this does NOT ask for a `!`"
                " name: `!` means MUTATION, and printing is not one"))))))
 
-(def ^:export per-form-write-gates
-  "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
-  (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
-  (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
-  the stale fns, the composed-def trap — and so the reference graph sees them.
-  Register a new per-form write gate HERE, not at the N write sites. Each gate's
-  per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`."
-  [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal])
-
-(defn ^:export write-gate-names
-  "The keyword rule-names of the registered per-form write gates (from the var
-   metadata) — the enumeration the unified rule catalog + its drift-guard use
-   without reaching the package-private `per-form-write-gates`."
-  []
-  (mapv #(keyword (:name (meta %))) per-form-write-gates))
-
-(defn ^:export gate-check
-  "Run every per-form write gate over the CANDIDATE store ONCE, bucketed by each
-   gate's effective per-store `rule-severity`: returns `{:refuse <first
-   refuse-grade teaching, or nil> :advisories [<advisory-grade teachings>]}`. A
-   gate dialed `:off` is skipped; `:refuse`/`:error` (and the default) BLOCK;
-   `:advisory` is non-blocking and its teaching rides the write result (the
-   dial's warn-but-proceed mode). `gate-refusal` is the blocking view."
-  [candidate ns-sym form-name]
-  (reduce (fn [acc gate]
-            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)
-                  ;; a gate declares whether it applies to TEST namespaces.
-                  ;; Declared once, here, so a gate and any REPORT of the same
-                  ;; rule cannot disagree — they did: purity-standing excluded
-                  ;; tests while tier-refusal gated them, so the report
-                  ;; recommended a tier the gate would then punish.
-                  skip? (and (= :production (:rule/applies-to (meta gate) :all))
-                             (render/test-ns? ns-sym))]
-              (if (or (= :off sev) skip?)
-                acc
-                (if-let [t (gate candidate ns-sym form-name)]
-                  (if (= :advisory sev)
-                    (update acc :advisories conj t)
-                    (cond-> acc (nil? (:refuse acc)) (assoc :refuse t)))
-                  acc))))
-          {:refuse nil :advisories []}
-          per-form-write-gates))
-
-(defn ^:export gate-refusal
-  "The BLOCKING view of `gate-check`: the first refuse-grade per-form write-gate
-   teaching over the CANDIDATE store, or nil. A gate dialed `:off` is skipped and
-   an `:advisory` gate is non-blocking (its teaching rides `gate-check`'s
-   `:advisories` onto the write result). Register a new per-form write gate in
-   `per-form-write-gates`, not at the N write sites."
-  [candidate ns-sym form-name]
-  (:refuse (gate-check candidate ns-sym form-name)))
-
 (def ^:export tier-order
   "Purity tiers, strictest to loosest. A namespace may only require namespaces
    at its OWN tier or stricter — core never depends on the edge.
@@ -618,3 +566,196 @@
                :let [why (tier-refusal cand n (:name f))]
                :when why]
            {:form (symbol (str n) (str (:name f))) :why why})))))
+
+(defn web-enabled?
+  "The D-web master opt-in, read off the candidate store's `capabilities`
+  config: http.enabled = \"true\". Every web gate is inert without it — a
+  store that never opts into HTTP is untouched (the adoption story)."
+  [candidate]
+  (= "true" (get-in candidate [:config "capabilities" :values "http.enabled"])))
+
+(defn ^:export web-name-meta
+  "The metadata on a stored form's NAME symbol, read off the node — no eval
+  (D3 keeps metadata source-only truth). nil for unnamed/unparseable forms.
+  THE reader for the `:web/*` declaration vocabulary; `slopp.api.web` and
+  the web gates both consume it."
+  [e]
+  (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+    (when (and (seq? s) (symbol? (second s)))
+      (meta (second s)))))
+
+(defn ^:export web-endpoint-rows
+  "Every `:web/path` form in `store`: `{:ns :name :form-id :meta}` rows —
+  the single route traversal; the collision gate and `slopp.api.web` both
+  build on it. A pure function of the store value."
+  [store]
+  (vec
+   (for [nsx (sort (keys (:namespaces store)))
+         e   (store/forms store nsx)
+         :when (:name e)
+         :let [m (web-name-meta e)]
+         :when (:web/path m)]
+     {:ns nsx :name (:name e) :form-id (:id e) :meta m})))
+
+(defn ^:export web-performers
+  "The app-declared performer vocabulary for `marker-key` (`:web/effect` or
+  `:web/read`): {kind → performer qsym}. slopp interprets no domain
+  vocabulary of its own — the store declares it, so this registry is a pure
+  function of the forms; the undeclared-effect gate and `slopp.api.web`
+  both consume it."
+  [store marker-key]
+  (into {}
+        (for [nsx (sort (keys (:namespaces store)))
+              e   (store/forms store nsx)
+              :when (:name e)
+              :let [kind (get (web-name-meta e) marker-key)]
+              :when kind]
+          [kind (symbol (str nsx) (str (:name e)))])))
+
+(defn ^:export ^{:rule/applies-to :production} web-auth-refusal
+  "The default-deny auth gate (D-web): a `:web/path` endpoint with NO
+  `:web/auth` declaration is refused — `:public` must be typed out, so an
+  unsecured route is always a visible decision, never an omission. Inert
+  until the store opts into HTTP (`web-enabled?`). Returns a teaching
+  string, or nil when clean."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [m (web-name-meta e)]
+        (when (and (:web/path m) (not (contains? m :web/auth)))
+          (str ns-sym "/" form-name " declares the route " (pr-str (:web/path m))
+               " but no :web/auth — every endpoint declares its policy"
+               " (default-deny): add :web/auth :public (deliberately open),"
+               " :authenticated, or [:group \"<name>\"] to the name metadata;"
+               " groups live in the capabilities config (query_capabilities)"))))))
+
+(defn ^:export ^{:rule/applies-to :production} web-route-collision
+  "The route-uniqueness gate (D-web): a `:web/path` endpoint whose
+  method+path another FORM already claims is refused at the write — a
+  duplicate route is impossible by construction, not a startup surprise.
+  The same form re-landing (a replace) is not a collision. Inert until
+  `web-enabled?`. Returns a teaching string, or nil when clean."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [m (web-name-meta e)]
+        (when (:web/path m)
+          (let [method (:web/method m)
+                path   (str (:web/path m))
+                other  (some #(when (and (not= (:form-id %) (:id e))
+                                         (= method (:web/method (:meta %)))
+                                         (= path (str (:web/path (:meta %)))))
+                               %)
+                             (web-endpoint-rows candidate))]
+            (when other
+              (str ns-sym "/" form-name " claims " method " " path
+                   " but " (:ns other) "/" (:name other) " already serves it —"
+                   " one method+path has one owner: change the path, change the"
+                   " method, or extend the existing handler (query_routes lists"
+                   " every claim)"))))))))
+
+(defn ^:export ^{:rule/applies-to :production} web-undeclared-effect
+  "The effect-vocabulary gate (D-web): an endpoint declaring `:web/effects`
+  kinds may only name kinds some `^{:web/effect <kind>}` performer provides
+  — the dispatcher can only run effects the app defined, and a typo'd kind
+  must fail at the write, not at the first request. Inert until
+  `web-enabled?`. Returns a teaching string, or nil when clean."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [m (web-name-meta e)
+            kinds (seq (:web/effects m))]
+        (when (and (:web/path m) kinds)
+          (let [known (set (keys (web-performers candidate :web/effect)))
+                missing (remove known kinds)]
+            (when (seq missing)
+              (str ns-sym "/" form-name " declares :web/effects "
+                   (pr-str (vec missing)) " but no performer provides "
+                   (if (= 1 (count missing)) "it" "them")
+                   " — define one per kind: (defn ^{:web/effect "
+                   (pr-str (first missing)) "} <name>! [ctx …] …), or reuse an"
+                   " existing kind (query_routes lists the vocabulary)"))))))))
+
+(defn ^:export ^{:rule/applies-to :production} web-unsafe-get
+  "The HTTP-safety gate (D-web): a `:get`/`:head` endpoint must be SAFE in
+  the RFC sense — it may neither declare `:web/effects` kinds
+  (effects-as-data must not launder a mutating GET) nor reach a mutation
+  directly (the D6 mutation set: `effectful-vars` with no external
+  boundary, the same read `:internal`'s tier check uses). Inert until
+  `web-enabled?`. Returns a teaching string, or nil when clean."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (let [m (web-name-meta e)]
+        (when (and (:web/path m) (#{:get :head} (:web/method m)))
+          (cond
+            (seq (:web/effects m))
+            (str ns-sym "/" form-name " is a GET/HEAD endpoint but declares"
+                 " :web/effects " (pr-str (vec (:web/effects m))) " — a safe"
+                 " method must not mutate: make it :post/:put/:delete, or drop"
+                 " the effects")
+
+            (contains? (derive/effectful-vars
+                        (analyze/analyze (render/render-ns candidate ns-sym))
+                        nil nil)
+                       (symbol (str ns-sym) (str form-name)))
+            (str ns-sym "/" form-name " is a GET/HEAD endpoint but reaches a"
+                 " mutation — a safe method must not mutate: move the write"
+                 " behind a :post/:put/:delete endpoint's :web/effects, or"
+                 " return the change as data")))))))
+
+(def ^:export per-form-write-gates
+  "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
+  (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
+  (`#'`) so a hot-reload of a gate is picked up — a value vector would freeze
+  the stale fns, the composed-def trap — and so the reference graph sees them.
+  Register a new per-form write gate HERE, not at the N write sites. Each gate's
+  per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`.
+  The web-* gates (D-web) are additionally inert until the store opts into
+  HTTP (`web-enabled?`)."
+  [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal
+   #'web-auth-refusal #'web-route-collision #'web-undeclared-effect
+   #'web-unsafe-get])
+
+(defn ^:export write-gate-names
+  "The keyword rule-names of the registered per-form write gates (from the var
+   metadata) — the enumeration the unified rule catalog + its drift-guard use
+   without reaching the package-private `per-form-write-gates`."
+  []
+  (mapv #(keyword (:name (meta %))) per-form-write-gates))
+
+(defn ^:export gate-check
+  "Run every per-form write gate over the CANDIDATE store ONCE, bucketed by each
+   gate's effective per-store `rule-severity`: returns `{:refuse <first
+   refuse-grade teaching, or nil> :advisories [<advisory-grade teachings>]}`. A
+   gate dialed `:off` is skipped; `:refuse`/`:error` (and the default) BLOCK;
+   `:advisory` is non-blocking and its teaching rides the write result (the
+   dial's warn-but-proceed mode). `gate-refusal` is the blocking view."
+  [candidate ns-sym form-name]
+  (reduce (fn [acc gate]
+            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)
+                  ;; a gate declares whether it applies to TEST namespaces.
+                  ;; Declared once, here, so a gate and any REPORT of the same
+                  ;; rule cannot disagree — they did: purity-standing excluded
+                  ;; tests while tier-refusal gated them, so the report
+                  ;; recommended a tier the gate would then punish.
+                  skip? (and (= :production (:rule/applies-to (meta gate) :all))
+                             (render/test-ns? ns-sym))]
+              (if (or (= :off sev) skip?)
+                acc
+                (if-let [t (gate candidate ns-sym form-name)]
+                  (if (= :advisory sev)
+                    (update acc :advisories conj t)
+                    (cond-> acc (nil? (:refuse acc)) (assoc :refuse t)))
+                  acc))))
+          {:refuse nil :advisories []}
+          per-form-write-gates))
+
+(defn ^:export gate-refusal
+  "The BLOCKING view of `gate-check`: the first refuse-grade per-form write-gate
+   teaching over the CANDIDATE store, or nil. A gate dialed `:off` is skipped and
+   an `:advisory` gate is non-blocking (its teaching rides `gate-check`'s
+   `:advisories` onto the write result). Register a new per-form write gate in
+   `per-form-write-gates`, not at the N write sites."
+  [candidate ns-sym form-name]
+  (:refuse (gate-check candidate ns-sym form-name)))

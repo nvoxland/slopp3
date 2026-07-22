@@ -37,7 +37,8 @@
   - same-form divergence = MV conflict: ours kept, theirs surfaced
   - add/add id collisions are remapped to fresh ids
   - whole namespaces created on their side arrive intact (provenance kept)
-  - :move deltas are skipped with a note (ordering is cosmetic in the image)
+  - :move deltas REPLAY (order is load-bearing since D7 — the merge gate
+    refuses a store that won't cold-load; a missing form/target skips with a note)
   Iterated merges stay exact via causal delivery: replayed deltas carry
   :merged-from (their id), the :merge delta records :applied, and neither
   replays again nor counts as OUR work in conflict detection.
@@ -295,10 +296,26 @@
                               new-nses (conj applied (:id d))))))
 
                   :move
-                  (done st idmap merged conflicts
-                        (conj notes {:skipped :move :ns (:ns d)
-                                     :reason "ordering is cosmetic; re-run edit_move if wanted"})
-                        changed new-nses (conj applied (:id d)))
+                  ;; REPLAY the reordering (was: skipped as cosmetic — that
+                  ;; predates D7/auto-ordering; order is load-bearing now, the
+                  ;; merge gate itself refuses a store that won't cold-load).
+                  ;; Their form-id maps through idmap; our current NAME is
+                  ;; resolved from it (rename-proof); a missing form or target
+                  ;; on our side skips with a note, never errors.
+                  (let [fid (get idmap (:form-id d) (:form-id d))
+                        nm  (:name (store/form-by-id st fid))
+                        r   (when nm
+                              (store/move-form st (:ns d) nm (:before d)
+                                               :prompt (:prompt d)
+                                               :agent (:agent d)))]
+                    (if r
+                      (done (tag-merged (first r) (:id d)) idmap (inc merged)
+                            conflicts notes changed new-nses
+                            (conj applied (:id d)))
+                      (done st idmap merged conflicts
+                            (conj notes {:skipped :move :ns (:ns d)
+                                         :reason "moved form or target absent on our side"})
+                            changed new-nses (conj applied (:id d)))))
 
                   ;; module edges are CRDT-grain: fold theirs in (adds union,
                   ;; removes disj) — never a conflict. A union can close a

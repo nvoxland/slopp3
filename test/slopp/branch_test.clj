@@ -4,7 +4,7 @@
   semantics; merging down to main rides the m2 causal-delivery engine."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
-            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store]))
 
 (def seed
   (str "(ns br.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -196,4 +196,31 @@
         (is (= 1 (count wins)))
         (is (= 1 (count errs)))
         (is (re-find #"already exists" (:error (first errs)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external merge-loads-changed-upstream-before-new-downstream
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'up.core "(ns up.core)\n\n(defn f \"F.\" [x] x)\n")
+      (branch/branch! sess "feat")
+      (let [r (api/add-form! sess 'up.core "(defn g \"G.\" [x] (inc x))"
+                             :prompt "upstream gains g on the branch")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/add-form! sess 'up.core "(defn doomed \"D.\" [x] x)"
+                             :prompt "added then deleted on the branch")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [r (api/delete-form! sess 'up.core 'doomed :prompt "gone again")]
+        (is (nil? (:error r)) (pr-str r)))
+      (api/module-dep! sess "up.web" "up.core" :prompt "the downstream web module calls the upstream core")
+      (let [r (api/create-ns! sess 'up.web
+                              :source "(ns up.web (:require [up.core :as core]))\n\n(defn h \"H.\" [x] (core/g x))\n")]
+        (is (nil? (:error r)) (pr-str r)))
+      (branch/branch-switch! sess "main")
+      (testing "the merge compiles the new downstream against the merged upstream"
+        (let [r (branch/branch-merge! sess "feat")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some #{'up.web} (:new-nses r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'up.core 'g)))
+          (is (some? (store/form-named (:store @sess) 'up.web 'h)))
+          (is (= [2] (api/query-eval sess "(up.web/h 1)")))))
       (finally (api/close! sess)))))

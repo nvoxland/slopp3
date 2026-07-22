@@ -1155,3 +1155,28 @@
                                     "refs/heads/slopp/feature:src/bp/core.clj")))
               "the branch work must be IN the mirrored tree")))
       (finally (api/close! sess)))))
+
+(deftest ^:external query-routes-rides-the-wire
+  (let [sess (external/open!)]
+    (try
+      (call! sess "ns_create" {:ns "wr.api" :source "(ns wr.api)\n(defn seed \"S.\" [x] x)\n"})
+      (testing "disabled: empty with the opt-in teaching"
+        (let [rep (edn/read-string (call! sess "query_routes" {}))]
+          (is (false? (:enabled rep)) (pr-str rep))
+          (is (re-find #"http.enabled" (str (:note rep))))))
+      (testing "enabled: the declared route reports with its policy"
+        (call! sess "config_file" {:path "capabilities" :key "http.enabled" :value "true"
+                                   :prompt "opt in"})
+        (call! sess "edit_add_form"
+               {:ns "wr.api"
+                :source "(defn ^{:web/method :get :web/path \"/api/ping\" :web/auth :public} ping \"P.\" [req] req)"
+                :prompt "a public endpoint"})
+        (let [rep (edn/read-string (call! sess "query_routes" {}))
+              row (first (:routes rep))]
+          (is (true? (:enabled rep)))
+          (is (= "/api/ping" (:path row)) (pr-str rep))
+          (is (= :public (:auth row)))
+          (is (= 'wr.api/ping (:handler row)))))
+      (testing "the tool is advertised read-only"
+        (is (contains? tools/read-only-tools "query_routes")))
+      (finally (api/close! sess)))))

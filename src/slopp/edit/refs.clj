@@ -128,8 +128,11 @@
 (defn- declared-refs
   "Marker declarations as edges FROM the outside world: ^:entry-point
   (invoked via CLI/wire/eval injection) and ^:unused-ok (deliberately
-  uncalled) both keep a var alive in the graph; :marker preserves WHICH
-  dial so consumers like the stale check can distinguish."
+  uncalled) both keep a var alive in the graph, and so do the D-web
+  declarations — a `:web/path` ENDPOINT (the dispatcher calls it) and a
+  `:web/effect` / `:web/read` PERFORMER (the effect interpreter / reads
+  loader calls it); :marker preserves WHICH dial so consumers like the
+  stale check can distinguish."
   [st _known nses]
   (for [nsx (sort nses)
         e   (store/forms st nsx)
@@ -138,6 +141,9 @@
               m (when (and (seq? s) (symbol? (second s))) (meta (second s)))
               marker (cond (:entry-point m) :entry-point
                            (:unused-ok m)   :unused-ok
+                           (:web/path m)    :web-endpoint
+                           (:web/effect m)  :web-effect
+                           (:web/read m)    :web-read
                            :else nil)]
         :when marker]
     {:from-form nil

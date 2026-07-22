@@ -177,3 +177,46 @@
         m2     (merge/merge-logs main1 fork-b :from "the-fork-dir")]
     (is (:error m2))
     (is (re-find #"recreated" (:error m2)))))
+
+(deftest move-deltas-replay-order-across-the-merge
+  (let [b      (base)
+        ours   (replace! b 'a "(defn a [x] (+ x 1))")
+        theirs (-> b
+                   (store/move-form 'm.core 'c 'a :prompt "c precedes a" :agent "them")
+                   first)
+        r      (merge/merge-logs ours theirs)]
+    (is (empty? (:conflicts r)))
+    (let [src (render/render-ns (:store r) 'm.core)]
+      (testing "their reordering lands: c is defined before a"
+        (is (< (.indexOf src "defn c") (.indexOf src "defn a")) src))
+      (testing "our same-file divergence still merges clean beside it"
+        (is (re-find #"\(\+ x 1\)" src))))
+    (testing "the replay is applied, not skipped"
+      (is (not-any? #(= :move (:skipped %)) (:notes r)) (pr-str (:notes r))))))
+
+(deftest iterated-merge-with-id-collisions-keeps-adds-and-order
+  (let [add     (fn [st src agent]
+                  (first (store/append-form st 'm.core (p/parse-string src)
+                                            :prompt "t" :agent agent)))
+        b       (base)
+        theirs1 (add b "(defn p1 [x] x)" "them")
+        m1      (merge/merge-logs b theirs1 :from "web")
+        ours1   (:store m1)
+        ours2   (add ours1 "(defn mine [x] x)" "us")
+        theirs2 (-> theirs1
+                    (add "(defn prim [x] x)" "them")
+                    (add "(defn gate [x] (prim x))" "them")
+                    (store/move-form 'm.core 'gate 'c :prompt "order" :agent "them") first
+                    (store/move-form 'm.core 'prim 'gate :prompt "order" :agent "them") first)
+        r       (merge/merge-logs ours2 theirs2 :from "web")
+        src     (render/render-ns (:store r) 'm.core)]
+    (testing "their adds survive the cross-line id collision"
+      (is (re-find #"defn prim" src) src)
+      (is (re-find #"defn gate" src) src))
+    (testing "our colliding add survives beside them"
+      (is (re-find #"defn mine" src) src))
+    (testing "their move-fixed order replays through the remap"
+      (is (< (.indexOf src "defn prim") (.indexOf src "defn gate")) src)
+      (is (< (.indexOf src "defn gate") (.indexOf src "defn c")) src))
+    (testing "no conflicts — different work, the granularity dodge"
+      (is (empty? (:conflicts r)) (pr-str (:conflicts r))))))

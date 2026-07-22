@@ -9,19 +9,23 @@
   "Hot-reload one form (from a store VALUE — commit only on success, S1) into
   the image, padded with newlines to its VFS row and attributed to its VFS
   path so stack traces cite the exact lines `query-source` shows (F6).
-  Returns nil on success, or the compile/load error message."
+  Returns nil on success, or the compile/load error message. A `form-id`
+  that no longer resolves in `store` (deleted since it was collected) loads
+  nothing and returns nil — a vanished form is not a compile error."
   [image store form-id]
   (let [ns-sym  (store/ns-of-form-id store form-id)
-        elems   (store/elements store ns-sym)
-        idx     (first (keep-indexed
-                        (fn [i e] (when (= form-id (:id e)) i)) elems))
-        [row _] (nth (render/element-offsets store ns-sym) idx)
-        src     (n/string (:node (nth elems idx)))
-        padded  (if (>= row 2)
-                  (str "(in-ns '" ns-sym ")\n"
-                       (apply str (repeat (- row 2) "\n")) src)
-                  (str "(in-ns '" ns-sym ") " src))]
-    (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))
+        elems   (when ns-sym (store/elements store ns-sym))
+        idx     (when elems
+                  (first (keep-indexed
+                          (fn [i e] (when (= form-id (:id e)) i)) elems)))]
+    (when idx
+      (let [[row _] (nth (render/element-offsets store ns-sym) idx)
+            src     (n/string (:node (nth elems idx)))
+            padded  (if (>= row 2)
+                      (str "(in-ns '" ns-sym ")\n"
+                           (apply str (repeat (- row 2) "\n")) src)
+                      (str "(in-ns '" ns-sym ") " src))]
+        (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))))
 
 (defn ^:export apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:

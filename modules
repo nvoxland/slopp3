@@ -2,7 +2,7 @@ slopp.addelete: slopp.api slopp.store
 slopp.api: slopp.build slopp.db slopp.deps slopp.edit slopp.image slopp.index slopp.normalize slopp.refactor slopp.render slopp.repl slopp.store slopp.testmain
 slopp.bench: slopp.api slopp.render slopp.store
 slopp.benchmark: slopp.api slopp.mcp
-slopp.branch: slopp.api
+slopp.branch: slopp.api slopp.store
 slopp.build-native: slopp.api slopp.build
 slopp.chsig: slopp.api slopp.refactor slopp.store
 slopp.coldload: slopp.index
