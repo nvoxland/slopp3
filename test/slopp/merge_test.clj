@@ -276,3 +276,48 @@
     (testing "nothing about them is 'skipped'"
       (is (not-any? #(#{:config-put :file-put} (:skipped %)) (:notes r))
           (pr-str (:notes r))))))
+
+(deftest round-tripped-copies-converge-instead-of-conflicting
+  (let [b     (base)
+        web1  (replace! b 'a "(defn a [x] :v2)")
+        r1    (merge/merge-logs b web1 :from "branch:web#W")
+        main1 (first (merge/record-merge (:store r1) "branch:web#W" r1))
+        web2  (replace! web1 'a "(defn a [x] :v3)")
+        r2    (merge/merge-logs web2 main1 :from "branch:main#M")]
+    (testing "the returning copy of our own v2 is recognized, never a conflict"
+      (is (empty? (:conflicts r2)) (pr-str (:conflicts r2))))
+    (testing "our newer v3 stands"
+      (is (re-find #":v3" (render/render-ns (:store r2) 'm.core))))
+    (testing "main's own :merge marker rides through without effect"
+      (is (some? (:store r2))))))
+
+(deftest poisoned-idmap-falls-back-to-the-live-form
+  (let [b    (base)
+        fa   (:id (store/form-named b 'm.core 'a))
+        ;; a PRIOR merge from this source left a stale mapping: their fa →
+        ;; our f999, a form that no longer exists (merge ping-pong)
+        ours (update b :deltas conj
+                     {:id "d800" :parent (:id (last (:deltas b)))
+                      :op :merge :ns '*session* :from "branch:web#W"
+                      :applied [] :id-map {fa "f999"} :at 1 :merged 0})
+        theirs (replace! b 'a "(defn a [x] :their-edit)")
+        r    (merge/merge-logs ours theirs :from "branch:web#W")]
+    (testing "their edit lands on the LIVE original instead of dropping"
+      (is (empty? (:conflicts r)) (pr-str (:conflicts r)))
+      (is (re-find #":their-edit" (render/render-ns (:store r) 'm.core))))))
+
+(deftest duplicate-name-candidates-refuse-the-merge
+  (let [b    (base)
+        fa   (:id (store/form-named b 'm.core 'a))
+        ;; their rename-shaped changeset rewrites OUR form `a` (by id) into a
+        ;; form NAMED `b` — which m.core already defines elsewhere
+        theirs (update b :deltas conj
+                       {:id "d900" :parent (:id (last (:deltas b)))
+                        :op :rename :ns 'm.core
+                        :form-ids [fa]
+                        :sources {fa "(defn b [x] :usurper)"}
+                        :old 'a :new 'b :at 1})
+        r    (merge/merge-logs b theirs :from "branch:web#W")]
+    (testing "the merge refuses rather than landing two forms named b"
+      (is (some? (:error r)) (pr-str (dissoc r :store)))
+      (is (re-find #"duplicate" (str (:error r)))))))

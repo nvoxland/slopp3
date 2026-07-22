@@ -2,7 +2,7 @@
   (:require [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]
             [slopp.semver :as semver]
-            [slopp.store :as store]))
+            [slopp.store :as store] [clojure.string :as str]))
 
 (defn ^:export record-merge
   "Append a `:merge` delta — what arrived, from where, the surfaced conflicts
@@ -41,7 +41,12 @@
     refuses a store that won't cold-load; a missing form/target skips with a note)
   Iterated merges stay exact via causal delivery: replayed deltas carry
   :merged-from (their id), the :merge delta records :applied, and neither
-  replays again nor counts as OUR work in conflict detection.
+  replays again nor counts as OUR work in conflict detection. ROUND TRIPS
+  are causal too (#16): a theirs-delta whose :merged-from names OUR OWN
+  delta (content-matched) is our work returning and converges silently;
+  fids resolve to the first LIVE candidate (mapped, then original) so a
+  stale ping-pong mapping cannot drop an edit; and a candidate that would
+  hold two same-named forms in one ns REFUSES (the shadow corruption).
   Returns {:store :merged :conflicts :notes :changed-form-ids :new-nses
            :applied :fork-point} — pure; the caller owns image loads +
   verification."
@@ -76,7 +81,31 @@
                                               (sort (vals (:sources copy)))))
                                d)))
                          dropped)
-        theirs-sfx (remove #(delivered (:id %)) (drop common td))
+        ;; #16 round-trip causality: a theirs-delta tagged :merged-from
+        ;; with OUR OWN delta's id is our work COMING BACK (they merged
+        ;; us earlier). Content-matched (the imposter rule's comparison),
+        ;; it converges silently instead of re-litigating as "theirs
+        ;; edited" — the poison that once dropped a wave's edit and
+        ;; noise-conflicted whole resyncs. A copy THEY EDITED after is a
+        ;; separate, untagged delta and still replays.
+        ours-by-id (into {} (map (juxt :id identity)) od)
+        returning? (fn [d]
+                     (when-let [orig (ours-by-id (:merged-from d))]
+                       (or (nil? (:sources d)) (nil? (:sources orig))
+                           (= (sort (map str (vals (:sources d))))
+                              (sort (map str (vals (:sources orig))))))))
+        theirs-sfx (remove #(or (delivered (:id %)) (returning? %))
+                           (drop common td))
+        ;; #16 poisoned idmaps: ping-pong accumulates mappings whose target
+        ;; died while the ORIGINAL id lives on — resolve to the first LIVE
+        ;; candidate (mapped first, then the original) so a stale entry
+        ;; cannot silently drop an edit as "we deleted it"
+        live-fid   (fn [st idmap fid0]
+                     (let [mapped (get idmap fid0)]
+                       (cond
+                         (and mapped (store/form-by-id st mapped)) mapped
+                         (store/form-by-id st fid0) fid0
+                         :else (or mapped fid0))))
         touched    (store/suffix-touched (remove :merged-from ours-sfx))]
     (if imposter
       {:error (str "merge identity mismatch: delta " (:id imposter)
@@ -199,7 +228,7 @@
                   :replace
                   (let [ns-sym (:ns d)
                         fid0   (:form-id d)
-                        fid    (get idmap fid0 fid0)
+                        fid    (live-fid st idmap fid0)
                         src    (get (:sources d) fid0)
                         cur    (store/form-by-id st fid)]
                     (cond
@@ -255,7 +284,7 @@
                   :delete
                   (let [ns-sym (:ns d)
                         fid0   (:form-id d)
-                        fid    (get idmap fid0 fid0)
+                        fid    (live-fid st idmap fid0)
                         cur    (store/form-by-id st fid)]
                     (cond
                       (nil? cur)                               ; converged
@@ -296,7 +325,7 @@
                             notes changed new-nses applied)
                       (let [changeset (into {}
                                             (keep (fn [[fid0 src]]
-                                                    (let [fid (get idmap fid0 fid0)]
+                                                    (let [fid (live-fid st idmap fid0)]
                                                       (when (store/form-by-id st fid)
                                                         [fid (p/parse-string src)]))))
                                             srcs)
@@ -315,7 +344,7 @@
                   ;; Their form-id maps through idmap; our current NAME is
                   ;; resolved from it (rename-proof); a missing form or target
                   ;; on our side skips with a note, never errors.
-                  (let [fid (get idmap (:form-id d) (:form-id d))
+                  (let [fid (live-fid st idmap (:form-id d))
                         nm  (:name (store/form-by-id st fid))
                         r   (when nm
                               (store/move-form st (:ns d) nm (:before d)
@@ -369,7 +398,21 @@
                         (conj notes {:skipped (:op d) :delta (:id d)})
                         changed new-nses (conj applied (:id d))))]
             (recur st ds idmap merged conflicts notes changed new-nses applied))
-          {:store (update st :blobs #(merge (:blobs theirs) (or % {})))
-           :merged merged :conflicts conflicts :notes notes
-           :changed-form-ids (vec (distinct changed)) :new-nses new-nses
-           :applied applied :id-map idmap :fork-point fork-point})))))
+          ;; #16/#19 postcondition: a candidate holding two same-named forms in
+          ;; one ns is CORRUPT (last-definition-wins shadows silently — the
+          ;; image runs one form while every name-keyed read shows the other).
+          ;; The rename-interplay minted exactly that once; refuse, never land.
+          (let [dupes (for [nsx (keys (:namespaces st))
+                            [nm cnt] (frequencies
+                                      (keep :name (store/forms st nsx)))
+                            :when (> cnt 1)]
+                        (symbol (str nsx) (str nm)))]
+            (if (seq dupes)
+              {:error (str "merge would mint duplicate names — refused: "
+                           (str/join ", " (map str dupes))
+                           " (a same-ns name collision shadows silently in the"
+                           " image; resolve by renaming on one line first)")}
+              {:store (update st :blobs #(merge (:blobs theirs) (or % {})))
+               :merged merged :conflicts conflicts :notes notes
+               :changed-form-ids (vec (distinct changed)) :new-nses new-nses
+               :applied applied :id-map idmap :fork-point fork-point})))))))
