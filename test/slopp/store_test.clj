@@ -157,10 +157,13 @@
         (let [replayed (store/replay-delta s0 d1)]
           (is (some? replayed))
           (is (= {"app.core" :pure} (:module-tiers replayed)))))
-      (testing "re-declaring a module overwrites its tier (per-module register)"
+      (testing "re-declaring overwrites, and a retired spelling folds CANONICALLY"
+        ;; the delta keeps the caller's :effects verbatim (history is honest);
+        ;; fold STATE canonicalizes, so retired vocabulary cannot re-enter
         (let [[s2 d2] (store/record-module-tier s1 "app.core" :effects)]
-          (is (= {"app.core" :effects} (:module-tiers s2)))
-          (is (= {"app.core" :effects} (:module-tiers (store/replay-delta s1 d2)))))))))
+          (is (= :effects (:tier d2)))
+          (is (= {"app.core" :external} (:module-tiers s2)))
+          (is (= {"app.core" :external} (:module-tiers (store/replay-delta s1 d2)))))))))
 
 (deftest form-accessors-handle-every-shape
   ;; THE bug class of this project. Analyzers reached into a form by INDEX:

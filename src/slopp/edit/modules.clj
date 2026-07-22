@@ -1,4 +1,4 @@
-(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.store.fields :as fields]))
 
 (defn ^:export modules-manifest
   "The module manifest — {module-string #{dep-module-strings}} — the FOLD
@@ -317,13 +317,13 @@
                " ^:foreign-keys; or opt out with config_file: path `gates` key"
                " `require-namespaced-keys` unset true"))))))
 
-(defn ^:export ^:legacy-ok canonical-tier
-  "Canonical spelling of a purity tier: the retired :reads/:effects map to
-  :internal/:external; canonical spellings (and nil) pass through. Normalize at
-  every boundary that READS a recorded tier — stores that predate the rename
-  legitimately carry the old spellings."
+(defn ^:export canonical-tier
+  "Canonical spelling of a purity tier — delegates to the registry's ONE
+  mapping (slopp.store.fields/canonical-tier). Normalize at every boundary
+  that READS a recorded tier — deltas legitimately carry the old spellings
+  verbatim (history is honest; fold state is canonical)."
   [tier]
-  ({:reads :internal :effects :external} tier tier))
+  (fields/canonical-tier tier))
 
 (defn ^:export tier-for
   "The purity tier governing `ns-sym`: the MOST SPECIFIC declaration wins —

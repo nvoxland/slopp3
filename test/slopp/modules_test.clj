@@ -290,13 +290,14 @@
         (is (nil? (modules/module-refusal cand 'x.z 'g)))))))
 
 (deftest module-tiers-merge-clean
-  (testing "tiers declared on either side land on the merged store"
+  (testing "tiers declared on either side land on the merged store, canonically"
     (let [base       (store/empty-store)
           [ours _]   (store/record-module-tier base "a.util" :effects)
           [theirs _] (store/record-module-tier base "a.core" :pure)
           {:keys [store]} (merge/merge-logs ours theirs :from "fork")]
       (is (= :pure (get-in store [:module-tiers "a.core"])))
-      (is (= :effects (get-in store [:module-tiers "a.util"]))))))
+      ;; :effects is a retired spelling — fold state is canonical everywhere
+      (is (= :external (get-in store [:module-tiers "a.util"]))))))
 
 (deftest purity-tier-gate
   (let [pure-src "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n"

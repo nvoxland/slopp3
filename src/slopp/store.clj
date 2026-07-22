@@ -12,22 +12,16 @@
   needs globally-unique ids (uuid / lamport)."
   (:require [clojure.string :as str]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n]))
+            [rewrite-clj.node :as n] [slopp.store.fields :as fields]))
 
 (defn empty-store
-  "A fresh store value — the empty starting point every session builds on."
+  "A fresh store value — the empty starting point every session builds on.
+  Every fold-field seeds from the registry (slopp.store.fields), so a field
+  cannot exist without a declared :init — what each field means lives on its
+  registry entry, not here."
   []
-  ;; :dep-ns   lib → #{namespaces the dep provides} (M4 surface, for M3's
-  ;;           external-call effect boundary)
-  ;; :dep-pure #{qualified syms} the user has asserted pure (narrows M3)
-  ;; :modules  module → #{declared dep modules} — fold of :module-edge
-  ;;           deltas; {} from birth (enforcement always on), nil only in
-  ;;           stores loaded from a pre-module db (open! adopts them)
-  ;; :module-tiers module → purity tier (:pure/:internal/:external) — fold of
-  ;;           :module-tier deltas; a module absent from the map is :external
-  ;;           (unrestricted), so tiers are opt-in tightening (D9)
-  {:namespaces {} :deltas [] :next-id 0 :deps {} :dep-ns {} :dep-pure #{}
-   :modules {} :module-tiers {}})
+  (merge {:namespaces {} :deltas [] :next-id 0}
+         (fields/field-defaults)))
 
 (defn now-ms
   "Epoch ms — the store's clock (public for the deep store packages)."
@@ -403,9 +397,9 @@
 (defn record-deps-add
   "Append a `:deps-add` delta declaring external dependency `lib` at `coord`
   (a deps.edn coordinate map, e.g. `{:mvn/version \"1.2.3\"}`), and materialize
-  it into the store's `:deps` manifest. A tracked delta (not a pure marker):
-  it rides history / branches / merge / foreign-sync like every write.
-  Returns [store' delta]."
+  it into the store's `:deps` manifest via the registry fold. A tracked delta
+  (not a pure marker): it rides history / branches / merge / foreign-sync
+  like every write. Returns [store' delta]."
   [store lib coord & {:keys [agent prompt namespaces]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
@@ -414,10 +408,7 @@
                 (seq namespaces) (assoc :namespaces (vec namespaces))
                 agent  (assoc :agent agent)
                 prompt (assoc :prompt prompt))]
-    [(-> store' (update :deltas conj delta)
-         (assoc-in [:deps lib] coord)
-         (assoc-in [:dep-ns lib] (set namespaces)))
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-deps-remove
   "Append a `:deps-remove` delta dropping `lib` from the manifest.
@@ -429,10 +420,7 @@
                        :lib lib}
                 agent  (assoc :agent agent)
                 prompt (assoc :prompt prompt))]
-    [(-> store' (update :deltas conj delta)
-         (update :deps dissoc lib)
-         (update :dep-ns dissoc lib))
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-deps-pure
   "Append a `:deps-pure` delta marking qualified `sym` pure (`pure?` true) or
@@ -446,9 +434,7 @@
                        :sym sym :pure (boolean pure?)}
                 agent  (assoc :agent agent)
                 prompt (assoc :prompt prompt))]
-    [(update (update store' :deltas conj delta)
-             :dep-pure (fnil (if pure? conj disj) #{}) sym)
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-turn
   "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
@@ -679,19 +665,15 @@
   the manifest entry is `{:sha :content-type :bytes}` — the delta carries
   the sha and size, NEVER the payload, so a large asset costs the journal
   ~60 bytes and identical content converges on one blob. ONE state-carrying
-  `:file-put` delta either way (replay reconstructs the manifest
-  incrementally, like :deps-add; blob BYTES persist via the db's blobs
-  table, not the journal). Returns [store' delta]."
+  `:file-put` delta either way; the manifest entry folds via the registry
+  (the fold reads the delta, which is why replay needs no payload), and only
+  the blob BYTES are assoc'd here, where they exist. Returns [store' delta]."
   [store path text & {:keys [prompt agent encoding content-type]}]
   (let [[did store'] (gen-id store "d")
         binary? (= "base64" (str encoding))
         bs      (when binary?
                   (.decode (java.util.Base64/getDecoder) (str text)))
         sha     (when binary? (sha256-of bs))
-        entry   (if binary?
-                  (cond-> {:sha sha :bytes (count bs)}
-                    content-type (assoc :content-type (str content-type)))
-                  (str text))
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op :file-put :ns '*session* :at (now-ms)
                        :path (str path)}
@@ -700,8 +682,7 @@
                 (and binary? content-type) (assoc :content-type (str content-type))
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]
-    [(-> store'
-         (assoc-in [:files (str path)] entry)
+    [(-> (fields/fold store' delta)
          (cond-> binary? (assoc-in [:blobs sha] bs))
          (update :deltas conj delta))
      delta]))
@@ -716,10 +697,7 @@
                        :path (str path)}
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]
-    [(-> store'
-         (update :files dissoc (str path))
-         (update :deltas conj delta))
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn file-history
   "Every tracked version of manifest file `path`, oldest first:
@@ -779,7 +757,9 @@
   "Declare a module's purity TIER (:pure/:internal/:external) — the per-module
   register behind the functional-core gate (D9): one :module-tier delta
   carrying its why (:prompt); last write per module wins. A module absent
-  from :module-tiers (or declared :external) is unrestricted. Returns
+  from :module-tiers (or declared :external) is unrestricted. The delta keeps
+  the caller's spelling verbatim; the registry fold canonicalizes state
+  (retired :reads/:effects land as :internal/:external). Returns
   [store' delta]."
   [store module tier & {:keys [prompt agent]}]
   (let [[did store'] (gen-id store "d")
@@ -789,10 +769,7 @@
                         :module module :tier tier}
                  prompt (assoc :prompt prompt)
                  agent  (assoc :agent agent))]
-    [(-> store'
-         (assoc-in [:module-tiers module] tier)
-         (update :deltas conj delta))
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-module-edge
   "Declare (or retract) ONE module dependency edge — the CRDT grain of the
@@ -806,15 +783,8 @@
                        :op :module-edge :ns '*session* :at (now-ms)
                        :from (str from) :to (str to) :action action}
                 prompt (assoc :prompt prompt)
-                agent  (assoc :agent agent))
-        fold  (fn [st]
-                (if (= :remove action)
-                  (let [deps (disj (get-in st [:modules (str from)] #{}) (str to))]
-                    (if (empty? deps)
-                      (update st :modules dissoc (str from))
-                      (assoc-in st [:modules (str from)] deps)))
-                  (update-in st [:modules (str from)] (fnil conj #{}) (str to))))]
-    [(-> store' fold (update :deltas conj delta)) delta]))
+                agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-config-put
   "Set one KEY of the structured config file at `path` (format `fmt`, e.g.
@@ -829,11 +799,7 @@
                        :key (str k) :value (str v)}
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]
-    [(-> store'
-         (assoc-in [:config (str path) :format] fmt)
-         (assoc-in [:config (str path) :values (str k)] (str v))
-         (update :deltas conj delta))
-     delta]))
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn record-config-unset
   "Remove one key from the config file at `path` (the whole entry when the
@@ -844,15 +810,8 @@
                        :op :config-unset :ns '*session* :at (now-ms)
                        :path (str path) :key (str k)}
                 prompt (assoc :prompt prompt)
-                agent  (assoc :agent agent))
-        drop-key (fn [st]
-                   (let [st (update-in st [:config (str path) :values]
-                                       dissoc (str k))]
-                     (if (empty? (get-in st [:config (str path) :values]))
-                       (update st :config dissoc (str path))
-                       st)))]
-    [(-> store' drop-key (update :deltas conj delta))
-     delta]))
+                agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
 (defn render-config
   "Serialize a config entry {:format f :values {k v}} to its file text.
@@ -967,128 +926,96 @@
   "Apply a FOREIGN delta from the SAME journal (linear history — ids are
   authoritative, nothing remaps) onto a trailing cached store. Returns the
   advanced store, or nil when this op needs a full reload (e.g. :ingest —
-  the elements table has the writer's exact trivia; rebuild from there)."
+  the elements table has the writer's exact trivia; rebuild from there).
+  Marker ops and field-carrying ops route through the registry
+  (slopp.store.fields) — a NEW op registers there once and this path knows
+  it; only the element-content machinery lives here."
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
-    (case (:op d)
-      (:verify :done :merge :turn-begin :turn-end :commit :revert)
+    (cond
+      (contains? fields/markers (:op d))
       (with-d store)
 
-      ;; manifest deltas carry state — reconstruct :deps/:dep-ns/:dep-pure
-      :deps-add    (with-d (-> store
-                               (assoc-in [:deps (:lib d)] (:coord d))
-                               (assoc-in [:dep-ns (:lib d)] (set (:namespaces d)))))
-      :deps-remove (with-d (-> store
-                               (update :deps dissoc (:lib d))
-                               (update :dep-ns dissoc (:lib d))))
-      :deps-pure   (with-d (update store :dep-pure
-                                   (fnil (if (:pure d) conj disj) #{}) (:sym d)))
+      (contains? fields/op-registry (:op d))
+      (with-d (fields/fold store d))
 
-      :module-tier (with-d (assoc-in store [:module-tiers (:module d)] (:tier d)))
-      :file-put    (with-d (assoc-in store [:files (:path d)]
-                                     (if (:sha d)
-                                       (cond-> {:sha (:sha d) :bytes (:bytes d)}
-                                         (:content-type d)
-                                         (assoc :content-type (:content-type d)))
-                                       (:content d))))
-      :file-remove (with-d (update store :files dissoc (:path d)))
+      :else
+      (case (:op d)
+        :trivia
+        (with-d
+          (update-in store [:namespaces (:ns d) :elements]
+                     (fn [elems]
+                       (let [end   (or (when (:before d)
+                                         (first (keep-indexed
+                                                 (fn [i e] (when (= (:before d) (:id e)) i))
+                                                 elems)))
+                                       (count elems))
+                             start (loop [i end]
+                                     (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
+                                       (recur (dec i))
+                                       i))
+                             seps  (mapv (fn [nd] {:kind :sep :node nd})
+                                         (n/children (p/parse-string-all (:text d))))]
+                         (into (into (subvec elems 0 start) seps)
+                               (subvec elems end))))))
 
-      :config-put
-      (with-d (-> store
-                  (assoc-in [:config (:path d) :format] (:format d))
-                  (assoc-in [:config (:path d) :values (:key d)] (:value d))))
+        (:replace :rename :normalize)
+        (with-d
+          (reduce-kv
+           (fn [st fid src]
+             (let [ns-sym (ns-of-form-id st fid)]
+               (if-not ns-sym
+                 st                                  ; unknown form: ignore
+                 (update-in st [:namespaces ns-sym :elements]
+                            (fn [elems]
+                              (mapv (fn [e]
+                                      (if (= fid (:id e))
+                                        (let [node (p/parse-string src)]
+                                          (assoc e :node node
+                                                 :name (form-symbol node)
+                                                 :names (form-symbols node)))
+                                        e))
+                                    elems))))))
+           store (:sources d)))
 
-      :module-edge
-      (with-d
-        (if (= :remove (:action d))
-          (let [deps (disj (get-in store [:modules (:from d)] #{}) (:to d))]
-            (if (empty? deps)
-              (update store :modules dissoc (:from d))
-              (assoc-in store [:modules (:from d)] deps)))
-          (update-in store [:modules (:from d)] (fnil conj #{}) (:to d))))
+        :add
+        (let [ns-sym (:ns d)
+              fid    (:form-id d)
+              src    (get (:sources d) fid)]
+          (if-not (get-in store [:namespaces ns-sym])
+            nil                                     ; ns unknown → full reload
+            (with-d
+              (update-in store [:namespaces ns-sym :elements]
+                         (fn [elems]
+                           (let [node       (p/parse-string src)
+                                 form-elem  {:id fid :kind :form
+                                             :name (form-symbol node)
+                                             :names (form-symbols node) :node node}
+                                 ;; anchored add (:before = anchor form-id):
+                                 ;; same position as the writer; gone → append
+                                 anchor-idx (when (:before d)
+                                              (first (keep-indexed
+                                                      (fn [i e] (when (= (:before d) (:id e)) i))
+                                                      elems)))]
+                             (place-form elems form-elem anchor-idx)))))))
 
-      :config-unset
-      (with-d
-        (let [st (update-in store [:config (:path d) :values] dissoc (:key d))]
-          (if (empty? (get-in st [:config (:path d) :values]))
-            (update st :config dissoc (:path d))
-            st)))
-
-      :trivia
-      (with-d
-        (update-in store [:namespaces (:ns d) :elements]
-                   (fn [elems]
-                     (let [end   (or (when (:before d)
-                                       (first (keep-indexed
-                                               (fn [i e] (when (= (:before d) (:id e)) i))
-                                               elems)))
-                                     (count elems))
-                           start (loop [i end]
-                                   (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
-                                     (recur (dec i))
-                                     i))
-                           seps  (mapv (fn [nd] {:kind :sep :node nd})
-                                       (n/children (p/parse-string-all (:text d))))]
-                       (into (into (subvec elems 0 start) seps)
-                             (subvec elems end))))))
-
-      (:replace :rename :normalize)
-      (with-d
-        (reduce-kv
-         (fn [st fid src]
-           (let [ns-sym (ns-of-form-id st fid)]
-             (if-not ns-sym
-               st                                  ; unknown form: ignore
-               (update-in st [:namespaces ns-sym :elements]
-                          (fn [elems]
-                            (mapv (fn [e]
-                                    (if (= fid (:id e))
-                                      (let [node (p/parse-string src)]
-                                        (assoc e :node node
-                                               :name (form-symbol node)
-                                               :names (form-symbols node)))
-                                      e))
-                                  elems))))))
-         store (:sources d)))
-
-      :add
-      (let [ns-sym (:ns d)
-            fid    (:form-id d)
-            src    (get (:sources d) fid)]
-        (if-not (get-in store [:namespaces ns-sym])
-          nil                                     ; ns unknown → full reload
+        :delete
+        (let [ns-sym (:ns d)
+              fid    (:form-id d)]
           (with-d
             (update-in store [:namespaces ns-sym :elements]
                        (fn [elems]
-                         (let [node       (p/parse-string src)
-                               form-elem  {:id fid :kind :form
-                                           :name (form-symbol node)
-                                           :names (form-symbols node) :node node}
-                               ;; anchored add (:before = anchor form-id):
-                               ;; same position as the writer; gone → append
-                               anchor-idx (when (:before d)
-                                            (first (keep-indexed
-                                                    (fn [i e] (when (= (:before d) (:id e)) i))
-                                                    elems)))]
-                           (place-form elems form-elem anchor-idx)))))))
+                         (if-let [idx (first (keep-indexed
+                                              (fn [i e] (when (= fid (:id e)) i))
+                                              elems))]
+                           (let [drop-next? (and (< (inc idx) (count elems))
+                                                 (= :sep (:kind (nth elems (inc idx)))))]
+                             (into (subvec elems 0 idx)
+                                   (subvec elems (+ idx (if drop-next? 2 1)))))
+                           elems)))))
 
-      :delete
-      (let [ns-sym (:ns d)
-            fid    (:form-id d)]
-        (with-d
-          (update-in store [:namespaces ns-sym :elements]
-                     (fn [elems]
-                       (if-let [idx (first (keep-indexed
-                                            (fn [i e] (when (= fid (:id e)) i))
-                                            elems))]
-                         (let [drop-next? (and (< (inc idx) (count elems))
-                                               (= :sep (:kind (nth elems (inc idx)))))]
-                           (into (subvec elems 0 idx)
-                                 (subvec elems (+ idx (if drop-next? 2 1)))))
-                         elems)))))
-
-      ;; :ingest / :move / anything unknown → full reload
-      nil)))
+        ;; :ingest / :move / anything unregistered → full reload
+        nil))))
 
 (defn append-form
   "Add a new form to `ns-sym` with a fresh id; ONE `:add` delta. Default:

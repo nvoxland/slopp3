@@ -2,7 +2,7 @@
   (:require [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]
             [slopp.semver :as semver]
-            [slopp.store :as store] [clojure.string :as str]))
+            [slopp.store :as store] [clojure.string :as str] [slopp.store.fields :as fields]))
 
 (defn ^:export record-merge
   "Append a `:merge` delta — what arrived, from where, the surfaced conflicts
@@ -155,8 +155,11 @@
                             [st idmap merged conflicts notes changed new-nses applied])
                 [st idmap merged conflicts notes changed new-nses applied]
                 (case op
-                  (:verify :done :merge)
-                  (done st idmap merged conflicts notes changed new-nses applied)
+                  :trivia
+                  ;; cosmetic payload, form-id aliasing risk — deliberate skip
+                  (done st idmap merged conflicts
+                        (conj notes {:skipped :trivia :delta (:id d)})
+                        changed new-nses (conj applied (:id d)))
 
                   :deps-add
                   ;; a foreign dep declaration. No divergence (new lib or same
@@ -190,24 +193,11 @@
                                          :reason "same dependency pinned to incomparable coords"})
                             changed new-nses (conj applied (:id d)))))
 
-                  :deps-remove
-                  (done (-> st (update :deps dissoc (:lib d))
-                            (update :dep-ns dissoc (:lib d)))
-                        idmap (inc merged) conflicts notes changed new-nses
-                        (conj applied (:id d)))
+                  
 
-                  :deps-pure
-                  (done (update st :dep-pure
-                                (fnil (if (:pure d) conj disj) #{}) (:sym d))
-                        idmap (inc merged) conflicts notes changed new-nses
-                        (conj applied (:id d)))
+                  
 
-                  :module-tier
-                  ;; per-module purity tier: theirs applies (register, last-writer-
-                  ;; wins), mirroring :deps-pure — no divergence conflict surfaced (D9)
-                  (done (assoc-in st [:module-tiers (:module d)] (:tier d))
-                        idmap (inc merged) conflicts notes changed new-nses
-                        (conj applied (:id d)))
+                  
 
                   :ingest
                   (let [ns-sym (:ns d)]
@@ -427,20 +417,36 @@
                           changed new-nses (conj applied (:id d))))
 
                 ;; unknown op: never guess with someone's code
-                  (:config-put :config-unset :file-put :file-remove)
-                  ;; state-carrying non-code ops replay through the ONE fold —
-                  ;; a branch's capabilities config and assets must cross,
-                  ;; path/key-grain last-writer-wins like :module-tier (main
-                  ;; once lost its whole web config to the skip below); binary
-                  ;; file-put BYTES ride the end-of-merge :blobs union
-                  (done (or (store/replay-delta st d) st)
-                        idmap (inc merged) conflicts notes changed new-nses
-                        (conj applied (:id d)))
+                  
 
                   ;; unknown op: never guess with someone's code
-                  (done st idmap merged conflicts
-                        (conj notes {:skipped (:op d) :delta (:id d)})
-                        changed new-nses (conj applied (:id d))))]
+                  (cond
+                    (fields/replay-merge-op? op)
+                    ;; state-carrying non-code ops replay through the ONE fold —
+                    ;; path/key-grain last-writer-wins (main once lost its whole
+                    ;; web config to a silent skip here); binary file-put BYTES
+                    ;; ride the end-of-merge :blobs union
+                    (done (or (store/replay-delta st d) st)
+                          idmap (inc merged) conflicts notes changed new-nses
+                          (conj applied (:id d)))
+
+                    (contains? fields/markers op)
+                    ;; line-scoped bookkeeping does not travel — milestones
+                    ;; deliberately (noted; the travel question is an open
+                    ;; decision), verification/merge chatter silently
+                    (done st idmap merged conflicts
+                          (cond-> notes
+                            (not (contains? fields/silent-markers op))
+                            (conj {:skipped op :delta (:id d)}))
+                          changed new-nses (conj applied (:id d)))
+
+                    :else
+                    ;; an op NO registry set knows: note it — the end of the
+                    ;; merge turns any such note into a REFUSAL (never guess
+                    ;; with, or silently drop, someone's state)
+                    (done st idmap merged conflicts
+                          (conj notes {:unregistered-op op :delta (:id d)})
+                          changed new-nses applied)))]
             (recur st ds idmap merged conflicts notes changed new-nses applied))
           ;; #16/#19 postcondition: a candidate holding two same-named forms in
           ;; one ns is CORRUPT (last-definition-wins shadows silently — the
@@ -451,11 +457,23 @@
                                       (keep :name (store/forms st nsx)))
                             :when (> cnt 1)]
                         (symbol (str nsx) (str nm)))]
-            (if (seq dupes)
+            (cond
+              (seq (keep :unregistered-op notes))
+              {:error (str "merge met unregistered delta op(s) "
+                           (str/join ", " (distinct (map (comp str :unregistered-op)
+                                                         (filter :unregistered-op notes))))
+                           " — register the op in slopp.store.fields (fold +"
+                           " merge strategy + sample) before it can cross a"
+                           " merge; a merge never guesses with, or silently"
+                           " drops, unknown state")}
+
+              (seq dupes)
               {:error (str "merge would mint duplicate names — refused: "
                            (str/join ", " (map str dupes))
                            " (a same-ns name collision shadows silently in the"
                            " image; resolve by renaming on one line first)")}
+
+              :else
               {:store (update st :blobs #(merge (:blobs theirs) (or % {})))
                :merged merged :conflicts conflicts :notes notes
                :changed-form-ids (vec (distinct changed)) :new-nses new-nses

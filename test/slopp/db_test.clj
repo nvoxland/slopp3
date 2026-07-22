@@ -3,7 +3,7 @@
             [slopp.store :as store]
             [slopp.render :as render]
             [slopp.db :as db]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io])
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -96,3 +96,20 @@
         (try
           (is (re-find #"\(\+ x y\)" (query/query-source sess2 'demo)))
           (finally (api/close! sess2)))))))
+
+(deftest ^:external legacy-tier-spellings-normalize-at-load
+  (testing "a pre-canonicalization db row (:effects) loads as :external"
+    (let [dir     (temp-dir)
+          conn    (db/open! dir)
+          [s1 d1] (store/record-module-tier (store/empty-store) "app.core" :pure
+                                            :prompt "core is pure")]
+      (db/persist! conn s1 d1)
+      ;; simulate an old store: the meta row carries a retired spelling
+      (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('module-tiers', ?)
+                            ON CONFLICT(k) DO UPDATE SET v = excluded.v"
+                           (pr-str {"app.core" :pure "app.shell" :effects})])
+      (.close conn)
+      (let [conn2  (db/open! dir)
+            loaded (db/load-store conn2)]
+        (is (= {"app.core" :pure "app.shell" :external} (:module-tiers loaded)))
+        (.close conn2)))))
