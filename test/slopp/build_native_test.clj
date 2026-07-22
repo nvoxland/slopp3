@@ -42,7 +42,7 @@
   (testing "plain deps.edn is unchanged without native"
     (is (= {:paths ["src"]} (edn/read-string (build/deps-edn false)))))
   (testing "the script AOT-compiles the launcher, then native-images it"
-    (let [s (build/native-script "calc")]
+    (let [s (build/native-script "calc" [])]
       (is (re-find #"compile 'native\.main" s))
       (is (re-find #"native-image" s))
       (is (re-find #"--no-fallback" s))

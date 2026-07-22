@@ -117,3 +117,19 @@
       (testing "an unknown file is a 404"
         (is (= 404 (:status (GET "/assets/nope.js")))))
       (finally (web/stop! srv)))))
+
+(deftest ^:external built-app-reader-resolves-fs-then-resources
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-static" (make-array java.nio.file.attribute.FileAttribute 0)))
+        _   (.mkdirs (java.io.File. dir "public"))
+        _   (spit (java.io.File. dir "public/app.css") "body{}")
+        rdr (static/file-or-resource-reader dir)]
+    (testing "a filesystem file resolves with its extension's type"
+      (let [{:keys [content content-type]} (rdr "public/app.css")]
+        (is (= "text/css" content-type))
+        (is (= "body{}" (String. ^bytes content "UTF-8")))))
+    (testing "a classpath resource resolves when the file is absent"
+      ;; clojure/core.clj is guaranteed on the classpath of any test JVM
+      (is (some? (:content (rdr "clojure/version.properties")))))
+    (testing "missing everywhere is nil"
+      (is (nil? (rdr "public/nope.js"))))))

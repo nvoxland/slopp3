@@ -129,7 +129,7 @@
                          script   (io/file target "build-native.sh")]
                      (io/make-parents launcher)
                      (spit launcher (build/launcher-source main (build/arg-style vdef)))
-                     (spit script (build/native-script bin))
+                     (spit script (build/native-script bin (keys (:files st))))
                      (.setExecutable script true false)
                      (let [warns (vec (for [[lib coord] deps
                                             :when (= :none (:verdict
