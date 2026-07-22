@@ -68,6 +68,20 @@
     {:modules (count edges)
      :edges   (reduce + 0 (map count (vals edges)))}))
 
+(defn await-image!
+  "Block until the session's background image boot has finished, then return
+  the session (its image live). A synchronously-opened session (the default)
+  carries no ready-promise and returns immediately. A boot FAILURE delivered
+  to the promise is RETHROWN here — with the async-boot server path the MCP
+  connection is already up by the time the image loads, so a boot error
+  surfaces on the first oracle/write call instead of killing the server at
+  startup (which is what let a slow store race the MCP connect timeout)."
+  [session]
+  (when-let [p (:image-ready @session)]
+    (let [r (deref p)]
+      (when (instance? Throwable r) (throw r))))
+  session)
+
 (defn close! "Release everything the session owns and return nil: its image, a warm spare
   still booting, the SQLite connection, every per-branch line's image and
   connection, and the idle-image reaper timer.
@@ -102,7 +116,7 @@
   or nil when already current. The MCP dispatch calls this before every
   tool, so servers converge continuously."
   [session]
-  (when-let [conn (:db @session)]
+  (when-let [conn (and (:image @session) (:db @session))]
     (let [v (db/data-version conn)]
       (when (not= v (:data-version @session))
         (let [old (:store @session)]

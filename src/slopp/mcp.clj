@@ -488,7 +488,12 @@
           payload))))
 
 (defn- call-tool! [session {:keys [name arguments]}]
-  (api/sync-with-journal! session)      ; m5b: absorb other servers' commits
+  ;; async-image boot: the store loaded synchronously (this dispatch is live),
+  ;; but the image may still be warming on a background thread. Oracle and
+  ;; write tools wait for it here; store-value reads serve immediately.
+  (when-not (contains? tools/image-free-tools name)
+    (api/await-image! session))
+  (api/sync-with-journal! session)      ; m5b: absorb other servers' commits      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
   (when (and (:require-turns? @session)
              (contains? tools/write-tools name)
@@ -1020,7 +1025,12 @@
       (binding [*out* *err*]
         (println (str "slopp: auto-imported " (:namespaces r)
                       " namespaces from the repo's slopp branch")))))
-  (let [session (external/open! (cond-> {:slopp.api/warm-spare? true}
+  (let [session (external/open! (cond-> {:slopp.api/warm-spare? true
+                                      ;; boot the image on a background thread
+                                      ;; so the MCP handshake completes as soon
+                                      ;; as the store loads — a slow/contended
+                                      ;; boot no longer races the connect timeout
+                                      :slopp.api/async-image? true}
                              dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
     (when (and dir (:db @session))

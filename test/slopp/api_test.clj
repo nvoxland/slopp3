@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -237,3 +237,46 @@
         (is (nil? (get-in (:store @sess) [:namespaces 'nd.gone])))
         (is (= :ns-delete (:op (last (store/deltas (:store @sess)))))))
       (finally (api/close! sess)))))
+
+(deftest await-image-is-a-noop-when-sync-and-surfaces-a-boot-failure-when-async
+  ;; the async-boot contract: a synchronously-opened session has no
+  ;; ready-promise, so await is instant; an async session whose background
+  ;; boot FAILED surfaces that failure at await (not by hanging, not
+  ;; silently) — the connection is already up, so the error rides the first
+  ;; oracle call.
+  (testing "no ready-promise (the sync default) → await returns immediately"
+    (let [s (atom {:image :live})]
+      (is (identical? s (api/await-image! s)))))
+  (testing "a delivered :ok returns the session"
+    (let [p (promise) s (atom {:image-ready p :image :live})]
+      (deliver p :ok)
+      (is (identical? s (api/await-image! s)))))
+  (testing "a delivered boot error is rethrown at await"
+    (let [p (promise) s (atom {:image-ready p})]
+      (deliver p (ex-info "image boot failed" {}))
+      (is (thrown-with-msg? Exception #"image boot failed" (api/await-image! s))))))
+
+(deftest ^:external async-image-boot-defers-the-oracle-not-the-connection
+  ;; the server-startup fix: with :async-image?, open! returns as soon as the
+  ;; store VALUE is loaded (the MCP handshake can complete instantly) while
+  ;; the image boots on a background thread. Reads work at once; the oracle
+  ;; is awaited on first use. Modelled as the real concurrent scenario: a
+  ;; second session opens async onto a first session's live store.
+  (let [dir (str (System/getProperty "java.io.tmpdir") "/slopp-async-" (System/nanoTime))
+        s1  (external/open! {:slopp.api/dir dir})]
+    (try
+      (api/ingest! s1 'async.core "(ns async.core)\n(defn twice [x] (* 2 x))\n")
+      (let [s (external/open! {:slopp.api/dir dir :slopp.api/async-image? true})]
+        (try
+          (testing "async mode arms a ready-promise; the store reads immediately"
+            (is (some? (:image-ready @s)) "async mode set a ready-promise")
+            (is (contains? (:namespaces (:store @s)) 'async.core))
+            (is (seq (:project (api/session-brief s)))))
+          (testing "await-image! brings the oracle up and it answers"
+            (api/await-image! s)
+            (is (some? (:image @s)))
+            (is (= [10] (api/query-eval s "(async.core/twice 5)"))))
+          (finally (api/close! s))))
+      (finally
+        (api/close! s1)
+        (clojure.java.shell/sh "rm" "-rf" dir)))))

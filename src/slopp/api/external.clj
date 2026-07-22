@@ -737,11 +737,54 @@
                       (git-config-value (:dir @session) (str k))
                       conf)}))))
 
+(defn- boot-image!
+  "Bring the session's image up: spawn it, warm a spare, schedule the branch
+  reaper, load every namespace (dependency order, stubbing red-first specs),
+  and adopt modules. THE slow part of open! (loading N namespaces into a
+  child JVM). On the SYNC path (no :image-ready) a failure throws, as open!
+  always did; on the ASYNC path (a background thread) the failure is
+  delivered to the ready-promise so `api/await-image!` surfaces it on first
+  oracle use instead of killing the server at startup. Returns the session."
+  [session store conn agent-id ttl]
+  (try
+    (let [image (repl/start! {:slopp.repl/deps (:deps store)})]
+      (swap! session assoc :image image)
+      (session/start-spare! session)
+      (let [t      (java.util.Timer. "slopp-branch-reaper" true)
+            period (long (max 1000 (quot ttl 3)))]
+        (.schedule t
+                   (proxy [java.util.TimerTask] []
+                     (run [] (try (api/reap-idle-images! session)
+                                  (catch Throwable _))))
+                   period period)
+        (swap! session assoc :reaper t))
+      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
+        (when-let [err (image/load-ns! image store ns-sym)]
+          ;; a store carrying red-first specs still opens — stub and retry
+          (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
+                         (nil? (image/load-ns! image store ns-sym)))
+            (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
+      ;; module adoption: a populated store from a pre-module db (:modules
+      ;; nil) gets its manifest derived from reality, once — fresh stores
+      ;; are born with {} and enforcement already on
+      (when (and conn (seq (:namespaces store))
+                 (or (nil? (:modules store))
+                     (and (empty? (:modules store))
+                          (not-any? #(= :module-edge (:op %)) (:deltas store)))))
+        (api/adopt-modules! session :agent (or agent-id "slopp")))
+      (when-let [p (:image-ready @session)] (deliver p :ok))
+      session)
+    (catch Throwable t
+      (if-let [p (:image-ready @session)]
+        (do (deliver p t) session)   ; async: rides home to await-image!
+        (throw t)))))
+
 (defn ^:export ^{:live-handle true
         :malli/schema
         [:=> [:cat [:? [:map
                         [:slopp.api/dir {:optional true} [:maybe :some]]
                         [:slopp.api/warm-spare? {:optional true} [:maybe :boolean]]
+                        [:slopp.api/async-image? {:optional true} [:maybe :boolean]]
                         [:slopp.api/branch-image-ttl-ms {:optional true} [:maybe :int]]
                         [:slopp.api/agent-id {:optional true} [:maybe :string]]]]]
          :any]}
@@ -751,6 +794,15 @@
   `:slopp.api/warm-spare? true` keeps a spare image warming in the background
   so restarts are near-instant. `:slopp.api/agent-id` (default:
   session-identity) keys every delta/turn/episode this session writes.
+
+  `:slopp.api/async-image? true` returns as soon as the store VALUE is
+  loaded (fast) and boots the image on a BACKGROUND thread — the MCP server
+  uses this so its `initialize` handshake completes without waiting for N
+  namespaces to load into a child JVM (which, under load, raced the client's
+  connect timeout and left a concurrent session with zero tools). Read-only
+  store tools serve immediately; oracle/write tools `api/await-image!` the
+  boot. The DEFAULT stays synchronous — every existing caller gets a
+  fully-loaded image on return, unchanged.
 
   The option keys are QUALIFIED — `{:slopp.api/dir …}` — and the schema, the
   destructure, and every call site agree. (The schema once documented bare
@@ -767,15 +819,15 @@
   the warming spare, the reaper timer, and the SQLite connection: the atom
   never reached the caller, so nothing could ever release them."
   ([] (open! {}))
-  ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare?]}]
+  ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare? async-image?]}]
    (let [conn    (when dir (db/open! dir {:create? false}))
          session (atom {:db conn :dir dir :branch "main" :lines {}})]
      (try
        (let [store (or (some-> conn db/load-store) (store/empty-store))
-             image (repl/start! {:slopp.repl/deps (:deps store)})
              ttl   (or branch-image-ttl-ms 600000)]
+         ;; SYNC phase: the store value + everything reads need, no image
          (swap! session assoc
-                :store store :image image
+                :store store
                 :data-version (some-> conn db/data-version)
                 :test-map (or (session/load-trace conn store) {})
                 :observed (session/load-observations conn)
@@ -788,47 +840,22 @@
          ;; where a .clj-kondo/ happened to sit beside the process, and a user
          ;; project's :carried stale-caller gate silently found nothing. A dirless
          ;; session gets an owned temp dir rather than inheriting whatever is there.
-         ;; The atom is process-global: two sessions on different stores in ONE
-         ;; process share the last opener's dir, which `index/lint` handles by
-         ;; re-passing on a dir change — correct, just not memoized across them.
          (reset! index/kondo-cache-dir
                  (if conn
                    (str (io/file dir ".slopp" "kondo-cache"))
-                   ;; no store here (yet): a session on an unadopted dir must
-                   ;; not leave a kondo-cache behind either — the whole point
-                   ;; of the deferred store is an untouched directory
                    (str (java.nio.file.Files/createTempDirectory
                          "slopp-kondo"
                          (make-array java.nio.file.attribute.FileAttribute 0)))))
-         (session/start-spare! session)
-         ;; m4: parked branch images retire after sitting idle for the TTL
-         (let [t      (java.util.Timer. "slopp-branch-reaper" true)
-               period (long (max 1000 (quot ttl 3)))]
-           (.schedule t
-                      (proxy [java.util.TimerTask] []
-                        (run [] (try (api/reap-idle-images! session)
-                                     (catch Throwable _))))
-                      period period)
-           (swap! session assoc :reaper t))
-         (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
-           (when-let [err (image/load-ns! image store ns-sym)]
-             ;; a store carrying red-first specs still opens — stub and retry
-             (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
-                            (nil? (image/load-ns! image store ns-sym)))
-               (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
-         ;; module adoption: a populated store from a pre-module db (:modules
-         ;; nil) gets its manifest derived from reality, once — fresh stores
-         ;; are born with {} and enforcement already on
-         (when (and conn (seq (:namespaces store))
-                    (or (nil? (:modules store))
-                        ;; an EMPTY manifest on a populated store whose journal has
-                        ;; never seen a :module-edge delta = pre-adoption (the
-                        ;; journal is the record of truth; a user who retracted
-                        ;; edges has retraction deltas)
-                        (and (empty? (:modules store))
-                             (not-any? #(= :module-edge (:op %)) (:deltas store)))))
-           (api/adopt-modules! session :agent (or agent-id "slopp")))
-         session)
+         ;; image boot: inline (sync default) or on a daemon thread (async),
+         ;; which arms the ready-promise await-image! blocks on
+         (if async-image?
+           (do (swap! session assoc :image-ready (promise))
+               (doto (Thread. ^Runnable #(boot-image! session store conn agent-id ttl)
+                              "slopp-image-boot")
+                 (.setDaemon true)
+                 (.start))
+               session)
+           (boot-image! session store conn agent-id ttl)))
        (catch Throwable t
          (api/close! session)
          (throw t))))))

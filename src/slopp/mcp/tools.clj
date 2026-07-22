@@ -471,6 +471,23 @@
     :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
     :inputSchema {:type "object" :properties {:path {:type "string"}}}}])
 
+(def image-free-tools
+  "Tools that answer from the STORE VALUE + in-process analysis alone — they
+  touch neither the owned image nor a write path, so the MCP dispatch serves
+  them WITHOUT waiting for the async image boot (the server claims ready as
+  soon as the store loads; orientation and reading are instant). Everything
+  else — the oracle tools (query_eval/query_call/query_observe/
+  query_macroexpand/query_store, which eval in the image) and every write —
+  `api/await-image!`s the boot first. Being CONSERVATIVE is safe: a tool
+  wrongly excluded here merely waits for the boot; one wrongly included
+  would touch a not-yet-live image."
+  #{"session_brief" "query_project" "query_search" "query_source"
+    "query_brief" "query_slice" "query_depends" "query_history"
+    "query_changes" "query_commits" "query_git" "query_branches"
+    "query_routes" "query_capabilities" "query_rules" "query_rule_telemetry"
+    "query_vocabulary" "query_detail" "help" "report" "review_scan"
+    "file_get" "file_list" "file_history" "deps_list"})
+
 (def read-only-tools
   "Tool names that never modify the STORE — advertised with the MCP
   readOnlyHint annotation so clients (Claude Code plan mode, permission
