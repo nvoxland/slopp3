@@ -66,26 +66,25 @@
   advanced at that same done, so comparing against it alone reads the late
   marker as stale (frictions #15; a merge-delivered narrowing made that the
   common case, and the escape was unusable exactly when it was needed).
-  Walk prior done baselines newest-first (bounded by the caller): at the
-  FIRST one where the form existed UNMARKED, answer whether the form
-  narrowed between there and now; marked baselines are skipped (the marker
-  cannot vouch for itself)."
+  True when the form narrowed relative to ANY unmarked prior-done baseline
+  (bounded by the caller). Not the FIRST unmarked sighting — an unrelated
+  done landing after the narrowing sits narrow-unmarked and would answer
+  'narrowed nothing since', re-opening the friction; the earlier WIDE
+  baseline still discharges it (review V-F4). Marked baselines are skipped
+  (the marker cannot vouch for itself)."
   [store fid ns-sym new-form prior-done-ids]
   (boolean
-   (first
-    (some (fn [did]
-            (when-let [old-src (get (store/sources-at store did) fid)]
-              (when-let [old (try (n/sexpr (p/parse-string old-src))
-                                  (catch Exception _ nil))]
-                (when-not (and (symbol? (second old))
-                               (:breaking-ok (meta (second old))))
-                  ;; first unmarked sighting DECIDES — wrap the verdict so
-                  ;; a false answer still terminates the walk
-                  [(and (node-boundary? ns-sym old)
-                        (boolean (or (seq (removed-arities old new-form))
-                                     (seq (removed-schema-keys old new-form))
-                                     (not (node-boundary? ns-sym new-form)))))]))))
-          prior-done-ids))))
+   (some (fn [did]
+           (when-let [old-src (get (store/sources-at store did) fid)]
+             (when-let [old (try (n/sexpr (p/parse-string old-src))
+                                 (catch Exception _ nil))]
+               (and (not (and (symbol? (second old))
+                              (:breaking-ok (meta (second old)))))
+                    (node-boundary? ns-sym old)
+                    (boolean (or (seq (removed-arities old new-form))
+                                 (seq (removed-schema-keys old new-form))
+                                 (not (node-boundary? ns-sym new-form))))))))
+         prior-done-ids)))
 
 (defn breaking-changes
   "The episode's likely CONTRACT BREAKAGES: a CHANGED `defn` that WAS

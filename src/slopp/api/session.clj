@@ -1,4 +1,4 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate]))
+(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -759,43 +759,63 @@
        first))
 
 (defn inert-ns-require-change?
-  "True when the newest change to ns FORM `fid` only ADDED require specs that
-  cannot change the resolution or load behavior of anything already
-  compiled: alias-only vectors (`[lib :as a]`) naming IN-STORE namespaces
-  with no method-carrying forms. Everything else — :refer (resolution can
-  shift), removals or renames, out-of-store libs (load effects unknown), a
-  required ns whose LOAD registers defmethods, any non-require edit — is not
-  inert. Conservative by construction: an unreadable or unknown prior source
-  answers false.
+  "True when an ns-form edit only ADDED require specs that cannot change the
+  resolution or load behaviour of anything already compiled: alias-only
+  vectors (`[lib :as a]`) naming IN-STORE namespaces whose require-CLOSURE
+  registers no methods. Everything else — :refer (resolution can shift),
+  removals or renames, out-of-store libs (load effects unknown), a required
+  ns whose closure LOADS defmethods, ANY metadata change on the ns form, any
+  non-require edit — is not inert. Conservative: an unreadable or absent
+  baseline answers false.
+
+  `old-src` is the ns form's source at the baseline to diff against — the
+  1-arity uses the delta immediately prior (the write path, one edit); the
+  done path passes the LAST-DONE source so a multi-edit episode where an
+  earlier edit added a :refer isn't masked by a later alias-only edit
+  (review V-F3).
 
   frictions #2: ns_add_require on slopp.api invalidated 331 external tests
   for an edit whose blast radius is zero — the require-closure fallback
   treated a require-list touch as a code change to the whole namespace."
-  [store fid]
-  (let [read* (fn [s] (try (edn/read-string (str s)) (catch Exception _ nil)))
-        e     (store/form-by-id store fid)
-        new   (some-> e :node n/string read*)
-        old   (read* (prior-source store fid))
-        req?  (fn [c] (and (seq? c) (= :require (first c))))
-        reqs  (fn [form] (set (mapcat rest (filter req? (drop 2 form)))))
-        rest* (fn [form] (remove req? (drop 2 form)))]
-    (boolean
-     (and (seq? old) (seq? new)
-          (= 'ns (first old) (first new))
-          (= (second old) (second new))
-          (= (rest* old) (rest* new))
-          (set/subset? (reqs old) (reqs new))
-          (let [added (set/difference (reqs new) (reqs old))]
-            (and (seq added)
-                 (every? (fn [spec]
-                           (and (vector? spec)
-                                (symbol? (first spec))
-                                (even? (count (rest spec)))
-                                (every? #(= :as %) (take-nth 2 (rest spec)))
-                                (contains? (:namespaces store) (first spec))
-                                (not-any? store/method-carrying?
-                                          (store/forms store (first spec)))))
-                         added)))))))
+  ([store fid] (inert-ns-require-change? store fid (prior-source store fid)))
+  ([store fid old-src]
+   (let [read* (fn [s] (try (n/sexpr (p/parse-string (str s)))
+                            (catch Exception _ nil)))
+         e     (store/form-by-id store fid)
+         new   (some-> e :node n/sexpr)
+         old   (read* old-src)
+         req?  (fn [c] (and (seq? c) (= :require (first c))))
+         reqs  (fn [form] (set (mapcat rest (filter req? (drop 2 form)))))
+         ;; the ns form with its require clauses stripped — everything whose
+         ;; change is NOT a plain require add: name, docstring, :import,
+         ;; :require-macros, :gen-class …
+         non-req (fn [form] (cons (second form) (remove req? (drop 2 form))))
+         ;; metadata is invisible to = (on symbols and colls alike), and a
+         ;; test-selector tag / load hint on the ns name is behaviourally
+         ;; live — compare the metadata of every node explicitly (V-F2)
+         metas   (fn [form] (mapv meta (tree-seq coll? seq form)))
+         ;; a required ns is quiet only if its WHOLE in-store closure
+         ;; registers no methods — loading it loads them all (V-F1)
+         quiet?  (fn [lib]
+                   (not-any? store/method-carrying?
+                             (mapcat #(store/forms store %)
+                                     (store/ns-closure store lib))))]
+     (boolean
+      (and (seq? old) (seq? new)
+           (= 'ns (first old) (first new))
+           (= (non-req old) (non-req new))
+           (= (metas (non-req old)) (metas (non-req new)))
+           (set/subset? (reqs old) (reqs new))
+           (let [added (set/difference (reqs new) (reqs old))]
+             (and (seq added)
+                  (every? (fn [spec]
+                            (and (vector? spec)
+                                 (symbol? (first spec))
+                                 (even? (count (rest spec)))
+                                 (every? #(= :as %) (take-nth 2 (rest spec)))
+                                 (contains? (:namespaces store) (first spec))
+                                 (quiet? (first spec))))
+                          added))))))))
 
 (defn impacted-tests
   "Every test var the changed form-ids can affect, decided PER FORM (#132):
@@ -812,13 +832,18 @@
   The dominant untraced form is the ns form, and its commonest edit is an
   alias-only require addition — SEMANTICALLY inert, so it contributes
   NOTHING instead of its whole closure (inert-ns-require-change?,
-  frictions #2). Every other untraced shape keeps the closure fallback:
-  `test-nses-reaching` over a union of namespaces IS the union of the
-  per-namespace calls (the closure intersection distributes), so untraced
-  forms select exactly what the global fallback selected for them, while
-  traced forms keep their narrow sets."
+  frictions #2). Inertness is judged against the LAST-DONE baseline (the
+  episode's start), so a multi-edit episode where an earlier edit added a
+  :refer isn't masked by a later alias-only edit (review V-F3). Every other
+  untraced shape keeps the closure fallback: `test-nses-reaching` over a
+  union of namespaces IS the union of the per-namespace calls (the closure
+  intersection distributes), so untraced forms select exactly what the
+  global fallback selected for them, while traced forms keep their narrow
+  sets."
   [session store changed]
-  (let [reach (memoize
+  (let [baseline (->> (:deltas store) (filter #(= :done (:op %))) last :id)
+        base-src (when baseline (store/sources-at store baseline))
+        reach (memoize
                (fn [ns-sym]
                  (vec (for [tns (test-nses-reaching store [ns-sym])
                             :let [tiers (test-var-tiers store tns)]
@@ -830,7 +855,11 @@
                             (let [ns-sym (store/ns-of-form-id store fid)]
                               (cond
                                 (and (= (:name e) ns-sym)
-                                     (inert-ns-require-change? store fid))
+                                     (inert-ns-require-change?
+                                      store fid
+                                      (if baseline
+                                        (get base-src fid)
+                                        (prior-source store fid))))
                                 []
 
                                 :else

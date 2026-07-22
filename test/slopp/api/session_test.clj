@@ -221,3 +221,61 @@
     (testing "a require REMOVAL is NOT inert"
       (let [st' (edit "(ns ir.b)")]
         (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))))
+
+(deftest inert-require-respects-transitive-loads-and-metadata
+  ;; review V-F1/V-F2: inert-ns-require-change? classified as inert two edits
+  ;; that CAN change behaviour, so `done` skipped external tests it should
+  ;; run (false-green — the class slopp most guards against).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'tr.deep (str "(ns tr.deep)\n\n(defmulti area :kind)\n\n"
+                                           "(defmethod area :sq [s] s)\n"))
+               ;; tr.leaf has NO methods of its own, but REQUIRES tr.deep,
+               ;; whose LOAD registers a defmethod — not inert transitively
+               (store/ingest 'tr.leaf "(ns tr.leaf (:require [tr.deep :as d]))\n\n(defn g [x] x)\n")
+               (store/ingest 'tr.b "(ns tr.b)\n\n(defn h \"H.\" [x] x)\n"))
+        edit (fn [src] (first (store/replace-node st 'tr.b 'tr.b
+                                                  (p/parse-string src) :prompt "t")))
+        fid  (:id (store/form-named st 'tr.b 'tr.b))]
+    (testing "V-F1: adding a method-free lib whose CLOSURE loads defmethods is NOT inert"
+      (let [st' (edit "(ns tr.b (:require [tr.leaf :as l]))")]
+        (is (not (session/inert-ns-require-change? st' fid)))))
+    (testing "a genuinely quiet leaf (no methods anywhere in its closure) stays inert"
+      (let [st2 (store/ingest st 'tr.quiet "(ns tr.quiet)\n\n(defn q [x] x)\n")
+            fid2 (:id (store/form-named st2 'tr.b 'tr.b))
+            st' (first (store/replace-node st2 'tr.b 'tr.b
+                                           (p/parse-string "(ns tr.b (:require [tr.quiet :as q]))")
+                                           :prompt "t"))]
+        (is (session/inert-ns-require-change? st' fid2))))
+    (testing "V-F2: an ns-NAME metadata change bundled with an alias add is NOT inert"
+      (let [st' (edit "(ns ^:no-doc tr.b (:require [tr.quiet :as q]))")]
+        ;; tr.quiet doesn't exist in `st` here, but the metadata change alone
+        ;; must defeat inertness regardless
+        (is (not (session/inert-ns-require-change? st' fid)))))))
+
+(deftest impacted-tests-diffs-against-the-last-done-not-the-newest-delta
+  ;; review V-F3: an episode with TWO ns edits — the first adds a :refer
+  ;; (behaviour-changing), the second an alias-only require. Judged against
+  ;; the NEWEST delta's prior, the alias edit looks inert and the :refer is
+  ;; masked → done skips the tests. It must diff against the LAST-DONE
+  ;; baseline, where the whole episode's net change (incl. the :refer) shows.
+  (let [st0 (-> (store/empty-store)
+                (store/ingest 'ep.a "(ns ep.a)\n\n(defn f \"F.\" [x] x)\n")
+                (store/ingest 'ep.q "(ns ep.q)\n\n(defn q \"Q.\" [x] x)\n")
+                (store/ingest 'ep.b "(ns ep.b)\n\n(defn h \"H.\" [x] x)\n")
+                (store/ingest 'ep.b-test
+                              (str "(ns ep.b-test (:require [ep.b :as b]\n"
+                                   "                        [clojure.test :refer [deftest is]]))\n\n"
+                                   "(deftest h-t (is (= 1 (b/h 1))))\n")))
+        st1 (first (store/record-done st0 "baseline"))
+        ;; edit 1: a :refer (non-inert)
+        st2 (first (store/replace-node st1 'ep.b 'ep.b
+                                       (p/parse-string "(ns ep.b (:require [ep.a :refer [f]]))")
+                                       :prompt "add refer"))
+        ;; edit 2: alias-only, quiet
+        st3 (first (store/replace-node st2 'ep.b 'ep.b
+                                       (p/parse-string "(ns ep.b (:require [ep.a :refer [f]] [ep.q :as q]))")
+                                       :prompt "add alias"))
+        sess (atom {:store st3 :test-map {'ep.b-test/h-t #{'ep.b/h}}})
+        fid  (:id (store/form-named st3 'ep.b 'ep.b))]
+    (testing "the episode's net ns change includes a :refer → NOT inert, tests selected"
+      (is (= '[ep.b-test/h-t] (session/impacted-tests sess st3 [fid]))))))

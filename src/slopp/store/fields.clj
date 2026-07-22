@@ -145,12 +145,13 @@
                   :sample {:op :config-unset :path "gone" :key "k"}
                   :crossed (fn [st] (not (contains? (:config st) "gone")))}})
 
-(def markers
+(def ^:export markers
   "No-content ops: replay-delta appends them (bookkeeping only) and
   merge-logs skips them — :verify/:done/:merge silently, the rest with a
   :skipped note (milestone markers deliberately do not travel; the open
   decision is frictions #9). A NEW marker op registers here, or foreign
-  sync full-reloads on every sighting of it."
+  sync full-reloads on every sighting of it. Exported: session_brief reads
+  it to exclude markers from the host's code-delta count (review host-F2)."
   #{:verify :done :merge :turn-begin :turn-end :commit :revert})
 
 (def silent-markers

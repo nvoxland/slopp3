@@ -166,8 +166,7 @@
                   ;; also empty (or already gone) — content we grew since is
                   ;; not deletable by their housekeeping
                   (let [nsx (:ns d)
-                        live (seq (filter #(not= (:name %) nsx)
-                                          (store/forms st nsx)))]
+                        live (seq (store/body-forms st nsx))]
                     (if live
                       (done st idmap merged conflicts
                             (conj notes {:skipped :ns-delete :ns nsx

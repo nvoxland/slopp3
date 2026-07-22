@@ -159,3 +159,31 @@
           (is (nil? (get-in r [:findings :breaking-changes]))
               (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-late-marker-discharges-across-an-intervening-done
+  ;; review V-F4: discharged-by-history? stopped at the FIRST unmarked prior
+  ;; baseline. An unrelated `done` landing AFTER the narrowing (form sitting
+  ;; narrow-unmarked) became that first sighting — "narrowed nothing since" —
+  ;; so a marker added later read stale again, re-opening frictions #15 for
+  ;; any episode with an intervening done.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'iv.core.impl
+                   (str "(ns iv.core.impl)\n"
+                        "(defn ^:export ^:unused-ok f \"F.\" [x] x)\n"))
+      (external/done! sess :label "baseline (wide)")
+      (api/edit-replace! sess 'iv.core.impl 'f
+                         "(defn ^:unused-ok f \"F.\" [x] x)"
+                         :prompt "narrow, unmarked (as a merge delivers it)")
+      (external/done! sess :label "the done that flags it")
+      ;; an unrelated edit + done — the form sits narrow-unmarked across it
+      (api/ingest! sess 'iv.other "(ns iv.other)\n(defn ^:unused-ok g [x] x)\n")
+      (external/done! sess :label "an intervening, unrelated done")
+      (testing "the marker added AFTER the intervening done still discharges"
+        (api/edit-replace! sess 'iv.core.impl 'f
+                           "(defn ^:breaking-ok ^:unused-ok f \"F.\" [x] x)"
+                           :prompt "discharge the earlier narrowing")
+        (let [r (external/done! sess :label "marked late, past an intervening done")]
+          (is (nil? (get-in r [:findings :breaking-changes]))
+              (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

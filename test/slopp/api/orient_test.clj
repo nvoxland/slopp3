@@ -98,14 +98,19 @@
   ;; branch line teaches that host code tracks the MAIN journal only.
   (testing "no record (a non-boot process) → nil, section absent"
     (is (nil? (orient/host-brief nil 0 false))))
-  (testing "snapshot mode names the deltas the host cannot be running"
+  (testing "snapshot mode names the CODE deltas the host cannot be running"
     (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 3 false)]
       (is (= :snapshot (:mode h)))
-      (is (re-find #"3 delta" (:note h)))
+      (is (re-find #"3 code delta" (:note h)))
       (is (re-find #"restart" (:note h)))))
-  (testing "snapshot mode with nothing since boot says current, plainly"
+  (testing "snapshot mode with nothing since boot is quiet — :mode carries it"
     (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 0 false)]
-      (is (re-find #"launch" (:note h)))))
+      (is (= :snapshot (:mode h)))
+      (is (nil? (:note h)))))
+  (testing "review V-F3: a snapshot host ON a branch gets BOTH stances"
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 2 true)]
+      (is (re-find #"2 code delta" (:note h)))
+      (is (re-find #"branch" (:note h)))))
   (testing "live on main with clean reloads is QUIET — no note, no noise"
     (let [h (orient/host-brief {:mode :live :booted-at 100 :last-reload-at 200
                                 :reloads 4 :failed []}

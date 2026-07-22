@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.refactor :as refactor]
             [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn]))
+            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2262,7 +2262,8 @@
                                       (catch Throwable _ nil))]
                    (orient/host-brief
                     info
-                    (count (filter #(> (:at % 0) (:booted-at info 0))
+                    (count (filter #(and (> (:at % 0) (:booted-at info 0))
+                                        (not (contains? fields/markers (:op %))))
                                    (store/deltas st)))
                     (boolean (when-let [b (:branch @session)]
                                (not= "main" (str b))))))
@@ -2707,19 +2708,19 @@
   forever). Refuses while the namespace holds any form beyond its ns decl
   (delete those first — each deletion individually verified) or while any
   other namespace still requires it (ns_remove_require first). On success:
-  one :ns-delete delta, element rows cleared by the persist, and the image
-  drops the namespace so a stale require fails fast."
+  one :ns-delete delta (id returned), element rows cleared by the persist,
+  and the image drops the namespace so a stale require fails fast."
   [session ns-sym & {:keys [prompt agent]}]
   (let [st (:store @session)]
     (cond
       (nil? (get-in st [:namespaces ns-sym]))
       {:error (str "no namespace " ns-sym)}
 
-      (seq (remove #(= (:name %) ns-sym) (store/forms st ns-sym)))
-      (let [held (keep :name (remove #(= (:name %) ns-sym)
-                                     (store/forms st ns-sym)))]
-        {:error (str ns-sym " still holds "
-                     (count (remove #(= (:name %) ns-sym) (store/forms st ns-sym)))
+      ;; STRUCTURAL emptiness (review S-F2): a def whose name equals the ns
+      ;; symbol is not the ns decl and must still block deletion
+      (seq (store/body-forms st ns-sym))
+      (let [held (keep :name (store/body-forms st ns-sym))]
+        {:error (str ns-sym " still holds " (count (store/body-forms st ns-sym))
                      " form(s)"
                      (when (seq held) (str " (" (str/join ", " held) ")"))
                      " — delete them first (edit_delete_form); ns_delete"
@@ -2734,10 +2735,10 @@
         (if (seq requirers)
           {:error (str ns-sym " is still required by " (str/join ", " requirers)
                        " — ns_remove_require them first")}
-          (do (session/commit-appended!
-               session
-               #(first (store/record-ns-delete % ns-sym :prompt prompt :agent agent))
-               [ns-sym])
-              (repl/eval! (:image @session)
-                          (format "(remove-ns '%s)" ns-sym))
-              {:deleted (str ns-sym)}))))))
+          (let [st' (session/commit-appended!
+                     session
+                     #(first (store/record-ns-delete % ns-sym :prompt prompt :agent agent))
+                     [ns-sym])]
+            (repl/eval! (:image @session)
+                        (format "(remove-ns '%s)" ns-sym))
+            {:deleted (str ns-sym) :delta (:id (last (store/deltas st')))}))))))

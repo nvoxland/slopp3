@@ -747,13 +747,21 @@
                                                     ;; these made dry-run look like a no-op
                                                     :dry-run :in-code :in-strings :note])
                                       (summarize (:verbose a)))))
-      "edit_subform" (let [match (or (:match a) (:from a) (:after a))
-                                src   (if (:after a)
-                                        ;; anchor mode: INSERT after a complete
-                                        ;; neighbor — the commonest let-binding
-                                        ;; splice, pre-composed so the caller
-                                        ;; never shapes a half-open match
-                                        (str (:after a) "\n" (or (:source a) (:to a)))
+      "edit_subform" (let [after  (:after a)
+                                anchor (or (:match a) (:from a))
+                                ;; :after is a distinct INSERT anchor — combining
+                                ;; it with :match/:from/:where composed src on
+                                ;; :after's mere PRESENCE while the anchor
+                                ;; preferred :match, splicing a DUPLICATE of the
+                                ;; neighbor at the match site (review host-F1)
+                                _ (when (and after (or anchor (:where a)))
+                                    (throw (ex-info "edit_subform: :after is an INSERT anchor — do not combine it with :match/:from/:where (that would duplicate the neighbor). Use one or the other." {})))
+                                match (or anchor after)
+                                src   (if after
+                                        ;; anchor mode: INSERT behind a complete
+                                        ;; neighbor — the let-binding splice
+                                        ;; without shaping a half-open match
+                                        (str after "\n" (or (:source a) (:to a)))
                                         (or (:source a) (:to a)))]
                             (when-not (and (or match (:where a)) src)
                               (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it) OR :after (a complete neighboring form to insert behind), plus :source" {})))

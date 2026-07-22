@@ -226,9 +226,14 @@
           (is (re-find #"ns_remove_require" (str (:error r))))))
       (let [rr (api/remove-require! sess 'nd.user 'nd.gone :prompt "unwire")]
         (is (nil? (:error rr)) (pr-str rr)))
-      (testing "empty and unreferenced → deleted everywhere"
+      (testing "a self-named def still blocks deletion (structural, not by-name)"
+        (api/ingest! sess 'nd.self "(ns nd.self)\n(def nd.self 1)\n")
+        (let [r (api/delete-ns! sess 'nd.self)]
+          (is (re-find #"still holds" (str (:error r))) (pr-str r))))
+      (testing "empty and unreferenced → deleted everywhere, delta id returned"
         (let [r (api/delete-ns! sess 'nd.gone :prompt "retire the scaffold")]
-          (is (= "nd.gone" (:deleted r)) (pr-str r)))
+          (is (= "nd.gone" (:deleted r)) (pr-str r))
+          (is (string? (:delta r)) (pr-str r)))
         (is (nil? (get-in (:store @sess) [:namespaces 'nd.gone])))
         (is (= :ns-delete (:op (last (store/deltas (:store @sess)))))))
       (finally (api/close! sess)))))

@@ -93,35 +93,39 @@
 (defn ^:export host-brief
   "The serving host's code-currency section for session_brief, as data —
   pure assembly over the kernel's boot-info record (`info`), the count of
-  deltas landed after the host booted, and whether the session is on a
-  branch line. Nil `info` (a process that didn't boot from a store) → nil,
-  the section simply absent.
+  CODE-affecting deltas landed after the host booted, and whether the
+  session is on a branch line. Nil `info` (a process that didn't boot from a
+  store) → nil, the section simply absent.
 
   The stances it teaches: a :snapshot host serves LAUNCH-time code, so
   post-boot deltas are inert until restart; a :live host tracks the MAIN
   journal only (a branch line's writes reload the image, never the host);
   a reload failure is NAMED, because a silently held-back namespace is how
-  three debugging arcs started."
+  three debugging arcs started. The notes COMPOSE — a snapshot host ON a
+  branch gets both stances (review V-F3, the branch caveat used to be
+  unreachable in snapshot mode)."
   [info deltas-since-boot on-branch?]
   (when info
     (let [failed (seq (:failed info))
-          note   (cond
+          parts  (cond-> []
                    failed
-                   (str "live-reload FAILED for " (str/join ", " failed)
-                        " — the host still runs their previous code; the next"
-                        " poll retries, and the failure is in the server log")
+                   (conj (str "live-reload FAILED for " (str/join ", " failed)
+                              " — the host still runs their previous code; the"
+                              " next poll retries, and the failure is in the"
+                              " server log"))
 
-                   (= :snapshot (:mode info))
-                   (if (pos? (or deltas-since-boot 0))
-                     (str deltas-since-boot " delta(s) landed after this server"
-                          " booted — snapshot mode serves launch-time code, so"
-                          " serving-machinery changes are inert until restart")
-                     "host code = the store at launch (snapshot mode)")
+                   (and (not failed) (= :snapshot (:mode info))
+                        (pos? (or deltas-since-boot 0)))
+                   (conj (str deltas-since-boot " code delta(s) landed after this"
+                              " server booted — snapshot mode serves launch-time"
+                              " code, so serving-machinery changes are inert until"
+                              " restart"))
 
                    on-branch?
-                   (str "host code tracks the MAIN journal — this branch line's"
-                        " writes hot-reload the image only; verify branch"
-                        " serving behavior there or in a fresh JVM"))]
+                   (conj (str "host code tracks the MAIN journal — this branch"
+                              " line's writes hot-reload the image only; verify"
+                              " branch serving behavior there or in a fresh JVM")))
+          note   (when (seq parts) (str/join " " parts))]
       (cond-> {:mode (:mode info) :booted-at (:booted-at info)}
         (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
         failed                 (assoc :failed (vec failed))

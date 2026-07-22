@@ -939,6 +939,17 @@
          (update :deltas conj delta))
      delta]))
 
+(defn body-forms
+  "Semantic forms of `ns-sym` EXCLUDING its (ns …) declaration, identified
+  STRUCTURALLY (first sexpr element = `ns`) — a def whose NAME equals the ns
+  symbol (`(def scratch 1)` in ns `scratch`) is NOT mistaken for the decl
+  the way a by-name filter did (review S-F2). This is the set that must be
+  empty before a namespace can be retired."
+  [store ns-sym]
+  (remove (fn [e] (try (= 'ns (first (n/sexpr (:node e))))
+                       (catch Exception _ false)))
+          (forms store ns-sym)))
+
 (defn replay-delta
   "Apply a FOREIGN delta from the SAME journal (linear history — ids are
   authoritative, nothing remaps) onto a trailing cached store. Returns the
@@ -1034,11 +1045,8 @@
         :ns-delete
         ;; the writer removed an EMPTY husk; a trailing cache whose copy has
         ;; grown content since is divergent — full reload gives db truth
-        (let [ns-sym (:ns d)
-              forms* (seq (filter #(and (= :form (:kind %))
-                                        (not= (:name %) ns-sym))
-                                  (get-in store [:namespaces ns-sym :elements])))]
-          (when-not forms* (with-d (update store :namespaces dissoc ns-sym))))
+        (when-not (seq (body-forms store (:ns d)))
+          (with-d (update store :namespaces dissoc (:ns d))))
 
         ;; :ingest / :move / anything unregistered → full reload
         nil))))

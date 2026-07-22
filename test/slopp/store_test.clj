@@ -194,3 +194,24 @@
     (testing "a non-def form yields nil rather than a plausible wrong answer"
       (is (nil? (store/def-init (p "(println 1)"))))
       (is (nil? (store/form-docstring (p "(println 1)")))))))
+
+(deftest ns-delete-of-a-self-named-form-does-not-drop-the-namespace
+  ;; review S-F2: a (def scratch 1) in ns `scratch` has form-name = the ns
+  ;; symbol, so the by-NAME "empty?" test mistook it for the ns declaration
+  ;; and dropped a namespace that still held a form (data loss). The decl
+  ;; must be identified STRUCTURALLY.
+  (let [st (store/ingest (store/empty-store) 'scratch "(ns scratch)\n\n(def scratch 1)\n")
+        d  {:op :ns-delete :ns 'scratch :id "d99"
+            :parent (:id (last (store/deltas st)))}]
+    (testing "body-forms sees the def, not just the ns decl"
+      (is (= 1 (count (store/body-forms st 'scratch))))
+      (is (= 'scratch (:name (first (store/body-forms st 'scratch))))))
+    (testing "replay treats the ns as NON-empty → full reload (nil), never a dissoc"
+      (is (nil? (store/replay-delta st d))))
+    (testing "a genuinely empty ns replays the dissoc"
+      (let [st2 (store/ingest (store/empty-store) 'husk "(ns husk)\n")
+            d2  {:op :ns-delete :ns 'husk :id "d99"
+                 :parent (:id (last (store/deltas st2)))}
+            r   (store/replay-delta st2 d2)]
+        (is (some? r))
+        (is (nil? (get-in r [:namespaces 'husk])))))))

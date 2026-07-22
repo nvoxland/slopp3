@@ -1202,3 +1202,24 @@
           (is (re-find #":image" r) r)
           (is (re-find #":external" r) r)))
       (finally (api/close! sess)))))
+
+(deftest ^:external edit-subform-after-does-not-combine-with-match
+  ;; review host-F1: the :after INSERT anchor composed src as (str after "\n"
+  ;; source) keyed on :after's mere PRESENCE, while the anchor preferred
+  ;; :match — so {:match M :after A :source S} replaced M with "A\nS", a
+  ;; duplicate of A spliced at M's site (legal shadowing, so verification
+  ;; stayed green). Combining the two must refuse.
+  (let [sess (external/open!)]
+    (try
+      (call! sess "ns_create"
+             {:ns "sf" :source "(ns sf)\n(defn f [x]\n  (let [a 1]\n    (+ a x)))\n"})
+      (testing ":after combined with :match refuses instead of duplicating"
+        (let [r (call! sess "edit_subform"
+                       {:ns "sf" :form "f"
+                        :match "(+ a x)" :after "[a 1]" :source "b 2"})]
+          (is (re-find #"(?i)after" (str r)) r)
+          (is (re-find #"(?i)refus|combine|one or the other|ambiguous" (str r)) r)))
+      (testing "the form was NOT mutated by the refused call — a still binds once"
+        (let [src (call! sess "query_source" {:ns "sf" :targets [{:ns "sf" :name "f"}]})]
+          (is (= 1 (count (re-seq #"\[a 1\]" (str src)))) src)))
+      (finally (api/close! sess)))))
