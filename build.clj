@@ -81,3 +81,46 @@
                      :main      (symbol main)}
               extra (assoc :manifest extra)))
     (println "built" jar-file "Main-Class:" main)))
+
+;; ---------------------------------------------------------------------------
+;; The slim slopp-web runtime jar (D-web wave-5 tail): ONLY slopp/web/** —
+;; what a USER app deps_add's to serve declared endpoints. Deps mirror the
+;; kernel's versions. `slim-install` puts it in the local ~/.m2 so a store's
+;; deps_add resolves it without a remote (CI's native proof uses exactly that).
+
+(def slim-lib 'io.github.nvoxland/slopp-web)
+
+(def ^:private slim-deps
+  {'org.clojure/clojure {:mvn/version "1.12.5"}
+   'cheshire/cheshire   {:mvn/version "5.13.0"}
+   'http-kit/http-kit   {:mvn/version "2.8.0"}})
+
+(defn slim
+  "Build target/slopp-web-<version>.jar from the materialized store source
+  (`:src`, default target/jar-src/src — run the `build` MCP tool first).
+  No AOT; the jar is source + pom."
+  [{:keys [version src] :or {version "0.1.0" src "target/jar-src/src"}}]
+  (let [class-dir "target/slim-classes"
+        jar      (str "target/slopp-web-" version ".jar")
+        basis    (b/create-basis {:project {:deps slim-deps}})]
+    (b/delete {:path class-dir})
+    ;; two globs: slopp/web/** matches the DIRECTORY's contents, not the
+    ;; sibling root-facade file slopp/web.clj — both must ship
+    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
+                 :include "slopp/web.clj"})
+    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
+                 :include "slopp/web/**"})
+    (b/write-pom {:class-dir class-dir :lib slim-lib :version version
+                  :basis basis})
+    (b/jar {:class-dir class-dir :jar-file jar})
+    (println "built" jar)
+    {:jar jar :class-dir class-dir :version version :basis basis}))
+
+(defn slim-install
+  "slim + install into the local ~/.m2 — a store can then
+  deps_add io.github.nvoxland/slopp-web {:mvn/version <version>}."
+  [{:keys [version] :or {version "0.1.0"} :as opts}]
+  (let [{:keys [jar class-dir basis]} (slim (assoc opts :version version))]
+    (b/install {:basis basis :lib slim-lib :version version
+                :jar-file jar :class-dir class-dir})
+    (println "installed" (str slim-lib) version "into ~/.m2")))

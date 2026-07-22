@@ -49,3 +49,83 @@ jobs:
           out=$(/tmp/app/app world)
           echo "$out"
           test "$out" = "hello, world!"
+  native-web-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp/main
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: graalvm-community
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - name: Install the slim slopp-web jar into the local repo
+        run: clojure -T:build slim-install :src '"src"' :version '"0.1.2"'
+      - name: Build a web app through slopp on the slim jar
+        env:
+          SLOPP_CLOJURE: clojure
+        run: |
+          python3 - <<'PY'
+          import base64, json, subprocess
+          png = b"\x89PNG\r\n\x1a\n<3slopp"
+          src = '''(ns app.web
+            (:require [slopp.web :as web]
+                      [slopp.web.static :as static]))
+
+          (defn ^{:web/method :get :web/path "/hello" :web/auth :public} hello
+            "The proof endpoint."
+            [_req]
+            {:status 200 :body {:msg "hi from slopp-web"}})
+
+          (defn -main
+            "Serve the declared endpoints + the /assets mount, and block."
+            [& _]
+            (web/serve! {:web/namespaces '[app.web]
+                         :web/routes (static/mount-routes {"/assets" "public"}
+                                                          (static/file-or-resource-reader "."))
+                         :web/port 8087})
+            @(promise))
+          '''
+          reqs = [
+              {"name": "turn_begin", "arguments": {"agent": "ci", "intent": "native web proof"}},
+              {"name": "deps_add", "arguments": {"agent": "ci", "lib": "io.github.nvoxland/slopp-web", "version": "0.1.2"}},
+              {"name": "config_file", "arguments": {"agent": "ci", "path": "capabilities", "key": "http.enabled", "value": "true", "prompt": "ci"}},
+              {"name": "config_file", "arguments": {"agent": "ci", "path": "capabilities", "key": "http.static./assets", "value": "public", "prompt": "ci"}},
+              {"name": "file_put", "arguments": {"agent": "ci", "path": "public/logo.png", "encoding": "base64", "content-type": "image/png",
+                                                 "content": base64.b64encode(png).decode(), "prompt": "ci asset"}},
+              {"name": "ns_create", "arguments": {"agent": "ci", "ns": "app.web", "source": src}},
+              {"name": "build", "arguments": {"agent": "ci", "dir": "/tmp/webapp", "main": "app.web/-main", "name": "webapp"}},
+              {"name": "turn_end", "arguments": {"agent": "ci"}},
+          ]
+          lines = [json.dumps({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}})]
+          for i, r in enumerate(reqs, 1):
+              lines.append(json.dumps({"jsonrpc":"2.0","id":i,"method":"tools/call","params":r}))
+          p = subprocess.run(["clojure","-M","-m","slopp.mcp","/tmp/webstore"],
+                             input="\n".join(lines)+"\n", capture_output=True, text=True, timeout=1800)
+          for line in p.stdout.splitlines():
+              line=line.strip()
+              if not line: continue
+              m=json.loads(line)
+              if m.get("id",0)>=1:
+                  r=m.get("result",{})
+                  txt=" ".join(c.get("text","") for c in r.get("content",[])) if r else json.dumps(m.get("error"))
+                  print(m["id"], txt[:140])
+                  assert ":error" not in txt[:12], txt
+          PY
+          cd /tmp/webapp && bash build-native.sh
+      - name: Run the binary and curl the endpoint and the asset
+        run: |
+          cd /tmp/webapp
+          ./webapp &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8087/hello && break || sleep 1; done
+          body=$(curl -s http://127.0.0.1:8087/hello)
+          echo "$body"; echo "$body" | grep -q "hi from slopp-web"
+          curl -s http://127.0.0.1:8087/assets/logo.png -o got.png
+          printf '\x89PNG\r\n\x1a\n<3slopp' > want.png
+          cmp got.png want.png && echo "asset bytes exact"
+          type=$(curl -s -D - -o /dev/null http://127.0.0.1:8087/assets/logo.png | grep -i '^content-type' | tr -d '\r')
+          echo "$type"; echo "$type" | grep -qi "image/png"
+          kill %1

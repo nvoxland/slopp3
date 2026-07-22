@@ -93,9 +93,37 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
+(defn- add-manifest-libs!
+  "Resolve the store's Tier-1 dependency manifest (the `deps` meta row) onto
+  THIS JVM's classpath via Clojure 1.12 add-libs (`*repl*` bound — the
+  programmatic context), so a store whose code requires external libs boots
+  from the bare kernel: `java -jar slopp.jar <dir>` works for ANY app.
+  Idempotent for coords already present. Failures WARN and continue — the
+  namespace load that needed the jar will name the real problem."
+  [conn]
+  (when-let [deps (some-> (jdbc/execute-one!
+                           conn ["SELECT v FROM meta WHERE k = 'deps'"])
+                          :meta/v edn/read-string not-empty)]
+    (try
+      ;; add-libs needs a DynamicClassLoader as the thread's context loader
+      ;; (outside a REPL the launcher's loader is static) — install one over
+      ;; the current loader so the resolved jars have somewhere to land
+      (let [t (Thread/currentThread)]
+        (when-not (instance? clojure.lang.DynamicClassLoader
+                             (.getContextClassLoader t))
+          (.setContextClassLoader
+           t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
+      (binding [*repl* true]
+        ((requiring-resolve 'clojure.repl.deps/add-libs) deps))
+      (catch Throwable t
+        (log! "slopp.boot: could not add manifest deps ("
+              (.getMessage t) ") — continuing")))))
+
 (defn load-store!
   "Load every namespace of the store at `dir` into the CURRENT JVM, dependency
-  order: load-string each rendered source + a *loaded-libs* stamp. Returns the
+  order: load-string each rendered source + a *loaded-libs* stamp. The store's
+  dependency MANIFEST resolves onto the classpath first (add-manifest-libs!),
+  so store code may require its Tier-1 libs. Returns the
   {ns source} map that was loaded. A load failure is rethrown NAMING the
   namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
   is useless on the one code path with no oracle behind it.
@@ -106,6 +134,7 @@
   [dir]
   (if-let [c (open-conn dir)]
     (with-open [conn c]
+      (add-manifest-libs! conn)
       (let [sources (store-sources conn)]
         (doseq [ns-sym (dependency-order sources)]
           (try (load-string (get sources ns-sym))

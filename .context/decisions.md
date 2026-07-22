@@ -1556,3 +1556,24 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   curled), and `slopp.boot` add-libs for store manifests — plus wave 3's
   OIDC. Each needs the release surface the others define; shipping them as
   one arc beats four stubs.
+- **RELEASE TAIL SHIPPED 2026-07-22 — the program is complete.**
+  `web-public-mutation` registered+cataloged (the rule table is whole).
+  OIDC as a RESOURCE SERVER, zero new deps: JDK RSA verifies RS256 JWTs
+  against configured/fetched JWKS (kid lookup, iss/exp/aud), claims →
+  identity via a configurable groups claim; `fetch-jwks!` does discovery
+  at serve-time; the browser login flow stays the IdP's/proxy's job
+  (recorded, not implied). Providers now take an opts seam
+  ({:getenv :now}). `build.clj slim`/`slim-install` cut
+  `io.github.nvoxland/slopp-web` (slopp/web.clj + slopp/web/** — TWO
+  globs, the root facade is a sibling file) with clojure+cheshire+http-kit
+  deps; PROVEN end to end locally: a scratch store `deps_add`'d 0.1.2 from
+  ~/.m2, declared an endpoint + a content-addressed asset, built with
+  app.main, and served — /hello answered, the asset's exact bytes and
+  image/png came back. `native-proof.yml` gained a `native-web-app` job
+  running that exact flow through GraalVM. `slopp.boot` resolves the store
+  manifest via add-libs at load (DynamicClassLoader installed — the
+  documented non-REPL constraint), so `java -jar slopp.jar <dir>` boots
+  ANY app; proven against the scratch store from the bare kernel. Known
+  small gaps, recorded: HEAD requests don't route (a HEAD-as-GET mapping
+  is a one-liner when wanted); the jar needs a rebuild for the kernel
+  change (deferred past the #16 arc to dodge the #17 jar-swap).
