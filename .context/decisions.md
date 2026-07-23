@@ -2042,6 +2042,29 @@ boundary; path `:segments` interpolated). Load-bearing sub-decisions:
   literal — D4 bans `defmacro` even as quoted DATA, so any edit re-froze the form
   (frozen-form trap, `.context/findings-log.md`). Now compares head by
   name-string (`#{"defn" "defmacro"}`), which unfreezes it.
+- **Toolchain self-provisioning — TWO dep configs (part-3 dogfood finding,
+  user-directed, 2026-07-23).** The dogfood hit it before the app even built: an
+  agent had to hand-`deps_add` ClojureScript and malli. Those are slopp's OWN
+  plumbing — the compiler it dispatches to, and the schema library its gate +
+  GENERATED code mandate (the generated client emits `[malli.core :as m]`, so a
+  store without malli produces code that won't compile — a correctness gap, not
+  just ergonomics). **A first attempt provisioned them via `deps-add!` and was
+  REJECTED by the user for the right reason: that records `:deps-add` DELTAS, so
+  slopp's plumbing lands in the USER's manifest** — provenance noise, versions
+  frozen per-store at provisioning time (no upgrade path), riding branches/merges
+  as user history. The user named the correct model: two separately-managed dep
+  configs, ours and theirs. slopp already had it for the image tier
+  (`repl/inherent-deps` — nREPL + malli, "never in `deps_list`, never removable,
+  versioned centrally"); the gap was that it never reached the BUILD tier, which
+  is why D-web-cljs had originally shoved malli into the user manifest as a
+  workaround. Fixed at the single materialization point: `external/build!`
+  (which `external-test-run!` AND `compile-client!` both go through) merges
+  `external/client-build-deps` — malli from `repl/inherent-deps`, the compiler
+  from `build/compiler-coord` — into the generated deps.edn, and ONLY when the
+  store carries client code, so a non-client build stays byte-identical. No
+  deltas, no manifest entries, versions central; the agent adds only APPLICATION
+  deps. Generalizable rule: **a dep slopp itself requires is injected, never
+  delta-recorded.**
 
 Deferred / next: a dogfood on real endpoints (part 3, held by the user until
 part 2 landed); a client-usage lint of hand-written bypasses of the generated

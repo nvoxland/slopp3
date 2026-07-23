@@ -121,13 +121,19 @@ at birth with `ns_create {platform}`.
 - **Compile it** with the `compile_client` tool → one `:simple` JS bundle
   recorded as a served blob (`public/cljs/main.js` → `/assets/cljs/main.js`).
   It shells **real ClojureScript on the JVM — no Node** — via the generated
-  `:cljs` deps.edn alias. That alias needs `org.clojure/clojurescript` as a
-  **build-only** dep: `deps_add {lib "org.clojure/clojurescript" … client
-  true}` (routed to `:client-deps`, never hot-loaded, never in the runtime jar
-  or native binary). A `.cljc`/`.cljs` ns that requires a library (e.g. malli)
-  needs that library in the `:client` channel too, so the compile can resolve
-  it. `compile_client` doesn't run automatically by default — it's a
-  build/serve step, not part of the write-verify loop.
+  `:cljs` deps.edn alias. **Two dep configs, and slopp owns one of them:**
+  the manifest (`deps_add`, delta-tracked, yours) and slopp's own toolchain,
+  which `build!` INJECTS at materialization time (`external/client-build-deps`)
+  whenever the store has client code — the configured compiler into the
+  build-only `:cljs` alias, and malli into the build's `:deps` (inherited by
+  `:cljs`, so it covers the external tier and the compile). slopp's deps are
+  versioned centrally (malli from `repl/inherent-deps`, the compiler from
+  `build/compiler-coord`), never enter the manifest or `deps_list`, and leave
+  no `:deps-add` deltas — so an upgrade reaches every store with no migration.
+  `build!` is the single materialization point (`external-test-run!` and
+  `compile-client!` both go through it), so one injection covers every tier. `compile_client` doesn't run
+  automatically by default — it's a build/serve step, not part of the
+  write-verify loop.
 - **Optional dev loop:** `config_file {path "client" key "auto-compile" value
   "true"}` makes a client-ns write recompile the bundle in the background
   (async, single-flight), so a `--live` server serves fresh JS without a manual

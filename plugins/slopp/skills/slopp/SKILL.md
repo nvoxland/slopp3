@@ -469,12 +469,19 @@ Cypress/Playwright territory someday).
   the owning store form. Reference the bundle with `[:script {:src
   "/assets/cljs/main.js" :defer true}]` from `page`'s `:html/head`; a top-level
   `(defonce _ (main))` self-starts it so the page needs no inline JS.
-- **The compiler dep is build-only** — `deps_add {lib
-  "org.clojure/clojurescript" … client true}` routes it to a `:cljs` deps.edn
-  alias; it is never hot-loaded and never ships in the runtime jar or native
-  binary. The backend is a per-project config (`config_file {path "client" key
-  "compiler"}`, default `:clojurescript`) — cherry/squint are future backends,
-  same source.
+- **slopp provisions its OWN toolchain — you never `deps_add` the compiler or
+  malli.** There are TWO dep configs: **yours** (the `deps_add` manifest —
+  application libraries, delta-tracked, in `deps_list`) and **slopp's** (the
+  compiler + malli), which slopp injects **at build time**, versioned centrally
+  with slopp. They never enter your manifest, never appear in `deps_list`, and
+  never land as deltas in your history — so a slopp upgrade moves every store
+  forward with no migration. The compiler goes to the build-only `:cljs` alias
+  (never hot-loaded, never in the runtime jar or native binary); malli to the
+  build's `:deps` (the `:cljs` alias inherits it, so one entry serves the JVM
+  oracle, the external tier, and the compile). Injection happens only when the
+  store HAS client code. The compiler backend is a per-project config
+  (`config_file {path "client" key "compiler"}`, default `:clojurescript`) —
+  cherry/squint are future backends, same source.
 - **Read platforms at a glance** with `query_depends {modules true}` — a
   `:platforms` map names the `:cljs`/`:cljc` namespaces (undeclared = `:jvm`).
 - **Share real logic AND libraries in `.cljc`** — a malli schema in `.cljc`
