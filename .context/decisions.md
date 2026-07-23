@@ -1952,3 +1952,52 @@ and `ns_delete` were already safe). (2) the recompile dev loop is now ASYNC —
 compile (a client write returns `:client-recompiling` immediately; the served
 blob updates when the background compile commits; the previous compile's outcome
 rides `:client-recompile-prev` on a later write) instead of blocking the write.
+
+## D-web-contracts (2026-07-23) — typed API contracts, gated and shared with the client
+
+The correctness half of the client story: D-web-cljs gave the client CODE; this
+gives the client a CONTRACT. The user's framing — a gate requiring a schema on
+every web endpoint, that schema `.cljc` so the front-end is checked against the
+SAME contract, so a mismatch is a write-time / boundary error, not a runtime
+surprise. It extends the existing route-integrity index (which ties a literal
+`:href`/`:action` to a route) from ROUTES to DATA SHAPES. Decisions (user calls):
+
+- **Front-end usage is checked by a GENERATED TYPED CLIENT, not a lint.** cljs
+  has no static types, so "the FE uses the API correctly" is enforced either at
+  runtime (a validating wrapper) or at write-time (a fuzzy static lint). Chosen:
+  slopp GENERATES a `.cljs` `fetch` wrapper per endpoint from its
+  `:web/request`/`:web/response` schemas — it validates params out and the
+  response in, so the FE literally cannot call the endpoint with the wrong shape,
+  and the wrapper cannot drift from the server contract (regenerated on change,
+  rides the compile step). The client-usage lint was rejected as fuzzy/evadable
+  (dynamic payloads/URLs); "generate + lint the bypasses" is a later escalation.
+- **The gate REFUSES a schema-less NEW/edited endpoint** (like `:web/auth` is
+  mandatory), grandfathering existing endpoints until touched — not
+  advisory-first, not refuse-everywhere. Refuse-for-new forces the contract from
+  day one without a store-wide up-front sweep; there are ZERO production
+  endpoints today, so the only cost was three test endpoints (updated).
+- **Named vs inline schemas: both allowed, named is the paved road, an advisory
+  guides.** A named `.cljc` malli schema var (`contracts/order`) earns its name
+  when the shape is shared / composed / domain vocabulary — one source of truth,
+  reusable, and (being a var) it rides slopp's refs graph so rename/blast-radius
+  just work, and it is the clean input to the generated client. Inline
+  (`^{:web/response [:map …]}`) is better for a genuine one-off. The gate
+  requires A schema, not a spelling; a named schema referenced by
+  `:web/request`/`:web/response` must live in a `:cljc` ns (so it compiles into
+  the client); and a DRY done-advisory flags a structurally-duplicated inline
+  schema across endpoints, nudging inline→named exactly when reuse appears.
+
+**Shipped (part 1): the endpoint-schema gate.** `slopp.edit.modules/
+web-endpoint-schema` (refuse-grade, `^{:rule/applies-to :production}`, inert
+until `http.enabled`, mirroring `web-auth-refusal`): a `:web/path` endpoint with
+no `:web/response` is refused, teaching both the named-var and inline paths.
+Registered in `per-form-write-gates` after `web-auth-refusal` (auth refuses
+first) and cataloged in `rule-catalog`.
+
+Deferred / next: `:web/request` (needs method-awareness — GET has no body); the
+`:cljc`-placement check on a referenced schema var (resolve the aliased symbol →
+its ns → assert `:cljc`); the DRY inline-duplication advisory; the schema-var
+resolver (symbol → schema value — the reference graph already tracks the symbol,
+only the value lookup is new); THE GENERATED TYPED CLIENT (part 2, off
+`:web/request`/`:web/response`); a dogfood on real endpoints (part 3). Program
+roadmap: `.context/roadmap.md` (typed API contracts).
