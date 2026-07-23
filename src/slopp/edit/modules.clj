@@ -802,32 +802,52 @@
   []
   (mapv #(keyword (:name (meta %))) per-form-write-gates))
 
+(defn ^:export rule-applies-to-platform?
+  "Whether a rule scoped to `rule-scope` (:everywhere / :clojure / :clojurescript)
+  fires for a form on `platform` (:jvm / :cljc / :cljs) — the platform axis of a
+  rule's applicability (D-web-cljs, the sibling of the :production test-ns axis).
+  :everywhere always fires. A :cljc form is checked by BOTH :clojure and
+  :clojurescript rules because it compiles to both. :jvm satisfies :clojure;
+  :cljs satisfies :clojurescript; an unknown scope defaults to firing."
+  [rule-scope platform]
+  (case rule-scope
+    :clojure       (contains? #{:jvm :cljc} platform)
+    :clojurescript (contains? #{:cljs :cljc} platform)
+    true))
+
 (defn ^:export gate-check
   "Run every per-form write gate over the CANDIDATE store ONCE, bucketed by each
    gate's effective per-store `rule-severity`: returns `{:refuse <first
    refuse-grade teaching, or nil> :advisories [<advisory-grade teachings>]}`. A
    gate dialed `:off` is skipped; `:refuse`/`:error` (and the default) BLOCK;
    `:advisory` is non-blocking and its teaching rides the write result (the
-   dial's warn-but-proceed mode). `gate-refusal` is the blocking view."
+   dial's warn-but-proceed mode). `gate-refusal` is the blocking view.
+
+   A gate also declares WHERE it applies. `:rule/applies-to :production` skips
+   TEST namespaces (declared once, here, so a gate and any REPORT of the same
+   rule cannot disagree — they did: purity-standing excluded tests while
+   tier-refusal gated them). `:rule/platform` (:everywhere default / :clojure /
+   :clojurescript) skips forms whose platform the rule doesn't cover — a :cljs
+   gate never fires on a :jvm form, and a :cljc form is checked by both worlds
+   (D-web-cljs)."
   [candidate ns-sym form-name]
-  (reduce (fn [acc gate]
-            (let [sev (rule-severity candidate (:name (meta gate)) :refuse)
-                  ;; a gate declares whether it applies to TEST namespaces.
-                  ;; Declared once, here, so a gate and any REPORT of the same
-                  ;; rule cannot disagree — they did: purity-standing excluded
-                  ;; tests while tier-refusal gated them, so the report
-                  ;; recommended a tier the gate would then punish.
-                  skip? (and (= :production (:rule/applies-to (meta gate) :all))
-                             (render/test-ns? ns-sym))]
-              (if (or (= :off sev) skip?)
-                acc
-                (if-let [t (gate candidate ns-sym form-name)]
-                  (if (= :advisory sev)
-                    (update acc :advisories conj t)
-                    (cond-> acc (nil? (:refuse acc)) (assoc :refuse t)))
-                  acc))))
-          {:refuse nil :advisories []}
-          per-form-write-gates))
+  (let [platform (store/platform-for candidate ns-sym)]
+    (reduce (fn [acc gate]
+              (let [sev   (rule-severity candidate (:name (meta gate)) :refuse)
+                    skip? (or (and (= :production (:rule/applies-to (meta gate) :all))
+                                   (render/test-ns? ns-sym))
+                              (not (rule-applies-to-platform?
+                                    (:rule/platform (meta gate) :everywhere)
+                                    platform)))]
+                (if (or (= :off sev) skip?)
+                  acc
+                  (if-let [t (gate candidate ns-sym form-name)]
+                    (if (= :advisory sev)
+                      (update acc :advisories conj t)
+                      (cond-> acc (nil? (:refuse acc)) (assoc :refuse t)))
+                    acc))))
+            {:refuse nil :advisories []}
+            per-form-write-gates)))
 
 (defn ^:export gate-refusal
   "The BLOCKING view of `gate-check`: the first refuse-grade per-form write-gate

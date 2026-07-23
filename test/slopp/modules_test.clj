@@ -767,3 +767,20 @@
       (testing "rejects a non-module string"
         (is (:error (api/module-platform! sess "has spaces" :cljs))))
       (finally (api/close! sess)))))
+
+(deftest rule-applies-to-platform?-scopes-by-target
+  (testing ":everywhere fires on every platform"
+    (is (modules/rule-applies-to-platform? :everywhere :jvm))
+    (is (modules/rule-applies-to-platform? :everywhere :cljs))
+    (is (modules/rule-applies-to-platform? :everywhere :cljc)))
+  (testing ":clojure fires on :jvm and :cljc, not :cljs"
+    (is (modules/rule-applies-to-platform? :clojure :jvm))
+    (is (modules/rule-applies-to-platform? :clojure :cljc))
+    (is (not (modules/rule-applies-to-platform? :clojure :cljs))))
+  (testing ":clojurescript fires on :cljs and :cljc, not :jvm"
+    (is (modules/rule-applies-to-platform? :clojurescript :cljs))
+    (is (modules/rule-applies-to-platform? :clojurescript :cljc))
+    (is (not (modules/rule-applies-to-platform? :clojurescript :jvm))))
+  (testing "the load-bearing case: a :cljc form is checked by BOTH worlds"
+    (is (modules/rule-applies-to-platform? :clojure :cljc))
+    (is (modules/rule-applies-to-platform? :clojurescript :cljc))))
