@@ -531,3 +531,32 @@ exist — the work is (a) the endpoint-schema gate, (b) deriving/sharing the
 `.cljc` schema, (c) the FE-side contract check (a client-usage lint or a
 generated typed client). Supersedes the terse "typed client API" deferral in
 D-web-cljs. Needs its own design pass and decision record before building.
+
+**STATUS (2026-07-23): decided + parts 1/1b SHIPPED.** Decision record is
+`.context/decisions.md` (D-web-contracts): FE-check = GENERATED typed client
+(not a lint); gate = refuse-for-new; named `.cljc` schemas are the paved road
+with inline allowed and a DRY advisory to guide. Shipped: `web-endpoint-schema`
+refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
+`:web/request` (`:post`/`:put`/`:patch` body methods). Milestones d11968/d11981.
+
+**PART 2 = the generated typed client — the next build, two open design
+questions to settle FIRST (asked the user 2026-07-23, awaiting the call):**
+1. **Delivery: stored `.cljs` ns vs build-artifact blob.** A `generate_client`
+   op writes an `app.client.api` namespace of validating `fetch` wrappers into
+   the STORE (visible, refactorable, rides the compile step, but derived code
+   needing a "regenerated — don't hand-edit" marker) — OR a pure compile-time
+   BLOB like the compiled bundle (clean separation, not inspectable as a ns).
+2. **Regeneration: automatic vs explicit.** Ride the async recompile loop (edit
+   an endpoint → client regenerates + recompiles) — OR an explicit
+   `generate_client` step.
+Then the wrapper shape: async `fetch` → malli-validate params OUT / response IN,
+`malli.transform` at the JSON boundary. And the three pieces that bundle into
+part 2 because they only bite with real schemas + generation: the schema-var
+RESOLVER (symbol → schema value — the reference graph already tracks the symbol,
+only the value lookup is new; blocked from reusing `slopp.edit/require-aliases`
+by the `slopp.edit ↔ slopp.edit.modules` cycle, so inline a small alias reader);
+the `:cljc`-PLACEMENT check (a referenced schema var must be in a `:cljc` ns so
+it compiles into the client); and the DRY inline-duplication ADVISORY
+(structurally-equal inline schemas on 2+ endpoints → "extract to a named `.cljc`
+schema"). Part 3 (dogfood on real endpoints) comes after part 2 — the user
+explicitly said NOT to jump to the dogfood.
