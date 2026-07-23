@@ -113,3 +113,30 @@
             loaded (db/load-store conn2)]
         (is (= {"app.core" :pure "app.shell" :external} (:module-tiers loaded)))
         (.close conn2)))))
+
+(deftest commit-tree-lives-outside-the-parsed-payload
+  ;; 94% of this store's journal is :commit :tree snapshots (~1.35MB each, 239
+  ;; of them) — re-parsed on EVERY session open even though only the git
+  ;; projection reads them (measured: 7.4s of a 9.4s load-store). The tree now
+  ;; lives in its own column: load-store never selects or parses it, and
+  ;; db/delta-tree fetches it on demand. Byte-exactness matters — git shas are
+  ;; content-addressed off this tree.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-tree" (make-array java.nio.file.attribute.FileAttribute 0)))
+        conn (db/open! dir)
+        tree {'a.core "(ns a.core)\n\n;; trivia survives\n(defn f [] 1)\n"}
+        d    {:id "d1" :op :commit :ns '*session*
+              :description "m" :target "d0" :tree tree}]
+    (try
+      (is (true? (db/append! conn (store/empty-store) [d] [] nil)))
+      (testing "a loaded delta carries no :tree — the bytes are never parsed at open"
+        (let [ld (first (filter #(= "d1" (:id %)) (:deltas (db/load-store conn))))]
+          (is (some? ld))
+          (is (nil? (:tree ld)))
+          (is (= "m" (:description ld)) "the small payload fields still round-trip")
+          (is (= "d0" (:target ld)))))
+      (testing "the tree round-trips byte-exactly, on demand"
+        (is (= tree (db/delta-tree conn "d1"))))
+      (testing "a non-commit delta has no tree and asking is nil, not an error"
+        (is (nil? (db/delta-tree conn "nope"))))
+      (finally (.close conn)))))

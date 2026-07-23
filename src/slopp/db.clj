@@ -40,12 +40,23 @@
          (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
                               k TEXT PRIMARY KEY, v TEXT NOT NULL)"])
+         ;; `tree` is DELIBERATELY its own column, not part of `payload`: a :commit
+         ;; marker's byte-exact tree snapshot is ~1.35MB, and payloads are parsed
+         ;; on EVERY session open while only the git projection ever reads a tree
+         ;; (measured: 239 markers = 94% of this journal, 7.4s of a 9.4s load).
+         ;; load-store selects explicit columns and never touches it; read it
+         ;; with db/delta-tree.
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
                               seq     INTEGER PRIMARY KEY AUTOINCREMENT,
                               id      TEXT UNIQUE NOT NULL,
                               op      TEXT NOT NULL,
                               ns      TEXT NOT NULL,
-                              payload TEXT NOT NULL)"])
+                              payload TEXT NOT NULL,
+                              tree    TEXT)"])
+         ;; stores created before the column: SQLite has no ADD COLUMN IF NOT
+         ;; EXISTS, so adding it twice is the expected no-op
+         (try (jdbc/execute! conn ["ALTER TABLE deltas ADD COLUMN tree TEXT"])
+              (catch java.sql.SQLException _ nil))
          (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS deltas_ns ON deltas(ns)"])
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS elements (
                               ns      TEXT NOT NULL,
@@ -242,7 +253,11 @@
                           {}
                           (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
       :deltas     (mapv row->delta
-                        (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq"]))
+                        ;; EXPLICIT columns — never SELECT `tree`. The whole point of splitting it
+      ;; out is that ~1.35MB per :commit marker is neither fetched nor parsed
+      ;; here; db/delta-tree reads it on demand for the git projection.
+                        (jdbc/execute! conn ["SELECT id, op, ns, payload FROM deltas
+                                              ORDER BY seq"]))
       :next-id    next-id
       :line-id    (:meta/v (jdbc/execute-one!
                             conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
@@ -364,9 +379,14 @@
         (when (not= head expected-head)
           (throw (ex-info "journal head moved" {::head-moved true})))
         (doseq [d new-deltas]
-          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload) VALUES (?,?,?,?)"
+          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload, tree)
+                              VALUES (?,?,?,?,?)"
                              (:id d) (name (:op d)) (str (:ns d))
-                             (pr-str (dissoc d :id :op :ns))]))
+                             ;; :tree is split OUT of the payload — it is the
+                             ;; one huge, rarely-read field, and payloads are
+                             ;; parsed on every session open
+                             (pr-str (dissoc d :id :op :ns :tree))
+                             (some-> (:tree d) pr-str)]))
         (write-snapshot! tx store nses)
         true))
     (catch clojure.lang.ExceptionInfo e
@@ -387,3 +407,16 @@
                         (pr-str (dissoc delta :id :op :ns))])
      (write-snapshot! tx store nses))
    nil))
+
+^:reads (defn delta-tree
+          "The byte-exact rendered `:tree` snapshot of `:commit` delta `id`, parsed
+  ON DEMAND, or nil when there is none — a non-commit, a retroactive `:target`
+  marker (which never captures one), or a delta written before the split, whose
+  tree still rides its payload. It lives in its own column because it is ~1.35MB
+  per milestone and ONLY the git projection reads it, while payloads are parsed
+  at every session open; `slopp.git/project-journal!` falls back to the payload's
+  `:tree`, then to `backfill-tree`, so old markers keep projecting."
+          [conn id]
+          (some-> (jdbc/execute-one! conn ["SELECT tree FROM deltas WHERE id = ?" id])
+                  :deltas/tree
+                  edn/read-string))

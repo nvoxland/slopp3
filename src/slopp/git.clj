@@ -361,7 +361,12 @@
              (if (and pinned
                       (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
                pinned
-               (let [tree (or (:tree d) (backfill-tree deltas (:target d)))
+               ;; :tree inline = a delta written before the column split (still honored);
+               ;; then its own column, read ON DEMAND (never loaded at session
+               ;; open); then the lossy backfill for markers that never had one.
+               (let [tree (or (:tree d)
+                              (db/delta-tree map-conn (:id d))
+                              (backfill-tree deltas (:target d)))
                      sha  (insert-commit! repo parent d tree
                                           #(db/get-blob map-conn %))]
                  (record-sha! map-conn (:id d) fp sha line-label)
