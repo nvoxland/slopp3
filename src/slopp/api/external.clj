@@ -29,6 +29,24 @@
       (when (and nm em)
         {:name nm :email em}))))
 
+(defn ^:export client-build-deps
+  "slopp's OWN toolchain deps for a BUILD of `store`, injected at build time —
+   NEVER user manifest deltas — when the store carries CLIENT code (:cljc/:cljs):
+   {:runtime {lib coord} :client {lib coord}}. malli goes in the runtime channel
+   (schema code loads on the JVM oracle + external tier, and the :cljs compile
+   inherits base :deps), versioned centrally from repl/inherent-deps; the
+   configured compiler (build/compiler-coord) goes in the build-only :client
+   channel. {:runtime {} :client {}} for a non-client store, so its generated
+   deps.edn stays byte-identical. slopp versions these centrally so an upgrade
+   reaches every store with no migration; the agent adds only APPLICATION deps (a
+   D-web-contracts dogfood finding — the two-config split the user named)."
+  [store]
+  (if (some #(#{:cljc :cljs} (store/platform-for store %)) (keys (:namespaces store)))
+    (let [[clib ccoord] (build/compiler-coord (build/client-compiler store))]
+      {:runtime (select-keys repl/inherent-deps '[metosin/malli])
+       :client  (if clib {clib ccoord} {})})
+    {:runtime {} :client {}}))
+
 (defn ^:export build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
   `src/<ns-path>.clj` per namespace plus a minimal `deps.edn` (F8). Guarded
@@ -52,8 +70,9 @@
         main     (or main (capabilities/effective st "app.main"))
         bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
-        deps     (:deps st)
-client-deps (:client-deps st)
+        provided (client-build-deps st)
+        deps     (merge (:deps st) (:runtime provided))
+client-deps (merge (:client-deps st) (:client provided))
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
                                         (some #(re-find #"^\(deftest\b"

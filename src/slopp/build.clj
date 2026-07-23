@@ -196,3 +196,13 @@
          "  native.main\n"
          "\n"
          "echo \"built ./" bin-name "\"\n")))
+
+(defn compiler-coord
+  "The build-only dependency coordinate [lib coord] for a client-compiler
+   keyword (the compiler slopp DISPATCHES to), or nil for a backend slopp has
+   no bundled default for. Only :clojurescript is implemented today; cherry /
+   squint would add rows here when their backends land."
+  [compiler]
+  (case compiler
+    :clojurescript ['org.clojure/clojurescript {:mvn/version "1.11.132"}]
+    nil))

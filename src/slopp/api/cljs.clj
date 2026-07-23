@@ -90,53 +90,6 @@
                " planned). Set the backend with config_file {path \"client\""
                " key \"compiler\" value \"clojurescript\"}.")})
 
-(defn ^:export compile-client!
-  "Compile the store's CLIENT namespaces (:cljc + :cljs) to JavaScript with the
-  configured backend (build/client-compiler, default :clojurescript) and record
-  the output as a served blob — the client wave's compile-error-as-oracle
-  (D-web-cljs). Materializes the store (build!) into a throwaway dir whose
-  generated deps.edn carries the :cljs alias, shells the compiler in a fresh JVM
-  (no Node — real org.clojure/clojurescript on the JVM), then anchors warnings to
-  store forms (name-addressed, no file:line) and file_puts the JS. Returns
-  {:compiled <ns-count> :warnings [...anchored...] :output <path> :bytes n} on
-  success, {:error ... :warnings ...} on a compile failure, or {:note ...} when
-  there is no client code. `:output` sets the served path (default
-  \"public/cljs/main.js\")."
-  [session & {:keys [output] :or {output "public/cljs/main.js"}}]
-  (let [st       (:store @session)
-        compiler (build/client-compiler st)
-        client   (filterv #(#{:cljc :cljs} (store/platform-for st %))
-                          (keys (:namespaces st)))]
-    (if (empty? client)
-      {:note (str "no client namespaces to compile — declare one :cljc or :cljs"
-                  " via module_platform")}
-      (let [dir (str (java.nio.file.Files/createTempDirectory
-                      "slopp-cljs"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))]
-        (try
-          (let [b (external/build! session dir)]
-            (if (:error b)
-              b
-              (let [{:keys [warnings error]} (compile-client* compiler dir)
-                    anchored (anchor-warnings st (or warnings []))]
-                (if error
-                  {:error error :warnings anchored}
-                  (let [js (slurp (io/file dir "out" "main.js"))]
-                    (session/commit-appended!
-                     session
-                     (fn [s] (first (store/record-file-put s output js)))
-                     [])
-                    {:compiled  (count client)
-                     :namespaces (mapv str (sort client))
-                     :warnings  anchored
-                     :output    output
-                     :bytes     (count js)})))))
-          (finally
-            (letfn [(rm! [f]
-                      (when (.isDirectory f) (run! rm! (.listFiles f)))
-                      (.delete f))]
-              (rm! (io/file dir)))))))))
-
 (defn ^:private resolve-schema-ref
   "Resolve a :web/request/:web/response value into a client-usable schema
    reference. A schema VAR symbol (alias- or fully-qualified) →
@@ -286,6 +239,54 @@
     (str "(ns " ns-sym "\n  " requires ")\n\n"
          (str/join "\n\n" (map render-wrapper wrappers)))))
 
+(defn ^:export compile-client!
+  "Compile the store's CLIENT namespaces (:cljc + :cljs) to JavaScript with the
+  configured backend (build/client-compiler, default :clojurescript) and record
+  the output as a served blob — the client wave's compile-error-as-oracle
+  (D-web-cljs). Materializes the store (build!) into a throwaway dir whose
+  generated deps.edn carries the :cljs alias — build! injects slopp's OWN
+  toolchain there (the compiler + malli), so the agent never hand-adds slopp's
+  plumbing. Shells the compiler in a fresh JVM (no Node — real
+  org.clojure/clojurescript on the JVM), then anchors warnings to store forms
+  (name-addressed, no file:line) and file_puts the JS. Returns {:compiled
+  <ns-count> :warnings [...anchored...] :output <path> :bytes n} on success,
+  {:error ... :warnings ...} on a compile failure, or {:note ...} when there is
+  no client code. `:output` sets the served path (default \"public/cljs/main.js\")."
+  [session & {:keys [output] :or {output "public/cljs/main.js"}}]
+  (let [st       (:store @session)
+        compiler (build/client-compiler st)
+        client   (filterv #(#{:cljc :cljs} (store/platform-for st %))
+                          (keys (:namespaces st)))]
+    (if (empty? client)
+      {:note (str "no client namespaces to compile — declare one :cljc or :cljs"
+                  " via module_platform")}
+      (let [dir (str (java.nio.file.Files/createTempDirectory
+                      "slopp-cljs"
+                      (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (try
+          (let [b (external/build! session dir)]
+            (if (:error b)
+              b
+              (let [{:keys [warnings error]} (compile-client* compiler dir)
+                    anchored (anchor-warnings st (or warnings []))]
+                (if error
+                  {:error error :warnings anchored}
+                  (let [js (slurp (io/file dir "out" "main.js"))]
+                    (session/commit-appended!
+                     session
+                     (fn [s] (first (store/record-file-put s output js)))
+                     [])
+                    {:compiled  (count client)
+                     :namespaces (mapv str (sort client))
+                     :warnings  anchored
+                     :output    output
+                     :bytes     (count js)})))))
+          (finally
+            (letfn [(rm! [f]
+                      (when (.isDirectory f) (run! rm! (.listFiles f)))
+                      (.delete f))]
+              (rm! (io/file dir)))))))))
+
 (defn ^:export generate-client!
   "Generate the typed client (D-web-contracts part 2): read every web endpoint's
    contract (client-wrapper-specs) and write a stored, edit-PROTECTED :cljs
@@ -299,9 +300,10 @@
    Endpoints whose schema can't ship to the client (non-:cljc, or a missing var)
    are SKIPPED and surfaced in :problems so the namespace always compiles. An
    EXPLICIT step (mirrors compile_client); a done-advisory nudges regeneration
-   when endpoints drift. Returns {:generated :wrappers :endpoints :platform
-   :delta} (+ :problems, + recompile keys) — or a :note when there is nothing to
-   generate."
+   when endpoints drift. slopp provisions malli itself (build! injects it — the
+   generated code requires it), so the agent never hand-adds slopp's plumbing.
+   Returns {:generated :wrappers :endpoints :platform :delta} (+ :problems,
+   recompile keys) — or a :note when there is nothing to generate."
   [session & {:keys [ns]}]
   (let [st0    (:store @session)
         target (symbol (str (or ns

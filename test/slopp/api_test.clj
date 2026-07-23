@@ -280,3 +280,43 @@
       (finally
         (api/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
+
+(deftest client-build-deps-injects-slopp-toolchain-for-client-stores
+  ;; slopp self-provisions its client toolchain at BUILD time — never user
+  ;; manifest deltas (D-web-contracts dogfood finding): malli into the runtime
+  ;; channel, the configured compiler into the client channel — but only when the
+  ;; store carries client code, so a non-client build stays byte-identical.
+  (testing "a :cljs store gets malli (runtime) + the compiler (client)"
+    (let [st (-> (store/empty-store)
+                 (store/ingest 'app.view "(ns app.view)\n(defn ^:export main [] 1)\n"))
+          st (first (store/record-module-platform st "app.view" :cljs))
+          provided (external/client-build-deps st)]
+      (is (contains? (:runtime provided) 'metosin/malli) (pr-str provided))
+      (is (contains? (:client provided) 'org.clojure/clojurescript) (pr-str provided))))
+  (testing "a non-client store injects nothing"
+    (let [st (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [] 1)\n")]
+      (is (= {} (:runtime (external/client-build-deps st))))
+      (is (= {} (:client (external/client-build-deps st)))))))
+
+(deftest ^:external build-injects-slopp-client-toolchain-without-manifest-deps
+  ;; the payoff of the two-config split: a store with client code and an EMPTY
+  ;; user manifest still builds a deps.edn carrying slopp's compiler + malli.
+  ;; The agent added nothing — slopp provisions its own plumbing at build time,
+  ;; versioned centrally, with no :deps-add delta in the user's history.
+  (let [sess (external/open!)
+        dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-toolchain"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (api/create-ns! sess 'cbt.view
+                      :source "(ns cbt.view)\n\n(defn ^:export main \"Entry.\" [] 1)\n"
+                      :platform "cljs")
+      (is (nil? (:error (external/build! sess dir))))
+      (let [d (edn/read-string (slurp (io/file dir "deps.edn")))]
+        (is (contains? (:deps d) 'metosin/malli) (pr-str d))
+        (is (contains? (get-in d [:aliases :cljs :extra-deps]) 'org.clojure/clojurescript)
+            (pr-str d)))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (rm! (io/file dir)))
+        (api/close! sess)))))
