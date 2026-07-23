@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.api.query :as query]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -749,6 +749,22 @@
     (testing "a late-ref BETWEEN external namespaces is fine (both shell)"
       (let [st2 (first (store/record-module-tier st "app.core" :external))]
         (is (empty? (modules/layering-violations st2 'app.core :external)))))))
+
+(deftest ^:external module-platforms-surface-in-query-depends
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'plat.client :source "(ns plat.client)\n"
+                      :platform :cljs :prompt "browser")
+      (api/create-ns! sess 'plat.shared :source "(ns plat.shared)\n"
+                      :platform :cljc :prompt "portable")
+      (api/create-ns! sess 'plat.server :source "(ns plat.server)\n(defn ^:unused-ok f [] 1)\n")
+      (let [r (query/query-depends sess "" :modules true)]
+        (testing "declared platforms surface in the module graph"
+          (is (= :cljs (get (:platforms r) "plat.client")) (pr-str (:platforms r)))
+          (is (= :cljc (get (:platforms r) "plat.shared")) (pr-str (:platforms r))))
+        (testing "an undeclared ns (= :jvm default) is absent, not noise"
+          (is (nil? (get (:platforms r) "plat.server")) (pr-str (:platforms r)))))
+      (finally (api/close! sess)))))
 
 (deftest ^:external module-platform-verb
   (let [sess (external/open!)]

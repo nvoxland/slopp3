@@ -230,6 +230,9 @@
                                                         ;; nothing ran because everything impacted is
                                                         ;; ^:external — by DESIGN, and the done point
                                                         ;; will run them. Not a gap, not a bug.
+                                                        ;; a lower layer already NAMED the reason (e.g. a :cljs write,
+                                                        ;; :cljs-deferred-to-compile) — respect it over the generic guesses
+                                                        (:reason t)                 (:reason t)
                                                         (seq (:external-pending t)) :all-impacted-external
                                                         (= :all (:affected r))      :no-covering-tests
                                                         :else                       :scope-ran-nothing))
@@ -555,6 +558,8 @@
       "ns_create" (text! (api/create-ns! session (sym :ns)
                                                 :requires (:requires a)
                                                 :source (:source a)
+                                                :platform (:platform a)
+                                                :prompt (:prompt a)
                                                 :agent (:agent a)))
       "ns_add_require" (text! (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a)

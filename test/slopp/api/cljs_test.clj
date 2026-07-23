@@ -48,3 +48,45 @@
           (is (pos? (or (:bytes r) 0)) (pr-str r))
           (is (string? (get-in @sess [:store :files "public/tc.js"])))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-cljs-write-lands-unverified-not-refused
+  (let [sess (external/open!)]
+    (try
+      ;; CONTROL — a :jvm namespace: js/* is genuinely unresolvable on the JVM,
+      ;; so the write is REFUSED (the oracle cannot load it). This is the
+      ;; behaviour that must stay for ordinary Clojure.
+      (api/ingest! sess 'wp.server "(ns wp.server)\n(defn ok [] 1)\n")
+      (is (:error (api/add-form! sess 'wp.server "(defn boom [] (js/alert \"hi\"))"))
+          "a js/* form in a :jvm ns fails to load — refused")
+      ;; a :cljs namespace: the SAME form LANDS, its verification deferred to
+      ;; the cljs compiler (compile_client), reported :unverified with a reason.
+      (api/module-platform! sess "wp.client" :cljs :prompt "browser code")
+      (api/ingest! sess 'wp.client "(ns wp.client)\n")
+      (let [r (api/add-form! sess 'wp.client "(defn boom [] (js/alert \"hi\"))"
+                             :prompt "client click handler")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (some? (:delta r)) (pr-str r))
+        (is (some? (store/form-named (:store @sess) 'wp.client 'boom))
+            "the js/* form is really in the store")
+        (is (= :unverified (:status (:test r))) (pr-str (:test r)))
+        (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r))))
+      ;; ingest! of a :cljs ns whose body ALREADY uses js/* also lands
+      (api/module-platform! sess "wp.widget" :cljs :prompt "browser code")
+      (let [r (api/ingest! sess 'wp.widget
+                           "(ns wp.widget)\n(defn go [] (js/console.log \"x\"))\n")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external ns-create-with-a-platform-is-born-there
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'wc.client :source "(ns wc.client)\n"
+                      :platform :cljs :prompt "browser code")
+      (testing "the platform is declared at creation, at the namespace grain"
+        (is (= :cljs (store/platform-for (:store @sess) 'wc.client))))
+      (testing "born :cljs, a js/* form lands straight away — no separate decl"
+        (let [r (api/add-form! sess 'wc.client "(defn boom [] (js/alert \"hi\"))")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r)))))
+      (finally (api/close! sess)))))

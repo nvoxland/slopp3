@@ -151,14 +151,20 @@
   namespace's source in one call. Compile-gated like every write (the image
   loads it FIRST; a failed load commits nothing — T4), then verified and
   recorded like every write. Overwriting an existing namespace is NOT allowed
-  — edit its forms instead. Returns {:ns :forms :test} or {:error msg}."
+  — edit its forms instead. Returns {:ns :forms :test} or {:error msg}.
+
+  A :cljs (non-jvm-loadable) namespace is ingested the same way, but its code
+  references js/* / the DOM and cannot load into the JVM oracle, so ingest
+  SKIPS the hot-load and defers verification to the ClojureScript compiler
+  (compile_client) — reporting `cljs-deferred-summary`. D-web-cljs."
   [session ns-sym source & {:keys [agent]}]
   (if (get-in (:store @session) [:namespaces ns-sym])
     {:error (str ns-sym " already exists — edit its forms instead"
                  " (whole-namespace overwrite is not allowed)")}
     (try
       (let [base      (:store @session)
-            candidate (store/ingest base ns-sym source :agent agent)]
+            candidate (store/ingest base ns-sym source :agent agent)
+            load?     (store/jvm-loadable? base ns-sym)]
         (if-let [derr (or (edit/dialect-scan candidate ns-sym)
                           ;; bulk imports (clone) land reality first and derive
                           ;; the manifest after — the gate blocks DRIFT, not adoption
@@ -170,11 +176,14 @@
           {:error derr}
           (let [load!   #(repl/load-checked! (:image @session)
                                              (render/render-ns candidate ns-sym)
-                                             (render/ns-path ns-sym))
-                res     (load!)
+                                             (render/ns-path ns-sym
+                                                             (store/platform-for base ns-sym)))
+                ;; :cljs code never loads into the JVM oracle — skip the hot-load
+                ;; and let the cljs compiler be its gate (below).
+                res     (if load? (load!) {})
                 ;; the generic red-first seam, ingest face: a spec ns naming
                 ;; not-yet-written vars stubs + retries instead of refusing
-                stubbed (when (:err res)
+                stubbed (when (and load? (:err res))
                           (session/stub-missing-test-vars! (:image @session) candidate [ns-sym]))
                 res     (if (and stubbed (nil? (:err (load!)))) {} res)]
             (cond
@@ -186,15 +195,18 @@
 
               :else
               (do
-                (repl/eval! (:image @session)
-                            (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                                    ns-sym))
+                (when load?
+                  (repl/eval! (:image @session)
+                              (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                                      ns-sym)))
                 (let [edited  (into #{}
                                     (keep (fn [e]
                                             (when (:name e)
                                               (symbol (str ns-sym) (str (:name e))))))
                                     (store/forms candidate ns-sym))
-                      summary (session/run-verification! session ns-sym nil :edited edited)]
+                      summary (if load?
+                                (session/run-verification! session ns-sym nil :edited edited)
+                                session/cljs-deferred-summary)]
                   (session/commit-appended! session
                                     #(store/record-verification % ns-sym summary)
                                     [])
@@ -208,32 +220,6 @@
                                               " implement them to go green.")))))))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
-
-(defn create-ns!
-  "F4: bring a brand-new namespace into being — two modes (mutually exclusive):
-   - **scaffold** (`:requires`, clause strings like \"[clojure.string :as str]\"):
-     build an empty `(ns …)` to grow form-by-form with red-first TDD. The default.
-   - **content** (`:source`, the whole namespace text incl. its own `(ns …)`):
-     land the entire namespace in one verified call — forward refs within the
-     file resolve as a unit, like a real `.clj` load. For ported/reference/data
-     code that isn't subject to red→green.
-   Delegates to `ingest!` (the shared engine); overwrite is refused there."
-  [session ns-sym & {:keys [requires source agent]}]
-  (cond
-    (and source (seq requires))
-    {:error (str ":source and :requires are mutually exclusive — put requires "
-                 "inside the source's ns form")}
-
-    source
-    (ingest! session ns-sym source :agent agent)
-
-    :else
-    (ingest! session ns-sym
-             (str "(ns " ns-sym
-                  (when (seq requires)
-                    (str "\n  (:require " (str/join "\n            " requires) ")"))
-                  ")\n")
-             :agent agent)))
 
 (defn turn-begin!
   "Open `agent`'s turn, recording the VERBATIM user ask as the root intent of
@@ -381,13 +367,15 @@
                    " — edit_rename rewrites every caller atomically (or land"
                    " the callers in this same change)")}
       (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+load? (store/jvm-loadable? (:store @session) ns-sym)
             r (session/rebased-write!
                session
                (fn [base] (edit/replace-form base ns-sym nm new-source
                                              :prompt prompt :agent agent))
                (fn [base] (:node (store/form-named base ns-sym nm)))
                (symbol (str ns-sym) (str nm))
-               ns-sym)]
+               ns-sym
+               :load? load?)]
         (if (or (:error r) (:conflict r))
           r
           (let [qform    (symbol (str ns-sym) (str nm))
@@ -439,8 +427,10 @@
                            (or (seq (session/covering-test-nses
                                      (:store @session) [ns-sym]))
                                ns-sym))
-                summary  (session/run-verification! session scope affected
-                                            :edited edited)
+                summary  (if load?
+                             (session/run-verification! session scope affected
+                                                        :edited edited)
+                             session/cljs-deferred-summary)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))]
             (session/commit-appended! session
                               #(store/record-verification % ns-sym summary) [])
@@ -480,7 +470,13 @@
   delta, hot-reload into the image, verification, provenance. `:before
   <form-name>` anchors the new form immediately before that one (default:
   appended at the tail) — define-before-use without a follow-up move.
-  Returns {:delta :warnings :test :affected} or {:error msg}."
+  Returns {:delta :warnings :test :affected} or {:error msg}.
+
+  A :cljs (non-jvm-loadable) namespace is authored the same way but its form
+  references js/* / the DOM and cannot load into the JVM oracle, so the write
+  SKIPS the per-form hot-load (`:load? false`) and defers verification to the
+  ClojureScript compiler — reporting `cljs-deferred-summary` (:unverified,
+  reason :cljs-deferred-to-compile) rather than running the suite. D-web-cljs."
   [session ns-sym source & {:keys [prompt agent before]}]
   (let [t0 (System/nanoTime)
         {:keys [node error]} (edit/parse-form source)
@@ -498,6 +494,7 @@
 
       :else
       (let [pre-warned (set (map :var (edit/ns-warnings (:store @session) ns-sym)))
+            load?      (store/jvm-loadable? (:store @session) ns-sym)
             r (session/rebased-write!
                session
                (fn [base]
@@ -519,36 +516,39 @@
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
                (fn [base] (when nm (:node (store/form-named base ns-sym nm))))
                (symbol (str ns-sym) (str (or nm "anonymous")))
-               ns-sym)]
+               ns-sym
+               :load? load?)]
         (if (or (:error r) (:conflict r))
           r
-          (let [edited   (if nm #{(symbol (str ns-sym) (str nm))} #{})
-                    affected (when nm (session/affected-tests session ns-sym nm))
-                    summary  (session/run-verification! session ns-sym affected
-                                                :edited edited)
-                    all-w    (edit/ns-warnings (:store @session) ns-sym)
-                    existing (count (filter (comp pre-warned :var) all-w))
-                    advisories (when nm (:advisories (edit.modules/gate-check
-                                                      (:store @session) ns-sym nm)))]
-                (session/commit-appended! session
-                                  #(store/record-verification % ns-sym summary)
-                                  [])
-                (session/with-ms
-                  (cond-> {:delta    (:delta r)
-                           ;; T3: only NEW violations; pre-existing as a count
-                           :warnings (vec (remove (comp pre-warned :var) all-w))
-                           :test     summary
-                           :affected (or affected :all)}
-                    (:image-healed r) (assoc :image-healed true)
-                    (pos? existing)   (assoc :existing-warnings existing)
-                    (:red-first r)    (assoc :red-first (:red-first r)
-                                             :note (str "these vars don't exist yet —"
-                                                        " stubbed in-image as failing"
-                                                        " (red-first); implement them to"
-                                                        " go green."))
-                    (:carried-errors r) (assoc :carried-errors (:carried-errors r))
-                    (seq advisories)    (assoc :advisories advisories))
-                  t0)))))))
+          (let [edited     (if nm #{(symbol (str ns-sym) (str nm))} #{})
+                affected   (when (and load? nm) (session/affected-tests session ns-sym nm))
+                summary    (if load?
+                             (session/run-verification! session ns-sym affected
+                                                        :edited edited)
+                             session/cljs-deferred-summary)
+                all-w      (edit/ns-warnings (:store @session) ns-sym)
+                existing   (count (filter (comp pre-warned :var) all-w))
+                advisories (when nm (:advisories (edit.modules/gate-check
+                                                  (:store @session) ns-sym nm)))]
+            (session/commit-appended! session
+                                      #(store/record-verification % ns-sym summary)
+                                      [])
+            (session/with-ms
+              (cond-> {:delta    (:delta r)
+                       ;; T3: only NEW violations; pre-existing as a count
+                       :warnings (vec (remove (comp pre-warned :var) all-w))
+                       :test     summary
+                       :affected (or affected :all)}
+                (:image-healed r) (assoc :image-healed true)
+                (pos? existing)   (assoc :existing-warnings existing)
+                (:red-first r)    (assoc :red-first (:red-first r)
+                                         :note (str "these vars don't exist yet —"
+                                                    " stubbed in-image as failing"
+                                                    " (red-first); implement them to"
+                                                    " go green."))
+                (:carried-errors r) (assoc :carried-errors (:carried-errors r))
+                (seq advisories)    (assoc :advisories advisories))
+              t0)))))))
 
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
@@ -2448,6 +2448,44 @@
                  [])]
         {:module module :platform platform
          :platforms (:module-platforms st')}))))
+
+(defn create-ns!
+  "F4: bring a brand-new namespace into being — two modes (mutually exclusive):
+   - **scaffold** (`:requires`, clause strings like \"[clojure.string :as str]\"):
+     build an empty `(ns …)` to grow form-by-form with red-first TDD. The default.
+   - **content** (`:source`, the whole namespace text incl. its own `(ns …)`):
+     land the entire namespace in one verified call — forward refs within the
+     file resolve as a unit, like a real `.clj` load. For ported/reference/data
+     code that isn't subject to red→green.
+   `:platform` (:jvm/:cljc/:cljs) declares the namespace's target platform
+   (module_platform grain = this namespace) BEFORE the source lands, so a
+   client ns is BORN :cljs — its first js/* form defers to the cljs compiler
+   instead of failing to load into the JVM oracle (the inherited-default
+   footgun). A bad platform refuses the whole create.
+   Delegates to `ingest!` (the shared engine); overwrite is refused there."
+  [session ns-sym & {:keys [requires source agent platform prompt]}]
+  (if (and source (seq requires))
+    {:error (str ":source and :requires are mutually exclusive — put requires "
+                 "inside the source's ns form")}
+    ;; platform must be declared FIRST: ingest reads it to decide whether to
+    ;; hot-load, so a :cljs source with js/* would fail to load otherwise
+    (let [perr (when platform
+                 (:error (module-platform! session (str ns-sym) platform
+                                           :prompt (or prompt "platform declared at namespace creation")
+                                           :agent agent)))]
+      (cond
+        perr {:error perr}
+
+        source
+        (ingest! session ns-sym source :agent agent)
+
+        :else
+        (ingest! session ns-sym
+                 (str "(ns " ns-sym
+                      (when (seq requires)
+                        (str "\n  (:require " (str/join "\n            " requires) ")"))
+                      ")\n")
+                 :agent agent)))))
 
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):

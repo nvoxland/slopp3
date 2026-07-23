@@ -37,6 +37,21 @@
     (is (= 404 (:status (browse/store-source-page
                          {:web/reads {} :path-params {:ns "x" :name "y"}}))))))
 
+(deftest the-index-page-carries-the-client-filter
+  (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+        ctx (web/context {:web/namespaces ['slopp.http.browse]
+                          :web/perform-ctx {:session (atom {:store st})}})]
+    (testing "the index page carries the filter box and the per-row hooks the cljs wires"
+      (let [body (:body (web/handle! ctx {:request-method :get :uri "/store"}))]
+        (is (re-find #"<input[^>]*id=\"ns-filter\"" body) body)
+        (is (re-find #"<ul[^>]*id=\"ns-list\"" body) body)
+        (is (re-find #"<li[^>]*class=\"ns-row\"" body) body)))
+    (testing "every page links the compiled client bundle (a literal src the integrity check joins)"
+      (doseq [uri ["/store" "/store/ns/demo.core"]]
+        (is (re-find #"<script[^>]*src=\"/assets/cljs/main\.js\""
+                     (:body (web/handle! ctx {:request-method :get :uri uri})))
+            uri)))))
+
 (deftest the-browser-styles-itself-with-css-as-data
   (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
         ctx (web/context {:web/namespaces ['slopp.http.browse]

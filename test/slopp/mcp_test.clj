@@ -653,6 +653,22 @@
         (is (not (re-find #"\.clj:\d" r)) "no file:line in the wire text"))
       (finally (api/close! sess)))))
 
+(deftest ^:external ns-create-platform-rides-the-wire
+  (let [sess (external/open!)]
+    (try
+      (testing "ns_create carries a platform on the wire — born :cljs"
+        (let [r (call! sess "ns_create"
+                       {:ns "wcw.client" :source "(ns wcw.client)\n"
+                        :platform "cljs" :prompt "browser code"})]
+          (is (not (re-find #":error" r)) r)))
+      (testing "a js/* form then lands unverified, deferred to the cljs compiler"
+        (let [r (call! sess "edit_add_form"
+                       {:ns "wcw.client" :source "(defn boom [] (js/alert \"hi\"))"
+                        :prompt "client handler"})]
+          (is (re-find #":cljs-deferred-to-compile" r) r)
+          (is (not (re-find #"form failed to compile" r)) r)))
+      (finally (api/close! sess)))))
+
 (deftest ^:external module-purity-rides-the-wire
   (let [sess (external/open!)]
     (try

@@ -679,6 +679,15 @@
 
       :else (assoc r1 :diagnosis :genuine))))
 
+(def cljs-deferred-summary
+  "Verification summary for a write to a :cljs (non-jvm-loadable) namespace.
+  Such code references js/* / the DOM and never loads into the JVM oracle, so
+  there is nothing to run here — its red/green comes from the ClojureScript
+  compiler (compile_client), not the test suite. Reported :unverified with a
+  reason that says the check is DEFERRED, distinct from :no-covering-tests (a
+  coverage gap the agent should close). D-web-cljs."
+  {:test 0 :pass 0 :status :unverified :reason :cljs-deferred-to-compile})
+
 (defn run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
   `default-ns`'s tests when there's no trace information. `:edited` (the

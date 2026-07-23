@@ -714,6 +714,11 @@
                                  (assoc :note (str "could-tighten lists module NAMES —"
                                                    " query_depends {modules true, detail true}"
                                                    " adds each one's declared/supports")))))}
+            (seq (:module-platforms st))
+            ;; declared target platforms (undeclared = :jvm, so absent here) —
+            ;; answers "which namespaces are :cljs client / :cljc shared?" (D-web-cljs)
+            (assoc :platforms (into (sorted-map) (:module-platforms st)))
+
             (seq (:cycles graph))
             (assoc :cycles (:cycles graph))
 

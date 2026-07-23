@@ -68,11 +68,14 @@
 
 (defn- shell
   "html/page with the store-browser stylesheet linked — the one place the
-  link literal lives, so every page joins /store/style.css."
+  link literal lives, so every page joins /store/style.css. The compiled
+  client bundle (slopp.client.nsview → /assets/cljs/main.js) rides here too;
+  it self-starts and no-ops on pages without a #ns-filter box."
   [title & body]
   (apply html/page
          {:html/title title
-          :html/head [[:link {:rel "stylesheet" :href "/store/style.css"}]]}
+          :html/head [[:link {:rel "stylesheet" :href "/store/style.css"}]
+                      [:script {:src "/assets/cljs/main.js" :defer true}]]}
          body))
 
 (defn ^{:web/method :get :web/path "/store" :web/auth :public
@@ -80,15 +83,22 @@
   store-index-page
   "GET /store — the namespace index. `:public` deliberately: the co-hosted
   /call and /mcp endpoints on this server already expose strictly more
-  than read-only source."
+  than read-only source.
+
+  Progressive enhancement: the compiled client filter (slopp.client.nsview,
+  served at /assets/cljs/main.js) wires the #ns-filter box to the .ns-row
+  items; with JS off the full list still renders server-side."
   [req]
   (html/html-response
    (shell "store"
      [:main
       [:h1 "namespaces"]
-      [:ul
+      [:input {:id "ns-filter" :type "search" :autocomplete "off"
+               :placeholder "filter namespaces…" :aria-label "filter namespaces"}]
+      [:ul {:id "ns-list"}
        (for [{:keys [ns forms]} (:namespaces (:web/reads req))]
-         [:li [:a {:href (str "/store/ns/" ns)} (str ns)]
+         [:li {:class "ns-row"}
+          [:a {:href (str "/store/ns/" ns)} (str ns)]
           (str " (" forms ")")])]])))
 
 (defn ^{:web/method :get :web/path "/store/ns/:ns" :web/auth :public
