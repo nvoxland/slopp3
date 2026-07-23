@@ -145,6 +145,15 @@
 - Store namespaces have **no classpath presence**; `load-ns!` marks
   `*loaded-libs*`. Cross-ns loads must be TOPOLOGICAL (`ns-dependency-order`
   — X3: map order goes hash past 8 entries and silently drops namespaces).
+- **Not every ns loads into the oracle (D-web-cljs).** The `:platform`
+  register (`:module-platforms`, namespace-grained like the purity tiers) marks
+  a ns `:jvm` (default — loads), `:cljc` (loads AND compiles to JS), or `:cljs`
+  (compiled to JS ONLY, NEVER loaded — it references `js/*`/DOM). So `load-ns!`,
+  the write ops, and `build!` all consult `store/jvm-loadable?`: a `:cljs` write
+  skips the hot-load and reports `:unverified :cljs-deferred-to-compile`, its
+  oracle being `compile_client` (real ClojureScript, compiled on the JVM — no
+  Node) instead of the test suite. Reading source, this is why a `:cljs` form's
+  extension is `.cljs` under `cljs-src/` and it never appears in the image.
 - **External deps are Tier 1 (P4-deps):** the owned image is otherwise bare
   (Clojure + nREPL). A store declares its own libs in a `:deps` manifest
   (lib→coord) that reaches every image launch via `-Sdeps`

@@ -149,7 +149,10 @@ OR its namespace. NOTE: bang-named external vars
 (`jdbc/execute!`) were already caught by `bang-target?`; the net-new surface
 is **non-bang** external calls (`jdbc/query`, `json/write-str`). Still
 WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
-(not in `:dep-ns`).
+(not in `:dep-ns`). **Platform-scoped (D-web-cljs):** the M3 boundary is a
+`:clojure`-scoped rule — a `:cljs`/`:cljc` form's dependency world is npm/JS,
+analyzed differently — so the JVM Tier-1 effect boundary does not fire on
+client code.
 
 ## `!`-effect checking (D6, `slopp.index`)
 
@@ -171,6 +174,12 @@ WARNINGS, never rejections. Store-ns and clojure-stdlib calls are unaffected
     assertion of effectfulness, and the call graph can't see interop/opaque
     effects (`.close`, a socket/JGit write), so demanding the `!` be removed
     would be wrong. (Consistent with `^:unsafe`/`^:reads`: human assertion wins.)
+  - **`:cljs` is ADVISORY (D-web-cljs).** In the browser everything touches the
+    DOM, so the JVM effect model's leaf set doesn't carve client code cleanly; a
+    `:cljs` ns stays the permissive `:effects` default and the D6 `!`-warning is
+    advisory there — it fires as a false positive on idiomatic `^:export main`
+    (a `main!` would munge the exported JS name). A platform-aware `:client`
+    effect tier — event handlers effectful, render fns pure — is deferred.
 - **Known leak:** higher-order fns are effect-polymorphic and can't be soundly
   marked statically — runtime observation covers them.
 - **`#'var` carriers don't propagate:** the effect `call-graph` adds an edge for

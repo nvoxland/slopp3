@@ -434,6 +434,51 @@ ties the link to the stylesheet endpoint like any other route. Raw or
 vendored CSS goes through a static `.css` asset (`file_put` + an
 `http.static.*` mount), not the renderer.
 
+**Client code is ClojureScript — same store, compiled to JS (D-web-cljs).**
+Browser logic is authored like everything else: forms in the store, edited by
+the same tools, gated by the same dialect. A namespace declares its target
+**platform** — `module_platform {module platform}`, or born at creation with
+`ns_create {ns … platform}`:
+
+- **`:jvm`** (default) — ordinary Clojure, loads into the oracle, never
+  compiled to JS. Everything you already write.
+- **`:cljc`** — `.cljc`, loads on the JVM (`:clj` branch) AND compiles to JS.
+  **This is where testable logic goes.** A `:cljc` form is verified by the JVM
+  oracle for FREE, exactly like Clojure — write a `-test`, red→green as usual.
+- **`:cljs`** — `.cljs`, client-ONLY (`js/*`, the DOM). Never loads into the
+  oracle; a write lands `:unverified` with reason `:cljs-deferred-to-compile`.
+  It is verified by the COMPILER, not the suite.
+
+**The discipline that makes this work: keep platform-neutral logic in `.cljc`
+so the free JVM oracle covers it; reserve `.cljs` for the thin, genuinely
+browser-bound edge (DOM, events).** A predicate, a schema, a state transition
+belong in `.cljc` and get red/green; only `js/document`-touching glue is
+`.cljs`, and it stays small because a cljs-only form is verified by "it
+compiled" alone until browser tests exist (out of scope — that is
+Cypress/Playwright territory someday).
+
+- **Compile with `compile_client`** — it compiles every `:cljc`+`:cljs`
+  namespace with the configured backend (real ClojureScript, **on the JVM, no
+  Node**) to one `:simple` bundle, recorded as a served blob (default
+  `public/cljs/main.js` → `/assets/cljs/main.js` via a static mount).
+  Compile-error-as-oracle: analyzer warnings and hard errors are anchored to
+  the owning store form. Reference the bundle with `[:script {:src
+  "/assets/cljs/main.js" :defer true}]` from `page`'s `:html/head`; a top-level
+  `(defonce _ (main))` self-starts it so the page needs no inline JS.
+- **The compiler dep is build-only** — `deps_add {lib
+  "org.clojure/clojurescript" … client true}` routes it to a `:cljs` deps.edn
+  alias; it is never hot-loaded and never ships in the runtime jar or native
+  binary. The backend is a per-project config (`config_file {path "client" key
+  "compiler"}`, default `:clojurescript`) — cherry/squint are future backends,
+  same source.
+- **Read platforms at a glance** with `query_depends {modules true}` — a
+  `:platforms` map names the `:cljs`/`:cljc` namespaces (undeclared = `:jvm`).
+- **Two current rough edges** (both benign): the D6 `!`-effect warning fires on
+  idiomatic cljs entry points (`^:export main` touches the DOM) — advisory, not
+  a refusal; and kondo lints a `:cljs` form as `.clj`, so `js/*` draws a
+  spurious "unresolved namespace js" WARNING at the done-point — expected, not
+  an error.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`

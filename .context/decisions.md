@@ -1832,3 +1832,96 @@ html→hiccup conversion tool (build on pasted-HTML friction), an
 oversized-page-defn advisory, a CSP capability key, and ClojureScript
 (`ideas/clojurescript-client-code.md`, escalation after htmx). Wave
 frictions: `ideas/html-wave-frictions.md`.
+
+## D-web-cljs (2026-07-22) — client-side ClojureScript: one store, one dialect, compiled on the JVM
+
+The CLIENT half of D-web: browser-side logic authored the way Clojure is —
+form-grain edits, merges, provenance, write-time verification — by writing it
+in ClojureScript/`.cljc` in the SAME store, edited by the SAME tools, gated by
+the SAME dialect, and compiled to JS as a build step whose output rides the
+existing content-addressed blob store. The alternative (a `src/js/` directory,
+or npm/JS tooling) is a second world none of slopp's machinery can see into.
+The deciding realizations, all settled with the user: real
+`org.clojure/clojurescript` compiles cljs→JS **entirely on the JVM** (Google
+Closure is Java — no Node to compile), and a `.cljc` form's `:clj` branch is
+ordinary JVM Clojure, so the EXISTING oracle already verifies the majority of
+client logic. GraalJS/Node were considered and dropped: running the compiled
+JS is browser territory (Cypress/Playwright someday), not the write-verify
+loop. Decisions:
+
+- **The `:platform` register** (`module_platform` → `:module-platforms`),
+  namespace-grained, most-specific-wins, absent = `:jvm` (nothing changes for
+  existing code). `:jvm` = `.clj`, loads on the JVM, never compiled (default).
+  `:cljc` = `.cljc`, loads on the JVM (`:clj` branch) AND compiles to JS —
+  shared schemas/logic. `:cljs` = `.cljs`, NEVER loaded into the oracle
+  (references `js/*`/DOM), ONLY compiled. It routes: which extension
+  `render/source-path` emits, which tree `build!` materializes to (`cljs-src/`),
+  and whether the image loader / cljs compiler sees the ns. Mirrors the
+  `:module-tiers` purity register exactly; landed almost free on the
+  D-fold-field-registry (one field row + one op row auto-generated the merge
+  proof, empty-store seed, and db persistence).
+- **The oracle is JVM + compile-error — NO GraalJS, NO Node in the inner
+  loop.** `.cljc` platform-neutral logic → the existing JVM oracle (free, and
+  trustworthy: real-cljs semantics are very close to JVM Clojure). Compile-error
+  -as-oracle: the real cljs compiler runs on the JVM at build time, so "does it
+  compile?" is a genuine form-anchored red/green (analyzer warnings via
+  `*cljs-warning-handlers*` + hard-error `ExceptionInfo`, both anchored to the
+  owning store form, name-addressed, no file:line). Running compiled JS is
+  OUT OF SCOPE. The one honest tradeoff — a cljs-ONLY fn (touches `js/*`) is
+  verified only by "it compiled" until browser tests exist — is mitigated by a
+  discipline good regardless: **keep platform-neutral logic in `.cljc`
+  (JVM-verified); keep `.cljs` thin, at the genuinely browser-bound edge.** The
+  dogfood proved it — `slopp.client.nsfilter/matches?` (`.cljc`) red/greened on
+  the JVM like any fn; only the DOM glue (`slopp.client.nsview`) is `.cljs`.
+- **The compiler is pluggable, per-project config** (user call). Real
+  `org.clojure/clojurescript` now; the stored source and the `:platform` marker
+  are compiler-agnostic (just Clojure(Script) source), so the compile step
+  DISPATCHES on a `compile-client*` multimethod keyed on the `client`/`compiler`
+  config (default `:clojurescript`). cherry/squint slot in later as new
+  `defmethod`s **without re-authoring a single form** — swap the config, not the
+  code. Only `:clojurescript` is implemented; the others are registered
+  deferrals.
+- **A build-only dependency channel** (`deps_add {client true}` → `:client-deps`
+  manifest → a `:cljs` alias in generated `deps.edn`), following the `:native`
+  alias precedent. It carries `org.clojure/clojurescript`; it is NEVER
+  hot-loaded into the running oracle and NEVER enters the shipped native binary
+  or slim jar. `compile-client!` (an `:external` op) materializes the store,
+  shells `clojure -M:cljs` in a fresh JVM (reusing `run-cmd!`/`clojure-bin`
+  verbatim), and `file_put`s the JS — served by the EXISTING static mount with
+  zero new serving code (`public/cljs/main.js` → `/assets/cljs/main.js`).
+- **The write-path enabler**: a `:cljs` form references `js/*` and can't load
+  into the oracle, so the base write ops (`add-form!`/`edit-replace!`/`ingest!`/
+  `create-ns!`; `delete-form!` already) pass `:load? (store/jvm-loadable? …)` to
+  `rebased-write!` (skipping the per-form JVM hot-load) and report
+  `session/cljs-deferred-summary` — `:unverified`, reason
+  `:cljs-deferred-to-compile` — instead of running the oracle. `ns_create
+  {platform}` declares the platform BEFORE the source lands, so a client ns is
+  BORN `:cljs` and its first `js/*` form defers instead of failing to load.
+  `query_depends {modules true}` surfaces `:platforms` alongside `:purity`.
+- **Platform-scoped rules** (user call: "everywhere / clojurescript / clojure").
+  Every write gate carries a `:rule/platform` scope (`:everywhere` default /
+  `:clojure` / `:clojurescript`); `gate-check` reads the form's platform and
+  skips a rule the scope excludes — and a `.cljc` form satisfies BOTH worlds
+  (it compiles to both). The M3 JVM-dep effect boundary re-scoped to `:clojure`
+  (cljs's dep world is npm/JS, analyzed differently). This governs slopp's OWNED
+  rules; kondo's own per-lang linting is a separate, still-open item (below).
+- **Effect/dialect fit**: the dialect gate is MORE at home in cljs (D3 no-eval,
+  D4 no-user-macros are already law). But D6 `!`-effect naming assumes JVM
+  effects — in the browser everything touches the DOM — so a `:cljs` module
+  stays the permissive `:effects` default and the D6 `!`-warning is ADVISORY
+  (it fires as a false positive on idiomatic `^:export main`; left the names
+  idiomatic and logged it). A platform-aware `:client` effect tier is deferred.
+
+Deferred, deliberately: running compiled JS in the write-verify loop (browser/
+Cypress/Playwright — the eventual app-level layer); cherry/squint backends (the
+multimethod is built for them); the npm/JS dependency world (its own later
+record); a `:client` effect tier refining D6 for browser code; the
+`:web/reads`/`:web/effects` → generated typed client API (the deeper LoB
+payoff beyond a hand-shared schema); **kondo linting a `:cljs` form by its LANG**
+(it currently lints as `.clj`, so `js/*` draws a spurious warning — warning-
+level, needs `:lang` threaded through the memoized lint pipeline); and
+**extending the write-path enabler to the REFACTOR ops** (`edit_rename`/
+`edit_move_forms`/`change_signature`/… still JVM-hot-load, so a `:cljs` form can
+be created and replaced but not yet renamed or moved). Supersedes
+`ideas/clojurescript-client-code.md`. Wave frictions:
+`ideas/cljs-wave-frictions.md`.

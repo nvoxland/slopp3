@@ -107,6 +107,28 @@ says exercise the touched forms, and:
 Image-spawning tests must be `^:external` and must `close!`/`stop!` in a
 `finally` — leaked child JVMs are a bug (`ps aux | grep nrepl.cmdline`).
 
+## Client code (ClojureScript)
+
+The store now carries client code (`slopp.client.*`, the store-browser
+namespace filter). A namespace's target is the `:platform` register — `:jvm`
+(default), `:cljc` (portable: JVM-verified AND compiled), `:cljs` (client-only:
+compiled, never loaded into the oracle). Declare it with `module_platform`, or
+at birth with `ns_create {platform}`.
+
+- **Verify it** the usual way: `:cljc`/`:jvm` logic red/greens on the JVM
+  oracle like any Clojure (keep testable logic in `.cljc`); a `:cljs` write
+  lands `:unverified :cljs-deferred-to-compile` — its gate is the compiler.
+- **Compile it** with the `compile_client` tool → one `:simple` JS bundle
+  recorded as a served blob (`public/cljs/main.js` → `/assets/cljs/main.js`).
+  It shells **real ClojureScript on the JVM — no Node** — via the generated
+  `:cljs` deps.edn alias. That alias needs `org.clojure/clojurescript` as a
+  **build-only** dep: `deps_add {lib "org.clojure/clojurescript" … client
+  true}` (routed to `:client-deps`, never hot-loaded, never in the runtime jar
+  or native binary). Nothing runs `compile_client` automatically — it is a
+  build/serve step, not part of the write-verify loop.
+- Running the compiled JS against a real DOM is out of scope (browser/Cypress
+  someday), not the inner loop.
+
 ## Documentation site
 
 `docs/` + `mkdocs.yml`, built with MkDocs Material. These are ordinary git
