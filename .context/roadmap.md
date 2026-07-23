@@ -501,3 +501,33 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
     `:test {:extra-paths ["test"]}` alias when the project has tests (so `test/`
     is runnable, off the default classpath — no-test output stays byte-identical
     so the `ours?` guard holds); git `path->ns` accepts `test/**.clj` on push.
+
+## Typed API contracts, gated and shared with the client (user ask, 2026-07-23)
+
+The endgame the D-web-cljs hand-shared schema (`slopp.client.nsschema`) only
+gestures at. Two enforceable pieces the user proposed:
+
+1. **A gate requiring a SCHEMA on every web endpoint** — a web-facing `defn`
+   (`:web/method`/`:web/path`) must declare the shape of what it READS
+   (request/params) and RETURNS (response body), the way `:web/auth` is already
+   mandatory. Refuse-grade, dial-able; inert until `http.enabled`. This makes
+   the request/response contract a first-class, checkable artifact instead of
+   living implicitly in the handler body.
+
+2. **The schema is `.cljc`, SHARED with the client** — the same schema the
+   server validates against is compiled into the client bundle, so front-end
+   code that calls the endpoint is checked against the SAME contract. A FE call
+   that sends the wrong request shape, or reads a response field the endpoint
+   doesn't declare, becomes a WRITE-TIME red (the deeper cousin of the existing
+   `web-dangling-route-refs` route-integrity index — that ties links to routes;
+   this ties data shapes to endpoints). Malli is the vehicle (proven to compile
+   to cljs, D-web-cljs (b)); a generated typed client (`fetch` wrapper + a
+   validating decoder per endpoint) is the natural output.
+
+Relation to what shipped: the route-ref index already joins literal
+`:href`/`:action` to routes; `:web/reads`/`:web/effects` already declare an
+endpoint's data dependencies; malli already compiles to cljs. So the pieces
+exist — the work is (a) the endpoint-schema gate, (b) deriving/sharing the
+`.cljc` schema, (c) the FE-side contract check (a client-usage lint or a
+generated typed client). Supersedes the terse "typed client API" deferral in
+D-web-cljs. Needs its own design pass and decision record before building.

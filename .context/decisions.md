@@ -1912,16 +1912,35 @@ loop. Decisions:
   (it fires as a false positive on idiomatic `^:export main`; left the names
   idiomatic and logged it). A platform-aware `:client` effect tier is deferred.
 
+- **Follow-ons shipped (Wave 4 a/b/c).** (b) A **shared `.cljc` malli schema**
+  proves a real validation LIBRARY crosses the boundary: `slopp.client.nsschema/
+  ns-row` is JVM-verified AND compiled into the client bundle. malli was a
+  kernel-only dep absent from the store manifest, so the cljs compile couldn't
+  resolve it — added to the build-only `:client` channel (the bundle now
+  carries malli's cljs code; the JVM keeps using the kernel copy). (a)
+  **Platform-aware kondo linting** — `index/lint` gained a `:lang` arg threaded
+  from the ns platform (`store/kondo-lang`), so a `:cljs` form's `js/*` and
+  `cljs.core` resolve instead of a false unresolved-namespace finding; the memo
+  keys on `[source lang]`. The lint pipeline is SELF-HOSTING (it lints slopp's
+  own `:clj` source), so `kondo-pass`/`run-kondo`/`lint` keep an arity-1 default
+  of `:clj` — and a mid-change arity-2-only `kondo-pass` deadlocked every write
+  through the gate (recovered by temporarily marking `slopp.index` `:cljs` to
+  skip the gate; frictions #10). (c) An **opt-in recompile-on-write dev loop** —
+  `client`/`auto-compile` config on → a client-ns write recompiles the bundle
+  (`session/maybe-recompile-client!`, decoupled via `store/late-ref` because
+  `slopp.api.cljs → api.external → slopp.api` would cycle) so `--live` serves
+  fresh JS. Default off; the common `:jvm` write is a nil no-op.
+
 Deferred, deliberately: running compiled JS in the write-verify loop (browser/
 Cypress/Playwright — the eventual app-level layer); cherry/squint backends (the
 multimethod is built for them); the npm/JS dependency world (its own later
-record); a `:client` effect tier refining D6 for browser code; the
-`:web/reads`/`:web/effects` → generated typed client API (the deeper LoB
-payoff beyond a hand-shared schema); **kondo linting a `:cljs` form by its LANG**
-(it currently lints as `.clj`, so `js/*` draws a spurious warning — warning-
-level, needs `:lang` threaded through the memoized lint pipeline); and
+record); a `:client` effect tier refining D6 for browser code; **typed API
+contracts gated + shared with the client** (a schema-per-endpoint gate whose
+`.cljc` schema checks front-end usage — the deeper LoB payoff beyond a
+hand-shared schema; scoped in `.context/roadmap.md`, user ask 2026-07-23);
 **extending the write-path enabler to the REFACTOR ops** (`edit_rename`/
 `edit_move_forms`/`change_signature`/… still JVM-hot-load, so a `:cljs` form can
-be created and replaced but not yet renamed or moved). Supersedes
-`ideas/clojurescript-client-code.md`. Wave frictions:
-`ideas/cljs-wave-frictions.md`.
+be created and replaced but not yet renamed or moved); and an **async** client
+recompile (the dev loop is synchronous — a client write blocks ~seconds while
+the bundle rebuilds). Supersedes `ideas/clojurescript-client-code.md`. Wave
+frictions: `ideas/cljs-wave-frictions.md`.

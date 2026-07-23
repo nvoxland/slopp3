@@ -124,8 +124,14 @@ at birth with `ns_create {platform}`.
   `:cljs` deps.edn alias. That alias needs `org.clojure/clojurescript` as a
   **build-only** dep: `deps_add {lib "org.clojure/clojurescript" … client
   true}` (routed to `:client-deps`, never hot-loaded, never in the runtime jar
-  or native binary). Nothing runs `compile_client` automatically — it is a
+  or native binary). A `.cljc`/`.cljs` ns that requires a library (e.g. malli)
+  needs that library in the `:client` channel too, so the compile can resolve
+  it. `compile_client` doesn't run automatically by default — it's a
   build/serve step, not part of the write-verify loop.
+- **Optional dev loop:** `config_file {path "client" key "auto-compile" value
+  "true"}` makes every client-ns write recompile the bundle, so a `--live`
+  server serves fresh JS without a manual `compile_client`. Off by default (the
+  compile is synchronous — a client write blocks ~seconds).
 - Running the compiled JS against a real DOM is out of scope (browser/Cypress
   someday), not the inner loop.
 

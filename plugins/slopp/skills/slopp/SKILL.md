@@ -473,11 +473,19 @@ Cypress/Playwright territory someday).
   same source.
 - **Read platforms at a glance** with `query_depends {modules true}` — a
   `:platforms` map names the `:cljs`/`:cljc` namespaces (undeclared = `:jvm`).
-- **Two current rough edges** (both benign): the D6 `!`-effect warning fires on
-  idiomatic cljs entry points (`^:export main` touches the DOM) — advisory, not
-  a refusal; and kondo lints a `:cljs` form as `.clj`, so `js/*` draws a
-  spurious "unresolved namespace js" WARNING at the done-point — expected, not
-  an error.
+- **Share real logic AND libraries in `.cljc`** — a malli schema in `.cljc`
+  (`m/validate`) is JVM-verified by the oracle here AND compiled into the
+  browser bundle, so the same contract checks both sides. Keep the schema and
+  any pure transform in `.cljc`; the `.cljs` stays thin.
+- **Dev loop (optional):** `config_file {path "client" key "auto-compile" value
+  "true"}` recompiles the bundle on every client-ns write, so a `--live` server
+  serves fresh JS without a manual `compile_client`. Off by default (a client
+  write blocks ~seconds while it rebuilds); the write response carries
+  `:client-recompiled`.
+- **One benign rough edge:** the D6 `!`-effect warning fires on idiomatic cljs
+  entry points (`^:export main` touches the DOM) — advisory, not a refusal.
+  (Kondo lints each form in its platform's language, so `js/*` no longer draws a
+  false "unresolved namespace" finding.)
 
 ## Questions → the oracle
 
