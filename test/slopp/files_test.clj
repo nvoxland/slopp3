@@ -145,12 +145,18 @@
         [s1 d1] (store/record-file-put (store/empty-store) "public/a.png" b64
                                        :encoding "base64" :content-type "image/png")]
     (db/persist! conn s1 d1)
-    (testing "load-store restores the blob cache and the entry"
+    (testing "load-store restores the ENTRY; the bytes stay in the table, not memory"
       (let [st (db/load-store conn)]
         (is (= (:sha d1) (get-in st [:files "public/a.png" :sha])))
         (let [{:keys [content content-type]} (store/file-content st "public/a.png")]
           (is (= "image/png" content-type))
-          (is (java.util.Arrays/equals png ^bytes content)))))
+          ;; :blobs is a PARTIAL cache — file-content documents :content nil on
+          ;; a miss and defers to the db. Loading every blob's bytes at open
+          ;; cost a compiled JS bundle (~1.8MB) on every session open, for
+          ;; something no consumer needs until it asks.
+          (is (nil? content) "no blob bytes are pulled into memory at open")
+          (is (java.util.Arrays/equals png ^bytes (db/get-blob conn (:sha d1)))
+              "and the bytes are right there, on demand"))))
     (testing "the journal payload is sha-only — no base64 in the deltas table"
       (let [payloads (map :deltas/payload
                           (jdbc/execute! conn ["SELECT payload FROM deltas"]))]

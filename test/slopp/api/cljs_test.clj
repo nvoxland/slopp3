@@ -248,3 +248,23 @@
                                    :prompt "try to hand-edit the generated wrapper")]
           (is (re-find #"generate_client" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest client-wrapper-specs-honors-the-client-opt-out
+  ;; Dogfood finding: an HTML page is a :web/path form like any other, so
+  ;; generate_client emitted a typed fetch wrapper for it — one whose
+  ;; (.json resp) can never succeed on HTML. Sniffing the response schema would
+  ;; be the wrong fix (:string is a legitimate JSON response), so the endpoint
+  ;; declares it: ^{:web/client false} opts out of client generation.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'pg.api
+                             (str "(ns pg.api)\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/\" :web/auth :public"
+                                  " :web/response :string :web/client false}"
+                                  " home \"The page.\" [r] r)\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/api/x\" :web/auth :public"
+                                  " :web/response :map} data \"Data.\" [r] r)\n")))
+        {:keys [wrappers problems]} (cljs/client-wrapper-specs st)]
+    (testing "the page opts out; the JSON endpoint still gets its wrapper"
+      (is (= '[data] (mapv :fn-name wrappers))))
+    (testing "opting out is not a problem to report — it is a declaration"
+      (is (empty? problems) (pr-str problems)))))

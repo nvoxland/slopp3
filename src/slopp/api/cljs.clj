@@ -129,23 +129,30 @@
   [store]
   (reduce
    (fn [acc {:keys [ns name meta]}]
-     (let [endpoint (symbol (str ns) (str name))
-           method   (:web/method meta)
-           req      (resolve-schema-ref store ns (:web/request meta))
-           resp     (resolve-schema-ref store ns (:web/response meta))
-           bad      (vals (into {} (map (juxt :sym identity))
-                                (filter (comp #{:not-cljc :missing} :kind) [req resp])))]
-       (if (seq bad)
-         (update acc :problems into
-                 (for [b bad] {:endpoint endpoint :schema-ref (:sym b)
-                               :ns (:ns b) :issue (:kind b) :platform (:platform b)}))
-         (update acc :wrappers conj
-                 {:fn-name  (symbol (str name (when (#{:post :put :patch :delete} method) "!")))
-                  :method   method
-                  :path     (:web/path meta)
-                  :endpoint endpoint
-                  :request  (if (#{:post :put :patch} method) req {:kind :none})
-                  :response resp}))))
+     ;; ^{:web/client false} opts an endpoint OUT of client generation. An HTML
+     ;; page is a :web/path form like any other, but a typed fetch wrapper whose
+     ;; (.json resp) runs against HTML is nonsense. Declared, never sniffed:
+     ;; :string is a legitimate JSON response, so the response schema cannot
+     ;; decide this — only the endpoint can.
+     (if (false? (:web/client meta))
+       acc
+       (let [endpoint (symbol (str ns) (str name))
+             method   (:web/method meta)
+             req      (resolve-schema-ref store ns (:web/request meta))
+             resp     (resolve-schema-ref store ns (:web/response meta))
+             bad      (vals (into {} (map (juxt :sym identity))
+                                 (filter (comp #{:not-cljc :missing} :kind) [req resp])))]
+         (if (seq bad)
+           (update acc :problems into
+                   (for [b bad] {:endpoint endpoint :schema-ref (:sym b)
+                                 :ns (:ns b) :issue (:kind b) :platform (:platform b)}))
+           (update acc :wrappers conj
+                   {:fn-name  (symbol (str name (when (#{:post :put :patch :delete} method) "!")))
+                    :method   method
+                    :path     (:web/path meta)
+                    :endpoint endpoint
+                    :request  (if (#{:post :put :patch} method) req {:kind :none})
+                    :response resp})))))
    {:wrappers [] :problems []}
    (edit.modules/web-endpoint-rows store)))
 

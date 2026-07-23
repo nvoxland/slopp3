@@ -220,14 +220,6 @@
   (some-> (jdbc/execute-one! conn ["SELECT bytes FROM blobs WHERE sha = ?" (str sha)])
           :blobs/bytes))
 
-^:reads (defn all-blobs
-  "Every stored blob as {sha → bytes} — load-store's read into the
-  in-memory `:blobs` cache."
-  [conn]
-  (into {}
-        (map (fn [r] [(:blobs/sha r) (:blobs/bytes r)]))
-        (jdbc/execute! conn ["SELECT sha, bytes FROM blobs"])))
-
 ^:reads (defn files
   "The store's non-code files manifest ({path → text}), read straight from
   meta — for the git projection paths that need it without a session."
@@ -261,7 +253,11 @@
       :next-id    next-id
       :line-id    (:meta/v (jdbc/execute-one!
                             conn ["SELECT v FROM meta WHERE k = 'line-id'"]))
-      :blobs      (all-blobs conn)}
+      ;; NOT loaded at open. :blobs is a partial cache by design — file-content
+      ;; documents the miss and the db fallback owns it, and put-blobs! is
+      ;; INSERT OR IGNORE so an empty cache never prunes. Reading every blob's
+      ;; bytes here cost a compiled JS bundle (~1.8MB) on every session open.
+      :blobs      {}}
      (map (fn [{:keys [field meta-key init absent-nil? normalize]}]
             (let [raw (some-> (jdbc/execute-one!
                                conn ["SELECT v FROM meta WHERE k = ?" meta-key])

@@ -125,7 +125,11 @@ client-deps (merge (:client-deps st) (:client provided))
       (io/make-parents file)
       (if (map? entry)
         ;; a binary asset: real bytes from the content-addressed cache
-        (when-let [^bytes bs (get (:blobs st) (:sha entry))]
+        ;; a binary asset: real bytes, from the in-memory cache when this
+        ;; session wrote them, else straight from the content-addressed
+        ;; table — :blobs is a PARTIAL cache and is not populated at open
+        (when-let [^bytes bs (or (get (:blobs st) (:sha entry))
+                                 (some-> (:db @session) (db/get-blob (:sha entry))))]
           (io/copy bs file))
         (spit file entry))))
   (doseq [[path entry] (cond-> (:config st)

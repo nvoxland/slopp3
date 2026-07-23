@@ -140,3 +140,31 @@
       (testing "a non-commit delta has no tree and asking is nil, not an error"
         (is (nil? (db/delta-tree conn "nope"))))
       (finally (.close conn)))))
+
+(deftest blobs-are-not-pulled-into-memory-at-open
+  ;; The same "don't read it at open" lever as the commit trees: all-blobs
+  ;; pulled EVERY blob's bytes into the store value at every session open, and
+  ;; a compiled JS bundle is ~1.8MB. Nothing at open needs them. This is safe by
+  ;; construction, not by luck: :blobs is a PARTIAL cache by design (file-content
+  ;; documents the miss and defers to the db), and put-blobs! is INSERT OR
+  ;; IGNORE, so an empty cache on the next write is a no-op and can never prune.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-blobs" (make-array java.nio.file.attribute.FileAttribute 0)))
+        conn (db/open! dir)
+        png  (byte-array [(byte -119) 80 78 71 13 10 26 10])
+        b64  (.encodeToString (java.util.Base64/getEncoder) png)
+        [s1 _] (store/record-file-put (store/empty-store) "public/logo.png" b64
+                                      :encoding "base64" :content-type "image/png")
+        sha  (get-in s1 [:files "public/logo.png" :sha])]
+    (try
+      (is (true? (db/append! conn s1 [] [] nil)))
+      (let [loaded (db/load-store conn)]
+        (testing "the manifest entry loads, the BYTES do not"
+          (is (contains? (:files loaded) "public/logo.png"))
+          (is (empty? (:blobs loaded))))
+        (testing "and a later write cannot prune what was never loaded"
+          (is (true? (db/append! conn loaded [] [] nil)))
+          (is (java.util.Arrays/equals png ^bytes (db/get-blob conn sha)))))
+      (testing "the bytes are still there, on demand"
+        (is (java.util.Arrays/equals png ^bytes (db/get-blob conn sha))))
+      (finally (.close conn)))))
