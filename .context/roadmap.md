@@ -502,6 +502,72 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
     is runnable, off the default classpath — no-test output stays byte-identical
     so the `ours?` guard holds); git `path->ns` accepts `test/**.clj` on push.
 
+## Session-open cost: the journal carries 323MB of commit trees (measured 2026-07-23)
+
+**Measured, not estimated.** A cold MCP handshake on slopp's own store is ~23s:
+JVM+classload ~0.8s · `boot/load-store!` (load 161 nses into the JVM) ~5s ·
+`db/load-store` **9.4s** · MCP wiring/git listener the rest. Inside
+`db/load-store`:
+
+| part | cost |
+|---|---|
+| elements: 3666 rows | 12ms SQL + 317ms parse |
+| deltas: 9923 rows | 311ms SQL + **7670ms parse** |
+| blobs | 0ms (this store has none) |
+
+**94% of the journal is `:commit` payloads:** 239 markers × ~1.35MB of P4-m8
+byte-exact `:tree` snapshots = **323.7MB of 344MB total**. Parsing all deltas
+costs 7424ms; excluding commits, **454ms**. D-web/P4-m8 recorded this cost as
+"tens of KB of journal per milestone" — it is ~50× that, and now dominates
+every session open.
+
+**Not a state-reconstruction problem.** Current state is already checkpointed
+(P4-m5a): `load-store` reads folded `elements` rows + materialized meta
+registers — it never replays the log. Reconstructing state is ~330ms. The 7.4s
+is loading HISTORY nobody asked for.
+
+**Two cheap fixes MEASURED AND REJECTED** (recorded so they are not re-tried):
+- *Pre-serialize the tree to one EDN string token*: *slower* (7469ms vs
+  6904ms) — reading a 1.35MB escaped string literal costs as much as parsing
+  the structure.
+- *Move trees into the content-addressed blob store*: `db/all-blobs` loads every
+  blob's BYTES eagerly into the store value, so this relocates the cost rather
+  than removing it. (Latent already: a store with a compiled JS bundle pays it.)
+
+**The fix that works: the bytes must not be read at open. ✅ SHIPPED.** `deltas`
+gained its own `tree` column; `append!` writes it there and strips it from the
+payload; `load-store` selects EXPLICIT columns that exclude it (so the bytes are
+neither fetched nor parsed); `db/delta-tree` reads it on demand for the one
+reader, `slopp.git/project-journal!`, which already held `map-conn`. Old inline
+markers keep working via `(or (:tree d) (delta-tree …) (backfill-tree …))`.
+Schema migration is automatic and idempotent (`ALTER TABLE … ADD COLUMN`, in
+`open!`); this store's 237 tree-carrying markers were migrated once (2 retroactive
+`:target` markers legitimately have none).
+
+**Measured after:** `db/load-store` **9.4s → 1.3s**; cold MCP handshake
+**23s → 10s** — now comfortably inside Claude Code's 30s default, so a fresh
+install no longer races it. git identity is preserved: `fingerprint` hashes only
+`[id at description target]` ("NOT the whole map"), so `git_map` pins still hit
+and published shas do not move.
+
+**Sequencing lesson (cost a live deadlock):** the code change landed BEFORE the
+column existed on the running server's db, so every write failed — and `append!`
+catches `SQLException` and returns false, which the caller reports as "commit
+contention: too many concurrent writes". Writes were dead until the column was
+added out-of-band. A schema-dependent write-path change must run its migration
+FIRST; and that error message should distinguish a genuine head-move from a
+failed statement, because it sent the diagnosis in the wrong direction.
+
+Same lever applies to `all-blobs`: blob CONTENT should be read on demand, not
+folded into the store value at open.
+
+Second, independent lever: **the handshake does not need the store at all** —
+only tool calls do. `initialize` could return immediately with the store value
+loading in the background (the pattern `:slopp.api/async-image?` already uses
+for the image), so connect never races the client timeout. 23s was landing
+uncomfortably close to Claude Code's 30s default; `MCP_TIMEOUT` is now set in
+this repo, but a fresh install has no such protection.
+
 ## Typed API contracts, gated and shared with the client (user ask, 2026-07-23)
 
 The endgame the D-web-cljs hand-shared schema (`slopp.client.nsschema`) only

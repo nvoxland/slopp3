@@ -917,6 +917,24 @@ review_scan (callable-data-invisible trace limit) — coverage is structural
 via the generated merge harness, not absent. The module-edge nil-marker
 clobber is unreachable (open! adopts before any write).
 
+**A server restart can fake 4 lint ERRORS (2026-07-23).** A `full_check` came
+back red with `slopp.index/lint is called with 2 args but expects 1` in four
+namespaces, plus eleven `Unresolved var:` warnings — every one of them naming a
+var added earlier the same day (`client-build-deps`, `client-signature`,
+`compiler-coord`, `kondo-lang`, `maybe-recompile-client!`). All of it was false:
+`lint` demonstrably has both arities, every "unresolved" var exists and passes
+its own tests, and the external tier was fully green (691 tests). The cause is
+the one `lint`'s own docstring names — "findings are NOT a function of `source`
+alone; kondo reads cross-ns facts (arities, var existence) from its cache". The
+MCP server had restarted into a fresh process, and its empty in-process memo no
+longer matched a `.slopp/kondo-cache` predating those vars. `rm -rf
+.slopp/kondo-cache` (pure cache, rebuilds) → green.
+
+Worth knowing because the failure mode is maximally misleading: a red gate
+accusing you of arity errors in code you did not touch, on a store whose entire
+test suite passes. Suspect the cache when lint errors name recently-added vars
+and the tiers are green — especially right after a restart.
+
 **Frozen-form trap (D-web-contracts part 2):** `edit.modules/
 missing-doc-warning` classified heads with a `'#{defn defmacro}` DATA literal —
 but D4 bans `defmacro` *wherever it appears*, quoted data included
