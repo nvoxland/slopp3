@@ -346,3 +346,50 @@
         (is (= [:user/insert] (:web/effects (first r))))))
     (testing "inert until http.enabled"
       (is (empty? (f s0))))))
+
+(deftest client-stale-advisory-fires-on-endpoint-drift
+  ;; the "explicit + advisory" regeneration decision's safety net: once a client
+  ;; has been generated (a client/generated-sig is on record), a later contract
+  ;; change makes the done-advisory nudge generate_client. It never nags a store
+  ;; that never generated one.
+  (let [mk (fn [resp] (-> (store/empty-store)
+                          (store/ingest 'st.api
+                                        (str "(ns st.api)\n\n"
+                                             "(defn ^{:web/method :post :web/path \"/o\""
+                                             " :web/request st.c/a :web/response " resp "} make [r] r)\n"))))
+        old-sig (edit.modules/client-signature (mk "st.c/a"))]
+    (testing "a recorded sig that no longer matches the current endpoints fires the advisory"
+      (let [drifted (first (store/record-config-put (mk "st.c/b") "client" :manifest
+                                                    "generated-sig" old-sig))]
+        (is (seq (rules/client-stale-check nil drifted nil)))))
+    (testing "a matching sig is quiet"
+      (let [fresh-store (mk "st.c/b")
+            fresh (first (store/record-config-put fresh-store "client" :manifest
+                                                  "generated-sig" (edit.modules/client-signature fresh-store)))]
+        (is (empty? (rules/client-stale-check nil fresh nil)))))
+    (testing "never generated (no recorded sig) → never nags"
+      (is (empty? (rules/client-stale-check nil (mk "st.c/a") nil))))))
+
+(deftest inline-schema-dup-advisory-nudges-extraction
+  ;; the DRY paved-road nudge (D-web-contracts part 2): 2+ endpoints declaring
+  ;; the SAME structured inline schema should extract it to a named .cljc var.
+  (testing "two endpoints sharing an identical inline schema fire the advisory"
+    (let [st (-> (store/empty-store)
+                 (store/ingest 'dup.api
+                               (str "(ns dup.api)\n\n"
+                                    "(defn ^{:web/method :post :web/path \"/a\""
+                                    " :web/request [:map [:x :int]] :web/response :map} a [r] r)\n\n"
+                                    "(defn ^{:web/method :post :web/path \"/b\""
+                                    " :web/request [:map [:x :int]] :web/response :map} b [r] r)\n")))
+          findings (rules/inline-schema-dup-check nil st nil)]
+      (is (seq findings))
+      (is (some #(re-find #"named .cljc" (:teach %)) findings))))
+  (testing "distinct inline schemas do not fire; a shared bare keyword is too trivial to nag"
+    (let [st (-> (store/empty-store)
+                 (store/ingest 'dup2.api
+                               (str "(ns dup2.api)\n\n"
+                                    "(defn ^{:web/method :post :web/path \"/a\""
+                                    " :web/request [:map [:x :int]] :web/response :map} a [r] r)\n\n"
+                                    "(defn ^{:web/method :post :web/path \"/b\""
+                                    " :web/request [:map [:y :string]] :web/response :map} b [r] r)\n")))]
+      (is (empty? (rules/inline-schema-dup-check nil st nil))))))

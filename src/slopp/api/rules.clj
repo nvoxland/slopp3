@@ -323,6 +323,47 @@
   (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
     (vec (:dangling (api.web/dangling-route-refs st*)))))
 
+(defn client-stale-check
+  "Done-advisory (D-web-contracts part 2): the generated typed client
+   (generate_client) is STALE — an endpoint or its :web/request/:web/response
+   changed since the client was last generated. Fires only once a client has been
+   generated (a `client`/`generated-sig` is on record), so it never nags a store
+   that has not opted into a generated client. Regenerating re-records the
+   signature and clears it."
+  [_session store _changed]
+  (let [recorded (get-in store [:config "client" :values "generated-sig"])]
+    (when (and recorded (not= recorded (edit.modules/client-signature store)))
+      [{:stale-client true
+        :teach (str "the generated typed client is out of date — an endpoint or its"
+                    " :web/request/:web/response changed since generate_client last"
+                    " ran. Re-run generate_client to re-derive the wrappers.")}])))
+
+(defn inline-schema-dup-check
+  "Done-advisory (D-web-contracts part 2): 2+ endpoints declare the SAME
+   structured inline :web/request/:web/response schema — the DRY nudge toward the
+   paved road. A shared shape should be a named .cljc schema VAR so server and
+   client validate against ONE definition and a change lands in one place. Only
+   structured (vector) inline schemas count — a bare keyword like :map is too
+   trivial to extract. Fires once per duplicated shape."
+  [_session store _changed]
+  (let [inlines (for [{:keys [ns name meta]} (edit.modules/web-endpoint-rows store)
+                      k     [:web/request :web/response]
+                      :let  [v (get meta k)]
+                      :when (vector? v)]
+                  {:endpoint (symbol (str ns) (str name)) :schema v})
+        dups    (->> inlines
+                     (group-by :schema)
+                     (keep (fn [[schema es]]
+                             (let [eps (distinct (map :endpoint es))]
+                               (when (>= (count eps) 2) [schema (vec eps)])))))]
+    (for [[schema eps] dups]
+      {:duplicate-inline-schema (pr-str schema)
+       :endpoints eps
+       :teach (str (count eps) " endpoints declare the identical inline schema "
+                   (pr-str schema) " — extract it to a named .cljc schema var so"
+                   " the server and the generated client validate against ONE"
+                   " definition and a change lands once.")})))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -386,6 +427,16 @@
     :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
 {:key :web-dangling-route-refs :severity :error :check #'dangling-route-refs-check
     :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
+   {:key :stale-client :severity :advisory :check #'client-stale-check
+    :selftest-note (str "needs a recorded client/generated-sig config (a source-only"
+                        " fixture cannot carry one) — covered by rules-test/"
+                        "client-stale-advisory-fires-on-endpoint-drift")}
+   {:key :inline-schema-dup :severity :advisory :check #'inline-schema-dup-check
+    :fires-on (str "(ns ds.api)\n"
+                   "(defn ^{:web/method :post :web/path \"/a\" :web/request [:map [:x :int]]"
+                   " :web/response :map} a [r] r)\n"
+                   "(defn ^{:web/method :post :web/path \"/b\" :web/request [:map [:x :int]]"
+                   " :web/response :map} b [r] r)\n")}
    ])
 
 (defn run-done-advisories!

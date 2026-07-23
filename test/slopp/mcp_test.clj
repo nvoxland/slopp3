@@ -1185,7 +1185,7 @@
                                    :prompt "opt in"})
         (call! sess "edit_add_form"
                {:ns "wr.api"
-                :source "(defn ^{:web/method :get :web/path \"/api/ping\" :web/auth :public} ping \"P.\" [req] req)"
+                :source "(defn ^{:web/method :get :web/path \"/api/ping\" :web/auth :public :web/response :map} ping \"P.\" [req] req)"
                 :prompt "a public endpoint"})
         (let [rep (edn/read-string (call! sess "query_routes" {}))
               row (first (:routes rep))]

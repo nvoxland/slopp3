@@ -1,6 +1,6 @@
 (ns slopp.api.modules-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.edit.modules :as edit.modules]))
 
 (deftest ^:external the-module-surface-is-browsable
   (let [sess (external/open!)]
@@ -259,3 +259,20 @@
           (is (some? (:layers r)))
           (is (map? (:manifest r)))))
       (finally (api/close! sess)))))
+
+(deftest generated-forms-are-exempt-from-inspection-gates
+  ;; ^:generated forms are generate_client's output — client-API wrappers that
+  ;; await FE calls (so a zero-caller wrapper is "available", not dead), are
+  ;; documented BY the generator, and are never hand-tested. They must not trip
+  ;; the dead-surface or missing-doc inspection gates (D-web-contracts part 2).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'gc.client
+                             (str "(ns gc.client)\n\n"
+                                  "(defn ^{:generated \"app.orders/create-order\"} create-order! [x] x)\n\n"
+                                  "(defn orphan [x] x)\n")))]
+    (testing "dead-surface skips a ^:generated public defn, keeps the real orphan"
+      (is (= '[gc.client/orphan] (:unused (modules/unused-report st '[gc.client])))
+          (pr-str (modules/unused-report st '[gc.client]))))
+    (testing "missing-doc skips a ^:generated public defn, keeps the undocumented real one"
+      (is (nil? (edit.modules/missing-doc-warning st 'gc.client 'create-order!)))
+      (is (some? (edit.modules/missing-doc-warning st 'gc.client 'orphan))))))

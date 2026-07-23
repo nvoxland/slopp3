@@ -147,7 +147,10 @@
                          real?   (some #(not= :declared (:via %)) rs)]]
                {:q          (symbol (str nsx) (str (:name e)))
                 :unused-ok? (contains? markers :unused-ok)
-                :exempt?    (boolean (seq markers))
+                :exempt?    (boolean (or (seq markers)
+                                          ;; ^:generated wrappers await FE calls —
+                                          ;; available surface, not dead
+                                          (:generated (meta (second s)))))
                 :real?      (boolean real?)})]
     {:unused (vec (sort (keep #(when-not (or (:real? %) (:exempt? %)) (:q %))
                               rows)))

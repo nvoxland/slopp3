@@ -72,3 +72,37 @@
     (testing "inert until http.enabled"
       (let [s (land s0 "(defn ^{:web/method :get :web/path \"/d\" :web/auth [:group \"ghost\"]} d \"D.\" [req] req)")]
         (is (nil? (modules/web-unknown-group s 'shop.more 'd)))))))
+
+(deftest generated-ns-gate-refuses-hand-edits
+  ;; the second duty of ^:generated (D-web-contracts part 2): a write gate
+  ;; refuses HAND edits to a generated form. Regeneration rewrites the ns
+  ;; wholesale through store/ingest (below the gate layer), so the generator
+  ;; itself is unaffected — only edit-tool writes reach this gate.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'gc.client
+                             (str "(ns gc.client)\n\n"
+                                  "(defn ^{:generated \"app.orders/create-order\"} create-order! [x] x)\n\n"
+                                  "(defn hand [x] x)\n")))]
+    (testing "editing a ^:generated form refuses, teaching to regenerate instead"
+      (let [t (modules/generated-ns st 'gc.client 'create-order!)]
+        (is (string? t) (pr-str t))
+        (is (re-find #"generate_client" t))))
+    (testing "a normal form is untouched by the gate"
+      (is (nil? (modules/generated-ns st 'gc.client 'hand))))))
+
+(deftest client-signature-tracks-endpoint-contracts
+  ;; the fingerprint behind the generated-client staleness advisory
+  ;; (D-web-contracts part 2): it changes iff an endpoint's declared contract
+  ;; changes, so the advisory can nudge "run generate_client" without re-rendering.
+  (let [mk (fn [resp] (store/ingest (store/empty-store) 'sig.api
+                                    (str "(ns sig.api)\n\n"
+                                         "(defn ^{:web/method :post :web/path \"/o\""
+                                         " :web/request sig.c/a :web/response " resp "} make [r] r)\n")))]
+    (testing "stable for identical contracts"
+      (is (= (modules/client-signature (mk "sig.c/a"))
+             (modules/client-signature (mk "sig.c/a")))))
+    (testing "changes when a response contract changes"
+      (is (not= (modules/client-signature (mk "sig.c/a"))
+                (modules/client-signature (mk "sig.c/b")))))
+    (testing "an endpointless store still fingerprints (a stable string)"
+      (is (string? (modules/client-signature (store/empty-store)))))))

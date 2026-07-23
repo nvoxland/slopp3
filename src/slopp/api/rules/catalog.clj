@@ -75,6 +75,15 @@
    {:rule :retired-vocabulary :grain :done :severity :advisory
     :escape "route through the normalizer, or ^:legacy-ok on the name if this form IS the normalizer (it polices itself — a marker that mixes nothing is reported stale)"
     :teach "a form ENUMERATES a retired vocabulary (two retired members, or one beside its replacement) — a second copy that missed the rename; declare yours with config_file {path vocabulary key <old> value <new>}"}
+   {:rule :generated-ns :grain :form :severity :refuse
+    :escape "regenerate via generate_client after changing the ENDPOINT (its :web/request/:web/response), strip the ^:generated marker to take manual ownership, or dial it down (config_file {path \"rules\" key \"generated-ns\" value \"advisory\"})"
+    :teach "a ^:generated form is generate_client's output and must not be hand-edited — regeneration rewrites the whole client namespace, so a hand edit is lost on the next generate (D-web-contracts part 2)"}
+   {:rule :stale-client :grain :done :severity :advisory
+    :escape "run generate_client to re-derive the client from the current endpoints, or accept the drift"
+    :teach "the generated typed client is stale — an endpoint's contract changed since generate_client last ran (D-web-contracts part 2)"}
+   {:rule :inline-schema-dup :grain :done :severity :advisory
+    :escape "extract the shared inline schema to a named .cljc var both endpoints reference, or accept the duplication"
+    :teach "2+ endpoints declare the same inline request/response schema — a shared shape belongs in one named .cljc schema so the server and the generated client agree (D-web-contracts part 2)"}
    {:rule :shell-widening :grain :done :severity :advisory
     :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
     :teach "this episode declared a namespace :external/:internal — the functional CORE got smaller, and only you know whether it had to"}

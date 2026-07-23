@@ -194,9 +194,14 @@
     (when-let [e (store/form-named store ns-sym form-name)]
       (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
         (when (and (seq? s)
-                   (contains? '#{defn defmacro} (first s))
+                   ;; head compared by NAME-string so this form carries no
+                   ;; banned symbol literal (D4 bans defmacro even as data) and
+                   ;; so stays editable
+                   (contains? #{"defn" "defmacro"} (str (first s)))
                    (symbol? (second s))
                    (not (:private (meta (second s))))
+                   ;; generate_client's output documents itself; never nag it
+                   (not (:generated (meta (second s))))
                    ;; via the shared accessor: (def x "a value") has a string at
                    ;; index 2 that is NOT a docstring, and indexing cannot tell
                    (nil? (store/form-docstring (:node e)))
@@ -750,6 +755,38 @@
                    (first missing) ".members\" value \"…\"} defines it, or fix"
                    " the name"))))))))
 
+(defn ^:export generated-ns
+  "The generated-client protection gate (D-web-contracts part 2): a form marked
+  ^{:generated \"<endpoint>\"} is OUTPUT of generate_client and must not be
+  hand-edited. Regeneration rewrites the whole client namespace (through
+  store/ingest, BELOW this gate layer — so the generator itself is unaffected;
+  only edit-tool writes reach here). Returns a teaching string naming the source
+  endpoint + generate_client, or nil. To take manual ownership of a generated
+  form, strip its ^:generated marker first. Not web-gated — the marker alone
+  arms it."
+  [candidate ns-sym form-name]
+  (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+    (when-let [g (:generated (web-name-meta e))]
+      (str ns-sym "/" form-name " is GENERATED (from endpoint " g
+           ") and must not be hand-edited — generate_client rewrites the whole"
+           " client namespace from the endpoint schemas, so an edit here is lost"
+           " on the next generate. Change the ENDPOINT's :web/request/:web/response"
+           " and re-run generate_client; to take manual ownership, strip the"
+           " ^:generated marker first."))))
+
+(defn ^:export client-signature
+  "A deterministic fingerprint of the store's web endpoint CONTRACTS — the raw
+   {:ns :name :method :path :web/request :web/response} of every endpoint — so a
+   done-advisory can tell whether the generated typed client (generate_client) is
+   stale WITHOUT re-rendering or parsing it. generate_client records this on the
+   `client`/`generated-sig` config at generation; the staleness advisory compares
+   the recorded value with the current one. A pure function of the store value."
+  [store]
+  (str (hash (mapv (fn [{:keys [ns name meta]}]
+                     [(str ns) (str name) (:web/method meta) (:web/path meta)
+                      (pr-str (:web/request meta)) (pr-str (:web/response meta))])
+                   (web-endpoint-rows store)))))
+
 (defn ^:export ^{:rule/applies-to :production} web-endpoint-schema
   "The API-contract gate (D-web-contracts): a `:web/path` endpoint must type out
   its contract so the client validates against the SAME schema. `:web/response`
@@ -819,7 +856,7 @@
   per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`.
   The web-* gates (D-web) are additionally inert until the store opts into
   HTTP (`web-enabled?`)."
-  [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal
+  [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal #'generated-ns
    #'web-auth-refusal #'web-endpoint-schema #'web-route-collision #'web-undeclared-effect
    #'web-unsafe-get #'web-unknown-group #'web-react-attrs])
 

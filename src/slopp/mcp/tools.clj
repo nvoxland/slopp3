@@ -419,6 +419,10 @@
     :description "Compile the store's CLIENT namespaces (:cljc + :cljs, declared via module_platform) to JavaScript with the configured backend (default ClojureScript, compiled ON THE JVM — no Node) and record the output as a served file blob. Compile-error-as-oracle: analyzer warnings and hard errors are anchored to the owning store forms. `output` sets the served path (default public/cljs/main.js). Requires a build-only compiler dep: deps_add org.clojure/clojurescript with client=true."
     :inputSchema {:type "object"
                   :properties {:output {:type "string"}}}}
+   {:name "generate_client"
+    :description "Generate the typed CLIENT (D-web-contracts part 2): read every web endpoint's contract and write a stored, edit-PROTECTED :cljs namespace of typed fetch wrappers — one per endpoint, validating the request OUT and the response IN against the SAME shared :cljc schema the server enforces. An EXPLICIT step (like compile_client, not on every edit); the target ns defaults to the client/generated-ns config, else app.client.api (`ns` overrides). Marks the ns :cljs so compile_client picks it up; with client/auto-compile on, schedules a background recompile. Endpoints whose schema can't ship to the client (non-:cljc, or a missing var) are SKIPPED and reported in :problems. The generated ns is edit-protected and inspectable like any code — regenerate, never hand-edit."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"}}}}
 {:name "module_platform"
     :description "Declare a MODULE's target platform for the client wave — :jvm (Clojure on the JVM, the default), :cljc (portable: loads on the JVM AND compiles to JS — shared schemas/logic), or :cljs (ClojureScript only: compiled to JS, NEVER loaded into the JVM oracle — browser code). Namespace grain, most-specific declaration wins (like module_purity). A :cljs namespace renders as .cljs under a separate cljs-src/ tree, is excluded from JVM image-load, and is verified by the cljs compile step, not the JVM. Say WHY in prompt. Read platforms: query_depends {modules true}."
     :inputSchema {:type "object"

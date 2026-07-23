@@ -149,3 +149,102 @@
           (is (nil? (store/form-named (:store @sess) 'mvc.a 'ping))
               "gone from the source")))
       (finally (api/close! sess)))))
+
+(deftest client-wrapper-specs-resolves-endpoints-and-schemas
+  (let [st (-> (store/empty-store)
+               (store/ingest 'shop.contracts
+                             "(ns shop.contracts)\n\n(def order [:map [:item :string] [:qty :int]])\n"))
+        st (first (store/record-module-platform st "shop.contracts" :cljc))
+        st (store/ingest st 'shop.api
+                         (str "(ns shop.api)\n\n"
+                              "(defn ^{:web/method :post :web/path \"/api/orders\""
+                              " :web/request shop.contracts/order :web/response shop.contracts/order}"
+                              " create-order [req] req)\n\n"
+                              "(defn ^{:web/method :get :web/path \"/api/orders/:id\""
+                              " :web/response shop.contracts/order} get-order [req] req)\n"))
+        {:keys [wrappers problems]} (cljs/client-wrapper-specs st)]
+    (testing "one wrapper per endpoint; mutating verbs get a ! suffix"
+      (is (= '[create-order! get-order] (mapv :fn-name wrappers)))
+      (is (= [:post :get] (mapv :method wrappers))))
+    (testing "schema refs resolve to fully-qualified vars in the :cljc contracts ns"
+      (is (= 'shop.contracts/order (get-in (first wrappers) [:request :sym])))
+      (is (= 'shop.contracts/order (get-in (first wrappers) [:response :sym])))
+      (is (= :none (get-in (second wrappers) [:request :kind])) "a GET has no request schema"))
+    (testing "the source endpoint rides each spec as provenance"
+      (is (= 'shop.api/create-order (:endpoint (first wrappers)))))
+    (testing "a clean fixture yields no problems"
+      (is (empty? problems) (pr-str problems)))))
+
+(deftest client-wrapper-specs-flags-non-cljc-schemas
+  (let [st (-> (store/empty-store)
+               (store/ingest 'shop.contracts
+                             "(ns shop.contracts)\n\n(def order [:map [:item :string]])\n")
+               ;; platform LEFT :jvm — a jvm-only schema cannot ship to the client
+               (store/ingest 'shop.api
+                             (str "(ns shop.api)\n\n"
+                                  "(defn ^{:web/method :post :web/path \"/api/orders\""
+                                  " :web/request shop.contracts/order :web/response shop.contracts/order}"
+                                  " create-order [req] req)\n")))
+        {:keys [wrappers problems]} (cljs/client-wrapper-specs st)]
+    (testing "an endpoint whose schema ns is not :cljc becomes a problem; its wrapper is skipped"
+      (is (empty? wrappers) (pr-str wrappers))
+      (is (= 1 (count problems)) (pr-str problems))
+      (is (= :not-cljc (:issue (first problems))))
+      (is (= 'shop.contracts/order (:schema-ref (first problems)))))))
+
+(deftest render-client-ns-emits-typed-wrappers
+  (let [src (cljs/render-client-ns
+             'shop.client.api
+             [{:fn-name 'create-order! :method :post :path "/api/orders"
+               :endpoint 'shop.api/create-order
+               :request  {:kind :var :sym 'shop.contracts/order :ns 'shop.contracts}
+               :response {:kind :var :sym 'shop.contracts/order :ns 'shop.contracts}}
+              {:fn-name 'get-order :method :get :path "/api/orders/:id"
+               :endpoint 'shop.api/get-order
+               :request  {:kind :none}
+               :response {:kind :var :sym 'shop.contracts/order :ns 'shop.contracts}}])]
+    (testing "one ns form plus one defn per wrapper (structural parse is checked end-to-end at ingest)"
+      (is (re-find #"\(ns shop\.client\.api" src) src)
+      (is (= 2 (count (re-seq #"\(defn " src))))
+      (is (= (count (re-seq #"\(" src)) (count (re-seq #"\)" src))) "balanced parens"))
+    (testing "the ns requires malli + the schema's contracts ns"
+      (is (re-find #"malli\.core" src))
+      (is (re-find #"malli\.transform" src))
+      (is (re-find #"shop\.contracts" src)))
+    (testing "each wrapper carries its ^:generated provenance, is ^:export, and fetches"
+      (is (re-find #"\^\{:generated \"shop\.api/create-order\"\}" src))
+      (is (re-find #"\^\{:generated \"shop\.api/get-order\"\}" src))
+      (is (re-find #":export" src))
+      (is (re-find #"js/fetch" src)))
+    (testing "request validation on a body verb; response validation both; path param substituted"
+      (is (re-find #"m/validate shop\.contracts/order params" src) "request validated out")
+      (is (re-find #"m/decode shop\.contracts/order" src) "response decoded in")
+      (is (re-find #"\(str \"/api/orders/\" \(:id params\)\)" src) "path param interpolated"))))
+
+(deftest ^:external generate-client-writes-a-protected-cljs-namespace
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'shopg.contracts
+                   "(ns shopg.contracts)\n\n(def order [:map [:item :string] [:qty :int]])\n")
+      (api/module-platform! sess "shopg.contracts" "cljc" :prompt "shared contract")
+      (api/ingest! sess 'shopg.api
+                   (str "(ns shopg.api)\n\n"
+                        "(defn ^{:web/method :post :web/path \"/api/orders\""
+                        " :web/request shopg.contracts/order :web/response shopg.contracts/order}"
+                        " create-order \"Create an order.\" [req] req)\n"))
+      (let [r (cljs/generate-client! sess :ns 'shopg.client.api)]
+        (testing "one wrapper per endpoint, written into a stored :cljs namespace"
+          (is (= 'shopg.client.api (:generated r)) (pr-str r))
+          (is (= 1 (:endpoints r)))
+          (is (= ["create-order!"] (:wrappers r)))
+          (is (= :cljs (store/platform-for (:store @sess) 'shopg.client.api)))
+          (is (some? (store/form-named (:store @sess) 'shopg.client.api 'create-order!))))
+        (testing "no shippable-schema problems for a clean :cljc contract"
+          (is (nil? (:problems r)) (pr-str (:problems r)))))
+      (testing "the generated form refuses a hand edit — the protection gate is wired end to end"
+        (let [r (api/edit-replace! sess 'shopg.client.api 'create-order!
+                                   (str "(defn ^{:generated \"shopg.api/create-order\"} ^:export create-order!"
+                                        " \"x\" [params] :hacked)")
+                                   :prompt "try to hand-edit the generated wrapper")]
+          (is (re-find #"generate_client" (str (:error r))) (pr-str r))))
+      (finally (api/close! sess)))))

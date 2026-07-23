@@ -315,6 +315,11 @@
      (text! (if (:output a)
               (api.cljs/compile-client! session :output (:output a))
               (api.cljs/compile-client! session))))
+   "generate_client"
+   (fn [session a _sym]
+     (text! (if (:ns a)
+              (api.cljs/generate-client! session :ns (symbol (:ns a)))
+              (api.cljs/generate-client! session))))
    "deps_pure"
    (fn [session a sym]
      (text! (if (false? (:pure a))

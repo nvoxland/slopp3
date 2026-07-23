@@ -79,6 +79,8 @@
                               (not (:private (meta (second s))))
                               (not (:unused-ok (meta (second s))))
                               (not (:entry-point (meta (second s))))
+                              ;; generated wrappers are available surface, not dead
+                              (not (:generated (meta (second s))))
                               (not= '-main nm))
                          untested (and (not test?)
                                        ;; a plain (def x <data>) has no invocation to
@@ -87,7 +89,10 @@
                                        ;; defn/defmulti stay flaggable: they are callable.
                                        (not (and (seq? s) (= 'def (first s))))
                                        (zero? traced)
-                                       (not (contains? covered-static q)))
+                                       (not (contains? covered-static q))
+                                       ;; a ^:generated wrapper is :cljs — never traced,
+                                       ;; never reached from a test ns; not a finding
+                                       (not (:generated (meta (second s)))))
                          flags    (cond-> []
                                     untested       (conj :untested)
                                     unused         (conj :unused)
