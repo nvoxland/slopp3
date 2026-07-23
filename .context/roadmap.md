@@ -539,16 +539,19 @@ with inline allowed and a DRY advisory to guide. Shipped: `web-endpoint-schema`
 refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
 `:web/request` (`:post`/`:put`/`:patch` body methods). Milestones d11968/d11981.
 
-**PART 2 = the generated typed client — the next build, two open design
-questions to settle FIRST (asked the user 2026-07-23, awaiting the call):**
-1. **Delivery: stored `.cljs` ns vs build-artifact blob.** A `generate_client`
-   op writes an `app.client.api` namespace of validating `fetch` wrappers into
-   the STORE (visible, refactorable, rides the compile step, but derived code
-   needing a "regenerated — don't hand-edit" marker) — OR a pure compile-time
-   BLOB like the compiled bundle (clean separation, not inspectable as a ns).
-2. **Regeneration: automatic vs explicit.** Ride the async recompile loop (edit
-   an endpoint → client regenerates + recompiles) — OR an explicit
-   `generate_client` step.
+**PART 2 = the generated typed client — the next build.**
+1. **Delivery: DECIDED — a stored, generated, edit-PROTECTED `.cljs` namespace**
+   (`app.client.api`), not a blob. Driven by the user's confirmation that the
+   client is PURELY GENERATED / never hand-edited: it must be a stored ns
+   because the FE has to `(:require)` and CALL the wrappers as cljs fns AND its
+   references (`api/create-order!`) must RESOLVE in the store at write-time to
+   pass slopp's reference/cold-load gates — a blob or build-time-only ns can't
+   provide that. "Never edited" is ENFORCED: mark the ns `^:generated` and add a
+   write gate that REFUSES hand-edits (regeneration is the only writer), same
+   machinery as `web-endpoint-schema`.
+2. **Regeneration: automatic vs explicit — STILL OPEN (awaiting the user).**
+   Ride the async recompile loop (edit an endpoint → client regenerates +
+   recompiles) — OR an explicit `generate_client` step.
 Then the wrapper shape: async `fetch` → malli-validate params OUT / response IN,
 `malli.transform` at the JSON boundary. And the three pieces that bundle into
 part 2 because they only bite with real schemas + generation: the schema-var
