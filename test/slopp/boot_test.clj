@@ -45,3 +45,20 @@
     (is (= {:dir "/p" :live? false :main 'slopp.mcp/call-main!
             :args ["/p" "edit_replace_form" "@/tmp/a.json"]}
            (boot/parse-args ["/p" "--call" "edit_replace_form" "@/tmp/a.json"])))))
+
+(deftest jvm-loadable-skips-cljs-namespaces
+  ;; F5: the kernel boot path must NEVER JVM-load a :cljs namespace — it
+  ;; references js/* and its libs are not on the boot classpath, so loading it
+  ;; makes any store carrying client code unbootable (java -jar slopp.jar <dir>,
+  ;; --call, --main, serving). Most-specific declared path wins, mirroring
+  ;; slopp.store/platform-for.
+  (let [pf {"app.client" :cljs, "app.client.shared" :cljc, "app.core" :jvm}]
+    (is (false? (boot/jvm-loadable? pf 'app.client.view))
+        "a namespace under a :cljs module inherits :cljs")
+    (is (true? (boot/jvm-loadable? pf 'app.client.shared))
+        "a more specific :cljc declaration wins over the :cljs module")
+    (is (true? (boot/jvm-loadable? pf 'app.core)))
+    (is (true? (boot/jvm-loadable? pf 'other.thing))
+        "undeclared defaults to :jvm")
+    (is (true? (boot/jvm-loadable? {} 'anything))
+        "no register at all — everything loads, as before the client wave")))
