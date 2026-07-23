@@ -257,7 +257,16 @@
     (letfn [(load-all []
               (loop [ids (seq form-ids)]
                 (when ids
-                  (or (hotload/hot-load-form! (:image @session) candidate (first ids))
+                  (or (when (store/jvm-loadable? candidate
+                                             (store/ns-of-form-id candidate (first ids)))
+                        ;; a :cljs form (js/*/DOM) is never JVM-loaded — skip it
+                        ;; here exactly as image/load-ns! skips a :cljs ns, so the
+                        ;; refactor ops (rename/move/extract/change-sig/…) work on
+                        ;; client forms (D-web-cljs). Per-form-id, so a multi-ns op
+                        ;; that mixes platforms loads the :jvm/:cljc ids and skips
+                        ;; the :cljs ones in the same pass. A skipped id is nil,
+                        ;; the same shape as an unresolved id, so the loop recurs.
+                        (hotload/hot-load-form! (:image @session) candidate (first ids)))
                       (recur (next ids))))))]
       (when-let [err1 (load-all)]
         (let [stubbed (stub!)]
@@ -688,30 +697,79 @@
   coverage gap the agent should close). D-web-cljs."
   {:test 0 :pass 0 :status :unverified :reason :cljs-deferred-to-compile})
 
-(defn maybe-recompile-client!
-  "Dev loop (D-web-cljs): when the `client`/`auto-compile` config is ON and
-  `ns-sym` is a CLIENT namespace (`:cljc`/`:cljs`), recompile the client bundle
-  so a `--live` server serves fresh JS without a manual `compile_client`.
-  Returns `{:client-recompiled <output-path>}` (or `{:client-recompile-error
-  <msg>}`), or nil when disabled or `ns-sym` is not a client namespace.
+(defn- client-compile-guard!
+  "The per-session single-flight guard for background client recompiles
+  (D-web-cljs (c) async): an atom `{:running? :dirty? :last}`. Lazily created on
+  the session atom, atomically, so concurrent client writes share ONE guard."
+  [session]
+  (:client-compile
+   (swap! session update :client-compile
+          #(or % (atom {:running? false :dirty? false :last nil})))))
 
-  Opt-in and synchronous — a dev who turns it on accepts the ~seconds-per-write
-  compile cost; the common (`:jvm`) write is a nil no-op (one config read + a
-  platform lookup). Best-effort: a compile failure is REPORTED, never thrown
-  into the write. Decoupled via `store/late-ref` — `slopp.api.cljs` requires
-  `slopp.api.external` → `slopp.api`, so a static require here would close a
-  load cycle."
+(defn- recompile-loop!
+  "Background thread body (D-web-cljs (c) async): compile the client bundle,
+  then — if another client write set `:dirty?` while we compiled — clear it and
+  compile AGAIN (coalescing), else set `:running?` false and stop. Each
+  outcome is stored on `guard` under `:last`, surfaced on a later write; a
+  compile error is captured, never thrown into the daemon."
+  [session guard]
+  (loop []
+    (let [outcome (try
+                    (let [r ((store/late-ref 'slopp.api.cljs/compile-client!) session)]
+                      (if (:error r)
+                        {:client-recompile-error (:error r)}
+                        {:client-recompiled (:output r)}))
+                    (catch Throwable t
+                      {:client-recompile-error (ex-message t)}))
+          [old _] (swap-vals! guard
+                              (fn [s]
+                                (-> (if (:dirty? s)
+                                      (assoc s :dirty? false)
+                                      (assoc s :running? false))
+                                    (assoc :last outcome))))]
+      (when (:dirty? old) (recur)))))
+
+(defn- schedule-client-recompile!
+  "Single-flight (D-web-cljs (c) async): start a background compile thread only
+  if none is running; otherwise mark the in-flight one `:dirty?` so it compiles
+  once more when it finishes. `swap-vals!` gives the pre-swap state, so exactly
+  the false→true transition starts the daemon."
+  [session]
+  (let [guard   (client-compile-guard! session)
+        [old _] (swap-vals! guard
+                            #(if (:running? %)
+                               (assoc % :dirty? true)
+                               (assoc % :running? true :dirty? false)))]
+    (when-not (:running? old)
+      (doto (Thread. ^Runnable #(recompile-loop! session guard)
+                     "slopp-client-recompile")
+        (.setDaemon true)
+        (.start)))))
+
+(defn maybe-recompile-client!
+  "Dev loop (D-web-cljs): when `client`/`auto-compile` is ON and `ns-sym` is a
+  CLIENT namespace (`:cljc`/`:cljs`), schedule an ASYNC background recompile of
+  the client bundle so a `--live` server serves fresh JS — WITHOUT blocking the
+  write. Single-flight + coalescing (a write during a compile triggers exactly
+  ONE more compile after it — the bundle always reflects the latest edit).
+  Returns `{:client-recompiling true}` immediately, plus `:client-recompile-prev`
+  (the previous background compile's outcome — `{:client-recompiled path}` or
+  `{:client-recompile-error msg}`) once one has finished; or nil when disabled or
+  `ns-sym` is not a client namespace.
+
+  The common `:jvm` write is a nil no-op (one config read + a platform lookup).
+  The compile runs on a daemon thread and commits the served blob when done;
+  a compile error is captured on the guard and surfaces on a later write, never
+  thrown here. Decoupled via `store/late-ref` — `slopp.api.cljs` requires
+  `slopp.api.external` → `slopp.api`, so a static require here would cycle."
   [session ns-sym]
   (let [st (:store @session)]
     (when (and (= "true" (str (get-in st [:config "client" :values "auto-compile"])))
                (#{:cljc :cljs} (store/platform-for st ns-sym)))
-      (try
-        (let [r ((store/late-ref 'slopp.api.cljs/compile-client!) session)]
-          (if (:error r)
-            {:client-recompile-error (:error r)}
-            {:client-recompiled (:output r)}))
-        (catch Throwable t
-          {:client-recompile-error (ex-message t)})))))
+      (schedule-client-recompile! session)
+      (let [prev (:last @(client-compile-guard! session))]
+        (cond-> {:client-recompiling true}
+          prev (assoc :client-recompile-prev prev))))))
 
 (defn run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of

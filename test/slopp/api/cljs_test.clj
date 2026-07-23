@@ -100,14 +100,52 @@
       (api/ingest! sess 'ac.client "(ns ac.client)\n")
       (testing "auto-compile OFF (default): a client write does NOT recompile"
         (let [r (api/add-form! sess 'ac.client "(defn a [] (js/alert \"a\"))")]
-          (is (nil? (:client-recompiled r)) (pr-str r))
+          (is (nil? (:client-recompiling r)) (pr-str r))
           (is (nil? (get-in @sess [:store :files "public/cljs/main.js"]))
               "no bundle written yet")))
-      (testing "auto-compile ON: a client write recompiles → served bundle appears"
+      (testing "auto-compile ON: a client write schedules an ASYNC recompile"
         (api/config-file! sess "client" :key "auto-compile" :value "true"
                           :prompt "dev loop")
         (let [r (api/add-form! sess 'ac.client "(defn b [] (js/alert \"b\"))")]
-          (is (some? (:client-recompiled r)) (pr-str r))
-          (is (string? (get-in @sess [:store :files "public/cljs/main.js"]))
-              "fresh bundle served")))
+          (is (true? (:client-recompiling r)) (pr-str r))
+          ;; async: the background compile commits the served bundle shortly after
+          (let [blob (loop [n 0]
+                       (or (get-in @sess [:store :files "public/cljs/main.js"])
+                           (when (< n 120)
+                             (Thread/sleep 500)
+                             (recur (inc n)))))]
+            (is (string? blob) "fresh bundle served within timeout"))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external edit-rename-handles-a-cljs-form
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'rf.client
+                      :source "(ns rf.client)\n(defn boom [] (js/alert \"hi\"))\n"
+                      :platform :cljs :prompt "browser code")
+      (testing "edit_rename renames a :cljs form (js/* — never loaded on the JVM)"
+        (let [r (api/rename! sess 'rf.client 'boom 'kaboom)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'rf.client 'kaboom))
+              "renamed form is present")
+          (is (nil? (store/form-named (:store @sess) 'rf.client 'boom))
+              "old name is gone")))
+      (finally (api/close! sess)))))
+
+(deftest ^:external edit-move-forms-handles-cljs-forms
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'mvc.a
+                      :source "(ns mvc.a)\n(defn ping [] (js/alert \"a\"))\n"
+                      :platform :cljs :prompt "browser code")
+      (api/create-ns! sess 'mvc.b
+                      :source "(ns mvc.b)\n(defn other [] (js/console.log \"b\"))\n"
+                      :platform :cljs :prompt "browser code")
+      (testing "edit_move_forms moves a :cljs form between :cljs namespaces"
+        (let [r (api/move-forms! sess 'mvc.a '[ping] 'mvc.b)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'mvc.b 'ping))
+              "moved into the target")
+          (is (nil? (store/form-named (:store @sess) 'mvc.a 'ping))
+              "gone from the source")))
       (finally (api/close! sess)))))
