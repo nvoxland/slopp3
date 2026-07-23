@@ -6,7 +6,7 @@
   slopp.web.**, so it never rides the slim user jar."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.web.html :as html]))
+            [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs]))
 
 (defn- form-doc
   "A form's docstring, read off the stored node's sexpr (nil when absent)."
@@ -46,6 +46,35 @@
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
       (n/string (:node e)))))
 
+(defn ^{:web/method :get :web/path "/store/style.css" :web/auth :public}
+  store-stylesheet
+  "GET /store/style.css — the browser's own styling as garden data (CSS as
+  Clojure data, tracked like every other form). A safe GET; served text/css."
+  [_req]
+  (css/css-response
+   [[:body {:font-family "system-ui, sans-serif" :line-height 1.5
+            :max-width "50rem" :margin "2rem auto" :padding "0 1rem"}]
+    [:h1 {:font-size "1.4rem"}]
+    [:a {:color "#2a6"}]
+    [:small {:color "#777"}]
+    [:pre {:background "#f4f4f4" :padding "1rem" :border-radius "4px"
+           :overflow-x "auto"}]
+    [:code {:font-family "ui-monospace, monospace"}]
+    (gs/at-media {:prefers-color-scheme :dark}
+                 [:body {:background "#111" :color "#ddd"}]
+                 [:pre {:background "#1c1c1c"}]
+                 [:a {:color "#5c9"}]
+                 [:small {:color "#999"}])]))
+
+(defn- shell
+  "html/page with the store-browser stylesheet linked — the one place the
+  link literal lives, so every page joins /store/style.css."
+  [title & body]
+  (apply html/page
+         {:html/title title
+          :html/head [[:link {:rel "stylesheet" :href "/store/style.css"}]]}
+         body))
+
 (defn ^{:web/method :get :web/path "/store" :web/auth :public
         :web/reads {:namespaces [:browse/namespaces []]}}
   store-index-page
@@ -54,7 +83,7 @@
   than read-only source."
   [req]
   (html/html-response
-   (html/page {:html/title "store"}
+   (shell "store"
      [:main
       [:h1 "namespaces"]
       [:ul
@@ -71,7 +100,7 @@
     (if-not outline
       {:status 404 :body {:error "no such namespace"}}
       (html/html-response
-       (html/page {:html/title (str ns)}
+       (shell (str ns)
          [:main
           [:p [:a {:href "/store"} "← all namespaces"]]
           [:h1 (str ns)]
@@ -92,7 +121,7 @@
     (if-not src
       {:status 404 :body {:error "no such form"}}
       (html/html-response
-       (html/page {:html/title (str ns "/" name)}
+       (shell (str ns "/" name)
          [:main
           [:p [:a {:href (str "/store/ns/" ns)} "← back"]]
           [:pre [:code src]]])))))

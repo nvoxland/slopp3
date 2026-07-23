@@ -36,3 +36,18 @@
     (is (= 404 (:status (browse/store-ns-page {:web/reads {}}))))
     (is (= 404 (:status (browse/store-source-page
                          {:web/reads {} :path-params {:ns "x" :name "y"}}))))))
+
+(deftest the-browser-styles-itself-with-css-as-data
+  (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+        ctx (web/context {:web/namespaces ['slopp.http.browse]
+                          :web/perform-ctx {:session (atom {:store st})}})]
+    (testing "the stylesheet is served as text/css, CSS-as-data"
+      (let [r (web/handle! ctx {:request-method :get :uri "/store/style.css"})]
+        (is (= 200 (:status r)))
+        (is (= "text/css; charset=utf-8" (get-in r [:headers "Content-Type"])))
+        (is (re-find #"@media\(prefers-color-scheme:dark\)" (:body r)))))
+    (testing "every page links the stylesheet (a literal href the integrity check joins)"
+      (doseq [uri ["/store" "/store/ns/demo.core" "/store/source/demo.core/f"]]
+        (is (re-find #"<link href=\"/store/style\.css\" rel=\"stylesheet\">"
+                     (:body (web/handle! ctx {:request-method :get :uri uri})))
+            uri)))))

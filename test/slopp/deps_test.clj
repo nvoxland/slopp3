@@ -273,3 +273,14 @@
         (is (re-find #"io\.github\.cognitect-labs/test-runner" s)))
       (testing ":test keeps its baked -r .* and :test-run still omits it (Q13)"
         (is (re-find #"\"-r\" \"\.\*\"" s))))))
+
+(deftest build-deps-edn-coerces-exclusion-strings-to-symbols
+  (testing "an MCP-supplied exclusion (JSON string) projects as a tools.deps symbol"
+    (let [s (build/deps-edn false
+                            {'garden/garden {:mvn/version "1.3.10"
+                                             :exclusions ["com.yahoo.platform.yui/yuicompressor"]}})
+          m (edn/read-string s)
+          excl (get-in m [:deps 'garden/garden :exclusions])]
+      (is (= ['com.yahoo.platform.yui/yuicompressor] excl))
+      (is (symbol? (first excl)))
+      (is (not (re-find #"\"com\.yahoo" s))))))

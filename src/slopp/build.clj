@@ -50,6 +50,21 @@
        "  (flush)\n"
        "  (shutdown-agents))\n"))
 
+(defn- coerce-exclusions
+  "tools.deps requires a coord's `:exclusions` to be SYMBOLS; an MCP-supplied
+  coord carries them as strings (JSON has no symbol type). Coerce each so the
+  projected deps.edn resolves — a string exclusion makes make_classpath2 fail
+  in every fresh JVM (build, external test tier, native), while the live
+  hot-add tolerates it."
+  [deps]
+  (into {}
+        (map (fn [[lib coord]]
+               [lib (cond-> coord
+                      (:exclusions coord)
+                      (update :exclusions
+                              (fn [xs] (mapv #(if (string? %) (symbol %) %) xs))))]))
+        deps))
+
 ^:unsafe (defn deps-edn
   "deps.edn for the built project; `deps` (lib→coord, the store's Tier-1
   manifest) becomes the `:deps` map so a built project is runnable; with
@@ -79,7 +94,7 @@
    ;; projection + build! ours? guard both depend on byte-stable output).
    (let [deps-str (if (seq deps)
                     (str " :deps " (binding [*print-namespace-maps* false]
-                                     (pr-str deps)))
+                                     (pr-str (coerce-exclusions deps))))
                     "")
          main-ns  (if trace? "slopp.testmain" "cognitect.test-runner")
          ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
