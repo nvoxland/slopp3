@@ -1,5 +1,14 @@
 (ns slopp.web.static (:require [clojure.string :as str]))
 
+(def ^:private content-types
+  "Extension → media type for the built-app reader (a store-backed reader
+  gets the type from the manifest entry instead)."
+  {"html" "text/html" "css" "text/css" "js" "text/javascript"
+   "json" "application/json" "png" "image/png" "jpg" "image/jpeg"
+   "jpeg" "image/jpeg" "gif" "image/gif" "svg" "image/svg+xml"
+   "ico" "image/x-icon" "woff2" "font/woff2" "txt" "text/plain"
+   "map" "application/json" "webp" "image/webp"})
+
 (defn ^:export mount-routes
   "Route rows serving static assets: `mounts` = {url-prefix path-prefix}
   (`{\"/assets\" \"public\"}` maps GET /assets/cljs/main.js → (reader
@@ -32,20 +41,17 @@
                             (when safe? (reader (str path-prefix "/" rel)))]
                      {:status 200
                       :web/raw true
-                      :headers (if content-type
-                                 {"Content-Type" (str content-type)}
+                      ;; a store-backed reader supplies no type for a blob, and a script served
+                      ;; with NO Content-Type is refused by strict MIME checking — fall
+                      ;; back to the same extension table the built-app reader uses
+                      :headers (if-let [t (or content-type
+                                              (content-types
+                                               (str/lower-case
+                                                (last (str/split rel #"\.")))))]
+                                 {"Content-Type" (str t)}
                                  {})
                       :body content}
                      {:status 404 :body {:error "no such asset"}})))})))
-
-(def ^:private content-types
-  "Extension → media type for the built-app reader (a store-backed reader
-  gets the type from the manifest entry instead)."
-  {"html" "text/html" "css" "text/css" "js" "text/javascript"
-   "json" "application/json" "png" "image/png" "jpg" "image/jpeg"
-   "jpeg" "image/jpeg" "gif" "image/gif" "svg" "image/svg+xml"
-   "ico" "image/x-icon" "woff2" "font/woff2" "txt" "text/plain"
-   "map" "application/json" "webp" "image/webp"})
 
 (defn ^:export file-or-resource-reader
   "The BUILT-app reader for `mount-routes`: resolve `path` as a file under

@@ -20,7 +20,12 @@
            :auth      (:web/auth meta)
            :web/effects (:web/effects meta)
            :web/reads   (:web/reads meta)
-           :schema?   (contains? meta :malli/schema)
+           ;; the CONTRACT the endpoint-schema gate enforces (D-web-contracts) —
+           ;; this used to read :malli/schema, a different key, so every
+           ;; contract-carrying endpoint reported :schema? false
+           :web/request  (:web/request meta)
+           :web/response (:web/response meta)
+           :schema?   (contains? meta :web/response)
            :effectful? (boolean (:web/effectful meta))})
         (modules/web-endpoint-rows store)))
 

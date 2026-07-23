@@ -930,8 +930,17 @@
   engine and the fallback when no MCP connection exists. Opens a durable
   session, dispatches ONE tool call, closes. Returns the wire result map
   ({:content [{:text …}]}; :isError true on tool errors), same as the
-  server would send. An unexpected throw reports its CAUSE CHAIN and top
-  stack frames — a bare message localizes nothing in a one-shot process."
+  server would send.
+
+  Writes stay TURN-GATED here, deliberately: provenance is not optional just
+  because the caller is a script. Turns are DURABLE across one-shot processes,
+  so the scripted shape is `--call turn_begin` once, then the writes, then
+  `--call turn_end` — not a turn per call. Reads need nothing.
+
+  An unexpected throw reports its CAUSE CHAIN. It does NOT report stack frames:
+  everything here flows through `text!`, whose boundary-leak guard refuses a
+  file:line coordinate, so emitting frames replaced the real diagnostic with a
+  guard exception."
   [dir tool arguments]
   (let [session (external/open! {:slopp.api/dir (str dir)})]
     (swap! session assoc :require-turns? true)
@@ -942,11 +951,8 @@
                    msgs  (into [] (comp (take-while some?)
                                         (map #(str (.getSimpleName (class %))
                                                    ": " (ex-message %))))
-                               chain)
-                   root  (last (take-while some? chain))
-                   frames (mapv str (take 6 (.getStackTrace ^Throwable root)))]
-               (assoc (text! (str "error: " (str/join " <- " msgs)
-                                  "\n  at " (str/join "\n     " frames)))
+                               chain)]
+               (assoc (text! (str "error: " (str/join " <- " msgs)))
                       :isError true))))
       (finally (api/close! session)))))
 

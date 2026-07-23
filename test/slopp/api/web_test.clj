@@ -8,7 +8,8 @@
                  "(defn ^{:web/method :get :web/path \"/api/users/:id\"\n"
                  "        :web/auth [:group \"admin\"]\n"
                  "        :web/reads {:user [:user/by-id [:path-params :id]]}\n"
-                 "        :malli/schema [:=> [:cat :map] :map]} get-user \"U.\" [req] req)\n\n"
+                 "        :malli/schema [:=> [:cat :map] :map]\n"
+                 "        :web/response :map} get-user \"U.\" [req] req)\n\n"
                  "(defn ^{:web/method :post :web/path \"/api/users\"\n"
                  "        :web/auth :authenticated\n"
                  "        :web/effects [:user/insert]} create-user \"C.\" [req] req)\n\n"
@@ -247,3 +248,25 @@
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'shopr.api 'create2)))))
       (finally (api/close! sess)))))
+
+(deftest routes-surface-the-declared-contract
+  ;; D-web-contracts dogfood finding: the endpoint-schema gate makes
+  ;; :web/request / :web/response MANDATORY, but query_routes computed :schema?
+  ;; from :malli/schema — a DIFFERENT key — so every contract-carrying endpoint
+  ;; reported :schema? false. What query_routes shows must be what the gate
+  ;; enforces.
+  (let [s   (store/ingest (store/empty-store) 'rc.api
+                          (str "(ns rc.api)\n\n"
+                               "(defn ^{:web/method :post :web/path \"/o\" :web/auth :public"
+                               " :web/request rc.c/new :web/response rc.c/one}"
+                               " make \"M.\" [r] r)\n\n"
+                               "(defn ^{:web/method :get :web/path \"/bare\" :web/auth :public}"
+                               " bare \"B.\" [r] r)\n"))
+        by  (into {} (map (juxt :name identity)) (web/endpoints s))]
+    (testing "the declared contract rides the route row"
+      (is (= 'rc.c/new (:web/request (by 'make))))
+      (is (= 'rc.c/one (:web/response (by 'make))))
+      (is (true? (:schema? (by 'make)))))
+    (testing "an endpoint with no contract reads as unschema'd"
+      (is (nil? (:web/response (by 'bare))))
+      (is (false? (:schema? (by 'bare)))))))

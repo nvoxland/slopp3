@@ -175,3 +175,25 @@
       (is (= 404 (:status (call "cljs/../../../secret"))))
       (is (= 404 (:status (call "/etc/passwd"))))
       (is (empty? @seen) "no traversal attempt may reach the reader"))))
+
+(deftest static-mounts-fall-back-to-extension-content-type
+  ;; F7 (dogfood): mount-routes emitted Content-Type ONLY when the reader
+  ;; supplied one — and a store-backed reader returns none for a blob, so the
+  ;; compiled JS bundle served with NO Content-Type at all. Browsers applying
+  ;; strict MIME checking refuse to execute such a script. The extension table
+  ;; already existed in this namespace for the built-app reader; the mount now
+  ;; uses it as a fallback, so EVERY reader gets a correct type.
+  (let [row  (first (static/mount-routes {"/assets" "public"}
+                                         (fn [_] {:content "x"})))
+        call (fn [p] ((:handler row) {:path-params {:path p}}))]
+    (testing "a typeless blob still serves with the right type"
+      (is (= "text/javascript" (get-in (call "cljs/main.js") [:headers "Content-Type"])))
+      (is (= "text/css" (get-in (call "app.css") [:headers "Content-Type"]))))
+    (testing "a reader-supplied type still wins"
+      (let [row2 (first (static/mount-routes
+                         {"/assets" "public"}
+                         (fn [_] {:content "x" :content-type "text/plain"})))]
+        (is (= "text/plain" (get-in ((:handler row2) {:path-params {:path "a.js"}})
+                                    [:headers "Content-Type"])))))
+    (testing "an unknown extension omits the header rather than guessing"
+      (is (nil? (get-in (call "thing.zzz") [:headers "Content-Type"]))))))

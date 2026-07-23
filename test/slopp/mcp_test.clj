@@ -1239,3 +1239,24 @@
         (let [src (call! sess "query_source" {:ns "sf" :targets [{:ns "sf" :name "f"}]})]
           (is (= 1 (count (re-seq #"\[a 1\]" (str src)))) src)))
       (finally (api/close! sess)))))
+
+(deftest ^:external one-shot-call-errors-stay-readable
+  ;; The turn gate on --call is DELIBERATE (see one-shot-call: reads are free,
+  ;; writes carry provenance, and turns are durable across one-shot processes,
+  ;; so a script opens ONE turn then writes). What was broken is the error path:
+  ;; call! reported stack frames, and every result flows through text!, whose
+  ;; boundary-leak guard refuses a file:line coordinate — so a refused write
+  ;; blew up with "boundary leak — a file/line coordinate reached an agent
+  ;; response" INSTEAD of the actual reason. The gate's teaching has to survive
+  ;; its own trip through the wire.
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-oneshot" (make-array java.nio.file.attribute.FileAttribute 0)))
+        r   (mcp/call! dir "ns_create"
+                       {:ns "oc.core" :source "(ns oc.core)\n" :agent "probe"})
+        txt (get-in r [:content 0 :text])]
+    (is (:isError r) "an unturned write is still refused")
+    (is (re-find #"turn" txt) "and says WHY, in words the caller can act on")
+    (is (not (re-find #"boundary leak" txt))
+        "the refusal must not be replaced by the guard that its own frames tripped")
+    (is (not (re-find #"\.clj:\d+" txt))
+        "no file:line coordinate survives to the caller")))
