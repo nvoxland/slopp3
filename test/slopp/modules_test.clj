@@ -749,3 +749,21 @@
     (testing "a late-ref BETWEEN external namespaces is fine (both shell)"
       (let [st2 (first (store/record-module-tier st "app.core" :external))]
         (is (empty? (modules/layering-violations st2 'app.core :external)))))))
+
+(deftest ^:external module-platform-verb
+  (let [sess (external/open!)]
+    (try
+      (testing "declares a platform, folded onto the store"
+        (let [r (api/module-platform! sess "app.client" :cljs :prompt "browser code")]
+          (is (= :cljs (:platform r)))
+          (is (= "app.client" (:module r)))
+          (is (= :cljs (get-in @sess [:store :module-platforms "app.client"])))))
+      (testing "accepts a string spelling (MCP/JSON carries no keyword)"
+        (is (= :cljc (:platform (api/module-platform! sess "app.shared" ":cljc")))))
+      (testing "defaults nil to :jvm"
+        (is (= :jvm (:platform (api/module-platform! sess "app.server" nil)))))
+      (testing "rejects an unknown platform"
+        (is (:error (api/module-platform! sess "app.client" :wasm))))
+      (testing "rejects a non-module string"
+        (is (:error (api/module-platform! sess "has spaces" :cljs))))
+      (finally (api/close! sess)))))

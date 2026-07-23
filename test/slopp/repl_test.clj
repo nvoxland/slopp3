@@ -126,3 +126,18 @@
               (not alive) (is true)
               (< n 20)    (do (Thread/sleep 100) (recur (inc n)))
               :else       (is false "child still alive after a failed boot"))))))))
+
+(deftest benign-load-noise?-distinguishes-warnings-from-errors
+  (testing "a stderr chunk of only compiler WARNINGs is benign noise"
+    (is (#'slopp.repl/benign-load-noise?
+         "WARNING: abs already refers to: #'clojure.core/abs in namespace: garden.color, being replaced by: #'garden.color/abs\n"))
+    (is (#'slopp.repl/benign-load-noise?
+         "Reflection warning, foo.clj:3:5 - call to method size can't be resolved.\n")))
+  (testing "a chunk with a real error is NOT benign, even mixed with a warning"
+    (is (not (#'slopp.repl/benign-load-noise?
+              "Syntax error compiling at (foo.clj:1:1).\nUnable to resolve symbol: qux")))
+    (is (not (#'slopp.repl/benign-load-noise?
+              "WARNING: harmless\nUnable to resolve symbol: qux"))))
+  (testing "empty/nil stderr is not classified as benign (prior behavior preserved)"
+    (is (not (#'slopp.repl/benign-load-noise? "")))
+    (is (not (#'slopp.repl/benign-load-noise? nil)))))

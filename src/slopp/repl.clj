@@ -218,6 +218,21 @@
                   " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
       (when (:err r) r))))
 
+(defn- benign-load-noise?
+  "True when a `load-file` stderr chunk carries ONLY compiler noise — var-shadow
+  `WARNING:`s (e.g. garden.color's `abs` re-refer) or reflection warnings — and
+  no genuine failure. nREPL reports a real load failure via an `eval-error`
+  STATUS (which load-checked! collects separately), so warning-only stderr must
+  not be counted as an error (friction #9: garden's benign warning surfaced as a
+  restart-load ERROR that obscured every red diagnosis)."
+  [chunk]
+  (let [lines (remove str/blank? (str/split-lines (str chunk)))]
+    (boolean
+     (and (seq lines)
+          (every? #(or (str/starts-with? % "WARNING:")
+                       (str/starts-with? % "Reflection warning"))
+                  lines)))))
+
 ^:unsafe (defn load-checked!
   "Like `load!` but surfaces evaluation failures instead of silently dropping
   them (T4 — a failed load must never leave the store and image out of step).
@@ -229,7 +244,7 @@
                      {:op "load-file" :file src :file-path path
                       :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
                       :session (:session image)}))
-        errs (concat (keep :err msgs)
+        errs (concat (remove benign-load-noise? (keep :err msgs))
                      (mapcat (fn [m]
                                (when (some #{"eval-error"} (:status m))
                                  [(or (:ex m) "eval-error")]))

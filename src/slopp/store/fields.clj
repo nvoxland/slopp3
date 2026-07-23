@@ -18,6 +18,18 @@
   [tier]
   ({:reads :internal :effects :external} tier tier))
 
+(defn ^:export canonical-platform
+  "Canonical spelling of a module's target PLATFORM — :jvm (Clojure on the JVM,
+  the default), :cljc (portable: loads on the JVM AND compiles to JS), or :cljs
+  (ClojureScript only — never loaded into the JVM oracle). Coerces a string or
+  colon-prefixed spelling to the keyword so an MCP/JSON value round-trips (the
+  deps-exclusions-as-strings lesson). The three-value validation happens at the
+  api boundary (module-platform!), so this stays total for the fold/replay path."
+  [platform]
+  (let [s (name platform)
+        s (if (= \: (first s)) (subs s 1) s)]
+    (keyword s)))
+
 (def field-registry
   "Store fold-field → persistence declaration. :init seeds empty-store;
   :meta-key names the db meta row persist!/append! write and load-store
@@ -38,6 +50,10 @@
                   :normalize (fn [tiers]
                                (into {} (map (fn [[m t]] [m (canonical-tier t)])) tiers))
                   :doc "module → purity tier, canonical spellings only (D9)"}
+:module-platforms {:init {} :meta-key "module-platforms"
+                      :normalize (fn [pfs]
+                                   (into {} (map (fn [[m p]] [m (canonical-platform p)])) pfs))
+                      :doc "module → target platform :jvm/:cljc/:cljs (default :jvm, D-web-cljs)"}
    :files        {:init {} :meta-key "files"
                   :doc "path → text, or {:sha :bytes :content-type} for binary (bytes live in :blobs)"}
    :config       {:init {} :meta-key "config"
@@ -124,6 +140,12 @@
                   :sample-pre [{:op :file-put :path "GONE.md" :content "x\n"}]
                   :sample {:op :file-remove :path "GONE.md"}
                   :crossed (fn [st] (not (contains? (:files st) "GONE.md")))}
+:module-platform {:field :module-platforms :merge :replay
+                  :fold (fn [st d]
+                          (assoc-in st [:module-platforms (:module d)]
+                                    (canonical-platform (:platform d))))
+                  :sample {:op :module-platform :module "sample.mod" :platform :cljs}
+                  :crossed (fn [st] (= :cljs (get-in st [:module-platforms "sample.mod"])))}
    :config-put   {:field :config :merge :replay
                   :fold (fn [st d]
                           (-> st

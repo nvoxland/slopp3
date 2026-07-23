@@ -24,3 +24,18 @@
       (let [s (store/ingest (store/empty-store) 'ns src)]
         (is (= src (render/render-ns s 'ns))
             (str "round-trip failed for: " (pr-str src)))))))
+
+(deftest source-path-routes-by-platform
+  (testing ":jvm (the arity-2 default) matches legacy .clj under src/"
+    (is (= "src/app/core.clj" (render/source-path 'app.core :jvm)))
+    (is (= "src/app/core.clj" (render/source-path 'app.core))))
+  (testing ":cljc lives under src/ (JVM classpath) with a .cljc extension"
+    (is (= "src/app/shared.cljc" (render/source-path 'app.shared :cljc)))
+    (is (= "test/app/shared_test.cljc" (render/source-path 'app.shared-test :cljc))))
+  (testing ":cljs lives under a separate cljs-src/ tree (off the JVM classpath)"
+    (is (= "cljs-src/app/widget.cljs" (render/source-path 'app.widget :cljs)))
+    (is (= "cljs-test/app/widget_test.cljs" (render/source-path 'app.widget-test :cljs))))
+  (testing "ns-path carries the platform extension"
+    (is (= "app/widget.cljs" (render/ns-path 'app.widget :cljs)))
+    (is (= "app/shared.cljc" (render/ns-path 'app.shared :cljc)))
+    (is (= "app/core.clj" (render/ns-path 'app.core)))))

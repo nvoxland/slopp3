@@ -2399,6 +2399,43 @@
        (seq intents) (assoc :intents intents)
        (seq dead)    (assoc :dead-ends dead)))))
 
+(defn module-platform!
+  "Declare a module's target PLATFORM — the client wave's router (D-web-cljs):
+  :jvm (Clojure on the JVM, the default), :cljc (portable — loads on the JVM AND
+  compiles to JS), or :cljs (ClojureScript only — compiled to JS, never loaded
+  into the JVM oracle). One :module-platform delta carrying its why (:prompt);
+  last write per module wins. Namespace grain, like module_purity — the
+  most-specific declaration governs. Read platforms via query_depends
+  {modules true}."
+  [session module platform & {:keys [prompt agent]}]
+  (let [module   (str module)
+        ;; every surface spells platforms WITH the colon, and MCP/JSON carries
+        ;; a string, so accept both (nil defaults to :jvm) rather than minting
+        ;; a bad keyword
+        platform (keyword (str/replace (name (or platform :jvm)) #"^:" ""))
+        modish   (re-matches #"[^.\s]+(\.[^.\s]+)*" module)]
+    (cond
+      (not modish)
+      {:error (str "modules are the first TWO segments of a namespace"
+                   " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
+                   (pr-str module))}
+
+      (not (#{:jvm :cljc :cljs} platform))
+      {:error (str "platform must be :jvm, :cljc, or :cljs — got "
+                   (pr-str platform)
+                   ". :jvm = Clojure on the JVM (default); :cljc = portable"
+                   " (loads on the JVM AND compiles to JS); :cljs = ClojureScript"
+                   " only (compiled to JS, never loaded into the oracle).")}
+
+      :else
+      (let [st' (session/commit-appended!
+                 session
+                 #(first (store/record-module-platform % module platform
+                                                       :prompt prompt :agent agent))
+                 [])]
+        {:module module :platform platform
+         :platforms (:module-platforms st')}))))
+
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):
   :pure (referentially transparent), :internal (may mutate IN-PROCESS state

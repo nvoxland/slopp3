@@ -377,7 +377,11 @@
    "module_purity"
    (fn [session a _sym]
      (text! (api/module-tier! session (:module a) (:tier a)
-                              :prompt (:prompt a) :agent (:agent a))))})
+                              :prompt (:prompt a) :agent (:agent a))))
+"module_platform"
+   (fn [session a _sym]
+     (text! (api/module-platform! session (:module a) (:platform a)
+                                  :prompt (:prompt a) :agent (:agent a))))})
 
 (def ^:private sync-handlers!
   "call-tool dispatch \u2014 git publish/absorb + remotes (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."

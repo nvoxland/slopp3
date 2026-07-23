@@ -411,6 +411,13 @@
    {:name "deps_list"
     :description "The dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
+{:name "module_platform"
+    :description "Declare a MODULE's target platform for the client wave — :jvm (Clojure on the JVM, the default), :cljc (portable: loads on the JVM AND compiles to JS — shared schemas/logic), or :cljs (ClojureScript only: compiled to JS, NEVER loaded into the JVM oracle — browser code). Namespace grain, most-specific declaration wins (like module_purity). A :cljs namespace renders as .cljs under a separate cljs-src/ tree, is excluded from JVM image-load, and is verified by the cljs compile step, not the JVM. Say WHY in prompt. Read platforms: query_depends {modules true}."
+    :inputSchema {:type "object"
+                  :properties {:module {:type "string"}
+                               :platform {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["module" "platform"]}}
    {:name "deps_pure"
     :description "Assert a dep target is PURE so callers aren't !-flagged: a var (\"ns/f\"), a namespace, or a whole lib. pure=false undoes."
     :inputSchema {:type "object"

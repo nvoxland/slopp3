@@ -20,9 +20,13 @@
 
 (defn ns-path
   "The VFS path of a namespace's rendered file (also used by build! and as the
-  source-path for image loads, so stack traces cite VFS coordinates — F6)."
-  [ns-sym]
-  (str (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/")) ".clj"))
+  source-path for image loads, so stack traces cite VFS coordinates — F6). The
+  arity-2 form takes the namespace's PLATFORM and sets the extension
+  accordingly (:jvm→.clj, :cljc→.cljc, :cljs→.cljs, D-web-cljs)."
+  ([ns-sym] (ns-path ns-sym :jvm))
+  ([ns-sym platform]
+   (str (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/"))
+        "." (case platform :cljs "cljs" :cljc "cljc" "clj"))))
 
 (defn test-ns?
   "Convention: a namespace whose name ends in `-test` is a test namespace
@@ -34,9 +38,18 @@
 (defn source-path
   "The materialized file path for a namespace, rooted by convention: production
   code under `src/`, test namespaces under `test/`. e.g. `slopp.semver` →
-  `src/slopp/semver.clj`; `slopp.semver-test` → `test/slopp/semver_test.clj`."
-  [ns-sym]
-  (str (if (test-ns? ns-sym) "test/" "src/") (ns-path ns-sym)))
+  `src/slopp/semver.clj`; `slopp.semver-test` → `test/slopp/semver_test.clj`.
+  The arity-2 form takes the namespace's PLATFORM (:jvm/:cljc/:cljs): :cljs roots
+  under a separate `cljs-src/` (`cljs-test/`) tree the JVM classpath excludes,
+  with a `.cljs` extension; :cljc/:jvm stay under `src/`/`test/` with
+  `.cljc`/`.clj` (D-web-cljs)."
+  ([ns-sym] (source-path ns-sym :jvm))
+  ([ns-sym platform]
+   (let [test? (test-ns? ns-sym)
+         root  (if (= :cljs platform)
+                 (if test? "cljs-test/" "cljs-src/")
+                 (if test? "test/" "src/"))]
+     (str root (ns-path ns-sym platform)))))
 
 (defn element-offsets
   "Start position [row col] (1-based) of each of `ns-sym`'s elements within the

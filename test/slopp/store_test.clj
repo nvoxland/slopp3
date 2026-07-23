@@ -215,3 +215,42 @@
             r   (store/replay-delta st2 d2)]
         (is (some? r))
         (is (nil? (get-in r [:namespaces 'husk])))))))
+
+(deftest module-platform-delta-model
+  (let [s0 (store/empty-store)]
+    (testing "a fresh store declares no module platforms"
+      (is (= {} (:module-platforms s0))))
+    (let [[s1 d1] (store/record-module-platform s0 "app.client" :cljs
+                                                :agent "a" :prompt "browser code")]
+      (testing "record-module-platform appends a :module-platform delta and folds it"
+        (is (= :module-platform (:op d1)))
+        (is (= "app.client" (:module d1)))
+        (is (= :cljs (:platform d1)))
+        (is (= '*session* (:ns d1)))
+        (is (= "browser code" (:prompt d1)))
+        (is (= {"app.client" :cljs} (:module-platforms s1))))
+      (testing "replay reconstructs :module-platforms (foreign-sync stays cheap)"
+        (let [replayed (store/replay-delta s0 d1)]
+          (is (some? replayed))
+          (is (= {"app.client" :cljs} (:module-platforms replayed)))))
+      (testing "re-declaring overwrites"
+        (let [[s2 d2] (store/record-module-platform s1 "app.client" :cljc)]
+          (is (= :cljc (:platform d2)))
+          (is (= {"app.client" :cljc} (:module-platforms s2)))
+          (is (= {"app.client" :cljc} (:module-platforms (store/replay-delta s1 d2)))))))))
+
+(deftest platform-for-most-specific-wins
+  (let [s0 (store/empty-store)
+        [s1 _] (store/record-module-platform s0 "app.client" :cljs)
+        [s2 _] (store/record-module-platform s1 "app.client.shared" :cljc)]
+    (testing "an undeclared namespace defaults to :jvm"
+      (is (= :jvm (store/platform-for s0 'other.thing)))
+      (is (= :jvm (store/platform-for s2 'app.server.core))))
+    (testing "a module declaration governs its namespaces"
+      (is (= :cljs (store/platform-for s2 'app.client.widget))))
+    (testing "the MOST SPECIFIC declaration wins — a subtree overrides its module"
+      (is (= :cljc (store/platform-for s2 'app.client.shared.schema))))
+    (testing "jvm-loadable? is false only for :cljs"
+      (is (store/jvm-loadable? s2 'app.server.core))
+      (is (store/jvm-loadable? s2 'app.client.shared.schema))
+      (is (not (store/jvm-loadable? s2 'app.client.widget))))))

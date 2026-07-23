@@ -10,15 +10,21 @@
   "Evaluate `ns-sym`'s current source (rendered from the store) into the image,
   then mark it in `*loaded-libs*` — store namespaces have no classpath presence
   (C1 no-disk), so without the mark a later `(:require ns-sym)` from another
-  store namespace would hit the classpath and fail."
+  store namespace would hit the classpath and fail.
+
+  A :cljs namespace is ClojureScript-only (references js/…, the DOM) and is
+  NEVER loaded into the JVM oracle — load-ns! skips it and returns nil (a no-op,
+  not an error), so every dependency-order loader excludes it for free
+  (D-web-cljs). :jvm and :cljc load as usual (the latter's :clj branch)."
   [handle store ns-sym]
-  (let [res (repl/load-checked! handle
-                                (render/render-ns store ns-sym)
-                                (render/ns-path ns-sym))]
-    (repl/eval! handle
-                (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                        ns-sym))
-    (:err res)))
+  (when (store/jvm-loadable? store ns-sym)
+    (let [res (repl/load-checked! handle
+                                  (render/render-ns store ns-sym)
+                                  (render/ns-path ns-sym (store/platform-for store ns-sym)))]
+      (repl/eval! handle
+                  (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                          ns-sym))
+      (:err res))))
 
 ^:reads (defn test-run
   "Run `ns-sym`'s clojure.test tests in the live image; returns the summary map

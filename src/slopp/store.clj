@@ -753,6 +753,44 @@
                   :else cur))
               nil upto))))
 
+(defn platform-for
+  "The target PLATFORM governing `ns-sym` — the MOST SPECIFIC :module-platform
+  declaration wins (the namespace itself, then each enclosing prefix, then its
+  module), else :jvm (undeclared = ordinary Clojure on the JVM). Mirrors the
+  purity tier register's namespace-grain lookup (edit.modules/tier-for)."
+  [store ns-sym]
+  (let [pfs  (:module-platforms store)
+        segs (str/split (str ns-sym) #"\.")]
+    (fields/canonical-platform
+     (or (some #(get pfs (str/join "." (take % segs)))
+               (range (count segs) 0 -1))
+         :jvm))))
+
+(defn jvm-loadable?
+  "True unless `ns-sym`'s platform is :cljs — i.e. its source can be loaded into
+  the JVM oracle. :jvm and :cljc load (the latter's :clj branch); :cljs is
+  ClojureScript only and is never loaded (D-web-cljs)."
+  [store ns-sym]
+  (not= :cljs (platform-for store ns-sym)))
+
+(defn record-module-platform
+  "Declare a module's target PLATFORM (:jvm/:cljc/:cljs) — the per-module
+  register behind the client wave (D-web-cljs). :jvm (default; a module absent
+  from :module-platforms) is Clojure loaded into the JVM oracle; :cljc loads on
+  the JVM (its :clj branch) AND compiles to JS; :cljs compiles to JS only and is
+  never loaded into the oracle. One :module-platform delta carrying its why
+  (:prompt); last write per module wins; the registry fold canonicalizes state.
+  Returns [store' delta]."
+  [store module platform & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        module (str module)
+        delta  (cond-> {:id did :parent (:id (last (:deltas store)))
+                        :op :module-platform :ns '*session* :at (now-ms)
+                        :module module :platform platform}
+                 prompt (assoc :prompt prompt)
+                 agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
 (defn record-module-tier
   "Declare a module's purity TIER (:pure/:internal/:external) — the per-module
   register behind the functional-core gate (D9): one :module-tier delta

@@ -97,7 +97,7 @@
 
       :else
       (do (doseq [ns-sym (keys (:namespaces st))]
-    (let [file (io/file target (render/source-path ns-sym))]
+    (let [file (io/file target (render/source-path ns-sym (store/platform-for st ns-sym)))]
       (io/make-parents file)
       (spit file (render/render-ns st ns-sym))))
   (doseq [[path entry] (:files st)]
