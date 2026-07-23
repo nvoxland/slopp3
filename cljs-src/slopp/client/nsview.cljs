@@ -4,15 +4,22 @@
   namespace only touches the DOM — the genuinely browser-bound edge. Compiled
   to JS by compile_client and served as a blob; never loaded into the JVM
   oracle. D-web-cljs dogfood."
-  (:require [slopp.client.nsfilter :as nsf]))
+  (:require [slopp.client.nsfilter :as nsf] [slopp.client.nsschema :as schema]))
 
 (defn apply-filter!
-  "Show each row whose text matches `needle`, hide the rest."
+  "Show each row whose namespace matches `needle`, hide the rest. Each row's
+  cell is parsed with the SHARED schema and, when it validates, matched on the
+  clean namespace name; a row that doesn't parse falls back to its raw text."
   [needle rows]
   (.forEach rows
             (fn [row]
-              (set! (.. row -style -display)
-                    (if (nsf/matches? needle (.-textContent row)) "" "none")))))
+              (let [text   (.-textContent row)
+                    parsed (schema/parse-ns-cell text)
+                    target (if (and parsed (schema/valid-ns-row? parsed))
+                             (:ns parsed)
+                             text)]
+                (set! (.. row -style -display)
+                      (if (nsf/matches? needle target) "" "none"))))))
 
 (defn ^:export init
   "Wire the search box to the namespace rows. No-op if the input is absent."

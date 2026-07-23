@@ -206,7 +206,8 @@
                                     (store/forms candidate ns-sym))
                       summary (if load?
                                 (session/run-verification! session ns-sym nil :edited edited)
-                                session/cljs-deferred-summary)]
+                                session/cljs-deferred-summary)
+recompiled (session/maybe-recompile-client! session ns-sym)]
                   (session/commit-appended! session
                                     #(store/record-verification % ns-sym summary)
                                     [])
@@ -217,7 +218,8 @@
                     stubbed (assoc :red-first stubbed
                                    :note (str "these vars don't exist yet — stubbed"
                                               " in-image as failing (red-first);"
-                                              " implement them to go green.")))))))))
+                                              " implement them to go green."))
+                    recompiled (merge recompiled))))))))
       (catch Exception e
         {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))
 
@@ -431,7 +433,8 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                              (session/run-verification! session scope affected
                                                         :edited edited)
                              session/cljs-deferred-summary)
-                existing (count (filter (comp pre-warned :var) (:warnings r)))]
+                existing (count (filter (comp pre-warned :var) (:warnings r)))
+recompiled (session/maybe-recompile-client! session ns-sym)]
             (session/commit-appended! session
                               #(store/record-verification % ns-sym summary) [])
             (session/with-ms
@@ -462,7 +465,8 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                          :note (str "these vars don't exist yet — stubbed"
                                                     " in-image as failing (red-first);"
                                                     " implement them to go green."))
-                (:carried-errors r) (assoc :carried-errors (:carried-errors r)))
+                (:carried-errors r) (assoc :carried-errors (:carried-errors r))
+                recompiled          (merge recompiled))
               t0)))))))
 
 (defn add-form!
@@ -529,7 +533,8 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                 all-w      (edit/ns-warnings (:store @session) ns-sym)
                 existing   (count (filter (comp pre-warned :var) all-w))
                 advisories (when nm (:advisories (edit.modules/gate-check
-                                                  (:store @session) ns-sym nm)))]
+                                                  (:store @session) ns-sym nm)))
+recompiled (session/maybe-recompile-client! session ns-sym)]
             (session/commit-appended! session
                                       #(store/record-verification % ns-sym summary)
                                       [])
@@ -547,7 +552,8 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                                     " (red-first); implement them to"
                                                     " go green."))
                 (:carried-errors r) (assoc :carried-errors (:carried-errors r))
-                (seq advisories)    (assoc :advisories advisories))
+                (seq advisories)    (assoc :advisories advisories)
+                recompiled          (merge recompiled))
               t0)))))))
 
 (defn delete-form!

@@ -766,6 +766,17 @@
                (range (count segs) 0 -1))
          :jvm))))
 
+(defn kondo-lang
+  "The clj-kondo `:lang` for `ns-sym`'s platform (companion to `platform-for`):
+  `:cljs`/`:cljc` lint as themselves so `js/*` and `cljs.core` resolve; `:jvm`
+  (the default) lints as `:clj`. Pass to `index/lint` so a client form doesn't
+  draw a false \"Unresolved namespace js\" finding (D-web-cljs)."
+  [store ns-sym]
+  (case (platform-for store ns-sym)
+    :cljs :cljs
+    :cljc :cljc
+    :clj))
+
 (defn jvm-loadable?
   "True unless `ns-sym`'s platform is :cljs — i.e. its source can be loaded into
   the JVM oracle. :jvm and :cljc load (the latter's :clj branch); :cljs is

@@ -59,45 +59,55 @@
   (atom nil))
 
 ^:reads (defn- kondo-pass
-  "ONE real kondo run over `source`, stored. Also records what this pass just
-  taught kondo's cache about `source`'s OWN namespace — that side effect is
-  what dependents' fingerprints read, so it must be tracked wherever a pass
-  actually happens.
+  "ONE real kondo run over `source` in language `lang` (`:clj`/`:cljs`/`:cljc`),
+  stored. Also records what this pass just taught kondo's cache about `source`'s
+  OWN namespace — that side effect is what dependents' fingerprints read, so it
+  must be tracked wherever a pass actually happens.
+
+  `lang` forces kondo's language (`:lang` in the run! opts): a `:cljs` form's
+  `js/*` and `cljs.core` resolve instead of drawing false unresolved findings
+  (D-web-cljs). The memo keys on `[source lang]` so a clj-linted source is never
+  reused for a cljs form. Arity-1 defaults to `:clj` — the lint pipeline is
+  SELF-HOSTING (it lints slopp's own :clj source), so a lang-less call must
+  always work.
 
   Runs against `kondo-cache-dir` when set (#134). Unset means kondo resolves
   the cache from the process CWD, which is how cross-ns findings came to
   depend on a `.clj-kondo/` happening to sit next to the process."
-  [source]
-  (let [dir (some-> @kondo-cache-dir str)
-        r (with-in-str source
-            (kondo/run! (cond-> {:lint ["-"] :config derive/kondo-config}
-                          dir (assoc :cache-dir dir))))
-        a (:analysis r)
-        requires (into #{} (map :to) (:namespace-usages a))
-        own      (-> a :namespace-definitions first :name)
-        v {:analysis a
-           :ns       own
-           :requires requires
-           ;; the cross-ns state these FINDINGS are true under: WHICH cache,
-           ;; and what it knew about this source's requires
-           :cache-dir dir
-           ;; the CONFIG is part of the world these findings are true under:
-           ;; change a linter level and every memoized entry is stale. Without
-           ;; this, editing kondo-config silently did nothing until restart.
-           :cfg      (hash derive/kondo-config)
-           :fp       (deps-fp requires)
-           :findings (->> (:findings r)
-                          (filter #(#{:warning :error} (:level %)))
-                          (mapv #(select-keys % [:level :type :message :row :col])))}]
-    (when own
-      (swap! ns-source-hash assoc own (hash source)))
-    (swap! kondo-cache (fn [c] (assoc (if (>= (count c) 256) {} c) source v)))
-    v))
+  ([source] (kondo-pass source :clj))
+  ([source lang]
+   (let [dir (some-> @kondo-cache-dir str)
+         r (with-in-str source
+             (kondo/run! (cond-> {:lint ["-"] :config derive/kondo-config :lang lang}
+                           dir (assoc :cache-dir dir))))
+         a (:analysis r)
+         requires (into #{} (map :to) (:namespace-usages a))
+         own      (-> a :namespace-definitions first :name)
+         v {:analysis a
+            :ns       own
+            :requires requires
+            ;; the cross-ns state these FINDINGS are true under: WHICH cache,
+            ;; and what it knew about this source's requires
+            :cache-dir dir
+            ;; the CONFIG is part of the world these findings are true under:
+            ;; change a linter level and every memoized entry is stale. Without
+            ;; this, editing kondo-config silently did nothing until restart.
+            :cfg      (hash derive/kondo-config)
+            :fp       (deps-fp requires)
+            :findings (->> (:findings r)
+                           (filter #(#{:warning :error} (:level %)))
+                           (mapv #(select-keys % [:level :type :message :row :col])))}]
+     (when own
+       (swap! ns-source-hash assoc own (hash source)))
+     (swap! kondo-cache (fn [c] (assoc (if (>= (count c) 256) {} c) [source lang] v)))
+     v)))
 
 ^:reads (defn- run-kondo
-  "The memoized kondo pass: {:analysis ... :findings ...} for `source`, keyed
-  on SOURCE — the honest key for `:analysis`, which is cache-INDEPENDENT
-  (measured 2026-07-16: byte-identical with and without `.clj-kondo/.cache`).
+  "The memoized kondo pass: {:analysis ... :findings ...} for `source` in
+  language `lang`, keyed on [SOURCE LANG] — the honest key for `:analysis`,
+  which is cache-INDEPENDENT (measured 2026-07-16: byte-identical with and
+  without `.clj-kondo/.cache`), plus the lang the pass ran under. Arity-1
+  defaults to `:clj` (the self-hosting lint pipeline over slopp's own source).
 
   It must stay source-keyed: `edit.refs/static-refs` maps `analyze` over EVERY
   namespace, so keying analysis on the cross-ns fingerprint would re-analyze
@@ -105,18 +115,22 @@
 
   `:findings` need a stricter key and get it in `lint`; reading them straight
   off this entry is what made the lint gate stale."
-  [source]
-  (or (get @kondo-cache source)
-      (kondo-pass source)))
+  ([source] (run-kondo source :clj))
+  ([source lang]
+   (or (get @kondo-cache [source lang])
+       (kondo-pass source lang))))
 
 ^:reads (defn lint
-  "clj-kondo FINDINGS for `source` (warnings + errors: [{:level :type :message
-  :row :col}]).
+  "clj-kondo FINDINGS for `source` in language `lang` (warnings + errors:
+  [{:level :type :message :row :col}]). `lang` (`:clj` default / `:cljs` /
+  `:cljc`) forces kondo's language so a `:cljs` form's `js/*` and `cljs.core`
+  resolve instead of drawing false unresolved findings (D-web-cljs); pass it
+  from the namespace's `:platform`.
 
   Findings are NOT a function of `source` alone — kondo reads cross-ns facts
   (arities, var existence) from its cache, which other lints rewrite. So the
   memoized entry is only reusable while the world it was computed under still
-  holds, which is three things:
+  holds, which is:
   - the same CACHE (`:cache-dir`) — a different cache is a different world
     (#134);
   - the same CONFIG (`:cfg`) — a linter level change makes every prior
@@ -129,12 +143,13 @@
   Any mismatch re-passes. `analyze` deliberately keeps the source-only key:
   `:analysis` is cache-INDEPENDENT (measured 2026-07-16) and `edit.refs`
   maps it over EVERY namespace."
-  [source]
-  (let [ent (run-kondo source)]
-    (:findings
-     (if (and (= (:cache-dir ent) (some-> @kondo-cache-dir str))
-              (= (:cfg ent) (hash derive/kondo-config))
-              (= (:fp ent) (deps-fp (:requires ent)))
-              (= (get @ns-source-hash (:ns ent)) (hash source)))
-       ent
-       (kondo-pass source)))))
+  ([source] (lint source :clj))
+  ([source lang]
+   (let [ent (run-kondo source lang)]
+     (:findings
+      (if (and (= (:cache-dir ent) (some-> @kondo-cache-dir str))
+               (= (:cfg ent) (hash derive/kondo-config))
+               (= (:fp ent) (deps-fp (:requires ent)))
+               (= (get @ns-source-hash (:ns ent)) (hash source)))
+        ent
+        (kondo-pass source lang))))))

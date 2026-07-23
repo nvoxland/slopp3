@@ -537,7 +537,7 @@ client-deps (:client-deps st)
         nses  (sort (keys (:namespaces st)))
         lint  (vec (for [n nses
                          :let [src (render/render-ns st n)]
-                         f (index/lint src)]
+                         f (index/lint src (store/kondo-lang st n))]
                      (-> f (dissoc :row :col) (assoc :ns n))))
         rep   (modules/unused-report st nses)
         ;; tier LAYERING — a whole-graph property, so it lives here rather

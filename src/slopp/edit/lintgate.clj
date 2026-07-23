@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [slopp.edit :as edit]
             [slopp.index :as index]
-            [slopp.render :as render]))
+            [slopp.render :as render] [slopp.store :as store]))
 
 (defn ^:export lint-refusals
   "NEW error-level kondo findings a candidate store would introduce over
@@ -27,7 +27,8 @@
   (let [written (set written-fids)
         errs    (fn [store ns-sym]
                   (when (get-in store [:namespaces ns-sym])
-                    (->> (index/lint (render/render-ns store ns-sym))
+                    (->> (index/lint (render/render-ns store ns-sym)
+                                    (store/kondo-lang store ns-sym))
                          (filter #(contains? edit/write-coherence-lint (:type %)))
                          (map #(assoc % :ns ns-sym)))))
         key*    (juxt :ns :type :message)

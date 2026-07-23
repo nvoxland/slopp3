@@ -48,7 +48,7 @@
                                                 frontier)))))
         lint-by-form (frequencies
                       (for [[nsx src] rendered
-                            f (index/lint src)
+                            f (index/lint src (store/kondo-lang st nsx))
                             :let [e (render/owner-form st nsx (:row f) (:col f))]
                             :when e]
                         (symbol (str nsx) (str (or (:name e) (:id e))))))

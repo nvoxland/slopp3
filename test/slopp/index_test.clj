@@ -78,6 +78,15 @@
       (let [an2 (analyze/analyze "(ns app)\n(defn go [a] (reset! a 1))\n")]
         (is (some #(= 'app/go (:var %)) (derive/effect-violations an2)))))))
 
+(deftest lint-honours-the-platform-lang
+  (let [src "(ns x)\n(defn f [] (js/alert 1) (.-value (js/document.getElementById \"q\")))\n"]
+    (testing "default (:clj) lang flags js/* as an unresolved namespace"
+      (is (some #(= :unresolved-namespace (:type %)) (index/lint src))
+          "clj lint can't resolve js"))
+    (testing ":cljs lang resolves js/* — no false unresolved-namespace finding"
+      (is (not (some #(= :unresolved-namespace (:type %)) (index/lint src :cljs)))
+          "cljs lint knows js"))))
+
 (deftest analysis-and-lint-are-memoized-separately
   ;; These used to share ONE cached kondo pass, to hold per-write kondo cost
   ;; at a single run. That coupling is RETIRED: `:findings` depend on
@@ -88,19 +97,21 @@
   ;; which nothing reads. Measured after: no benchmark regression.
   ;;
   ;; The ORIGINAL concern still stands and is what this test now protects:
-  ;; neither pass may recompute for the same source.
+  ;; neither pass may recompute for the same source. The lint memo keys on
+  ;; [source lang] (D-web-cljs) so a clj-linted source is never reused for a
+  ;; cljs form.
   (let [s "(ns kx.core)\n(defn f [x] (reduce + x))\n(defn g [] (f 1 2 3))\n"]
     (testing "lint keeps its cache-dir-backed pass, memoized as before"
       (is (seq (index/lint s)) "lint returns findings")
-      (let [before (get @@#'index/kondo-cache s)]
-        (is (some? before) "lint populates the kondo cache")
+      (let [before (get @@#'index/kondo-cache [s :clj])]
+        (is (some? before) "lint populates the kondo cache under [source lang]")
         (index/lint s)
-        (is (identical? before (get @@#'index/kondo-cache s))
+        (is (identical? before (get @@#'index/kondo-cache [s :clj]))
             "same cached kondo result object — no recompute")))
     (testing "analysis runs its own pass and does NOT ride lint's cache"
       (let [s2 "(ns kx.other)\n\n(defn h \"D.\" [x] (inc x))\n"]
         (analyze/analyze s2)
-        (is (not (contains? @@#'index/kondo-cache s2))
+        (is (not (contains? @@#'index/kondo-cache [s2 :clj]))
             "analysis must not populate the cache-dir-backed pass")))
     (testing "and analysis is memoized on its own key"
       (let [s3 "(ns kx.memo)\n\n(defn k \"D.\" [x] (inc x))\n"

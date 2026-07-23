@@ -688,6 +688,31 @@
   coverage gap the agent should close). D-web-cljs."
   {:test 0 :pass 0 :status :unverified :reason :cljs-deferred-to-compile})
 
+(defn maybe-recompile-client!
+  "Dev loop (D-web-cljs): when the `client`/`auto-compile` config is ON and
+  `ns-sym` is a CLIENT namespace (`:cljc`/`:cljs`), recompile the client bundle
+  so a `--live` server serves fresh JS without a manual `compile_client`.
+  Returns `{:client-recompiled <output-path>}` (or `{:client-recompile-error
+  <msg>}`), or nil when disabled or `ns-sym` is not a client namespace.
+
+  Opt-in and synchronous — a dev who turns it on accepts the ~seconds-per-write
+  compile cost; the common (`:jvm`) write is a nil no-op (one config read + a
+  platform lookup). Best-effort: a compile failure is REPORTED, never thrown
+  into the write. Decoupled via `store/late-ref` — `slopp.api.cljs` requires
+  `slopp.api.external` → `slopp.api`, so a static require here would close a
+  load cycle."
+  [session ns-sym]
+  (let [st (:store @session)]
+    (when (and (= "true" (str (get-in st [:config "client" :values "auto-compile"])))
+               (#{:cljc :cljs} (store/platform-for st ns-sym)))
+      (try
+        (let [r ((store/late-ref 'slopp.api.cljs/compile-client!) session)]
+          (if (:error r)
+            {:client-recompile-error (:error r)}
+            {:client-recompiled (:output r)}))
+        (catch Throwable t
+          {:client-recompile-error (ex-message t)})))))
+
 (defn run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
   `default-ns`'s tests when there's no trace information. `:edited` (the

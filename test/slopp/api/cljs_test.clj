@@ -90,3 +90,24 @@
           (is (nil? (:error r)) (pr-str r))
           (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external auto-compile-recompiles-the-client-bundle-on-write
+  (let [sess (external/open!)]
+    (try
+      (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+                     :client true :prompt "the cljs compiler")
+      (api/module-platform! sess "ac.client" :cljs :prompt "browser code")
+      (api/ingest! sess 'ac.client "(ns ac.client)\n")
+      (testing "auto-compile OFF (default): a client write does NOT recompile"
+        (let [r (api/add-form! sess 'ac.client "(defn a [] (js/alert \"a\"))")]
+          (is (nil? (:client-recompiled r)) (pr-str r))
+          (is (nil? (get-in @sess [:store :files "public/cljs/main.js"]))
+              "no bundle written yet")))
+      (testing "auto-compile ON: a client write recompiles → served bundle appears"
+        (api/config-file! sess "client" :key "auto-compile" :value "true"
+                          :prompt "dev loop")
+        (let [r (api/add-form! sess 'ac.client "(defn b [] (js/alert \"b\"))")]
+          (is (some? (:client-recompiled r)) (pr-str r))
+          (is (string? (get-in @sess [:store :files "public/cljs/main.js"]))
+              "fresh bundle served")))
+      (finally (api/close! sess)))))

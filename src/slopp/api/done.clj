@@ -39,7 +39,7 @@
              :let [st*   (:store @session)
                    src   (render/render-ns st* ns-sym)
                    lines (vec (str/split-lines src))]
-             f (index/lint src)]
+             f (index/lint src (store/kondo-lang st* ns-sym))]
          ;; anchors, not coordinates: the owning form + a match-ready
          ;; snippet; row/col never cross the wire
          (cond-> (-> f
