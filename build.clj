@@ -105,7 +105,8 @@
   {'org.clojure/clojure {:mvn/version "1.12.5"}
    'cheshire/cheshire   {:mvn/version "5.13.0"}
    'http-kit/http-kit   {:mvn/version "2.8.0"}
-   'hiccup/hiccup       {:mvn/version "2.0.0"}})
+   'hiccup/hiccup       {:mvn/version "2.0.0"}
+   'garden/garden       {:mvn/version "1.3.10"}})
 
 (defn slim
   "Build target/slopp-web-<version>.jar from the materialized store source

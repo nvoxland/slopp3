@@ -421,6 +421,19 @@ The rules that matter:
   request); pin one rendered string per component. Under `--live`, an
   edited page hot-serves — browser F5, no build step.
 
+**CSS is garden — the same story for stylesheets (`slopp.web.css`).** A
+stylesheet is a `defn` GET endpoint returning `css-response`; rules are
+garden data (`[:main {:margin "0 auto"}]`, nested `[:main [:a {…}]]`,
+`garden.stylesheet/at-media` for `@media`). `render` serializes minified
+and validates every selector/value string against block-breakout (`{ } <`
+throw — garden renders strings verbatim, so an interpolated value is an
+injection door; `;` is allowed because data URIs use it). Serve it, then
+`[:link {:rel "stylesheet" :href "/styles/app.css"}]` from `page`'s
+`:html/head` — that `:href` is a literal, so `web-dangling-route-refs`
+ties the link to the stylesheet endpoint like any other route. Raw or
+vendored CSS goes through a static `.css` asset (`file_put` + an
+`http.static.*` mount), not the renderer.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`

@@ -1800,11 +1800,29 @@ attributes), nothing in this design depends on it, and plain links + forms
   `:web/auth`; the browser dogfood's `/store*` endpoints are `:public`
   WITH the recorded justification (the co-hosted `/call`+`/mcp` expose
   strictly more).
+- **CSS is the same story, via garden** (`slopp.web.css`, added when the
+  question "something similar for CSS?" came up). CSS-as-Clojure-data is
+  to stylesheets what hiccup is to HTML: a stylesheet is a `defn` GET
+  endpoint returning `css-response` (text/css, `:web/raw`), rules are
+  garden data. Same shape as the HTML side: garden 2nd dep-with-owned-
+  strictness-layer (`render` refuses `{ } <` in any selector/value string
+  — garden renders them verbatim, the identical injection door hiccup
+  had; `;` is deliberately NOT refused because data URIs
+  (`data:…;base64,…`) use it and, absent a `}`, a stray `;` only appends
+  a declaration to the same rule). The garden dep excludes the optional
+  YUI-compressor (drags Rhino). No new integrity machinery: a
+  `[:link {:href "/styles/app.css"}]` is a literal `:href`, so the
+  EXISTING `web-dangling-route-refs` advisory covers CSS links for free —
+  verified live, `/store/style.css`'s route reports `:rendered-by`
+  `[slopp.http.browse/shell]`. Raw/vendored CSS uses the static-asset
+  path, not the renderer. `render` rides the slim jar (`slopp/web/**`).
 - **Dogfood**: `slopp.http.browse` — the read-only store browser
-  (`/store`, `/store/ns/:ns`, `/store/source/:ns/:name`) in the server
-  module (never rides the slim jar), plain links, full-page renders,
-  arbitrary store source through the escaper as a standing security
-  exercise; wired into `start-server!`'s `:web/namespaces`.
+  (`/store`, `/store/ns/:ns`, `/store/source/:ns/:name`, and
+  `/store/style.css` — its own stylesheet as garden data with a
+  dark-mode `@media` block) in the server module (never rides the slim
+  jar), plain links, full-page renders, arbitrary store source through
+  the escaper as a standing security exercise; wired into
+  `start-server!`'s `:web/namespaces`.
 
 Deferred, deliberately: htmx (additive hx-* attributes + one static blob
 when an app wants partial updates; `ideas/htmx-hiccup-ui.md` keeps that
