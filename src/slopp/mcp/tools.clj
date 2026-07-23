@@ -413,6 +413,10 @@
    {:name "deps_list"
     :description "The dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
+{:name "compile_client"
+    :description "Compile the store's CLIENT namespaces (:cljc + :cljs, declared via module_platform) to JavaScript with the configured backend (default ClojureScript, compiled ON THE JVM — no Node) and record the output as a served file blob. Compile-error-as-oracle: analyzer warnings and hard errors are anchored to the owning store forms. `output` sets the served path (default public/cljs/main.js). Requires a build-only compiler dep: deps_add org.clojure/clojurescript with client=true."
+    :inputSchema {:type "object"
+                  :properties {:output {:type "string"}}}}
 {:name "module_platform"
     :description "Declare a MODULE's target platform for the client wave — :jvm (Clojure on the JVM, the default), :cljc (portable: loads on the JVM AND compiles to JS — shared schemas/logic), or :cljs (ClojureScript only: compiled to JS, NEVER loaded into the JVM oracle — browser code). Namespace grain, most-specific declaration wins (like module_purity). A :cljs namespace renders as .cljs under a separate cljs-src/ tree, is excluded from JVM image-load, and is verified by the cljs compile step, not the JVM. Say WHY in prompt. Read platforms: query_depends {modules true}."
     :inputSchema {:type "object"
