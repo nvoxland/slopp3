@@ -66,10 +66,10 @@
                                :prompt "endpoint without auth")]
           (is (re-find #":web/auth" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'shop.api 'naked)))))
-      (testing "with a declared policy it lands, and the route reports"
+      (testing "with a declared policy and response contract it lands, and the route reports"
         (let [r (api/add-form! sess 'shop.api
                                (str "(defn ^{:web/method :get :web/path \"/api/ping\""
-                                    " :web/auth :public} ping \"P.\" [req] req)")
+                                    " :web/auth :public :web/response :map} ping \"P.\" [req] req)")
                                :prompt "a public endpoint")]
           (is (nil? (:error r)) (pr-str r))
           (let [rep (web/routes-report (:store @sess))]
@@ -151,7 +151,7 @@
     (try
       (api/ingest! sess 'ui.core
                    (str "(ns ui.core)\n\n"
-                        "(defn ^{:web/method :get :web/path \"/home\" :web/auth :public} home \"H.\" [req]\n"
+                        "(defn ^{:web/method :get :web/path \"/home\" :web/auth :public :web/response :map} home \"H.\" [req]\n"
                         "  [:a {:href \"/nowhere\"} \"x\"])\n"))
       (testing "inert until http.enabled"
         (let [r (external/done! sess :label "pre-optin")]
@@ -167,7 +167,7 @@
               (pr-str (:findings r)))))
       (testing "adding the route discharges"
         (api/add-form! sess 'ui.core
-                       "(defn ^{:web/method :get :web/path \"/nowhere\" :web/auth :public} nowhere \"N.\" [req] req)"
+                       "(defn ^{:web/method :get :web/path \"/nowhere\" :web/auth :public :web/response :map} nowhere \"N.\" [req] req)"
                        :prompt "serve the missing route")
         (let [r (external/done! sess :label "served")]
           (is (empty? (get-in r [:findings :web-dangling-route-refs]))
@@ -191,4 +191,30 @@
                                "(defn card \"C.\" [] [:div {:class \"x\"} \"c\"])"
                                :prompt "correct spelling")]
           (is (nil? (:error r)) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external web-endpoint-schema-gate-requires-a-response-contract
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'shopc.api "(ns shopc.api)\n\n(defn seed \"S.\" [x] x)\n")
+      (testing "before opt-in, an endpoint without :web/response lands (grandfathered)"
+        (let [r (api/add-form! sess 'shopc.api
+                               "(defn ^{:web/method :get :web/path \"/pre\" :web/auth :public} pre \"P.\" [req] req)"
+                               :prompt "pre-optin endpoint")]
+          (is (nil? (:error r)) (pr-str r))))
+      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (testing "under opt-in, an endpoint with auth but NO :web/response is refused, never lands"
+        (let [r (api/add-form! sess 'shopc.api
+                               "(defn ^{:web/method :get :web/path \"/list\" :web/auth :public} list-it \"L.\" [req] req)"
+                               :prompt "no response contract")]
+          (is (re-find #":web/response" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'shopc.api 'list-it)) "never lands")))
+      (testing "declaring :web/response (here inline) lets it land"
+        (let [r (api/add-form! sess 'shopc.api
+                               (str "(defn ^{:web/method :get :web/path \"/ok\" :web/auth :public"
+                                    " :web/response [:map [:n :int]]} ok \"O.\" [req] req)")
+                               :prompt "with a response contract")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'shopc.api 'ok)))))
       (finally (api/close! sess)))))

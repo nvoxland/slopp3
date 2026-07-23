@@ -45,6 +45,9 @@
 {:rule :web-react-attrs :grain :form :severity :refuse
     :escape "spell it as HTML (:class, :for), replace handlers with a link/form targeting an endpoint, or dial it down (config_file {path \"rules\" key \"web-react-attrs\" value \"advisory\"}) for a map that is genuinely not an element"
     :teach "a literal hiccup element carries a React attribute name (:className, :htmlFor, :onClick…) — browsers silently ignore unknown attributes, so it ships and does nothing (inert until http.enabled)"}
+{:rule :web-endpoint-schema :grain :form :severity :refuse
+    :escape "add :web/response to the endpoint's name metadata — a .cljc malli schema var (shareable/reusable) or an inline [:map …] for a one-off — or dial it down (config_file {path \"rules\" key \"web-endpoint-schema\" value \"advisory\"})"
+    :teach "a :web/path endpoint must declare :web/response — its response contract, shared .cljc so the client validates against the SAME schema (D-web-contracts; inert until http.enabled)"}
    {:rule :web-public-mutation :grain :done :severity :advisory
     :escape "tighten :web/auth, or accept it — a deliberately public write surface (signup, webhook) is legitimate and this asks per changed form"
     :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until http.enabled)"}
