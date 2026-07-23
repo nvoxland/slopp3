@@ -1990,11 +1990,12 @@ surprise. It extends the existing route-integrity index (which ties a literal
 **Shipped (part 1): the endpoint-schema gate.** `slopp.edit.modules/
 web-endpoint-schema` (refuse-grade, `^{:rule/applies-to :production}`, inert
 until `http.enabled`, mirroring `web-auth-refusal`): a `:web/path` endpoint with
-no `:web/response` is refused, teaching both the named-var and inline paths.
+no `:web/response` — and a BODY method (`:post`/`:put`/`:patch`) with no
+`:web/request` — is refused, teaching both the named-var and inline paths.
 Registered in `per-form-write-gates` after `web-auth-refusal` (auth refuses
 first) and cataloged in `rule-catalog`.
 
-Deferred / next: `:web/request` (needs method-awareness — GET has no body); the
+Deferred / next: the
 `:cljc`-placement check on a referenced schema var (resolve the aliased symbol →
 its ns → assert `:cljc`); the DRY inline-duplication advisory; the schema-var
 resolver (symbol → schema value — the reference graph already tracks the symbol,
