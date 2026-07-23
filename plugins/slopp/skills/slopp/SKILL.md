@@ -338,7 +338,8 @@ no route table, no macro:
 Request/response maps are RING-shaped (`:request-method` `:uri` `:body` /
 `:status` `:headers` `:body` as data); everything slopp adds is
 `:web/`-namespaced. `query_routes` lists the whole surface: every method,
-path, policy, handler, and the derived effect/read vocabularies.
+path, policy, handler, the declared `:web/request`/`:web/response` contract,
+and the derived effect/read vocabularies.
 
 **Write gates** (all inert until `http.enabled`; dial via `rules` config):
 - every endpoint DECLARES `:web/auth` — `:public` is typed out, never implied
