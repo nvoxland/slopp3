@@ -751,25 +751,32 @@
                    " the name"))))))))
 
 (defn ^:export ^{:rule/applies-to :production} web-endpoint-schema
-  "The API-contract gate (D-web-contracts): a `:web/path` endpoint with NO
-  `:web/response` declaration is refused — every endpoint types out the shape
-  it RETURNS, so the response contract is a first-class artifact the client can
-  validate against the SAME schema (the Locality-of-Behaviour payoff). Declare
-  a `.cljc` malli schema VAR (shareable/reusable — `some.contracts/order`) or an
-  inline `[:map …]` for a one-off shape. Inert until the store opts into HTTP
-  (`web-enabled?`); auth is checked first, so a naked endpoint still refuses on
-  `:web/auth` before this. Returns a teaching string, or nil when clean."
+  "The API-contract gate (D-web-contracts): a `:web/path` endpoint must type out
+  its contract so the client validates against the SAME schema. `:web/response`
+  is required on EVERY endpoint; `:web/request` is required on a BODY method
+  (`:post`/`:put`/`:patch`) — a `:get`/`:delete`/`:head` needs only a response.
+  Declare a `.cljc` malli schema VAR (shareable/reusable — `some.contracts/order`)
+  or an inline `[:map …]` for a one-off shape. Inert until the store opts into
+  HTTP (`web-enabled?`); auth is checked first, so a naked endpoint still refuses
+  on `:web/auth` before this. Returns a teaching string, or nil when clean."
   [candidate ns-sym form-name]
   (when (web-enabled? candidate)
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
       (let [m (web-name-meta e)]
-        (when (and (:web/path m) (not (contains? m :web/response)))
-          (str ns-sym "/" form-name " declares the route " (pr-str (:web/path m))
-               " but no :web/response — every endpoint types out its response"
-               " contract so the client validates against the SAME schema"
-               " (D-web-contracts). Add :web/response to the name metadata: a"
-               " .cljc malli schema VAR (shareable/reusable, e.g."
-               " some.contracts/order) or an inline [:map …] for a one-off shape."))))))
+        (when (:web/path m)
+          (let [body?   (contains? #{:post :put :patch} (:web/method m))
+                missing (cond-> []
+                          (not (contains? m :web/response)) (conj :web/response)
+                          (and body? (not (contains? m :web/request))) (conj :web/request))]
+            (when (seq missing)
+              (str ns-sym "/" form-name " declares the route " (pr-str (:web/path m))
+                   " but no " (str/join " / " (map str missing))
+                   " — every endpoint types out its contract so the client"
+                   " validates against the SAME schema (D-web-contracts). Add "
+                   (str/join " and " (map str missing))
+                   " to the name metadata: a .cljc malli schema VAR"
+                   " (shareable/reusable, e.g. some.contracts/order) or an inline"
+                   " [:map …] for a one-off shape."))))))))
 
 (defn- web-react-attrs
   "Per-form write gate (D-web-html): a literal hiccup element carrying a

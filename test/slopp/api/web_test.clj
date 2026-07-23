@@ -218,3 +218,32 @@
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'shopc.api 'ok)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external web-endpoint-schema-requires-request-on-body-methods
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'shopr.api "(ns shopr.api)\n\n(defn seed \"S.\" [x] x)\n")
+      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (testing "a POST endpoint with :web/response but NO :web/request is refused"
+        (let [r (api/add-form! sess 'shopr.api
+                               (str "(defn ^{:web/method :post :web/path \"/orders\" :web/auth :public"
+                                    " :web/response [:map [:id :int]]} create \"C.\" [req] req)")
+                               :prompt "no request contract")]
+          (is (re-find #":web/request" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'shopr.api 'create)))))
+      (testing "a GET endpoint needs only :web/response (no request body)"
+        (let [r (api/add-form! sess 'shopr.api
+                               (str "(defn ^{:web/method :get :web/path \"/orders\" :web/auth :public"
+                                    " :web/response [:map]} listing \"L.\" [req] req)")
+                               :prompt "get needs only response")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "declaring both contracts lets the POST land"
+        (let [r (api/add-form! sess 'shopr.api
+                               (str "(defn ^{:web/method :post :web/path \"/orders2\" :web/auth :public"
+                                    " :web/request [:map [:item :string]] :web/response [:map [:id :int]]}"
+                                    " create2 \"C.\" [req] req)")
+                               :prompt "both contracts")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (some? (store/form-named (:store @sess) 'shopr.api 'create2)))))
+      (finally (api/close! sess)))))
