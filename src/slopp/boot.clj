@@ -137,9 +137,40 @@
         (log! "slopp.boot: could not add manifest deps ("
               (.getMessage t) ") — continuing")))))
 
+^:reads (defn store-platforms
+          "The store's `module-platforms` register — {path-string
+  platform-keyword} — read RAW from the meta row (the kernel cannot use
+  slopp.store). {} when the row, the table, or the whole schema is absent, so a
+  brand-new or pre-client-wave store behaves exactly as before."
+          [conn]
+          (try
+            (or (some-> (jdbc/execute-one!
+                         conn ["SELECT v FROM meta WHERE k = 'module-platforms'"])
+                        :meta/v edn/read-string)
+                {})
+            (catch Throwable _ {})))
+
+(defn jvm-loadable?
+  "Whether `ns-sym` may load into a JVM, given the store's `platforms` register
+  ({path-string platform-keyword}): everything EXCEPT a :cljs namespace, which
+  compiles to JavaScript and is never loaded here (D-web-cljs). The MOST
+  SPECIFIC declared path wins, mirroring slopp.store/platform-for — the kernel
+  reimplements it because it cannot require slopp.store. An empty register loads
+  everything, exactly as before the client wave."
+  [platforms ns-sym]
+  (let [n    (str ns-sym)
+        best (->> (keys platforms)
+                  (filter (fn [k] (or (= n k) (str/starts-with? n (str k ".")))))
+                  (sort-by count)
+                  last)]
+    (not= :cljs (get platforms best))))
+
 (defn load-store!
-  "Load every namespace of the store at `dir` into the CURRENT JVM, dependency
-  order: load-string each rendered source + a *loaded-libs* stamp. The store's
+  "Load every JVM-LOADABLE namespace of the store at `dir` into the CURRENT JVM,
+  dependency order: load-string each rendered source + a *loaded-libs* stamp.
+  A :cljs namespace is SKIPPED — it compiles to JavaScript and its libs are not
+  on the boot classpath, so loading it made any store carrying client code
+  unbootable (D-web-cljs). The store's
   dependency MANIFEST resolves onto the classpath first (add-manifest-libs!),
   so store code may require its Tier-1 libs. Returns the
   {ns source} map that was loaded. A load failure is rethrown NAMING the
@@ -153,8 +184,10 @@
   (if-let [c (open-conn dir)]
     (with-open [conn c]
       (add-manifest-libs! conn)
-      (let [sources (store-sources conn)]
-        (doseq [ns-sym (dependency-order sources)]
+      (let [sources   (store-sources conn)
+            platforms (store-platforms conn)]
+        (doseq [ns-sym (dependency-order sources)
+                :when  (jvm-loadable? platforms ns-sym)]
           (try (load-string (get sources ns-sym))
                (catch Throwable t
                  (throw (ex-info (str "slopp.boot: failed to load namespace "
@@ -195,8 +228,10 @@
               (let [dv2 (data-version conn)]
                 (if (= dv dv2)
                   [dv prev]
-                  (let [now     (store-sources conn)
-                        changed (filter #(not= (get prev %) (get now %))
+                  (let [now       (store-sources conn)
+                        platforms (store-platforms conn)
+                        changed (filter #(and (jvm-loadable? platforms %)
+                                              (not= (get prev %) (get now %)))
                                         (dependency-order now))
                         failed  (reduce (fn [failed ns-sym]
                                           (try (load-string (get now ns-sym))

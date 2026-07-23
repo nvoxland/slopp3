@@ -63,9 +63,18 @@ In this repo the server is normally the **plugin's**, running the local jar
 rather than the pinned release:
 
 ```sh
-clojure -T:build uber            # -> target/slopp.jar
+# the tree is FILELESS, so the jar is built from a MATERIALIZATION of the
+# store — both steps, in this order, every time:
+slopp --call build '{"dir":"'$PWD'/target/jar-src"}'   # or the build MCP tool
+clojure -T:build uber                                  # -> target/slopp.jar
 SLOPP_JAR=$PWD/target/slopp.jar  # what the plugin's bin/slopp honours
 ```
+
+**`uber` alone silently ships a STALE jar.** It bundles whatever is in
+`target/jar-src` — if you skip the materialize step that directory can be days
+old, and the build succeeds, prints "built target/slopp.jar", and takes only a
+few seconds. Verify when it matters: `unzip -l target/slopp.jar | grep
+slopp/api/external.clj` should show today's timestamp.
 
 `.claude/settings.json` sets `SLOPP_LIVE=1`. Rebuild the jar only for
 kernel or dependency changes — everything else is store code and hot-reloads
