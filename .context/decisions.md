@@ -1995,10 +1995,58 @@ no `:web/response` — and a BODY method (`:post`/`:put`/`:patch`) with no
 Registered in `per-form-write-gates` after `web-auth-refusal` (auth refuses
 first) and cataloged in `rule-catalog`.
 
-Deferred / next: the
-`:cljc`-placement check on a referenced schema var (resolve the aliased symbol →
-its ns → assert `:cljc`); the DRY inline-duplication advisory; the schema-var
-resolver (symbol → schema value — the reference graph already tracks the symbol,
-only the value lookup is new); THE GENERATED TYPED CLIENT (part 2, off
-`:web/request`/`:web/response`); a dogfood on real endpoints (part 3). Program
-roadmap: `.context/roadmap.md` (typed API contracts).
+**Shipped (part 2): the generated typed client.** `generate_client`
+(`slopp.api.cljs/generate-client!`, sibling of `compile_client`) reads every web
+endpoint (`edit.modules/web-endpoint-rows`), resolves each `:web/request`/
+`:web/response` to a shippable schema, and writes a stored `:cljs` namespace
+(default `app.client.api`, `client`/`generated-ns`-configurable) of typed `fetch`
+wrappers — one per endpoint, validating params OUT and the response IN against
+the SAME malli schema the server enforces (`malli.transform` at the JSON
+boundary; path `:segments` interpolated). Load-bearing sub-decisions:
+
+- **Delivery = a stored, edit-PROTECTED namespace, not a blob.** The FE
+  `(:require)`s and CALLS the wrappers as cljs fns AND their references
+  (`api/create-order!`, and each wrapper's `contracts/order`) must RESOLVE in the
+  store to pass the reference / cold-load gates — a blob can't. Being stored also
+  makes it INSPECTABLE like any code (query_source, blast-radius): the chain
+  schema → endpoint → wrapper → FE call site is connected by REAL references, so
+  "edit a schema → every affected client call" falls out of the graph.
+- **The `^{:generated "<endpoint>"}` marker does TRIPLE duty:** (a) the
+  `generated-ns` write gate (`slopp.edit.modules`, in `per-form-write-gates` +
+  `rule-catalog`, runs even for `:cljs` writes since `gate-refusal` is inside the
+  rebased-write transform, before the `load?` skip) REFUSES hand-edits, teaching
+  regenerate-or-strip-the-marker; (b) inspection exemptions — `unused-report`,
+  `missing-doc-warning`, and `review-scan` all skip a generated form (a wrapper
+  no FE calls yet is "available", not dead; documented BY the generator; never
+  hand-tested); (c) provenance — the marker VALUE is the source endpoint. The
+  generator writes via `store/ingest`+`commit-appended!` (BELOW the per-form
+  gates), so regeneration overwrites wholesale and is the ONLY writer.
+- **Regeneration = EXPLICIT `generate_client` + a staleness ADVISORY** (user,
+  2026-07-23). A write to the generated ns couples the generator to the write
+  path and risks churn; an explicit step mirrors `compile_client`/`build!`. The
+  safety net: `generate_client` records a contract fingerprint
+  (`edit.modules/client-signature`, a hash of every endpoint's raw
+  method/path/request/response) on `client`/`generated-sig`; the `stale-client`
+  done-advisory (`slopp.api.rules/client-stale-check`) compares recorded vs
+  current and nudges "run generate_client" on drift — firing ONLY once a client
+  has been generated. Composes with the dev loop: the generate WRITE, with
+  `client`/`auto-compile` on, triggers the async recompile so the bundle
+  refreshes off an explicit generate.
+- **`:cljc`-placement check + DRY advisory (both shipped).** A referenced schema
+  VAR must live in a `:cljc` ns (so it compiles into the client AND is the same
+  one the server validates); `resolve-schema-ref` tags a non-`:cljc` or missing
+  var as a `:problem` and SKIPS that wrapper (the ns always compiles). The
+  `inline-schema-dup` done-advisory flags a structurally-duplicated STRUCTURED
+  inline schema across 2+ endpoints, nudging inline→named.
+- **Side-fix:** `missing-doc-warning` compared heads with a `'#{defn defmacro}`
+  literal — D4 bans `defmacro` even as quoted DATA, so any edit re-froze the form
+  (frozen-form trap, `.context/findings-log.md`). Now compares head by
+  name-string (`#{"defn" "defmacro"}`), which unfreezes it.
+
+Deferred / next: a dogfood on real endpoints (part 3, held by the user until
+part 2 landed); a client-usage lint of hand-written bypasses of the generated
+wrappers; auto-declaring the generated ns's cross-module edges to the schema
+namespaces (today `store/ingest` bypasses the module gate, so a `done`/
+`full_check` module analysis over a generated ns in a real store is the open
+question part 3 will surface). Program roadmap: `.context/roadmap.md` (typed API
+contracts).

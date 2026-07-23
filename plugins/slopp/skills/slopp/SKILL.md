@@ -342,6 +342,10 @@ path, policy, handler, and the derived effect/read vocabularies.
 
 **Write gates** (all inert until `http.enabled`; dial via `rules` config):
 - every endpoint DECLARES `:web/auth` — `:public` is typed out, never implied
+- every endpoint TYPES its contract — `:web/response` (all) and `:web/request`
+  (body methods `:post`/`:put`/`:patch`) — a `.cljc` malli schema VAR
+  (`some.contracts/order`: shared, refs-visible, and the input to the generated
+  client — the paved road) or an inline `[:map …]` for a one-off (D-web-contracts)
 - one method+path has one owner (collision refuses at the write)
 - a `:get`/`:head` endpoint is SAFE: no `:web/effects`, no reachable mutation
 - `:web/effects` may only name kinds a `^{:web/effect <kind>}` performer
@@ -487,6 +491,29 @@ Cypress/Playwright territory someday).
   entry points (`^:export main` touches the DOM) — advisory, not a refusal.
   (Kondo lints each form in its platform's language, so `js/*` no longer draws a
   false "unresolved namespace" finding.)
+
+**The typed client is GENERATED, never hand-written (D-web-contracts).** Once
+your endpoints declare their `:web/request`/`:web/response` contracts (the write
+gate requires it — see the D-web write gates), `generate_client` writes a stored
+`:cljs` namespace (default `app.client.api`, set `client`/`generated-ns`) of
+typed `fetch` wrappers — one fn per endpoint, validating params OUT and the
+response IN against the SAME schema the server enforces. Call them from your
+`.cljs`: `(api/create-order! params)` returns a promise; a wrong shape throws
+before the request leaves. Rules of the road:
+- **It's EXPLICIT** — run `generate_client` after changing an endpoint (like
+  `compile_client`, not on every edit). A `stale-client` done-advisory nudges you
+  when a contract drifts from the last generation; with `client`/`auto-compile`
+  on, the generate also refreshes the JS bundle.
+- **NEVER hand-edit it.** Every wrapper is `^{:generated "<endpoint>"}` and the
+  `generated-ns` gate REFUSES edits (regenerate instead; to take manual
+  ownership, strip the marker). It's still fully inspectable — `query_source`,
+  blast-radius, refs — and because the wrappers reference the schema VARS,
+  "change a schema → every affected client call" falls out of the reference graph.
+- **Schemas must be `.cljc`.** A `:web/request`/`:web/response` VAR the client
+  ships has to live in a `:cljc` ns (so it compiles into the bundle AND is the
+  one the server validates); `generate_client` SKIPS an endpoint whose schema
+  isn't shippable and reports it in `:problems`. A `inline-schema-dup` advisory
+  nudges a shape shared across endpoints toward a named `.cljc` var.
 
 ## Questions → the oracle
 

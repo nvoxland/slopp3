@@ -532,14 +532,18 @@ exist — the work is (a) the endpoint-schema gate, (b) deriving/sharing the
 generated typed client). Supersedes the terse "typed client API" deferral in
 D-web-cljs. Needs its own design pass and decision record before building.
 
-**STATUS (2026-07-23): decided + parts 1/1b SHIPPED.** Decision record is
+**STATUS (2026-07-23): decided + parts 1/1b/2 SHIPPED.** Decision record is
 `.context/decisions.md` (D-web-contracts): FE-check = GENERATED typed client
 (not a lint); gate = refuse-for-new; named `.cljc` schemas are the paved road
-with inline allowed and a DRY advisory to guide. Shipped: `web-endpoint-schema`
+with inline allowed and a DRY advisory to guide. Part 1: `web-endpoint-schema`
 refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
-`:web/request` (`:post`/`:put`/`:patch` body methods). Milestones d11968/d11981.
+`:web/request` (`:post`/`:put`/`:patch` body methods) — milestones d11968/d11981.
+Part 2: `generate_client` — a stored, edit-protected, inspectable `:cljs`
+namespace of typed fetch wrappers; the `^:generated` marker's triple duty; the
+`:cljc`-placement check; the explicit-regeneration `stale-client` advisory; the
+`inline-schema-dup` DRY advisory. Only part 3 (the dogfood) remains.
 
-**PART 2 = the generated typed client — the next build.**
+**PART 2 = the generated typed client — ✅ SHIPPED (2026-07-23).**
 1. **Delivery: DECIDED — a stored, generated, edit-PROTECTED `.cljs` namespace**
    (`app.client.api`), not a blob. Driven by the user's confirmation that the
    client is PURELY GENERATED / never hand-edited: it must be a stored ns
@@ -560,9 +564,17 @@ refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
    dead-surface (a wrapper no FE calls yet is "available," not dead), and the
    generator stamps each wrapper's provenance (`:why` = "generated from endpoint
    X") so inspection shows the derivation.
-2. **Regeneration: automatic vs explicit — STILL OPEN (awaiting the user).**
-   Ride the async recompile loop (edit an endpoint → client regenerates +
-   recompiles) — OR an explicit `generate_client` step.
+2. **Regeneration: DECIDED — an explicit `generate_client` step + a staleness
+   ADVISORY (user, 2026-07-23).** Regeneration is a WRITE (to the generated ns),
+   so tying it to every endpoint edit couples the generator to the write path
+   and risks churn; an explicit build step mirrors the established
+   `compile_client`/`build!` pattern. The safety net is a done-advisory —
+   "endpoints changed since the client was last generated → run
+   `generate_client`" — so staleness is surfaced without the coupling. It
+   composes with what exists: `generate_client` WRITES the `.cljs` (well, the
+   generated ns), and if `client/auto-compile` is on, that write already
+   triggers the async recompile, so the bundle refreshes off an explicit
+   generate.
 Then the wrapper shape: async `fetch` → malli-validate params OUT / response IN,
 `malli.transform` at the JSON boundary. And the three pieces that bundle into
 part 2 because they only bite with real schemas + generation: the schema-var

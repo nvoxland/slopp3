@@ -916,3 +916,14 @@ today by the single-segment router); `http.max-body-bytes` never enforced
 review_scan (callable-data-invisible trace limit) — coverage is structural
 via the generated merge harness, not absent. The module-edge nil-marker
 clobber is unreachable (open! adopts before any write).
+
+**Frozen-form trap (D-web-contracts part 2):** `edit.modules/
+missing-doc-warning` classified heads with a `'#{defn defmacro}` DATA literal —
+but D4 bans `defmacro` *wherever it appears*, quoted data included
+(`dialect-check` flags `'defmacro`). So the form had landed once (pre-strictness
+or via a skip) and was then FROZEN: every later edit re-ran the whole-form
+dialect scan and refused on its own body. The tell is a dialect refusal naming a
+symbol you didn't touch. Fix that also unfreezes: compare the head by
+NAME-STRING (`#{"defn" "defmacro"}`) so the form carries no banned literal. A
+form that legitimately needs a banned symbol as data wants `^:unsafe`; a form
+that only needs to MATCH on one wants the string compare.
