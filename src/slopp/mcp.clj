@@ -295,10 +295,11 @@
   {"deps_add"
    (fn [session a sym]
      (text! (api/deps-add! session (sym :lib)
-                                        (or (:coord a)
-                                            (when (:version a)
-                                              {:mvn/version (:version a)}))
-                                        :agent (:agent a))))
+                          (or (:coord a)
+                              (when (:version a)
+                                {:mvn/version (:version a)}))
+                          :agent (:agent a) :prompt (:prompt a)
+                          :client (:client a))))
    "deps_remove"
    (fn [session a sym]
      (text! (api/deps-remove! session (sym :lib)

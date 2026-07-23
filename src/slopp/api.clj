@@ -1215,13 +1215,26 @@
   at `coord` (a deps.edn coordinate map, e.g. `{:mvn/version \"2.5.0\"}`).
   Records a `:deps-add` delta (materialized to the store's manifest), then
   HOT-adds the jar to the running image via add-libs — no restart; on failure
-  it restarts. Returns {:added lib :coord :hot true|:restarted true} | {:error}."
-  [session lib coord & {:keys [agent prompt]}]
+  it restarts. Returns {:added lib :coord :hot true|:restarted true} | {:error}.
+
+  With `:client true` the dep is BUILD-ONLY (the ClojureScript compiler): it
+  records to the separate `:client-deps` manifest, is NOT analyzed and NOT
+  hot-loaded, and routes to the `:cljs` alias in the generated deps.edn — so it
+  never enters the running oracle nor ships in the jar (D-web-cljs)."
+  [session lib coord & {:keys [agent prompt client]}]
   (cond
     (not (symbol? lib))
     {:error "dependency lib must be a symbol like org.clojure/data.json"}
     (not (and (map? coord) (seq coord)))
     {:error "dependency coord must be a non-empty map like {:mvn/version \"1.2.3\"}"}
+
+    client
+    (do (session/commit-appended! session
+                                  #(first (store/record-client-dep
+                                           % lib coord :agent agent :prompt prompt))
+                                  [])
+        {:added lib :coord coord :client true})
+
     :else
     (let [surf (api.deps/analyze-dep! session lib coord)]                 ; M4: API surface
       (session/commit-appended! session

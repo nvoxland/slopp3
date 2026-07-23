@@ -65,6 +65,17 @@
                               (fn [xs] (mapv #(if (string? %) (symbol %) %) xs))))]))
         deps))
 
+(defn client-compiler
+  "The configured client-side compiler for `store` (D-web-cljs) — read from the
+  `client` config file's `compiler` key, defaulting to :clojurescript. The
+  compile step DISPATCHES on this, so cherry/squint can be plugged in per
+  project (`config_file {path \"client\" key \"compiler\" value \"cherry\"}`)
+  without re-authoring a single stored form — the `.cljs`/`.cljc` source is
+  compiler-agnostic. Only :clojurescript is implemented today."
+  [store]
+  (keyword (or (get-in store [:config "client" :values "compiler"])
+               "clojurescript")))
+
 ^:unsafe (defn deps-edn
   "deps.edn for the built project; `deps` (lib→coord, the store's Tier-1
   manifest) becomes the `:deps` map so a built project is runnable; with
@@ -82,13 +93,20 @@
   runs :test-run narrowed while `commit_point` runs :test full — tracing only
   one entry leaves a hole exactly where the gate is.
 
-  With an EMPTY manifest and no test/native aliases the
-  output is byte-identical to the pre-manifest version (the build! `ours?`
-  byte-identity guard relies on this)."
+  With `client-deps` (the BUILD-ONLY cljs compiler manifest, D-web-cljs), adds a
+  `:cljs` alias carrying those deps + the `cljs-src` extra-path, so
+  `clojure -A:cljs` resolves the ClojureScript compiler for the compile step —
+  and they NEVER enter the runtime `:deps` that ships. Absent client-deps the
+  alias is omitted, so output is unchanged.
+
+  With an EMPTY manifest and no test/native/cljs aliases the output is
+  byte-identical to the pre-manifest version (the build! `ours?` byte-identity
+  guard relies on this)."
   ([native?] (deps-edn native? {}))
   ([native? deps] (deps-edn native? deps false))
   ([native? deps test?] (deps-edn native? deps test? false))
-  ([native? deps test? trace?]
+  ([native? deps test? trace?] (deps-edn native? deps test? trace? {}))
+  ([native? deps test? trace? client-deps]
    ;; bind *print-namespace-maps* OFF: it defaults true at a REPL, false in a
    ;; script — leaving it would make output non-deterministic (the git
    ;; projection + build! ours? guard both depend on byte-stable output).
@@ -99,7 +117,7 @@
          main-ns  (if trace? "slopp.testmain" "cognitect.test-runner")
          ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
          ;; aliases-map `{` (matching the historical single-:native layout), the
-         ;; rest are 2-space-indented — order is deterministic (test, native).
+         ;; rest are 2-space-indented — order is deterministic (test, native, cljs).
          aliases  (cond-> []
                     test?   (conj (str ":test\n"
                                        "  {:extra-paths [\"test\"]\n"
@@ -119,7 +137,14 @@
                     native? (conj (str ":native\n"
                                        "  {:extra-paths [\"classes\"]\n"
                                        "   :extra-deps  {com.github.clj-easy/graal-build-time {:mvn/version \"1.0.5\"}}\n"
-                                       "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}")))]
+                                       "   :jvm-opts    [\"-Dclojure.compiler.direct-linking=true\"]}"))
+                    (seq client-deps)
+                    (conj (str ":cljs\n"
+                               "  {:extra-paths [\"cljs-src\"]\n"
+                               "   :extra-deps  "
+                               (binding [*print-namespace-maps* false]
+                                 (pr-str (coerce-exclusions client-deps)))
+                               "}")))]
      (if (empty? aliases)
        (str "{:paths [\"src\"]" deps-str "}\n")
        (str "{:paths [\"src\"]" deps-str "\n"

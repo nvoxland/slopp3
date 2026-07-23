@@ -284,3 +284,36 @@
       (is (= ['com.yahoo.platform.yui/yuicompressor] excl))
       (is (symbol? (first excl)))
       (is (not (re-find #"\"com\.yahoo" s))))))
+
+(deftest ^:external deps-add-client-is-build-only
+  (let [sess (external/open!)]
+    (try
+      (let [r (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+                             :client true :prompt "the cljs compiler")]
+        (testing "a :client dep records to the build-only manifest"
+          (is (:client r))
+          (is (= {:mvn/version "1.11.132"}
+                 (get-in @sess [:store :client-deps 'org.clojure/clojurescript]))))
+        (testing "and NEVER enters the runtime :deps that hot-loads and ships"
+          (is (nil? (get-in @sess [:store :deps 'org.clojure/clojurescript])))))
+      (finally (api/close! sess)))))
+
+(deftest build-deps-edn-cljs-alias
+  (testing "no client deps → byte-identical output (the ours? guard depends on it)"
+    (is (= (build/deps-edn false {} false false)
+           (build/deps-edn false {} false false {}))))
+  (testing "client deps → a :cljs alias with the compiler and cljs-src, never in :deps"
+    (let [edn (edn/read-string
+               (build/deps-edn false {} false false
+                               {'org.clojure/clojurescript {:mvn/version "1.11.132"}}))]
+      (is (= {:mvn/version "1.11.132"}
+             (get-in edn [:aliases :cljs :extra-deps 'org.clojure/clojurescript])))
+      (is (= ["cljs-src"] (get-in edn [:aliases :cljs :extra-paths])))
+      (is (nil? (get-in edn [:deps 'org.clojure/clojurescript]))))))
+
+(deftest client-compiler-defaults-to-clojurescript
+  (testing "defaults to :clojurescript with no config"
+    (is (= :clojurescript (build/client-compiler {}))))
+  (testing "a project plugs in another backend via the client/compiler config"
+    (is (= :cherry (build/client-compiler
+                    {:config {"client" {:values {"compiler" "cherry"}}}})))))

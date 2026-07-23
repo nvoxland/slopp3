@@ -254,3 +254,20 @@
       (is (store/jvm-loadable? s2 'app.server.core))
       (is (store/jvm-loadable? s2 'app.client.shared.schema))
       (is (not (store/jvm-loadable? s2 'app.client.widget))))))
+
+(deftest client-deps-are-a-separate-build-only-manifest
+  (let [s0 (store/empty-store)]
+    (testing "a fresh store has no client deps"
+      (is (= {} (:client-deps s0))))
+    (let [[s1 d1] (store/record-client-dep s0 'org.clojure/clojurescript
+                                           {:mvn/version "1.11.132"}
+                                           :prompt "the cljs compiler")]
+      (testing "record-client-dep folds into :client-deps"
+        (is (= :client-dep-add (:op d1)))
+        (is (= {'org.clojure/clojurescript {:mvn/version "1.11.132"}}
+               (:client-deps s1))))
+      (testing "it is BUILD-ONLY: it never enters the runtime :deps that ships"
+        (is (= {} (:deps s1))))
+      (testing "replay reconstructs it (foreign-sync stays cheap)"
+        (is (= {'org.clojure/clojurescript {:mvn/version "1.11.132"}}
+               (:client-deps (store/replay-delta s0 d1))))))))

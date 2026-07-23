@@ -53,6 +53,7 @@
         bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
         deps     (:deps st)
+client-deps (:client-deps st)
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
                                         (some #(re-find #"^\(deftest\b"
@@ -64,8 +65,8 @@
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
         traced?  (boolean (and has-tests?
                                (get-in st [:namespaces 'slopp.testmain])))
-        ours?    #(contains? #{(build/deps-edn false deps has-tests? traced?)
-                               (build/deps-edn true deps has-tests? traced?)}
+        ours?    #(contains? #{(build/deps-edn false deps has-tests? traced? client-deps)
+                               (build/deps-edn true deps has-tests? traced? client-deps)}
                              (slurp de))
         entry-ns (some-> main namespace symbol)]
     (cond
@@ -116,7 +117,7 @@
       (spit file (store/render-config entry))))
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
-            (spit de (build/deps-edn (boolean main) deps has-tests? traced?)))
+            (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
           (cond-> {:built (str target)}
             main
             (assoc :native

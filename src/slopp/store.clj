@@ -773,6 +773,22 @@
   [store ns-sym]
   (not= :cljs (platform-for store ns-sym)))
 
+(defn record-client-dep
+  "Declare a BUILD-ONLY dependency (the ClojureScript compiler) at `coord` — the
+  client wave's build-only channel (D-web-cljs). Unlike record-deps-add, this
+  NEVER enters the runtime :deps manifest: a client dep is routed to the :cljs
+  alias in the generated deps.edn (so the compile step resolves it) and is never
+  hot-loaded into the JVM oracle nor shipped in the slim jar. One :client-dep-add
+  delta; last write per lib wins. Returns [store' delta]."
+  [store lib coord & {:keys [prompt agent]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :client-dep-add :ns '*session* :at (now-ms)
+                       :lib lib :coord coord}
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
 (defn record-module-platform
   "Declare a module's target PLATFORM (:jvm/:cljc/:cljs) — the per-module
   register behind the client wave (D-web-cljs). :jvm (default; a module absent

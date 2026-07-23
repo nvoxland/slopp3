@@ -401,7 +401,9 @@
     :inputSchema {:type "object"
                   :properties {:lib {:type "string"}
                                :version {:type "string"}
-                               :coord {:type "object"}}
+                               :coord {:type "object"}
+                               :client {:type "boolean"}
+                               :prompt {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_remove"
     :description "Remove a dependency (restarts the image)."

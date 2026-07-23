@@ -54,6 +54,8 @@
                       :normalize (fn [pfs]
                                    (into {} (map (fn [[m p]] [m (canonical-platform p)])) pfs))
                       :doc "module → target platform :jvm/:cljc/:cljs (default :jvm, D-web-cljs)"}
+:client-deps {:init {} :meta-key "client-deps"
+                      :doc "lib → coord for BUILD-ONLY deps (the cljs compiler): routed to the :cljs alias, never hot-loaded into the oracle or shipped in the jar (D-web-cljs)"}
    :files        {:init {} :meta-key "files"
                   :doc "path → text, or {:sha :bytes :content-type} for binary (bytes live in :blobs)"}
    :config       {:init {} :meta-key "config"
@@ -146,6 +148,11 @@
                                     (canonical-platform (:platform d))))
                   :sample {:op :module-platform :module "sample.mod" :platform :cljs}
                   :crossed (fn [st] (= :cljs (get-in st [:module-platforms "sample.mod"])))}
+:client-dep-add {:field :client-deps :merge :replay
+                  :fold (fn [st d]
+                          (assoc-in st [:client-deps (:lib d)] (:coord d)))
+                  :sample {:op :client-dep-add :lib 'sample/cljs :coord {:mvn/version "1.0.0"}}
+                  :crossed (fn [st] (= {:mvn/version "1.0.0"} (get-in st [:client-deps 'sample/cljs])))}
    :config-put   {:field :config :merge :replay
                   :fold (fn [st d]
                           (-> st
