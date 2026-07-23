@@ -54,6 +54,37 @@
   Entry point comes from the tracked META-INF/MANIFEST.MF next to :src's
   parent; without one the jar falls back to clojure.main (-m slopp.boot)."
   [{:keys [src] :or {src "target/jar-src/src"}}]
+  ;; The tree is FILELESS: `src` is a MATERIALIZATION of the store, produced by
+  ;; the `build` tool. `uber` alone re-jars whatever is sitting there — which
+  ;; may be days old — and still prints "built target/slopp.jar" in a few
+  ;; seconds, so a stale jar ships silently (it did: a whole debugging cycle
+  ;; chasing a fix that was never in the artifact). Refuse instead. CI passes an
+  ;; explicit :src from a real checkout and is unaffected.
+  (when (= src "target/jar-src/src")
+    (let [srcd (io/file src)]
+      ;; MISSING is unambiguous — refuse.
+      (when-not (.exists srcd)
+        (throw (ex-info (str "no materialized source at " src " — materialize the"
+                             " store first (the `build` MCP tool, or:"
+                             " slopp --call build '{\"dir\":\""
+                             (.getAbsolutePath (io/file "target/jar-src")) "\"}')")
+                        {:src src})))
+      ;; STALE can only be a hint, never a refusal: a live session touches
+      ;; store.db constantly, so "db is newer" is often off by seconds and
+      ;; failing on it would block legitimate builds. Compare the newest FILE
+      ;; under src — a directory's mtime does NOT move when nested files are
+      ;; rewritten, which is what made the first version of this check misfire.
+      (let [newest (->> (file-seq srcd)
+                        (filter #(.isFile ^java.io.File %))
+                        (map #(.lastModified ^java.io.File %))
+                        (reduce max 0))
+            db     (io/file ".slopp" "store.db")
+            fmt    #(.format (java.text.SimpleDateFormat. "HH:mm:ss") (java.util.Date. ^long %))]
+        (when (and (.exists db) (> (.lastModified db) newest))
+          (println (str "WARNING: " src " was materialized at " (fmt newest)
+                        " but .slopp/store.db changed at " (fmt (.lastModified db))
+                        " — this jar may be STALE. Re-run the `build` tool if you"
+                        " expect recent store changes in it."))))))
   (b/delete {:path class-dir})
   (b/delete {:path "target/launcher"})
   (let [root  (or (.getParent (io/file (str src))) ".")

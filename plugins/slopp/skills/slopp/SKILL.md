@@ -522,6 +522,11 @@ before the request leaves. Rules of the road:
   one the server validates); `generate_client` SKIPS an endpoint whose schema
   isn't shippable and reports it in `:problems`. A `inline-schema-dup` advisory
   nudges a shape shared across endpoints toward a named `.cljc` var.
+- **A page endpoint opts OUT: `^{:web/client false}`.** An HTML page is a
+  `:web/path` form like any other, so it would otherwise get a typed wrapper
+  whose `.json` parse can never succeed. Declare it rather than relying on the
+  response schema — `:string` is a perfectly good JSON response, so the schema
+  can't tell HTML from JSON; only you can.
 
 ## Questions → the oracle
 
