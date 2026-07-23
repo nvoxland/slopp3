@@ -1,30 +1,42 @@
-(ns slopp.web.static)
+(ns slopp.web.static (:require [clojure.string :as str]))
 
 (defn ^:export mount-routes
   "Route rows serving static assets: `mounts` = {url-prefix path-prefix}
-  (`{\"/assets\" \"public\"}` maps GET /assets/app.css → (reader
-  \"public/app.css\")); `reader` returns {:content <bytes|string>
+  (`{\"/assets\" \"public\"}` maps GET /assets/cljs/main.js → (reader
+  \"public/cljs/main.js\")); `reader` returns {:content <bytes|string>
   :content-type …} or nil. The handler answers a RAW response
   (`:web/raw true` + :headers Content-Type) the adapters write verbatim —
-  no JSON wrapping. One-segment filenames for now (the router's declared
-  param scope); assets are :public."
+  no JSON wrapping. Assets are :public.
+
+  Serves a whole TREE under the prefix via the router's trailing catch-all —
+  which is what a static mount is for, and what slopp's own default bundle path
+  (public/cljs/main.js → /assets/cljs/main.js) needs.
+
+  TRAVERSAL IS REFUSED HERE, before `reader` is ever called: spanning a subtree
+  removes the one-segment route that used to contain `..` by accident, and a
+  custom reader (a store-backed one, say) may do no checking at all. A rejected
+  path is indistinguishable from a missing one — 404, never a leak."
   [mounts reader]
   (vec
    (for [[url-prefix path-prefix] mounts]
      {:method :get
-      :path (str url-prefix "/:file")
+      :path (str url-prefix "/*path")
       :auth :public
       :handler (fn [req]
-                 (if-let [{:keys [content content-type]}
-                          (reader (str path-prefix "/"
-                                       (:file (:path-params req))))]
-                   {:status 200
-                    :web/raw true
-                    :headers (if content-type
-                               {"Content-Type" (str content-type)}
-                               {})
-                    :body content}
-                   {:status 404 :body {:error "no such asset"}}))})))
+                 (let [rel   (str (:path (:path-params req)))
+                       safe? (and (seq rel)
+                                  (not (str/starts-with? rel "/"))
+                                  (not (str/includes? rel "\\"))
+                                  (not-any? #{"" "." ".."} (str/split rel #"/")))]
+                   (if-let [{:keys [content content-type]}
+                            (when safe? (reader (str path-prefix "/" rel)))]
+                     {:status 200
+                      :web/raw true
+                      :headers (if content-type
+                                 {"Content-Type" (str content-type)}
+                                 {})
+                      :body content}
+                     {:status 404 :body {:error "no such asset"}})))})))
 
 (def ^:private content-types
   "Extension → media type for the built-app reader (a store-backed reader

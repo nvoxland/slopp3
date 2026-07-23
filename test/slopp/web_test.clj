@@ -153,3 +153,25 @@
       (is (nil? (rdr "../secret.txt")))
       (is (nil? (rdr "../../etc/hosts")))
       (is (nil? (rdr "sub/../../secret.txt"))))))
+
+(deftest static-mounts-serve-a-tree-and-refuse-traversal
+  ;; F6: slopp's own default bundle path (public/cljs/main.js -> /assets/cljs/
+  ;; main.js) was unservable because the mount matched one segment only. Now it
+  ;; is a catch-all — which REMOVES the accidental containment that was the only
+  ;; thing preventing /assets/../../etc/passwd, so the refusal must be explicit
+  ;; and the reader must never even be reached.
+  (let [seen   (atom [])
+        reader (fn [p] (swap! seen conj p) {:content "x" :content-type "text/plain"})
+        row    (first (static/mount-routes {"/assets" "public"} reader))
+        call   (fn [captured] ((:handler row) {:path-params {:path captured}}))]
+    (testing "the mount is a catch-all, so nested assets are reachable"
+      (is (= "/assets/*path" (:path row))))
+    (testing "a nested path reads under the mount prefix"
+      (is (= 200 (:status (call "cljs/main.js"))))
+      (is (= "public/cljs/main.js" (last @seen))))
+    (testing "traversal is refused, and the reader is never called"
+      (reset! seen [])
+      (is (= 404 (:status (call "../../etc/passwd"))))
+      (is (= 404 (:status (call "cljs/../../../secret"))))
+      (is (= 404 (:status (call "/etc/passwd"))))
+      (is (empty? @seen) "no traversal attempt may reach the reader"))))

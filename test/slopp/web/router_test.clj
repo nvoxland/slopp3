@@ -21,3 +21,25 @@
       (is (nil? (router/match routes :get ""))))
     (testing "a trailing slash is tolerated"
       (is (= 'a/health (:handler (router/match routes :get "/health/")))))))
+
+(deftest catch-all-segment-matches-a-nested-remainder
+  ;; F6: a static mount must be able to serve a TREE (/assets/cljs/main.js),
+  ;; which the exact-segment-count router could not express — so slopp's own
+  ;; default bundle path 404'd. A trailing *name captures one or more remaining
+  ;; segments, matching the capabilities pattern convention (a trailing * is a
+  ;; prefix). It must rank BELOW static and single-segment captures so existing
+  ;; precedence is untouched.
+  (let [routes [{:method :get :path "/assets/*path"       :handler 'a/asset}
+                {:method :get :path "/assets/favicon.ico" :handler 'a/favicon}
+                {:method :get :path "/assets/:one"        :handler 'a/one}]]
+    (testing "a catch-all captures the whole remainder, slash-joined"
+      (let [m (router/match routes :get "/assets/cljs/main.js")]
+        (is (= 'a/asset (:handler m)))
+        (is (= "cljs/main.js" (:path (:path-params m))))))
+    (testing "a static segment still beats the catch-all"
+      (is (= 'a/favicon (:handler (router/match routes :get "/assets/favicon.ico")))))
+    (testing "a single-segment capture still beats the catch-all"
+      (is (= 'a/one (:handler (router/match routes :get "/assets/app.css")))))
+    (testing "a catch-all needs at least one segment"
+      (is (nil? (router/match [{:method :get :path "/assets/*path" :handler 'a/asset}]
+                              :get "/assets"))))))
