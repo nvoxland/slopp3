@@ -549,6 +549,17 @@ refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
    provide that. "Never edited" is ENFORCED: mark the ns `^:generated` and add a
    write gate that REFUSES hand-edits (regeneration is the only writer), same
    machinery as `web-endpoint-schema`.
+   **INSPECTABLE, though — a first-class benefit (user, 2026-07-23).** Being a
+   stored ns, the generated client is fully visible to tooling (query_source,
+   query_depends/blast-radius, usage/reference graphs) — a blob would be opaque.
+   The payoff: the chain schema → endpoint → generated wrapper → FE call site is
+   connected by REAL references, so "edit this schema → every affected FE call
+   site" falls out of the refs graph for free (the deep contract-integrity
+   story). So `^:generated` does DOUBLE duty: (a) refuse hand-edits; (b) tune the
+   inspection gates — generated code must NOT be flagged untested/undocumented/
+   dead-surface (a wrapper no FE calls yet is "available," not dead), and the
+   generator stamps each wrapper's provenance (`:why` = "generated from endpoint
+   X") so inspection shows the derivation.
 2. **Regeneration: automatic vs explicit — STILL OPEN (awaiting the user).**
    Ride the async recompile loop (edit an endpoint → client regenerates +
    recompiles) — OR an explicit `generate_client` step.
