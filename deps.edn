@@ -12,9 +12,20 @@
         org.xerial/sqlite-jdbc  {:mvn/version "3.47.1.0"}
         org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.3.0.202506031305-r"}
         org.slf4j/slf4j-nop     {:mvn/version "2.0.16"}
-        ;; D-web: mirrors the store manifest — slopp.web.server.httpkit is
-        ;; store code the boot kernel must be able to load
-        http-kit/http-kit       {:mvn/version "2.8.0"}}
+        ;; D-web / D-web-cljs: these mirror the store manifest because they are
+        ;; required by STORE CODE THE BOOT KERNEL MUST LOAD. The kernel loads
+        ;; every :jvm and :cljc namespace of the store (only :cljs is skipped),
+        ;; so a lib any of them requires has to be on the kernel classpath —
+        ;; add-manifest-libs! cannot be relied on here (add-libs needs
+        ;; tools.deps, which the uberjar does not carry).
+        ;;   http-kit -> slopp.web.server.httpkit
+        ;;   hiccup   -> slopp.web.html
+        ;;   garden   -> slopp.web.css
+        ;;   malli    -> slopp.client.nsschema (:cljc, so it DOES load here)
+        http-kit/http-kit       {:mvn/version "2.8.0"}
+        hiccup/hiccup           {:mvn/version "2.0.0"}
+        garden/garden           {:mvn/version "1.3.10"}
+        metosin/malli           {:mvn/version "0.17.0"}}
 
  ;; No :test alias: the working tree is FILELESS (the store is the source).
  ;; The suite runs via test_run {external true} — build! to a temp dir whose
