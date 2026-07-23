@@ -129,9 +129,9 @@ at birth with `ns_create {platform}`.
   it. `compile_client` doesn't run automatically by default — it's a
   build/serve step, not part of the write-verify loop.
 - **Optional dev loop:** `config_file {path "client" key "auto-compile" value
-  "true"}` makes every client-ns write recompile the bundle, so a `--live`
-  server serves fresh JS without a manual `compile_client`. Off by default (the
-  compile is synchronous — a client write blocks ~seconds).
+  "true"}` makes a client-ns write recompile the bundle in the background
+  (async, single-flight), so a `--live` server serves fresh JS without a manual
+  `compile_client`. Off by default; the write returns `:client-recompiling`.
 - Running the compiled JS against a real DOM is out of scope (browser/Cypress
   someday), not the inner loop.
 

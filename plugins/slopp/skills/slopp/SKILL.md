@@ -478,10 +478,11 @@ Cypress/Playwright territory someday).
   browser bundle, so the same contract checks both sides. Keep the schema and
   any pure transform in `.cljc`; the `.cljs` stays thin.
 - **Dev loop (optional):** `config_file {path "client" key "auto-compile" value
-  "true"}` recompiles the bundle on every client-ns write, so a `--live` server
-  serves fresh JS without a manual `compile_client`. Off by default (a client
-  write blocks ~seconds while it rebuilds); the write response carries
-  `:client-recompiled`.
+  "true"}` recompiles the bundle after a client-ns write — ASYNC and
+  non-blocking (single-flight + coalescing): the write returns
+  `:client-recompiling`, and a `--live` server serves fresh JS once the
+  background compile commits. Off by default. Also fine: `:cljs` forms can be
+  renamed/moved/extracted like any code — the refactor ops handle them.
 - **One benign rough edge:** the D6 `!`-effect warning fires on idiomatic cljs
   entry points (`^:export main` touches the DOM) — advisory, not a refusal.
   (Kondo lints each form in its platform's language, so `js/*` no longer draws a

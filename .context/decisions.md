@@ -1937,10 +1937,18 @@ multimethod is built for them); the npm/JS dependency world (its own later
 record); a `:client` effect tier refining D6 for browser code; **typed API
 contracts gated + shared with the client** (a schema-per-endpoint gate whose
 `.cljc` schema checks front-end usage — the deeper LoB payoff beyond a
-hand-shared schema; scoped in `.context/roadmap.md`, user ask 2026-07-23);
-**extending the write-path enabler to the REFACTOR ops** (`edit_rename`/
-`edit_move_forms`/`change_signature`/… still JVM-hot-load, so a `:cljs` form can
-be created and replaced but not yet renamed or moved); and an **async** client
-recompile (the dev loop is synchronous — a client write blocks ~seconds while
-the bundle rebuilds). Supersedes `ideas/clojurescript-client-code.md`. Wave
-frictions: `ideas/cljs-wave-frictions.md`.
+hand-shared schema; scoped in `.context/roadmap.md`, user ask 2026-07-23). Supersedes
+`ideas/clojurescript-client-code.md`. Wave frictions:
+`ideas/cljs-wave-frictions.md`.
+
+**Shipped after the milestone (user ask, 2026-07-23):** (1) the REFACTOR ops
+handle `:cljs` forms — every compiling refactor op (`edit_rename`/
+`edit_move_forms`/`edit_extract`/`change_signature`/`edit_requalify`/
+`rename_sweep`) funnels through `slopp.api.session/hot-load-all!`, guarded once
+to skip a `form-id` whose ns isn't `jvm-loadable?` (per-form-id, so a multi-ns
+move loads the `:jvm`/`:cljc` ids and skips the `:cljs` in one pass; `ns_rename`
+and `ns_delete` were already safe). (2) the recompile dev loop is now ASYNC —
+`session/maybe-recompile-client!` schedules a single-flight, coalescing daemon
+compile (a client write returns `:client-recompiling` immediately; the served
+blob updates when the background compile commits; the previous compile's outcome
+rides `:client-recompile-prev` on a later write) instead of blocking the write.
