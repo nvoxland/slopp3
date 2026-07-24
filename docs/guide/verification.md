@@ -121,6 +121,10 @@ being hand-wired per gate.
 Rules that are merely advisory get walked past, so slopp's own store runs the
 catalog blocking. A new project inherits sensible defaults and can loosen them.
 
+Some rules are gated on a capability rather than a severity. Every web rule is
+inert until `http.enabled` is true, so a store that does not serve HTTP never
+sees one. See [web apps](web/endpoints.md#what-the-gates-check).
+
 ## Running tests yourself
 
 You should rarely need to. `test_run` is for spot-checking one namespace or one

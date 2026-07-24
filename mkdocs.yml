@@ -65,6 +65,13 @@ nav:
       - Working with git: guide/git.md
       - Dependencies and config: guide/deps-and-config.md
       - CLI and CI: guide/cli.md
+  - Web apps:
+      - Overview: guide/web/index.md
+      - Endpoints: guide/web/endpoints.md
+      - Auth and security: guide/web/auth.md
+      - HTML and CSS: guide/web/html.md
+      - ClojureScript client: guide/web/client.md
+      - Running and shipping: guide/web/running.md
   - Reference:
       - Tool index: reference/tools.md
       - The dialect: reference/dialect.md

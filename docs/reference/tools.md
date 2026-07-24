@@ -27,7 +27,18 @@ a running server, and is always current for the version you are on.
 | `query_rules` | The enforcement catalog: every rule, its grain, its effective severity, how to discharge it. |
 | `query_rule_telemetry` | Fire rates and discharge patterns per rule, plus escape-marker density. |
 | `query_capabilities` | Every capability setting: type, default, effective value, what's set. Writes to the `capabilities` config validate against this registry. |
+
+## Web applications
+
+Everything here is inert until `http.enabled`. See the [web apps
+guide](../guide/web/index.md).
+
+| Tool | What it does |
+|---|---|
 | `query_routes` | The declared web surface: every endpoint's method, path, auth policy and handler, `:rendered-by` (the forms whose links/forms target it), plus the derived effect/read vocabularies. Empty with teaching until `http.enabled`. |
+| `module_platform {module platform}` | Declare a namespace's target platform: `:jvm`, `:cljc`, or `:cljs`. Namespace path, most-specific wins. |
+| `compile_client {output?}` | Compile every `:cljc` and `:cljs` namespace to one JS bundle with the configured backend. Warnings anchor to the owning form. |
+| `generate_client {ns?}` | Write the typed `fetch` client from the endpoints' declared contracts, as an edit-protected `:cljs` namespace. |
 
 ## The oracle
 
@@ -56,6 +67,7 @@ a running server, and is always current for the version you are on.
 |---|---|
 | `ns_create {ns requires\|source}` | A brand-new namespace. Never overwrites. |
 | `ns_rename {old new}` | Rename a whole namespace everywhere. |
+| `ns_delete {ns}` | Retire an empty namespace. Refuses while any form remains or anything still requires it. |
 | `ns_add_require` / `ns_remove_require` | One require clause. Never hand-edit an `ns` form. |
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |
 | `edit_replace_form {ns name source}` | Replace a whole form. |
@@ -84,6 +96,7 @@ a running server, and is always current for the version you are on.
 | `test_run` | Spot-check specific tests. `{external true}` for the external tier, `{all true}` for the whole in-image suite. |
 | `draft_test {ns name code?}` | Draft a `deftest` from observed calls. Writes nothing. |
 | `build {dir main?}` | Materialize every namespace to `.clj` files. `main` adds a GraalVM native-image recipe. |
+| `store_health` | What the store costs in bytes: journal by op, materialized state, blob table. `full_check` answers whether it is correct; this answers what it weighs. |
 
 ## Architecture
 
@@ -91,6 +104,7 @@ a running server, and is always current for the version you are on.
 |---|---|
 | `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked. |
 | `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the code already there. |
+| `module_platform {module platform}` | Declare a namespace's target platform. See [web apps](#web-applications). |
 
 ## Branches
 
@@ -121,7 +135,7 @@ a running server, and is always current for the version you are on.
 | `deps_remove {lib}` | Drop a library. |
 | `deps_list` | The dependency manifest. |
 | `deps_pure {target}` | Assert a dependency target is pure, so callers are not `!`-flagged. |
-| `file_put` / `file_remove` / `file_list` / `file_get` | Non-code files on the files manifest. |
+| `file_put` / `file_remove` / `file_list` / `file_get` | Non-code files on the files manifest. `encoding: "base64"` plus `content-type` stores binary content-addressed -- the journal carries only the sha. |
 | `file_history {path}` | A tracked file's change history. |
 | `config {key value?}` | Read or set store config. |
 | `config_file {path key value format}` | Structured config with per-key history, serialized into the projection. |

@@ -124,6 +124,25 @@ trailing `!`, or `deps_pure` the var, namespace or library, or tag the form
 `:reads` and `:effects` are legacy spellings of `:internal` and `:external`;
 they normalize on read.
 
+## Platform
+
+A third namespace-level declaration, with the same path scoping and
+most-specific-wins rule:
+
+```clj
+module_platform {module "shop.contracts" platform ":cljc"
+                 prompt "order schemas are shared with the browser"}
+```
+
+`:jvm` is the default and is what you have been writing. `:cljc` loads on the
+JVM *and* compiles to JavaScript, which is where shared schemas and portable
+logic belong -- the oracle verifies them for free. `:cljs` is browser-only,
+never loads into the image, and is verified by the compiler instead of the
+suite. See [the ClojureScript client](web/client.md).
+
+`query_depends {modules true}` returns a `:platforms` map alongside the
+manifest; anything absent from it is `:jvm`.
+
 ## Boundary contracts
 
 Public functions at a module boundary carry Malli schemas

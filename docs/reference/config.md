@@ -37,9 +37,8 @@ you how much there is.
 ## The capabilities file
 
 `config_file {path "capabilities"}` is the project's app manifest and opt-in
-surface: what the application is called (`app.name`, `app.version`), its
-entry point (`app.main` -- `build` uses it when no `:main` argument is
-passed), and, as the web waves land, whether it serves HTTP and how.
+surface: what the application is called, its entry point, and whether it serves
+HTTP and how.
 
 Unlike a free-form config file, every `capabilities` key is declared in a
 registry with a type, a default, and a doc line. That buys two things:
@@ -54,6 +53,43 @@ registry with a type, a default, and a doc line. That buys two things:
 config_file {path "capabilities" key "app.main" value "myapp.core/-main"}
 query_capabilities {}
 ```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `app.name` | the store directory name | Application name, at build time. |
+| `app.version` | `0.0.0` | Carried into build artifacts. |
+| `app.main` | unset | The entry fn (`myapp.core/-main`). `build` falls back to it when given no `main` argument. |
+| `http.enabled` | `false` | Whether this project serves HTTP. The master opt-in: every web rule and `query_routes` exists only when true. |
+| `http.adapter` | `:http-kit` | `:jdk` is the zero-dependency fallback. |
+| `http.host` | `127.0.0.1` | Bind address. Widen deliberately. |
+| `http.port` | `8080` | |
+| `http.max-body-bytes` | `1048576` | Largest accepted request body. |
+| `auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
+| `auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
+| `auth.session.ttl-seconds` | `86400` | Browser session lifetime. |
+
+Some keys are *families* whose tail is part of the setting:
+
+| Pattern | Meaning |
+|---|---|
+| `http.static.<url-prefix>` | A static mount. The value is a files-manifest path prefix: `http.static./assets` = `public`. |
+| `auth.static.users.<name>` | `{:password-hash "pbkdf2$..." :groups [...]}` |
+| `auth.bearer.tokens.<name>` | `{:secret "env:NAME" :groups [...]}` |
+| `auth.proxy.*` / `auth.oidc.*` | Provider settings. Secrets are `env:NAME` indirections. |
+| `groups.<name>.members` | Comma-separated members of a named group. |
+
+`query_capabilities` is the current list for the version you are on. The web
+keys are covered in [auth and security](../guide/web/auth.md).
+
+## The client config file
+
+`config_file {path "client"}` holds the ClojureScript build settings:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `compiler` | `:clojurescript` | The compile backend. |
+| `auto-compile` | `false` | Recompile the bundle in the background after a client-namespace write. |
+| `generated-ns` | `app.client.api` | Where `generate_client` writes the typed client. |
 
 ## Structured config files
 

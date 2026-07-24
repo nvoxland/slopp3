@@ -402,7 +402,8 @@ a `:web/public` allowlist, anything else is a generic 500 (detail logged, not
 returned); request bodies are capped (default 1 MiB — thread
 `:web/max-body-bytes` from the `http.max-body-bytes` capability into
 `serve!`); the static asset reader contains paths under its root. Auth: static
-passwords are salted PBKDF2 (`web/hash-password`/`verify-password`), bearer and
+passwords are salted PBKDF2 (`slopp.web.auth/hash-password` — mint one with
+`query_eval`, it is not on the `slopp.web` facade), bearer and
 password compares are constant-time, and **OIDC requires a configured
 `auth.oidc.audience`** — an unset audience denies every token (a resource
 server must not accept cross-audience tokens). Row-level authz is still yours:

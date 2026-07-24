@@ -82,6 +82,22 @@ exceeds it. Undeclared means `:external`, which means ungated.
 The axis is about testing: external needs a separate JVM and temp dirs,
 internal needs a state reset, pure needs nothing.
 
+## Platform
+
+What a namespace compiles to and what verifies it: `:jvm` (the default),
+`:cljc` (loads on the JVM and compiles to JavaScript), `:cljs` (browser only,
+never loaded into the image, verified by the compiler). Declared with
+`module_platform`, same path scoping as the tier. See [the ClojureScript
+client](../guide/web/client.md).
+
+## Capability
+
+A declared setting in the `capabilities` config saying what kind of application
+this store is: its name, its entry point, whether it serves HTTP, which auth
+providers are on. Every key is registry-declared with a type and a default, so
+an unknown key or a bad value is refused at the write and `query_capabilities`
+always has an answer.
+
 ## Line and branch
 
 A branch is an O(1) snapshot of the store with a name and a line id, persisted

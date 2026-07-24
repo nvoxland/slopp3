@@ -25,6 +25,18 @@ otherwise:
 - `deps_pure` the var, namespace, or whole library
 - tag the form `^:reads` if it only reads (reads take no bang)
 
+### slopp's own toolchain is not your manifest
+
+There are two dependency configurations, and only one of them is yours. The
+manifest above holds application libraries: delta-tracked, visible in
+`deps_list`, part of your history. slopp's own plumbing -- the ClojureScript
+compiler when a store has [client code](web/client.md), malli for schema
+checks -- is injected at build time and versioned centrally with slopp.
+
+Those never enter your manifest, never show up in `deps_list`, and never land
+as deltas, so a slopp upgrade moves every store forward with no migration on
+your side. Do not `deps_add` them.
+
 ## Config the application consumes
 
 `config_file` stores semantic key/value config -- per-key history, like forms --

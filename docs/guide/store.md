@@ -79,7 +79,11 @@ manifest. Two mechanisms:
 
 - `file_put {path content}` / `file_remove` / `file_list` / `file_get` --
   opaque files on the files manifest, with `file_history` giving them the same
-  per-change history forms get.
+  per-change history forms get. Binary files go in as
+  `encoding: "base64"` plus a `content-type`, stored content-addressed: the
+  bytes live in a blob table and the delta carries only the sha. That is what
+  lets a store serve [static assets](web/running.md#static-assets) and a build
+  emit real bytes.
 - `config_file {path key value format}` -- *semantic* key/value config, stored
   per key with per-key history and serialized into the right format at
   projection time. `format: "manifest"` covers `META-INF/MANIFEST.MF`.
