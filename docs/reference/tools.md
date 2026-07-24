@@ -126,9 +126,14 @@ guide](../guide/web/index.md).
 
 | Tool | What it does |
 |---|---|
-| `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked. |
-| `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the FORMS already there; `:unverified` names what it did not check. |
-| `module_platform {module platform}` | Declare a namespace's target platform. See [web apps](#web-applications). |
+| `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked over production edges. `remove: true` retracts. |
+| `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the FORMS already there; `:unverified` names what it did not check. `remove: true` retires the declaration. |
+| `module_platform {module platform}` | Declare a namespace's target platform. Records only — `:verified []`. `remove: true` retires it. See [web apps](#web-applications). |
+
+All three retire with `remove: true`, and retiring is a different statement
+from declaring the permissive value: `:external` and `:jvm` are claims,
+absence is no claim. A declaration whose namespace was renamed away is a ghost
+that every register view has to carry.
 
 ## Branches
 

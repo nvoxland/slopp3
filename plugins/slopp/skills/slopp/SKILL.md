@@ -156,6 +156,7 @@ measurably bleed tokens.
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
+| Retire a declaration | `remove: true` on `module_dep`, `module_purity`, `module_platform` — all three. Retiring is not the same as declaring the permissive value: `:external`/`:jvm` is a CLAIM, absence is no claim |
 | Declare a namespace's purity tier | `module_purity {module tier prompt}` — `:pure` (referentially transparent) / `:internal` (mutates in-process only) / `:external` (IO). Namespace PATH, most-specific wins; declaring verifies the FORMS already there. Undeclared = `:external` = ungated |
 
 **A declaration tells you which axes it checked.** Every register write —
@@ -176,6 +177,17 @@ not a clean bill of health:**
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.
+
+**A rename tells you what it did NOT rewrite.** `ns_rename` rewrites every
+SYMBOL — including quoted ones inside data literals — and deliberately leaves
+strings alone, because a namespace name inside a string might be prose, a
+path, or a generated program. It now returns `:left-behind`, grouped by how
+each occurrence was found, plus a `:note`. **Read it.** The dangerous rows are
+TOKEN strings (`:prose false`): a path, a `:main-opts` namespace, a `(require
+'ns)` inside a program string — those BREAK, where a docstring mention merely
+reads wrong. `:test-sibling` means the `-test` namespace still carries the old
+name, which files its tests under the old module. Absence of `:left-behind`
+means checked-and-none, not unchecked.
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the

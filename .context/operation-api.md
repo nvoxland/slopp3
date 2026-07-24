@@ -270,6 +270,19 @@ Every edit ends with `run-verification!` (affected-narrowed, diagnosed) and a
 `{:error msg}` on validation failure. **Keep return shapes tidy maps** —
 every op, `ingest!` included (`{:ns :forms}` / `{:error}`), returns one (F8).
 
+**Verification belongs to the TRANSACTION, not to the verb (2026-07-24).**
+A composite built by sequencing user-facing verbs used to pay one verification
+per verb — `module_extract` ran N × `ns-rename!`, each re-verifying, and a
+three-namespace extraction ran past 465s. `ns-rename!` takes `:defer-verify`,
+and `module-extract!` runs ONE `run-verification!` over the union of the
+touched namespaces, **strictly after the whole rename set has landed AND after
+the derived module edges are declared** — verifying earlier judges an
+intermediate store the gate itself would refuse (namespaces renamed, callers
+not yet rewritten, edges not yet declared). Any new composite should compose
+the same way. The per-rename `fresh-image!` is NOT deferred and remains the
+other half of #9's cost: the old namespace must not linger, and skipping it
+would hot-load later renames into an image missing the earlier ones.
+
 ## Concurrency (item 4 — CRDT-aligned, no locks)
 
 Single-form writes (replace/add/delete/move) commit through
