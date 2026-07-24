@@ -195,6 +195,15 @@ Reach for `query_eval` to look at what the code actually sees rather than
 bisecting features by intuition — measuring the analysis found this one
 after four wrong guesses.
 
+**Every assertion must be observed failing at least once.** The load-bearing
+part of red-first is not "test before code" — it is that each `is` was seen
+red before it was trusted green. ADDING an assertion to an already-green test
+skips that, and nothing downstream notices: `(is (empty? (:unused r)))` where
+`full-check!` never returns `:unused` is `(empty? nil)` → passes no matter what
+the code does. A green you never watched fail proves nothing. When you extend a
+passing test, break the subject once and confirm the NEW assertions go red — or
+you have written coverage theatre that reads as verification.
+
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
 2× the commentary plain-file agents did, and it was ALL of the remaining
@@ -219,12 +228,18 @@ be refused while every test passes. A cycle usually means a require that is
 no longer referenced: drop it, or move the shared code somewhere both sides
 can depend on. `edit_move_forms` drops the requires IT orphans on BOTH
 sides — the source namespace whose last user of a lib just left, and a
-rewritten caller left referencing nothing in the source namespace — but only
-those: a require kept for its load side effects, like `defmethod`
-registration, is indistinguishable from a dead one, so nothing prunes those
-for you. A stale require is worse than untidy — a namespace inherits the
-TIER of everything it requires, so one left behind makes a `:pure` namespace
-report as depending on the shell for something it no longer uses at all.
+rewritten caller left referencing nothing in the source namespace. Any OTHER
+unused require — one an ordinary delete or refactor stranded — you leave
+alone: **`done` prunes it for you, and there is no tool to check or remove
+one by hand.** At every done point it TRIES removing each require kondo
+reports unused; a genuinely dead one is dropped, and one that turns out to be
+load-bearing — removing it would break a cold load, a `defmethod`/registration
+the reference graph can't see — is restored with a `^:side-effect` marker so
+it is never flagged or re-tried. `done` reports what it did in
+`:pruned-requires`. (A stale require is not merely untidy: a namespace inherits
+the TIER of everything it requires, so one left behind makes a `:pure`
+namespace report as depending on the shell for something it no longer uses —
+which is why done clears them.)
 
 **Moving a form re-resolves its `::auto-keywords`.** `::foo` is read as
 `:current-namespace/foo`, so the same text means something DIFFERENT after

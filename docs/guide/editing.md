@@ -123,11 +123,16 @@ two-way split and names the forms that would be left behind -- "the moved set
 calls [x y] (staying)". Add those and retry. The refusal is the analysis;
 guessing the seam yourself leaves a cycle.
 
-It drops the requires it orphans on both sides, but only those. A require kept
-for its load side effects (a `defmethod` registration) is indistinguishable
-from a dead one, so nothing prunes it for you. Leaving a stale require behind
-is worse than untidy: a namespace inherits the tier of everything it requires,
-so one leftover makes a `:pure` namespace report as depending on the shell.
+It drops the requires it orphans on both sides. Any other unused require -- one
+an ordinary delete or refactor stranded -- you leave alone: `done` prunes it
+for you, and there is no tool to check or remove one by hand. At every done
+point it tries removing each require kondo reports unused; a genuinely dead one
+is dropped, and one that turns out to be load-bearing -- removing it would break
+a cold load, a `defmethod` registration the reference graph can't see -- is
+restored with a `^:side-effect` marker so it is never flagged or re-tried.
+`done` reports what it did in `:pruned-requires`. This matters because a
+namespace inherits the tier of everything it requires, so one stale leftover
+makes a `:pure` namespace report as depending on the shell.
 
 !!! warning "Moving a form re-resolves its `::auto-keywords`"
     `::foo` reads as `:current-namespace/foo`, so the same text means something

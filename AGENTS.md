@@ -133,6 +133,7 @@ the backlog for attention.
 |---|---|
 | `DEV.md` | setup, dev server, tests, benchmarks, the docs site, CI |
 | `.context/architecture.md` | anything — the layer map + core stance |
+| `.context/design-disciplines.md` | building ANY surface/rule — the friction cores + the disciplines that avoid them |
 | `.context/decisions.md` | any design-level change — DECISIONS only |
 | `.context/findings-log.md` | what past user tests / evals actually observed |
 | `.context/store-and-persistence.md` | `slopp.store`, `slopp.db`, `slopp.render` |

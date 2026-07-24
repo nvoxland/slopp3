@@ -988,6 +988,41 @@ cannot state which grammar or declaration grounds it has not met it yet.
 
 ---
 
+## D-surface-honesty (2026-07-24) — the read/analysis layer inherits the write layer's discipline
+
+**Decision.** A surface that reports on code may never conflate *"I checked and
+found nothing"* with *"I could not check."* Every analysis/report/read result
+that can be incomplete says so in the SAME breath — `:unverified`, `:partial
+true`, `:coverage :none`, `:via :static|:observed|:declared`, a `:reason`. The
+write pipeline already lives this (a failed gate refuses; `:status` names which
+tier ran; `:red-first`/`:carried-errors` mark interim states). The analysis
+layer did not, and that is where this project's characteristic failure lives: of
+~20 recorded failures, roughly two threw — the rest returned a confident,
+well-formed, WRONG answer (`ideas/the-patterns-behind-every-failure.md`
+Pattern 4).
+
+**Why it is decision-grade, not hygiene.** The write gates earn justified trust,
+and an agent spends it on every slopp surface — acting on a read WITHOUT
+double-checking (measured repeatedly). So an incomplete read in slopp is worse
+than the same read on files, where the agent would have verified. A read surface
+that lies by omission spends trust the write boundary earned.
+
+**Consequences.**
+- Absence-of-finding and absence-of-check get DIFFERENT representations, always.
+- A composite that gains a field must NAME it where the reader looks (skill +
+  result) or it goes undiscovered — capability existing ≠ capability found (P9).
+- An unknown/typo'd tool argument is REFUSED, not silently dropped (the `dry-run`
+  flag that evaporated and ran the real op — the most dangerous friction logged).
+  SHIPPED d12549: `slopp.mcp.tools/unknown-arg-keys` refuses at the `call-tool!`
+  chokepoint (wire calls only; the api layer stays lenient).
+- This is **D-rule-grounding**'s finding-grade `:info` rule (ship every finding;
+  grade the ones that shouldn't flip) raised to SURFACE grade. Same stance, two
+  granularities.
+
+Full lens + the other three cores: `.context/design-disciplines.md`.
+
+---
+
 ## D-kondo-config (2026-07-20) — slopp owns the linter config, and `:level` means "can this be legitimate mid-edit?"
 
 **Decision.** `slopp.index/kondo-config` is a static def, shipped with slopp,
