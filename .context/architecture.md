@@ -121,7 +121,6 @@ The resulting graph is acyclic and nearly linear:
 | 0 | `boot` `rt` | the on-disk kernel — outside the component map by design |
 | 0 | `cache` | the blessed memo |
 | 0 | `web` | the app FRAMEWORK slopp ships to users; zero outgoing edges, by rule |
-| 0 | `client` | dogfood cljs; moves into `slopp.ui` |
 | 1 | `store` | `store` `.db` `.render` `.build` `.mine` `.semver` `.fields` `.merge` |
 | 2 | `image` | `image` `.repl` `.testmain` — the oracle |
 | 2 | `git` | `git` `.client` `.server` |
@@ -129,7 +128,8 @@ The resulting graph is acyclic and nearly linear:
 | 4 | `edit` | `edit` `.refs` `.modules` `.hotload` `.lintgate` `.refactor` |
 | 5 | `api` | operations + verification orchestration (22 namespaces) |
 | 6 | `sync` | the git bridge — **stays top-level**: `slopp.sync/-main` is a published CLI entry in the plugin launcher, the install docs, a release blog post, and users' CI recipes |
-| 7 | `mcp` | `mcp` `.tools` `.smells` `.http` `.http.browse` `.turn` — the agent-facing transports |
+| 6 | `ui` | `ui.model` `.pages` `.server` `.client.*` — slopp's OWN webapp: the reviewer view of a store, built on `slopp.web` exactly as a user's app would be |
+| 7 | `mcp` | `mcp` `.tools` `.smells` `.http` `.turn` — the agent-facing transports |
 | 8 | `bench` | `bench` `.benchmark` `.evalseed` — dev instruments, on no user path |
 
 **`slopp.boot`, `slopp.rt` and `slopp.sync` are deliberately exempt.** Each is a
@@ -242,8 +242,16 @@ and unchecked. Layering *within* a component is no longer a gate.
   declarations union; `merge-logs` folds them without conflict and NOTES a
   cycle neither side saw). Writes go through the semantic verb
   `module_dep {from to [remove] prompt}` — an add that CLOSES a cycle is
-  refused (LOCAL reachability check; adopted test-fold cycles like
-  api↔db never block unrelated declarations), the why rides the delta;
+  refused, the why rides the delta. The cycle question is asked of the
+  **PRODUCTION** graph, the same `production-manifest` the layer view
+  above uses, so a `-test` namespace's fixture require can never veto an
+  architecture decision. It used to ask the DECLARED manifest, which meant
+  the gate and the architecture view disagreed: `slopp.mcp → slopp.ui` was
+  refused for closing `ui → api → index → mcp → ui`, where the
+  `index → mcp` hop existed solely because `slopp.index.deps-test` calls
+  `slopp.mcp/handle!` — while `query_depends` showed a clean nine-layer
+  DAG. `module_extract` already judged on production edges; `module_dep`
+  now matches (`slopp.modules-test/cycle-refusal-judges-production-edges-not-test-fixtures`);
   reads through `query_depends {modules true}` (manifest +
   standing debt). The manifest projects into git commits/builds as a
   `modules` file (read-only transparency).

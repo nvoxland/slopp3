@@ -54,8 +54,10 @@ conclusions, so the review reasons about findings, not source dumps.
   card or `review_scan`) means no test exercises it. `draft_test {ns name code}`
   drafts one from observed calls. Zero coverage on a `:high-blast` form is the
   first thing to flag.
-- **Architecture → `query_depends {modules true}`.** `:cycles` (should be empty —
-  the gate refuses new ones, but adopted/test-fold cycles surface here),
+- **Architecture → `query_depends {modules true}`.** `:cycles` (should be empty
+  — the gate refuses new ones; an ADOPTED cycle from an import surfaces here.
+  Both `:layers` and `:cycles` read production edges only, so a `-test`
+  namespace's fixture require never shows up as one),
   `:unused-edges` (declared deps nothing uses — retire them), `:layers` (is the
   dependency direction sane?). Boundary violations and visibility are already
   gated, so a *standing* one is debt worth naming. `query_depends {on X}` traces

@@ -261,7 +261,9 @@ then write the code). Deeper namespaces (`x.y.z`) are package-private
 to `x.y.*`; the `:export` dial on a defn widens it — `^:export` hoists
 it into the module's public surface, `^{:export "x.y.z"}` exposes it to
 that subtree only. An edge that closes a cycle is refused (the cycle is
-named). **Red-first specs targeting a package-private ns go in a
+named) — judged on PRODUCTION edges, so a `-test` namespace's fixture
+require never vetoes an architecture decision, even though it does show
+up in the declared manifest. **Red-first specs targeting a package-private ns go in a
 SAME-PACKAGE test ns** (`x.y.z` spec → `x.y.z-test` or another `x.y.*`
 test ns): an outside spec naming not-yet-existing deep vars hits the
 visibility gate before its stubs can land, and the escape it teaches
