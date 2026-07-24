@@ -5,7 +5,7 @@
   the PLANS are cheap to assert."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.refactor :as refactor]
-            [slopp.store :as store] [clojure.string :as str]))
+            [slopp.store :as store] [clojure.string :as str] [rewrite-clj.node :as n]))
 
 (defn- fixture-store
   "mv.core defines a private util + a public mid + entry; mv.app (another
@@ -322,3 +322,103 @@
   (testing "it does NOT match inside a larger symbol token"
     (is (nil? (re-find (refactor/symbol-mention-re "rate") "bulk-rate")))
     (is (nil? (re-find (refactor/symbol-mention-re "valid") "valid?")))))
+
+(deftest module-extract-plan-names-what-must-be-exported
+  ;; Pulling ex.helper under ex.core makes it a DEEP namespace (3 segments),
+  ;; so callers outside ex.core.* lose visibility unless the var is hoisted.
+  ;; ns_rename rewrites every reference correctly and leaves exactly these
+  ;; vars as module-gate violations; the plan must name them, and NAME WHO
+  ;; forces each one, before a single write lands.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'ex.helper
+                             (str "(ns ex.helper)\n\n"
+                                  "(defn shared \"S.\" [x] x)\n\n"
+                                  "(defn local \"L.\" [x] x)\n"))
+               (store/ingest 'ex.core
+                             (str "(ns ex.core (:require [ex.helper :as h]))\n\n"
+                                  "(defn a \"A.\" [x] (h/local x))\n"))
+               (store/ingest 'ex.other
+                             (str "(ns ex.other (:require [ex.helper :as h]))\n\n"
+                                  "(defn b \"B.\" [x] (h/shared x))\n")))
+        p  (refactor/module-extract-plan st '[ex.helper] 'ex.core)]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (= {'ex.helper 'ex.core.helper} (:renames p)))
+    (testing "only the var an OUTSIDE caller reaches needs hoisting"
+      (is (= #{'shared} (set (map :name (:exports p))))
+          (pr-str (:exports p))))
+    (testing "the plan says who forces the hoist, not just that one is needed"
+      (is (= ['ex.other/b] (:forced-by (first (:exports p))))))
+    (testing "the edge the extraction necessitates is named too"
+      (is (some #{["ex.other" "ex.core"]} (:edges-add p))
+          (pr-str (:edges-add p))))))
+
+(deftest module-extract-plan-judges-cycles-on-production-edges-only
+  ;; cy.helper-test needs cy.app as a fixture, so folding -test into its
+  ;; subject's module puts cy.helper → cy.app in the DECLARED manifest while
+  ;; cy.app → cy.helper is the real production edge. Pulling cy.helper under
+  ;; cy.app must NOT read that as a cycle — it is the same false positive
+  ;; store/module-layers already excludes, and judging it on the declared
+  ;; manifest refused the whole slopp.store regroup.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cy.helper
+                             "(ns cy.helper)\n\n(defn shared \"S.\" [x] x)\n")
+               (store/ingest 'cy.app
+                             (str "(ns cy.app (:require [cy.helper :as h]))\n\n"
+                                  "(defn run \"R.\" [x] (h/shared x))\n"))
+               (store/ingest 'cy.helper-test
+                             (str "(ns cy.helper-test"
+                                  " (:require [cy.app :as app] [cy.helper :as h]))\n\n"
+                                  "(defn fixture \"F.\" [] (app/run (h/shared 1)))\n")))
+        p  (refactor/module-extract-plan st '[cy.helper] 'cy.app)]
+    (is (nil? (:error p))
+        (str "a test-only back-edge is not a production cycle: " (:error p)))
+    (is (= 'cy.app.helper (get (:renames p) 'cy.helper)))
+    (testing "the test namespace rides along with its subject"
+      (is (= 'cy.app.helper-test (get (:renames p) 'cy.helper-test))))))
+
+(deftest export-changeset-hoists-only-the-named-vars
+  ;; The write half of a module regroup: the planner names the vars that lose
+  ;; visibility, this turns that list into a changeset. Two edges matter — a
+  ;; name that is already meta-wrapped (the marker stacks) and a name that
+  ;; already carries :export (no double-marking, and no delta churn).
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'ex.h
+                              (str "(ns ex.h)\n\n"
+                                   "(defn shared \"S.\" [x] x)\n\n"
+                                   "(defn ^:dynamic *hooked* \"H.\" [] 1)\n\n"
+                                   "(defn ^:export already \"A.\" [x] x)\n\n"
+                                   "(defn untouched \"U.\" [x] x)\n")))
+        cs  (refactor/export-changeset
+             st '[{:ns ex.h :name shared} {:ns ex.h :name *hooked*}
+                  {:ns ex.h :name already}])
+        src (fn [nm] (some (fn [[fid node]]
+                             (when (= fid (:id (store/form-named st 'ex.h nm)))
+                               (n/string node)))
+                           cs))]
+    (testing "a var that is already exported contributes no change"
+      (is (= 2 (count cs)) (pr-str (map first cs)))
+      (is (nil? (src 'already))))
+    (is (re-find #"\(defn \^:export shared" (src 'shared)) (src 'shared))
+    (testing "the marker stacks on an already meta-wrapped name"
+      (is (re-find #"\^:export \^:dynamic \*hooked\*" (src '*hooked*))
+          (src '*hooked*)))
+    (testing "nothing else is touched"
+      (is (nil? (src 'untouched))))))
+
+(deftest export-changeset-marks-through-a-top-level-meta-wrapper
+  ;; A form written `^:reads (defn f ...)` is a top-level :meta node whose
+  ;; children are a keyword and a list — no symbol token among them. Scanning
+  ;; those children for the defn head finds nothing, and the marker walk NPEs
+  ;; rather than refusing. slopp.db/load-store is exactly this shape, so the
+  ;; regroup that motivated this tripped on it immediately; edit_move_forms
+  ;; {export true} moving such a form has the same bug.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'mw.h
+                              (str "(ns mw.h)\n\n"
+                                   "^:reads (defn wrapped \"W.\" [x] x)\n")))
+        cs  (refactor/export-changeset st '[{:ns mw.h :name wrapped}])
+        src (n/string (second (first cs)))]
+    (is (= 1 (count cs)))
+    (testing "the outer marker survives and :export lands on the NAME"
+      (is (re-find #"\^:reads" src) src)
+      (is (re-find #"\(defn \^:export wrapped" src) src))))

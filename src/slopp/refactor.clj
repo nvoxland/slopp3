@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.render :as render]
-            [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs] [slopp.index.analyze :as analyze]))
+            [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -767,22 +767,40 @@
   gives `^:export` (world surface); a prefix string gives
   `^{:export \"prefix\"}` (that subtree only) — the deliberate widening a
   deep-ns move needs when callers live outside the subtree. The name may
-  itself be meta-wrapped (`^:dynamic *hook*`) — the marker stacks on top."
+  itself be meta-wrapped (`^:dynamic *hook*`) — the marker stacks on top.
+
+  A form written `^:reads (defn f ...)` is a top-level :meta node whose
+  children hold no defn symbol AT ALL — the def is its VALUE. Mark inside
+  and rewrap, so the outer marker survives and the head scan never runs on
+  a node that has no head. An unrecognised shape returns unchanged rather
+  than throwing: this is a widening, and refusing to widen is recoverable
+  where an NPE mid-changeset is not."
   [node level]
-  (let [kids (n/children node)
-        op?  (fn [k] (and (= :token (n/tag k)) (symbol? (n/sexpr k))))
-        nameish? (fn [k] (or (op? k) (= :meta (n/tag k))))
-        opi  (first (keep-indexed #(when (op? %2) %1) kids))
-        nami (first (keep-indexed (fn [i k] (when (and (> i opi) (nameish? k)) i))
-                                  kids))
-        mark (if (true? level)
-               (n/keyword-node :export)
-               (p/parse-string (pr-str {:export (str level)})))]
-    (if nami
-      (n/replace-children
-       node
-       (map-indexed (fn [i k] (if (= i nami) (n/meta-node mark k) k)) kids))
-      node)))
+  (if (= :meta (n/tag node))
+    (let [kids (vec (n/children node))
+          vi   (last (keep-indexed
+                      (fn [i k] (when-not (n/whitespace-or-comment? k) i))
+                      kids))]
+      (if vi
+        (n/replace-children
+         node (map-indexed (fn [i k] (if (= i vi) (export-mark k level) k)) kids))
+        node))
+    (let [kids (n/children node)
+          op?  (fn [k] (and (= :token (n/tag k)) (symbol? (n/sexpr k))))
+          nameish? (fn [k] (or (op? k) (= :meta (n/tag k))))
+          opi  (first (keep-indexed #(when (op? %2) %1) kids))
+          nami (when opi
+                 (first (keep-indexed
+                         (fn [i k] (when (and (> i opi) (nameish? k)) i))
+                         kids)))
+          mark (if (true? level)
+                 (n/keyword-node :export)
+                 (p/parse-string (pr-str {:export (str level)})))]
+      (if nami
+        (n/replace-children
+         node
+         (map-indexed (fn [i k] (if (= i nami) (n/meta-node mark k) k)) kids))
+        node))))
 
 (defn- imports-for
   "The (:import ...) clause text the moved `nodes` need from `ns-sym`'s
@@ -1278,3 +1296,107 @@
                                 z/root)]
                 :when  (not= (n/string out) (n/string node))]
             [(:id e) out]))))
+
+(defn module-extract-plan
+  "PLAN pulling `ns-syms` (each with its subtree and `-test` siblings) under
+  `to-prefix` — the module-grain regroup, analysed before anything is
+  written. A namespace that moves from two segments to three becomes
+  PACKAGE-PRIVATE, so every caller outside the new parent silently becomes a
+  module violation; `ns-rename-changeset` rewrites references faithfully and
+  leaves exactly those behind. This names them first.
+
+  Returns {:renames {old new} :exports [{:ns :name :forced-by [qsym…]}…]
+  :edges-add [[from-mod to-mod]…] :edges-retire [[from-mod to-mod]…]}, or
+  {:error msg} when the regroup would leave a module dependency CYCLE.
+
+  Two rules are borrowed rather than restated: visibility is decided by
+  `edit.modules/module-violations` (the same predicate the write gate
+  enforces), and cycles are computed over PRODUCTION edges only, the way
+  `store/module-layers` does — a `-test` namespace folds into its subject's
+  module, so its fixture deps would manufacture cycles that do not exist in
+  production (slopp.api ↔ slopp.db is exactly such a pair today)."
+  [store ns-syms to-prefix]
+  (let [all      (keys (:namespaces store))
+        test-ns? (fn [n] (str/ends-with? (str n) "-test"))
+        moving   (fn [n] (some (fn [s] (or (= (str n) (str s))
+                                           (= (str n) (str s "-test"))
+                                           (str/starts-with? (str n) (str s "."))))
+                               ns-syms))
+        renames  (into {} (for [n all :when (moving n)]
+                            [n (symbol (str to-prefix "."
+                                            (str/join "." (rest (str/split (str n) #"\.")))))]))
+        rn       (fn [n] (get renames n n))
+        manifest (or (edit.modules/modules-manifest store) {})
+        internal (set (map str all))
+        rs       (for [r (refs/refs store)
+                       :let [from (:from-ns r) to (:to-ns r)]
+                       :when (and (symbol? from) (symbol? to)
+                                  (internal (str to))
+                                  (not= (str from) (str to)))]
+                   (assoc r :from-ns' (rn from) :to-ns' (rn to)))
+        edge-of  (fn [k1 k2] (fn [r] [(edit.modules/module-of (k1 r))
+                                      (edit.modules/module-of (k2 r))]))
+        edges-of (fn [xs f] (into #{} (comp (map f) (remove (fn [[a b]] (= a b)))) xs))
+        after    (edges-of rs (edge-of :from-ns' :to-ns'))
+        before   (edges-of rs (edge-of :from-ns :to-ns))
+        prod     (edges-of (remove #(test-ns? (:from-ns %)) rs)
+                           (edge-of :from-ns' :to-ns'))
+        g        (reduce (fn [m [a b]] (update m a (fnil conj #{}) b)) {} prod)
+        cyclic   (vec (for [[a b] (sort prod)
+                            :when (store/module-path (update g a disj b) b a)]
+                        [a b]))
+        touched  (into #{} (map edit.modules/module-of)
+                       (concat (keys renames) (vals renames)))
+        cands    (filter #(or (renames (:from-ns %)) (renames (:to-ns %))) rs)
+        viol     (fn [r] (first (edit.modules/module-violations
+                                 manifest
+                                 [{:from-ns (:from-ns' r) :from-var (:from-var r)
+                                   :to (:to-ns' r)
+                                   :to-export (edit.modules/export-level
+                                               store (:to-ns r) (:to-name r))}])))
+        exports  (->> cands
+                      (keep (fn [r] (when (= :visibility (:rule (viol r))) r)))
+                      (group-by (juxt :to-ns' :to-name))
+                      (sort-by first)
+                      (mapv (fn [[[nsx nm] rs*]]
+                              {:ns nsx :name nm
+                               :forced-by (->> rs*
+                                               (keep (fn [r]
+                                                       (when (:from-var r)
+                                                         (symbol (str (:from-ns' r))
+                                                                 (str (:from-var r))))))
+                                               distinct sort vec)})))]
+    (if (seq cyclic)
+      {:error (str "the regroup would leave a module dependency cycle ("
+                   (str/join ", " (map (fn [[a b]] (str a " → " b)) cyclic))
+                   ") — extract the shared piece the other way, or restructure"
+                   " the callers first")}
+      {:renames renames
+       :exports exports
+       :edges-add (vec (sort (remove (fn [[a b]] (contains? (get manifest a #{}) b))
+                                     after)))
+       :edges-retire (vec (sort (for [[a bs] manifest b bs
+                                      :when (and (or (touched a) (touched b))
+                                                 (before [a b])
+                                                 (not (after [a b])))]
+                                  [a b])))})))
+
+(defn export-changeset
+  "Changeset hoisting each `{:ns :name}` in `targets` onto its module's world
+  surface — `^:export` on the defn name, via the same `export-mark` a
+  deep-target move uses. `level` (default true) may be a namespace-prefix
+  string for subtree-only widening.
+
+  Addressed at the store AS IT IS, so a regroup exports BEFORE it renames:
+  the marker has to be in place by the time the namespace goes deep, or the
+  intermediate store is one the module gate refuses. A var that already
+  carries the marker contributes nothing — a re-run is a no-op, not churn."
+  ([store targets] (export-changeset store targets true))
+  ([store targets level]
+   (into {}
+         (keep (fn [{:keys [ns name]}]
+                 (let [nsx (symbol (str ns)) nm (symbol (str name))]
+                   (when-let [e (store/form-named store nsx nm)]
+                     (when-not (edit.modules/export-level store nsx nm)
+                       [(:id e) (export-mark (:node e) level)])))))
+         targets)))

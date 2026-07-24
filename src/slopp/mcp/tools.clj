@@ -278,6 +278,16 @@
                                         :description "true = world surface; a namespace-prefix string = visible to that subtree only"}
                                :prompt {:type "string"}}
                   :required ["ns" "forms" "to"]}}
+   {:name "module_extract"
+    :description "Regroup at MODULE grain: pull whole namespaces (with their subtrees and -test siblings) under `to` — the op for a namespace that grew into its own component, or for giving a set of them one owning prefix. Going from two segments to three makes a namespace PACKAGE-PRIVATE, so every outside caller would break at once: this hoists exactly the vars that lose visibility (^:export) BEFORE renaming, then renames (callers, requires, prose, and the manifest all follow), then declares the edges the moved store actually references. ALWAYS dry-run first: it writes nothing and returns the plan — the renames, every var that must be exported AND WHICH CALLERS FORCE IT, the edges that appear, the edges the regroup unbacks. Refuses a regroup that would leave a production module cycle; a -test back-edge is not one."
+    :inputSchema {:type "object"
+                  :properties {:namespaces {:type "array" :items {:type "string"}
+                                            :description "the namespaces to pull; each takes its subtree and -test sibling with it"}
+                               :to {:type "string" :description "the owning prefix, e.g. \"my.core\""}
+                               :dry-run {:type "boolean"
+                                         :description "plan only: write nothing, report renames / exports+who-forces-them / edges / refusal"}
+                               :prompt {:type "string"}}
+                  :required ["namespaces" "to"]}}
    {:name "cleanup"
     :description "Bring a namespace up to current standards — the WHOLE namespace, regardless of what you touched. Pass `all: true` instead of `ns` to sweep the ENTIRE store: that is the migration surface for adopting slopp on an existing codebase, or for landing a slopp upgrade that adds a rule every existing form predates. APPLIES: normalize every form (conservative, behavior-preserving), reorder definitions above their callers, retire legacy or stale (declare …)s and phantom names. REPORTS everything slopp can check on a WRITE, replayed over EXISTING code — :lint, :unused (dead public surface), :undocumented, :gates (module / tier / schema / namespaced-keys write gates), :advisories (ambient-state, bare-throw, key-typos, schema-drift) and :purity (which tier the namespace could support). Those all normally fire only as code is written, so a form predating a rule was never subject to it. Findings are REPORTED, never auto-fixed — each needs a judgment call."
     :inputSchema {:type "object"

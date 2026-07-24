@@ -2934,3 +2934,78 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
             (repl/eval! (:image @session)
                         (format "(remove-ns '%s)" ns-sym))
             {:deleted (str ns-sym) :delta (:id (last (store/deltas st')))}))))))
+
+(defn module-extract!
+  "Pull `ns-syms` (each with its subtree and `-test` siblings) under
+  `to-prefix` — the module-grain regroup, as ONE intent.
+
+  Order is the design, not a detail. A namespace that moves from two segments
+  to three becomes package-private, so every caller outside the new parent
+  becomes a module violation the instant the rename lands. The vars the plan
+  named are therefore hoisted FIRST; only then do the renames run, and the
+  edges are declared LAST from what the store actually references — by then
+  `ns-rename!` has already re-keyed the manifest for whole modules that moved,
+  so replaying the plan's pre-rename edge list would re-declare them.
+
+  `dry-run` returns the plan and writes nothing — what can be extracted, what
+  must be exported and who forces it, which edges appear. Refuses when the
+  regroup would leave a production module cycle."
+  [session ns-syms to-prefix & {:keys [prompt agent dry-run]}]
+  (let [st   (:store @session)
+        plan (refactor/module-extract-plan st ns-syms to-prefix)]
+    (cond
+      (:error plan) (select-keys plan [:error])
+
+      dry-run {:plan plan}
+
+      (empty? (:renames plan))
+      {:error (str "no namespace matches " (pr-str ns-syms)
+                   " — name the namespaces to pull under " to-prefix
+                   " (subtrees and -test siblings follow on their own)")}
+
+      :else
+      (let [why (or prompt (str "extract " (str/join ", " ns-syms)
+                                " under " to-prefix))
+            inv (into {} (map (fn [[k v]] [v k])) (:renames plan))
+            cur (mapv (fn [e] {:ns (get inv (:ns e) (:ns e)) :name (:name e)})
+                      (:exports plan))
+            cs  (refactor/export-changeset st cur)]
+        ;; 1. hoist first — never leave an intermediate store the gate refuses
+        (when (seq cs)
+          (let [[st1 _] (store/apply-changeset st :module-extract
+                                               (symbol (str to-prefix)) cs
+                                               :prompt why :agent agent)]
+            (session/try-commit! session st st1
+                                 (vec (distinct (map :ns cur))))))
+        ;; 2. the renames, each carrying its own manifest follow + verification
+        (let [done (reduce (fn [acc [o v]]
+                             (let [r (ns-rename! session o v
+                                                 :prompt why :agent agent)]
+                               (if (:error r)
+                                 (reduced {:error (str "renaming " o " → " v ": "
+                                                       (:error r))
+                                           :landed acc})
+                                 (conj acc [o v]))))
+                           [] (sort-by first (:renames plan)))]
+          (if (:error done)
+            done
+            ;; 3. the edges reality now requires, derived from the moved store
+            (let [st'      (:store @session)
+                  manifest (or (edit.modules/modules-manifest st') {})
+                  missing  (vec (sort (for [[m deps] (edit.modules/derive-module-edges st')
+                                            d deps
+                                            :when (not (contains? (get manifest m #{}) d))]
+                                        [m d])))]
+              (when (seq missing)
+                (session/commit-appended!
+                 session
+                 (fn [base]
+                   (reduce (fn [s [a b]]
+                             (first (store/record-module-edge s a b :add
+                                                              :prompt why :agent agent)))
+                           base missing))
+                 []))
+              {:extracted {:to (symbol (str to-prefix))
+                           :renames (into (sorted-map) (:renames plan))
+                           :exported (count cs)
+                           :edges-declared missing}})))))))

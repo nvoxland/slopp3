@@ -855,3 +855,42 @@
     (testing "a lone refusal reads exactly as before — no 'also pending' noise"
       (with-redefs [modules/per-form-write-gates [#'fixture-refuse-gate-a]]
         (is (= "fixture-refuse-a teaching" (modules/gate-refusal t 'app.core 'f)))))))
+
+(deftest ^:external module-extract-lands-exports-renames-and-edges-as-one-intent
+  ;; The regroup a component restructure repeats per component. me.helper goes
+  ;; DEEP under me.core, so me.other loses visibility of everything it calls
+  ;; there. Order is the whole design: exports must land BEFORE the rename, or
+  ;; the intermediate store is one the module gate refuses.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'me.helper
+                   (str "(ns me.helper)\n"
+                        "(defn shared \"Reached from outside.\" [x] x)\n"
+                        "(defn local \"Reached only from me.core.\" [x] x)\n"))
+      (api/module-dep! sess "me.core" "me.helper" :prompt "core uses helper")
+      (api/module-dep! sess "me.other" "me.helper" :prompt "other uses helper")
+      (api/ingest! sess 'me.core
+                   (str "(ns me.core (:require [me.helper :as h]))\n"
+                        "(defn a \"A.\" [x] (h/local x))\n"))
+      (api/ingest! sess 'me.other
+                   (str "(ns me.other (:require [me.helper :as h]))\n"
+                        "(defn b \"B.\" [x] (h/shared x))\n"))
+      (let [r (api/module-extract! sess '[me.helper] 'me.core
+                                   :prompt "regroup helper under core")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the namespace moved, with its callers rewritten"
+          (is (nil? (get-in @sess [:store :namespaces 'me.helper])))
+          (is (some? (get-in @sess [:store :namespaces 'me.core.helper]))))
+        (testing "only the var an outside caller reaches was hoisted"
+          (let [st (:store @sess)]
+            (is (true? (modules/export-level st 'me.core.helper 'shared)))
+            (is (nil? (modules/export-level st 'me.core.helper 'local)))))
+        (testing "the edge reality now requires is declared"
+          (is (contains? (get (modules/modules-manifest (:store @sess)) "me.other")
+                         "me.core")))
+        (testing "THE property: the end state has no module violations"
+          (is (nil? (:error (api/edit-replace!
+                             sess 'me.other 'b
+                             "(defn b \"B.\" [x] (h/shared (inc x)))"
+                             :prompt "a write still passes the gate afterwards")))))) 
+      (finally (api/close! sess)))))

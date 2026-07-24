@@ -1308,3 +1308,29 @@
   (testing "the rename streak likewise stays on rename calls"
     (let [sess (atom {:slopp.mcp.smells/stats {:renames 4}})]
       (is (nil? (smells/track-hint! sess "query_slice" {}))))))
+
+(deftest ^:external module-extract-dry-run-rides-the-wire
+  ;; The dry-run IS the safety story: an agent reads the plan before a rename
+  ;; that would otherwise land a pile of module-gate violations. So the wire
+  ;; test asserts the plan arrives WITH its forced-by attribution, and that
+  ;; nothing moved.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mx.helper "(ns mx.helper)\n(defn shared \"S.\" [x] x)\n")
+      (api/module-dep! sess "mx.other" "mx.helper" :prompt "other uses helper")
+      (api/ingest! sess 'mx.other
+                   (str "(ns mx.other (:require [mx.helper :as h]))\n"
+                        "(defn b \"B.\" [x] (h/shared x))\n"))
+      (let [out (call! sess "module_extract"
+                       {:namespaces ["mx.helper"] :to "mx.core" :dry-run true})]
+        (is (re-find #"mx\.core\.helper" out) out)
+        (testing "the plan names WHO forces each hoist, not just that one is due"
+          (is (re-find #"mx\.other/b" out) out))
+        (testing "a dry-run writes nothing"
+          (is (some? (get-in @sess [:store :namespaces 'mx.helper])))
+          (is (nil? (get-in @sess [:store :namespaces 'mx.core.helper])))))
+      (testing "an unsupported argument is refused, not silently dropped"
+        (is (re-find #"(?i)unknown|unsupported"
+                     (call! sess "module_extract"
+                            {:namespaces ["mx.helper"] :to "mx.core" :dryrun true}))))
+      (finally (api/close! sess)))))
