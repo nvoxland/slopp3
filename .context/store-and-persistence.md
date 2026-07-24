@@ -55,6 +55,20 @@
   DAG-ready).
 - Multi-form coordinated edits go through `apply-changeset` → ONE delta over
   N forms (used by rename).
+- **`:system true` marks a delta the PIPELINE wrote, not the agent** — today
+  only the cold-load auto-reorder (`edit/resolve-cold-load` → `reorder-to` →
+  `move-form`). It exists because a derived view otherwise cannot tell
+  housekeeping from intent: `prompt-by-form` takes the last prompt naming a
+  form, so the reorder's constant prompt became the recorded WHY of 142 of
+  1,898 forms (7%) — on `form-card`, `query_slice`'s cards and the reviewer
+  UI alike. The op is not the discriminator (`edit_move` is the same op with a
+  real intent) and neither is the absence of `:agent` (measured: 75 genuine
+  hand-written asks carry none). It has to be recorded as a fact.
+  The log is append-only, so already-written reorders cannot be re-stamped;
+  `prompt-by-form` also recognises `store/auto-reorder-prompt`, ONE constant
+  owned here and used by the one writer so the two cannot drift.
+  **A writer acting on the agent's behalf must mark what it writes**, or it is
+  indistinguishable from the agent in every view derived from the log.
 - **Purity is load-bearing:** transactional/atomic behaviors at the api layer
   (e.g. group validation) work by applying store fns to a value and only
   committing the result on success.

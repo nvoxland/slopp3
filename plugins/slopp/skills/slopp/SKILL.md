@@ -580,6 +580,17 @@ History is ONE door:
 touched X · {dead_ends true} the SCRAPPED explorations, {dead_ends "some.ns"}
 those that touched it); `report {since, contains}` for summaries and handoffs.
 
+**When the answer is for a HUMAN, serve it: `ui_serve`.** It starts a
+browsable view of the store — a milestone timeline, a per-milestone change
+review (module → namespace → form, with each form's recorded ask, its line
+diff and its blast radius), form permalinks by ID with callers above and
+callees inlined below, and the namespace index — and returns `{:url :port}`.
+Hand over the url and the change screen's, not a wall of pasted source: your
+tools answer questions, a page lets someone LOOK. It runs on your live
+session, so warranty and observed examples are the ones you actually have.
+Serving again evicts the previous server rather than moving the port;
+`{stop: true}` shuts it down. Port comes from the `ui.port` capability.
+
 **When you hit a dead end, revert cleanly and say WHY.** `undo` walks back
 your OWN writes by delta — `{deltas n}` for the last n, or `{to :last-commit}`
 to scrap everything since the last milestone (the usual "this whole approach
@@ -607,4 +618,5 @@ branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep module_purity · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
-test_run draft_test done full_check commit_point restart build help
+test_run draft_test done full_check commit_point restart build help ·
+ui_serve compile_client generate_client store_health

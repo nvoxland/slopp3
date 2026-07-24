@@ -112,3 +112,10 @@ rows the gates can't see:
 - Don't re-verify by cloning/worktree/raw store.db — the store IS the source of
   truth and it's already verified; `query_commits {:alignment}` proves handoff
   state in one read.
+- **Point the human at the change screen.** `ui_serve` returns `{:url :port}`;
+  `<url>change/<from>..<to>` (the milestone ids from `query_commits`) is that
+  milestone reviewed form by form — recorded ask, line diff, blast radius,
+  each form linking its permalink with callers above and callees inlined. Give
+  the url alongside your findings rather than pasting sources: your report says
+  what you concluded, the page lets them check it. It rides your live session,
+  so warranty counts are the real ones.
