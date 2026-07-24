@@ -5,7 +5,7 @@
             [slopp.edit.refs :as refs]
             [slopp.index :as index]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.api.done :as done]))
 
 ^:reads (defn ^:export review-scan
   "Whole-codebase (or one-ns) REVIEW TRIAGE — the fileless store's answer
@@ -32,7 +32,8 @@
                             :let [c (count (for [f (index/lint src (store/kondo-lang st nsx))
                                                  :let [e (render/owner-form st nsx (:row f) (:col f))
                                                        s (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
-                                                 :when (and (seq? s) (= 'ns (first s)))]
+                                                 :when (and (seq? s) (= 'ns (first s))
+                                                            (not (done/marked-unused? st nsx f)))]
                                              f))]
                             :when (pos? c)]
                         [nsx c]))

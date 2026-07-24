@@ -343,3 +343,31 @@
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
         (api/close! sess)))))
+
+(deftest ^:external prune-requires-drops-dead-and-keeps-load-bearing
+  ;; The done-point prunes a require that is genuinely dead, but KEEPS (marked
+  ;; ^:side-effect) one whose target registers something a cold load would lose
+  ;; — the in-image suite can't see that break, because the registration is
+  ;; already loaded in the live image. So the decision is static, not just the
+  ;; in-image verdict: an orphaned registering target is load-bearing.
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'pz.pure :source "(ns pz.pure)\n(defn g [] 1)\n")
+      (api/create-ns! sess 'pz.reg
+                      :source "(ns pz.reg)\n(defmulti area identity)\n(defmethod area :sq [_] 42)\n")
+      (api/create-ns! sess 'pz.app
+                      :source "(ns pz.app (:require [pz.pure :as p] [pz.reg :as r]))\n(defn f [] 1)\n")
+      (let [r (api/prune-requires! sess 'pz.app :agent "t")]
+        (testing "the dead pure require is pruned; the registering one is kept"
+          (is (= '[pz.pure] (:pruned r)) (pr-str r))
+          (is (= '[pz.reg]  (:kept r))   (pr-str r)))
+        (testing "the ns form drops the dead require and marks the kept one"
+          (let [ns-src (:source (query/query-brief sess 'pz.app 'pz.app))]
+            (is (not (re-find #"pz\.pure" (str ns-src))) (str ns-src))
+            (is (re-find #":side-effect" (str ns-src)) (str ns-src))
+            (is (re-find #"pz\.reg" (str ns-src)) (str ns-src)))))
+      (testing "a second prune is a no-op: the kept require is marked, not re-tried"
+        (let [r2 (api/prune-requires! sess 'pz.app :agent "t")]
+          (is (= [] (:pruned r2)) (pr-str r2))
+          (is (= [] (:kept r2)) (pr-str r2))))
+      (finally (api/close! sess)))))

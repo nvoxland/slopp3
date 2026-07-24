@@ -4,7 +4,7 @@
             [slopp.index :as index]
             [slopp.normalize :as normalize]
             [slopp.render :as render]
-            [slopp.store :as store]))
+            [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (defn normalize-rewrites "Which of the episode's `changed` form ids the normalizer would actually
   rewrite, as `[{:form-id :form :node :applied}]` — pure, nothing committed.
@@ -20,6 +20,64 @@
                                           (str (or (:name e) (:id e))))
                          :node    node
                          :applied applied})))
+
+(defn- require-specs
+  "Every require spec (symbol or vector) in an ns form's sexpr."
+  [ns-form]
+  (for [c ns-form
+        :when (and (seq? c) (= :require (first c)))
+        spec (rest c)]
+    spec))
+
+(defn side-effect-required?
+  "True when `ns-sym`'s require of `lib` carries the `^:side-effect` marker —
+   a require the done-point kept because removing it broke verification (a
+   load-bearing registration the reference graph can't see). Such a require is
+   deliberately present, so it is NOT reported as unused and NOT re-tried."
+  [st ns-sym lib]
+  (boolean
+   (when-let [e (store/form-named st ns-sym ns-sym)]
+     (some (fn [spec]
+             (let [l (if (vector? spec) (first spec) spec)]
+               (and (= l lib) (:side-effect (meta spec)))))
+           (require-specs (n/sexpr (:node e)))))))
+
+(defn unused-requires
+  "The requires of `ns-sym` that kondo reports unused and that are not already
+   marked `^:side-effect` — the done-point's prune candidates. Each entry is
+   `{:lib sym :marked \"^:side-effect …\"}`; `:marked` is the re-add form used
+   if the empirical removal turns out to break verification. Pure over the
+   store — the effectful try-remove-verify loop lives in `slopp.api`."
+  [st ns-sym]
+  (when-let [e (store/form-named st ns-sym ns-sym)]
+    (let [flagged (into #{}
+                        (keep (fn [f]
+                                (when (= :unused-namespace (:type f))
+                                  (some-> (re-find #"namespace (\S+) is required"
+                                                   (:message f))
+                                          second symbol)))
+                              (index/lint (render/render-ns st ns-sym)
+                                          (store/kondo-lang st ns-sym))))]
+      (vec (for [spec (require-specs (n/sexpr (:node e)))
+                 :let [lib (if (vector? spec) (first spec) spec)]
+                 :when (and (symbol? lib)
+                            (contains? flagged lib)
+                            (not (:side-effect (meta spec))))]
+             {:lib    lib
+              :marked (str "^:side-effect "
+                           (pr-str (if (vector? spec) spec [spec])))})))))
+
+(defn marked-unused?
+  "True when kondo finding `f` is an `:unused-namespace` for a require that
+   carries the `^:side-effect` keep-marker — a require the done-point kept
+   because removing it breaks a cold load. It is deliberately present, so the
+   finding is suppressed: a kept require must not read as unused."
+  [st ns-sym f]
+  (boolean
+   (and (= :unused-namespace (:type f))
+        (when-let [lib (some-> (re-find #"namespace (\S+) is required" (:message f))
+                               second symbol)]
+          (side-effect-required? st ns-sym lib)))))
 
 (defn anchored-lint
   "Kondo findings for every namespace the EPISODE TOUCHED, expressed as ANCHORS
@@ -39,7 +97,8 @@
              :let [st*   (:store @session)
                    src   (render/render-ns st* ns-sym)
                    lines (vec (str/split-lines src))]
-             f (index/lint src (store/kondo-lang st* ns-sym))]
+             f (index/lint src (store/kondo-lang st* ns-sym))
+             :when (not (marked-unused? st* ns-sym f))]
          ;; anchors, not coordinates: the owning form + a match-ready
          ;; snippet; row/col never cross the wire
          (cond-> (-> f

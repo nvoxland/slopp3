@@ -1016,6 +1016,65 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                  " routes to the external tier automatically)")))
              t0)))
 
+(defn- require-orphaned-registrar?
+  "After a require to `lib` has been dropped, would a COLD LOAD lose a
+   registration? True when `lib` is an in-store namespace whose require-closure
+   registers something (defmethod / extend-* / deftype / defrecord …) AND
+   nothing else in the store still requires it — so dropping this require
+   orphans it and its registrations never run again. The in-image suite cannot
+   see this break: the registration is already loaded in the live image, so a
+   green in-image verdict is not enough to prove the require dead."
+  [st lib]
+  (boolean
+   (and (contains? (:namespaces st) lib)
+        (not (some (fn [nsx] (contains? (set (store/ns-requires st nsx)) lib))
+                   (keys (:namespaces st))))
+        (some store/method-carrying?
+              (mapcat #(store/forms st %) (store/ns-closure st lib))))))
+
+(defn prune-requires!
+  "Done-point require hygiene — the agent never manages unused requires; done
+   does, and there is deliberately no MCP tool for it. For each require kondo
+   reports unused (`done/unused-requires`), TRY removing it and re-verify.
+
+   Removing a kondo-unused require cannot break COMPILATION — nothing used it —
+   so the only ways it can break are (1) a test the removal's own affected set
+   catches, or (2) a load effect a cold load would lose: an orphaned in-store
+   target whose closure REGISTERS something (a defmethod the reference graph
+   can't see). The live image already has that registration loaded, so a green
+   in-image verdict does NOT prove the require dead — `require-orphaned-registrar?`
+   is the static backstop.
+
+   Genuinely dead → drop it. Load-bearing (or the removal went red) → restore it
+   WITH a `^:side-effect` marker, so it no longer reads as unused and done never
+   re-tries it. Returns `{:pruned [lib …] :kept [lib …]}`."
+  [session ns-sym & {:keys [prompt agent]}]
+  (reduce
+   (fn [acc {:keys [lib marked]}]
+     (let [r    (remove-require! session ns-sym lib
+                                 :prompt (or prompt (str "done: try pruning unused require " lib))
+                                 :agent agent)
+           red? (let [t (:test r)]
+                  (boolean (and t (or (pos? (:fail t 0)) (pos? (:error t 0))))))]
+       (cond
+         ;; couldn't remove it at all (conflict/refusal) — leave it untouched
+         (or (:error r) (:conflict r))
+         (update acc :kept conj lib)
+
+         ;; removing it broke a test, or would lose a registration on cold load:
+         ;; restore it, marked, so it is not reported unused or re-tried
+         (or red? (require-orphaned-registrar? (:store @session) lib))
+         (do (add-require! session ns-sym marked
+                           :prompt (str "done: keep load-bearing require " lib
+                                        " (removing it breaks a cold load) — marked ^:side-effect")
+                           :agent agent)
+             (update acc :kept conj lib))
+
+         :else
+         (update acc :pruned conj lib))))
+   {:pruned [] :kept []}
+   (done/unused-requires (:store @session) ns-sym)))
+
 (defn fix-declares!
   "Declare hygiene at the done-point. The write pipeline OWNS form ordering, so
   this no longer reorders anything itself (it used to carry a second,

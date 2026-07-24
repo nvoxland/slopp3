@@ -373,6 +373,19 @@ client-deps (merge (:client-deps st) (:client provided))
           (api/fix-declares! session ns*
                          :prompt (or label "done declare hygiene")
                          :agent agent))
+        ;; require hygiene, REPORTED (unlike declares, which the agent never
+        ;; sees): try dropping each unused require — a genuinely dead one goes,
+        ;; a load-bearing one is restored marked ^:side-effect. The agent never
+        ;; manages unused requires; done does.
+        pruned-reqs
+        (into (sorted-map)
+              (for [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
+                                        changed))
+                    :let [pr (api/prune-requires! session ns*
+                                                  :prompt (or label "done require hygiene")
+                                                  :agent agent)]
+                    :when (or (seq (:pruned pr)) (seq (:kept pr)))]
+                [ns* pr]))
         ;; kondo lint over every namespace touched since the last done-point —
         ;; carried mid-episode errors (stale callers) get re-checked HARD here
         lint (done/anchored-lint session changed)
@@ -541,6 +554,7 @@ client-deps (merge (:client-deps st) (:client provided))
                                  {:count (count carried)
                                   :forms (vec (sort (distinct (keep :form carried))))})
       summary             (assoc :test summary)
+      (seq pruned-reqs)   (assoc :pruned-requires pruned-reqs)
       (:status iso)       (assoc :external iso))))
 
 (defn ^:export full-check!

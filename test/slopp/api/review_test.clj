@@ -40,3 +40,20 @@
       (is (not (contains? (set (:flags row)) :untested)) (pr-str row)))
     (testing "declared coverage is not liveness — the form is still :unused"
       (is (contains? (set (:flags row)) :unused) (pr-str row)))))
+
+(deftest review-scan-ignores-marked-side-effect-requires
+  ;; A require the done-point kept (marked ^:side-effect because removing it
+  ;; breaks a cold load) is deliberately present — it must NOT read as unused.
+  ;; kondo still flags it :unused-namespace; review_scan suppresses that.
+  (let [marked (-> (store/empty-store)
+                   (store/ingest 'rv.se
+                                 "(ns rv.se (:require ^:side-effect [rv.dep :as d]))\n(defn f [] 1)\n"))
+        plain  (-> (store/empty-store)
+                   (store/ingest 'rv.un
+                                 "(ns rv.un (:require [rv.dep :as d]))\n(defn f [] 1)\n"))]
+    (testing "a ^:side-effect-marked unused require is not counted in :ns-lint"
+      (is (nil? (get (:ns-lint (review/review-scan (atom {:store marked :test-map {}}) :ns 'rv.se))
+                     'rv.se))))
+    (testing "the same require WITHOUT the marker is still flagged"
+      (is (= 1 (get (:ns-lint (review/review-scan (atom {:store plain :test-map {}}) :ns 'rv.un))
+                    'rv.un))))))
