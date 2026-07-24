@@ -138,6 +138,12 @@ client-deps (merge (:client-deps st) (:client provided))
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file (store/render-config entry))))
+          ;; PROVENANCE: what this materialization was built FROM. A derived
+          ;; artifact that cannot state its origin eventually gets trusted when
+          ;; it should not — `uber` jarred a two-day-old materialization and
+          ;; printed success. The head delta id makes the staleness check exact
+          ;; instead of an mtime guess.
+          (spit (io/file target ".slopp-head") (str (:id (last (store/deltas st)))))
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
@@ -558,7 +564,16 @@ client-deps (merge (:client-deps st) (:client provided))
   [session & {:keys [affected]}]
   (let [st    (:store @session)
         nses  (sort (keys (:namespaces st)))
-        lint  (vec (for [n nses
+        ;; The whole-store gate must not inherit incremental kondo state. kondo
+        ;; reads cross-ns facts from a disk cache that each lint TEACHES, so a
+        ;; cache predating recent vars makes whatever is linted early get judged
+        ;; against yesterday's facts — once four phantom `invalid-arity` ERRORS
+        ;; and eleven unresolved vars, on a store whose every test passed. A
+        ;; STALE fact lies confidently; an ABSENT one is benign.
+        _     (index/reset-kondo-cache!)
+        ;; and teach it callees-first — the same "deps first" order every loader
+        ;; uses — so nothing is judged against a fact not yet refreshed
+        lint  (vec (for [n (store/ns-dependency-order st)
                          :let [src (render/render-ns st n)]
                          f (index/lint src (store/kondo-lang st n))]
                      (-> f (dissoc :row :col) (assoc :ns n))))
@@ -935,3 +950,19 @@ client-deps (merge (:client-deps st) (:client provided))
                            (not= :green (:status ex)))
                      :red
                      :green)}))))
+
+(defn ^:export store-health
+  "What this store CARRIES, in bytes — the journal per op (heaviest first, with
+  `:commit` tree snapshots counted APART from payloads), the materialized state,
+  and the blob table. Cheap: SQLite LENGTH only, nothing parsed.
+
+  Reach for it when a session feels slow to open, before growing what a delta
+  carries, and periodically. `full_check` answers whether the store is CORRECT;
+  this answers what it COSTS, and nothing else did — which is how a byte-exact
+  tree snapshot inline in every milestone reached 94% of a 344MB journal,
+  unnoticed across 239 of them, against a design note estimating \"tens of KB\".
+  A store can rot by growing."
+  [session]
+  (if-let [conn (:db @session)]
+    (db/journal-stats conn)
+    {:note "no durable store on disk yet — nothing has been written"}))

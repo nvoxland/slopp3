@@ -320,3 +320,26 @@
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
         (api/close! sess)))))
+
+(deftest ^:external build-stamps-the-head-it-was-materialized-from
+  ;; Derived artifacts serve old truth silently: `uber` jarred a two-day-old
+  ;; materialization and printed success. The mtime heuristic that first guarded
+  ;; it was wrong twice over — a directory's mtime does not move when nested
+  ;; files change, and a live session touches store.db constantly. slopp already
+  ;; has the exact provenance token, the head delta id, so the materialization
+  ;; states what it was built FROM and the check stops being a guess.
+  (let [sess (external/open!)
+        dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-stamp" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (api/create-ns! sess 'stamp.core :source "(ns stamp.core)\n\n(defn f \"F.\" [x] x)\n")
+      (external/build! sess dir)
+      (let [stamp (io/file dir ".slopp-head")
+            head  (:id (last (store/deltas (:store @sess))))]
+        (is (.exists stamp) "the materialization records its provenance")
+        (is (= head (slurp stamp))
+            "and it is exactly the head delta the store stood at"))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (rm! (io/file dir)))
+        (api/close! sess)))))

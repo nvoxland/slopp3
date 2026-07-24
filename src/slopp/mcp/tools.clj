@@ -415,6 +415,9 @@
    {:name "deps_list"
     :description "The dependency manifest: {lib coord}."
     :inputSchema {:type "object" :properties {}}}
+   {:name "store_health"
+    :description "What this store CARRIES, in bytes: the journal per op (heaviest first, :commit tree snapshots counted apart from payloads), the materialized state, and the blob table. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."
+    :inputSchema {:type "object" :properties {}}}
 {:name "compile_client"
     :description "Compile the store's CLIENT namespaces (:cljc + :cljs, declared via module_platform) to JavaScript with the configured backend (default ClojureScript, compiled ON THE JVM — no Node) and record the output as a served file blob. Compile-error-as-oracle: analyzer warnings and hard errors are anchored to the owning store forms. `output` sets the served path (default public/cljs/main.js). Requires a build-only compiler dep: deps_add org.clojure/clojurescript with client=true."
     :inputSchema {:type "object"

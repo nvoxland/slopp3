@@ -168,3 +168,61 @@
       (testing "the bytes are still there, on demand"
         (is (java.util.Arrays/equals png ^bytes (db/get-blob conn sha))))
       (finally (.close conn)))))
+
+(deftest a-bad-statement-surfaces-instead-of-looking-like-contention
+  ;; append! caught EVERY SQLException and returned false, which the caller's
+  ;; rebase loop reads as "the head moved, retry" — so a malformed statement
+  ;; (a column that does not exist, a constraint violation) was reported as
+  ;; "commit contention: too many concurrent writes". That happened for real:
+  ;; a write-path change referencing a not-yet-migrated column killed every
+  ;; write, and the message sent the diagnosis hunting phantom writers while
+  ;; the store was unwritable. Only a genuine writer collision is retryable;
+  ;; anything else must SURFACE.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-append" (make-array java.nio.file.attribute.FileAttribute 0)))
+        conn (db/open! dir)]
+    (try
+      (testing "a constraint violation throws rather than masquerading as contention"
+        (is (thrown? java.sql.SQLException
+                     (db/append! conn (store/empty-store)
+                                 [{:id nil :op :add :ns 'x.core}] [] nil))))
+      (testing "a genuine writer collision is still a retryable false"
+        (is (false? (db/append! conn (store/empty-store)
+                                [{:id "d1" :op :add :ns 'x.core}] []
+                                "a-head-that-never-existed"))))
+      (finally (.close conn)))))
+
+(deftest journal-stats-reports-what-the-store-carries
+  ;; Nothing measured the COST of what the store holds, so a byte-exact :tree
+  ;; snapshot inline in every :commit payload grew to 94% of a 344MB journal —
+  ;; unnoticed across 239 milestones, against a design note that estimated
+  ;; "tens of KB". full_check counts namespaces and tests; nothing counted
+  ;; bytes. The cheapest guard against the next one is a number nobody has to
+  ;; go looking for.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-health" (make-array java.nio.file.attribute.FileAttribute 0)))
+        conn (db/open! dir)
+        st   (store/ingest (store/empty-store) 'sh.core
+                           "(ns sh.core)\n\n(defn f \"F.\" [x] x)\n")]
+    (try
+      (is (true? (db/append! conn st
+                             [{:id "d1" :op :ingest :ns 'sh.core :prompt "seed"}
+                              {:id "d2" :op :commit :ns '*session* :description "m"
+                               :target "d1"
+                               :tree {'sh.core "(ns sh.core)\n(defn f [x] x)\n"}}]
+                             ['sh.core] nil)))
+      (let [s (db/journal-stats conn)]
+        (testing "the journal is measured, payload and tree counted APART"
+          (is (= 2 (get-in s [:deltas :n])))
+          (is (pos? (get-in s [:deltas :payload-bytes])))
+          (is (pos? (get-in s [:deltas :tree-bytes]))
+              "commit trees are the thing that grew unwatched — count them alone"))
+        (testing "per-op rows, heaviest first, so the outlier is the first thing read"
+          (let [ops (map :op (get-in s [:deltas :by-op]))]
+            (is (= #{"ingest" "commit"} (set ops)))
+            (is (= "commit" (first ops)) "the tree-carrying op leads")))
+        (testing "state is measured too, so history-vs-state is visible"
+          (is (pos? (get-in s [:elements :n])))
+          (is (pos? (get-in s [:elements :source-bytes])))
+          (is (= 0 (get-in s [:blobs :n])))))
+      (finally (.close conn)))))

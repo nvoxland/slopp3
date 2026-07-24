@@ -153,3 +153,30 @@
                (= (get @ns-source-hash (:ns ent)) (hash source)))
         ent
         (kondo-pass source lang))))))
+
+(defn reset-kondo-cache!
+  "Drop kondo's CROSS-NS fact cache (and the in-process source memo that keys
+  off it), so the next lint rebuilds from the code as it stands. nil when no
+  cache dir is set.
+
+  For the WHOLE-STORE gate, which must not inherit incremental cache state. A
+  restarted server once reported four `invalid-arity` ERRORS and eleven
+  unresolved vars against code that was correct and fully green: the cache
+  predated the vars, the sweep runs a namespace at a time, and 'linting a
+  namespace teaches it' — so whatever is linted early is judged against
+  yesterday's facts. The asymmetry is the point: an ABSENT fact is benign
+  (kondo simply says nothing), a STALE one is a confident lie.
+
+  `kondo-cache-dir` holds a PATH STRING in real use and a File in some tests,
+  so coerce — the first cut hinted ^File and threw ClassCastException on every
+  live call while its test, which had stored a File, passed."
+  []
+  (when-let [dir @kondo-cache-dir]
+    (let [cache (java.io.File. (str dir) ".cache")]
+      (when (.isDirectory cache)
+        (letfn [(rm! [^java.io.File f]
+                  (when (.isDirectory f) (run! rm! (.listFiles f)))
+                  (.delete f))]
+          (rm! cache)))
+      (reset! ns-source-hash {})
+      nil)))

@@ -263,3 +263,34 @@
     (testing "a real MUTATION still demands the !"
       (let [an2 (analyze/analyze "(ns c2)\n(defn bump [a] (swap! a inc))\n")]
         (is (some #(= 'c2/bump (:var %)) (derive/effect-violations an2)))))))
+
+(deftest reset-kondo-cache-clears-stale-cross-ns-facts
+  ;; A restarted server produced FOUR confident lint ERRORS — "slopp.index/lint
+  ;; is called with 2 args but expects 1" — plus eleven unresolved-var warnings,
+  ;; every one naming a var added the same day. All false: the code was correct
+  ;; and the whole suite green. kondo reads cross-ns facts (arities, var
+  ;; existence) from its DISK cache, "linting a namespace teaches it", and the
+  ;; sweep runs alphabetically — so namespaces linted early were judged against
+  ;; a cache predating those vars. Clearing the cache made it green, which is
+  ;; the tell: a STALE entry lies confidently, an ABSENT one is benign. The
+  ;; whole-store gate must therefore not inherit incremental cache state.
+  (let [dir (java.nio.file.Files/createTempDirectory
+             "slopp-kondo" (make-array java.nio.file.attribute.FileAttribute 0))
+        cache (java.io.File. (.toFile dir) ".cache")
+        _     (.mkdirs cache)
+        stale (java.io.File. cache "stale-fact.edn")
+        prev  @index/kondo-cache-dir]
+    (try
+      (spit stale "{:pretend :stale}")
+      ;; a PATH STRING, which is what api/open! actually stores — the first
+      ;; version of this test used a File and so passed against an
+      ;; implementation that threw on every real call
+      (reset! index/kondo-cache-dir (str (.toFile dir)))
+      (is (.exists stale) "sentinel is in place before the reset")
+      (index/reset-kondo-cache!)
+      (is (not (.exists stale))
+          "a stale cross-ns fact does not survive into a whole-store lint")
+      (testing "resetting an unset cache dir is a no-op, not a throw"
+        (reset! index/kondo-cache-dir nil)
+        (is (nil? (index/reset-kondo-cache!))))
+      (finally (reset! index/kondo-cache-dir prev)))))

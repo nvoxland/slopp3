@@ -359,6 +359,20 @@
                            meta-key (pr-str (if (nil? v) init v))]))))
   (put-blobs! tx (:blobs store {})))
 
+(defn writer-collision?
+  "Is this SQLException SQLite's WRITER COLLISION (busy / locked) — the only
+  kind a refresh-and-rebase can fix? Everything else (a missing column, a
+  constraint violation) is a real fault and must surface.
+
+  This distinction is load-bearing: `append!` used to treat every SQLException
+  as a lost race, so a malformed statement came back as `false`, the caller
+  retried it twelve times, and the agent was told \"commit contention: too many
+  concurrent writes\" while the store was actually unwritable. An error may only
+  name a cause it checked."
+  [^java.sql.SQLException e]
+  (let [m (.toLowerCase (str (.getMessage e)))]
+    (or (.contains m "busy") (.contains m "locked"))))
+
 (defn append!
   "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
   snapshot tail via write-snapshot!) in ONE transaction, iff the journal head
@@ -387,7 +401,11 @@
         true))
     (catch clojure.lang.ExceptionInfo e
       (if (::head-moved (ex-data e)) false (throw e)))
-    (catch java.sql.SQLException _ false)))
+    ;; ONLY a writer collision is a retryable lost race. Any other SQL fault
+    ;; must SURFACE: swallowing it returned false, the caller retried, and the
+    ;; agent was told "commit contention" for what was really a bad statement.
+    (catch java.sql.SQLException e
+      (if (writer-collision? e) false (throw e)))))
 
 (defn persist!
   "Write one mutation atomically: the delta, then the full snapshot tail
@@ -416,3 +434,41 @@
           (some-> (jdbc/execute-one! conn ["SELECT tree FROM deltas WHERE id = ?" id])
                   :deltas/tree
                   edn/read-string))
+
+^:reads (defn journal-stats
+          "What the store CARRIES, in bytes: the journal (per op, heaviest first,
+  with commit `tree` snapshots counted APART from payloads), the materialized
+  state, and the blob table. A pure read straight off SQLite's LENGTH — nothing
+  is parsed, so it stays cheap on a large journal.
+
+  This exists because nothing measured cost. A byte-exact `:tree` snapshot
+  inline in every `:commit` payload reached 94% of a 344MB journal — ~1.35MB per
+  milestone against a design note estimating \"tens of KB\" — and went unnoticed
+  across 239 milestones while `full_check` happily counted namespaces and tests.
+  A store can rot by GROWING, and only a number catches that."
+          [conn]
+          (let [rows (jdbc/execute!
+                      conn ["SELECT op,
+                                    COUNT(*)                        AS n,
+                                    SUM(LENGTH(payload))            AS pbytes,
+                                    SUM(LENGTH(COALESCE(tree, ''))) AS tbytes
+                             FROM deltas GROUP BY op"])
+                by-op (->> rows
+                           ;; next.jdbc qualifies a real column by its table (:deltas/op) while a
+                           ;; computed alias comes back bare — read both rather than betting
+                           (map (fn [r] {:op (or (:deltas/op r) (:op r))
+                                         :n (or (:n r) 0)
+                                         :payload-bytes (or (:pbytes r) 0)
+                                         :tree-bytes (or (:tbytes r) 0)}))
+                           (sort-by #(- (+ (:payload-bytes %) (:tree-bytes %))))
+                           vec)
+                els  (jdbc/execute-one!
+                      conn ["SELECT COUNT(*) AS n, SUM(LENGTH(source)) AS b FROM elements"])
+                bl   (jdbc/execute-one!
+                      conn ["SELECT COUNT(*) AS n, SUM(LENGTH(bytes)) AS b FROM blobs"])]
+            {:deltas   {:n (reduce + 0 (map :n by-op))
+                        :payload-bytes (reduce + 0 (map :payload-bytes by-op))
+                        :tree-bytes    (reduce + 0 (map :tree-bytes by-op))
+                        :by-op by-op}
+             :elements {:n (or (:n els) 0) :source-bytes (or (:b els) 0)}
+             :blobs    {:n (or (:n bl) 0) :bytes (or (:b bl) 0)}}))

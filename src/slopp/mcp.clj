@@ -310,6 +310,9 @@
    "deps_list"
    (fn [session _a _sym]
      (text! (api/deps-list session)))
+   "store_health"
+   (fn [session _a _sym]
+     (text! (external/store-health session)))
 "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)
