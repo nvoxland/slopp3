@@ -396,6 +396,16 @@ your handler stays analyzer-pure); `(web/authorized? policy identity)`
 answers booleans. Test namespaces' endpoint-shaped forms are FIXTURES —
 they neither report in query_routes nor claim paths.
 
+**Both halves of the URL are addressed the same way.** The dispatcher puts
+`:path-params` AND `:query-params` on the request (the query string is
+parsed once, there — don't split `:query-string` yourself), so a declared
+read reaches a query parameter exactly as it reaches a path one:
+`:web/reads {:page [:my/page [:query-params :view]]}`. Needs both? Declare
+the read over the whole request with `[]` and destructure. A parameter the
+page cannot honour should be a 404, not a silent fall back to the default —
+otherwise a link means "whatever the default became" the day you add a
+second value.
+
 **Security posture the runtime enforces** (not just the write gates): auth is
 default-deny and an empty `[:all]`/`[:any]` policy DENIES; the dispatcher
 bounds a response's effects to the route's declared `:web/effects` (a handler
