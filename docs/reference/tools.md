@@ -14,7 +14,31 @@ a running server, and is always current for the version you are on.
 | `query_slice {ns name}` | The focused read: one form's full source plus interface cards for everything it reaches. `match` + `window` narrows a giant form. |
 | `query_brief {ns name}` | One form's dossier: source, effect flags, cross-namespace callers, covering tests, and the recorded why. |
 | `query_detail {id}` | The full version of a response that was trimmed by the size gate. |
+| `ui_serve {port? stop?}` | Serve a browsable view of the store for a HUMAN -- milestone timeline, per-milestone change review, form permalinks, namespace index. Returns `{:url :port}`. See [the store browser](#the-store-browser). |
 | `help` | The workflow cheat-sheet. |
+
+### The store browser
+
+`ui_serve` starts a small web application -- built on slopp's own [web
+framework](../guide/web/index.md), the way any other slopp app is -- and hands
+back a url. It answers the questions a tool result is a poor shape for:
+
+- **`/`** -- milestones newest first, each linking its own change screen, plus
+  what has been written since the newest one.
+- **`/change/<from>..<to>`** -- that milestone reviewed form by form, grouped
+  module then namespace, each form leading with its recorded ask, then a line
+  diff, then how many forms call it.
+- **`/store/form/<id>`** -- one form's permalink. Form ids are stable across
+  edits and names are not, so the id is the address. Laid out for arriving cold
+  from a link: breadcrumb, callers above grouped by how each edge was found,
+  the source, then callees below with their signature and docstring *inlined*
+  rather than linked.
+- **`/store`**, **`/store/ns/<ns>`** -- the namespace index and outlines.
+
+It runs on the session that is already open, so covering-test counts are the
+ones that session actually measured. Serving again replaces the running server
+rather than moving to another port, and a port something else holds is reported
+as a sentence. Port comes from the `ui.port` capability (default 7359).
 
 ## Dependencies and structure
 

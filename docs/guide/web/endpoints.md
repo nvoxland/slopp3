@@ -43,6 +43,7 @@ intact and the additions are visibly slopp's.
 | `:web/path` | The path, with `:name` segments arriving as `:path-params`. |
 | `:web/auth` | The policy. Required -- see [auth](auth.md). |
 | `:web/reads` | `{alias [<kind> <request-path>]}`. Fetched before the handler runs. |
+
 | `:web/effects` | `[<kind> ...]` -- the effect kinds this endpoint is allowed to emit. |
 | `:web/request` | Malli schema for the body. Required on `:post`/`:put`/`:patch`. |
 | `:web/response` | Malli schema for the response. Required on every endpoint. |
@@ -55,6 +56,31 @@ Two markers go on *other* forms:
 |---|---|
 | `^{:web/read <kind>}` | A function that fetches one read kind: `(fn [ctx arg] ...)`. |
 | `^{:web/effect <kind>}` | A function that performs one effect kind: `(fn [ctx & args] ...)`. |
+
+## Both halves of the URL
+
+The dispatcher puts `:path-params` and `:query-params` on the request -- the
+query string is parsed once, there, so no application splits `:query-string`
+itself. A declared read reaches a query parameter exactly as it reaches a path
+one:
+
+```clojure
+:web/reads {:page [:doc/by-id    [:path-params  :id]]
+            :view [:doc/fidelity [:query-params :view]]}
+```
+
+Need both in one read? Declare it over the whole request with `[]` and
+destructure what you want.
+
+A bare key (`?flag`) is present with an empty value, because present-and-empty
+is not the same as absent. Malformed pairs are dropped rather than thrown: a
+query string is arbitrary text off the network, and the answer to garbage is a
+page, not a 500.
+
+One rule worth adopting early: **a parameter value your endpoint cannot honour
+should be a 404, not a quiet fall back to the default.** The day you add a
+second value, every link already in the wild would otherwise mean "whatever the
+default became".
 
 These are declared edges in the reference graph, so endpoints and performers
 never trip the dead-surface gate despite nothing in the store calling them.
