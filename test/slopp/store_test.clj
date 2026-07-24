@@ -271,3 +271,31 @@
       (testing "replay reconstructs it (foreign-sync stays cheap)"
         (is (= {'org.clojure/clojurescript {:mvn/version "1.11.132"}}
                (:client-deps (store/replay-delta s0 d1))))))))
+
+(deftest prompt-by-form-is-the-last-ask-per-form
+  ;; form-card's :why walked the whole delta log REVERSED, per form, to find
+  ;; the most recent prompt naming that form. Once per card that is fine; once
+  ;; per form on a page it is quadratic in the log (10,728 deltas here).
+  ;; prompt-by-form folds the same answer in one forward pass.
+  ;;
+  ;; Two delta shapes carry form ids and BOTH count: :form-id (a single write)
+  ;; and :form-ids (a group — one intent, several forms). The log is written
+  ;; out longhand rather than driven through a write path so the orderings
+  ;; that matter are pinned directly.
+  (let [st  (assoc (store/empty-store)
+                   :deltas
+                   [{:id "d1" :op :add        :form-id  "f1" :prompt "first ask"}
+                    {:id "d2" :op :replace    :form-id  "f1" :prompt "second ask"}
+                    {:id "d3" :op :replace    :form-id  "f2"}
+                    {:id "d4" :op :move-forms :form-ids ["f2" "f3"] :prompt "group ask"}
+                    {:id "d5" :op :verify     :result   {}}
+                    {:id "d6" :op :replace    :form-id  "f3"}])
+        idx (store/prompt-by-form st)]
+    (is (= "second ask" (get idx "f1"))
+        "the LAST ask for a form wins — :why means the most recent intent")
+    (is (= "group ask" (get idx "f2"))
+        ":form-ids counts, not just :form-id — a group is one intent over many forms")
+    (is (= "group ask" (get idx "f3"))
+        "a later delta with no :prompt must not erase the recorded ask")
+    (is (nil? (get idx "f-never-touched"))
+        "a form nothing ever asked about is absent, not blank")))

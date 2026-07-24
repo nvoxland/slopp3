@@ -46,7 +46,7 @@
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
       (n/string (:node e)))))
 
-(defn ^{:web/method :get :web/path "/store/style.css" :web/auth :public}
+(defn ^{:web/method :get :web/path "/store/style.css" :web/auth :public :web/response :string :web/client false}
   store-stylesheet
   "GET /store/style.css — the browser's own styling as garden data (CSS as
   Clojure data, tracked like every other form). A safe GET; served text/css."
@@ -78,7 +78,7 @@
                       [:script {:src "/assets/cljs/main.js" :defer true}]]}
          body))
 
-(defn ^{:web/method :get :web/path "/store" :web/auth :public
+(defn ^{:web/method :get :web/path "/store" :web/auth :public :web/response :string :web/client false
         :web/reads {:namespaces [:browse/namespaces []]}}
   store-index-page
   "GET /store — the namespace index. `:public` deliberately: the co-hosted
@@ -101,7 +101,7 @@
           [:a {:href (str "/store/ns/" ns)} (str ns)]
           (str " (" forms ")")])]])))
 
-(defn ^{:web/method :get :web/path "/store/ns/:ns" :web/auth :public
+(defn ^{:web/method :get :web/path "/store/ns/:ns" :web/auth :public :web/response :string :web/client false
         :web/reads {:outline [:browse/ns-outline [:path-params :ns]]}}
   store-ns-page
   "GET /store/ns/:ns — one namespace's forms, each name linking its source."
@@ -119,7 +119,7 @@
              [:li [:a {:href (str "/store/source/" ns "/" name)} (str name)]
               (when doc [:small (str " — " doc)])])]])))))
 
-(defn ^{:web/method :get :web/path "/store/source/:ns/:name" :web/auth :public
+(defn ^{:web/method :get :web/path "/store/source/:ns/:name" :web/auth :public :web/response :string :web/client false
         :web/reads {:source [:browse/form-source [:path-params]]}}
   store-source-page
   "GET /store/source/:ns/:name — one form's source in [:pre [:code]],

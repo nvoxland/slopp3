@@ -12,7 +12,7 @@
   needs globally-unique ids (uuid / lamport)."
   (:require [clojure.string :as str]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n] [slopp.store.fields :as fields]))
+            [rewrite-clj.node :as n] [slopp.store.fields :as fields] [slopp.cache :as cache]))
 
 (defn empty-store
   "A fresh store value — the empty starting point every session builds on.
@@ -1279,3 +1279,33 @@
   come through here rather than rediscover that."
   [store ns-sym nm]
   (some-> (form-named store ns-sym nm) :node form-sexpr))
+
+(defn ^:export prompt-by-form
+  "THE recorded intent per form: `{form-id prompt}`, each form's most recent
+  ask.
+
+  `form-card` answered this by reversing the whole delta log and scanning it
+  once per form — fine for a single card, quadratic for a page (this store
+  carries 10,728 deltas). One forward fold gives the answer for every form at
+  once.
+
+  Both id-carrying shapes count: `:form-id` (a single write) and `:form-ids`
+  (a group — one intent across several forms). Later prompts overwrite earlier
+  ones, since the question is the LAST ask; a delta with no `:prompt`
+  contributes nothing and never erases what is already recorded.
+
+  Memoized on the immutable store value like the reference graph: the log is
+  append-only, so a new store value is the only way the answer can change."
+  [store]
+  (cache/cached-last
+   ::prompt-by-form store
+   (fn []
+     (reduce (fn [m d]
+               (if-let [p (:prompt d)]
+                 (reduce (fn [m2 fid] (assoc m2 fid p))
+                         m
+                         (cond-> (or (:form-ids d) [])
+                           (:form-id d) (conj (:form-id d))))
+                 m))
+             {}
+             (deltas store)))))

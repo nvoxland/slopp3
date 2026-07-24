@@ -29,12 +29,7 @@
                                              (first %))
                                           (drop 2 (or body ())))]
                         (when (seq arities) (vec arities))))
-          why     (->> (store/deltas (:store @session))
-                       reverse
-                       (some #(when (and (:prompt %)
-                                         (or (= (:id e) (:form-id %))
-                                             (some #{(:id e)} (or (:form-ids %) []))))
-                                (:prompt %))))
+          why     (get (store/prompt-by-form (:store @session)) (:id e))
           covered (let [ks (store/form-trace-keys ns-sym e)]
                     ;; any name the form defines can carry its evidence (#129):
                     ;; a defprotocol's card counts tests that called m or n
