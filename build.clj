@@ -79,12 +79,21 @@
                         (map #(.lastModified ^java.io.File %))
                         (reduce max 0))
             db     (io/file ".slopp" "store.db")
+            stamp  (io/file (or (.getParent srcd) ".") ".slopp-head")
             fmt    #(.format (java.text.SimpleDateFormat. "HH:mm:ss") (java.util.Date. ^long %))]
+        ;; NEVER be silent about what is being shipped. `build!` stamps the
+        ;; materialization with the head delta it was built from; print it so a
+        ;; stale jar is visible rather than inferred. (This tool runs under -T,
+        ;; whose deps replace the project's, so it has no sqlite driver to read
+        ;; the current head itself — comparing is the caller's one glance.)
+        (println (str "jarring a materialization of "
+                      (if (.exists stamp) (str "head " (slurp stamp)) "UNKNOWN head")
+                      ", written " (fmt newest)))
         (when (and (.exists db) (> (.lastModified db) newest))
-          (println (str "WARNING: " src " was materialized at " (fmt newest)
-                        " but .slopp/store.db changed at " (fmt (.lastModified db))
-                        " — this jar may be STALE. Re-run the `build` tool if you"
-                        " expect recent store changes in it."))))))
+          (println (str "WARNING: .slopp/store.db changed at " (fmt (.lastModified db))
+                        ", after that materialization — this jar may be STALE."
+                        " Re-run the `build` tool if you expect recent store"
+                        " changes in it."))))))
   (b/delete {:path class-dir})
   (b/delete {:path "target/launcher"})
   (let [root  (or (.getParent (io/file (str src))) ".")
