@@ -945,3 +945,56 @@ symbol you didn't touch. Fix that also unfreezes: compare the head by
 NAME-STRING (`#{"defn" "defmacro"}`) so the form carries no banned literal. A
 form that legitimately needs a banned symbol as data wants `^:unsafe`; a form
 that only needs to MATCH on one wants the string compare.
+
+## 2026-07-24 — the reviewer UI, checked for coverage; the speed claim was NOT tested
+
+The wave-2 plan called for a task-based eval: ~8 real questions about this
+codebase, five reviewer-shaped and three orientation-shaped, timed with the
+UI against `query_search` / `query_depends` / `query_changes`, with the
+explicit calibration that *"the defensible claim is better orientation and
+structural recall, NOT faster lookup."*
+
+**Half of that was run, and the other half cannot be run by me.** Recorded
+plainly so nobody later reads a coverage check as a speed result.
+
+### What was run: does the UI answer the questions at all
+
+Five reviewer-shaped questions against the live store, milestone
+`d13382..d13458`:
+
+| Question | Answered by | Result |
+|---|---|---|
+| What changed in the last milestone, and where? | `/change/<range>` | 19 forms, `slopp.ui` 15 / `slopp.web` 4 |
+| Why does `slopp.web.router/query-params` exist? | same page, per-form `:why` | the authored ask, verbatim |
+| What breaks if I change `slopp.store/prompt-by-form`? | `/store/form/<id>` | 4 static callers, named, each a permalink |
+| Is `slopp.ui.model/change-view` tested? | same page, warranty | 3 covering tests |
+| Is the diff readable per form? | `/change/<range>` | 64 del / 310 add lines, marked |
+
+All five answered. Two observations worth keeping:
+
+- **The warranty count is only right because the UI runs on the LIVE
+  session.** `:test-map` is session-grain and unpersisted; served from a
+  fresh session every one of those reads would have said zero. This is the
+  single design decision the eval actually validated.
+- **One answer looked wrong and was not.** A scraping script grabbed the
+  wrong `<em>` and attributed another form's ask to `query-params`;
+  checking the page directly showed the correct value. Worth recording
+  because it is the failure mode this whole surface is FOR — a wrong answer
+  that reads as plausible — and it came from my extraction, not the page.
+
+### What was NOT run, and why
+
+**The timed comparison.** Its subject is a human reviewer; I am not one,
+and my costs are not theirs. An agent asking these questions has
+`query_impact`, `query_changes` and `form-card` in one call each — I would
+be measuring a population the page was not built for, and any number I
+produced would be an argument dressed as evidence. The plan's own
+calibration says the claim is orientation and structural recall, and
+neither is measurable by proxy.
+
+**So the UI currently has a coverage result and no efficacy result.** The
+honest state: it answers the reviewer-shaped questions it was designed for,
+against the real store, at ~0.9s for a 36-form milestone page. Whether it
+makes a human faster or better-oriented is untested, and should stay
+untested rather than assumed — a human review session is the experiment,
+and it has not happened.
