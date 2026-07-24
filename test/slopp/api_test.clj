@@ -171,14 +171,14 @@
             (is (re-find #"\"-m\" \"cognitect\.test-runner\"" d))
             (is (not (re-find #"slopp\.testmain" d))))))
       (testing "the store provides one — both aliases route through it"
-        (api/create-ns! sess 'slopp.testmain
-                        :source (str "(ns slopp.testmain \"Stub: presence is the"
-                                     " condition build! reads.\")\n"
+        (api/create-ns! sess 'slopp.image.testmain
+                        :source (str "(ns slopp.image.testmain \"Stub: presence is"
+                                     " the condition build! reads.\")\n"
                                      "(defn -main [& _args] nil)\n"))
         (let [dir (tmp "slopp-trace-build2")]
           (external/build! sess dir)
           (let [d (slurp (java.io.File. dir "deps.edn"))]
-            (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" d))) d)
+            (is (= 2 (count (re-seq #"\"-m\" \"slopp\.image\.testmain\"" d))) d)
             (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" d))))))
       (finally (api/close! sess)))))
 

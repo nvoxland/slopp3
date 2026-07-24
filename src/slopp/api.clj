@@ -14,13 +14,13 @@
             [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.render :as render]
-            [slopp.repl :as repl]
+            [slopp.store.render :as render]
+            [slopp.image.repl :as repl]
             [slopp.image :as image]
             [slopp.edit :as edit]
-            [slopp.refactor :as refactor]
-            [slopp.normalize :as normalize]
-            [slopp.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields]))
+            [slopp.edit.refactor :as refactor]
+            [slopp.index.normalize :as normalize]
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2032,6 +2032,36 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
 
                           :else s))
                       base (or (:modules base) {}))))
+                 [])))
+            ;; and so do the namespace-grained registers. A tier or platform describes
+            ;; a NAME: orphaned, it both lists a namespace that no longer exists and
+            ;; leaves the renamed code ungated. Deep namespaces follow by prefix.
+            (let [st*     (:store @session)
+                  why     (str "declaration follows ns rename " old " → " new)
+                  moved   (fn [reg]
+                            (vec (for [[k v] (get st* reg)
+                                       :when (or (= k (str old))
+                                                 (str/starts-with? k (str old ".")))]
+                                   [k (str new (subs k (count (str old)))) v])))
+                  tiers   (moved :module-tiers)
+                  plats   (moved :module-platforms)]
+              (when (or (seq tiers) (seq plats))
+                (session/commit-appended!
+                 session
+                 (fn [base]
+                   (as-> base $
+                     (reduce (fn [s [k k' v]]
+                               (-> s
+                                   (store/record-module-tier k' v :prompt why :agent agent) first
+                                   (store/record-module-tier k nil :action :remove
+                                                             :prompt why :agent agent) first))
+                             $ tiers)
+                     (reduce (fn [s [k k' v]]
+                               (-> s
+                                   (store/record-module-platform k' v :prompt why :agent agent) first
+                                   (store/record-module-platform k nil :action :remove
+                                                                 :prompt why :agent agent) first))
+                             $ plats)))
                  [])))
             (session/fresh-image! session)          ; the old ns must NOT linger
             (let [verify-nses (vec (remove #{old} touched))

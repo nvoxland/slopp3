@@ -1,7 +1,7 @@
 (ns slopp.store.merge
   (:require [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]
-            [slopp.semver :as semver]
+            [slopp.store.semver :as semver]
             [slopp.store :as store] [clojure.string :as str] [slopp.store.fields :as fields]))
 
 (defn ^:export record-merge

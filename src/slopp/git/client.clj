@@ -1,6 +1,6 @@
 (ns slopp.git.client
   (:require [clojure.java.io :as io]
-            [slopp.db :as db]
+            [slopp.store.db :as db]
             [slopp.git :as git])
   (:import [org.eclipse.jgit.lib NullProgressMonitor ObjectId Repository] [org.eclipse.jgit.transport PushResult RefSpec RemoteRefUpdate Transport URIish UsernamePasswordCredentialsProvider]))
 

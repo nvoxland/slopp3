@@ -1,7 +1,7 @@
 (ns slopp.api.cljs
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.render :as render] [slopp.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit]))
+            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the

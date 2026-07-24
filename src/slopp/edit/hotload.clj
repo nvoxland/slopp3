@@ -1,8 +1,8 @@
 (ns slopp.edit.hotload
   (:require [rewrite-clj.node :as n]
             [slopp.edit :as edit]
-            [slopp.render :as render]
-            [slopp.repl :as repl]
+            [slopp.store.render :as render]
+            [slopp.image.repl :as repl]
             [slopp.store :as store]))
 
 (defn ^:export hot-load-form!

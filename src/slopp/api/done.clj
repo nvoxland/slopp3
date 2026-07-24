@@ -2,8 +2,8 @@
   (:require [clojure.string :as str]
             [slopp.api.session :as session]
             [slopp.index :as index]
-            [slopp.normalize :as normalize]
-            [slopp.render :as render]
+            [slopp.index.normalize :as normalize]
+            [slopp.store.render :as render]
             [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (defn normalize-rewrites "Which of the episode's `changed` form ids the normalizer would actually

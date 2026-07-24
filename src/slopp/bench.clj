@@ -7,7 +7,7 @@
   the one defining form, whereas grep-and-read forces reading the surrounding file
   to understand context. It grows with the size of the surrounding code."
   (:require [clojure.string :as str]
-            [slopp.render :as render] [slopp.api.query :as query]))
+            [slopp.store.render :as render] [slopp.api.query :as query]))
 
 (defn reference-query-cost
   "Compare payloads for a 'where is `sym` referenced + show its def' query."

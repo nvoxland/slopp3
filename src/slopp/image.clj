@@ -2,8 +2,8 @@
   "Bridge the store to the owned live image: load a namespace's forms straight
   from the CRDT into the running JVM (no disk, C1), and run its tests there,
   recording the green/red result as provenance (D5/D6, C4)."
-  (:require [slopp.render :as render]
-            [slopp.repl :as repl]
+  (:require [slopp.store.render :as render]
+            [slopp.image.repl :as repl]
             [slopp.store :as store] [slopp.rt :as rt]))
 
 (defn load-ns!

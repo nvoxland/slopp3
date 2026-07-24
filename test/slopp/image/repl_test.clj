@@ -1,6 +1,6 @@
-(ns slopp.repl-test
+(ns slopp.image.repl-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.repl :as repl] [clojure.java.io :as io]))
+            [slopp.image.repl :as repl] [clojure.java.io :as io]))
 
 (deftest ^:external owned-repl-eval-and-restart
   (let [h (repl/start!)]
@@ -23,11 +23,11 @@
   ;; malli + nrepl ship WITH slopp (inherent), merged into every image's -Sdeps
   ;; — NOT via the project manifest (deps_add), so they are unremovable and
   ;; centrally versioned. Image-tier only (the server runs on kernel deps).
-  (let [sdeps (nth (#'slopp.repl/default-cmd nil) 2)]
+  (let [sdeps (nth (#'slopp.image.repl/default-cmd nil) 2)]
     (is (re-find #"metosin/malli" sdeps))
     (is (re-find #"nrepl/nrepl" sdeps)))
   (testing "inherent deps win a colliding manifest entry (slopp controls versions)"
-    (let [sdeps (nth (#'slopp.repl/default-cmd '{metosin/malli {:mvn/version "0.0.0"}}) 2)]
+    (let [sdeps (nth (#'slopp.image.repl/default-cmd '{metosin/malli {:mvn/version "0.0.0"}}) 2)]
       (is (re-find #"0\.17\.0" sdeps))
       (is (not (re-find #"0\.0\.0" sdeps))))))
 
@@ -43,8 +43,8 @@
   ;; a stand-in for SIGKILL, which no shutdown hook can catch. The grandchild
   ;; must be gone within a few seconds.
   (let [cp   (System/getProperty "java.class.path")
-        code (str "(require 'slopp.repl)"
-                  "(let [img (slopp.repl/start!)]"
+        code (str "(require 'slopp.image.repl)"
+                  "(let [img (slopp.image.repl/start!)]"
                   "  (println \"IMGPID\" (.pid (:process img)))"
                   "  (flush)"
                   "  (Thread/sleep 60000))")
@@ -110,8 +110,8 @@
   ;; nrepl.cmdline never reads stdin, so the orphan outlived even parent
   ;; death. The failure path owns the kill; the pid rides the ex-info so this
   ;; test can verify the child is actually gone.
-  (let [ex (try (repl/start! {:slopp.repl/cmd ["sleep" "60"]
-                              :slopp.repl/timeout-ms 500})
+  (let [ex (try (repl/start! {:slopp.image.repl/cmd ["sleep" "60"]
+                              :slopp.image.repl/timeout-ms 500})
                 nil
                 (catch Exception e e))]
     (is (some? ex) "a portless child must fail the boot")
@@ -129,29 +129,29 @@
 
 (deftest benign-load-noise?-distinguishes-warnings-from-errors
   (testing "a stderr chunk of only compiler WARNINGs is benign noise"
-    (is (#'slopp.repl/benign-load-noise?
+    (is (#'slopp.image.repl/benign-load-noise?
          "WARNING: abs already refers to: #'clojure.core/abs in namespace: garden.color, being replaced by: #'garden.color/abs\n"))
-    (is (#'slopp.repl/benign-load-noise?
+    (is (#'slopp.image.repl/benign-load-noise?
          "Reflection warning, foo.clj:3:5 - call to method size can't be resolved.\n")))
   (testing "a chunk with a real error is NOT benign, even mixed with a warning"
-    (is (not (#'slopp.repl/benign-load-noise?
+    (is (not (#'slopp.image.repl/benign-load-noise?
               "Syntax error compiling at (foo.clj:1:1).\nUnable to resolve symbol: qux")))
-    (is (not (#'slopp.repl/benign-load-noise?
+    (is (not (#'slopp.image.repl/benign-load-noise?
               "WARNING: harmless\nUnable to resolve symbol: qux"))))
   (testing "empty/nil stderr is not classified as benign (prior behavior preserved)"
-    (is (not (#'slopp.repl/benign-load-noise? "")))
-    (is (not (#'slopp.repl/benign-load-noise? nil)))))
+    (is (not (#'slopp.image.repl/benign-load-noise? "")))
+    (is (not (#'slopp.image.repl/benign-load-noise? nil)))))
 
 (deftest eval-outcome-reads-status-not-the-stderr-stream
   (testing "a load-time WARNING on stderr is OUTPUT, not failure — values survive"
     (is (= {:values [3]
             :stderr "WARNING: abs already refers to: #'clojure.core/abs\n"}
-           (#'slopp.repl/eval-outcome
+           (#'slopp.image.repl/eval-outcome
             [{:err "WARNING: abs already refers to: #'clojure.core/abs\n"}
              {:value "3"}
              {:status ["done"]}]))))
   (testing "an eval-error IS failure, and keeps the stderr text that names the cause"
-    (let [r (#'slopp.repl/eval-outcome
+    (let [r (#'slopp.image.repl/eval-outcome
              [{:err "Execution error (ExceptionInfo) at (REPL:1).\nboom\n"}
               {:ex "clojure.lang.ExceptionInfo" :status ["eval-error"]}
               {:status ["done"]}])]
@@ -159,11 +159,11 @@
       (is (re-find #"boom" (:err r)))))
   (testing "an eval-error with no stderr still names the exception class"
     (is (= {:err "clojure.lang.ExceptionInfo"}
-           (#'slopp.repl/eval-outcome
+           (#'slopp.image.repl/eval-outcome
             [{:ex "clojure.lang.ExceptionInfo" :status ["eval-error"]}]))))
   (testing "a clean eval carries no :stderr key at all"
     (is (= {:values [7]}
-           (#'slopp.repl/eval-outcome [{:value "7"} {:status ["done"]}]))))
+           (#'slopp.image.repl/eval-outcome [{:value "7"} {:status ["done"]}]))))
   (testing "unreadable values ride through as strings, as before"
     (is (= {:values ["#object[Foo]"]}
-           (#'slopp.repl/eval-outcome [{:value "#object[Foo]"}])))))
+           (#'slopp.image.repl/eval-outcome [{:value "#object[Foo]"}])))))

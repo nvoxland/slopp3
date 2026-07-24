@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [slopp.edit :as edit]
             [slopp.index :as index]
-            [slopp.render :as render] [slopp.store :as store]))
+            [slopp.store.render :as render] [slopp.store :as store]))
 
 (defn ^:export lint-refusals
   "NEW error-level kondo findings a candidate store would introduce over

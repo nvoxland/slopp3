@@ -1,4 +1,4 @@
-(ns slopp.http
+(ns slopp.mcp.http
   "Tiny localhost JSON-over-HTTP transport over the SAME dispatch as MCP —
   for CLI/scripting access (curl) and harness-driven evals. Binds 127.0.0.1
   only. Since D-web wave 2 the endpoints are DECLARED (:web/* metadata on
@@ -9,13 +9,13 @@
     POST /mcp     JSON-RPC (native MCP; notifications -> 202)
     GET  /metrics -> {\"calls\": [{:tool :t :in :out} ...]}  (payload sizes)
 
-  Entry: clojure -M -m slopp.http <port> [project-dir]"
+  Entry: clojure -M -m slopp.mcp.http <port> [project-dir]"
   (:require [slopp.api :as api]
             [slopp.mcp :as mcp]
             [slopp.api.external :as external]
-            [slopp.web :as web] [slopp.store :as store] [slopp.db :as db] [slopp.web.static :as static]))
+            [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static]))
 
-(defn start-server!
+(defn ^:export start-server!
   "Start the transport on `port` over a fresh session (`opts` as api/open!):
   the declared endpoints of THIS namespace (/call, /mcp, /metrics) plus any
   `http.static.*` capability mounts, served through the web facade — the
@@ -42,14 +42,14 @@
                                     (some-> (:db @session)
                                             (db/get-blob (:sha e))))
                        :content-type content-type})))
-        srv     (web/serve! {:web/namespaces ['slopp.http 'slopp.http.browse]
+        srv     (web/serve! {:web/namespaces ['slopp.mcp.http 'slopp.mcp.http.browse]
                              :web/routes (static/mount-routes mounts reader)
                              :web/host "127.0.0.1"
                              :web/port port
                              :web/perform-ctx {:session session :calls calls}})]
     {:server srv :session session :calls calls}))
 
-(defn stop-server!
+(defn ^:export stop-server!
   "Stop the HTTP transport and close the session it serves, returning nil.
   Takes the map `start-server!` returned — an opaque handle, so its keys are
   read here rather than destructured in the arglist (they are not a contract
@@ -63,7 +63,7 @@
 (defn -main "CLI: serve the HTTP transport on `port` (default 7357) over a session at
   `dir`, and block. Enables `:require-turns?` — a real server refuses unrooted
   writes, where an in-process test session does not.
-  `clojure -M -m slopp.http [port] [dir]`"
+  `clojure -M -m slopp.mcp.http [port] [dir]`"
   [& [port dir]]
   (let [{:keys [session]} (start-server! (Long/parseLong (or port "7357"))
                                          (cond-> {:slopp.api/warm-spare? true}

@@ -1,7 +1,7 @@
 (ns slopp.image-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.repl :as repl]
+            [slopp.image.repl :as repl]
             [slopp.image :as image]))
 
 (def target

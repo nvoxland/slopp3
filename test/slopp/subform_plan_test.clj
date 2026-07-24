@@ -5,7 +5,7 @@
   the first form once corrupted a case dispatch), and the documented SPLICE
   (one match → several replacement forms) must hold."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.refactor :as refactor]
+            [slopp.edit.refactor :as refactor]
             [slopp.store :as store]))
 
 (defn- st [src] (store/ingest (store/empty-store) 'sp.core src))

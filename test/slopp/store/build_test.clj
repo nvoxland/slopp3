@@ -1,6 +1,6 @@
-(ns slopp.build-test
+(ns slopp.store.build-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.build :as build]))
+            [slopp.store.build :as build]))
 
 (deftest native-script-carries-assets
   (testing "asset paths copy into classes/ and ride -H:IncludeResources"

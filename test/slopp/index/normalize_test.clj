@@ -1,6 +1,6 @@
-(ns slopp.normalize-test
+(ns slopp.index.normalize-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.normalize :as norm]
+            [slopp.index.normalize :as norm]
             [slopp.store :as store]
             [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 

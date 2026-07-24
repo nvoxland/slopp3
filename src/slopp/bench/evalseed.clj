@@ -1,8 +1,8 @@
-(ns slopp.evalseed
+(ns slopp.bench.evalseed
   "Seed the eval-round-2 template: a known-green ~16-form tasker app, as (a) a
   slopp store and (b) a conventional files project (via build!). Fresh eval
   agents then get IDENTICAL starting codebases for the modify-and-extend task.
-  Run: clojure -M -m slopp.evalseed <template-dir>   (see .context/dogfooding.md)"
+  Run: clojure -M -m slopp.bench.evalseed <template-dir>   (see .context/dogfooding.md)"
   (:require [slopp.api :as api] [clojure.java.io :as io] [clojure.string :as str] [slopp.api.external :as external]))
 
 (def model-src
@@ -276,7 +276,7 @@
   and a conventional files project, so eval agents start from identical
   ground. `large` seeds the 12-namespace orders app; anything else is read as
   a directory and seeds the tasker app.
-  `clojure -M -m slopp.evalseed [large|<dir>] [dir]`"
+  `clojure -M -m slopp.bench.evalseed [large|<dir>] [dir]`"
   [& [which dir]]
   (case which
     "large" (do (seed-large! (or dir "eval-templates/orders"))

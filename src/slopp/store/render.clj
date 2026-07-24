@@ -1,4 +1,4 @@
-(ns slopp.render
+(ns slopp.store.render
   "VFS render: project a namespace's current source from the store on demand
   (C1/C6). Lossless — concatenating each element's CST string reproduces the
   ingested source exactly. This is what tools/agents 'read'; nothing is written
@@ -7,7 +7,7 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store] [slopp.cache :as cache]))
 
-^:reads (defn render-ns
+^:reads (defn ^:export render-ns
   "Render `ns-sym`'s current source as a string from the store. Memoized on
   the (immutable) elements vector, through the blessed cache — so a test can
   reset it or bypass it entirely, and the memo is countable in
@@ -18,7 +18,7 @@
                   (fn [] (apply str (map (comp n/string :node) elements))))
     ""))
 
-(defn ns-path
+(defn ^:export ns-path
   "The VFS path of a namespace's rendered file (also used by build! and as the
   source-path for image loads, so stack traces cite VFS coordinates — F6). The
   arity-2 form takes the namespace's PLATFORM and sets the extension
@@ -28,17 +28,17 @@
    (str (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/"))
         "." (case platform :cljs "cljs" :cljc "cljc" "clj"))))
 
-(defn test-ns?
+(defn ^:export test-ns?
   "Convention: a namespace whose name ends in `-test` is a test namespace
   (matches cognitect test-runner's default and slopp's own layout), so it
   materializes under `test/` rather than `src/`."
   [ns-sym]
   (str/ends-with? (str ns-sym) "-test"))
 
-(defn source-path
+(defn ^:export source-path
   "The materialized file path for a namespace, rooted by convention: production
-  code under `src/`, test namespaces under `test/`. e.g. `slopp.semver` →
-  `src/slopp/semver.clj`; `slopp.semver-test` → `test/slopp/semver_test.clj`.
+  code under `src/`, test namespaces under `test/`. e.g. `app.core` →
+  `src/app/core.clj`; `app.core-test` → `test/app/core_test.clj`.
   The arity-2 form takes the namespace's PLATFORM (:jvm/:cljc/:cljs): :cljs roots
   under a separate `cljs-src/` (`cljs-test/`) tree the JVM classpath excludes,
   with a `.cljs` extension; :cljc/:jvm stay under `src/`/`test/` with
@@ -51,7 +51,7 @@
                  (if test? "test/" "src/"))]
      (str root (ns-path ns-sym platform)))))
 
-(defn element-offsets
+(defn ^:export element-offsets
   "Start position [row col] (1-based) of each of `ns-sym`'s elements within the
   rendered source — the bridge from index positions (clj-kondo rows/cols against
   `render-ns` output) back to the owning store element."
@@ -68,7 +68,7 @@
                (conj acc [row col])))
       acc)))
 
-(defn owner-form
+(defn ^:export owner-form
   "The form element whose rendered span contains position [row col], or nil —
   the bridge from linter/index positions to form addressing."
   [store ns-sym row col]

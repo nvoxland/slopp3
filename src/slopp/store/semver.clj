@@ -1,4 +1,4 @@
-(ns slopp.semver
+(ns slopp.store.semver
   "Tiny mvn-version utility: parse a version string into its numeric segments
   and compare them NUMERICALLY (so 1.10.0 > 1.2.0, unlike a lexical string
   compare). Used by the deps-manifest merge to auto-resolve version divergence

@@ -360,7 +360,7 @@
                      (str (:error (query/query-store
                                    sess "(fn [store] (spit \"/tmp/x\" store))")))))
         (is (:error (query/query-store
-                     sess "(fn [store] (slopp.db/append! nil store nil))")))
+                     sess "(fn [store] (slopp.store.db/append! nil store nil))")))
         (is (:error (query/query-store sess "(fn [store] (eval '(+ 1 2)))"))))
 
       (testing "the SANDBOX is the sole gate — refusals teach it, not the dialect"

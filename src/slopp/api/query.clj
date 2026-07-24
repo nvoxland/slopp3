@@ -10,7 +10,7 @@
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
 
 (defn ^:export query-sources

@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [slopp.api.schema :as schema]
             [slopp.store :as store]
-            [slopp.repl :as repl] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.image.repl :as repl] [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest schema-of-reads-name-metadata
   (let [src (str "(ns app.bnd)\n\n"

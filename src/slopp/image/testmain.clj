@@ -1,4 +1,4 @@
-(ns slopp.testmain
+(ns slopp.image.testmain
   "The BUILT project's traced test entry point (#121) — cognitect's runner
   wrapped in slopp's form tracer, so the EXTERNAL tier produces a trace.
 
@@ -19,7 +19,7 @@
             [clojure.test :as t]
             [slopp.rt :as rt]))
 
-(def trace-file-prefix
+(def ^:export trace-file-prefix
   "Marks this run's trace files in the built dir. Each shard writes its own
   (they run concurrently in ONE built dir); the reader globs and merges."
   "slopp-trace-")

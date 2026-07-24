@@ -1,4 +1,4 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs]))
+(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -17,16 +17,16 @@
 (defn image-with-deps!
   "A ready owned image carrying `deps` (lib→coord) on its classpath: adopt the
   bare `spare` and hot-`add-libs` the manifest into it, falling back to a fresh
-  launch if the spare can't reconcile; or launch fresh with `:slopp.repl/deps`
+  launch if the spare can't reconcile; or launch fresh with `:slopp.image.repl/deps`
   when there is no spare. The caller owns spare bookkeeping (nil-ing +
   rewarming)."
   [spare deps]
   (if spare
     (let [img @spare]
       (if (and (seq deps) (:err (repl/add-libs! img deps)))
-        (do (repl/stop! img) (repl/start! {:slopp.repl/deps deps}))
+        (do (repl/stop! img) (repl/start! {:slopp.image.repl/deps deps}))
         img))
-    (repl/start! {:slopp.repl/deps deps})))
+    (repl/start! {:slopp.image.repl/deps deps})))
 
 ^:reads
 (defn session-identity

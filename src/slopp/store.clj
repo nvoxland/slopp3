@@ -807,13 +807,18 @@
   the JVM (its :clj branch) AND compiles to JS; :cljs compiles to JS only and is
   never loaded into the oracle. One :module-platform delta carrying its why
   (:prompt); last write per module wins; the registry fold canonicalizes state.
-  Returns [store' delta]."
-  [store module platform & {:keys [prompt agent]}]
+
+  `:action :remove` RETIRES the declaration instead of setting it — the rename
+  path needs it, so a platform follows the name it describes rather than
+  stranding a `:cljs` marker on a namespace that no longer exists. Returns
+  [store' delta]."
+  [store module platform & {:keys [prompt agent action]}]
   (let [[did store'] (gen-id store "d")
         module (str module)
         delta  (cond-> {:id did :parent (:id (last (:deltas store)))
                         :op :module-platform :ns '*session* :at (now-ms)
                         :module module :platform platform}
+                 action (assoc :action action)
                  prompt (assoc :prompt prompt)
                  agent  (assoc :agent agent))]
     [(update (fields/fold store' delta) :deltas conj delta) delta]))
@@ -824,14 +829,19 @@
   carrying its why (:prompt); last write per module wins. A module absent
   from :module-tiers (or declared :external) is unrestricted. The delta keeps
   the caller's spelling verbatim; the registry fold canonicalizes state
-  (retired :reads/:effects land as :internal/:external). Returns
-  [store' delta]."
-  [store module tier & {:keys [prompt agent]}]
+  (retired :reads/:effects land as :internal/:external).
+
+  `:action :remove` RETIRES the declaration instead of setting it — the
+  rename path needs it, because a tier describes a NAME and an orphaned one
+  both lists a namespace that no longer exists and leaves the renamed code
+  silently ungated. Returns [store' delta]."
+  [store module tier & {:keys [prompt agent action]}]
   (let [[did store'] (gen-id store "d")
         module (str module)
         delta  (cond-> {:id did :parent (:id (last (:deltas store)))
                         :op :module-tier :ns '*session* :at (now-ms)
                         :module module :tier tier}
+                 action (assoc :action action)
                  prompt (assoc :prompt prompt)
                  agent  (assoc :agent agent))]
     [(update (fields/fold store' delta) :deltas conj delta) delta]))

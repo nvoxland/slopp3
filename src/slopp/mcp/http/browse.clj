@@ -1,8 +1,8 @@
-(ns slopp.http.browse
+(ns slopp.mcp.http.browse
   "Read-only store browser: server-rendered hiccup pages over the query
   surfaces — the D-web-html dogfood. Plain links, full-page renders, zero
   writes; rendering arbitrary store source through the escaper is a
-  standing security exercise. Lives in slopp.http (the server module), NOT
+  standing security exercise. Lives in slopp.mcp.** (the server module), NOT
   slopp.web.**, so it never rides the slim user jar."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]

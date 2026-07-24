@@ -1,7 +1,7 @@
-(ns slopp.http-test
+(ns slopp.mcp.http-test
   (:require [clojure.test :refer [deftest is testing]]
             [cheshire.core :as json]
-            [slopp.http :as http])
+            [slopp.mcp.http :as http])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))

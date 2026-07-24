@@ -5,7 +5,7 @@
   Derived and content-memoized, never stored: references are an index of
   source, and the journal owes them no consistency."
   (:require [rewrite-clj.node :as n]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [slopp.store :as store] [slopp.cache :as cache] [slopp.index.analyze :as analyze] [clojure.string :as str]))
 
 (defn ^:export walk-pruned

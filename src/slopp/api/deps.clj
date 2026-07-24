@@ -1,6 +1,6 @@
 (ns slopp.api.deps
-  (:require [slopp.db :as db]
-            [slopp.deps :as deps]))
+  (:require [slopp.store.db :as db]
+            [slopp.index.deps :as deps]))
 
 (defn analyze-dep!
   "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —

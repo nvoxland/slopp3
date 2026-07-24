@@ -1,6 +1,6 @@
 (ns slopp.api.web
   (:require [slopp.api.capabilities :as capabilities]
-            [slopp.edit.modules :as modules] [slopp.web.router :as router] [slopp.store :as store] [slopp.render :as render] [clojure.string :as str] [rewrite-clj.node :as n]))
+            [slopp.edit.modules :as modules] [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n]))
 
 (defn endpoints
   "Every declared endpoint in the store — a `:web/path` form's route row:

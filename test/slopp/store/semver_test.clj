@@ -1,6 +1,6 @@
-(ns slopp.semver-test
+(ns slopp.store.semver-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.semver :as semver]))
+            [slopp.store.semver :as semver]))
 
 (deftest parse-numeric-segments
   (is (= [1 2 3] (semver/parse "1.2.3")))
@@ -20,5 +20,5 @@
     (is (not (semver/newer? "1.0.0" "1.0.0")))))
 
 (deftest older-is-newer-flipped
-  (is (true? (slopp.semver/older? "1.2.0" "1.10.0")))
-  (is (false? (slopp.semver/older? "1.10.0" "1.2.0"))))
+  (is (true? (slopp.store.semver/older? "1.2.0" "1.10.0")))
+  (is (false? (slopp.store.semver/older? "1.10.0" "1.2.0"))))

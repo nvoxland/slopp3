@@ -1,8 +1,8 @@
 (ns slopp.edit-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.render :as render]
-            [slopp.repl :as repl]
+            [slopp.store.render :as render]
+            [slopp.image.repl :as repl]
             [slopp.image :as image]
             [slopp.edit :as edit] [slopp.edit.refs :as refs] [slopp.edit.hotload :as hotload]))
 

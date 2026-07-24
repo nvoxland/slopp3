@@ -4,7 +4,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
             [slopp.index :as index]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [slopp.store :as store] [slopp.api.done :as done]))
 
 ^:reads (defn ^:export review-scan

@@ -63,7 +63,7 @@
   "The set of map keys a destructuring form gives an `:or` default —
    `{:keys [a b] :or {a 1}}` → `#{:a}`. These are OPTIONAL by construction, so
    no caller passing one is the design working, not a gap: measured on
-   `slopp.repl/start!`, every `:read-never-passed` key it reported was an
+   `slopp.image.repl/start!`, every `:read-never-passed` key it reported was an
    `:or`-defaulted option, i.e. a false positive three times out of three."
   [bnd]
   (let [sym->key (binding-keys bnd)]

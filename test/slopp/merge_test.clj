@@ -6,7 +6,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [rewrite-clj.parser :as p]
             [slopp.store :as store]
-            [slopp.render :as render] [slopp.store.merge :as merge]))
+            [slopp.store.render :as render] [slopp.store.merge :as merge]))
 
 (def base-src "(ns m.core)\n(defn a [x] x)\n(defn b [x] x)\n(defn c [x] x)\n")
 

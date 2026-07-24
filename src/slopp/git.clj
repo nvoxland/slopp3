@@ -24,9 +24,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [next.jdbc :as jdbc]
-            [slopp.build :as build]
-            [slopp.db :as db]
-            [slopp.render :as render] [slopp.store :as store])
+            [slopp.store.build :as build]
+            [slopp.store.db :as db]
+            [slopp.store.render :as render] [slopp.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.time Instant ZoneOffset]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]

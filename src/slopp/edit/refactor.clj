@@ -1,4 +1,4 @@
-(ns slopp.refactor
+(ns slopp.edit.refactor
   "Coordinated structural rewrites (Phase-3 ops; rename first).
 
   Rename is POSITION-BASED: clj-kondo resolves every reference (the def's name
@@ -12,7 +12,7 @@
             [rewrite-clj.node :as n]
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules]))
 
 (defn- sites-in-analysis
@@ -173,7 +173,7 @@
         (symbol (str n (subs (str sym) (count o))))
         :else nil))))
 
-(defn ns-rename-changeset
+(defn ^:export ns-rename-changeset
   "Every form in the STORE mentioning `old` as a namespace — its own ns decl,
   require clauses, fully-qualified refs — rewritten to `new`. {form-id node}."
   [store old new]
@@ -374,7 +374,7 @@
 
               :else {:zloc (first usable)})))))))
 
-(defn keyed-replace-plan
+(defn ^:export keyed-replace-plan
   "Plan replacing the UNIQUE map inside `form-name` that contains every
   entry of `where` (e.g. {:name \"query_history\"} addresses one tool
   descriptor in a registry vector) with `new-src` — first-person friction:
@@ -410,7 +410,7 @@
     (catch Exception ex
       {:error (str "keyed edit failed: " (ex-message ex))})))
 
-(defn subform-replace-plan
+(defn ^:export subform-replace-plan
   "Plan replacing the unique occurrence of `match-src` inside `form-name` with
   `new-src` (item 5 — paredit's valid-tree→valid-tree invariant, content-
   addressed: siblings are never re-transcribed). A pair match (P1) replaces
@@ -469,7 +469,7 @@
         {:error (str "no complete form in " what " contains that anchor")
          :source-now form-src}))))
 
-(defn extract-plan
+(defn ^:export extract-plan
   "Plan extracting the unique occurrence of `subform-src` inside `from-name`
   into a new fn `new-name`: params = the free locals (bound outside the
   subform, used inside), in first-use order. Pair matches (P1) are refused —
@@ -593,7 +593,7 @@
                                        form-src
                                        (reverse spans))})))))))
 
-(defn change-signature-plan
+(defn ^:export change-signature-plan
   "Plan a signature change for `def-ns/fn-name` (P2): every CALL site (the
   fn in head position) gets its argument list rebuilt from `args-template`,
   a source string where $1..$9 are the site's existing arg sources — the
@@ -648,7 +648,7 @@
     (catch Exception ex
       {:error (str "change-signature plan failed: " (ex-message ex))})))
 
-(defn rename-changeset
+(defn ^:export rename-changeset
   "Compute {form-id new-node} renaming `def-ns/old-name` to `new-name` across
   every store namespace."
   [store def-ns old-name new-name]
@@ -666,7 +666,7 @@
                                      old-name new-name)]))))
         (keys (:namespaces store))))
 
-(defn text-replace-plan
+(defn ^:export text-replace-plan
   "Plan a RAW-TEXT replace inside form `form-name`: `match-text` must occur
   exactly ONCE in the form's source — exactly, or failing that under
   whitespace-fuzzy matching (runs of whitespace are equivalent, so a
@@ -847,7 +847,7 @@
     (when (seq kept)
       (str "(:import " (str/join " " kept) ")"))))
 
-(defn move-plan
+(defn ^:export move-plan
   "PLAN moving `moved-names` from `from-ns` into `to-ns` (new or existing) —
   pure analysis over a store value; the executor applies it atomically.
   Returns {:error msg} with teaching for the impossible cases, else
@@ -1110,7 +1110,7 @@
                    (let [have (set (map :lib (require-specs store to-ns)))]
                      (vec (sort (map :spec (remove #(have (:lib %)) to-specs))))))))))))
 
-(defn match-in-strings?
+(defn ^:export match-in-strings?
   "True when `pat` matches inside a STRING LITERAL of `src` — as opposed to
   matching code.
 
@@ -1130,7 +1130,7 @@
          (->> (iterate z/next (z/of-string src))
               (take-while (complement z/end?))))))
 
-(defn requalify-call-args
+(defn ^:export requalify-call-args
   "Qualify key `key-name` with `to-ns` in the map LITERAL passed as argument 1
   to calls of the target fn in `src`. `heads` is the SET of head spellings that
   resolve to that fn in this source's namespace — `#{\"slopp.api.external/open!\"
@@ -1185,7 +1185,7 @@
 
           :else (recur (z/next z)))))))
 
-(defn requalify-keys
+(defn ^:export requalify-keys
   "Rewrite `{:keys [x]}` destructuring to `{:to-ns/keys [x]}` for the single key
   named `key-name`, leaving every other key in the vector where it is.
 
@@ -1254,7 +1254,7 @@
         sym "A-Za-z0-9*+!_'?<>=/.&%$:#-"]   ; symbol constituents; '-' last = literal
     (re-pattern (str "(?<![" sym "])" q "(?![" sym "])"))))
 
-(defn qualified-mention-changeset
+(defn ^:export qualified-mention-changeset
   "{form-id new-node} rewriting QUALIFIED references inside STRING LITERALS
   across the store, given `renames` as `{old-qsym new-qsym …}` — docstrings,
   teach strings, tool descriptions. `base` is an in-flight changeset
@@ -1297,7 +1297,7 @@
                 :when  (not= (n/string out) (n/string node))]
             [(:id e) out]))))
 
-(defn module-extract-plan
+(defn ^:export module-extract-plan
   "PLAN pulling `ns-syms` (each with its subtree and `-test` siblings) under
   `to-prefix` — the module-grain regroup, analysed before anything is
   written. A namespace that moves from two segments to three becomes
@@ -1381,7 +1381,7 @@
                                                  (not (after [a b])))]
                                   [a b])))})))
 
-(defn export-changeset
+(defn ^:export export-changeset
   "Changeset hoisting each `{:ns :name}` in `targets` onto its module's world
   surface — `^:export` on the defn name, via the same `export-mark` a
   deep-target move uses. `level` (default true) may be a namespace-prefix

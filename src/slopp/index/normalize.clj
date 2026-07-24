@@ -1,4 +1,4 @@
-(ns slopp.normalize
+(ns slopp.index.normalize
   "Deterministic 'if the form looks like X, rewrite to Y' normalization —
   conservative, provably behavior-preserving, kibit-style rules for the
   patterns agents habitually over-write. Runs at explicit done-points (never
@@ -122,7 +122,7 @@
                (conj applied desc))
         {:src (z/root-string zloc) :applied applied}))))
 
-(defn normalize-form
+(defn ^:export normalize-form
   "Normalize one form node. Returns {:node node' :applied [...]}
   (`:applied` empty ⇒ node unchanged)."
   [node]

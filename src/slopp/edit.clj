@@ -8,7 +8,7 @@
             [rewrite-clj.node :as n]
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (def ^:private banned-heads
@@ -238,7 +238,7 @@
       (str "query_store is READ-ONLY analysis over the immutable store value — "
            f " is refused (no effects, no defs, no interop, no IO/eval). "
            "Pure clojure.core plus slopp's pure fns (slopp.store/forms, "
-           "slopp.render/render-ns, slopp.index.analyze/analyze ...) cover the "
+           "slopp.store.render/render-ns, slopp.index.analyze/analyze ...) cover the "
            "analysis space"))))
 
 (defn observe-gate
@@ -359,11 +359,11 @@
   and these vars spawn images: the run would recurse (Q7). Resolution is
   alias-based (see require-aliases); fully-qualified calls hit directly."
   '#{slopp.api/open! slopp.api/restart! slopp.api/external-test-run!
-     slopp.repl/start! slopp.git/start-server!
+     slopp.image.repl/start! slopp.git/start-server!
      slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
      slopp.sync/maybe-auto-import!
      slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
-     slopp.boot/-main slopp.benchmark/-main})
+     slopp.boot/-main slopp.bench.benchmark/-main})
 
 (defn require-aliases
   "{alias full-ns} (plus identity entries for the full names) from `ns-sym`'s

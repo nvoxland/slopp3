@@ -1,4 +1,4 @@
-(ns slopp.build
+(ns slopp.store.build
   "The native-binary build target (O4): pure generators for everything an
   explicit `build!` needs to compile a store-built project into a
   self-contained executable via GraalVM native-image.
@@ -15,7 +15,7 @@
   Feature registers Clojure classes for build-time init), `--no-fallback`."
   (:require [clojure.string :as str]))
 
-(defn ^{:foreign-keys true
+(defn ^:export ^{:foreign-keys true
         :malli/schema [:=> [:cat [:map
                                   [:fixed-arities {:optional true} [:maybe [:set :int]]]
                                   [:varargs-min-arity {:optional true} [:maybe :int]]]]
@@ -33,7 +33,7 @@
     :vector
     :apply))
 
-(defn launcher-source
+(defn ^:export launcher-source
   "The generated `src/native/main.clj`: a gen-class entry delegating to
   `main-sym`, exiting cleanly (flush + shutdown-agents, so a lingering agent
   thread pool can't hang the binary)."
@@ -65,7 +65,7 @@
                               (fn [xs] (mapv #(if (string? %) (symbol %) %) xs))))]))
         deps))
 
-(defn client-compiler
+(defn ^:export client-compiler
   "The configured client-side compiler for `store` (D-web-cljs) — read from the
   `client` config file's `compiler` key, defaulting to :clojurescript. The
   compile step DISPATCHES on this, so cherry/squint can be plugged in per
@@ -76,7 +76,7 @@
   (keyword (or (get-in store [:config "client" :values "compiler"])
                "clojurescript")))
 
-^:unsafe (defn deps-edn
+^:unsafe (defn ^:export deps-edn
   "deps.edn for the built project; `deps` (lib→coord, the store's Tier-1
   manifest) becomes the `:deps` map so a built project is runnable; with
   `native?`, adds the :native alias (AOT output path, graal-build-time, direct
@@ -85,7 +85,7 @@
   carrying the cognitect test-runner, so `clojure -M:test` runs the project's
   suite out of the box (the external runner builds+runs exactly this).
 
-  With `trace?`, BOTH test aliases enter through `slopp.testmain` — the trace
+  With `trace?`, BOTH test aliases enter through `slopp.image.testmain` — the trace
   runner that WRAPS cognitect — so the external tier yields a form trace
   (#121, the only tier that runs ^:external tests). Cognitect stays in
   :extra-deps: the runner resolves it there and delegates, leaving the output
@@ -114,7 +114,7 @@
                     (str " :deps " (binding [*print-namespace-maps* false]
                                      (pr-str (coerce-exclusions deps))))
                     "")
-         main-ns  (if trace? "slopp.testmain" "cognitect.test-runner")
+         main-ns  (if trace? "slopp.image.testmain" "cognitect.test-runner")
          ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
          ;; aliases-map `{` (matching the historical single-:native layout), the
          ;; rest are 2-space-indented — order is deterministic (test, native, cljs).
@@ -151,7 +151,7 @@
             " :aliases\n"
             " {" (str/join "\n  " aliases) "}}\n")))))
 
-(defn native-script
+(defn ^:export native-script
   "build-native.sh: AOT-compile the launcher (and, transitively, the app),
   then native-image the result into `bin-name`. `asset-paths` (the file
   manifest's paths) copy into classes/ — putting them on the compile
@@ -197,7 +197,7 @@
          "\n"
          "echo \"built ./" bin-name "\"\n")))
 
-(defn compiler-coord
+(defn ^:export compiler-coord
   "The build-only dependency coordinate [lib coord] for a client-compiler
    keyword (the compiler slopp DISPATCHES to), or nil for a backend slopp has
    no bundled default for. Only :clojurescript is implemented today; cherry /

@@ -894,3 +894,26 @@
                              "(defn b \"B.\" [x] (h/shared (inc x)))"
                              :prompt "a write still passes the gate afterwards")))))) 
       (finally (api/close! sess)))))
+
+(deftest ^:external namespace-grained-registers-follow-an-ns-rename
+  ;; The manifest already follows a rename. The purity TIER and the PLATFORM
+  ;; are the other two registers keyed by namespace, and they did not — so
+  ;; extracting slopp.store left "slopp.render" :internal declared for a
+  ;; namespace that no longer exists while slopp.store.render, which holds
+  ;; the actual code, had no tier at all. Silent un-gating, plus a view that
+  ;; lists ghosts.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tr.core "(ns tr.core)\n(defn f \"F.\" [x] x)\n")
+      (api/module-tier! sess "tr.core" :pure :prompt "a pure core")
+      (api/module-platform! sess "tr.core" "cljc" :prompt "shared with the client")
+      (is (= :pure (get-in @sess [:store :module-tiers "tr.core"])))
+      (is (nil? (:error (api/ns-rename! sess 'tr.core 'tr.hub :prompt "rebrand"))))
+      (testing "the tier follows the name it describes"
+        (is (= :pure (get-in @sess [:store :module-tiers "tr.hub"])))
+        (is (nil? (get-in @sess [:store :module-tiers "tr.core"]))
+            "and the old key does not linger as a ghost"))
+      (testing "so does the platform"
+        (is (= :cljc (get-in @sess [:store :module-platforms "tr.hub"])))
+        (is (nil? (get-in @sess [:store :module-platforms "tr.core"]))))
+      (finally (api/close! sess)))))

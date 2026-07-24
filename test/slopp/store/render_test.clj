@@ -1,16 +1,26 @@
-(ns slopp.render-test
+(ns slopp.store.render-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.render :as render]))
+            [slopp.store.render :as render]))
 
 (deftest test-namespaces-route-to-a-test-dir
+  ;; Synthetic namespaces on purpose. This tests the ROUTING RULE, and an
+  ;; earlier version keyed it to a live one (slopp.semver) against hardcoded
+  ;; path strings — so extracting slopp.store rewrote the symbol, left the
+  ;; string, and reddened a rule that had not changed.
   (testing "test-ns? keys on the -test name suffix (Clojure convention)"
-    (is (render/test-ns? 'slopp.semver-test))
-    (is (not (render/test-ns? 'slopp.semver)))
+    (is (render/test-ns? 'routing.fixture-test))
+    (is (not (render/test-ns? 'routing.fixture)))
     (is (not (render/test-ns? 'slopp.core))))
   (testing "source-path roots production under src/ and tests under test/"
-    (is (= "src/slopp/semver.clj" (render/source-path 'slopp.semver)))
-    (is (= "test/slopp/semver_test.clj" (render/source-path 'slopp.semver-test)))))
+    (is (= "src/routing/fixture.clj" (render/source-path 'routing.fixture)))
+    (is (= "test/routing/fixture_test.clj"
+           (render/source-path 'routing.fixture-test))))
+  (testing "a deep namespace nests, and only the LAST segment carries -test"
+    (is (= "src/routing/deep/fixture.clj"
+           (render/source-path 'routing.deep.fixture)))
+    (is (= "test/routing/deep/fixture_test.clj"
+           (render/source-path 'routing.deep.fixture-test)))))
 
 (def corpus
   ["(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n"

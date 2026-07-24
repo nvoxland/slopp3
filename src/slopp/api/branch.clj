@@ -1,10 +1,10 @@
 (ns slopp.api.branch
   (:require [clojure.java.io :as io]
             [slopp.api.session :as session]
-            [slopp.db :as db]
+            [slopp.store.db :as db]
             [slopp.edit :as edit]
             [slopp.image :as image]
-            [slopp.repl :as repl]
+            [slopp.image.repl :as repl]
             [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str]))
 
 (defn merge-into-session!

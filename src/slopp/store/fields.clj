@@ -128,8 +128,10 @@
                   ;; :effects can no longer re-mint retired vocabulary into
                   ;; fold state (frictions #5)
                   :fold (fn [st d]
-                          (assoc-in st [:module-tiers (:module d)]
-                                    (canonical-tier (:tier d))))
+                          (if (= :remove (:action d))
+                            (update st :module-tiers dissoc (:module d))
+                            (assoc-in st [:module-tiers (:module d)]
+                                      (canonical-tier (:tier d)))))
                   ;; the sample uses a RETIRED spelling on purpose — crossing
                   ;; a merge must land the canonical one
                   :sample {:op :module-tier :module "sample.mod" :tier :effects}
@@ -169,8 +171,10 @@
                   :crossed (fn [st] (not (contains? (:files st) "GONE.md")))}
 :module-platform {:field :module-platforms :merge :replay
                   :fold (fn [st d]
-                          (assoc-in st [:module-platforms (:module d)]
-                                    (canonical-platform (:platform d))))
+                          (if (= :remove (:action d))
+                            (update st :module-platforms dissoc (:module d))
+                            (assoc-in st [:module-platforms (:module d)]
+                                      (canonical-platform (:platform d)))))
                   :sample {:op :module-platform :module "sample.mod" :platform :cljs}
                   :crossed (fn [st] (= :cljs (get-in st [:module-platforms "sample.mod"])))}
 :client-dep-add {:field :client-deps :merge :replay

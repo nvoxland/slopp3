@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.turn]
+            [slopp.mcp.turn]
             [slopp.mcp]
             [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
@@ -170,11 +170,11 @@
     (try
       (api/ingest! sess 'ep.core seed)
       ;; simulate the UserPromptSubmit hook (separate process in production)
-      (slopp.turn/-main dir "begin" "alice" "fix" "the" "flaky" "test")
+      (slopp.mcp.turn/-main dir "begin" "alice" "fix" "the" "flaky" "test")
       (api/sync-with-journal! sess)
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 2))"
                          :prompt "the fix" :agent "alice")
-      (slopp.turn/-main dir "end" "alice")
+      (slopp.mcp.turn/-main dir "end" "alice")
       (api/sync-with-journal! sess)
       (let [turn (first (keep :turn (query/query-history sess :collapse true)))]
         (is (= "fix the flaky test" (:intent turn)))
@@ -230,13 +230,13 @@
       (api/ingest! sess 'ep.core seed)
       ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
       (with-in-str "{\"prompt\":\"please add rush orders — exactly these words\",\"session_id\":\"x\"}"
-        (slopp.turn/-main dir "hook-begin" "alice"))
+        (slopp.mcp.turn/-main dir "hook-begin" "alice"))
       (api/sync-with-journal! sess)
       (is (api/turn-open? sess "alice"))
       (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 4))"
                          :prompt "work" :agent "alice")
       (with-in-str "{}"
-        (slopp.turn/-main dir "hook-end" "alice"))
+        (slopp.mcp.turn/-main dir "hook-end" "alice"))
       (api/sync-with-journal! sess)
       (is (not (api/turn-open? sess "alice")))
       (let [turn (first (keep :turn (query/query-history sess :collapse true)))]

@@ -1,17 +1,17 @@
-(ns slopp.http.browse-test
+(ns slopp.mcp.http.browse-test
   "The store browser through the PORTLESS pipeline: route → policy →
   declared reads → handler, against an in-memory fixture store. The
   escaping assertion is a SECURITY test — the browser renders arbitrary
   store source."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.http.browse :as browse]
+            [slopp.mcp.http.browse :as browse]
             [slopp.store :as store]
             [slopp.web :as web]))
 
 (deftest the-pipeline-serves-the-browser-portlessly
   (let [st  (store/ingest (store/empty-store) 'demo.core
                           "(ns demo.core)\n\n(defn hello \"Says <hi> & more.\" [x] x)\n")
-        ctx (web/context {:web/namespaces ['slopp.http.browse]
+        ctx (web/context {:web/namespaces ['slopp.mcp.http.browse]
                           :web/perform-ctx {:session (atom {:store st})}})]
     (testing "the index → namespace → source click-path"
       (let [r (web/handle! ctx {:request-method :get :uri "/store"})]
@@ -39,7 +39,7 @@
 
 (deftest the-index-page-carries-the-client-filter
   (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
-        ctx (web/context {:web/namespaces ['slopp.http.browse]
+        ctx (web/context {:web/namespaces ['slopp.mcp.http.browse]
                           :web/perform-ctx {:session (atom {:store st})}})]
     (testing "the index page carries the filter box and the per-row hooks the cljs wires"
       (let [body (:body (web/handle! ctx {:request-method :get :uri "/store"}))]
@@ -54,7 +54,7 @@
 
 (deftest the-browser-styles-itself-with-css-as-data
   (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
-        ctx (web/context {:web/namespaces ['slopp.http.browse]
+        ctx (web/context {:web/namespaces ['slopp.mcp.http.browse]
                           :web/perform-ctx {:session (atom {:store st})}})]
     (testing "the stylesheet is served as text/css, CSS-as-data"
       (let [r (web/handle! ctx {:request-method :get :uri "/store/style.css"})]

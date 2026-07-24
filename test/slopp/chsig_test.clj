@@ -4,7 +4,7 @@
   as written (aliases survive), higher-order references surfaced as :manual.
   Plan tests are pure (ingest stores); the api op is exercised external."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.refactor :as refactor]
+            [slopp.edit.refactor :as refactor]
             [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
 
 (defn- st2 []

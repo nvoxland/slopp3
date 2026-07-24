@@ -7,7 +7,7 @@
             [clojure.java.shell]
             [rewrite-clj.parser]
             [slopp.store :as store]
-            [slopp.render]
+            [slopp.store.render]
             [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external two-servers-one-store
@@ -128,8 +128,8 @@
         r      (reduce store/replay-delta b suffix)]
     (testing "replay reproduces the writer's store exactly"
       (is (some? r))
-      (is (= (slopp.render/render-ns w 'ir.core)
-             (slopp.render/render-ns r 'ir.core)))
+      (is (= (slopp.store.render/render-ns w 'ir.core)
+             (slopp.store.render/render-ns r 'ir.core)))
       (is (= (:next-id w) (:next-id r)))
       (is (= (store/deltas w) (store/deltas r))))
     (testing ":ingest in the suffix signals full-reload fallback"

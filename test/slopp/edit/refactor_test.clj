@@ -1,10 +1,10 @@
-(ns slopp.refactor-test
+(ns slopp.edit.refactor-test
   "The move-forms planner: pure move analysis over a store value — external
   callers, dependency direction, selective requires, refusals with teaching.
   The executor (api/move-forms!) is covered end-to-end in surgeon-test; here
   the PLANS are cheap to assert."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.refactor :as refactor]
+            [slopp.edit.refactor :as refactor]
             [slopp.store :as store] [clojure.string :as str] [rewrite-clj.node :as n]))
 
 (defn- fixture-store

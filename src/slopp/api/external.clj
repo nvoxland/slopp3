@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -83,7 +83,7 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
         traced?  (boolean (and has-tests?
-                               (get-in st [:namespaces 'slopp.testmain])))
+                               (get-in st [:namespaces 'slopp.image.testmain])))
         ours?    #(contains? #{(build/deps-edn false deps has-tests? traced? client-deps)
                                (build/deps-edn true deps has-tests? traced? client-deps)}
                              (slurp de))
@@ -800,7 +800,7 @@ client-deps (merge (:client-deps st) (:client provided))
   oracle use instead of killing the server at startup. Returns the session."
   [session store conn agent-id ttl]
   (try
-    (let [image (repl/start! {:slopp.repl/deps (:deps store)})]
+    (let [image (repl/start! {:slopp.image.repl/deps (:deps store)})]
       (swap! session assoc :image image)
       (session/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)

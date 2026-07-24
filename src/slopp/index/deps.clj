@@ -1,4 +1,4 @@
-(ns slopp.deps
+(ns slopp.index.deps
   "External dependency ANALYSIS (Tier 1, P4-deps M4): resolve a dependency's
   own jars and extract its API SURFACE (provided namespaces + per-var arities,
   docstrings, macro flags) via clj-kondo — the metadata that lets slopp know
@@ -11,7 +11,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [clj-kondo.core :as kondo]
-            [slopp.repl :as repl])
+            [slopp.image.repl :as repl])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -40,7 +40,7 @@
   itself becomes a finding."
   (atom {}))
 
-^:reads (defn dep-jars
+^:reads (defn ^:export dep-jars
   "The classpath entries contributed by `lib`@`coord` ALONE — its own jar plus
   any transitives, minus the clojure baseline (a classpath diff), so the
   surface/native scan is exactly this dependency's contribution. Returns a
@@ -54,7 +54,7 @@
           (swap! jars-cache assoc k js)
           js))))
 
-^:reads (defn surface
+^:reads (defn ^:export surface
   "Analyze `jars` (from `dep-jars`) into an API surface:
   {:namespaces #{ns…} :vars {ns/name {:arities :varargs-min :doc :macro? :private?}}}.
   clj-kondo over the jars (source-fed — Clojure libs ship source); public vars
@@ -76,7 +76,7 @@
                                    (:macro d)             (assoc :macro? true))])))
                    (:var-definitions an))})))
 
-(defn coord-key
+(defn ^:export coord-key
   "The content-address of a dependency declaration: \"lib@version\" (or the
   full coord for non-mvn coords). The cache/memo key for surface + native
   verdict."
@@ -115,7 +115,7 @@
                      :when (str/starts-with? n "META-INF/native-image/")]
                  n)))))))
 
-(defn native-verdict
+(defn ^:export native-verdict
   "GraalVM native-image compatibility verdict for `jars` (from `dep-jars`):
   `:declared` if any jar ships reachability metadata, else `:none`. Best-effort
   — a dep can be native-compatible WITHOUT shipping metadata (if it needs no

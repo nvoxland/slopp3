@@ -3,7 +3,7 @@
   addressed by its NEIGHBOR (replace the whole gap before form X, or the
   namespace tail). Forms are never touched; foreign replay converges."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.render :as render]
+            [slopp.store.render :as render]
             [slopp.store :as store]))
 
 (def base-src

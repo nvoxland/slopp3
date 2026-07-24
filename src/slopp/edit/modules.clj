@@ -1,4 +1,4 @@
-(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.store.fields :as fields]))
+(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.store.fields :as fields]))
 
 (defn ^:export modules-manifest
   "The module manifest — {module-string #{dep-module-strings}} — the FOLD

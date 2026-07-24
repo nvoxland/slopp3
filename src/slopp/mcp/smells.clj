@@ -1,6 +1,6 @@
 (ns slopp.mcp.smells
   (:require [clojure.edn :as edn]
-            [slopp.db :as db]
+            [slopp.store.db :as db]
             [slopp.mcp.tools :as tools]))
 
 (defn bump-smell-counts

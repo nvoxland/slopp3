@@ -1,15 +1,15 @@
-(ns slopp.deps-test
+(ns slopp.index.deps-test
   "External dependency support (trust-tiered). M1: the per-store manifest —
   :deps-add/:deps-remove tracked deltas, materialized to a meta row, reaching
   the owned image's classpath and the generated deps.edn."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.build :as build]
-            [slopp.deps :as deps]
+            [slopp.store.build :as build]
+            [slopp.index.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.api.external :as external])
+            [slopp.store.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -267,7 +267,7 @@
     (let [s (build/deps-edn false {} true true)]
       (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" s))
           "cognitect is delegated to, never invoked directly")
-      (is (= 2 (count (re-seq #"\"-m\" \"slopp\.testmain\"" s)))
+      (is (= 2 (count (re-seq #"\"-m\" \"slopp\.image\.testmain\"" s)))
           ":test AND :test-run — a trace from only one tier-entry has a hole")
       (testing "cognitect stays on the classpath — the runner resolves it there"
         (is (re-find #"io\.github\.cognitect-labs/test-runner" s)))

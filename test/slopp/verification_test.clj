@@ -1,7 +1,7 @@
 (ns slopp.verification-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.image.repl :as repl]
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -316,8 +316,8 @@
                         "(deftest f-t (is (= 2 (f 1))))\n"))
       ;; a runner that writes a known trace, then hands off to the real
       ;; cognitect main — exactly the delegate-don't-replace shape.
-      (api/create-ns! sess 'slopp.testmain
-                      :source (str "(ns slopp.testmain\n"
+      (api/create-ns! sess 'slopp.image.testmain
+                      :source (str "(ns slopp.image.testmain\n"
                                    "  \"Stub trace runner (test).\"\n"
                                    "  (:require [clojure.java.io :as io]))\n"
                                    "(def trace-file-prefix \"slopp-trace-\")\n"
@@ -490,9 +490,9 @@
 
 (deftest ^:external live-handle-shape-change-rebuilds-the-image
   ;; The one failure this project never guarded, and it bricked the session
-  ;; TWICE. slopp's own code lives in the store, so editing slopp.repl
+  ;; TWICE. slopp's own code lives in the store, so editing slopp.image.repl
   ;; hot-reloads it into the process doing the editing. Renaming :client to
-  ;; :slopp.repl/client correctly rewrote start! AND every reader — the store
+  ;; :slopp.image.repl/client correctly rewrote start! AND every reader — the store
   ;; was perfectly consistent — but the map already sitting in (:image @session)
   ;; was built minutes earlier by the OLD start! and still held :client.
   ;;

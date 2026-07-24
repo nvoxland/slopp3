@@ -1,10 +1,10 @@
-(ns slopp.mine
+(ns slopp.store.mine
   "Demand mining over provenance journals: find MANUAL workaround shapes for
   refactorings that don't exist yet (discoverability countermeasure — needs
   with workable manual paths never announce themselves; the journal shows
   them anyway).
 
-    clojure -M -m slopp.mine <project-dir> ...
+    clojure -M -m slopp.store.mine <project-dir> ...
 
   Shapes detected per store:
   - :sig-change  — a defn replaced with a changed single arg vector; flagged
@@ -14,7 +14,7 @@
                    nearby (manual inline)"
   (:require [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n]
-            [slopp.db :as db]))
+            [slopp.store.db :as db]))
 
 (defn- arglist [src]
   (try (let [sx (n/sexpr (p/parse-string src))]
@@ -72,7 +72,7 @@
     {:dir dir :findings (vec (concat sig inl))}))
 
 (defn -main "CLI: print `mine-store` findings for each store dir given.
-  `clojure -M -m slopp.mine <dir>...`"
+  `clojure -M -m slopp.store.mine <dir>...`"
   [& dirs]
   (doseq [d dirs]
     (prn (mine-store d))))

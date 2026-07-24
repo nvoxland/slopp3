@@ -1,19 +1,19 @@
-(ns slopp.turn
+(ns slopp.mcp.turn
   "One-shot turn markers for Claude Code hooks: append a :turn-begin /
   :turn-end delta DIRECTLY to a project's journal, out-of-band — the agent's
   own server absorbs it via journal sync (m5b). This is how the VERBATIM
   user prompt reaches provenance without the model relaying it.
 
   Hook wiring (per agent workspace, .claude/settings.json):
-    UserPromptSubmit -> cd <slopp-repo> && clojure -M -m slopp.turn <dir> hook-begin <agent>
-    Stop             -> cd <slopp-repo> && clojure -M -m slopp.turn <dir> hook-end <agent>
+    UserPromptSubmit -> cd <slopp-repo> && clojure -M -m slopp.mcp.turn <dir> hook-begin <agent>
+    Stop             -> cd <slopp-repo> && clojure -M -m slopp.mcp.turn <dir> hook-end <agent>
   The hook-* modes read Claude Code's hook JSON from stdin ({\"prompt\": ...})
   so the intent recorded is the user's exact words. Manual modes:
-    clojure -M -m slopp.turn <dir> begin <agent> <prompt words...>
-    clojure -M -m slopp.turn <dir> end <agent>"
+    clojure -M -m slopp.mcp.turn <dir> begin <agent> <prompt words...>
+    clojure -M -m slopp.mcp.turn <dir> end <agent>"
   (:require [cheshire.core :as json]
             [clojure.string :as str]
-            [slopp.db :as db]
+            [slopp.store.db :as db]
             [slopp.store :as store]))
 
 ^:unsafe (defn- append-marker! [dir kind agent intent]
@@ -37,7 +37,7 @@
     (binding [*out* *err*]
       (println "no slopp store at" dir "— turn" (name kind) "not recorded"))))
 
-^:unsafe (defn -main "CLI: append a turn marker to `dir`'s journal — the identity boundary an
+^:unsafe (defn ^:export -main "CLI: append a turn marker to `dir`'s journal — the identity boundary an
   agent's episodes hang off.
 
   `begin`/`end` take the intent as trailing words. `hook-begin`/`hook-end` are
@@ -45,7 +45,7 @@
   UserPromptSubmit carries the user's exact words in `:prompt`, so the turn
   records what was actually asked rather than a paraphrase.
 
-  `clojure -M -m slopp.turn <dir> begin|end|hook-begin|hook-end <agent> [intent...]`"
+  `clojure -M -m slopp.mcp.turn <dir> begin|end|hook-begin|hook-end <agent> [intent...]`"
   [dir kind agent & intent-words]
   (case kind
     "begin"      (append-marker! dir :turn-begin agent
@@ -60,4 +60,4 @@
     "hook-end"   (do (try (slurp *in*) (catch Exception _))
                      (append-marker! dir :turn-end agent nil))
     (binding [*out* *err*]
-      (println "usage: slopp.turn <dir> begin|end|hook-begin|hook-end <agent> [intent...]"))))
+      (println "usage: slopp.mcp.turn <dir> begin|end|hook-begin|hook-end <agent> [intent...]"))))

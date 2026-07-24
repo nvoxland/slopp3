@@ -1,4 +1,4 @@
-(ns slopp.db
+(ns slopp.store.db
   "Durable system of record (C7): SQLite at `<dir>/.slopp/store.db`. Because of
   C1 there are no `.clj` files on disk — this database IS the source code — so
   it gets a real storage engine rather than hand-rolled EDN files.
@@ -19,7 +19,7 @@
             [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n] [slopp.store.fields :as fields]))
 
-(defn open!
+(defn ^:export open!
   "Open (creating if needed) the store db under `dir`; returns the connection.
 
   `{:create? false}` returns NIL instead of creating one when `dir` has no
@@ -89,7 +89,7 @@
                               bytes BLOB NOT NULL)"])
          conn)))))
 
-^:reads (defn data-version
+^:reads (defn ^:export data-version
   "SQLite's cheap foreign-commit detector: this value changes when ANOTHER
   connection (thread or process) has committed to the database since we last
   looked — our own writes through this connection don't bump it."
@@ -119,13 +119,13 @@
           :ns (symbol (:deltas/ns row))}
          (edn/read-string (:deltas/payload row))))
 
-(defn set-line-id!
+(defn ^:export set-line-id!
   "Stamp this store db with its line identity (branch creation)."
   [conn line-id]
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES ('line-id', ?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" line-id]))
 
-^:reads (defn deps
+^:reads (defn ^:export deps
   "The store's external-dependency manifest, read straight from meta — for
   the git/native/launch paths that need it without opening a session."
   [conn]
@@ -133,13 +133,13 @@
               :meta/v edn/read-string)
       {}))
 
-^:reads (defn get-dep-surface
+^:reads (defn ^:export get-dep-surface
   "The cached analysis surface for a dependency `id` (\"lib@version\"), or nil."
   [conn id]
   (some-> (jdbc/execute-one! conn ["SELECT surface FROM dep_surface WHERE id = ?" id])
           :dep_surface/surface edn/read-string))
 
-(defn put-dep-surface!
+(defn ^:export put-dep-surface!
   "Cache `surface` (an EDN-able map) for dependency `id`. Content-addressed by
   coord@version — computed once, reused forever."
   [conn id surface]
@@ -147,20 +147,20 @@
                         ON CONFLICT(id) DO UPDATE SET surface = excluded.surface"
                        id (pr-str surface)]))
 
-^:reads (defn get-dep-native
+^:reads (defn ^:export get-dep-native
   "The cached native-image verdict for a dependency `id`, or nil (P4-deps M6)."
   [conn id]
   (some-> (jdbc/execute-one! conn ["SELECT native FROM dep_surface WHERE id = ?" id])
           :dep_surface/native edn/read-string))
 
-(defn put-dep-native!
+(defn ^:export put-dep-native!
   "Cache the native-compat `verdict` (EDN map) for dependency `id`."
   [conn id verdict]
   (jdbc/execute! conn ["INSERT INTO dep_surface (id, native) VALUES (?,?)
                         ON CONFLICT(id) DO UPDATE SET native = excluded.native"
                        id (pr-str verdict)]))
 
-^:reads (defn rendered-sources
+^:reads (defn ^:export rendered-sources
   "{ns-sym rendered-source} straight from the element rows — the `source`
   column is each element's canonical serialization, so concatenation by pos
   IS the render-ns output, byte-exact. The live state without parsing,
@@ -173,7 +173,7 @@
           (jdbc/execute! conn ["SELECT ns, source FROM elements
                                 ORDER BY ns, pos"])))
 
-^:reads (defn commit-shas
+^:reads (defn ^:export commit-shas
   "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
   written by slopp.git; this is read-only convenience for query surfaces).
   Nil when nothing has been projected. Only UNAMBIGUOUS rows: a delta id
@@ -190,14 +190,14 @@
           (jdbc/execute! conn ["SELECT delta_id, MIN(sha) AS sha, COUNT(*) AS n
                                 FROM git_map GROUP BY delta_id"]))))
 
-^:reads (defn deltas-after
+^:reads (defn ^:export deltas-after
   "The journal suffix past the first `n` deltas (incremental sync)."
   [conn n]
   (mapv row->delta
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
-^:reads (defn config-files
+^:reads (defn ^:export config-files
   "The store's structured-config entries ({path {:format :values}}), read
   straight from meta — for the projection paths that need it session-free."
   [conn]
@@ -213,14 +213,14 @@
     (jdbc/execute! tx ["INSERT OR IGNORE INTO blobs (sha, bytes) VALUES (?,?)"
                        (str sha) bs])))
 
-^:reads (defn get-blob
+^:reads (defn ^:export get-blob
   "The bytes stored under `sha`, or nil — the sessionless read (git
   projection, build) and the session cache's fallback."
   [conn sha]
   (some-> (jdbc/execute-one! conn ["SELECT bytes FROM blobs WHERE sha = ?" (str sha)])
           :blobs/bytes))
 
-^:reads (defn files
+^:reads (defn ^:export files
   "The store's non-code files manifest ({path → text}), read straight from
   meta — for the git projection paths that need it without a session."
   [conn]
@@ -228,7 +228,7 @@
               :meta/v edn/read-string)
       {}))
 
-^:reads (defn load-store
+^:reads (defn ^:export load-store
   "Reconstruct the full in-memory store from the db, or nil if empty. Every
   registry meta row loads through ONE loop (default from :init unless
   :absent-nil?, :normalize applied — retired vocabulary canonicalizes here,
@@ -266,13 +266,13 @@
               [field (if (and normalize (some? v)) (normalize v) v)])))
      (fields/meta-fields))))
 
-^:reads (defn get-meta
+^:reads (defn ^:export get-meta
   "Read a meta row's value (nil when absent) — the k/v side-table for
   config the journal doesn't track (e.g. `git-remote`, `git-base-sha`)."
   [conn k]
   (:meta/v (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = ?" k])))
 
-^:reads (defn meta-with-prefix
+^:reads (defn ^:export meta-with-prefix
   "Every meta row whose key starts with `prefix`, as `{k v}`. The k/v
   side-table has no other way to be enumerated, and observations are stored
   one row per form (`observed/<ns>/<name>`) — they load in one scan at
@@ -284,14 +284,14 @@
         (jdbc/execute! conn ["SELECT k, v FROM meta WHERE k LIKE ?"
                              (str prefix "%")])))
 
-(defn set-meta!
+(defn ^:export set-meta!
   "Upsert a meta row — the write side of `get-meta`."
   [conn k v]
   (jdbc/execute! conn ["INSERT INTO meta (k,v) VALUES (?,?)
                         ON CONFLICT(k) DO UPDATE SET v = excluded.v" k (str v)])
   nil)
 
-(defn quarantine-put!
+(defn ^:export quarantine-put!
   "Record a git-pull conflict for `path` (upsert): the raw remote `source`
   (nil for deletions), the remote `sha` it came from, and the human `reason`.
   Off-log by design — never touches the journal."
@@ -306,7 +306,7 @@
                        (System/currentTimeMillis)])
   nil)
 
-^:reads (defn quarantine-list
+^:reads (defn ^:export quarantine-list
   "Every unresolved git-pull conflict, oldest first:
   [{:path :ns :source :sha :reason :at}]."
   [conn]
@@ -319,7 +319,7 @@
            :at     (:quarantine/at row)})
         (jdbc/execute! conn ["SELECT * FROM quarantine ORDER BY at, path"])))
 
-(defn quarantine-clear!
+(defn ^:export quarantine-clear!
   "Resolve one conflict (`path`) — or ALL of them when path is nil."
   [conn path]
   (if path
@@ -373,7 +373,7 @@
   (let [m (.toLowerCase (str (.getMessage e)))]
     (or (.contains m "busy") (.contains m "locked"))))
 
-(defn append!
+(defn ^:export append!
   "Phase-a storage inversion: conditionally append `new-deltas` (+ the full
   snapshot tail via write-snapshot!) in ONE transaction, iff the journal head
   still equals `expected-head` (nil for an empty log). Returns true on
@@ -407,7 +407,7 @@
     (catch java.sql.SQLException e
       (if (writer-collision? e) false (throw e)))))
 
-(defn persist!
+(defn ^:export persist!
   "Write one mutation atomically: the delta, then the full snapshot tail
   (element rows of the touched namespaces, id counter, registry meta rows,
   blobs) via write-snapshot!. Namespaces are small; rewriting a ns's rows per
@@ -422,7 +422,7 @@
      (write-snapshot! tx store nses))
    nil))
 
-^:reads (defn delta-tree
+^:reads (defn ^:export delta-tree
           "The byte-exact rendered `:tree` snapshot of `:commit` delta `id`, parsed
   ON DEMAND, or nil when there is none — a non-commit, a retroactive `:target`
   marker (which never captures one), or a delta written before the split, whose
@@ -435,7 +435,7 @@
                   :deltas/tree
                   edn/read-string))
 
-^:reads (defn journal-stats
+^:reads (defn ^:export journal-stats
           "What the store CARRIES, in bytes: the journal (per op, heaviest first,
   with commit `tree` snapshots counted APART from payloads), the materialized
   state, and the blob table. A pure read straight off SQLite's LENGTH — nothing

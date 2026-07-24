@@ -1,8 +1,8 @@
-(ns slopp.db-test
+(ns slopp.store.db-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.render :as render]
-            [slopp.db :as db]
+            [slopp.store.render :as render]
+            [slopp.store.db :as db]
             [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

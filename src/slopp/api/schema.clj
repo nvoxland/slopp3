@@ -2,8 +2,8 @@
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.render :as render]
-            [slopp.repl :as repl] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+            [slopp.store.render :as render]
+            [slopp.image.repl :as repl] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (defn schema-of
   "The :=> :malli/schema declared on a stored form's defn name, or nil. Read

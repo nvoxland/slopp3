@@ -1,4 +1,4 @@
-(ns slopp.repl
+(ns slopp.image.repl
   "The owned live image (D5): slopp launches and manages a JVM Clojure nREPL as
   a subprocess. `refresh` (hot eval/redefine) is the fast path; `restart!` throws
   the process away for a guaranteed-faithful fresh image — the correctness
@@ -11,7 +11,7 @@
            [java.nio.file.attribute FileAttribute]
            [java.util.concurrent TimeUnit]))
 
-(def clojure-bin
+(def ^:export clojure-bin
   "The clojure launcher for owned images: SLOPP_CLOJURE env override, else the
   first executable found in the usual install locations, else trust PATH.
   Public so `slopp.deps` reuses the same launcher for classpath resolution."
@@ -22,7 +22,7 @@
             ["/opt/homebrew/bin" "/usr/local/bin" "/usr/bin"])
       "clojure"))
 
-(def inherent-deps
+(def ^:export inherent-deps
   "Dependencies slopp-the-tool provides to EVERY owned image for its OWN
   features — nREPL (the image's REPL server) and malli (image-side schema
   generative-check). NOT the project manifest (`deps_add`): never in
@@ -97,7 +97,7 @@
         :else
         (do (Thread/sleep 25) (recur sb))))))
 
-^:unsafe (defn eval!
+^:unsafe (defn ^:export eval!
   "Eval `code` in the image; returns a vector of returned values, read as data
   when readable and left as the raw printed string otherwise (so evals that
   return unreadable objects — namespaces, functions — don't blow up).
@@ -140,13 +140,13 @@
   (eval! handle "(in-ns 'user)")
   handle)
 
-(defn ^{:live-handle true
+(defn ^:export ^{:live-handle true
         :malli/schema
         [:=> [:cat [:? [:map
-                        [:slopp.repl/cmd {:optional true} [:maybe [:sequential :string]]]
-                        [:slopp.repl/dir {:optional true} [:maybe :some]]
-                        [:slopp.repl/timeout-ms {:optional true} :int]
-                        [:slopp.repl/deps {:optional true} [:maybe :map]]]]]
+                        [:slopp.image.repl/cmd {:optional true} [:maybe [:sequential :string]]]
+                        [:slopp.image.repl/dir {:optional true} [:maybe :some]]
+                        [:slopp.image.repl/timeout-ms {:optional true} :int]
+                        [:slopp.image.repl/deps {:optional true} [:maybe :map]]]]]
          :map]}
   start!
   "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
@@ -166,7 +166,7 @@
   oracle-check. Nothing will catch it drifting from the impl — keep it
   honest by hand."
   ([] (start! {}))
-  ([{:slopp.repl/keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
+  ([{:slopp.image.repl/keys [cmd dir timeout-ms deps] :or {timeout-ms 60000}}]
    (let [cmd (or cmd (default-cmd deps))
          dir (or dir (temp-dir))
          pb  (doto (ProcessBuilder. ^java.util.List cmd)
@@ -212,7 +212,7 @@
                                                (catch Exception _ v)))))}
         (not (str/blank? stderr)) (assoc :stderr stderr)))))
 
-^:unsafe (defn eval-checked!
+^:unsafe (defn ^:export eval-checked!
   "Like `eval!` but surfaces evaluation errors instead of silently dropping
   them (F-3c2 — an eval that throws must not look like an empty result).
   Returns `{:values [...]}` — with `:stderr` when the eval printed there
@@ -224,7 +224,7 @@
    (doall (nrepl/message (:client image) {:op "eval" :code code
                                           :session (:session image)}))))
 
-(defn add-libs!
+(defn ^:export add-libs!
   "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via
   Clojure 1.12 `clojure.repl.deps/add-libs` — no restart. Idempotent for
   already-present coords (so it also reconciles an adopted bare spare).
@@ -253,7 +253,7 @@
                        (str/starts-with? % "Reflection warning"))
                   lines)))))
 
-^:unsafe (defn load-checked!
+^:unsafe (defn ^:export load-checked!
   "Like `load!` but surfaces evaluation failures instead of silently dropping
   them (T4 — a failed load must never leave the store and image out of step).
   Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
@@ -274,7 +274,7 @@
       {:values (->> msgs (keep :value)
                     (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
 
-(defn stop!
+(defn ^:export stop!
   "Destroy the image subprocess and release its connection. `image` is the
   opaque handle from `start!` — see `eval!` for why it is not destructured.
   Tolerates a partially-built or foreign-shaped handle: each resource is

@@ -6,7 +6,7 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.mcp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))

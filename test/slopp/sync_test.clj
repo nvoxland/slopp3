@@ -7,7 +7,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.db :as db]
+            [slopp.store.db :as db]
             [slopp.git :as git]
             [slopp.store :as store]
             [slopp.sync :as sync] [slopp.api.query :as query] [slopp.api.external :as external])
