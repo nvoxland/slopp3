@@ -232,3 +232,22 @@
     (testing "an ordinary var whose NAME collides but is a different ns still passes"
       (is (nil? (:error (edit/replace-form s 'demo 'add
                                            "(defn add [x] (my.lib/resolve x))")))))))
+
+(deftest control-characters-in-source-are-refused
+  (let [us  (str (char 31))                     ; unit separator, as \x1f decodes
+        nul (str (char 0))]
+    (testing "a raw control character refuses, naming the codepoint"
+      (let [err (:error (edit/parse-form
+                         (str "(defn f \"D.\" [] (re-find #\"[a-z" us "]\" \"x\"))")))]
+        (is (some? err))
+        (is (re-find #"(?i)control character" err))
+        (is (re-find #"U\+001F" err) err)))
+    (testing "the teaching names the transit decode and a way to spell it"
+      (let [err (:error (edit/parse-form (str "(def x \"" nul "\")")))]
+        (is (re-find #"(?i)escape" err) err)))
+    (testing "tab, newline and return are legitimate whitespace, not control chars"
+      (is (nil? (:error (edit/parse-form "(defn f \"D.\" []\n\t(+ 1 2))")))))
+    (testing "an escaped \\u in the SOURCE TEXT is fine — it is printable"
+      (is (some? (:node (edit/parse-form "(def x \"\\u001f\")")))))
+    (testing "ordinary source is untouched"
+      (is (some? (:node (edit/parse-form "(defn f \"D.\" [] 1)")))))))

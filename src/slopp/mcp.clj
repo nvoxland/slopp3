@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs]))
+            [slopp.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -709,7 +709,7 @@
                                  r))
       "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
       "query_vocabulary" (text! (told! session name a (query/query-vocabulary session :ns (:ns a))))
-      "query_rules" (text! (told! session name a (query/query-rules session)))
+      "query_rules" (text! (told! session name a (rules/query-rules session)))
       "query_capabilities" (text! (told! session name a (query/query-capabilities session)))
       "query_routes" (text! (told! session name a (query/query-routes session)))
       "query_rule_telemetry" (text! (told! session name a (query/query-rule-telemetry session :since (:since a))))

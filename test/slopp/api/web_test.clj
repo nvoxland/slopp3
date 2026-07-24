@@ -270,3 +270,67 @@
     (testing "an endpoint with no contract reads as unschema'd"
       (is (nil? (:web/response (by 'bare))))
       (is (false? (:schema? (by 'bare)))))))
+
+(deftest route-refs-only-read-hiccup-attribute-position
+  (let [src (str "(ns plan.core)\n\n"
+                 "(defn steps \"S.\" [x]\n"
+                 "  [{:op :add :action :replace}\n"
+                 "   {:action \"action\" :method :get}])\n\n"
+                 "(defn ^{:web/method :get :web/path \"/p\" :web/auth :public} page \"P.\" [req]\n"
+                 "  [:div [:a {:href \"/nowhere\"} \"bad\"]\n"
+                 "        [:form {:action (:uri req) :method \"post\"} \"dyn\"]])\n")
+        s (store/ingest (store/empty-store) 'plan.core src)
+        refs (web/ui-route-refs s)]
+    (testing "a data map that happens to carry :action is NOT a route reference"
+      (is (= '#{plan.core/page} (set (map :form refs)))
+          (pr-str (mapv (juxt :form :attr :value) refs))))
+    (testing "genuine hiccup attrs still register, dynamic ones as :unresolved"
+      (is (= #{[:href :exact] [:action :unresolved]}
+             (set (map (juxt :attr :kind) refs)))))
+    (testing "and the method still comes from the same attr map"
+      (is (= :post (:method (first (filter #(= :action (:attr %)) refs))))))))
+
+(deftest the-tag-decides-whether-an-attr-is-a-url
+  (let [src (str "(ns plan.two)\n\n"
+                 "(defn plan \"P.\" [x]\n"
+                 "  [:step {:action :replace :name x}])\n\n"
+                 "(defn widget \"W.\" [x]\n"
+                 "  [:div {:href \"/not-a-link\"} x])\n\n"
+                 "(defn ^{:web/method :get :web/path \"/q\" :web/auth :public} page \"P.\" [req]\n"
+                 "  [:div [:a.nav#top {:href \"/styled\"} \"sugar\"]\n"
+                 "        [:link {:href \"/site.css\"}]\n"
+                 "        [:form {:action (:uri req) :method \"post\"} \"dyn\"]])\n")
+        s (store/ingest (store/empty-store) 'plan.two src)
+        refs (web/ui-route-refs s)]
+    (testing ":action on a non-<form> element is data, not a target"
+      (is (not (contains? (set (map :form refs)) 'plan.two/plan))
+          (pr-str (mapv (juxt :form :attr :value) refs))))
+    (testing ":href on a <div> is an attribute the browser ignores, not a link"
+      (is (not (contains? (set (map :form refs)) 'plan.two/widget))))
+    (testing "the URL-bearing elements register, #id/.class sugar and all"
+      (is (= #{"/styled" "/site.css"}
+             (set (keep :path refs)))))
+    (testing "a <form> action that is code stays :unresolved, with its method"
+      (let [dyn (first (filter #(= :unresolved (:kind %)) refs))]
+        (is (= [:action :post] [(:attr dyn) (:method dyn)]))))))
+
+(deftest tests-are-joined-to-the-endpoints-whose-paths-they-exercise
+  (let [s (store/ingest (store/empty-store) 'shop.api
+                        (str "(ns shop.api)\n\n"
+                             "(defn ^{:web/method :get :web/path \"/todos\" :web/auth :public} todos \"T.\" [req] req)\n\n"
+                             "(defn ^{:web/method :get :web/path \"/todo/:id\" :web/auth :public} one \"O.\" [req] req)\n\n"
+                             "(defn ^{:web/method :post :web/path \"/todos\" :web/auth :public} add! \"A.\" [req] req)\n"))
+        s (store/ingest s 'shop.api-test
+                        (str "(ns shop.api-test)\n\n"
+                             "(deftest listing (handle! ctx {:request-method :get :uri \"/todos\"}))\n\n"
+                             "(deftest detail (handle! ctx {:request-method :get :uri \"/todo/7\"}))\n\n"
+                             "(deftest elsewhere (is (= 1 1)))\n"))
+        joined (web/endpoint-test-refs s)]
+    (testing "a literal URI in a test resolves through the ROUTER to its endpoint"
+      (is (= '#{shop.api-test/listing} (get joined 'shop.api/todos))))
+    (testing "a parameterized route matches the concrete path the test uses"
+      (is (= '#{shop.api-test/detail} (get joined 'shop.api/one))))
+    (testing "method matters — a POST endpoint is not exercised by a GET test"
+      (is (nil? (get joined 'shop.api/add!))))
+    (testing "a test touching no route joins to nothing"
+      (is (not-any? #(contains? % 'shop.api-test/elsewhere) (vals joined))))))

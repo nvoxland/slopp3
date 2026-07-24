@@ -1,4 +1,4 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p]))
+(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.render :as render] [slopp.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -490,10 +490,23 @@
   extend-*) NEVER narrows: its bodies run where the tracer cannot fully see
   them, so its evidence is structurally partial, and narrowing on partial
   evidence is how a false green happens. nil sends the caller to the same
-  closure fallback a silent trace does."
+  closure fallback a silent trace does.
+
+  ROUTE-aware (D-web-html): a web endpoint's tests reach it through
+  `web/handle!`'s runtime route scan, so they leave no static reference AND no
+  trace evidence until they have run once — every endpoint write reported
+  `:no-covering-tests` during exactly the writes its red route test existed
+  for. When trace evidence is silent, `api.web/endpoint-test-refs` joins the
+  static route table to the literal URIs in test forms. Consulted only AFTER
+  tracing, so recorded evidence always wins; a form that is not an endpoint
+  simply misses the join and falls through to nil as before."
   [session ns-sym nm]
   (let [qform (symbol (str ns-sym) (str nm))
-        tmap  (:test-map @session)]
+        tmap  (:test-map @session)
+        via-routes (fn []
+                     (when-let [hits (get (api.web/endpoint-test-refs (:store @session))
+                                          qform)]
+                       (vec (sort hits))))]
     (if (contains? tmap qform)
       [qform]
       (let [e (store/form-named (:store @session) ns-sym nm)]
@@ -511,7 +524,7 @@
                 hits (->> tmap
                           (keep (fn [[t forms]] (when (some forms ks) t)))
                           distinct sort vec)]
-            (when (seq hits) hits)))))))
+            (if (seq hits) hits (via-routes))))))))
 
 (defn implicate
   "Rock 2: annotate each failure with the just-changed forms that failing

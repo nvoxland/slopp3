@@ -800,3 +800,58 @@
   (testing "the load-bearing case: a :cljc form is checked by BOTH worlds"
     (is (modules/rule-applies-to-platform? :clojure :cljc))
     (is (modules/rule-applies-to-platform? :clojurescript :cljc))))
+
+(defn ^{:rule/severity :advisory} fixture-advisory-gate
+  "Test fixture: a write gate that declares its OWN default severity as
+   :advisory, with no per-store dial. Always fires."
+  [_candidate _ns-sym _form-name]
+  "fixture-advisory teaching")
+
+(defn fixture-refuse-gate-a
+  "Test fixture: a refuse-grade write gate (no :rule/severity declared, so the
+   :refuse default applies). Always fires."
+  [_candidate _ns-sym _form-name]
+  "fixture-refuse-a teaching")
+
+(defn fixture-refuse-gate-b
+  "Test fixture: a second refuse-grade write gate, so one candidate trips two
+   refusals in one pass. Always fires."
+  [_candidate _ns-sym _form-name]
+  "fixture-refuse-b teaching")
+
+(deftest write-gate-declares-its-own-default-severity
+  (let [t (store/ingest (store/empty-store) 'app.core
+                        "(ns app.core)\n\n(defn f \"D.\" [x] x)\n")]
+    (with-redefs [modules/per-form-write-gates [#'fixture-advisory-gate
+                                                #'fixture-refuse-gate-a]]
+      (let [gc (modules/gate-check t 'app.core 'f)]
+        (testing "the gate's own :rule/severity is the default — no dial needed"
+          (is (= ["fixture-advisory teaching"] (:advisories gc))))
+        (testing "an undeclared gate still defaults to :refuse"
+          (is (= "fixture-refuse-a teaching" (:refuse gc))))))
+    (testing "a per-store dial still WINS over the declared default"
+      (let [up (first (store/record-config-put
+                       t "rules" :manifest "fixture-advisory-gate" "refuse"))]
+        (with-redefs [modules/per-form-write-gates [#'fixture-advisory-gate]]
+          (is (= "fixture-advisory teaching"
+                 (:refuse (modules/gate-check up 'app.core 'f)))))))))
+
+(deftest stacked-gates-teach-every-refusal-at-once
+  (let [t (store/ingest (store/empty-store) 'app.core
+                        "(ns app.core)\n\n(defn f \"D.\" [x] x)\n")]
+    (with-redefs [modules/per-form-write-gates [#'fixture-refuse-gate-a
+                                                #'fixture-refuse-gate-b]]
+      (testing "gate-check keeps EVERY refuse-grade teaching, not just the first"
+        (is (= ["fixture-refuse-a teaching" "fixture-refuse-b teaching"]
+               (:refusals (modules/gate-check t 'app.core 'f)))))
+      (testing ":refuse stays the first teaching (the existing shape)"
+        (is (= "fixture-refuse-a teaching"
+               (:refuse (modules/gate-check t 'app.core 'f)))))
+      (testing "the blocking message carries the others so ONE resend satisfies both"
+        (let [msg (modules/gate-refusal t 'app.core 'f)]
+          (is (re-find #"fixture-refuse-a teaching" msg))
+          (is (re-find #"fixture-refuse-b teaching" msg))
+          (is (re-find #"(?i)also pending" msg)))))
+    (testing "a lone refusal reads exactly as before — no 'also pending' noise"
+      (with-redefs [modules/per-form-write-gates [#'fixture-refuse-gate-a]]
+        (is (= "fixture-refuse-a teaching" (modules/gate-refusal t 'app.core 'f)))))))

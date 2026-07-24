@@ -30,6 +30,31 @@
         s (if (= \: (first s)) (subs s 1) s)]
     (keyword s)))
 
+(def ^:private symbol-coord-fields
+  "Coord fields tools.deps requires to hold SYMBOLS. JSON has no symbol type,
+   so an MCP-supplied coord spells them as strings. Grow this list rather than
+   coercing at a call site — the point is that one place knows the types."
+  [:exclusions])
+
+(defn ^:export canonical-coord
+  "Canonical spelling of a dependency COORD — the fields tools.deps wants as
+   symbols (`symbol-coord-fields`) coerced from the strings an MCP/JSON caller
+   can spell. The coord twin of `canonical-platform`, and the same lesson:
+   coerce where the type is KNOWN, at the boundary.
+
+   Coercing only in the PROJECTION left the store holding strings, and a string
+   exclusion does not fail where you can see it — the live hot-add tolerates it
+   and `make_classpath2` dies in the first fresh JVM with a truncated stack that
+   never mentions exclusions. Total and idempotent, so the fold/replay path can
+   call it on anything."
+  [coord]
+  (reduce (fn [c f]
+            (cond-> c
+              (seq (get c f))
+              (update f (fn [xs] (mapv #(if (string? %) (symbol %) %) xs)))))
+          coord
+          symbol-coord-fields))
+
 (def field-registry
   "Store fold-field → persistence declaration. :init seeds empty-store;
   :meta-key names the db meta row persist!/append! write and load-store

@@ -82,3 +82,18 @@
         r      (merge/merge-logs ours theirs)]
     (is (some? (:error r)) (pr-str (dissoc r :store)))
     (is (re-find #"slopp\.store\.fields" (str (:error r))) (str (:error r)))))
+
+(deftest canonical-coord-coerces-symbol-typed-fields
+  (testing ":exclusions arrive as strings over JSON and must be stored as symbols"
+    (is (= {:mvn/version "1.0" :exclusions ['com.yahoo.platform.yui/yuicompressor]}
+           (fields/canonical-coord
+            {:mvn/version "1.0" :exclusions ["com.yahoo.platform.yui/yuicompressor"]}))))
+  (testing "already-symbol exclusions are left alone (idempotent)"
+    (is (= {:exclusions ['a/b]} (fields/canonical-coord {:exclusions ['a/b]}))))
+  (testing "a mixed vector coerces only what needs it"
+    (is (= {:exclusions ['a/b 'c/d]} (fields/canonical-coord {:exclusions ["a/b" 'c/d]}))))
+  (testing "a coord with no symbol-typed field is untouched"
+    (is (= {:mvn/version "1.0"} (fields/canonical-coord {:mvn/version "1.0"}))))
+  (testing "total on junk — the fold/replay path must never throw here"
+    (is (= {:exclusions []} (fields/canonical-coord {:exclusions []})))
+    (is (= {} (fields/canonical-coord {})))))

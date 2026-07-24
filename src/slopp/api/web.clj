@@ -36,36 +36,65 @@
   [store marker-key]
   (modules/web-performers store marker-key))
 
+(def ^:private url-attrs
+  "Hiccup tag → the attributes that name a URL ON THAT ELEMENT, per HTML.
+   `:href` is a URL on <a>, <link>, <area> and <base>; `:action` on <form>.
+   Everywhere else both are inert attributes the browser ignores, so a map
+   carrying one is not a route reference — it is ordinary data that happens to
+   share a key name. This table is why `link-refs` needs no heuristics: the
+   question 'is this a link' is answered by the HTML spec, not by guessing."
+  {:a #{:href} :link #{:href} :area #{:href} :base #{:href} :form #{:action}})
+
+(defn- hiccup-tag
+  "The ELEMENT of a hiccup tag keyword, with hiccup's `#id` / `.class` sugar
+   stripped — `:a#main.big` and `:a.nav` are both `:a`. nil for anything that
+   isn't a keyword, so a non-element vector answers no element at all."
+  [x]
+  (when (keyword? x)
+    (keyword (first (str/split (name x) #"[#.]")))))
+
 (defn- link-refs
-  "Route references in one form's SEXPR: literal attr maps carrying :href
-  or :action. Root-relative string values are :exact; (str \"/lit\" …) with
-  a root-relative literal first arg is :prefix; other dynamic values are
+  "Route references in one form's SEXPR: the URL-bearing attribute of a hiccup
+  element that HAS one. Root-relative string values are :exact; (str \"/lit\" …)
+  with a root-relative literal first arg is :prefix; other dynamic values are
   :unresolved. Absolute URLs (scheme or //), anchors, and non-root-relative
-  strings are not route references at all. :action takes its method from
-  the same map's :method attr (default :get); :href is always :get."
+  strings are not route references at all. :action takes its method from the
+  same map's :method attr (default :get); :href is always :get.
+
+  THE TAG DECIDES — see `url-attrs`. Reading instead \"any map in this form with
+  an :href key\" was a coincidence test: it made `{:op :add :action :replace}` a
+  route reference, 16 of them store-wide, none dischargeable by anyone. The
+  attribute map must also sit in hiccup ATTRIBUTE position (second element,
+  after the tag), which is what an attr map IS. Grounding in the HTML spec is
+  not a tighter heuristic, it is the actual question, so there is no residue
+  left to shave. A map assembled elsewhere and passed in by name is missed —
+  the right side to err on: a missed ref costs a 404 nobody was told about, a
+  false one costs every reader of every done."
   [sexpr]
-  (for [m (filter map? (tree-seq coll? seq sexpr))
-        attr [:href :action]
+  (for [v     (filter vector? (tree-seq coll? seq sexpr))
+        :when (map? (second v))
+        :let  [m (second v)]
+        attr  (url-attrs (hiccup-tag (first v)))
         :when (contains? m attr)
-        :let [v (get m attr)
+        :let [val (get m attr)
               method (if (= :action attr)
                        (let [mv (get m :method "get")]
                          (keyword (str/lower-case (if (keyword? mv) (name mv) (str mv)))))
                        :get)
               ref (cond
-                    (string? v)
-                    (when (and (str/starts-with? v "/")
-                               (not (str/starts-with? v "//")))
-                      {:kind :exact :path v})
+                    (string? val)
+                    (when (and (str/starts-with? val "/")
+                               (not (str/starts-with? val "//")))
+                      {:kind :exact :path val})
 
-                    (and (seq? v) (= 'str (first v)) (string? (second v))
-                         (str/starts-with? (second v) "/")
-                         (not (str/starts-with? (second v) "//")))
-                    {:kind :prefix :path (second v)}
+                    (and (seq? val) (= 'str (first val)) (string? (second val))
+                         (str/starts-with? (second val) "/")
+                         (not (str/starts-with? (second val) "//")))
+                    {:kind :prefix :path (second val)}
 
-                    (nil? v) nil
+                    (nil? val) nil
 
-                    :else {:kind :unresolved :value (pr-str v)})]
+                    :else {:kind :unresolved :value (pr-str val)})]
         :when ref]
     (assoc ref :attr attr :method method)))
 
@@ -152,3 +181,51 @@
                     false))]
     {:dangling   (vec (remove served? (remove #(= :unresolved (:kind %)) refs)))
      :unresolved (filterv #(= :unresolved (:kind %)) refs)}))
+
+(defn- request-literals
+  "The literal ring REQUESTS in one form's sexpr: maps carrying a string `:uri`,
+   as `{:method :uri}`. `:request-method` gives the method (`:get` when a test
+   omits it, matching ring). A map with a non-literal uri names no particular
+   route and is skipped — there is nothing to join it to."
+  [sexpr]
+  (for [m (filter map? (tree-seq coll? seq sexpr))
+        :let [uri (:uri m)]
+        :when (and (string? uri) (str/starts-with? uri "/"))]
+    {:uri uri
+     :method (let [mv (get m :request-method :get)]
+               (if (keyword? mv) mv (keyword (str/lower-case (str mv)))))}))
+
+(defn ^:export endpoint-test-refs
+  "`{qualified-endpoint-form #{qualified-test-form}}` — which tests exercise
+   which declared endpoint, joined through the ROUTER over the literal ring
+   requests test forms contain (`{:request-method :get :uri \"/todo/7\"}`).
+
+   The tracer cannot see this edge: a test reaches a handler through
+   `web/handle!`'s runtime route scan, so there is no static reference and no
+   recorded evidence until the test has run once. Every endpoint write therefore
+   reported `:no-covering-tests` while a red test aimed at exactly that route sat
+   in the store. The route table IS static and `router/match` is the same matcher
+   the server uses, so this join needs no heuristic.
+
+   Erring toward INCLUSION is correct here, and is the opposite of the bar a RULE
+   must clear (D-rule-grounding): this feeds test SELECTION, where an extra test
+   costs seconds and a missed one costs a false green."
+  [store]
+  (let [routes (endpoints store)
+        owner  (fn [{:keys [method uri]}]
+                 (when-let [r (router/match routes method uri)]
+                   (when (and (:ns r) (:name r))
+                     (symbol (str (:ns r)) (str (:name r))))))]
+    (reduce
+     (fn [acc [test-sym reqs]]
+       (reduce (fn [a req]
+                 (if-let [e (owner req)] (update a e (fnil conj #{}) test-sym) a))
+               acc reqs))
+     {}
+     (for [nsx  (sort (keys (:namespaces store)))
+           :when (render/test-ns? nsx)
+           e     (store/forms store nsx)
+           :when (:name e)
+           :let  [sx (try (n/sexpr (:node e)) (catch Exception _ nil))]
+           :when sx]
+       [(symbol (str nsx) (str (:name e))) (request-literals sx)]))))

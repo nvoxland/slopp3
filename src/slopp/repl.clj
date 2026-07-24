@@ -186,23 +186,43 @@
          (throw (ex-info (str "image boot failed: " (ex-message t))
                          {:pid (.pid proc)} t)))))))
 
+^:unsafe (defn- eval-outcome
+  "Classify a completed nREPL eval's messages: `{:values [...]}` (plus
+   `:stderr` when the eval WROTE to stderr without failing) or `{:err msg}`.
+
+   The verdict comes from nREPL's `eval-error` STATUS, which is the only thing
+   that actually knows. Reading `:err` — the stderr STREAM — as the verdict
+   instead meant any library that prints at load turned a successful eval into
+   an error AND discarded its values: garden's `WARNING: abs already refers to
+   …` did exactly that, and because a second eval finds the namespace already
+   loaded and prints nothing, it was non-reproducible on the retry.
+
+   A failure's message keeps the stderr text, which is where the exception's
+   own message lives (`:ex` names only the class), falling back to the class
+   when the eval failed silently."
+  [msgs]
+  (let [stderr  (str/join (keep :err msgs))
+        failed? (some #(some #{"eval-error"} (:status %)) msgs)]
+    (if failed?
+      {:err (str/trim (if (str/blank? stderr)
+                        (or (some :ex msgs) "eval-error")
+                        stderr))}
+      (cond-> {:values (->> msgs (keep :value)
+                            (mapv (fn [v] (try (read-string v)
+                                               (catch Exception _ v)))))}
+        (not (str/blank? stderr)) (assoc :stderr stderr)))))
+
 ^:unsafe (defn eval-checked!
   "Like `eval!` but surfaces evaluation errors instead of silently dropping
   them (F-3c2 — an eval that throws must not look like an empty result).
-  Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
-  `eval!` for why it is not destructured."
+  Returns `{:values [...]}` — with `:stderr` when the eval printed there
+  without failing — or `{:err msg}`. `eval-outcome` does the classifying, and
+  it reads nREPL's `eval-error` status rather than the stderr stream. `image`
+  is the opaque handle — see `eval!` for why it is not destructured."
   [image code]
-  (let [msgs (doall (nrepl/message (:client image) {:op "eval" :code code
-                                                    :session (:session image)}))
-        errs (concat (keep :err msgs)
-                     (mapcat (fn [m]
-                               (when (some #{"eval-error"} (:status m))
-                                 [(or (:ex m) "eval-error")]))
-                             msgs))]
-    (if (seq errs)
-      {:err (str/trim (str/join " " (distinct errs)))}
-      {:values (->> msgs (keep :value)
-                    (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+  (eval-outcome
+   (doall (nrepl/message (:client image) {:op "eval" :code code
+                                          :session (:session image)}))))
 
 (defn add-libs!
   "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via

@@ -36,35 +36,45 @@
       (assoc c :done-now (pos? (:test-runs c 0)) :test-runs 0)
 
       (tools/write-tools tool)
-      (assoc c :test-runs 0)
+      ;; a write is PROGRESS: it ends the streak the searches were part of
+      (assoc c :test-runs 0 :searches 0)
 
       :else (assoc c :searches 0))))
 
 (def smell-registry
   "Deterministic bad-usage smells → one-line redirections naming the better
   tool. EXPAND HERE as new smells surface (dogfooding is the source): each
-  entry is [key fires?-pred msg] over the bump-smell-counts map — one
-  entry, no plumbing. Fire policy (once per session + 30-min per-store
-  cooldown) lives in track-hint!; messages are suggestions, never refusals."
-  [[:test-runs #(>= (:test-runs %) 3)
+  entry is [key owner-tools fires?-pred msg] over the bump-smell-counts map —
+  one entry, no plumbing.
+
+  `owner-tools` is the set of tool names that can EARN the smell (nil = any
+  call). A smell is only considered on a call it owns, so a hint never rides a
+  tool that could not have caused it — a stale search streak once surfaced on a
+  `deps_add`, and a mis-aimed hint teaches agents to ignore hints.
+
+  Fire policy (once per session + 30-min per-store cooldown) lives in
+  track-hint!; messages are suggestions, never refusals."
+  [[:test-runs #{"test_run"} #(>= (:test-runs %) 3)
     "every write already verifies (its result includes :test) — test_run is rarely needed"]
-   [:pre-done-test :done-now
+   [:pre-done-test #{"done" "commit_point"} :done-now
     "done already runs the affected tests for everything you touched — a pre-flight test_run is redundant; mid-episode runs are for spot-checks"]
-   [:history #(>= (:history %) 2)
+   [:history #{"query_history" "query_changes" "report"} #(>= (:history %) 2)
     "stitching history calls — report {since/contains} composes milestones + changes + asks in ONE read"]
-   [:dumps #(>= (:dumps %) 2)
+   [:dumps #{"query_source"} #(>= (:dumps %) 2)
     "repeated whole-namespace dumps — query_slice {ns name} gives one form's source + cards for what it reaches; targets [{ns name}] reads named forms"]
-   [:renames #(>= (:renames %) 2)
+   [:renames #{"edit_rename"} #(>= (:renames %) 2)
     "several renames — if this is one CONCEPT changing name, rename_sweep {from to} does namespaces + vars + keys + prose in ONE call"]
-   [:searches #(>= (:searches %) 3)
+   [:searches #{"query_search"} #(>= (:searches %) 3)
     "a search streak — asking a QUESTION instead may be one call: query_depends {on X} (who uses/what reaches), query_slice {ns name} (a neighborhood), report {contains} (history)"]])
 
 (defn track-hint!
   "Run the smell registry over this call: bump counters, then let the FIRST
   fireable smell speak — `some` skips already-fired ones, so one smell never
-  shadows another (the old cond did). Anti-spam by construction: each smell
-  fires ONCE per session AND at most once per 30 minutes per STORE (db-meta
-  cooldown survives sessions)."
+  shadows another (the old cond did). Only smells this TOOL owns are
+  considered: a counter is moved by one tool, and reading every counter on
+  every call let a stale search streak surface on a `deps_add`. Anti-spam by
+  construction: each smell fires ONCE per session AND at most once per 30
+  minutes per STORE (db-meta cooldown survives sessions)."
   [session tool args]
   (let [s (::stats (swap! session update ::stats
                           #(bump-smell-counts % tool args)))
@@ -85,5 +95,8 @@
                                            (pr-str (assoc hist k now)))
                              (catch Exception _ nil)))
                       msg))))]
-    (some (fn [[k pred msg]] (when (pred s) (fire! k msg)))
+    (some (fn [[k owners pred msg]]
+            (when (and (or (nil? owners) (contains? owners tool))
+                       (pred s))
+              (fire! k msg)))
           smell-registry)))

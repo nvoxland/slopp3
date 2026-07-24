@@ -279,3 +279,23 @@
         fid  (:id (store/form-named st3 'ep.b 'ep.b))]
     (testing "the episode's net ns change includes a :refer → NOT inert, tests selected"
       (is (= '[ep.b-test/h-t] (session/impacted-tests sess st3 [fid]))))))
+
+(deftest an-endpoint-selects-the-tests-that-drive-its-route
+  (let [s (store/ingest (store/empty-store) 'shop.api
+                        (str "(ns shop.api)\n\n"
+                             "(defn ^{:web/method :get :web/path \"/todos\" :web/auth :public} todos \"T.\" [req] req)\n"))
+        s (store/ingest s 'shop.api-test
+                        (str "(ns shop.api-test)\n\n"
+                             "(deftest listing (handle! ctx {:request-method :get :uri \"/todos\"}))\n\n"
+                             "(deftest unrelated (is (= 1 1)))\n"))
+        sess (atom {:store s :test-map {}})]
+    (testing "with no trace evidence, the route join still names the covering test"
+      (is (= '[shop.api-test/listing]
+             (session/affected-tests sess 'shop.api 'todos))))
+    (testing "a non-endpoint form with no evidence still returns nil (run everything)"
+      (is (nil? (session/affected-tests sess 'shop.api-test 'unrelated-missing))))
+    (testing "recorded TRACE evidence still wins — the join is a fallback, not an override"
+      (let [sess (atom {:store s
+                        :test-map '{shop.api-test/unrelated #{shop.api/todos}}})]
+        (is (= '[shop.api-test/unrelated]
+               (session/affected-tests sess 'shop.api 'todos)))))))

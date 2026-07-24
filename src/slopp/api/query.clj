@@ -11,7 +11,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.edit.refs :as refs]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.rules.catalog :as catalog] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -859,26 +859,6 @@
   [session & {:keys [ns]}]
   (let [attrs (attrs/vocabulary (:store @session) :ns-prefix ns)]
     {:count (count attrs) :attributes attrs}))
-
-(defn ^:export query-rules
-  "The D9 enforcement catalog for THIS store: every rule with its grain, its
-   EFFECTIVE per-store severity (the `rules` config override else the default),
-   how to discharge it, and what it means. The one place to see what's enforced
-   and at what grade — dial any rule with `config_file {path \"rules\" key <rule>
-   value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`). WRITE-gate (`:form`)
-   severity is one of `:off` (skip), `:advisory` (warn-but-proceed — the teaching
-   rides the write result's `:advisories`), or `:refuse` (block); `:error` has no
-   write-gate meaning and reports as `:refuse`. Done-grain rules keep the full
-   `:off`/`:advisory`/`:error` range."
-  [session]
-  (let [st (:store @session)]
-    (mapv (fn [{:keys [rule grain severity] :as r}]
-            (let [eff (edit.modules/rule-severity st rule severity)]
-              (assoc r :severity
-                     (if (= grain :form)
-                       (case eff (:off :advisory) eff :refuse)
-                       eff))))
-          catalog/rule-catalog)))
 
 (defn ^:export query-rule-telemetry
   "The D9 rules' fire-rate + discharge signal for THIS store — the demand signal

@@ -158,9 +158,12 @@
   SKIPS the hot-load and defers verification to the ClojureScript compiler
   (compile_client) — reporting `cljs-deferred-summary`. D-web-cljs."
   [session ns-sym source & {:keys [agent]}]
-  (if (get-in (:store @session) [:namespaces ns-sym])
-    {:error (str ns-sym " already exists — edit its forms instead"
-                 " (whole-namespace overwrite is not allowed)")}
+  (if-let [pre (or (when (get-in (:store @session) [:namespaces ns-sym])
+                     (str ns-sym " already exists — edit its forms instead"
+                          " (whole-namespace overwrite is not allowed)"))
+                   ;; parse-form guards the per-FORM door; this is the other one
+                   (edit/control-char-refusal source))]
+    {:error pre}
     (try
       (let [base      (:store @session)
             candidate (store/ingest base ns-sym source :agent agent)
@@ -207,10 +210,10 @@
                       summary (if load?
                                 (session/run-verification! session ns-sym nil :edited edited)
                                 session/cljs-deferred-summary)
-recompiled (session/maybe-recompile-client! session ns-sym)]
+                      recompiled (session/maybe-recompile-client! session ns-sym)]
                   (session/commit-appended! session
-                                    #(store/record-verification % ns-sym summary)
-                                    [])
+                                            #(store/record-verification % ns-sym summary)
+                                            [])
                   (cond-> {:ns ns-sym
                            :forms (count (store/forms candidate ns-sym))
                            :warnings (vec (edit/ns-warnings candidate ns-sym))
@@ -266,7 +269,15 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
 ^:reads (defn query-eval
   "Observe-only eval against the live image (the oracle): call anything —
   including effectful fns — but (re)defining code is rejected (T5); writes go
-  through the edit tools so provenance stays airtight."
+  through the edit tools so provenance stays airtight.
+
+  Returns the values, or `{:error msg}` when the eval actually FAILED — nREPL's
+  `eval-error` status, not merely something reaching stderr. A library that
+  prints at load (`WARNING: abs already refers to …`) is output, not failure:
+  its warning is dropped here, as in any REPL, and the values come back. It used
+  to come back as `{:error …}` with the values discarded, and since a second
+  eval finds the namespace loaded and prints nothing, the failure vanished on
+  retry."
   [session code]
   (if-let [err (edit/observe-gate code)]
     {:error err}
@@ -1223,6 +1234,13 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   HOT-adds the jar to the running image via add-libs — no restart; on failure
   it restarts. Returns {:added lib :coord :hot true|:restarted true} | {:error}.
 
+  A coord carrying `:exclusions` RESTARTS rather than hot-adds. `add-libs`
+  silently ignores exclusions and a fresh JVM honors them, so hot-adding leaves
+  the oracle running a classpath no fresh JVM can reproduce: the in-image suite
+  goes green with the excluded jar present while every external shard, `build!`
+  and native fail to load. An image that can run what a fresh JVM cannot LOAD is
+  the cold-load failure class, and the cheapest place to not have it is here.
+
   With `:client true` the dep is BUILD-ONLY (the ClojureScript compiler): it
   records to the separate `:client-deps` manifest, is NOT analyzed and NOT
   hot-loaded, and routes to the `:cljs` alias in the generated deps.edn — so it
@@ -1234,27 +1252,34 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
     (not (and (map? coord) (seq coord)))
     {:error "dependency coord must be a non-empty map like {:mvn/version \"1.2.3\"}"}
 
-    client
-    (do (session/commit-appended! session
-                                  #(first (store/record-client-dep
-                                           % lib coord :agent agent :prompt prompt))
-                                  [])
-        {:added lib :coord coord :client true})
-
     :else
-    (let [surf (api.deps/analyze-dep! session lib coord)]                 ; M4: API surface
-      (session/commit-appended! session
-                        #(first (store/record-deps-add
-                                 % lib coord :agent agent :prompt prompt
-                                 :namespaces (:namespaces surf)))  ; M3: dep-ns index
-                        [])
-      (let [base (cond-> {:added lib :coord coord}
-                   surf (assoc :namespaces (vec (:namespaces surf))
-                               :vars (count (:vars surf))))]
-        (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
-          (do (session/fresh-image! session)            ; hot add failed → faithful restart
-              (assoc base :restarted true :note (:err hot)))
-          (assoc base :hot true))))))
+    (let [coord (fields/canonical-coord coord)]      ; JSON has no symbol type
+      (if client
+        (do (session/commit-appended! session
+                                      #(first (store/record-client-dep
+                                               % lib coord :agent agent :prompt prompt))
+                                      [])
+            {:added lib :coord coord :client true})
+        (let [surf (api.deps/analyze-dep! session lib coord)]             ; M4: API surface
+          (session/commit-appended! session
+                                    #(first (store/record-deps-add
+                                             % lib coord :agent agent :prompt prompt
+                                             :namespaces (:namespaces surf)))  ; M3: dep-ns index
+                                    [])
+          (let [base (cond-> {:added lib :coord coord}
+                       surf (assoc :namespaces (vec (:namespaces surf))
+                                   :vars (count (:vars surf))))]
+            (if (seq (:exclusions coord))
+              (do (session/fresh-image! session)
+                  (assoc base :restarted true
+                         :note (str "restarted rather than hot-added: add-libs ignores"
+                                    " :exclusions but a fresh JVM honors them, so the"
+                                    " image would have run a classpath no build or"
+                                    " external shard could reproduce")))
+              (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
+                (do (session/fresh-image! session)    ; hot add failed → faithful restart
+                    (assoc base :restarted true :note (:err hot)))
+                (assoc base :hot true)))))))))
 
 (defn deps-remove!
   "Drop external dependency `lib` from the manifest. A jar can't be unloaded,

@@ -1,6 +1,6 @@
 (ns slopp.api.rules-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.api.rules.catalog :as catalog]))
+            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.external :as external] [slopp.api.rules.catalog :as catalog]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -52,9 +52,9 @@
   (let [cataloged   (set (map :rule catalog/rule-catalog))
         write-gates (set (edit.modules/write-gate-names))
         done-keys   (set (map :key rules/done-advisories))]
-    (testing "every entry carries the declarative shape"
+    (testing "every entry carries the declarative shape (severity joined in by rule-rows)"
       (is (every? (fn [r] (and (:rule r) (:grain r) (:severity r) (:escape r) (:teach r)))
-                  catalog/rule-catalog)))
+                  (catalog/rule-rows (rules/declared-severities)))))
     (testing "every registered write gate is cataloged (drift guard)"
       (is (empty? (set/difference write-gates cataloged))
           (str "uncataloged write gates: " (set/difference write-gates cataloged))))
@@ -68,18 +68,18 @@
       (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
         (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
                           :prompt "soften a write gate to advisory")
-        (let [sr (first (filter #(= :schema-refusal (:rule %)) (query/query-rules sess)))]
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (rules/query-rules sess)))]
           (is (= :form (:grain sr)) (pr-str sr))
           (is (= :advisory (:severity sr)) (pr-str sr))))
       (testing ":off on a write gate is honored and reported"
         (api/config-file! sess "rules" :key "schema-refusal" :value "off"
                           :prompt "turn it off")
-        (let [sr (first (filter #(= :schema-refusal (:rule %)) (query/query-rules sess)))]
+        (let [sr (first (filter #(= :schema-refusal (:rule %)) (rules/query-rules sess)))]
           (is (= :off (:severity sr)) (pr-str sr))))
       (testing "a done advisory keeps its full severity range"
         (api/config-file! sess "rules" :key "key-typos" :value "error"
                           :prompt "escalate an advisory")
-        (let [kt (first (filter #(= :key-typos (:rule %)) (query/query-rules sess)))]
+        (let [kt (first (filter #(= :key-typos (:rule %)) (rules/query-rules sess)))]
           (is (= :error (:severity kt)) (pr-str kt))))
       (finally (api/close! sess)))))
 
@@ -393,3 +393,87 @@
                                     "(defn ^{:web/method :post :web/path \"/b\""
                                     " :web/request [:map [:y :string]] :web/response :map} b [r] r)\n")))]
       (is (empty? (rules/inline-schema-dup-check nil st nil))))))
+
+(deftest catalog-severity-is-derived-not-restated
+  (testing "no catalog row carries its own :severity — the registries own that fact"
+    (is (empty? (filter :severity catalog/rule-catalog))
+        (str "catalog rows restating :severity: "
+             (mapv :rule (filter :severity catalog/rule-catalog)))))
+  (let [declared (rules/declared-severities)
+        rows     (catalog/rule-rows declared)]
+    (testing "every cataloged rule still REPORTS a default, derived from its registry"
+      (is (every? :severity rows)
+          (str "rules with no declared default: " (mapv :rule (remove :severity rows)))))
+    (testing "a write gate's declared default IS the one gate-check enforces"
+      (let [gates (edit.modules/write-gate-severities)]
+        (is (= gates (select-keys declared (keys gates))))))
+    (testing "a done advisory's declared default IS the one status-flipping reads"
+      (is (every? (fn [{:keys [key severity]}] (= severity (get declared key)))
+                  rules/done-advisories)))
+    (testing "the catalog covers exactly what the registries declare"
+      (is (= (set (map :rule catalog/rule-catalog)) (set (keys declared)))))))
+
+(deftest a-finding-can-be-informational-inside-an-error-rule
+  (let [s0 (store/empty-store)]
+    (testing "an :info finding under an :error rule is REPORTED but does not flip status"
+      (is (false? (rules/status-affecting-fired?
+                   s0 {:schema-drift [{:form 'a/b :severity :info}]}))))
+    (testing "an ungraded finding under an :error rule still flips (the default)"
+      (is (true? (rules/status-affecting-fired?
+                  s0 {:schema-drift [{:form 'a/b}]}))))
+    (testing "a mixed list flips on the status-affecting member only"
+      (is (true? (rules/status-affecting-fired?
+                  s0 {:schema-drift [{:form 'a/b :severity :info}
+                                     {:form 'c/d}]}))))
+    (testing "a non-map finding has no grade to read and still flips"
+      (is (true? (rules/status-affecting-fired? s0 {:schema-drift ["a/b drifted"]}))))
+    (testing ":info does not resurrect a rule dialed below :error"
+      (is (false? (rules/status-affecting-fired?
+                   s0 {:key-typos [{:used :a/b :severity :info}]}))))))
+
+(deftest dangling-route-advisory-reports-dynamic-refs-without-flipping
+  (let [src (str "(ns shop.ui)\n\n"
+                 "(defn ^{:web/method :get :web/path \"/todos\" :web/auth :public} todos-page \"T.\" [req]\n"
+                 "  [:div [:a {:href \"/nowhere\"} \"bad\"]\n"
+                 "        [:a {:href (:uri req)} \"dyn\"]])\n")
+        s (store/ingest (store/empty-store) 'shop.ui src)
+        s (first (store/record-config-put s "capabilities" :manifest "http.enabled" "true"))
+        found (rules/dangling-route-refs-check nil s nil)
+        by-sev (group-by :severity found)]
+    (testing "the dangling ref is a status-affecting finding, as before"
+      (is (= ["/nowhere"] (mapv :path (get by-sev nil)))))
+    (testing "the dynamic ref RIDES ALONG as :info instead of being dropped"
+      (is (= '[shop.ui/todos-page] (mapv :form (get by-sev :info)))))
+    (testing "an :info-only result does not flip done red"
+      (is (false? (rules/status-affecting-fired?
+                   s {:web-dangling-route-refs (get by-sev :info)}))))
+    (testing "the dangling ref still does"
+      (is (true? (rules/status-affecting-fired?
+                  s {:web-dangling-route-refs found}))))))
+
+(deftest tracked-file-drift-reports-a-second-copy-that-moved
+  (let [dir (str (System/getProperty "java.io.tmpdir")
+                 "/slopp-drift-" (System/nanoTime))
+        sess (atom {:dir dir})]
+    (.mkdirs (java.io.File. dir))
+    (try
+      (let [s (first (store/record-file-put (store/empty-store) "build.clj" "(ns build)\n"))]
+        (testing "no working-tree twin — nothing to compare, no finding"
+          (is (empty? (rules/tracked-file-drift-check! sess s nil))))
+        (spit (java.io.File. dir "build.clj") "(ns build)\n")
+        (testing "an identical twin is not drift"
+          (is (empty? (rules/tracked-file-drift-check! sess s nil))))
+        (spit (java.io.File. dir "build.clj") "(ns build)\n;; edited on main\n")
+        (testing "a twin that MOVED is reported, naming the path"
+          (let [found (rules/tracked-file-drift-check! sess s nil)]
+            (is (= ["build.clj"] (mapv :path found)))
+            (is (= :advisory (:severity (first found)))
+                "reconciling is a branch action — it reports, it does not flip done")))
+        (testing "a blob is compared by content, not skipped for being big"
+          (let [b (first (store/record-file-put s "public/x.bin" "AAA"
+                                                :encoding "base64"))]
+            (spit (java.io.File. dir "build.clj") "(ns build)\n")
+            (is (empty? (rules/tracked-file-drift-check! sess b nil))
+                "an untracked-on-disk blob has no twin to differ from"))))
+      (finally
+        (doseq [f (reverse (file-seq (java.io.File. dir)))] (.delete ^java.io.File f))))))

@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1260,3 +1260,20 @@
         "the refusal must not be replaced by the guard that its own frames tripped")
     (is (not (re-find #"\.clj:\d+" txt))
         "no file:line coordinate survives to the caller")))
+
+(deftest a-hint-fires-only-on-the-call-that-earned-it
+  (testing "a stale streak does not attach to a call that could not have earned it"
+    (let [sess (atom {:slopp.mcp.smells/stats {:searches 5}})]
+      (is (nil? (smells/track-hint! sess "deps_add" {}))
+          "deps_add is not a search — it must not carry the search-streak hint")))
+  (testing "the streak still fires on the search that completes it"
+    (let [sess (atom {:slopp.mcp.smells/stats {:searches 2}})]
+      (is (re-find #"search streak" (str (smells/track-hint! sess "query_search" {}))))))
+  (testing "a write CLEARS the streak — it counts CONSECUTIVE searches"
+    (is (zero? (:searches (smells/bump-smell-counts {:searches 3} "edit_add_form" {})))))
+  (testing "a search still accumulates, and an unrelated read still clears"
+    (is (= 4 (:searches (smells/bump-smell-counts {:searches 3} "query_search" {}))))
+    (is (zero? (:searches (smells/bump-smell-counts {:searches 3} "query_slice" {})))))
+  (testing "the rename streak likewise stays on rename calls"
+    (let [sess (atom {:slopp.mcp.smells/stats {:renames 4}})]
+      (is (nil? (smells/track-hint! sess "query_slice" {}))))))

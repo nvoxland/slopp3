@@ -2,7 +2,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -315,13 +315,18 @@
   "Done-advisory (D-web-html): rendered links/forms targeting a path no
    declared route or static mount serves — the UI nil-pun: it ships and
    404s. Fires STORE-WIDE, like dead surface, because deleting a route
-   dangles an UNCHANGED form's link. Inert until http.enabled. Dynamic
-   (:unresolved) refs never appear here — they must not flip status — and
-   stay answerable via `api.web/dangling-route-refs`; the `^{:web/external-path
-   \"why\"}` marker on the rendering form discharges."
+   dangles an UNCHANGED form's link. Inert until http.enabled. The
+   `^{:web/external-path \\\"why\\\"}` marker on the rendering form discharges.
+
+   Dynamic (`:unresolved`) refs ride along as `:severity :info` findings:
+   listed at done, never status-flipping. They used to be omitted entirely
+   — the only way to keep them from flipping an `:error` rule red — which
+   hid the one part of this check a human has to judge."
   [_session st* _changed]
   (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
-    (vec (:dangling (api.web/dangling-route-refs st*)))))
+    (let [{:keys [dangling unresolved]} (api.web/dangling-route-refs st*)]
+      (vec (concat dangling
+                   (map #(assoc % :severity :info) unresolved))))))
 
 (defn client-stale-check
   "Done-advisory (D-web-contracts part 2): the generated typed client
@@ -363,6 +368,38 @@
                    (pr-str schema) " — extract it to a named .cljc schema var so"
                    " the server and the generated client validate against ONE"
                    " definition and a change lands once.")})))
+
+(defn tracked-file-drift-check!
+  "Done-advisory: a file on the store's manifest whose WORKING-TREE twin has
+   different content. `!` — it reads the working tree.
+
+   Tracked files are the one thing that exists twice: the store owns a copy
+   (projected onto the slopp branch) and the human branch carries a real file at
+   the same path. Nothing compared them, so `build.clj` fell behind by both the
+   slim-jar section and the atomic uber-rename — the jar-swap corruption fix —
+   and a consumer building from a published checkout got the truncation bug back.
+
+   `:advisory`, and every finding carries `:severity :advisory` explicitly: the
+   two copies differ legitimately between a store write and the next projection
+   (or pull), so this reports which way to reconcile rather than flipping done
+   red on a normal intermediate state. A path with no file on disk has no twin
+   and is not drift — generated blobs live only in the store."
+  [session st* _changed]
+  (when-let [dir (:dir @session)]
+    (vec
+     (keep (fn [path]
+             (let [f (java.io.File. ^String dir ^String path)]
+               (when (.isFile f)
+                 (let [disk  (slurp f)
+                       store (:content (store/file-content st* path))]
+                   (when (and (string? store) (not= disk store))
+                     {:path path :severity :advisory
+                      :store-bytes (count store) :worktree-bytes (count disk)
+                      :teach (str path " differs between the store manifest and the"
+                                  " working tree — reconcile deliberately: file_put"
+                                  " the working-tree copy if a human edited it, or"
+                                  " project/pull if the store's copy is the newer")})))))
+           (sort (keys (:files st*)))))))
 
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
@@ -421,6 +458,14 @@
    ;; once and cannot become a standing warning to scroll past.
    {:key :shell-widening  :severity :advisory :check #'shell-widening-check
     :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
+   ;; the only two copies of one fact this system keeps: a tracked manifest file
+   ;; and the real file the human branch carries at the same path. Nothing
+   ;; compared them until build.clj drifted far enough to reintroduce a fixed
+   ;; jar-corruption bug for anyone building from a published checkout.
+   {:key :tracked-file-drift :severity :advisory :check #'tracked-file-drift-check!
+    :selftest-note (str "compares the manifest against the WORKING TREE, which a"
+                        " source-only fixture has no copy of — covered by"
+                        " rules-test/tracked-file-drift-reports-a-second-copy-that-moved")}
    ;; a publicly-writable endpoint should be a decision, not an omission —
    ;; the question grade, like shell-widening: only the author knows
    {:key :web-public-mutation :severity :advisory :check #'web-public-mutation-check
@@ -454,14 +499,66 @@
         done-advisories))
 
 (defn status-affecting-fired?
-  "True when an advisory whose EFFECTIVE severity is `:error` produced findings —
-   a real failure that should flip `test-status` red. Effective severity is the
-   per-store override (`edit.modules/rule-severity`) else the registry default, so
-   a project can dial `key-typos` up to `:error` or `schema-drift` down to
-   `:advisory`. `:advisory`/`:off` never flip status. Args: the store (for the
-   config) and the `{:key findings}` map from `run-done-advisories!`."
+  "True when an advisory whose EFFECTIVE severity is `:error` produced a
+   STATUS-AFFECTING finding — a real failure that should flip `test-status` red.
+   Effective severity is the per-store override (`edit.modules/rule-severity`)
+   else the registry default, so a project can dial `key-typos` up to `:error` or
+   `schema-drift` down to `:advisory`. `:advisory`/`:off` never flip status.
+
+   A single finding may opt OUT with `:severity :info`: reported like any other,
+   never status-flipping. Without it an `:error` rule was all-or-nothing, so a
+   rule with both a hard failure and a genuinely informational observation had to
+   drop the latter out of its findings to keep it from flipping — invisible at
+   done, which is where it was worth seeing (`web-dangling-route-refs` and its
+   dynamic refs). An ungraded finding — including a non-map one — flips, so the
+   grade is opt-in and silence still means failure.
+
+   Args: the store (for the config) and the `{:key findings}` map from
+   `run-done-advisories!`."
   [store advisories]
   (boolean (some (fn [{:keys [key severity]}]
                    (and (= :error (edit.modules/rule-severity store key severity))
-                        (seq (get advisories key))))
+                        (some #(not= :info (:severity %)) (get advisories key))))
                  done-advisories)))
+
+(defn ^:export declared-severities
+  "`{rule-key declared-severity}` across BOTH D9 grains — write gates from
+   `edit.modules/write-gate-severities` (a gate's `:rule/severity` metadata) and
+   done advisories from this namespace's registry `:severity`. The single source
+   `catalog/rule-rows` reports from, so what `query_rules` shows and what
+   refuses a write cannot disagree.
+
+   Built here rather than in the catalog because the catalog is `:pure` and this
+   namespace is `:external`: the data flows out to the leaf, the leaf never
+   reaches into the shell."
+  []
+  (merge (edit.modules/write-gate-severities)
+         (into {} (map (juxt :key :severity)) done-advisories)))
+
+(defn ^:export query-rules
+  "The D9 enforcement catalog for THIS store: every rule with its grain, its
+   EFFECTIVE per-store severity (the `rules` config override else the rule's
+   DECLARED default), how to discharge it, and what it means. The one place to
+   see what's enforced and at what grade — dial any rule with `config_file {path
+   \"rules\" key <rule> value <severity>}` (`:off`/`:advisory`/`:error`/`:refuse`).
+
+   Lives HERE, beside the registries, rather than in `api.query`: the declared
+   default belongs to the code that ENFORCES each rule, and `api.query` is
+   `:pure` while this namespace is `:external` — a query that reports what a
+   shell owns cannot live in the core. `catalog/rule-rows` joins the prose to
+   `declared-severities`, so what this reports and what refuses a write cannot
+   disagree.
+
+   WRITE-gate (`:form`) severity is one of `:off` (skip), `:advisory` (warn-but-
+   proceed — the teaching rides the write result's `:advisories`), or `:refuse`
+   (block); `:error` has no write-gate meaning and reports as `:refuse`.
+   Done-grain rules keep the full `:off`/`:advisory`/`:error` range."
+  [session]
+  (let [st (:store @session)]
+    (mapv (fn [{:keys [rule grain severity] :as r}]
+            (let [eff (edit.modules/rule-severity st rule severity)]
+              (assoc r :severity
+                     (if (= grain :form)
+                       (case eff (:off :advisory) eff :refuse)
+                       eff))))
+          (catalog/rule-rows (declared-severities)))))

@@ -141,3 +141,29 @@
   (testing "empty/nil stderr is not classified as benign (prior behavior preserved)"
     (is (not (#'slopp.repl/benign-load-noise? "")))
     (is (not (#'slopp.repl/benign-load-noise? nil)))))
+
+(deftest eval-outcome-reads-status-not-the-stderr-stream
+  (testing "a load-time WARNING on stderr is OUTPUT, not failure — values survive"
+    (is (= {:values [3]
+            :stderr "WARNING: abs already refers to: #'clojure.core/abs\n"}
+           (#'slopp.repl/eval-outcome
+            [{:err "WARNING: abs already refers to: #'clojure.core/abs\n"}
+             {:value "3"}
+             {:status ["done"]}]))))
+  (testing "an eval-error IS failure, and keeps the stderr text that names the cause"
+    (let [r (#'slopp.repl/eval-outcome
+             [{:err "Execution error (ExceptionInfo) at (REPL:1).\nboom\n"}
+              {:ex "clojure.lang.ExceptionInfo" :status ["eval-error"]}
+              {:status ["done"]}])]
+      (is (nil? (:values r)))
+      (is (re-find #"boom" (:err r)))))
+  (testing "an eval-error with no stderr still names the exception class"
+    (is (= {:err "clojure.lang.ExceptionInfo"}
+           (#'slopp.repl/eval-outcome
+            [{:ex "clojure.lang.ExceptionInfo" :status ["eval-error"]}]))))
+  (testing "a clean eval carries no :stderr key at all"
+    (is (= {:values [7]}
+           (#'slopp.repl/eval-outcome [{:value "7"} {:status ["done"]}]))))
+  (testing "unreadable values ride through as strings, as before"
+    (is (= {:values ["#object[Foo]"]}
+           (#'slopp.repl/eval-outcome [{:value "#object[Foo]"}])))))

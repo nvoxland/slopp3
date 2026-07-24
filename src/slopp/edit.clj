@@ -732,32 +732,59 @@
     (catch Exception e
       {:error (str "unparseable source (unbalanced?): " (ex-message e))})))
 
+(defn ^:export control-char-refusal
+  "nil if `source` is free of raw control characters; a teaching string if not.
+   Tab, newline and carriage return are ordinary whitespace and pass.
+
+   A control BYTE in source text is never what anyone meant. It arrives when a
+   wire layer decodes a `\\uXXXX` escape before slopp sees it, so `#\"[\\s-\\x1f]\"`
+   is stored with a literal US byte inside the regex — which compiles, verifies
+   green, and projects to git carrying invisible bytes.
+
+   Refusing rather than warning, because the damage is not cosmetic: a file with
+   control bytes reads as BINARY to `file` and to grep, so grep silently matches
+   NOTHING in it. The content becomes invisible to every text sweep that looks
+   at it, slopp's own included — which is how the friction log recording this
+   bug was itself nearly triaged as an empty file."
+  [source]
+  (when-let [c (first (filter #(and (Character/isISOControl ^char %)
+                                    (not (#{\tab \newline \return} %)))
+                              source))]
+    (str "raw control character U+" (format "%04X" (int c)) " in source — "
+         "almost certainly a \\uXXXX escape that a wire layer decoded in "
+         "transit. Spell it as an escape the READER sees (\\\\uXXXX), or use a "
+         "class like \\p{Cntrl}. Stored control bytes make the source read as "
+         "BINARY to grep, so the form goes invisible to every text sweep.")))
+
 (defn parse-form
   "Parse `source` as exactly ONE dialect-legal top-level form (the gate every
-  WRITE shares): `parse-one` for the raw parse, then D3/D4 via `dialect-check`,
-  plus D7 — hand-written `(declare …)` is refused here (the EDIT path only):
-  the pipeline OWNS ordering — it reorders definitions above their callers, or
-  inserts a marked declare itself for a genuine cycle, so the agent never
-  writes one. Imports (`dialect-scan`) keep their declares.
+  WRITE shares): `control-char-refusal` on the raw text, `parse-one` for the
+  parse, then D3/D4 via `dialect-check`, plus D7 — hand-written `(declare …)`
+  is refused here (the EDIT path only): the pipeline OWNS ordering — it
+  reorders definitions above their callers, or inserts a marked declare itself
+  for a genuine cycle, so the agent never writes one. Imports (`dialect-scan`)
+  keep their declares.
   Returns {:node node} or {:error msg} — never throws (F3)."
   [source]
-  (let [r (parse-one source)]
-    (if (:error r)
-      r
-      (try
-        (let [node (:node r)
-              s    (n/sexpr node)]
-          (if (and (seq? s) (= 'declare (first s)))
-            {:error (str "(declare …) is managed for you — slopp orders forms"
-                         " itself: write your forms in any order (definitions are"
-                         " reordered above their callers), and a genuine"
-                         " mutual-recursion cycle gets a marked declare inserted"
-                         " automatically. Drop the declare and write the real forms.")}
-            (if-let [err (dialect-check node)]
-              {:error err}
-              {:node node})))
-        (catch Exception e
-          {:error (str "unparseable source (unbalanced?): " (ex-message e))})))))
+  (if-let [ctl (control-char-refusal source)]
+    {:error ctl}
+    (let [r (parse-one source)]
+      (if (:error r)
+        r
+        (try
+          (let [node (:node r)
+                s    (n/sexpr node)]
+            (if (and (seq? s) (= 'declare (first s)))
+              {:error (str "(declare …) is managed for you — slopp orders forms"
+                           " itself: write your forms in any order (definitions are"
+                           " reordered above their callers), and a genuine"
+                           " mutual-recursion cycle gets a marked declare inserted"
+                           " automatically. Drop the declare and write the real forms.")}
+              (if-let [err (dialect-check node)]
+                {:error err}
+                {:node node})))
+          (catch Exception e
+            {:error (str "unparseable source (unbalanced?): " (ex-message e))}))))))
 
 (defn live-handle-shape-change
   "`{:added #{kw} :removed #{kw}}` when replacing `old-node` with `new-node`
