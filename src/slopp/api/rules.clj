@@ -2,7 +2,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -401,6 +401,36 @@
                                   " project/pull if the store's copy is the newer")})))))
            (sort (keys (:files st*)))))))
 
+(defn key-not-returned-check
+  "Done-advisory: a changed form reads a key its callee never returns —
+   `(:k local)` where `local` is let-bound to a call whose SOUND
+   `shape/return-keys` (present only when the return shape is statically
+   bounded) exclude `:k`. A read that can never be non-nil is a vacuous
+   assertion: green proves nothing (assertions-that-cannot-fail). Precise by
+   construction — fires ONLY when the callee's return shape is fully known (a
+   map/assoc/cond-> result), so there is nothing to discharge but the bug.
+   Callees resolve through THE reference graph, by name, unambiguous only."
+  [_session st* changed]
+  (let [by-from (group-by (juxt :from-ns :from-var) (refs/refs st*))
+        rk      (memoize (fn [ns nm] (shape/return-keys (store/named-sexpr st* ns nm))))]
+    (vec (for [fid changed
+               :let [e (store/form-by-id st* fid)]
+               :when (and e (:name e))
+               :let [ns-sym   (store/ns-of-form-id st* fid)
+                     caller   (try (n/sexpr (:node e)) (catch Exception _ nil))
+                     ers      (get by-from [ns-sym (:name e)])
+                     by-name  (into {} (for [[nm grp] (group-by :to-name ers)
+                                             :when (and nm (apply = (map (juxt :to-ns :to-name) grp)))]
+                                         [(name nm) (first grp)]))
+                     resolver (fn [head] (when-let [t (get by-name (name head))]
+                                           (rk (:to-ns t) (:to-name t))))]
+               :when caller
+               f (shape/key-not-returned caller resolver)]
+           {:form  (symbol (str ns-sym) (str (:name e)))
+            :teach (str "(" (:key f) " " (:local f) ") — " (:callee f)
+                        " never returns " (:key f) "; its result is "
+                        (:returns f) ", so the assertion is vacuous")}))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -431,8 +461,12 @@
                    "(defn typo [] {:rf/staus 3})\n")}
    {:key :breaking-changes :severity :advisory :check #'breaking-check
     :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
-   {:key :ambient-state    :severity :advisory :check #'ambient-state-check
-    :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+   {:key :ambient-state :severity :advisory :check #'ambient-state-check
+ :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+{:key :key-not-returned :severity :advisory :check #'key-not-returned-check
+    :fires-on (str "(ns rf.core)\n"
+                   "(defn producer [] {:a 1})\n"
+                   "(defn consumer [] (let [r (producer)] (empty? (:b r))))\n")}
    {:key :bare-throw       :severity :advisory :check #'bare-throw-check
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
    ;; teaching that LIES: a string naming a var the store no longer has. Gates

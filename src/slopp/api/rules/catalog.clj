@@ -75,6 +75,9 @@
    {:rule :bare-throw :grain :done
     :escape "return data / (ex-info …) at the boundary, or accept the throw"
     :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
+{:rule :key-not-returned :grain :done
+    :escape "fix the assertion to read a key the callee returns, or drop it — a read of a key the callee never returns is always nil"
+    :teach "(:k local) where local is bound to a call whose statically-known return shape has no :k — a vacuous assertion that stays green no matter what the code does (assertions-that-cannot-fail)"}
    {:rule :stale-reference :grain :done
     :escape "fix the prose (or the reference) so the name resolves — the text is teaching, and teaching that lies costs a failed call to discover"
     :teach "a docstring/teach-string names a.b/c where namespace a.b is in this store but has no form c — a rename or move left the prose behind (gates never see a var inside a string)"}
