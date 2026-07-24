@@ -85,6 +85,23 @@
     (testing "mixed: the union, still never nil"
       (is (= '[z.core-test/slow-t] (session/impacted-external sess st [fid gid]))))))
 
+(deftest affected-tests-adds-declared-coverage-to-the-narrowed-set
+  ;; ^{:covers} declares a test that reaches a form through a dispatch/data
+  ;; path the tracer can't see. Such a test leaves NO trace evidence, so a
+  ;; trace-narrowed result would drop it. Declared coverage is ADDED to any
+  ;; non-nil narrowing (never narrows on its own — a declaration is a floor,
+  ;; not a ceiling; nil already runs everything, declared included).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'f.core "(ns f.core)\n(defn f [x] x)\n")
+               (store/ingest 'f.t
+                             (str "(ns f.t (:require [clojure.test :refer [deftest is]]))\n"
+                                  "(deftest traced (is (= 1 (f.core/f 1))))\n"
+                                  "(deftest ^{:covers \"f.core/f — dispatch path\"} declared-cover (is true))\n")))
+        sess (atom {:store st :test-map {'f.t/traced #{'f.core/f}}})]
+    (testing "the declared-coverage test is unioned into the trace-narrowed set"
+      (is (= '[f.t/declared-cover f.t/traced]
+             (vec (sort (session/affected-tests sess 'f.core 'f))))))))
+
 (deftest affected-tests-consults-every-name-and-refuses-opaque-bodies
   ;; Two consequences of D8 land here. (1) Evidence arrives keyed by the VAR
   ;; that ran — a test calling protocol method m records p.core/m — but the

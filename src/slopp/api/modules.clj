@@ -143,7 +143,7 @@
                               (not (:private (meta (second s))))
                               (not= '-main (:name e)))
                    :let [rs (get by-target [nsx (:name e)])
-                         markers (set (keep :marker rs))
+                         markers (disj (set (keep :marker rs)) :covers)
                          real?   (some #(not= :declared (:via %)) rs)]]
                {:q          (symbol (str nsx) (str (:name e)))
                 :unused-ok? (contains? markers :unused-ok)

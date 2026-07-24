@@ -125,35 +125,74 @@
        :to-form   (:id (store/form-named st to (symbol (name s))))
        :via       :carrier})))
 
+(defn- covers-targets
+  "Qualified symbols named by a `^{:covers …}` marker value. The value is a
+   string \"ns/name — why\" (or a vector of them); the target is the leading
+   whitespace-delimited token, the rest is the human why. Non-qualified or
+   unreadable tokens are dropped — a declaration only counts when it names a
+   real form."
+  [v]
+  (when v
+    (->> (if (sequential? v) v [v])
+         (keep (fn [item]
+                 (let [tok (first (str/split (str/trim (str item)) #"\s+"))
+                       sym (try (symbol tok) (catch Exception _ nil))]
+                   (when (and sym (seq (or (namespace sym) "")) (seq (name sym)))
+                     sym)))))))
+
 (defn- declared-refs
-  "Marker declarations as edges FROM the outside world: ^:entry-point
-  (invoked via CLI/wire/eval injection) and ^:unused-ok (deliberately
-  uncalled) both keep a var alive in the graph, and so do the D-web
-  declarations — a `:web/path` ENDPOINT (the dispatcher calls it) and a
-  `:web/effect` / `:web/read` PERFORMER (the effect interpreter / reads
-  loader calls it); :marker preserves WHICH dial so consumers like the
-  stale check can distinguish."
+  "Marker declarations as edges. Two shapes, both `:via :declared`:
+
+   KEEP-ALIVE markers keep a var reachable FROM the outside world —
+   ^:entry-point (invoked via CLI/wire/eval injection), ^:unused-ok
+   (deliberately uncalled), and the D-web declarations: a `:web/path`
+   ENDPOINT (the dispatcher calls it) and a `:web/effect` / `:web/read`
+   PERFORMER (the effect interpreter / reads loader calls it). `:from-ns`
+   is `:external`; `:marker` preserves WHICH dial so the stale check can
+   distinguish.
+
+   A `^{:covers \"ns/name — why\"}` marker on a deftest is the other shape:
+   a COVERAGE edge FROM the test TO each form it names — the dispatch /
+   data / spawned-child-image path neither the static graph nor the
+   in-image trace can see. `:marker :covers`, and `:from-ns`/`:from-var`
+   are the TEST (so covered-by can report it). Coverage is not liveness —
+   unused-report does not treat `:covers` as an exemption."
   [st _known nses]
-  (for [nsx (sort nses)
-        e   (store/forms st nsx)
-        :when (:name e)
-        :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))
-              m (when (and (seq? s) (symbol? (second s))) (meta (second s)))
-              marker (cond (:entry-point m) :entry-point
-                           (:unused-ok m)   :unused-ok
-                           (:web/path m)    :web-endpoint
-                           (:web/effect m)  :web-effect
-                           (:web/read m)    :web-read
-                           :else nil)]
-        :when marker]
-    {:from-form nil
-     :from-ns   :external
-     :from-var  nil
-     :to-ns     nsx
-     :to-name   (:name e)
-     :to-form   (:id e)
-     :via       :declared
-     :marker    marker}))
+  (concat
+   (for [nsx (sort nses)
+         e   (store/forms st nsx)
+         :when (:name e)
+         :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))
+               m (when (and (seq? s) (symbol? (second s))) (meta (second s)))
+               marker (cond (:entry-point m) :entry-point
+                            (:unused-ok m)   :unused-ok
+                            (:web/path m)    :web-endpoint
+                            (:web/effect m)  :web-effect
+                            (:web/read m)    :web-read
+                            :else nil)]
+         :when marker]
+     {:from-form nil
+      :from-ns   :external
+      :from-var  nil
+      :to-ns     nsx
+      :to-name   (:name e)
+      :to-form   (:id e)
+      :via       :declared
+      :marker    marker})
+   (for [nsx    (sort nses)
+         e      (store/forms st nsx)
+         :when  (:name e)
+         :let   [s (try (n/sexpr (:node e)) (catch Exception _ nil))
+                 m (when (and (seq? s) (symbol? (second s))) (meta (second s)))]
+         target (covers-targets (:covers m))]
+     {:from-form (:id e)
+      :from-ns   nsx
+      :from-var  (:name e)
+      :to-ns     (symbol (namespace target))
+      :to-name   (symbol (name target))
+      :to-form   nil
+      :via       :declared
+      :marker    :covers})))
 
 (defn- drop-self
   "Remove self-references — a form pointing at ITSELF (same form both ends).
@@ -217,21 +256,29 @@
 (defn ^:export covered-by
   "Every test that covers form `qsym`, each tagged with HOW we know — the
    canonical coverage edge set, the reference-graph epic's shape applied to
-   'which test reaches this form'. Two producers, one answer:
+   'which test reaches this form'. Three producers, one answer:
    - :observed — the trace map saw the test exercise the form (strongest).
    - :static   — a deftest references the form within `depth` static hops
                  (default 2), so it works for tests that never trace (the
                  external tier) and needs no run; `:hops` is the distance.
-   Returns `[{:test qsym :via #{…} :hops n?}]`, sorted. Static NEVER means
-   verified — it says 'a test REACHES this', not 'this was checked' — so `:via`
-   stays visible and a consumer must weight :observed over :static rather than
-   conflate them (do NOT let static coverage claim green)."
+   - :declared — a `^{:covers}` marker on the deftest names the form, for the
+                 dispatch / data / spawned-child-image path neither static
+                 reach nor the trace can see. No hops — it is a claim, direct.
+   Returns `[{:test qsym :via #{…} :hops n?}]`, sorted. Neither :static nor
+   :declared means verified — they say 'a test REACHES/CLAIMS this', not 'this
+   was checked' — so `:via` stays visible and a consumer must weight :observed
+   over the others rather than conflate them (do NOT let them claim green)."
   [st tmap qsym & {:keys [depth] :or {depth 2}}]
   (let [to-ns    (symbol (namespace qsym))
         to-nm    (symbol (name qsym))
         test-ns? (fn [ns] (str/ends-with? (str ns) "-test"))
         observed (into #{} (for [r (observed-refs tmap)
                                  :when (and (= to-ns (:to-ns r)) (= to-nm (:to-name r)))]
+                             (symbol (str (:from-ns r)) (str (:from-var r)))))
+        declared (into #{} (for [r (refs st)
+                                 :when (and (= :declared (:via r))
+                                            (= :covers (:marker r))
+                                            (= to-ns (:to-ns r)) (= to-nm (:to-name r)))]
                              (symbol (str (:from-ns r)) (str (:from-var r)))))
         radj     (reduce (fn [m r]
                            (if (= :static (:via r))
@@ -251,12 +298,13 @@
                                                a))
                                            acc fresh)]
                        (recur fresh (into seen frontier) (inc hop) acc'))))
-        tests    (into (sorted-set) (concat observed (keys static)))]
+        tests    (into (sorted-set) (concat observed (keys static) declared))]
     (vec (for [t tests]
            (cond-> {:test t
                     :via  (cond-> #{}
                             (observed t) (conj :observed)
-                            (static t)   (conj :static))}
+                            (static t)   (conj :static)
+                            (declared t) (conj :declared))}
              (static t) (assoc :hops (static t)))))))
 
 ^:reads (defn ^:export refs-to

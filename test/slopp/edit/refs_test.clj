@@ -175,6 +175,36 @@
     (testing "an unmarked form gains no edge"
       (is (empty? (refs/refs-to st 'w.api/plain))))))
 
+(deftest covered-by-honours-declared-coverage
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cov.core "(ns cov.core)\n(defn dispatched [] 1)\n")
+               (store/ingest 'cov.core-test
+                             (str "(ns cov.core-test (:require [clojure.test :refer [deftest is]]))\n"
+                                  "(deftest ^{:covers \"cov.core/dispatched — reached only via dispatch\"} dispatch-t\n"
+                                  "  (is true))\n")))]
+    (testing "a ^{:covers} marker on a deftest is a DECLARED coverage edge in THE graph"
+      (let [r (first (filter #(= :covers (:marker %)) (refs/refs-to st 'cov.core/dispatched)))]
+        (is (some? r) (pr-str (refs/refs-to st 'cov.core/dispatched)))
+        (is (= :declared (:via r)))
+        (is (= 'cov.core-test (:from-ns r)))
+        (is (= 'dispatch-t (:from-var r)))))
+    (testing "covered-by reports the declared test with :via :declared and no hop distance"
+      (let [cb (refs/covered-by st {} 'cov.core/dispatched)
+            by (into {} (map (juxt :test identity)) cb)]
+        (is (= #{'cov.core-test/dispatch-t} (set (map :test cb))) (pr-str cb))
+        (is (= #{:declared} (:via (by 'cov.core-test/dispatch-t))))
+        (is (nil? (:hops (by 'cov.core-test/dispatch-t))))))
+    (testing "declared coverage fuses with static and observed on the same form"
+      (let [st+ (store/ingest st 'cov.reach
+                              (str "(ns cov.reach (:require [cov.core :as c]))\n"
+                                   "(defn r [] (c/dispatched))\n"))
+            st2 (store/ingest st+ 'cov.reach-test
+                              (str "(ns cov.reach-test (:require [clojure.test :refer [deftest is]] [cov.reach :as r]))\n"
+                                   "(deftest static-t (is (= 1 (r/r))))\n"))
+            cb  (into {} (map (juxt :test :via)) (refs/covered-by st2 {} 'cov.core/dispatched))]
+        (is (= #{:declared} (cb 'cov.core-test/dispatch-t)) (pr-str cb))
+        (is (= #{:static} (cb 'cov.reach-test/static-t)))))))
+
 (deftest covered-by-fuses-observed-and-static-with-provenance
   (let [st (-> (store/empty-store)
                (store/ingest 'cov.core "(ns cov.core)\n(defn leaf [] 1)\n(defn mid [] (leaf))\n")

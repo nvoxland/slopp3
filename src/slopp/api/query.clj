@@ -594,10 +594,15 @@
             carried (vec (sort (distinct
                                 (for [r rs :when (= :carrier (:via r))]
                                   (symbol (str (:from-ns r)) (str (:from-var r)))))))
-            marks   (vec (sort (keep :marker rs)))
-            all-ts  (->> (refs/observed-refs (:test-map @session))
-                         (filter #(and (= ns-sym (:to-ns %)) (= nm (:to-name %))))
-                         (map #(symbol (str (:from-ns %)) (str (:from-var %))))
+            marks   (vec (sort (remove #{:covers} (keep :marker rs))))
+            all-ts  (->> (refs/covered-by st (:test-map @session) qsym)
+                         ;; the canonical coverage edge set, sliced to the tests
+                         ;; that EXERCISE or CLAIM this form — observed evidence
+                         ;; plus ^{:covers} declarations (the dispatch path the
+                         ;; trace never records). Static reach is excluded here:
+                         ;; :covered-by means "covers it", not "might reach it".
+                         (filter #(some #{:observed :declared} (:via %)))
+                         (map :test)
                          sort vec)
             ;; a central form is covered by HUNDREDS of tests. Printing them
             ;; all pushed the keys actually asked for past the response
@@ -819,9 +824,10 @@
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it
   (`:covered-by`, trace map; `:coverage :unknown` until a test_run builds one),
-  the tests that STATICALLY reach it but haven't been observed to run it
-  (`:reached-by`, with `:hops` — real for the untraced external tier, never a
-  green claim), and the recorded WHY (the last change's prompt + its enclosing
+  the tests that REACH or CLAIM it but haven't been observed to run it
+  (`:reached-by`, each tagged `:via` — `:static` reach carries `:hops`,
+  a `:declared` ^{:covers} marker does not; real for the untraced external
+  tier and dispatch paths, never a green claim), and the recorded WHY (the last change's prompt + its enclosing
   turn intent). Collapses the source→references→lineage read chain into one
   response."
   [session ns-sym nm]
@@ -840,8 +846,13 @@
                          distinct sort vec))
           reached (let [seen (set tests)]
                     (->> (refs/covered-by (:store @session) tmap qsym)
-                         (filter #(and (= #{:static} (:via %)) (not (seen (:test %)))))
-                         (mapv #(select-keys % [:test :hops]))))
+                         ;; everything that REACHES/CLAIMS the form but wasn't
+                         ;; observed to run it — static reach (with :hops) AND
+                         ;; ^{:covers} declarations (:via #{:declared}, no hops).
+                         ;; Never a green claim; :via stays visible.
+                         (filter #(and (not (contains? (:via %) :observed))
+                                       (not (seen (:test %)))))
+                         (mapv #(select-keys % [:test :via :hops]))))
           why     (last (query-lineage session ns-sym nm))]
       (cond-> {:ns ns-sym :name nm :source (:source sym)}
         (:effectful? sym) (assoc :effectful? true)

@@ -16,25 +16,26 @@
   everything. Coverage is STATIC (a form reachable in the call graph from
   any test namespace is covered) so the signal survives ^:external tests,
   which never touch the in-image trace map; the trace map, when warm,
-  refines it. ONE analysis pass (analyze + lint share the memoized kondo).
-  Drill into a flagged form with query_slice. `:ns` scopes to one
-  namespace; `:limit` caps the rows (default 25), the tail in :omitted.
-  Clean forms drop out."
+  refines it, and a ^{:covers} DECLARATION discharges the dispatch/data
+  path neither reach nor trace can see. ONE analysis pass (analyze + lint
+  share the memoized kondo). Drill into a flagged form with query_slice.
+  `:ns` scopes to one namespace; `:limit` caps the rows (default 25), the
+  tail in :omitted. Clean forms drop out."
   [session & {:keys [ns limit] :or {limit 25}}]
   (let [st    (:store @session)
         nses  (if ns [(symbol (str ns))] (sort (keys (:namespaces st))))
-         ;; retired: the graph owns the known-set
+        ;; retired: the graph owns the known-set
         tmap  (:test-map @session)
         rendered (into {} (map (fn [n] [n (render/render-ns st n)])) nses)
-ns-lint (into (sorted-map)
-                     (for [[nsx src] rendered
-                           :let [c (count (for [f (index/lint src (store/kondo-lang st nsx))
-      :let [e (render/owner-form st nsx (:row f) (:col f))
-            s (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
-      :when (and (seq? s) (= 'ns (first s)))]
-  f))]
-                           :when (pos? c)]
-                       [nsx c]))
+        ns-lint (into (sorted-map)
+                      (for [[nsx src] rendered
+                            :let [c (count (for [f (index/lint src (store/kondo-lang st nsx))
+                                                 :let [e (render/owner-form st nsx (:row f) (:col f))
+                                                       s (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
+                                                 :when (and (seq? s) (= 'ns (first s)))]
+                                             f))]
+                            :when (pos? c)]
+                        [nsx c]))
         ;; one analyze per ns → every store-internal call edge
         ;; THE reference graph — whole-store edges (carriers included), so
         ;; caller counts are true even in :ns-scoped scans
@@ -55,6 +56,12 @@ ns-lint (into (sorted-map)
                            (let [seen' (into seen frontier)]
                              (recur seen' (into #{} (comp (mapcat adj) (remove seen'))
                                                 frontier)))))
+        ;; DECLARED coverage: a ^{:covers} marker names a form the graph and
+        ;; the trace both miss (dispatch/data/child-image). Whole-store so
+        ;; :ns scoping still sees the declaration in the test namespace.
+        covered-declared (set (for [r (refs/refs st)
+                                    :when (= :covers (:marker r))]
+                                (symbol (str (:to-ns r)) (str (:to-name r)))))
         lint-by-form (frequencies
                       (for [[nsx src] rendered
                             f (index/lint src (store/kondo-lang st nsx))
@@ -99,6 +106,10 @@ ns-lint (into (sorted-map)
                                        (not (and (seq? s) (= 'def (first s))))
                                        (zero? traced)
                                        (not (contains? covered-static q))
+                                       ;; a ^{:covers} declaration discharges :untested —
+                                       ;; it names the exact dispatch path neither the
+                                       ;; trace nor static reach can see.
+                                       (not (contains? covered-declared q))
                                        ;; a ^:generated wrapper is :cljs — never traced,
                                        ;; never reached from a test ns; not a finding
                                        (not (:generated (meta (second s)))))
@@ -131,10 +142,10 @@ ns-lint (into (sorted-map)
              ;; rise while the codebase genuinely improves. Max and median
              ;; move the right way.
              :loc      (let [sized (for [nsx nses
-                                        e (store/forms st nsx)
-                                        :when (:name e)]
-                                    [(symbol (str nsx) (str (:name e)))
-                                     (count (str/split-lines (n/string (:node e))))])
+                                         e (store/forms st nsx)
+                                         :when (:name e)]
+                                     [(symbol (str nsx) (str (:name e)))
+                                      (count (str/split-lines (n/string (:node e))))])
                              ls    (sort (map second sized))
                              n     (count ls)]
                          (when (pos? n)
