@@ -47,8 +47,11 @@ and **token cost** (chars/4 of the JSON actually sent/received through
 - Each app = a deterministic script of MCP tool calls (deliberate red steps
   included — debugging is part of real usage). The run fails loudly if an
   app's final test run isn't green.
-- Results append to `benchmarks/results.md` (committed — it's the progress
-  record): git sha, app, steps, wall ms, tokens in/out.
+- Results append to `benchmarks/results.md` (**gitignored — a LOCAL progress
+  record, not committed**): git sha, app, steps, wall ms, tokens in/out. Rows
+  therefore only compare against other rows from the same machine, which is
+  what the wall-ms column was ever good for anyway; the token columns are the
+  machine-independent ones.
 - **Run it when the numbers should be changing** (user guidance) — edit-path /
   verification / restart changes, not routinely. Skip it for query additions,
   docs, or anything off the measured path.
