@@ -26,6 +26,15 @@
          ;; retired: the graph owns the known-set
         tmap  (:test-map @session)
         rendered (into {} (map (fn [n] [n (render/render-ns st n)])) nses)
+ns-lint (into (sorted-map)
+                     (for [[nsx src] rendered
+                           :let [c (count (for [f (index/lint src (store/kondo-lang st nsx))
+      :let [e (render/owner-form st nsx (:row f) (:col f))
+            s (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
+      :when (and (seq? s) (= 'ns (first s)))]
+  f))]
+                           :when (pos? c)]
+                       [nsx c]))
         ;; one analyze per ns → every store-internal call edge
         ;; THE reference graph — whole-store edges (carriers included), so
         ;; caller counts are true even in :ns-scoped scans
@@ -133,4 +142,5 @@
                             :largest (first (last (sort-by second sized)))
                             :p95     (nth ls (min (dec n) (int (* 0.95 n))))
                             :median  (nth ls (quot n 2))}))}
+      (seq ns-lint)          (assoc :ns-lint ns-lint)
       (> (count rows) limit) (assoc :omitted (- (count rows) limit)))))

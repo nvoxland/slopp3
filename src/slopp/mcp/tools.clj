@@ -16,6 +16,7 @@
     :description "Form source from the store. targets [{ns name}…] reads SEVERAL named forms in ONE call — the normal read. ns alone returns the OUTLINE (name forms, or pass full: true for a whole-namespace dump — rarely needed; compose edits from the outline and let :source-now correct misses)."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
+                               :full {:type "boolean"}
                                :targets {:type "array"
                                          :items {:type "object"
                                                  :properties {:ns {:type "string"}
@@ -535,6 +536,41 @@
                       (read-only-tools (:name %))
                       (assoc :annotations {:readOnlyHint true}))))
         [orientation-tools history-tools edit-tools flow-tools env-tools sync-tools]))
+
+(def extra-accepted-arg-keys
+  "Per-tool ALIASES the dispatch in slopp.mcp/call-tool! reads via
+   (or (:canonical a) (:alias a)) — deliberately kept OUT of the advertised
+   inputSchema so agents learn the one canonical key, but accepted (not refused
+   as unknown) when a client sends the alias. call-tool! is the source of truth;
+   the arg-forgiveness tests pin every entry, so a missed alias REDS the suite
+   rather than silently refusing documented behaviour."
+  {"edit_rename"    #{:name :from :to}
+   "edit_subform"   #{:from :to :after}
+   "edit_extract"   #{:source :subform}
+   "rename_sweep"   #{:dry_run}
+   "edit_requalify" #{:dry_run}})
+
+(defn accepted-arg-keys
+  "The full set of argument keys tool `name` accepts: its inputSchema
+   properties, its forgiveness aliases (extra-accepted-arg-keys), and the
+   universal cross-cutting keys (:agent stamped by the dispatch, :prompt intent,
+   :verbose full payload). nil for a name the server does not advertise
+   (edit_group is deliberately off-wire; an unknown name) — that tool opts OUT
+   of strict validation rather than refusing every key."
+  [name]
+  (when-let [d (some #(when (= name (:name %)) %) tools)]
+    (into (into #{:agent :prompt :verbose} (extra-accepted-arg-keys name))
+          (keys (get-in d [:inputSchema :properties])))))
+
+(defn unknown-arg-keys
+  "The keys in `arguments` that tool `name` does not accept — the ones the
+   dispatch would otherwise silently DROP. Returns a seq, or nil when the tool
+   opts out (see accepted-arg-keys) or every key is accepted. The wire refuses
+   a call carrying any, so a mistyped or unsupported argument fails loudly
+   instead of evaporating into a no-op (or, for a safety flag, its opposite)."
+  [name arguments]
+  (when-let [acc (accepted-arg-keys name)]
+    (seq (remove acc (keys arguments)))))
 
 (def cheat-sheet
   "slopp cheat-sheet

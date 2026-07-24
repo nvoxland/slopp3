@@ -700,18 +700,20 @@
   (let [sess (external/open!)]
     (try
       (call! sess "ns_create" {:ns "sa" :source "(ns sa)\n(defn f [x] x)\n"})
-      (testing "a misnamed new_source names the real :source param, not a paren/parse error"
+      (testing "a misnamed :new_source is refused, naming the bad key and :source — not a paren/parse error"
         (let [r (call! sess "edit_replace_form"
                       {:ns "sa" :name "f" :new_source "(defn f [x] (inc x))"})]
-          (is (re-find #"missing required argument :source" r))
-          (is (re-find #"new_source" r))
+          (is (re-find #"unknown argument" r))
+          (is (re-find #":new_source" r))
+          (is (re-find #":source" r) "the refusal lists :source as accepted")
           (is (not (re-find #"got 0" r)))))
       (testing "a genuinely missing source is a clear message too"
         (let [r (call! sess "edit_replace_form" {:ns "sa" :name "f"})]
           (is (re-find #"missing required argument :source" r))))
       (testing "edit_add_form guards its source arg the same way"
         (let [r (call! sess "edit_add_form" {:ns "sa" :new_source "(defn g [x] x)"})]
-          (is (re-find #"missing required argument :source" r))))
+          (is (re-find #"unknown argument" r))
+          (is (re-find #":new_source" r))))
       (testing "a correctly-named source still lands"
         (let [r (edn/read-string
                  (call! sess "edit_replace_form"
@@ -945,6 +947,35 @@
           (is (contains? by-name "rename_sweep"))
           (is (contains? by-name "change_signature"))
           (is (contains? by-name "undo"))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external unknown-argument-is-refused
+  ;; The MCP dispatch used to DROP an unrecognised argument — a typo'd flag
+  ;; silently ran a real sweep (dry-run-is-honored-over-the-wire is the
+  ;; incident). Strict validation REFUSES an unknown key, naming it, so a flag
+  ;; cannot evaporate into the opposite of what was asked. A key the dispatch
+  ;; deliberately accepts as an alias (edit_extract :subform) must still pass.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'uk.core "(ns uk.core)\n(defn f [] {:uk/target 1})\n")
+      (testing "an unknown key is refused, names itself and the accepted keys, and NOTHING runs"
+        (let [before (count (store/deltas (:store @sess)))
+              r      (call! sess "rename_sweep" {:from ":uk/target"
+                                                 :to ":uk/renamed"
+                                                 :bogus true})]
+          (is (re-find #"unknown argument" r) r)
+          (is (re-find #":bogus" r) r)
+          (is (re-find #":dry-run" r) "the refusal lists the accepted keys")
+          (is (= before (count (store/deltas (:store @sess))))
+              "a refused call appends NO delta — the sweep must not run")
+          (is (re-find #":uk/target" (query/query-source sess 'uk.core))
+              "and rewrites nothing")))
+      (testing "an alias the dispatch accepts is not treated as unknown"
+        (call! sess "ns_create" {:ns "uk2" :source "(ns uk2)\n(defn f [x] (+ x x 1))\n"})
+        (let [r (edn/read-string (call! sess "edit_extract"
+                                        {:ns "uk2" :from "f" :name "doubled"
+                                         :subform "(+ x x 1)"}))]
+          (is (nil? (:error r)) r)))
       (finally (api/close! sess)))))
 
 (deftest ^:external dry-run-is-honored-over-the-wire

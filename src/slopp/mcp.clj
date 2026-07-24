@@ -512,6 +512,14 @@
   ;; async-image boot: the store loaded synchronously (this dispatch is live),
   ;; but the image may still be warming on a background thread. Oracle and
   ;; write tools wait for it here; store-value reads serve immediately.
+  (when-let [bad (tools/unknown-arg-keys name arguments)]
+    (throw (ex-info (str "unknown argument" (when (next bad) "s") " "
+                         (str/join ", " (map #(str ":" (clojure.core/name %)) bad))
+                         " for " name " — a mistyped or unsupported argument is"
+                         " refused, not ignored. accepted: "
+                         (str/join " " (sort (map #(str ":" (clojure.core/name %))
+                                                  (tools/accepted-arg-keys name)))))
+                    {:tool name :unknown (vec bad)})))
   (when-not (contains? tools/image-free-tools name)
     (api/await-image! session))
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits      ; m5b: absorb other servers' commits
