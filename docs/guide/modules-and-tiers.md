@@ -98,12 +98,28 @@ module_purity {module "invoice.total" tier :pure
 
 Scope is a namespace **path**, and the most specific declaration wins, so a
 pure core underneath an effectful module is declarable. Declaring *verifies*
-the code already there and refuses a tier the existing forms exceed.
+the FORMS already there and refuses a tier the existing forms exceed.
 Undeclared means `:external`, which means ungated.
 
 Once declared, the write gate hard-refuses a form that exceeds the tier. Tier
 layering is itself a graph property: the core is not allowed to depend on the
 shell.
+
+**And that second half is deliberately not checked at declaration time**, so
+the declaration says as much:
+
+```clj
+{:module "shop.totals" :tier :pure
+ :verified [:forms] :unverified [:layering]
+ :note "…layering is a whole-graph property reported by full_check…"}
+```
+
+A layering verdict *changes as legitimate work continues* -- declare the
+dependency and the same tier becomes valid -- which is exactly the kind of
+check that does not belong at write grain. `full_check` reports it instead. So
+a tier can be accepted and stand for many writes before anything contradicts
+it, and `:unverified` is how you know to expect that. Read it: a clean
+declaration is not a clean bill of health.
 
 Every memo must go through `slopp.cache`. That is what keeps `:internal`
 checkable -- an ad-hoc atom is indistinguishable from arbitrary mutation, and

@@ -104,6 +104,18 @@ measurably bleed tokens.
    answers the whole-store question — see below. If your session pauses
    first, the hook fires done for you and the findings greet the next
    session's brief.
+   **`:host-stale` means DOUBT THE VERDICT.** `done` and `full_check` carry
+   it when the process that produced the result is knowingly running code the
+   store has moved past — a hot-reload that failed, or a `--snapshot` host
+   with code deltas since it booted. The tests may have passed against the
+   wrong code. Restart the server (or fix the reload failure named in
+   `:failed`) and re-run before believing a green. It is absent unless there
+   is something to doubt, so when you see it, act on it.
+   **`:ms` says what verification cost.** Every write's `:test`, every `done`,
+   every `full_check` and every external run reports its own wall time, and
+   the number persists on the delta — so "where is my time going?" is a query
+   over the journal, not a guess. Per-write verification is normally free
+   (median 0ms on a 170-namespace store); if yours is not, that is the signal.
    **Tier vocabulary** (namespaces AND tests): `:pure` (referentially
    transparent) · `:internal` (mutates in-process state only — a memo via
    `slopp.cache`) · `:external` (IO: files, subprocesses, network, db).
@@ -144,7 +156,26 @@ measurably bleed tokens.
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
-| Declare a namespace's purity tier | `module_purity {module tier prompt}` — `:pure` (referentially transparent) / `:internal` (mutates in-process only) / `:external` (IO). Namespace PATH, most-specific wins; declaring VERIFIES the code already there. Undeclared = `:external` = ungated |
+| Declare a namespace's purity tier | `module_purity {module tier prompt}` — `:pure` (referentially transparent) / `:internal` (mutates in-process only) / `:external` (IO). Namespace PATH, most-specific wins; declaring verifies the FORMS already there. Undeclared = `:external` = ungated |
+
+**A declaration tells you which axes it checked.** Every register write —
+`module_purity`, `module_platform`, `module_dep`, `config_file` — returns
+`:verified` and `:unverified` axis lists plus a `:note` saying where an
+unchecked axis IS judged. **Read `:unverified`, because a clean declaration is
+not a clean bill of health:**
+
+- `module_purity` checks the forms; it does NOT check layering (does this
+  namespace require a LOOSER tier?). That is a whole-graph property and only
+  `full_check` reports it — so a tier can be accepted and stand for many writes
+  before anything contradicts it. Declaring `:external` verifies nothing at
+  all, because `:external` asserts nothing.
+- `module_platform` verifies NOTHING about the code; `compile_client` is what
+  proves a `:cljc`/`:cljs` namespace actually compiles.
+- `module_dep` checks cycles over PRODUCTION edges; whether anything uses the
+  edge is `query_depends {modules true}`'s `:unused-edges`.
+- `config_file` validates only the `capabilities` path (against the capability
+  registry). Every other path — `rules`, `gates`, `client` — is recorded as
+  given, key and value unchecked.
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the

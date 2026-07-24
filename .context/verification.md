@@ -194,6 +194,46 @@ The oracle must never return a false verdict. Everything here serves that.
    a fully-loaded image on `open!` return, unchanged.
 5. **Provenance.** Every verification lands as a `:verify` delta with the
    summary (incl. `:failures`, `:staleness-detected`/`:fresh-confirmed`).
+   **What it COST, not only what it found (2026-07-24).** The summary carries
+   `:ms`, so it persists through `:result` at all twelve `record-verification`
+   call sites — one producer (`session/run-verification!` times itself), no
+   call-site changes. `done!` stamps its findings (the boundary delta is where
+   the frequency×cost product becomes computable — done is the most-called
+   verdict), `external-test-run!` stamps EVERY exit including the early ones
+   (this tier is ~187s of a ~190s full_check), and `full-check!` records its
+   own verdict as a `:verify` delta scoped `:full-check` — shape only
+   (`:status :ms :namespaces :lint-errors :lint-warnings`), never the finding
+   lists, since the journal is append-only and a red full_check's lint rows
+   are large.
+   **Why it mattered:** with no durations the only after-the-fact attribution
+   was the gap between consecutive deltas, which mixes tool execution with
+   agent thinking and idle time. Measured consequence — a first attribution
+   over this store's own log blamed `done` for 37% of wall clock; the gap it
+   was reading was unlogged work before a `commit_point`. The expensive
+   operations were precisely the ones that wrote no delta at all.
+   **Still unmeasured:** `module_extract`'s per-rename image rebuilds, and
+   `spot-run!`'s in-image half (it delegates to `api/test-run!`, whose verify
+   delta carries `:ms` — the composite total does not).
+   **Which COPY produced the verdict (2026-07-24, frictions #10).** A verdict
+   is only as good as the process that computed it, and a `--live` host can
+   fail to hot-reload — after which every verdict it produces is suspect while
+   looking ordinary. `orient/host-warning` (the same producer behind
+   `session_brief`'s `:host`, aimed at the other reader) rides `done` and
+   `full_check` as `:host-stale` whenever the host is KNOWINGLY behind: a
+   failed reload in either mode, or a `:snapshot` host with code deltas since
+   boot. `orient/code-deltas-since` is the ONE counter for that gap and reads
+   `store.fields/markers` so bookkeeping deltas never count.
+   Quiet is load-bearing: a clean `:live` host lags by up to one poll interval
+   by design, so it warns about nothing — a finding on every done is a finding
+   nobody reads.
+   **What it does NOT answer:** whether every var in the process is identical
+   to the store. It answers whether the host knowingly failed to load
+   something. A reload that succeeded while a long-lived closure kept the old
+   fn stays invisible, and no cheap check sees it.
+   **Deliberately not wired:** `test_run` (a spot-check whose own contract
+   points at done/commit_point for the real verdict) and `commit_point`'s
+   GATE. A green done carrying `:host-stale` still records a milestone today —
+   changing the milestone bar is decision-grade and was not taken here.
 6. **Cold-load gate (S1b, `edit/cold-load-errors` → `index/forward-refs`).**
    Hot-loading into the LIVE image cannot see forward references — the vars
    already exist there — so a write could commit a namespace that

@@ -127,7 +127,7 @@ guide](../guide/web/index.md).
 | Tool | What it does |
 |---|---|
 | `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked. |
-| `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the code already there. |
+| `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the FORMS already there; `:unverified` names what it did not check. |
 | `module_platform {module platform}` | Declare a namespace's target platform. See [web apps](#web-applications). |
 
 ## Branches
