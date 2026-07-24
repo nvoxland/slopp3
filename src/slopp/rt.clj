@@ -1,5 +1,5 @@
 (ns slopp.rt
-  "Runtime support slopp injects into every owned image (see slopp.repl/start!).
+  "Runtime support slopp injects into every owned image (see slopp.image.repl/start!).
   Lives IN the image, next to the code under management.
 
   `traced-run` is the D1 form-granularity mechanism: run tests while observing —

@@ -219,7 +219,7 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
   ride their root agent's turn (path labels); `checkpoint` is always allowed
   (it closes work). api-level sessions stay ungated (tests, seeding,
   scripts). The zero-ceremony path: Claude Code hooks run the one-shot
-  `slopp.turn` CLI (UserPromptSubmit → begin with the verbatim prompt,
+  `slopp.mcp.turn` CLI (UserPromptSubmit → begin with the verbatim prompt,
   Stop → end), appending markers OUT-OF-BAND to the journal — the agent's
   server absorbs them via m5b sync, so the model never has to relay its own
   instructions. A turn may end red — failed turns are history too.
@@ -414,7 +414,7 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
     anonymous); `dialect-check` early-returns on `unsafe?`; `query_symbol`
     surfaces `:unsafe?`; relaxes ONLY the dialect ban, not effect labeling;
     survives render + checkpoint normalize. **Self-host proven** (M1+M2): a
-    store with rewrite-clj added ingests real `slopp.store` + `slopp.render`
+    store with rewrite-clj added ingests real `slopp.store` + `slopp.store.render`
     source and runs `render/ns-path` in the self-hosted image; an `^:unsafe`
     def holding the banned symbols (slopp.edit `banned-syms` shape) ingests
     cleanly.
@@ -430,7 +430,7 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
       gate; the store is internally consistent (any in-store host form is
       `^:unsafe`, hence editable). Found by dogfooding `slopp.rt` import; log in
       `ideas/self-host-log.md`.
-  - **M4 shipped:** `slopp.deps` — a dep's own jars (classpath diff) →
+  - **M4 shipped:** `slopp.index.deps` — a dep's own jars (classpath diff) →
     clj-kondo API surface (namespaces + var arities/docs/macro flags),
     memoized per `coord@version` (process memo + durable `dep_surface`
     table). `deps-add!` returns `:namespaces`+`:vars`.

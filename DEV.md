@@ -31,7 +31,7 @@ ignored.
 - **Docker**, only if you want to preview the docs site.
 - **python3**, only if you are exercising the Claude Code plugin hooks.
 
-`mise.toml` also sets `SLOPP_CLOJURE=clojure`: `slopp.repl` probes homebrew
+`mise.toml` also sets `SLOPP_CLOJURE=clojure`: `slopp.image.repl` probes homebrew
 paths for the owned-image launcher before trusting PATH, and forcing the bare
 name makes child images inherit mise's pinned clojure.
 
@@ -194,10 +194,10 @@ Two rules for writing:
 At milestones, and commit the updated row:
 
 ```sh
-clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main
+clojure -M -m slopp.boot . --snapshot --main slopp.bench.benchmark/-main
 ```
 
-The tree is fileless, so a plain `-m slopp.benchmark` finds nothing. History
+The tree is fileless, so a plain `-m slopp.bench.benchmark` finds nothing. History
 lives in `benchmarks/results.md`. Background: `.context/dogfooding.md`.
 
 ## CI

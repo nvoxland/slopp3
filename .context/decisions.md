@@ -988,6 +988,72 @@ cannot state which grammar or declaration grounds it has not met it yet.
 
 ---
 
+## D-components (2026-07-24) — components are REAL namespace prefixes, not a label alongside them
+
+**Decision.** slopp's 28 flat modules are regrouped into nine components by
+RENAMING namespaces under component prefixes (`slopp.db` → `slopp.store.db`,
+`slopp.repl` → `slopp.image.repl`, …). The alternative — a declared component
+label layered over the existing module grain — was considered and rejected.
+
+**Why renaming, given it is the more expensive option.**
+`slopp.edit.modules/module-of` hardcodes *module = first two namespace
+segments*. So a prefix is not cosmetic here: it IS the enforced unit. Renaming
+makes each component one module, which means cross-component calls require
+declared `module_dep` edges and a component's deep namespaces become
+package-private with `^:export` as their declared public surface. A label
+alongside the module grain would have been a second, advisory naming of
+structure that nothing checks — precisely the "one relationship is first-class,
+the rest rot" core (`.context/design-disciplines.md` Core 2). We would have
+shipped a component map that could drift from the architecture it described.
+
+**Anchored, not abstract.** Each component is anchored on the namespace it
+already owns (`slopp.store.*`, not a new `slopp.storage.*`). Measured: 16
+production renames and 72 new `^:export` markers, against ~80 renames and 223
+markers for fresh abstract prefixes, with a shallower tree and no change to the
+published CLI entry point.
+
+**Exempt, and each for a stated reason — a published interface is not
+taxonomy's to spend.**
+- `slopp.boot` / `slopp.rt` — the on-disk kernel AND the published entry point
+  (`clojure -M -m slopp.boot`, `java -jar slopp.jar`) appearing in `deps.edn`,
+  `build.clj`, `README.md`, `DEV.md`, the docs site and a shipped release blog
+  post. They sit outside the component map, which `.context/architecture.md`
+  already frames as the honest place for "slopp-the-tool, not project source."
+- `slopp.sync` — its `-main` appears in users' CI recipes.
+
+**The framework/app boundary this exists to protect.** `slopp.web.*` is the
+framework slopp SHIPS to users (the slim `io.github.nvoxland/slopp-web` jar);
+`slopp.ui.*` is slopp's own webapp built on it. The restructure absorbs nothing
+into `slopp.web`, and the module gate enforces the direction: `slopp.web`
+declares zero outgoing edges and sits at layer 0, so a call from the framework
+into slopp's core refuses at the write.
+
+**Accepted cost, stated so it is not rediscovered as a bug.** ~80
+namespace→namespace edges enforced today (`db → store`, `render → store`)
+become intra-component and stop being checked. Layering WITHIN a component is
+no longer a gate. If that bites, an intra-component layering rule is a later,
+additive change — do not pre-build it.
+
+**Unanticipated cost, found by dogfooding the fold.** Purity tiers are
+namespace-grained and inherit by PREFIX, so folding a namespace under a
+component silently subjects it to that component's tier. `slopp.db` and
+`slopp.mine` were undeclared (= `:external` = ungated) standalone modules;
+under `:pure` `slopp.store` they inherited `:pure`, and `full_check` stayed
+GREEN with both violations resident because the functional-core gate fires on
+WRITE, over the forms a write touches. Declaring the three deep namespaces
+explicitly (`slopp.store.db`/`.mine` `:external`, `.merge` `:pure`) fixed this
+store. **The class is open**: a tier acquired by inheritance is never verified
+against the population it newly governs. See `ideas/ui-wave-frictions.md` #11.
+
+**Consequence for wave-scale renames generally.** A namespace name lives in
+strings as often as in symbols — generated `deps.edn` main-ns, `(ns …)` source
+in test fixtures, child-JVM program text, CLI usage lines in docstrings.
+`ns_rename` rewrites symbols perfectly and reports NO string hits, which is the
+confident-partial-answer shape **D-surface-honesty** names. Until it reports
+them, a rename wave owes a `rename_sweep` dry-run pass per retired name.
+
+---
+
 ## D-surface-honesty (2026-07-24) — the read/analysis layer inherits the write layer's discipline
 
 **Decision.** A surface that reports on code may never conflate *"I checked and

@@ -106,6 +106,48 @@
   `ideas/version-locked-references.md`. Convert at the boundary, one
   place.
 
+## Components (2026-07-24)
+
+Namespaces are grouped so that **a component IS a module** — modules are the
+first two ns segments, so `slopp.store.db` is part of module `slopp.store`,
+and a cross-component call needs a declared edge while an intra-component one
+does not. Before this, 28 flat modules sat with no coarser grouping and sizes
+160× apart; `slopp.bench` (2 forms) had the same standing as `slopp.api` (322).
+
+The resulting graph is acyclic and nearly linear:
+
+| Layer | Component | Holds |
+|---|---|---|
+| 0 | `boot` `rt` | the on-disk kernel — outside the component map by design |
+| 0 | `cache` | the blessed memo |
+| 0 | `web` | the app FRAMEWORK slopp ships to users; zero outgoing edges, by rule |
+| 0 | `client` | dogfood cljs; moves into `slopp.ui` |
+| 1 | `store` | `store` `.db` `.render` `.build` `.mine` `.semver` `.fields` `.merge` |
+| 2 | `image` | `image` `.repl` `.testmain` — the oracle |
+| 2 | `git` | `git` `.client` `.server` |
+| 3 | `index` | `index` `.analyze` `.derive` `.deps` `.normalize` — static analysis |
+| 4 | `edit` | `edit` `.refs` `.modules` `.hotload` `.lintgate` `.refactor` |
+| 5 | `api` | operations + verification orchestration (22 namespaces) |
+| 6 | `sync` | the git bridge — **stays top-level**: `slopp.sync/-main` is a published CLI entry in the plugin launcher, the install docs, a release blog post, and users' CI recipes |
+| 7 | `mcp` | `mcp` `.tools` `.smells` `.http` `.http.browse` `.turn` — the agent-facing transports |
+| 8 | `bench` | `bench` `.benchmark` `.evalseed` — dev instruments, on no user path |
+
+**`slopp.boot`, `slopp.rt` and `slopp.sync` are deliberately exempt.** Each is a
+published interface (`java -jar slopp.jar`, `clojure -M -m slopp.boot`,
+`slopp --main slopp.sync/-main import .`); renaming them breaks other people's
+scripts to buy taxonomy.
+
+**The framework/app boundary is load-bearing and mechanically enforced.**
+`slopp.web.*` is what users depend on — `build.clj`'s slim `slopp-web` jar ships
+exactly `slopp/web.clj` + `slopp/web/**`, and the `slopp.web` module declares
+ZERO outgoing edges, so the gate refuses any call from the framework into
+slopp's core. slopp's own webapp (`slopp.ui`) depends on the framework the way
+a user's app would, never the reverse.
+
+The cost accepted: ~80 namespace→namespace edges that were enforced when these
+were separate modules (`db → store`, `render → store`) are now intra-component
+and unchecked. Layering *within* a component is no longer a gate.
+
 ## Layer map (bottom-up)
 
 | ns | Role |
@@ -113,13 +155,13 @@
 | `slopp.store` | pure form store + delta log + episode snapshots (`sources-at`); public toolkit (`gen-id`, `now-ms`, `qform`, `suffix-touched`) serves the deep packages |
 | `slopp.store.fields` | the fold-field/op REGISTRY (deep, :pure): one declaration per field/op drives empty-store seeds, THE shared fold (record/replay/merge), db meta rows, merge strategy, and the generated round-trip proof (D-fold-field-registry) |
 | `slopp.store.merge` | the merge ENGINE (deep, world-exported): `merge-logs` delta-log replay with causal delivery, MV conflicts, semver auto-resolution, merge markers; unregistered ops REFUSE |
-| `slopp.render` | VFS: store → source (lossless, memoized); `element-offsets` maps positions back to elements |
-| `slopp.db` | the journal: SQLite WAL, conditional `append!`, `data-version`, `load-store`; `persist!` only for branch snapshots |
-| `slopp.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.rt` |
+| `slopp.store.render` | VFS: store → source (lossless, memoized); `element-offsets` maps positions back to elements |
+| `slopp.store.db` | the journal: SQLite WAL, conditional `append!`, `data-version`, `load-store`; `persist!` only for branch snapshots |
+| `slopp.image.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.rt` |
 | `slopp.rt` | runtime support inside the image: traced (multi-ns) test runs + failure capture, observe |
 | `slopp.image` | store↔image bridge: load-ns!, traced-test-run (dependency-closure instrumentation) |
 | `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
-| `slopp.refactor` | position-based structural rewrites (rename, extract, subform) |
+| `slopp.edit.refactor` | position-based structural rewrites (rename, extract, subform) |
 | `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate; pure-eval gate (query_store) |
 | `slopp.edit.refs` | THE reference graph (deep, world-exported): canonical form-anchored records from every producer — static/carrier/declared; `refs`/`refs-to` are the only reference query surface |
 | `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
@@ -128,12 +170,12 @@
 | `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), wire shaping (spool/told/hints), turn gate |
 | `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
-| `slopp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
-| `slopp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
-| `slopp.build` | explicit build: files + GraalVM native-image recipe (O4) |
+| `slopp.mcp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
+| `slopp.mcp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
+| `slopp.store.build` | explicit build: files + GraalVM native-image recipe (O4) |
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
-| `slopp.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
-| `slopp.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
+| `slopp.index.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
+| `slopp.store.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
 | `slopp.git` | P4-m8 git compatibility: the shared PROJECTION CORE over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, journal→commit projection, grafting onto `git-base-sha`) |
 | `slopp.git.client` | CLIENT face (deep): push the projection to a normal external remote / fetch a remote's objects; credentials; 30s transport timeouts |
 | `slopp.git.server` | SERVER face (deep): milestones served READ-ONLY over local smart-HTTP (refs advertisement, upload-pack, localhost lifecycle, CLI entry) |

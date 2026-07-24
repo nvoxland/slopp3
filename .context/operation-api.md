@@ -112,7 +112,7 @@ write time, instead of a fresh JVM catching it later.
   pipeline. Prefer these over hand-ingesting/replacing ns forms.
 - `edit-replace!` — whole-form replace (O1); the common "semantic patch" path.
 - `add-form!` / `delete-form!` — grow/shrink a namespace (delete `ns-unmap`s).
-- `rename!` — coordinated multi-form rename; see `slopp.refactor` notes below.
+- `rename!` — coordinated multi-form rename; see `slopp.edit.refactor` notes below.
 - `change-signature!` (P2, tool `change_signature`) — the defn + every CALL
   site as ONE intent: `source` replaces the defn (same name), each call's
   arg list is rebuilt from the `calls` template ($1..$9 = the site's
@@ -171,7 +171,7 @@ write time, instead of a fresh JVM catching it later.
   `:all-failing` {file [tests]}, and `:themes` (cause phrases clustered
   by distinct-test coverage).
 - `done!` — THE done-point (see decisions.md terminology). Deterministically
-  normalizes every form changed since the last done point (`slopp.normalize`,
+  normalizes every form changed since the last done point (`slopp.index.normalize`,
   conservative kibit-style rules, node-level so inner formatting survives),
   commits ONE `:normalize` group delta, hot-reloads + re-verifies affected
   tests, records a labeled `:done` delta. Never rewrites silently
@@ -195,7 +195,7 @@ write time, instead of a fresh JVM catching it later.
   (`image-with-deps!` reconciles the bare warm-spare via add-libs) and the
   generated `deps.edn` (`build/deps-edn` now takes the manifest; empty is
   byte-identical to before so the `ours?` guard holds; `*print-namespace-maps*`
-  is bound OFF for determinism). On add, `slopp.deps` analyzes the dep's own
+  is bound OFF for determinism). On add, `slopp.index.deps` analyzes the dep's own
   jars (classpath diff → clj-kondo) into an API SURFACE (provided namespaces +
   per-var arities/docs/macro flags), memoized per `coord@version` (process
   memo + durable `dep_surface` table); `deps-add!` returns `:namespaces` +
@@ -256,7 +256,7 @@ write time, instead of a fresh JVM catching it later.
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:
   a generated launcher, a `:native` deps alias, and `build-native.sh`
   (user runs it; needs GraalVM 21+ on PATH). Generators live in
-  `slopp.build`; X4 guards apply, plus: a deps.edn the build didn't
+  `slopp.store.build`; X4 guards apply, plus: a deps.edn the build didn't
   generate is never overwritten. **Native-compat gate (M6):** each manifest
   dep's jars are scanned for `META-INF/native-image/**` (GraalVM reachability
   metadata) → `:declared`/`:none` verdict (cached in `dep_surface.native`); a
@@ -286,7 +286,7 @@ locking: all image work rides ONE nREPL session (per-eval serialization) and
 `traced-run`/hot-loads are single evals — keep multi-step image work inside
 one eval. `*pre-commit-hook*` is the deterministic test seam.
 
-## `slopp.refactor` (rename mechanics)
+## `slopp.edit.refactor` (rename mechanics)
 
 Position-based: clj-kondo gives resolved sites; **use `:name-row`/`:name-col`
 for usages** (`:row`/`:col` point at the CALL's paren, not the symbol —
@@ -305,7 +305,7 @@ Two transports share the SAME dispatch (`mcp/handle`):
   in-repo `.mcp.json` runs it THROUGH `slopp.boot` (`-m slopp.boot . --snapshot`)
   so slopp serves from its own store, no exported source — see
   "Running from the store" below.
-- **HTTP** (`clojure -M -m slopp.http <port> [dir]`, or
+- **HTTP** (`clojure -M -m slopp.mcp.http <port> [dir]`, or
   `http/start-server!` programmatically) — localhost-only JSON for
   curl/scripting/evals; `/metrics` returns per-call payload sizes.
 - **Git smart-HTTP** (`clojure -M -m slopp.git <port> [dir]`, or

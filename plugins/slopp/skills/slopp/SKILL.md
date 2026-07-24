@@ -139,6 +139,7 @@ measurably bleed tokens.
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form. Whole-word only, so `region-ish` survives a `region` sweep. **`dry-run` first and check the count against what you expected** — a mismatch means your pattern is catching something else. Two gotchas: it rewrites prose DESCRIBING the rename (a comment explaining `a -> b` comes out saying `b -> b`), and if a live GATE enforces the thing you are renaming, you need two phases — teach the gate to accept BOTH spellings, sweep, then tighten. A gate runs from the old compiled code while the group rewrites it, so a one-shot sweep is refused at the first form it re-tags |
 | Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers). **Propose the cluster you want and let it close the set for you** — it refuses a two-way split and NAMES the forms that would leave a cycle ("the moved set calls [x y] (staying)"). Add those and retry. Guessing the seam leaves a cycle; the refusal IS the analysis |
+| Regroup whole namespaces under one prefix | `module_extract {namespaces to}` — the MODULE-grain move, for a namespace that grew into its own component or a set that wants one owning prefix. Each named ns takes its subtree and `-test` sibling. **`dry-run` first, always**: going from two segments to three makes a namespace package-private, so every outside caller breaks at once, and the plan is the only place you see WHICH vars must be hoisted and WHICH CALLERS force each. The write order is the design — hoist (`^:export`), then rename, then declare the edges the moved store actually references — so no intermediate state is one the gate would refuse. Refuses a regroup that would leave a production cycle; a `-test` back-edge is not one |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
@@ -599,7 +600,7 @@ query_git query_detail review_scan · ns_create
 ns_add_require ns_remove_require ns_rename ns_delete · edit_add_form
 edit_replace_form edit_delete_form edit_subform edit_trivia
 edit_rename change_signature rename_sweep edit_requalify edit_extract
-edit_move_forms edit_move edit_revert undo episode_revert cleanup ·
+edit_move_forms module_extract edit_move edit_revert undo episode_revert cleanup ·
 branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep module_purity · file_put file_remove file_list file_get

@@ -21,7 +21,7 @@ assertion** (a proof obligation), and where behavior must be trusted, is made
 content-addressed deps, and GraalVM's declared-or-traced metadata all inform
 it.
 
-## The manifest (`slopp.api` `deps_*`, `slopp.store`, `slopp.db`)
+## The manifest (`slopp.api` `deps_*`, `slopp.store`, `slopp.store.db`)
 
 - `deps_add {lib version|coord}` / `deps_remove` / `deps_list`. The manifest
   is `{lib coord}` (deps.edn coordinates), kept CLEAN (tools.deps-legal).
@@ -29,7 +29,7 @@ it.
   — they reconstruct `:deps` on foreign-sync, ride branches/merge), materialized
   to a `meta` `'deps'` row for O(1) load. `:deps` is on the store VALUE. On
   merge, a same-lib **version divergence auto-resolves to the newer mvn coord**
-  (numeric compare via `slopp.semver/newer?`, so 1.10 > 1.2) with a resolution
+  (numeric compare via `slopp.store.semver/newer?`, so 1.10 > 1.2) with a resolution
   note; only incomparable coords (mvn vs git sha) stay a conflict.
 - **Reaches the image classpath** at every launch (`-Sdeps` in
   `repl/default-cmd`; `image-with-deps!` reconciles the bare warm-spare). A
@@ -40,7 +40,7 @@ it.
   pre-manifest output (the `ours?` guard holds); `*print-namespace-maps*` is
   bound OFF for byte-determinism.
 
-## Surface analysis (`slopp.deps`, M4)
+## Surface analysis (`slopp.index.deps`, M4)
 
 On `deps_add`, slopp learns what a dep exposes without reading jars: isolate
 the dep's OWN jars (its classpath minus a clojure baseline — a **classpath

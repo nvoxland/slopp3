@@ -121,7 +121,7 @@ the backlog for attention.
 - **Dogfooding is a standing practice:** build real things through slopp
   itself under `projects/<name>/` (untracked); write findings to a
   `REPORT.md` there; findings drive the roadmap. See `.context/dogfooding.md`.
-- **Benchmark at milestones** (`clojure -M -m slopp.boot . --snapshot --main slopp.benchmark/-main` — the tree is fileless; plain `-m slopp.benchmark` finds nothing) and commit
+- **Benchmark at milestones** (`clojure -M -m slopp.boot . --snapshot --main slopp.bench.benchmark/-main` — the tree is fileless; plain `-m slopp.bench.benchmark` finds nothing) and commit
   the updated `benchmarks/results.md` row. See `.context/dogfooding.md`.
 - **The image is the oracle:** verification correctness depends on
   restart-as-diagnostic and the trace map. Don't weaken those paths without
@@ -136,10 +136,10 @@ the backlog for attention.
 | `.context/design-disciplines.md` | building ANY surface/rule — the friction cores + the disciplines that avoid them |
 | `.context/decisions.md` | any design-level change — DECISIONS only |
 | `.context/findings-log.md` | what past user tests / evals actually observed |
-| `.context/store-and-persistence.md` | `slopp.store`, `slopp.db`, `slopp.render` |
+| `.context/store-and-persistence.md` | `slopp.store`, `slopp.store.db`, `slopp.store.render` |
 | `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.api` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
-| `.context/operation-api.md` | `slopp.api`, `slopp.mcp`, `slopp.refactor` |
+| `.context/operation-api.md` | `slopp.api`, `slopp.mcp`, `slopp.edit.refactor` |
 | `.context/dogfooding.md` | user tests, benchmark suite, findings backlog |
 | `.context/working-in-this-repo.md` | dev workflow, REPL, tests, commits |
 | `.context/writing-style.md` | `docs/`, the blog, release notes, README copy |

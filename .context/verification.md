@@ -10,7 +10,7 @@ The oracle must never return a false verdict. Everything here serves that.
    `{:summary {... :failures [...]} :trace {test-sym #{form-sym}}}`.
    - **`rt/instrument!` + `restore!` are THE instrumentation seam** — ONE
      tracer, two runners. `traced-run` wraps its own per-var loop with it
-     (in-image); `slopp.testmain` wraps cognitect's runner with it (external,
+     (in-image); `slopp.image.testmain` wraps cognitect's runner with it (external,
      item 7). The runners genuinely differ; the wrapping must never be copied,
      because a second tracer is a second truth.
    - `traced-run` drops `^:external` tests **unconditionally, by design** —
@@ -254,7 +254,7 @@ The oracle must never return a false verdict. Everything here serves that.
    ever runs an `^:external` test, so it is the only place their test→form
    evidence can come from — before this, 69% of slopp's own suite (257/370
    deftests) produced ZERO runtime evidence and `slopp.api/done!` itself read
-   `:warranty {:covered 0}`. `slopp.testmain` is the built project's entry
+   `:warranty {:covered 0}`. `slopp.image.testmain` is the built project's entry
    point: it rides rt's `instrument!`/`restore!` seam — **the SAME tracer as
    in-image, never a second copy** — tracks the current test by delegating
    `clojure.test/report`, and **WRAPS `cognitect.test-runner/test` rather than
@@ -268,7 +268,7 @@ The oracle must never return a false verdict. Everything here serves that.
    concurrent JVMs in ONE dir) and `session/absorb-trace!` merges it into the
    same `:test-map` the in-image tier feeds. Silent — it surfaces as honest
    `:warranty` and narrowing, not as output. Routing is conditional on the
-   store PROVIDING `slopp.testmain`, so a store without it (any user project;
+   store PROVIDING `slopp.image.testmain`, so a store without it (any user project;
    every throwaway test store) builds byte-identically to before and stays on
    plain cognitect.
    **The child image REPORTS BACK (#126, 2026-07-17) — the subprocess limit is

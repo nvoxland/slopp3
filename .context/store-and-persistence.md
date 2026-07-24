@@ -59,7 +59,7 @@
   (e.g. group validation) work by applying store fns to a value and only
   committing the result on success.
 
-## Persistence (`slopp.db`, decision C7)
+## Persistence (`slopp.store.db`, decision C7)
 
 - SQLite at `<dir>/.slopp/store.db`, WAL mode. Tables:
   - `deltas(seq, id UNIQUE, op, ns, payload)` — append-only log; everything
@@ -86,7 +86,7 @@
   system. When you add a caller of `db/open!`, decide which one it is: a
   question takes `{:create? false}`, a write takes the default.
 
-## Rendering (`slopp.render`)
+## Rendering (`slopp.store.render`)
 
 - `render-ns` = concat of element node strings — byte-exact round trip with
   ingestion (tested over a corpus; keep it that way).
@@ -147,7 +147,7 @@ sites derive from it:
   `(:deps store)` (lib→coord) so foreign-sync reconstructs the manifest
   incrementally; `merge-logs` lands foreign deps and, on same-lib version
   divergence, auto-resolves to the NEWER coord (numeric compare via
-  `slopp.semver/newer?`) with a resolution `:note` — only truly incomparable
+  `slopp.store.semver/newer?`) with a resolution `:note` — only truly incomparable
   coords (mvn vs git sha, etc.) stay a `:conflict`. The current manifest is materialized
   to a `meta` row `'deps'` (written by `persist!`/`append!` from
   `(:deps store)`, read by `load-store` into `:deps`) so launch/git/native
