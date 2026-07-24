@@ -442,14 +442,18 @@
   "Append a turn marker (:turn-begin carries the VERBATIM user ask — the root
   intent of everything that follows; :turn-end closes the bracket, stable or
   not). Returns [store' delta]."
-  [store kind & {:keys [agent intent user note]}]
+  [store kind & {:keys [agent intent user note timing]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
                        :op kind :ns '*session* :at (now-ms)}
                 agent  (assoc :agent agent)
                 intent (assoc :intent intent)
                 user   (assoc :user user)
-                note   (assoc :note note))]
+                note   (assoc :note note)
+                ;; where this ask's wall clock went — {:slopp-ms :outside-ms
+                ;; :top …}, folded by api.telemetry/call-timing from what the
+                ;; wire saw. Absent when nothing was called, never zeroed.
+                timing (assoc :timing timing))]
     [(update store' :deltas conj delta) delta]))
 
 (defn- id-num [id]

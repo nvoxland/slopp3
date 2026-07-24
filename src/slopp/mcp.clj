@@ -1010,15 +1010,26 @@
     "notifications/initialized" nil
     "tools/list" (do (swap! session assoc :slopp.mcp/tools-hash (hash tools/tools))
                      {:jsonrpc "2.0" :id id :result {:tools tools/tools}})
-    "tools/call" {:jsonrpc "2.0" :id id
-                  :result (binding [*hint* (smells/track-hint! session
-                                                        (:name params)
-                                                        (:arguments params))
-                                    *spool-session* session]
-                            (try (call-tool! session params)
-                                 (catch Exception e
-                                   (assoc (text! (str "error: " (ex-message e)))
-                                          :isError true))))}
+    "tools/call"
+    ;; BOTH edges of the call, recorded here because this is the only layer
+    ;; that sees them. The gap between one answer and the next call is time
+    ;; slopp was NOT working — agent reasoning, non-slopp tools, the harness —
+    ;; and it had no producer at all: measured over one real session, 78% of
+    ;; the wall clock was invisible. turn_end folds the ring onto its delta.
+    (let [t0 (System/currentTimeMillis)
+          r  (binding [*hint* (smells/track-hint! session
+                                                  (:name params)
+                                                  (:arguments params))
+                       *spool-session* session]
+               (try (call-tool! session params)
+                    (catch Exception e
+                      (assoc (text! (str "error: " (ex-message e)))
+                             :isError true))))]
+      ;; after the call, so a tool that reads the ring (turn_end) never sees
+      ;; its own half-finished entry
+      (swap! session update :slopp.api.telemetry/calls (fnil conj [])
+             {:tool (:name params) :start t0 :end (System/currentTimeMillis)})
+      {:jsonrpc "2.0" :id id :result r})
     "ping" {:jsonrpc "2.0" :id id :result {}}
     (when id
       {:jsonrpc "2.0" :id id

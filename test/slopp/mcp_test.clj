@@ -1353,3 +1353,49 @@
       (finally
         (call! sess "ui_serve" {:stop true})
         (api/close! sess)))))
+
+(deftest ^:external a-turn-records-where-its-wall-clock-went
+  ;; slopp measured what its own verification cost and nothing else, so a
+  ;; session's wall clock had no producer: 1,703s elapsed against 390s
+  ;; recorded. The wire sees both edges of every call, and the TURN is
+  ;; already the user-ask bracket the prompt hook maintains — so the split
+  ;; belongs on the :turn-end delta, where it is durable and per-ask.
+  (let [sess (external/open!)]
+    (try
+      (mcp/handle! sess {:jsonrpc "2.0" :id 1 :method "tools/call"
+                         :params {:name "turn_begin"
+                                  :arguments {:intent "measure the turn"}}})
+      (mcp/handle! sess {:jsonrpc "2.0" :id 2 :method "tools/call"
+                         :params {:name "query_project" :arguments {}}})
+      (mcp/handle! sess {:jsonrpc "2.0" :id 3 :method "tools/call"
+                         :params {:name "session_brief" :arguments {}}})
+      (mcp/handle! sess {:jsonrpc "2.0" :id 4 :method "tools/call"
+                         :params {:name "turn_end" :arguments {}}})
+      (let [d (last (filter #(= :turn-end (:op %)) (store/deltas (:store @sess))))
+            t (:timing d)]
+        (is (some? t) (str "the turn-end delta must carry the split: " (pr-str d)))
+        (is (<= 3 (:calls t)) (pr-str t))
+        (is (number? (:slopp-ms t)))
+        (is (number? (:outside-ms t)))
+        (is (= (:elapsed-ms t) (+ (:slopp-ms t) (:outside-ms t)))
+            "the split is exhaustive — an unexplained remainder is the bug")
+        (is (seq (:top t)) "and it names the tools that cost")
+        (is (every? :tool (:top t)) (pr-str (:top t))))
+      (testing "turns do not bleed — a new one measures only its own calls"
+        ;; the wire records a call AFTER it returns (so turn_end never reads a
+        ;; half-finished entry for itself), which means turn_end's own entry
+        ;; lands in the ring just after it cleared it. turn_begin clears again,
+        ;; so the leftover bracket cannot be billed to the next ask.
+        (mcp/handle! sess {:jsonrpc "2.0" :id 5 :method "tools/call"
+                           :params {:name "turn_begin"
+                                    :arguments {:intent "a second ask"}}})
+        (mcp/handle! sess {:jsonrpc "2.0" :id 6 :method "tools/call"
+                           :params {:name "query_project" :arguments {}}})
+        (mcp/handle! sess {:jsonrpc "2.0" :id 7 :method "tools/call"
+                           :params {:name "turn_end" :arguments {}}})
+        (let [t (:timing (last (filter #(= :turn-end (:op %))
+                                       (store/deltas (:store @sess)))))]
+          (is (= 2 (:calls t))
+              (str "turn_begin + query_project, and nothing from turn one: "
+                   (pr-str t)))))
+      (finally (api/close! sess)))))

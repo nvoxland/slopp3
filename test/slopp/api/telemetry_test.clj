@@ -22,3 +22,41 @@
       (is (= 0 (get-in t [:fire-rate :unused-public :persisted]))))
     (testing "metadata finding keys (test-status) are not counted as rule fires"
       (is (nil? (get-in t [:fire-rate :test-status]))))))
+
+(deftest call-timing-splits-a-turn-into-slopp-and-everything-else
+  ;; Measured over a real session: 1,703s elapsed, 390s of it recorded as
+  ;; verification — 22%. The other 78% was invisible, and "invisible" was the
+  ;; whole problem: you cannot tell an agent that reasons slowly from a tool
+  ;; that runs slowly if only one of them is instrumented.
+  ;;
+  ;; The server sees both edges. It knows when a call arrived and when it
+  ;; answered, so the gap BETWEEN calls is time slopp was not working. That is
+  ;; deliberately not called "thinking time": it is agent reasoning plus every
+  ;; non-slopp tool (file reads, shell, subagents) plus the harness, and the
+  ;; server cannot tell them apart. Naming it for what it measures is the
+  ;; point — P7 says the cost of leaving slopp is invisible unless written
+  ;; down, and this is where it lands.
+  (let [calls [{:tool "query_slice" :start 1000 :end 1050}
+               {:tool "edit_add_form" :start 3050 :end 3550}
+               {:tool "done" :start 5550 :end 9550}]]
+    (testing "the two halves and their total"
+      (let [t (telemetry/call-timing calls)]
+        (is (= 3 (:calls t)))
+        (is (= 4550 (:slopp-ms t)) "50 + 500 + 4000")
+        (is (= 4000 (:outside-ms t)) "2000 between call 1 and 2, 2000 between 2 and 3")
+        (is (= 8550 (:elapsed-ms t)) "first arrival to last answer")
+        (is (= (:elapsed-ms t) (+ (:slopp-ms t) (:outside-ms t)))
+            "the split must be exhaustive — an unexplained remainder is the bug")))
+    (testing "the tools that actually cost, largest first"
+      (let [top (:top (telemetry/call-timing calls))]
+        (is (= "done" (:tool (first top))))
+        (is (= 4000 (:ms (first top))))
+        (is (= 1 (:n (first top))))))
+    (testing "repeated calls of one tool aggregate"
+      (let [t (telemetry/call-timing [{:tool "test_run" :start 0 :end 100}
+                                      {:tool "test_run" :start 100 :end 300}])]
+        (is (= [{:tool "test_run" :n 2 :ms 300}] (:top t)))
+        (is (zero? (:outside-ms t)))))
+    (testing "no calls is nil, not a zeroed record that reads as measured"
+      (is (nil? (telemetry/call-timing [])))
+      (is (nil? (telemetry/call-timing nil))))))

@@ -64,3 +64,41 @@
      :escape-markers (escape-markers store)
      :dials {:rules (get-in store [:config "rules" :values] {})
              :gates (get-in store [:config "gates" :values] {})}}))
+
+(defn ^:export call-timing
+  "A turn's wall clock split into the part slopp spent working and the part it
+  did not — the pure fold over `calls`, each `{:tool :start :end}` in epoch ms
+  as the wire recorded them.
+
+  Returns `{:calls :slopp-ms :outside-ms :elapsed-ms :slopp-share :top}`, or
+  NIL when nothing was called: a zeroed record would read as \"measured, and
+  the answer was nothing\", which is the conflation D-surface-honesty forbids.
+
+  **`:outside-ms` is not \"thinking time\".** It is the gap between one answer
+  going out and the next call arriving: agent reasoning, every non-slopp tool
+  (file reads, shell, subagents), and the harness, none of which the server
+  can tell apart. Naming it for what it MEASURES rather than what we suspect
+  it contains is the point — and it is the number that was missing. Measured
+  over one real session before this existed: 1,703s elapsed against 390s of
+  recorded verification, so 78% of the wall clock had no producer at all.
+  P7's standing complaint is exactly this: the cost of leaving slopp lands
+  where no slopp metric sees it.
+
+  `:top` is by total cost, largest first, aggregated per tool — the tool that
+  cost the most may be the one called a hundred times cheaply, and a per-call
+  median hides that."
+  [calls]
+  (when (seq calls)
+    (let [in    (reduce + 0 (map #(- (:end %) (:start %)) calls))
+          span  (- (:end (last calls)) (:start (first calls)))
+          by    (->> (group-by :tool calls)
+                     (map (fn [[t cs]] {:tool t :n (count cs)
+                                        :ms (reduce + 0 (map #(- (:end %) (:start %)) cs))}))
+                     (sort-by (juxt (comp - :ms) :tool))
+                     vec)]
+      {:calls      (count calls)
+       :slopp-ms   in
+       :outside-ms (- span in)
+       :elapsed-ms span
+       :slopp-share (str (int (* 100 (/ in (double (max span 1))))) "%")
+       :top        (vec (take 5 by))})))

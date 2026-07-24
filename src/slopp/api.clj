@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -230,9 +230,16 @@
   "Open `agent`'s turn, recording the VERBATIM user ask as the root intent of
   everything until turn-end. A new begin supersedes an unclosed one. The
   intent also stays on the session (:last-intent) — orientation mines it so
-  the brief arrives task-shaped."
+  the brief arrives task-shaped.
+
+  Also resets the wall-clock ring (`:slopp.api.telemetry/calls`) so this ask
+  measures only itself. The wire records a call AFTER it returns — otherwise
+  `turn_end` would read a half-finished entry for itself — which leaves the
+  previous turn's closing bracket in the ring. Clearing here is what keeps one
+  ask's cost from bleeding into the next."
   [session & {:keys [agent intent user]}]
   (when intent (swap! session assoc :last-intent intent))
+  (swap! session dissoc :slopp.api.telemetry/calls)
   (session/commit-appended! session
                     #(first (store/record-turn % :turn-begin
                                                :agent agent :intent intent
@@ -241,13 +248,30 @@
   {:turn :open :agent agent :intent intent})
 
 (defn turn-end!
-  "Close `agent`'s turn (stable or not — a red turn is still history)."
+  "Close `agent`'s turn (stable or not — a red turn is still history), and
+  record where the turn's WALL CLOCK went.
+
+  The wire accumulates one `{:tool :start :end}` per call into the session
+  (`:slopp.api.telemetry/calls`); this folds it with
+  `telemetry/call-timing` onto the `:turn-end` delta and clears the ring, so
+  each ask measures only itself. Nothing called → no `:timing` key, rather
+  than a zeroed record that would read as measured.
+
+  The turn is the right grain because it is the USER-ASK bracket the prompt
+  hook already maintains: the question worth answering is \"what did this ask
+  cost, and how much of it was slopp\", and until now the second half had no
+  producer at all. This call's own time is not in its own total — it is still
+  in flight."
   [session & {:keys [agent note]}]
-  (session/commit-appended! session
-                    #(first (store/record-turn % :turn-end
-                                               :agent agent :note note))
-                    [])
-  {:turn :closed :agent agent})
+  (let [timing (telemetry/call-timing (:slopp.api.telemetry/calls @session))]
+    (session/commit-appended! session
+                      #(first (store/record-turn % :turn-end
+                                                 :agent agent :note note
+                                                 :timing timing))
+                      [])
+    (swap! session dissoc :slopp.api.telemetry/calls)
+    (cond-> {:turn :closed :agent agent}
+      timing (assoc :timing timing))))
 
 (defn turn-open?
   "Does `agent-label` (or any of its path ancestors — sub-agents ride the
