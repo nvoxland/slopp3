@@ -24,7 +24,9 @@ That asymmetry generates most of the friction. It shows up in correctness
 cost (reads are 52% of the token bill and got the least optimization, P8), and
 in reachability (real capabilities one registry entry from unreachable).
 
-The four cores below are that asymmetry seen from four angles.
+Cores 1–4 below are that asymmetry seen from four angles. **Core 5** is a
+different axis and was added later (2026-07-24): not a category of mistake but
+a category of CITIZEN — what the form-shaped machinery does not cover.
 
 ## Core 1 — reads inherit unearned trust
 
@@ -112,6 +114,35 @@ habit with a guarantee. **A rule that relies on remembering is not a rule** (the
 "repro can be too minimal" and "every assertion observed failing" lessons in the
 `slopp` skill are the exceptions that earn a skill line — they are irreducibly
 about how the agent writes tests, and even those want a static/mutation backstop).
+
+## Core 5 — the form is the unit, and everything that is not a form is unmanaged
+
+**Root.** slopp's central bet is that the top-level form is the unit of
+editing, storage, hot-reload, verification and provenance. It pays off so
+completely that it hides its own edge: measured over 1,200 deltas, **349 writes
+cost 237s of verification, median 0s.** Forms get an id, provenance, impact
+analysis, gates, verification, history and a permalink. Four other citizens
+participate in the program's meaning and get none of it:
+
+| Citizen | Missing | Seen as |
+|---|---|---|
+| **Declarations** (tier, platform, module edge, capability) | verification when the governed POPULATION moves; a retract verb | a tier silently tightened by a rename, green in `full_check` |
+| **Occurrences** (a name as string, convention, or key) | one canonical occurrence set; a report of what was left | renames that rewrite symbols, miss strings, and say nothing |
+| **Copies** (server image, kernel file, materialized dir, client context) | a version stamp ON THE VERDICT | a stale `--live` server producing a false red |
+| **Transactions** (composite ops) | verification at the transaction, not the verb | N × (fresh image + full verify) for one logical change |
+
+**Discipline.** Read this as Core 2 generalized from *relationships* to
+*citizens*, with the same test: **does this thing participate in the program's
+meaning? Then does it have an identity, a provenance and a verification — or is
+it a key in a side map?** The recurring failure is not a bad fix, it is a fix
+that teaches ONE verb about ONE non-form thing while the class stays open.
+
+**Tell that you are in this core:** the fix you are about to write is a special
+case inside a verb (`ns_rename` should also carry X; `module_purity` should also
+check Y). That is the instance. The class fix gives the citizen the machinery a
+form already has.
+
+Full derivation, 5-whys and measurements: `ideas/the-non-form-citizens.md`.
 
 ---
 
