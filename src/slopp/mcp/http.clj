@@ -42,7 +42,7 @@
                                     (some-> (:db @session)
                                             (db/get-blob (:sha e))))
                        :content-type content-type})))
-        srv     (web/serve! {:web/namespaces ['slopp.mcp.http 'slopp.mcp.http.browse]
+        srv     (web/serve! {:web/namespaces ['slopp.mcp.http 'slopp.ui.pages]
                              :web/routes (static/mount-routes mounts reader)
                              :web/host "127.0.0.1"
                              :web/port port

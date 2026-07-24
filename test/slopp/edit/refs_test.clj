@@ -228,3 +228,39 @@
             cb   (into {} (map (juxt :test :via)) (refs/covered-by st tmap 'cov.core/leaf))]
         (is (= #{:observed :static} (cb 'cov.core-test/direct-t)) (pr-str cb))
         (is (= #{:static} (cb 'cov.core-test/via-mid-t)))))))
+
+(deftest refs-by-target-agrees-with-the-scan-it-replaces
+  ;; refs-to filtered the WHOLE reference graph on every call — 7,578 edges in
+  ;; slopp's own store — so a page asking "who references this?" once per form
+  ;; was quadratic in the store. refs-by-target groups the same records ONCE,
+  ;; memoized on the store value exactly as refs is, and refs-to becomes a map
+  ;; lookup.
+  ;;
+  ;; The contract that matters is that it is the same answer — same rows, same
+  ;; order — for EVERY target in the graph. An index that disagrees with the
+  ;; scan is a second producer of one relationship, which is the failure this
+  ;; codebase keeps paying for; so the expected value here is the original
+  ;; filtering algorithm written out, deliberately NOT refs-to.
+  (let [st       (-> (store/empty-store)
+                     (store/ingest 'bt.core
+                                   "(ns bt.core)\n(defn f [x] x)\n(defn g [x] (f (f x)))\n")
+                     (store/ingest 'bt.two
+                                   "(ns bt.two (:require [bt.core :as c]))\n(defn h [x] (c/f (c/g x)))\n"))
+        scan     (fn [qsym]
+                   (vec (filter #(and (= (symbol (namespace qsym)) (:to-ns %))
+                                      (= (symbol (name qsym)) (:to-name %)))
+                                (refs/refs st))))
+        targets  (distinct (map #(symbol (str (:to-ns %)) (str (:to-name %)))
+                                (refs/refs st)))
+        idx      (refs/refs-by-target st)]
+    (is (seq targets) "fixture must actually produce references to index")
+    (is (identical? idx (refs/refs-by-target st))
+        "memoized on the store value, the same way refs is")
+    (testing "every target agrees, index and scan"
+      (doseq [q targets]
+        (is (= (scan q) (get idx q)) (str "index disagrees with the scan for " q))
+        (is (= (scan q) (refs/refs-to st q))
+            (str "refs-to disagrees with the scan for " q))))
+    (testing "an unreferenced target is absent from the index, and refs-to says []"
+      (is (nil? (get idx 'bt.core/never-called)))
+      (is (= [] (refs/refs-to st 'bt.core/never-called))))))

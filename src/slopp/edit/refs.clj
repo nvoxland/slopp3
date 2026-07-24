@@ -307,14 +307,38 @@
                             (declared t) (conj :declared))}
              (static t) (assoc :hops (static t)))))))
 
+^:reads (defn ^:export refs-by-target
+  "THE reverse index over `refs`: `{to-qsym [ref ...]}`, every reference
+  grouped by the qualified symbol it points AT.
+
+  `refs-to` filtered the whole record stream on every call, which is fine for
+  one question and quadratic for a page that asks it per form (slopp's own
+  store carries 7,578 edges). Grouping once turns every blast-radius and
+  liveness question into a map lookup.
+
+  Memoized on the immutable store value with the same `cached-last` strategy
+  `refs` uses, and for the same reason: the store is too large to hash and a
+  new value appears only on a write, so identity is a sound key. It is an
+  INDEX, not a second producer — `refs` remains the single source of truth and
+  this holds exactly its records, in its order."
+  [st]
+  (cache/cached-last
+   ::refs-by-target st
+   (fn []
+     (reduce (fn [m r]
+               (update m (symbol (str (:to-ns r)) (str (:to-name r)))
+                       (fnil conj []) r))
+             {}
+             (refs st)))))
+
 ^:reads (defn ^:export refs-to
   "Every reference TO `qsym` (an ns/name symbol) — the blast-radius/liveness
-  question, answered from THE graph."
+  question, answered from THE graph.
+
+  A lookup into `refs-by-target`, so asking this once per form costs one
+  grouping pass over the store rather than one full scan per call."
   [st qsym]
-  (let [to-ns (symbol (namespace qsym))
-        to-nm (symbol (name qsym))]
-    (vec (filter #(and (= to-ns (:to-ns %)) (= to-nm (:to-name %)))
-                 (refs st)))))
+  (get (refs-by-target st) qsym []))
 
 (defn ^:export to-wire
   "Reference records → the COMPACT wire shape agents read (canonical maps

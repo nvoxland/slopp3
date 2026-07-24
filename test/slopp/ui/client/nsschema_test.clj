@@ -1,6 +1,6 @@
-(ns slopp.client.nsschema-test
+(ns slopp.ui.client.nsschema-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.client.nsschema :as sch]))
+            [slopp.ui.client.nsschema :as sch]))
 
 (deftest valid-ns-row?-checks-the-shared-shape
   (testing "a well-formed row validates"

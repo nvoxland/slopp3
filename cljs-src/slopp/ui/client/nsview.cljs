@@ -1,10 +1,10 @@
-(ns slopp.client.nsview
+(ns slopp.ui.client.nsview
   "Thin :cljs DOM glue for the store-browser namespace filter. All the testable
   logic lives in the .cljc slopp.client.nsfilter/matches? (JVM-verified); this
   namespace only touches the DOM — the genuinely browser-bound edge. Compiled
   to JS by compile_client and served as a blob; never loaded into the JVM
   oracle. D-web-cljs dogfood."
-  (:require [slopp.client.nsfilter :as nsf] [slopp.client.nsschema :as schema]))
+  (:require [slopp.ui.client.nsfilter :as nsf] [slopp.ui.client.nsschema :as schema]))
 
 (defn apply-filter!
   "Show each row whose namespace matches `needle`, hide the rest. Each row's

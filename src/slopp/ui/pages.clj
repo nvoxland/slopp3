@@ -1,4 +1,4 @@
-(ns slopp.mcp.http.browse
+(ns slopp.ui.pages
   "Read-only store browser: server-rendered hiccup pages over the query
   surfaces — the D-web-html dogfood. Plain links, full-page renders, zero
   writes; rendering arbitrary store source through the escaper is a

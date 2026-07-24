@@ -1,6 +1,6 @@
-(ns slopp.client.nsfilter-test
+(ns slopp.ui.client.nsfilter-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.client.nsfilter :as nsf]))
+            [slopp.ui.client.nsfilter :as nsf]))
 
 (deftest matches?-is-a-trimmed-case-insensitive-substring
   (testing "an empty or blank needle matches everything (nothing typed = show all)"

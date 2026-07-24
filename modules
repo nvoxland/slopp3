@@ -45,6 +45,7 @@ slopp.sync: slopp.api slopp.boot slopp.git slopp.store
 slopp.sync-plan: slopp.sync
 slopp.trace: slopp.api
 slopp.trivia: slopp.store
+slopp.ui: slopp.store slopp.web
 slopp.unsafe: slopp.api slopp.edit slopp.store
 slopp.verification: slopp.api slopp.image slopp.rt slopp.store
 slopp.warm-spare: slopp.api slopp.image

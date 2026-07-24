@@ -917,3 +917,41 @@
         (is (= :cljc (get-in @sess [:store :module-platforms "tr.hub"])))
         (is (nil? (get-in @sess [:store :module-platforms "tr.core"]))))
       (finally (api/close! sess)))))
+
+(deftest the-web-framework-never-reaches-back-into-slopp
+  ;; slopp.web.* is the FRAMEWORK slopp ships to users: build.clj's slim
+  ;; io.github.nvoxland/slopp-web jar is exactly slopp/web.clj + slopp/web/**.
+  ;; slopp.ui.* is slopp's OWN webapp built on that framework — a peer of any
+  ;; user's app. The dependency runs ui -> web and NEVER the reverse, because a
+  ;; framework namespace that reaches back into slopp's core makes that jar
+  ;; unloadable, and it breaks at the USER's require time rather than ours.
+  ;;
+  ;; Asserted rather than remembered: the invariant is one :require line away
+  ;; from being false, added for a perfectly good local reason, with nothing
+  ;; else to complain. The module gate states the same rule from the other side
+  ;; (slopp.web declares no outgoing edges and sits at layer 0); this catches a
+  ;; require that never became a declared edge.
+  (let [framework '[slopp.web slopp.web.auth slopp.web.css slopp.web.dispatch
+                    slopp.web.html slopp.web.router slopp.web.routes
+                    slopp.web.static slopp.web.server.httpkit
+                    slopp.web.server.jdk]
+        web?      #(boolean (re-matches #"slopp\.web(\..*)?" (str %)))]
+    (run! require framework)
+    (let [loaded (keep find-ns framework)
+          leaks  (for [n loaded
+                       [_ dep] (ns-aliases n)
+                       :let [d (ns-name dep)]
+                       :when (and (re-find #"^slopp\." (str d)) (not (web? d)))]
+                   [(ns-name n) d])]
+      ;; guard the guard: over an empty set "no leaks" is vacuously true, which
+      ;; is exactly the "I could not check" / "I checked and found nothing"
+      ;; conflation this codebase refuses everywhere else.
+      (is (= (count framework) (count loaded))
+          (str "every framework namespace must be loaded before it can be "
+               "checked; missing "
+               (vec (remove find-ns framework))))
+      (is (empty? leaks)
+          (str "slopp.web.* must not depend on anything outside slopp.web.* — "
+               "the slim slopp-web jar ships only slopp/web/**, so these "
+               "requires would not resolve in a user's project: "
+               (vec leaks))))))

@@ -1,4 +1,4 @@
-(ns slopp.client.nsschema
+(ns slopp.ui.client.nsschema
   "A SHARED (.cljc) contract for a store-browser namespace row: one malli
   schema, validated on the JVM (the existing oracle verifies it here) AND
   compiled to JS so the browser validates the identical shape with the
