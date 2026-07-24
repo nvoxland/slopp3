@@ -6,7 +6,7 @@
   source, and the journal owes them no consistency."
   (:require [rewrite-clj.node :as n]
             [slopp.render :as render]
-            [slopp.store :as store] [slopp.cache :as cache] [slopp.index.analyze :as analyze]))
+            [slopp.store :as store] [slopp.cache :as cache] [slopp.index.analyze :as analyze] [clojure.string :as str]))
 
 (defn ^:export walk-pruned
   "THE quote-aware traversal: depth-first over sexpr `x`, PRUNING quoted
@@ -213,6 +213,51 @@
           :to-name   (symbol (name f))
           :to-form   nil
           :via       :observed})))
+
+(defn ^:export covered-by
+  "Every test that covers form `qsym`, each tagged with HOW we know — the
+   canonical coverage edge set, the reference-graph epic's shape applied to
+   'which test reaches this form'. Two producers, one answer:
+   - :observed — the trace map saw the test exercise the form (strongest).
+   - :static   — a deftest references the form within `depth` static hops
+                 (default 2), so it works for tests that never trace (the
+                 external tier) and needs no run; `:hops` is the distance.
+   Returns `[{:test qsym :via #{…} :hops n?}]`, sorted. Static NEVER means
+   verified — it says 'a test REACHES this', not 'this was checked' — so `:via`
+   stays visible and a consumer must weight :observed over :static rather than
+   conflate them (do NOT let static coverage claim green)."
+  [st tmap qsym & {:keys [depth] :or {depth 2}}]
+  (let [to-ns    (symbol (namespace qsym))
+        to-nm    (symbol (name qsym))
+        test-ns? (fn [ns] (str/ends-with? (str ns) "-test"))
+        observed (into #{} (for [r (observed-refs tmap)
+                                 :when (and (= to-ns (:to-ns r)) (= to-nm (:to-name r)))]
+                             (symbol (str (:from-ns r)) (str (:from-var r)))))
+        radj     (reduce (fn [m r]
+                           (if (= :static (:via r))
+                             (update m [(:to-ns r) (:to-name r)] (fnil conj #{})
+                                     [(:from-ns r) (:from-var r)])
+                             m))
+                         {} (refs st))
+        static   (loop [frontier #{[to-ns to-nm]} seen #{} hop 1 acc {}]
+                   (if (or (empty? frontier) (> hop depth))
+                     acc
+                     (let [callers (into #{} (mapcat #(get radj %)) frontier)
+                           fresh   (into #{} (remove seen) callers)
+                           acc'    (reduce (fn [a [fns fv]]
+                                             (if (test-ns? fns)
+                                               (update a (symbol (str fns) (str fv))
+                                                       (fnil min hop) hop)
+                                               a))
+                                           acc fresh)]
+                       (recur fresh (into seen frontier) (inc hop) acc'))))
+        tests    (into (sorted-set) (concat observed (keys static)))]
+    (vec (for [t tests]
+           (cond-> {:test t
+                    :via  (cond-> #{}
+                            (observed t) (conj :observed)
+                            (static t)   (conj :static))}
+             (static t) (assoc :hops (static t)))))))
 
 ^:reads (defn ^:export refs-to
   "Every reference TO `qsym` (an ns/name symbol) — the blast-radius/liveness

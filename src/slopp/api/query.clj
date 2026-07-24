@@ -818,9 +818,12 @@
 (defn ^:export query-brief
   "The one-call dossier: everything the store knows about `ns-sym/nm` —
   source, effect flags, cross-ns callers, the tests that exercise it
-  (trace map; `:coverage :unknown` until a test_run builds one), and the
-  recorded WHY (the last change's prompt + its enclosing turn intent).
-  Collapses the source→references→lineage read chain into one response."
+  (`:covered-by`, trace map; `:coverage :unknown` until a test_run builds one),
+  the tests that STATICALLY reach it but haven't been observed to run it
+  (`:reached-by`, with `:hops` — real for the untraced external tier, never a
+  green claim), and the recorded WHY (the last change's prompt + its enclosing
+  turn intent). Collapses the source→references→lineage read chain into one
+  response."
   [session ns-sym nm]
   (if (nil? (store/form-named (:store @session) ns-sym nm))
     (edit/missing-form-error (:store @session) ns-sym nm)
@@ -828,12 +831,17 @@
           sym     (query-symbol session ns-sym nm)
           callers (vec (query-references session ns-sym nm))
           tmap    (:test-map @session)
+          qsym    (symbol (str ns-sym) (str nm))
           tests   (let [e  (store/form-named (:store @session) ns-sym nm)
                         ks (store/form-trace-keys ns-sym e)]
                     ;; evidence can arrive under any name the form defines (#129)
                     (->> tmap
                          (keep (fn [[t forms]] (when (some forms ks) t)))
                          distinct sort vec))
+          reached (let [seen (set tests)]
+                    (->> (refs/covered-by (:store @session) tmap qsym)
+                         (filter #(and (= #{:static} (:via %)) (not (seen (:test %)))))
+                         (mapv #(select-keys % [:test :hops]))))
           why     (last (query-lineage session ns-sym nm))]
       (cond-> {:ns ns-sym :name nm :source (:source sym)}
         (:effectful? sym) (assoc :effectful? true)
@@ -841,7 +849,8 @@
         (:unsafe? sym)    (assoc :unsafe? true)
         (seq callers)     (assoc :callers callers)
         (seq tests)       (assoc :covered-by (coverage-view tests))
-        (and (seq tmap) (empty? tests) (not (:test? sym)))
+        (seq reached)     (assoc :reached-by reached)
+        (and (seq tmap) (empty? tests) (empty? reached) (not (:test? sym)))
         (assoc :untested true)
         (empty? tmap)     (assoc :coverage :unknown)
         why               (assoc :why (cond-> {:op     (:op why)
