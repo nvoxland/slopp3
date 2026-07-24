@@ -211,9 +211,27 @@ The oracle must never return a false verdict. Everything here serves that.
    over this store's own log blamed `done` for 37% of wall clock; the gap it
    was reading was unlogged work before a `commit_point`. The expensive
    operations were precisely the ones that wrote no delta at all.
-   **Still unmeasured:** `module_extract`'s per-rename image rebuilds, and
-   `spot-run!`'s in-image half (it delegates to `api/test-run!`, whose verify
-   delta carries `:ms` — the composite total does not).
+   **The whole turn, at the wire (2026-07-24).** Per-tool `:ms` only ever
+   covered verification, and verification turned out to be a fifth of the
+   wall clock — measured on one real session, 1,703s elapsed against 390s
+   recorded. `slopp.mcp/handle!` now stamps BOTH edges of every `tools/call`
+   into `:slopp.api.telemetry/calls`, and `turn-end!` folds it with
+   `telemetry/call-timing` onto the `:turn-end` delta:
+   `{:calls :slopp-ms :outside-ms :elapsed-ms :slopp-share :top}`. One
+   chokepoint, so `test_run`, `module_extract`, `compile_client`, `restart`,
+   `git_*` and every read tool are covered without instrumenting any of them.
+   - **`:outside-ms` is not "thinking time"** — it is the gap between one
+     answer going out and the next call arriving: agent reasoning, every
+     non-slopp tool, and the harness, which the server cannot tell apart.
+     Naming it for what it measures is deliberate; it is P7's invisible cost
+     ("you left slopp") given a producer for the first time.
+   - The wire records AFTER the call returns, so `turn_end` never reads a
+     half-finished entry for itself — which leaves its own entry in the ring.
+     `turn-begin!` clears, so one ask's bracket cannot be billed to the next.
+   - Nothing called → no `:timing` key, never a zeroed record.
+   **Still unmeasured:** phases INSIDE a long tool — `module_extract`'s
+   per-rename image rebuilds, `build!`, an individual image boot. The turn
+   aggregate is what should point at these before any of them is instrumented.
    **Which COPY produced the verdict (2026-07-24, frictions #10).** A verdict
    is only as good as the process that computed it, and a `--live` host can
    fail to hot-reload — after which every verdict it produces is suspect while

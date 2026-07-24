@@ -116,6 +116,12 @@ measurably bleed tokens.
    the number persists on the delta — so "where is my time going?" is a query
    over the journal, not a guess. Per-write verification is normally free
    (median 0ms on a 170-namespace store); if yours is not, that is the signal.
+   **And each TURN records where its whole wall clock went**: `turn_end`'s
+   delta carries `:timing {:slopp-ms :outside-ms :elapsed-ms :top}`.
+   `:outside-ms` is time slopp was NOT working — your reasoning plus every
+   non-slopp tool — and it is usually the majority (measured on slopp's own
+   development: 78%). Use it before optimizing a tool: if `:slopp-ms` is a
+   fifth of the turn, a faster tool is not what you are missing.
    **Tier vocabulary** (namespaces AND tests): `:pure` (referentially
    transparent) · `:internal` (mutates in-process state only — a memo via
    `slopp.cache`) · `:external` (IO: files, subprocesses, network, db).
