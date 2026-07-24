@@ -21,45 +21,6 @@
             [slopp.api.query :as query]
             [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n]))
 
-(defn ^:export timeline
-  "The reviewer landing model: milestones newest first, each carrying the
-  `from..to` range that addresses its own change screen, plus the WORKING
-  SET — what has been written since the newest milestone.
-
-  The range is computed here rather than in the page so a template stays a
-  template: a milestone's range runs from the milestone BEFORE it, and the
-  oldest milestone has no `:range` at all rather than an empty one.
-
-  Deliberately not `query-changes`: this page shows counts and recorded
-  asks, never sources, and `query-changes` reconstructs the before/after
-  text of every touched form to answer a question nobody asked here.
-
-  Milestones come from `history/milestone-rows`, the pure fold, not from
-  `query-commits`: this namespace is :pure and query-commits opens the db
-  to join the git projection's pinned shas. The cost is exactly that —
-  `:sha` appears only for milestones whose DELTA carries one."
-  [session]
-  (let [st         (:store @session)
-        rows       (history/milestone-rows st :titles-only true)
-        milestones (vec (map-indexed
-                         (fn [i row]
-                           (let [prev (:commit (nth rows (inc i) nil))]
-                             (cond-> (select-keys row [:commit :description :more-lines
-                                                       :status :at :agent :sha])
-                               prev (assoc :range (str prev ".." (:commit row))))))
-                         rows))
-        ds         (store/deltas st)
-        last-commit (:id (last (filter #(= :commit (:op %)) ds)))
-        since      (if last-commit
-                     (rest (drop-while #(not= last-commit (:id %)) ds))
-                     ds)
-        mine       (filter #(contains? query/content-ops (:op %)) since)]
-    {:milestones milestones
-     :working {:since      (or last-commit :log-start)
-               :forms      (count (distinct (mapcat history/delta-fids mine)))
-               :namespaces (vec (distinct (keep #(some-> (:ns %) str) mine)))
-               :prompts    (vec (keep :prompt mine))}}))
-
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
   with a count at every rung so a collapsed row still says how much is
@@ -74,39 +35,44 @@
   caller count spans every `:via` the graph records, and the graph is a
   syntactic reader, so it is a floor rather than a census."
   [session from to]
-  (let [st        (:store @session)
-        ch        (query/query-changes session :from from :to to)
-        by-target (refs/refs-by-target st)
-        prompts   (store/prompt-by-form st)
-        rows      (for [{:keys [form form-id status was now]} (:forms ch)
-                        :let [ns-sym (symbol (namespace form))]]
-                    (cond-> {:form    (str form)
-                             :form-id form-id
-                             :status  status
-                             :ns      (str ns-sym)
-                             :module  (modules/module-of ns-sym)
-                             :diff    (vec (history/diff-lines was now))
-                             :callers (count (distinct (map (juxt :from-ns :from-var)
-                                                            (get by-target form []))))}
-                      (get prompts form-id) (assoc :why (get prompts form-id))))]
-    {:from    from
-     :to      to
-     :count   (count rows)
-     :modules (->> rows
-                   (group-by :module)
-                   (sort-by key)
-                   (mapv (fn [[m rs]]
-                           {:module     m
-                            :count      (count rs)
-                            :namespaces (->> rs
-                                             (group-by :ns)
-                                             (sort-by key)
-                                             (mapv (fn [[n fs]]
-                                                     {:ns    n
-                                                      :count (count fs)
-                                                      :forms (vec (sort-by :form
-                                                                           (map #(dissoc % :ns :module) fs)))})))})))
-     :arc     (vec (:verification-arc ch))}))
+  (let [st  (:store @session)
+        ids (into #{} (map :id) (store/deltas st))]
+    ;; a range arrives from a URL, so both ends are user input. "Nothing
+    ;; changed here" and "that is not a range" are different answers, and
+    ;; only the second one is a 404.
+    (when (and (contains? ids from) (contains? ids to))
+      (let [ch        (query/query-changes session :from from :to to)
+            by-target (refs/refs-by-target st)
+            prompts   (store/prompt-by-form st)
+            rows      (for [{:keys [form form-id status was now]} (:forms ch)
+                            :let [ns-sym (symbol (namespace form))]]
+                        (cond-> {:form    (str form)
+                                 :form-id form-id
+                                 :status  status
+                                 :ns      (str ns-sym)
+                                 :module  (modules/module-of ns-sym)
+                                 :diff    (vec (history/diff-lines was now))
+                                 :callers (count (distinct (map (juxt :from-ns :from-var)
+                                                                (get by-target form []))))}
+                          (get prompts form-id) (assoc :why (get prompts form-id))))]
+        {:from    from
+         :to      to
+         :count   (count rows)
+         :modules (->> rows
+                       (group-by :module)
+                       (sort-by key)
+                       (mapv (fn [[m rs]]
+                               {:module     m
+                                :count      (count rs)
+                                :namespaces (->> rs
+                                                 (group-by :ns)
+                                                 (sort-by key)
+                                                 (mapv (fn [[n fs]]
+                                                         {:ns    n
+                                                          :count (count fs)
+                                                          :forms (vec (sort-by :form
+                                                                               (map #(dissoc % :ns :module) fs)))})))})))
+         :arc     (vec (:verification-arc ch))}))))
 
 (defn- json-card
   "A `form-card` as JSON-shaped data. Two fields cannot survive the trip:
@@ -139,9 +105,13 @@
             nm      (:name e)
             qsym    (symbol (str ns-sym) (str nm))
             row     (fn [ns- var-]
-                      {:form   (str (symbol (str ns-) (str var-)))
-                       :ns     (str ns-)
-                       :module (modules/module-of ns-)})
+                      (let [e (store/form-named st ns- var-)]
+                        (cond-> {:form   (str (symbol (str ns-) (str var-)))
+                                 :ns     (str ns-)
+                                 :module (modules/module-of ns-)}
+                          ;; ids are the permalink, so every edge on the page
+                          ;; is one — a name would break the moment it changes
+                          e (assoc :form-id (:id e)))))
             callers (->> (refs/refs-to st qsym)
                          (filter :from-var)
                          (group-by :via)
@@ -177,3 +147,60 @@
                               " is a floor, not a census — a call reached through a"
                               " binding or built at runtime is not here")}
                (dissoc (json-card (orient/form-card session ns-sym nm)) :form))))))
+
+(defn- snip
+  "Cap `s` at `line-cap` characters with an ellipsis. A landing model is a
+  SUMMARY: a milestone whose title line is a whole paragraph, or twenty
+  prompts at full length, turn the page into the thing it exists to save
+  you from reading. Capped in the MODEL, not the page, so a JSON sink is
+  bounded too."
+  [s]
+  (let [line-cap 110]
+    (when s
+      (if (<= (count s) line-cap) s (str (subs s 0 line-cap) "…")))))
+
+(defn ^:export timeline
+  "The reviewer landing model: milestones newest first, each carrying the
+  `from..to` range that addresses its own change screen, plus the WORKING
+  SET — what has been written since the newest milestone.
+
+  The range is computed here rather than in the page so a template stays a
+  template: a milestone's range runs from the milestone BEFORE it, and the
+  oldest milestone has no `:range` at all rather than an empty one.
+
+  Deliberately not `query-changes`: this page shows counts and recorded
+  asks, never sources, and `query-changes` reconstructs the before/after
+  text of every touched form to answer a question nobody asked here.
+
+  Milestones come from `history/milestone-rows`, the pure fold, not from
+  `query-commits`: this namespace is :pure and query-commits opens the db
+  to join the git projection's pinned shas. The cost is exactly that —
+  `:sha` appears only for milestones whose DELTA carries one."
+  [session]
+  (let [st         (:store @session)
+        rows       (history/milestone-rows st :titles-only true)
+        milestones (vec (map-indexed
+                         (fn [i row]
+                           (let [prev (:commit (nth rows (inc i) nil))]
+                             (cond-> (-> (select-keys row [:commit :description :more-lines
+                                                           :status :at :agent :sha])
+                                         (update :description snip))
+                               prev (assoc :range (str prev ".." (:commit row))))))
+                         rows))
+        ds         (store/deltas st)
+        last-commit (:id (last (filter #(= :commit (:op %)) ds)))
+        since      (if last-commit
+                     (rest (drop-while #(not= last-commit (:id %)) ds))
+                     ds)
+        mine       (filter #(contains? query/content-ops (:op %)) since)
+        asks       (vec (keep :prompt mine))
+        shown      8]
+    {:milestones milestones
+     :working (cond-> {:since      (or last-commit :log-start)
+                       :forms      (count (distinct (mapcat history/delta-fids mine)))
+                       :namespaces (vec (distinct (keep #(some-> (:ns %) str) mine)))
+                       ;; the COUNT above is exact; only the listing is capped,
+                       ;; and what is left out is stated rather than dropped
+                       :prompts    (mapv snip (take shown asks))}
+                (> (count asks) shown)
+                (assoc :more-prompts (- (count asks) shown)))}))

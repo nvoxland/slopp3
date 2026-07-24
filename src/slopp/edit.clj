@@ -706,8 +706,12 @@
             {:store st' :declared names}))
         (let [names   (mapv #(:name (store/form-by-id store %)) order)
               [st' n] (store/reorder-to store ns-sym names
-                                        :prompt (or prompt "auto-reorder: define before use")
-                                        :agent agent)]
+                                        :prompt (or prompt store/auto-reorder-prompt)
+                                        :agent agent
+                                        ;; the pipeline OWNS ordering (see the
+                                        ;; docstring) — mark it, so this stops
+                                        ;; overwriting the author's recorded why
+                                        :system true)]
           (when (and (pos? n) (nil? (cold-load-errors st' [ns-sym])))
             {:store st' :moved n}))))))
 

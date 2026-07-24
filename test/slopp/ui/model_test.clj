@@ -156,7 +156,9 @@
         (is (= 1 (:count static)))
         (is (= ["demo.b.util/helper"] (mapv :form (:forms static))))
         (is (= "demo.b" (:module (first (:forms static))))
-            "a caller row carries its module, so the card reads as a map")))
+            "a caller row carries its module, so the card reads as a map")
+        (is (= (fid 'demo.b.util 'helper) (:form-id (first (:forms static))))
+            "every edge links a permalink — names change, ids do not")))
     (testing "the graph is never presented as complete"
       (is (string? (:note hello)) "a standing honesty line about what a syntactic reader misses"))
     (testing "callees are INLINED, with the callee's own signature and doc"
@@ -173,3 +175,50 @@
     (testing "the whole model survives a JSON round trip"
       (is (json-shaped? hello) (pr-str hello))
       (is (json-shaped? helper) (pr-str helper)))))
+
+(deftest change-view-refuses-a-range-that-names-nothing
+  ;; A range arrives from a URL, so it is user input. "Nothing changed
+  ;; between these two milestones" and "those are not delta ids" are
+  ;; different answers, and a page that cannot tell them apart renders an
+  ;; empty review where it owes a 404 (D-surface-honesty).
+  (let [st   (assoc (store/empty-store)
+                    :deltas [{:id "d1" :op :add :form-id "f1"}
+                             {:id "d2" :op :add :form-id "f2"}])
+        sess (atom {:store st})]
+    (is (nil? (model/change-view sess "nope" "alsonope")))
+    (is (nil? (model/change-view sess "d1" "alsonope")))
+    (is (nil? (model/change-view sess nil "d2")))
+    (testing "a real but empty range is a MAP with zero forms, not nil"
+      (is (= 0 (:count (model/change-view sess "d2" "d2")))))))
+
+(deftest timeline-caps-what-a-landing-page-shows
+  ;; Found by serving slopp's own store: nineteen forms in flight rendered
+  ;; nineteen full-length prompts, and one milestone whose title line is a
+  ;; whole paragraph (no newline after the title) printed all of it. A
+  ;; LANDING model has to be bounded — form-card already snips for exactly
+  ;; this reason. Bounded here rather than in the page, so a JSON sink is
+  ;; bounded too.
+  (let [long-text (fn [n] (apply str (repeat n "and on ")))
+        st (assoc (store/empty-store)
+                  :deltas
+                  (into [{:id "c1" :op :commit :status :green :at 1784900000000
+                          :description (str "a title that runs on " (long-text 40))}]
+                        (for [i (range 15)]
+                          {:id (str "d" i) :op :add :ns 'demo.core :form-id (str "f" i)
+                           :prompt (str "ask " i " " (long-text 40))})))
+        tl (model/timeline (atom {:store st}))]
+    (testing "a milestone title is capped, and says it was cut"
+      (let [d (:description (first (:milestones tl)))]
+        (is (<= (count d) 120) (str "was " (count d)))
+        (is (re-find #"…$" d) d)))
+    (testing "the working set shows a bounded number of asks and COUNTS the rest"
+      (is (= 8 (count (get-in tl [:working :prompts]))))
+      (is (= 7 (get-in tl [:working :more-prompts]))
+          "absence is not the same as nothing more — the page must be able to say so")
+      (is (every? #(<= (count %) 120) (get-in tl [:working :prompts])))
+      (is (= 15 (get-in tl [:working :forms]))
+          "the COUNT is exact; only the listing is capped"))
+    (testing "under the cap there is no more-prompts key at all"
+      (let [small (assoc (store/empty-store) :deltas
+                         [{:id "d1" :op :add :ns 'demo.core :form-id "f1" :prompt "one ask"}])]
+        (is (nil? (get-in (model/timeline (atom {:store small})) [:working :more-prompts])))))))

@@ -299,3 +299,46 @@
         "a later delta with no :prompt must not erase the recorded ask")
     (is (nil? (get idx "f-never-touched"))
         "a form nothing ever asked about is absent, not blank")))
+
+(deftest prompt-by-form-ignores-housekeeping-writes
+  ;; The pipeline OWNS form ordering — resolve-cold-load's own docstring
+  ;; calls its two moves "silent to the agent". They were not silent in the
+  ;; recorded intent: because prompt-by-form takes the LAST prompt naming a
+  ;; form, an auto-reorder overwrote the author's ask. Measured on slopp's
+  ;; own store before the fix: 142 of 1,898 forms with a recorded why
+  ;; (7%) reported "auto-reorder: define before use" as theirs — on
+  ;; form-card, query_slice's cards, and the reviewer UI alike.
+  ;;
+  ;; The discriminator is a MARK on the delta, not the op and not the
+  ;; prompt text: edit_move is the same op with a real intent behind it.
+  (testing "a marked housekeeping delta does not become a form's why"
+    (let [st (assoc (store/empty-store)
+                    :deltas
+                    [{:id "d1" :op :add  :form-id "f1" :prompt "the authored ask"}
+                     {:id "d2" :op :move :form-id "f1" :system true
+                      :prompt "auto-reorder: define before use"}])]
+      (is (= "the authored ask" (get (store/prompt-by-form st) "f1")))))
+  (testing "an UNMARKED move still counts — edit_move carries a real intent"
+    (let [st (assoc (store/empty-store)
+                    :deltas
+                    [{:id "d1" :op :add  :form-id "f1" :prompt "the authored ask"}
+                     {:id "d2" :op :move :form-id "f1" :prompt "move it where it belongs"}])]
+      (is (= "move it where it belongs" (get (store/prompt-by-form st) "f1")))))
+  (testing "reorder-to marks what it writes"
+    (let [st      (store/ingest (store/empty-store) 'demo.core
+                                "(ns demo.core)\n\n(defn a [] (b))\n\n(defn b [] 1)\n")
+          [st' n] (store/reorder-to st 'demo.core '[demo.core b a]
+                                    :prompt "auto-reorder: define before use"
+                                    :system true)]
+      (is (pos? n) "the fixture must actually move something")
+      (is (every? :system (filter #(= :move (:op %)) (store/deltas st'))))))
+  (testing "deltas written BEFORE the mark existed are recognised by their prompt"
+    ;; the log is append-only, so 142 already-written reorders cannot be
+    ;; re-stamped. One constant, owned here and used by the one writer, so
+    ;; this legacy clause cannot drift from the string it recognises.
+    (let [st (assoc (store/empty-store)
+                    :deltas
+                    [{:id "d1" :op :add  :form-id "f1" :prompt "the authored ask"}
+                     {:id "d2" :op :move :form-id "f1"
+                      :prompt store/auto-reorder-prompt}])]
+      (is (= "the authored ask" (get (store/prompt-by-form st) "f1"))))))

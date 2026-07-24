@@ -232,7 +232,7 @@
   "Move the form named `nm` (with its trailing separator) to just before the
   form named `before-nm` (S2 — fixes append-only forward references). ONE
   `:move` delta. Returns [store' delta], or nil if either form is missing."
-  [store ns-sym nm before-nm & {:keys [prompt group agent]}]
+  [store ns-sym nm before-nm & {:keys [prompt group agent system]}]
   (let [elems  (get-in store [:namespaces ns-sym :elements])
         idx-of (fn [es n]
                  (first (keep-indexed
@@ -256,8 +256,9 @@
                            :op :move :ns ns-sym
                            :form-id (:id (nth elems i)) :before before-nm
                            :prompt prompt :at (now-ms)}
-                    group (assoc :group group)
-                    agent (assoc :agent agent))]
+                    group  (assoc :group group)
+                    agent  (assoc :agent agent)
+                    system (assoc :system true))]
         [(-> store'
              (assoc-in [:namespaces ns-sym :elements] new-elems)
              (update :deltas conj delta))
@@ -322,7 +323,7 @@
   fresh journal reload. Right-to-left insertion: for each adjacent target
   pair, ensure the earlier name precedes the later, skipping pairs already
   ordered. Returns [store' moved-count]."
-  [store ns-sym name-order & {:keys [group prompt agent]}]
+  [store ns-sym name-order & {:keys [group prompt agent system]}]
   (let [target (vec (remove #{ns-sym} name-order))]
     (loop [st store, i (dec (count target)), moved 0]
       (if (< i 1)
@@ -338,7 +339,8 @@
           (if (and (pos earlier) (pos later) (< (pos earlier) (pos later)))
             (recur st (dec i) moved)                     ; already ordered
             (if-let [[st' _] (move-form st ns-sym earlier later
-                                        :group group :prompt prompt :agent agent)]
+                                        :group group :prompt prompt :agent agent
+                                        :system system)]
               (recur st' (dec i) (inc moved))
               (recur st (dec i) moved))))))))
 
@@ -1280,6 +1282,14 @@
   [store ns-sym nm]
   (some-> (form-named store ns-sym nm) :node form-sexpr))
 
+(def ^:export auto-reorder-prompt
+  "THE prompt the pipeline's auto-reorder writes. One constant with one
+  home, because two readers care about it: `slopp.edit/resolve-cold-load`
+  writes it, and `prompt-by-form` has to recognise it on deltas written
+  before the `:system` mark existed — the log is append-only, so those
+  cannot be re-stamped. Two string literals would drift silently."
+  "auto-reorder: define before use")
+
 (defn ^:export prompt-by-form
   "THE recorded intent per form: `{form-id prompt}`, each form's most recent
   ask.
@@ -1301,7 +1311,13 @@
    ::prompt-by-form store
    (fn []
      (reduce (fn [m d]
-               (if-let [p (:prompt d)]
+               ;; a :system delta is pipeline HOUSEKEEPING (the auto-reorder), not an
+               ;; intent ABOUT the form — it used to overwrite the author's ask on
+               ;; 7% of forms, because the last prompt naming a form wins
+               (if-let [p (and (not (:system d))
+                               ;; legacy: deltas written before the mark existed
+                               (not= auto-reorder-prompt (:prompt d))
+                               (:prompt d))]
                  (reduce (fn [m2 fid] (assoc m2 fid p))
                          m
                          (cond-> (or (:form-ids d) [])

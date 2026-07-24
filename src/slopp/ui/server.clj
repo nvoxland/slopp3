@@ -45,7 +45,7 @@
                            :web/port port
                            :web/perform-ctx {:session session}})
           p   (:port srv)
-          url (str "http://127.0.0.1:" p "/store")]
+          url (str "http://127.0.0.1:" p "/")]
       (reset! current {:server srv :port p :url url})
       {:url url :port p})
     (catch Exception e

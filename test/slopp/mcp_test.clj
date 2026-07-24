@@ -1346,9 +1346,9 @@
         (call! sess "ns_create" {:ns "us.only" :source "(ns us.only)\n(defn f \"F.\" [x] x)\n"})
         (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
           (is (pos? (:port r)) (pr-str r))
-          (is (= (str "http://127.0.0.1:" (:port r) "/store") (:url r)))
+          (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r)))
           (is (re-find #"<a href=\"/store/ns/us\.only\">"
-                       (slurp (str "http://127.0.0.1:" (:port r) "/store")))
+                       (slurp (str (:url r) "store")))
               "the served session is THIS one — a fresh session would not have us.only")))
       (finally
         (call! sess "ui_serve" {:stop true})

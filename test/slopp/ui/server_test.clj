@@ -17,8 +17,8 @@
       (let [r (server/serve! sess 0)]
         (testing "the BOUND port is reported, not the requested one"
           (is (pos? (:port r)) "port 0 means ephemeral — echoing 0 back would be a lie")
-          (is (= (str "http://127.0.0.1:" (:port r) "/store") (:url r))
-              "the url lands on a page, not on the bare root nothing serves"))
+          (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r))
+              "the url lands on the reviewer's front door"))
         (testing "the page renders the handed-over session"
           (is (re-find #"demo\.only\.here" (slurp (str "http://127.0.0.1:" (:port r) "/store"))))))
       (finally (server/stop!)))))

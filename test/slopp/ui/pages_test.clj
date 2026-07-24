@@ -66,3 +66,133 @@
         (is (re-find #"<link href=\"/store/style\.css\" rel=\"stylesheet\">"
                      (:body (web/handle! ctx {:request-method :get :uri uri})))
             uri)))))
+
+(deftest the-landing-page-is-the-milestone-timeline
+  ;; The reviewer's front door answers "what has been finished?" and "what
+  ;; is in flight?" in that order. Every milestone row is a link into its
+  ;; own change screen, addressed by the range the model precomputed — the
+  ;; page does no arithmetic.
+  (let [st  (assoc (store/ingest (store/empty-store) 'demo.core
+                                 "(ns demo.core)\n\n(defn hello [x] x)\n")
+                   :deltas
+                   [{:id "d1" :op :add :ns 'demo.core :form-id "f1"}
+                    {:id "c1" :op :commit :target "d1" :status :green :at 1784900000000
+                     :description "the first milestone"}
+                    {:id "d2" :op :add :ns 'demo.core :form-id "f2"}
+                    {:id "c2" :op :commit :target "d2" :status :green :at 1784900060000
+                     :description "the second milestone\nwith a body line"}
+                    {:id "d3" :op :replace :ns 'demo.core :form-id "f1"
+                     :prompt "sharpen hello"}])
+        ctx (web/context {:web/namespaces ['slopp.ui.pages]
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r   (web/handle! ctx {:request-method :get :uri "/"})]
+    (is (= 200 (:status r)))
+    (testing "milestones newest first, each linking its own change screen"
+      (let [body (:body r)]
+        (is (re-find #"<a href=\"/change/c1\.\.c2\">" body) body)
+        (is (< (.indexOf body "the second milestone")
+               (.indexOf body "the first milestone"))
+            "newest first — the reviewer's scan order")
+        (is (nil? (re-find #"/change/\.\." body))
+            "the oldest milestone has nothing to diff against and is not a link")))
+    (testing "the body of a long description is counted, not printed"
+      (is (nil? (re-find #"with a body line" (:body r))))
+      (is (re-find #"1 more line" (:body r)) (:body r)))
+    (testing "the working set says what is in flight, with the recorded asks"
+      (is (re-find #"since c2" (:body r)) (:body r))
+      (is (re-find #"sharpen hello" (:body r)) (:body r)))
+    (testing "the namespace index is one link away, not the front door"
+      (is (re-find #"<a href=\"/store\">" (:body r)) (:body r)))))
+
+(deftest the-change-page-reviews-one-milestone
+  ;; Ingest the final state so the forms and the reference graph are real,
+  ;; then write the delta log longhand — the log is where before-and-after
+  ;; lives, the store only holds "now". (store/ingest re-mints form ids, so
+  ;; ingesting twice would read as delete-plus-add.)
+  (let [s1     (-> (store/empty-store)
+                   (store/ingest 'demo.a.core
+                                 "(ns demo.a.core)\n\n(defn hello [x] (inc x))\n")
+                   (store/ingest 'demo.b.util
+                                 (str "(ns demo.b.util (:require [demo.a.core :as core]))\n\n"
+                                      "(defn helper [] (core/hello 1))\n")))
+        fid    (fn [ns- nm] (:id (store/form-named s1 ns- nm)))
+        a-ns   (fid 'demo.a.core 'demo.a.core)
+        hello  (fid 'demo.a.core 'hello)
+        b-ns   (fid 'demo.b.util 'demo.b.util)
+        helper (fid 'demo.b.util 'helper)
+        st     (assoc s1 :deltas
+                      [{:id "d1" :op :ingest :ns 'demo.a.core :form-ids [a-ns hello]
+                        :sources {a-ns "(ns demo.a.core)" hello "(defn hello [x] x)"}}
+                       {:id "c1" :op :commit :status :green :at 1784900000000
+                        :description "baseline"}
+                       {:id "d2" :op :replace :ns 'demo.a.core :form-id hello
+                        :prompt "make hello increment"
+                        :sources {hello "(defn hello [x] (inc x))"}}
+                       {:id "d3" :op :ingest :ns 'demo.b.util :form-ids [b-ns helper]
+                        :sources {b-ns "(ns demo.b.util (:require [demo.a.core :as core]))"
+                                  helper "(defn helper [] (core/hello 1))"}}
+                       {:id "c2" :op :commit :status :green :at 1784900060000
+                        :description "the work"}])
+        ctx    (web/context {:web/namespaces ['slopp.ui.pages]
+                             :web/perform-ctx {:session (atom {:store st})}})
+        body   (:body (web/handle! ctx {:request-method :get :uri "/change/c1..c2"}))]
+    (testing "the range titles the page and the count is stated up front"
+      (is (re-find #"c1\.\.c2" body) body)
+      (is (re-find #"3 forms" body) body))
+    (testing "grouped module → namespace → form, with a count at every rung"
+      (is (re-find #"<h2>demo\.a <small>1 form<" body) body)
+      (is (re-find #"<h3>demo\.a\.core</h3>" body) body)
+      (is (re-find #"<h2>demo\.b <small>2 forms<" body) body))
+    (testing "each form links its permalink by ID, since names change and ids do not"
+      (is (re-find (re-pattern (str "<a href=\"/store/form/" hello "\">")) body) body))
+    (testing "the recorded ask is shown — the reviewer reads intent before code"
+      (is (re-find #"make hello increment" body) body))
+    (testing "the diff is marked up per line, not dumped as two sources"
+      (is (re-find #"class=\"del\"[^>]*>-\(defn hello \[x\] x\)" body) body)
+      (is (re-find #"class=\"add\"[^>]*>\+\(defn hello \[x\] \(inc x\)\)" body) body))
+    (testing "blast radius rides along, and the graph is not claimed complete"
+      (is (re-find #"1 caller" body) body)
+      (is (re-find #"(?i)syntactic reader|floor, not a census" body) body))
+    (testing "a range naming nothing is a 404, not a blank page"
+      (is (= 404 (:status (web/handle! ctx {:request-method :get :uri "/change/nope..alsonope"}))))
+      (is (= 404 (:status (web/handle! ctx {:request-method :get :uri "/change/garbage"})))))))
+
+(deftest the-form-page-answers-a-cold-arrival
+  ;; Arrived at from a link, with no surrounding context — the "lonely
+  ;; bubble". The page owes: where am I (breadcrumb), who calls me (above),
+  ;; what am I (source), and what do I call (below, with each callee's
+  ;; signature and doc INLINED — a link is not visibility).
+  (let [st     (-> (store/empty-store)
+                   (store/ingest 'demo.a.core
+                                 "(ns demo.a.core)\n\n(defn hello \"Adds one.\" [x] (inc x))\n")
+                   (store/ingest 'demo.b.util
+                                 (str "(ns demo.b.util (:require [demo.a.core :as core]))\n\n"
+                                      "(defn helper [] (core/hello 1))\n")))
+        fid    (fn [ns- nm] (:id (store/form-named st ns- nm)))
+        ctx    (web/context {:web/namespaces ['slopp.ui.pages]
+                             :web/perform-ctx {:session (atom {:store st})}})
+        page   (fn [id] (web/handle! ctx {:request-method :get
+                                          :uri (str "/store/form/" id)}))
+        hello  (:body (page (fid 'demo.a.core 'hello)))
+        helper (:body (page (fid 'demo.b.util 'helper)))]
+    (testing "the breadcrumb says where this is, module and namespace both"
+      (is (re-find #"<nav><a href=\"/store\">store</a> / demo\.a / " hello) hello)
+      (is (re-find #"<a href=\"/store/ns/demo\.a\.core\">" hello) hello))
+    (testing "signature and doc, before the source"
+      (is (re-find #"\[x\]" hello) hello)
+      (is (re-find #"Adds one\." hello) hello)
+      (is (re-find #"\(inc x\)" hello) hello))
+    (testing "callers are a CARD, grouped by the via that found each edge"
+      (is (re-find #"(?i)static" hello) hello)
+      (is (re-find (re-pattern (str "<a href=\"/store/form/" (fid 'demo.b.util 'helper)
+                                    "\">demo\\.b\\.util/helper</a>"))
+                   hello)
+          hello))
+    (testing "callees are INLINED with their own signature and doc, not just linked"
+      (is (re-find #"demo\.a\.core/hello" helper) helper)
+      (is (re-find #"Adds one\." helper)
+          "the callee's doc appears on the CALLER's page — that is the whole point"))
+    (testing "the graph is never presented as complete"
+      (is (re-find #"(?i)floor, not a census|syntactic reader" hello) hello))
+    (testing "an unknown id is a 404, not a blank page"
+      (is (= 404 (:status (page "f-nope")))))))
