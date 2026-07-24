@@ -45,6 +45,28 @@ on day one and will never read our decision log.
 A lesson about using slopp that lives only in `.context/` helps exactly one
 repo: this one. That is the whole project failing at its own goal.
 
+### `ideas/` is the backlog; `ideas/done/` is the record
+
+`ideas/*.md` holds what is still OPEN — frictions, proposals, wave logs.
+It is a worklist, and a worklist that also carries its own history stops
+reading as a worklist: a log where nine of ten items are already fixed
+scans as nine items of work.
+
+So: **when you finish an item, MOVE it — same filename, into
+`ideas/done/`.** Nothing is deleted; the record just stops competing with
+the backlog for attention.
+
+- **A whole file finished** → move the file to `ideas/done/`.
+- **Some items in a running log finished** (the usual case for the
+  `*-wave-frictions.md` logs) → move the finished items into
+  `ideas/done/<same-name>.md`, creating it if needed, and leave the open
+  ones behind under a short pointer line naming where the rest went. Both
+  halves say which half they are. `web-wave-frictions.md` and
+  `cljs-wave-frictions.md` are the worked examples.
+- **Move it when it's actually done** — verified green, not merely
+  written. A resolved item carries what fixed it, so the record answers
+  "was this ever addressed?" without a git archaeology dig.
+
 1. **Read the relevant doc before touching its subsystem.** They're short on
    purpose — skipping them costs more than reading them.
 2. **Update the relevant doc in the same commit as your change.** Docs that

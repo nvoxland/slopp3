@@ -943,6 +943,51 @@ Same rule at the done grain: green, zero collisions.
 
 ---
 
+## D-rule-grounding (2026-07-23) — a rule's predicate is a ROLE, never a coincidence
+
+**Decision.** A rule may only fire on a property that is *constitutive* of the
+thing it claims to have found. Ranked, best first:
+
+1. **Declared** — the author said so (`:web/path`, `^:generated`, a module
+   edge). No false positive is possible.
+2. **Grammatical role** — the value sits where a real grammar fixes its
+   meaning (an HTML element's URL attribute; a hiccup attr map's position).
+   Precision is bounded by the grammar's own ambiguity, which is small.
+3. **Presence of a name somewhere in the form** — a COINCIDENCE test. Not
+   allowed. This is the one that keeps shipping, because it is the easy one
+   to write and it looks right on the fixture you wrote it against.
+
+**The evidence.** `web-dangling-route-refs` extracted route references by
+finding any map anywhere in a form with an `:href`/`:action` key. On the real
+store that made `{:op :add :action :replace}` — a sync plan step — a route
+reference: 16 findings, zero of them dischargeable by anyone. Two successive
+tightenings (attribute position, then value type) each shrank the residue
+without ever being able to reach zero, because each was a better guess rather
+than a different KIND of predicate. The fix that ended it was grade 2: `:href`
+names a URL on `<a>`, `<link>`, `<area>`, `<base>` and `:action` on `<form>`,
+per HTML, and nowhere else. There is no residue to shave because the question
+is no longer being approximated.
+
+This is the same failure as the withdrawn `:positional-form-access` advisory
+(4–5 false positives out of 5, `ideas/the-patterns-behind-every-failure.md`
+Pattern 1), whose recorded lesson — *"positional access is not the real
+predicate"* — is this decision generalized. Twice is a class.
+
+**A rule with a hidden finding class has an unmeasurable precision.** The
+`:unresolved` half of this rule was deliberately kept OUT of the findings so it
+could not flip status — the only lever available before per-finding severity —
+and its 16 false positives were therefore invisible for as long as it shipped.
+The `:info` grade (`status-affecting-fired?`) exists so a rule never has to
+choose between *blocking everyone* and *being unmeasurable*. **Ship every
+finding; grade the ones that should not flip.**
+
+**Consequence for review.** Before registering a rule, run it over the whole
+real store and read the finding list. The bar is this project's existing one —
+*a metric must only count findings someone can discharge* — and a rule that
+cannot state which grammar or declaration grounds it has not met it yet.
+
+---
+
 ## D-kondo-config (2026-07-20) — slopp owns the linter config, and `:level` means "can this be legitimate mid-edit?"
 
 **Decision.** `slopp.index/kondo-config` is a static def, shipped with slopp,

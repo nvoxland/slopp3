@@ -88,7 +88,11 @@ measurably bleed tokens.
    it for you then.) It runs the
    WHOLE in-image suite plus the `^:external` tests your changes impact,
    normalizes, marks the episode boundary, and reports findings; address
-   them. A pre-flight `test_run` is redundant. **`done` REPORTS, it does
+   them. A finding marked `:severity :info` is deliberately
+   INFORMATIONAL — reported for you to eyeball, never status-flipping —
+   so a rule can carry both a hard failure and an observation only you
+   can judge. It is not a lesser failure; there is nothing to discharge.
+   A pre-flight `test_run` is redundant. **`done` REPORTS, it does
    not refuse** — it records the boundary honestly and tells you "not done
    yet", so you are never deadlocked by a finding you cannot fix.
    `commit_point` is what refuses to PUBLISH a red done — and a red done
@@ -128,6 +132,7 @@ measurably bleed tokens.
 | Change a whole form | `edit_replace_form` |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
 | Change a form's NAME METADATA (`^:export`, `^{:malli/schema …}`) | `edit_subform {text: true}` matching the `defn` head — `"^:live-handle open!"` → the new metadata. Structural matching can't address the head on its own, so without this you resend the whole form to change one marker |
+| A write refusal says `ALSO PENDING:` | **Fix every line before resending.** A refusal carries EVERY gate the candidate tripped, not just the first — they were all knowable from the same form, so satisfying them one per round-trip is pure waste |
 | A subform edit refused with `unresolved-symbol`/`invalid-arity` | **Widen the match.** The change spans more of the form than you matched — a binding and its use, a loop and its `recur`, an arglist and its body. Match the enclosing form, or `edit_replace_form` the whole thing. **Two edits to ONE form is ONE edit**; this is NOT cross-form atomicity and there is no batch tool for it (the refusal says so too) |
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |

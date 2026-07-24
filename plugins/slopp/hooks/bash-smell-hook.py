@@ -37,6 +37,9 @@ RAW_DB_REASON = (
     "verbatim user :intents, and :code (the follow-up that carries source); "
     "query_history {contains X} / {dead_ends true} for the asks and the "
     "scrapped explorations. "
+    "NO MCP TOOLS AVAILABLE (server not connected)? Those same tools run "
+    "one-shot from the shell: slopp --call query_store '{\"code\":\"...\"}', "
+    "slopp --call report '{}'. That is the fallback — not sqlite3. "
     "If you truly need the raw file for store forensics, do it outside a "
     "slopp session."
 )
