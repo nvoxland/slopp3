@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -1945,7 +1945,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   "Rename a WHOLE namespace: its ns decl, every require clause, and every
   fully-qualified reference across the store; the namespaces map rekeys; the
   image rebuilds fresh (old name gone); everything re-verifies."
-  [session old new & {:keys [prompt agent]}]
+  [session old new & {:keys [prompt agent defer-verify]}]
   (let [st  (:store @session)
         old (symbol (str old)) new (symbol (str new))]
     (cond
@@ -2058,19 +2058,53 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                  [])))
             (session/fresh-image! session)          ; the old ns must NOT linger
             (let [verify-nses (vec (remove #{old} touched))
-                  summary (session/run-verification! session verify-nses nil
-                                             :edited (into #{}
-                                                           (keep (fn [id]
-                                                                   (when-let [e (store/form-by-id st2 id)]
-                                                                     (symbol (str (store/ns-of-form-id st2 id))
-                                                                             (str (or (:name e) (:id e)))))))
-                                                           (keys changeset)))]
-              (session/commit-appended! session
-                                #(store/record-verification % verify-nses summary)
-                                [])
-              {:renamed {:old old :new new :forms (count changeset)}
-               :delta (:id delta)
-               :test summary})))))))
+                  ;; `defer-verify` hands the verification to the COMPOSITE that owns
+                  ;; this rename (module_extract). Mid-batch the store has
+                  ;; namespaces renamed and callers not yet rewritten, so
+                  ;; verifying here is both expensive and meaningless — the only
+                  ;; bar a batch can meet is that its END STATE is green. One
+                  ;; logical change used to pay N verifications purely because
+                  ;; each step was spelled as a verb.
+                  summary (when-not defer-verify
+                            (session/run-verification!
+                             session verify-nses nil
+                             :edited (into #{}
+                                           (keep (fn [id]
+                                                   (when-let [e (store/form-by-id st2 id)]
+                                                     (symbol (str (store/ns-of-form-id st2 id))
+                                                             (str (or (:name e) (:id e)))))))
+                                           (keys changeset))))]
+              (when summary
+                (session/commit-appended! session
+                                  #(store/record-verification % verify-nses summary)
+                                  []))
+              ;; frictions #7/#13: symbols are rewritten perfectly and everything else
+              ;; — a name inside a string, the `-test` sibling's own name — is
+              ;; left, correctly and SILENTLY. Silence reads as "there was
+              ;; nothing to carry". Scanned AFTER the write over the OLD name, so
+              ;; whatever is still there was, by construction, not rewritten.
+              (let [left (group-by :via (refs/occurrences-of (:store @session) old))]
+                (cond-> {:renamed {:old old :new new :forms (count changeset)}
+                         :delta (:id delta)}
+                  summary      (assoc :test summary)
+                  ;; hand the scope UP: the owning transaction verifies this
+                  ;; namespace set once, after the whole batch has landed
+                  defer-verify (assoc :deferred-verification true
+                                      :verify-nses verify-nses)
+                  (seq left)
+                  (assoc :left-behind left
+                         :note
+                         (str (count (apply concat (vals left))) " occurrence(s) of "
+                              old " were NOT rewritten"
+                              (when-let [ss (seq (remove :prose (:string left)))]
+                                (str " — " (count ss) " in TOKEN strings (a path, a"
+                                     " main-ns, a require target: these BREAK, they do"
+                                     " not merely read wrong)"))
+                              (when (:test-sibling left)
+                                (str "; the -test sibling still carries the old name,"
+                                     " which files its tests under the old module"))
+                              ". Judge each: string rewriting is deliberately"
+                              " conservative, so this list is the whole signal.")))))))))))
 
 (defn affected-test-nses
   "The PROVABLE verification slice: test namespaces (any ns holding a
@@ -2254,7 +2288,19 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                                              :prompt prompt
                                                              :agent agent))
                             [])
-          {:path (str path) :key (str key) :value (str value) :format fmt}))
+          ;; `capabilities` is the ONLY path with a registry behind it. Every
+          ;; other path records the key and value as given, so a caller
+          ;; cannot tell a checked write from an unchecked one unless the
+          ;; result says which happened (D-surface-honesty).
+          (let [caps? (= "capabilities" (str path))]
+            (cond-> {:path (str path) :key (str key) :value (str value) :format fmt
+                     :verified (if caps? [:registry] [])
+                     :unverified (if caps? [] [:schema])}
+              (not caps?)
+              (assoc :note (str "recorded as given — no registry governs the "
+                                path " config, so neither the key nor the value"
+                                " was validated. Only `capabilities` writes are"
+                                " checked (query_capabilities lists them)."))))))
 
       key
       (if-let [v (get-in entry [:values (str key)])]
@@ -2533,7 +2579,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   last write per module wins. Namespace grain, like module_purity — the
   most-specific declaration governs. Read platforms via query_depends
   {modules true}."
-  [session module platform & {:keys [prompt agent]}]
+  [session module platform & {:keys [prompt agent remove]}]
   (let [module   (str module)
         ;; every surface spells platforms WITH the colon, and MCP/JSON carries
         ;; a string, so accept both (nil defaults to :jvm) rather than minting
@@ -2545,6 +2591,20 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       {:error (str "modules are the first TWO segments of a namespace"
                    " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
                    (pr-str module))}
+
+      ;; RETIRE, matching module_dep and module_purity. Declaring :jvm is not
+      ;; the same statement as making no claim: an explicit :jvm on a
+      ;; namespace nobody compiles is noise a register view has to carry.
+      remove
+      (if (contains? (:module-platforms (:store @session)) module)
+        (let [st' (session/commit-appended!
+                   session
+                   #(first (store/record-module-platform % module nil :action :remove
+                                                        :prompt prompt :agent agent))
+                   [])]
+          {:module module :action :removed :platforms (:module-platforms st')})
+        {:error (str module " has no platform declaration — nothing to remove."
+                     " Undeclared already means :jvm.")})
 
       (not (#{:jvm :cljc :cljs} platform))
       {:error (str "platform must be :jvm, :cljc, or :cljs — got "
@@ -2559,8 +2619,18 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                  #(first (store/record-module-platform % module platform
                                                        :prompt prompt :agent agent))
                  [])]
+        ;; This verb checks NOTHING about the code — it records a routing fact.
+        ;; Whether a :cljc/:cljs namespace actually compiles for its declared
+        ;; platform is compile_client's answer, and it can arrive much later.
+        ;; An empty :verified is the honest shape (D-surface-honesty).
         {:module module :platform platform
-         :platforms (:module-platforms st')}))))
+         :platforms (:module-platforms st')
+         :verified []
+         :unverified [:compilation]
+         :note (str "the platform is RECORDED, not verified: nothing here checks"
+                    " that " module " compiles for :" (name platform)
+                    ". compile_client is what proves it, and its warnings anchor"
+                    " to the owning form.")}))))
 
 (defn create-ns!
   "F4: bring a brand-new namespace into being — two modes (mutually exclusive):
@@ -2608,7 +2678,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   :internal/:external. One :module-tier delta carrying its why (:prompt); last
   write per module wins. Declaring :external (or never declaring) leaves a
   module ungated. Read tiers via query_depends {modules true}."
-  [session module tier & {:keys [prompt agent]}]
+  [session module tier & {:keys [prompt agent remove]}]
   (let [module (str module)
         ;; every surface — this docstring, the tool description, query_depends'
         ;; output — spells tiers WITH the colon, so accept that spelling too
@@ -2626,6 +2696,22 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       {:error (str "modules are the first TWO segments of a namespace"
                    " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
                    (pr-str module))}
+
+      ;; RETIRE, matching module_dep's `remove: true`. The store op has always
+      ;; supported this (ns_rename needs it, so an orphaned declaration does
+      ;; not outlive its namespace); nothing exposed it, so a mis-declared
+      ;; tier could be overwritten but never withdrawn — and overwriting with
+      ;; :external is not the same statement as making no claim at all.
+      remove
+      (if (contains? (:module-tiers (:store @session)) module)
+        (let [st' (session/commit-appended!
+                   session
+                   #(first (store/record-module-tier % module nil :action :remove
+                                                    :prompt prompt :agent agent))
+                   [])]
+          {:module module :action :removed :tiers (:module-tiers st')})
+        {:error (str module " has no tier declaration — nothing to remove."
+                     " Undeclared already means :external (ungated).")})
 
       (not (#{:pure :internal :external} tier))
       {:error (str "tier must be :pure, :internal, or :external — got "
@@ -2655,8 +2741,25 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                      #(first (store/record-module-tier % module tier
                                                        :prompt prompt :agent agent))
                      [])]
+            ;; D-surface-honesty at declaration grain. This call checked the FORMS
+            ;; in the governed namespaces and nothing else. Layering — does this
+            ;; namespace REQUIRE a looser tier? — is deliberately not checked
+            ;; here (its verdict changes as legitimate work continues, which is
+            ;; the D-rule-grain test for a check that does not belong at write
+            ;; grain). The omission is fine; being silent about it is not.
             {:module module :tier tier
-             :tiers (:module-tiers st')}))))))
+             :tiers (:module-tiers st')
+             :verified (if (= :external tier) [] [:forms])
+             :unverified [:layering]
+             :note (if (= :external tier)
+                     (str ":external asserts nothing about the code, so nothing"
+                          " was checked. Layering — whether these namespaces"
+                          " require a LOOSER tier — is a whole-graph property"
+                          " and is reported by full_check.")
+                     (str "the forms already in " module " were checked against :"
+                          (name tier) ". Layering — whether they require a LOOSER"
+                          " tier — is a whole-graph property reported by"
+                          " full_check, not at write grain."))}))))))
 
 (defn module-dep!
   "Declare or retract ONE module dependency edge — the semantic verb behind
@@ -2710,19 +2813,28 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                      (clojure.string/join " → " (conj back to))
                      " — point the dependency one way (usually by extracting"
                      " the shared piece into a module both sides may depend on)")}
-        (let [st' (session/commit-appended!
-                   session
-                   #(first (store/record-module-edge % from to action
-                                                     :prompt prompt
-                                                     :agent agent))
-                   [])]
+        (let [st'  (session/commit-appended!
+                    session
+                    #(first (store/record-module-edge % from to action
+                                                      :prompt prompt
+                                                      :agent agent))
+                    [])
+              debt (modules/module-debt st')
+              ;; what this call checked, and what it did not: the cycle
+              ;; question is real and was asked, but whether anything USES the
+              ;; edge is a different question with a different owner.
+              axes (str "cycles were judged over PRODUCTION edges. Whether"
+                        " anything USES this edge is not checked here —"
+                        " query_depends {modules true} reports :unused-edges.")]
           (cond-> {:from from :to to :action action
+                   :verified [:cycles] :unverified [:usage] :note axes
                    :deps (vec (sort (get-in st' [:modules from])))}
-            (modules/module-debt st')
-            (assoc :violations (modules/module-debt st')
+            debt
+            (assoc :violations debt
                    :note (str "existing debt under this manifest — writes"
                               " touching these forms stay blocked until the"
-                              " edge is declared or the call restructured"))))))))
+                              " edge is declared or the call restructured. "
+                              axes))))))))
 
 (defn rename-sweep!
   "Q14: the docs-team rename as ONE intent — every namespace, var, keyword,
@@ -3018,15 +3130,27 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
             (session/try-commit! session st st1
                                  (vec (distinct (map :ns cur))))))
         ;; 2. the renames, each carrying its own manifest follow + verification
+        ;; every rename DEFERS its verification to this transaction. Mid-batch the
+        ;; store has namespaces renamed and callers not yet rewritten, so a
+        ;; verification between steps is meaningless as well as expensive — the
+        ;; only bar a batch can meet is that its END STATE is green. A
+        ;; three-namespace extraction used to run past 465s paying N of them.
         (let [done (reduce (fn [acc [o v]]
                              (let [r (ns-rename! session o v
-                                                 :prompt why :agent agent)]
+                                                 :prompt why :agent agent
+                                                 :defer-verify true)]
                                (if (:error r)
                                  (reduced {:error (str "renaming " o " → " v ": "
                                                        (:error r))
-                                           :landed acc})
-                                 (conj acc [o v]))))
-                           [] (sort-by first (:renames plan)))]
+                                           :landed (:pairs acc)})
+                                 (cond-> (-> acc
+                                             (update :pairs conj [o v])
+                                             (update :nses into (:verify-nses r)))
+                                   (:left-behind r)
+                                   (update :left-behind (fnil conj [])
+                                           (select-keys r [:renamed :left-behind :note]))))))
+                           {:pairs [] :nses #{}}
+                           (sort-by first (:renames plan)))]
           (if (:error done)
             done
             ;; 3. the edges reality now requires, derived from the moved store
@@ -3045,7 +3169,22 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                                               :prompt why :agent agent)))
                            base missing))
                  []))
-              {:extracted {:to (symbol (str to-prefix))
-                           :renames (into (sorted-map) (:renames plan))
-                           :exported (count cs)
-                           :edges-declared missing}})))))))
+              ;; 4. ONE verification, strictly after the whole set has landed
+              ;; AND after the edges are declared — verifying earlier would
+              ;; judge a store the gate itself would refuse.
+              (let [vn      (vec (sort (remove (set (map first (:pairs done)))
+                                               (:nses done))))
+                    summary (session/run-verification! session vn nil)]
+                (session/commit-appended!
+                 session #(store/record-verification % vn summary) [])
+                (cond-> {:extracted {:to (symbol (str to-prefix))
+                                     :renames (into (sorted-map) (:renames plan))
+                                     :exported (count cs)
+                                     :edges-declared missing}
+                         :test summary}
+                  (seq (:left-behind done))
+                  (assoc :left-behind (:left-behind done)
+                         :note (str (count (:left-behind done)) " of the renamed"
+                                    " namespaces left occurrences of their old name"
+                                    " behind — strings and -test siblings the symbol"
+                                    " rewrite cannot reach. Judge each.")))))))))))

@@ -477,3 +477,33 @@
                 "an untracked-on-disk blob has no twin to differ from"))))
       (finally
         (doseq [f (reverse (file-seq (java.io.File. dir)))] (.delete ^java.io.File f))))))
+
+(deftest ^:external a-namespace-that-MOVES-under-a-stricter-tier-is-caught-at-done
+  ;; `module_purity` verifies the forms it is about to govern — the
+  ;; declaration side of the pair. Nothing checked the POPULATION side: a
+  ;; rename that folds existing code under a stricter prefix makes it inherit
+  ;; that tier by prefix, with no write to fire the functional-core gate on.
+  ;; Measured in anger: `slopp.mine` and `slopp.store.db` (the SQLite layer)
+  ;; both became `:pure` this way and `full_check` stayed GREEN, because the
+  ;; gate fires on WRITE over the forms a write touches and no write had
+  ;; touched them since. It surfaced weeks later on a docstring typo-fix.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tv.core "(ns tv.core)\n(defn pure-thing \"P.\" [] (inc 1))\n")
+      (api/module-tier! sess "tv.core" :pure :prompt "the core is pure")
+      (api/ingest! sess 'elsewhere.io
+                   "(ns elsewhere.io)\n(defn read-it \"R.\" [] (slurp \"deps.edn\"))\n")
+      (external/done! sess :label "baseline")
+      (testing "the fold itself is allowed — it is a rename, not a write to the forms"
+        (is (nil? (:error (api/ns-rename! sess 'elsewhere.io 'tv.core.io
+                                          :prompt "fold it under the pure core")))))
+      (testing "and done catches that the moved code cannot satisfy its new tier"
+        (let [r (external/done! sess :label "after the fold")
+              f (get-in r [:findings :tier-governance])]
+          (is (seq f) (str "findings: " (pr-str (keys (:findings r)))))
+          (is (= 'tv.core.io (:ns (first f))) (pr-str f))
+          (is (= :pure (:tier (first f))))
+          (is (= :external (:supports (first f))))
+          (is (= :red (get-in r [:findings :test-status]))
+              "a tier the code does not satisfy is a declaration that lies")))
+      (finally (api/close! sess)))))

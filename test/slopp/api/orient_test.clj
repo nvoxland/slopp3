@@ -127,3 +127,50 @@
                                0 false)]
       (is (= '[a.core] (:failed h)))
       (is (re-find #"(?i)failed" (:note h))))))
+
+(deftest host-warning-fires-only-when-a-verdict-should-be-doubted
+  ;; The currency record was already right (host-brief); it was in the wrong
+  ;; PLACE. session_brief is read once, at the start; `done` and `full_check`
+  ;; are read after every unit of work, and they are the surfaces whose whole
+  ;; output is a claim about the code. This is the same producer, aimed there.
+  ;;
+  ;; Quiet is load-bearing: a live host lags the store by up to one poll by
+  ;; design, so a warning on every done would train the reader to ignore it.
+  (testing "no record — the process did not boot from a store, so it cannot be stale"
+    (is (nil? (orient/host-warning nil 0))))
+  (testing "live with clean reloads is SILENT — a poll-interval lag is not a finding"
+    (is (nil? (orient/host-warning {:mode :live :booted-at 100 :last-reload-at 200
+                                    :reloads 9 :failed []}
+                                   3))))
+  (testing "a FAILED reload rides the verdict, naming the namespace"
+    (let [w (orient/host-warning {:mode :live :booted-at 100 :failed '[a.core]} 0)]
+      (is (= '[a.core] (:failed w)))
+      (is (re-find #"(?i)failed" (:note w)))
+      (is (re-find #"(?i)verdict" (:verdict-note w))
+          "it must say what this means for the result it is attached to")))
+  (testing "a snapshot host with post-boot code deltas is running old code, and says so"
+    (let [w (orient/host-warning {:mode :snapshot :booted-at 100} 3)]
+      (is (= :snapshot (:mode w)))
+      (is (re-find #"3 code delta" (:note w)))))
+  (testing "a snapshot host with nothing since boot is current — silent"
+    (is (nil? (orient/host-warning {:mode :snapshot :booted-at 100} 0)))))
+
+(deftest code-deltas-since-is-the-one-counter-for-host-currency
+  ;; Markers (:verify :done :commit :turn-begin …) are bookkeeping — a host
+  ;; that has not "loaded" a :done delta is not stale. The set lives in
+  ;; store.fields/markers and this is the only place that reads it for this
+  ;; question, so the count cannot drift between session_brief and a verdict.
+  (let [st {:deltas [{:id "d1" :op :add     :at 50}
+                     {:id "d2" :op :replace :at 150}
+                     {:id "d3" :op :verify  :at 160}
+                     {:id "d4" :op :done    :at 170}
+                     {:id "d5" :op :commit  :at 180}
+                     {:id "d6" :op :replace :at 190}]}]
+    (testing "counts only CODE deltas after the mark"
+      (is (= 2 (orient/code-deltas-since st 100))))
+    (testing "everything after 0 is counted except the markers"
+      (is (= 3 (orient/code-deltas-since st 0))))
+    (testing "nothing after the newest"
+      (is (zero? (orient/code-deltas-since st 999))))
+    (testing "a nil mark reads as 0, never as 'skip the check'"
+      (is (= 3 (orient/code-deltas-since st nil))))))

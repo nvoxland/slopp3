@@ -431,6 +431,59 @@
                         " never returns " (:key f) "; its result is "
                         (:returns f) ", so the assertion is vacuous")}))))
 
+(defn tier-governance-check
+  "Namespaces this EPISODE MOVED that their new governing tier refuses.
+
+  A purity tier binds a PAIR — a declaration and the population it governs —
+  and that pair can change from either side. `module_purity` verifies the
+  forms it is about to govern, so the DECLARATION side is covered. Nothing
+  covered the POPULATION side: a rename or a relocation folds existing code
+  under a different prefix, it inherits that prefix's tier, and no write ever
+  touches those forms, so the functional-core gate — which fires on write over
+  the forms a write touches — never sees them.
+
+  Measured in anger: folding `slopp.mine` under `slopp.store` (declared
+  `:pure`) made it `:pure`, along with `slopp.store.db`, the SQLite layer.
+  `full_check` reported GREEN with both violations sitting in the store. It
+  surfaced weeks later when a docstring typo-fix happened to touch one of the
+  forms.
+
+  Scoped to what MOVED rather than the whole store: a whole-store purity sweep
+  is a per-namespace analyze pass and belongs in `full_check`, and the only
+  way a namespace can newly violate a tier WITHOUT a write is by moving under
+  a different one. Error-grade — a tier its code does not satisfy is a
+  declaration that lies, and every reader downstream is relying on it: the
+  tests you decide not to isolate, the reviewer trusting the core/shell
+  split."
+  [_session store _changed]
+  (let [ds     (store/deltas store)
+        since  (->> ds (keep-indexed #(when (= :done (:op %2)) %1)) last)
+        recent (if since (drop (inc since) ds) ds)
+        moved  (into #{}
+                     (mapcat (fn [d]
+                               (case (:op d)
+                                 :rename-ns  [(:new d)]
+                                 :move-forms (keys (:sources d))
+                                 nil)))
+                     recent)]
+    (vec (for [n (sort (filter #(and (symbol? %)
+                                     (contains? (:namespaces store) %)
+                                     (not (str/ends-with? (str %) "-test")))
+                               moved))
+               :let [t (edit.modules/tier-for store n)]
+               :when (not= :external t)
+               :let [r (edit.modules/tier-report store n)]
+               :when (> (get edit.modules/tier-order (:supports r) 2)
+                        (get edit.modules/tier-order t 2))]
+           {:ns n :tier t :supports (:supports r) :blocking (:blocking r)
+            :why (str n " moved under a :" (name t) " prefix this episode and its"
+                      " forms only support :" (name (:supports r))
+                      ". A tier is inherited by prefix, so the move — not any"
+                      " write — is what put this code under a rule it does not"
+                      " satisfy, and nothing would have re-checked it until"
+                      " someone happened to edit one of these forms. Declare"
+                      " this namespace's own tier, or move the effects out.")}))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -492,6 +545,14 @@
    ;; once and cannot become a standing warning to scroll past.
    {:key :shell-widening  :severity :advisory :check #'shell-widening-check
     :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
+   ;; the OTHER half of the same pair. shell-widening asks when the
+   ;; DECLARATION moves; this fires when the POPULATION does — a rename or a
+   ;; relocation folds existing code under a tier no write will ever re-check.
+   {:key :tier-governance :severity :error :check #'tier-governance-check
+    :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus an inherited"
+                        " tier — a source-only fixture can carry neither; covered"
+                        " by rules-test/"
+                        "a-namespace-that-MOVES-under-a-stricter-tier-is-caught-at-done")}
    ;; the only two copies of one fact this system keeps: a tracked manifest file
    ;; and the real file the human branch carries at the same path. Nothing
    ;; compared them until build.clj drifted far enough to reintroduce a fixed

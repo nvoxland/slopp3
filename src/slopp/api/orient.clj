@@ -2,7 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.store.fields :as fields]))
 
 (defn snip
   "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
@@ -129,3 +129,55 @@
         (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
         failed                 (assoc :failed (vec failed))
         note                   (assoc :note note)))))
+
+(defn ^:export code-deltas-since
+  "How many CODE deltas landed after `at` (epoch ms) — the host-currency
+  count, and the ONLY spelling of it.
+
+  Markers (`store.fields/markers`: :verify :done :commit :merge :revert, the
+  turn pair) are bookkeeping, not code: a host that has not \"loaded\" a :done
+  delta is not behind on anything. A nil `at` counts everything rather than
+  skipping the question, because a missing boot timestamp must never read as
+  a clean bill of health."
+  [store at]
+  (let [at (or at 0)]
+    (count (filter #(and (> (:at % 0) at)
+                         (not (contains? fields/markers (:op %))))
+                   (store/deltas store)))))
+
+(defn ^:export host-warning
+  "The host code-currency record for a VERDICT — nil unless the process
+  producing that verdict is knowingly running code the store has moved past.
+
+  `host-brief` answers the same question for ORIENTATION, and this is the same
+  producer aimed at the other reader: session_brief is read once at the start
+  of a session, while `done` / `full_check` / `test_run` are read after every
+  unit of work and their entire output is a claim about the code. A host that
+  failed to reload said nothing on any of them, which is how one investigation
+  spent four ruled-out hypotheses inside `rt` before finding a stale process.
+
+  Two states warrant it, and nothing else does:
+  - a **failed reload** (either mode) — the host TRIED to become current and
+    could not, so it is running a namespace the store has superseded;
+  - a **:snapshot host with code deltas since boot** — it serves launch-time
+    code by design, so every one of those deltas is inert in it.
+
+  A clean `:live` host is SILENT even with deltas outstanding: the watcher
+  polls, so lagging by up to one interval is normal operation, and a warning
+  on every done is a warning nobody reads.
+
+  What it does NOT answer: whether every var in the process is byte-identical
+  to the store. It answers whether the host has knowingly failed to load
+  something. A reload that succeeded while a long-lived closure kept the old
+  fn is invisible here."
+  [info deltas-since-boot]
+  (when info
+    (let [failed?  (seq (:failed info))
+          stale?   (and (= :snapshot (:mode info)) (pos? (or deltas-since-boot 0)))]
+      (when (or failed? stale?)
+        (assoc (host-brief info deltas-since-boot false)
+               :verdict-note
+               (str "this verdict was produced by a host running code the store"
+                    " has moved past — treat it as suspect until the host is"
+                    " current (restart the server, or check the reload failure"
+                    " in its log)"))))))

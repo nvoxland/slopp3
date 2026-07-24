@@ -1,7 +1,7 @@
 (ns slopp.api.testrun
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [slopp.image.repl :as repl] [slopp.image.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn]))
+            [slopp.image.repl :as repl] [slopp.image.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.edit.refs :as refs]))
 
 (defn ^{:export "slopp.verification"} parse-test-summary
   "Parse a clojure.test runner's terminal summary into
@@ -117,6 +117,38 @@
             :out (str (deref out 1000 "")
                       "\n[slopp] test runner exceeded " timeout-ms "ms — killed")
             :err ""})))))
+
+(defn ^:export balance-shards
+  "Split `nses` into `n` shards balanced by IMAGE BOOTS rather than by index.
+
+  Shards run concurrently, so the external tier's wall time is its SLOWEST
+  shard, not the average — and a shard's cost is dominated by how many fresh
+  image subprocesses its tests boot (~1.15s of Clojure loading each, and that
+  boot IS the isolation the tier exists for). Round-robin by index ignored
+  that. Measured on slopp's own suite: 402 boots across 52 test namespaces
+  split `[139 100 90 73]`, so one shard still had 66 boots to go after the
+  fastest had finished. Longest-first gives `[101 101 100 100]` — 27% off the
+  critical path for the same work on the same cores.
+
+  This is NOT the warm-pool dead end (`ideas/full-check-is-slow.md`), which
+  rescheduled boot work into CPU that was not idle and measured zero gain. It
+  removes idle time that already exists, and adds no concurrency.
+
+  The weight is static calls to `open!` read from THE reference graph, not a
+  source scan, so it tracks the code and cannot drift. A namespace whose tests
+  boot nothing weighs 0 and packs freely. The order is total (weight, then
+  name), so the split is deterministic — a shard assignment that varied
+  between runs would make a flake unreproducible."
+  [store nses n]
+  (let [w    (frequencies (map :from-ns
+                               (concat (refs/refs-to store 'slopp.api.external/open!)
+                                       (refs/refs-to store 'slopp.api/open!))))
+        cost (fn [grp] (reduce + 0 (map #(get w % 0) grp)))]
+    (reduce (fn [shards x]
+              (let [i (apply min-key #(cost (nth shards %)) (range (count shards)))]
+                (update shards i conj x)))
+            (vec (repeat n []))
+            (sort-by (juxt #(- (get w % 0)) str) nses))))
 
 (defn ^{:export "slopp.verification"} run-shard!
   "Shell one test shard: a fresh `clojure -M<alias>` over `grp`'s namespaces

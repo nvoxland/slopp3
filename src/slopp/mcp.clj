@@ -400,10 +400,12 @@
    "module_purity"
    (fn [session a _sym]
      (text! (api/module-tier! session (:module a) (:tier a)
+                              :remove (:remove a)
                               :prompt (:prompt a) :agent (:agent a))))
 "module_platform"
    (fn [session a _sym]
      (text! (api/module-platform! session (:module a) (:platform a)
+                                  :remove (:remove a)
                                   :prompt (:prompt a) :agent (:agent a))))})
 
 (def ^:private sync-handlers!

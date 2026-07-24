@@ -355,3 +355,36 @@
           (is (not (re-find #"nr\.old/calc" src))
               (str "prose kept the old namespace: " src))))
       (finally (api/close! sess)))))
+
+(deftest ^:external ns-rename-reports-the-occurrences-it-did-not-rewrite
+  ;; The dominant failure mode of a 16-namespace restructure: four tests broke
+  ;; on namespace names living in STRINGS — a generated deps.edn main-ns, a
+  ;; child JVM's program text, a hardcoded path — every one rewritten
+  ;; correctly nowhere and reported nowhere. Plus the `-test` sibling, which
+  ;; module_extract carries and ns_rename does not, so the two verbs disagree
+  ;; about one relationship.
+  ;;
+  ;; The check runs AFTER the rename over the OLD name: whatever still names
+  ;; it was, by construction, not rewritten. That is a reality check, not a
+  ;; claim about what the changeset intended to do.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'rn.core "(ns rn.core)\n(defn f \"F.\" [] \"rn.core\")\n")
+      (api/ingest! sess 'rn.core-test
+                   (str "(ns rn.core-test (:require [rn.core :as c]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest t (is (string? (c/f))))\n"))
+      (let [r    (api/ns-rename! sess 'rn.core 'rn.renamed :prompt "regroup")
+            left (:left-behind r)]
+        (is (some? left) (str "the rename must say what it left: " (pr-str (keys r))))
+        (testing "the string literal naming the old namespace"
+          (is (some #(= 'f (:form %)) (:string left)) (pr-str left)))
+        (testing "the -test sibling still carrying the old name"
+          (is (some #(= 'rn.core-test (:ns %)) (:test-sibling left)) (pr-str left)))
+        (testing "the note tells the reader these were NOT rewritten"
+          (is (re-find #"(?i)not rewritten" (str (:note r))) (pr-str (:note r)))))
+      (testing "a clean rename says nothing — absence means checked-and-none"
+        (api/ingest! sess 'rn.clean "(ns rn.clean)\n(defn g \"G.\" [] 1)\n")
+        (let [r (api/ns-rename! sess 'rn.clean 'rn.spotless :prompt "regroup")]
+          (is (nil? (:left-behind r)) (pr-str r))))
+      (finally (api/close! sess)))))

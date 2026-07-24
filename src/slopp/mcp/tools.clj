@@ -403,12 +403,13 @@
                                :prompt {:type "string"}}
                   :required ["from" "to"]}}
    {:name "module_purity"
-    :description "Declare a NAMESPACE's purity tier for the functional-core gate. :pure = referentially transparent (no mutation, no rand/slurp) — that is what lets the generative schema check run on it; :internal = may mutate IN-PROCESS state (a memo, a registry) but touches NOTHING outside the process; :external = IO (files, subprocesses, network, db). Undeclared = :external = ungated. Scope is a namespace PATH and the MOST SPECIFIC declaration wins, so a pure core one level below an effectful module (slopp.api.shape inside slopp.api) is declarable. Declaring VERIFIES the code already there and refuses a tier the existing forms exceed. The axis is internal/external because that is what decides how a thing must be TESTED: external needs isolation (fresh JVM, temp dirs), internal needs only a cache/state reset, pure needs nothing. Caches must go through slopp.cache so `internal` stays checkable. Say WHY in prompt. (:reads/:effects are legacy spellings of :internal/:external.) Read tiers: query_depends {modules true}."
+    :description "Declare a NAMESPACE's purity tier for the functional-core gate. :pure = referentially transparent (no mutation, no rand/slurp) — that is what lets the generative schema check run on it; :internal = may mutate IN-PROCESS state (a memo, a registry) but touches NOTHING outside the process; :external = IO (files, subprocesses, network, db). Undeclared = :external = ungated. Scope is a namespace PATH and the MOST SPECIFIC declaration wins, so a pure core one level below an effectful module (slopp.api.shape inside slopp.api) is declarable. Declaring VERIFIES THE FORMS already there and refuses a tier they exceed — the result's :verified/:unverified says so, because it does NOT check layering (whether the namespace requires a LOOSER tier): that verdict changes as legitimate work continues, so full_check owns it and a wrong tier can stand until then. The axis is internal/external because that is what decides how a thing must be TESTED: external needs isolation (fresh JVM, temp dirs), internal needs only a cache/state reset, pure needs nothing. Caches must go through slopp.cache so `internal` stays checkable. Say WHY in prompt. (:reads/:effects are legacy spellings of :internal/:external.) Read tiers: query_depends {modules true}."
     :inputSchema {:type "object"
                   :properties {:module {:type "string"}
                                :tier {:type "string"}
+                               :remove {:type "boolean"}
                                :prompt {:type "string"}}
-                  :required ["module" "tier"]}}
+                  :required ["module"]}}
    {:name "deps_add"
     :description "Add an external dependency (hot to the live classpath, no restart). lib like \"org.clojure/data.json\"; version string or full coord map."
     :inputSchema {:type "object"
@@ -447,8 +448,9 @@
     :inputSchema {:type "object"
                   :properties {:module {:type "string"}
                                :platform {:type "string"}
+                               :remove {:type "boolean"}
                                :prompt {:type "string"}}
-                  :required ["module" "platform"]}}
+                  :required ["module"]}}
    {:name "deps_pure"
     :description "Assert a dep target is PURE so callers aren't !-flagged: a var (\"ns/f\"), a namespace, or a whole lib. pure=false undoes."
     :inputSchema {:type "object"

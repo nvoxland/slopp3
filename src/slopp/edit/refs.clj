@@ -462,3 +462,80 @@
                 [kw via] (when s (form-keyword-uses s))]
             {:from-form (:id e) :from-ns nsx :from-var (:name e)
              :kw kw :via via})))))
+
+(defn ^:export occurrences-of
+  "Every place `target` (a namespace name) APPEARS, whatever form the
+  appearance takes — the occurrence set a rename must answer to.
+
+  THE reference graph is a graph of var/namespace references discovered by
+  ANALYSIS. That is the right model for \"who calls this\", and the wrong one
+  for \"what would a rename miss\": a name also lives in strings, in a `-test`
+  sibling's own name, and in the register keys, none of which are references.
+  Each rename verb used to re-derive its own partial answer, so each had a
+  different blind spot and none reported what it left behind.
+
+  Rows are `{:ns :form :via :rewritable}` plus `:text`/`:prose` on strings.
+  `:via` is the provenance and the whole value:
+
+  | `:via` | what it is | rewritable |
+  |---|---|---|
+  | `:ns-form` | the target's OWN `(ns …)` declaration | yes |
+  | `:require` | another namespace's require clause | yes |
+  | `:symbol` | a symbol token — INCLUDING a quoted one, which the CST rewrite reaches like any other | yes |
+  | `:string` | the name inside a string literal | **no** |
+  | `:test-sibling` | the `<target>-test` namespace | no (it is a NAME, not a reference) |
+  | `:register` | a `:module-tiers` / `:module-platforms` / manifest key | no |
+
+  `:prose` splits the string rows the way the risk splits: a string with
+  whitespace is a docstring or message (a rename makes it WRONG), one without
+  is a path, a main-ns, or a require target (a rename BREAKS it). Measured on
+  slopp's own store: 145 prose to 13 load-bearing, and the 13 included the
+  generated `deps.edn` main-ns that killed every external test during a
+  restructure.
+
+  This does not rewrite anything and takes no position on what should be.
+  Conservative string handling is correct; being silent about it is not."
+  [store target]
+  (let [t     (str target)
+        pfx   (str t ".")
+        under (fn [s] (or (= s t) (str/starts-with? s pfx)))
+        scan  (fn scan [node ns-sym form-name ns-form?]
+                (when node
+                  (let [s    (when (n/sexpr-able? node)
+                               (try (n/sexpr node) (catch Exception _ nil)))
+                        here (cond
+                               (and (symbol? s)
+                                    (or (under (str s))
+                                        (and (namespace s) (under (namespace s)))))
+                               [{:ns ns-sym :form form-name :rewritable true
+                                 :via (cond (not ns-form?)    :symbol
+                                            (= ns-sym target) :ns-form
+                                            :else             :require)}]
+
+                               (and (string? s) (str/includes? s t))
+                               [{:ns ns-sym :form form-name :via :string
+                                 :rewritable false
+                                 :text s
+                                 :prose (boolean (re-find #"\s" s))}]
+
+                               :else [])]
+                    (into here
+                          (when (n/inner? node)
+                            (mapcat #(scan % ns-sym form-name ns-form?)
+                                    (n/children node)))))))]
+    (vec
+     (concat
+      (for [n (sort (keys (:namespaces store)))
+            f (store/forms store n)
+            :when (:node f)
+            row (scan (:node f) n (:name f) (= (:name f) n))]
+        row)
+      (let [sibling (symbol (str t "-test"))]
+        (when (contains? (:namespaces store) sibling)
+          [{:ns sibling :via :test-sibling :rewritable false}]))
+      (for [[reg m] [[:module-tiers (:module-tiers store)]
+                     [:module-platforms (:module-platforms store)]
+                     [:modules (:modules store)]]
+            k (keys m)
+            :when (under (str k))]
+        {:register reg :key (str k) :via :register :rewritable false})))))

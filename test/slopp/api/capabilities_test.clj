@@ -134,3 +134,24 @@
     (is (nil? (caps/check-value entry "7400")))
     (is (string? (caps/check-value entry "not-a-port"))
         "a bad port is refused at the config write, not at bind time")))
+
+(deftest ^:external config-writes-say-whether-anything-validated-them
+  ;; `capabilities` is the ONLY path with a registry behind it. Every other
+  ;; path — rules, gates, client — records the key and value as given and
+  ;; returns a result indistinguishable from a validated one. Saying which is
+  ;; which is D-surface-honesty at config grain.
+  (let [sess (external/open!)]
+    (try
+      (testing "a capabilities write was checked against the registry"
+        (let [r (api/config-file! sess "capabilities" :key "http.port" :value "7357"
+                                  :prompt "real port")]
+          (is (= [:registry] (:verified r)) (pr-str r))
+          (is (= [] (:unverified r)) (pr-str r))))
+      (testing "any other path is recorded UNVALIDATED, and says so"
+        (let [r (api/config-file! sess "rules" :key "key-typos" :value "off"
+                                  :prompt "quiet that rule")]
+          (is (= [] (:verified r)) (pr-str r))
+          (is (= [:schema] (:unverified r)) (pr-str r))
+          (is (re-find #"capabilities" (str (:note r)))
+              "the note must name the one path that IS validated")))
+      (finally (api/close! sess)))))

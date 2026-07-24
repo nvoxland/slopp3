@@ -1,6 +1,6 @@
 (ns slopp.api.external
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -192,8 +192,14 @@ client-deps (merge (:client-deps st) (:client provided))
   to AUTO (auto-parallel: scales with test-ns count + cores, serial below
   ~8 nses where boot overhead beats the gain); an explicit N overrides
   (1 forces serial). A single :ns/:only run never shards. Returns {:external
-  true :status :ran :assertions :failures :errors :exit} plus :failing +
+  true :status :ran :assertions :failures :errors :exit :ms} plus :failing +
   :all-failing {file [tests]} + :themes (clustered causes) when red.
+
+  `:ms` is the wall cost, on EVERY exit including the early ones. This tier
+  is where the time goes — measured, ~187s of a ~190s full_check, almost all
+  of it the fresh-JVM boots the isolation requires — and it used to report
+  nothing about that, so `done` and `full_check` could not be split into
+  their phases and the cost had to be inferred from delta gaps.
 
   Every runner is BOUNDED (testrun/run-cmd!) — a hung ^:external test used
   to wedge done! and the milestone gate forever. A green summary is only
@@ -208,12 +214,14 @@ client-deps (merge (:client-deps st) (:client provided))
   trace lands in the session's test-map (and persists), surfacing later as
   honest `:warranty` and affected-test narrowing, not as output here."
   [session & {:keys [alias ns only affected parallel nses]}]
-  (let [aff (when affected (api/affected-test-nses session))]
+  (let [t0    (System/currentTimeMillis)
+        stamp (fn [r] (cond-> r (map? r) (assoc :ms (- (System/currentTimeMillis) t0))))
+        aff   (when affected (api/affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
-      {:external true :ran 0 :status :green :affected aff
-       :note (str "no test namespace can reach the changes since the last"
-                  " milestone — nothing to verify (run without affected for"
-                  " the full gate)")}
+      (stamp {:external true :ran 0 :status :green :affected aff
+              :note (str "no test namespace can reach the changes since the last"
+                         " milestone — nothing to verify (run without affected for"
+                         " the full gate)")})
       ;; the full/affected set is shardable (a single :ns or :only run is not);
       ;; :parallel defaults to AUTO — scale the shard count to the work + cores
       (let [full-set (cond
@@ -240,13 +248,14 @@ client-deps (merge (:client-deps st) (:client provided))
         (try
           (let [b (build! session dir)]
             (if (:error b)
-              b
+              (stamp b)
               (let [result
                     (if (seq shard-nses)
-                      (let [shards (->> (map-indexed vector shard-nses)
-                                        (group-by #(mod (first %) par))
-                                        vals
-                                        (mapv #(mapv second %)))
+                      (let [;; balanced by IMAGE BOOTS, not by index: the shards run concurrently,
+                            ;; so this tier costs its SLOWEST shard. Round-robin split
+                            ;; slopp's own 402 boots [139 100 90 73] — one shard still
+                            ;; had 66 to go after the fastest had finished.
+                            shards (testrun/balance-shards (:store @session) shard-nses par)
                             runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
                                          shards)
                             outs0  (mapv deref runs)
@@ -335,10 +344,24 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; here is missed forever. nil when the build carried no runner, so
                 ;; untraced stores behave exactly as before.
                 (session/absorb-trace! session (testrun/read-traces dir))
-                result)))
+                (stamp result))))
           (finally
             ;; a full materialized project per run; nothing else ever deletes it
             (branch/delete-dir! (io/file dir))))))))
+
+(defn- host-warning-now
+  "The host code-currency warning for a verdict produced right now, or nil.
+
+  The kernel namespace exists only in a process that BOOTED from a store (the
+  MCP server, a jar launch), so the carrier is reached defensively and any
+  failure reads as absence — a test JVM cannot be stale, because nothing
+  hot-reloaded into it. One resolver for every verdict surface: done,
+  full_check and test_run must not disagree about whether the host is
+  current."
+  [st]
+  (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
+                       (catch Throwable _ nil))]
+    (orient/host-warning info (orient/code-deltas-since st (:booted-at info 0)))))
 
 (defn ^:export done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
@@ -354,7 +377,8 @@ client-deps (merge (:client-deps st) (:client provided))
   :normalized n :rewrites [{:form :applied}] :lint [...] :test s
   :findings {...}}."
   [session & {:keys [label agent external?] :or {external? true}}]
-  (let [st       (:store @session)
+  (let [t0       (System/currentTimeMillis)
+        st       (:store @session)
         changed  (->> (query/episode-span st agent)
                       (filter #(and (contains? query/content-ops (:op %))
                                     (= agent (:agent %))))
@@ -494,8 +518,7 @@ client-deps (merge (:client-deps st) (:client provided))
                                                (store/ns-of-form-id st* fid)
                                                (:name e)))))
                                     changed))))]
-  (cond-> {:test-status (cond (and (nil? summary) (nil? iso) (zero? lint-errors)) :none
-                              (or (pos? failures) iso-red?
+  (cond-> {:test-status (cond (or (pos? failures) iso-red?
                                   ;; lint errors — which INCLUDE dead public
                                   ;; surface, folded in as ERROR rows by
                                   ;; with-unused-gate — are part of "is this
@@ -505,6 +528,13 @@ client-deps (merge (:client-deps st) (:client provided))
                                   ;; store with dead surface milestone green.
                                   (pos? lint-errors)
                                   (rules/status-affecting-fired? st* advisories)) :red
+                              ;; :none is judged AFTER red, never before it. An
+                              ;; error-grade finding that fires on a DELTA rather
+                              ;; than on code — tier-governance,
+                              ;; web-dangling-route-refs — can be the only thing
+                              ;; that happened in an episode, and while :none came
+                              ;; first it swallowed exactly those.
+                              (and (nil? summary) (nil? iso) (zero? lint-errors)) :none
                               :else                           :green)
            :failures    failures
            :lint-errors lint-errors
@@ -533,7 +563,19 @@ client-deps (merge (:client-deps st) (:client provided))
     (seq missing-doc) (assoc :missing-doc missing-doc)
     (seq advisories)  (merge advisories)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
-    (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))))
+    (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))
+    ;; friction #10: the host-currency record existed and only ever reached
+    ;; session_brief — an orientation surface read once a session — so a
+    ;; verdict produced by a process running superseded code said nothing
+    ;; about it, and the investigation that followed eliminated four correct
+    ;; mechanisms in rt first. Nil unless there is genuinely something to
+    ;; doubt, so it never becomes noise the reader learns to skip.
+    (host-warning-now st*) (assoc :host-stale (host-warning-now st*))
+    ;; what the done-point COST, persisted on the boundary delta. done is the
+    ;; most frequently called verdict, so its cost dominates by repetition
+    ;; rather than by any single call being slow — a product the log could
+    ;; not compute while no delta carried a duration.
+    true (assoc :ms (- (System/currentTimeMillis) t0))))
         cid (let [v (volatile! nil)]
               (session/commit-appended! session
                                 (fn [base]
@@ -557,6 +599,31 @@ client-deps (merge (:client-deps st) (:client provided))
       (seq pruned-reqs)   (assoc :pruned-requires pruned-reqs)
       (:status iso)       (assoc :external iso))))
 
+(defn- record-full-check!
+  "Stamp the whole-store verdict with its wall cost and land it in the journal
+  as a `:verify` delta scoped `:full-check`.
+
+  Two things were missing and they are the same thing. `full_check` is the
+  most expensive operation slopp performs — ~190s on a 125-namespace store,
+  almost entirely the external tier's fresh-JVM boots — and it wrote NOTHING,
+  so the only after-the-fact attribution was the gap before whatever delta
+  landed next. It is also the verdict most worth standing behind, and
+  \"when did this store last pass a whole-store check, and was it green?\" had
+  no answer in the log either.
+
+  Only the SHAPE of the verdict is recorded, never the finding lists: the
+  journal is append-only and a red full_check's lint rows can be large."
+  [res session nses t0]
+  (let [res (assoc res :ms (- (System/currentTimeMillis) t0))]
+    (session/commit-appended!
+     session
+     #(store/record-verification
+       % (vec nses)
+       (assoc (select-keys res [:status :ms :namespaces :lint-errors :lint-warnings])
+              :scope :full-check))
+     [])
+    res))
+
 (defn ^:export full-check!
   "The WHOLE-STORE check, on demand: kondo over every namespace, the
   dead-public-surface report over every namespace, and every test in every
@@ -576,7 +643,8 @@ client-deps (merge (:client-deps st) (:client provided))
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
   [...] :test {...} :external {...} :status :green|:red}."
   [session & {:keys [affected]}]
-  (let [st    (:store @session)
+  (let [t0    (System/currentTimeMillis)
+        st    (:store @session)
         nses  (sort (keys (:namespaces st)))
         ;; The whole-store gate must not inherit incremental kondo state. kondo
         ;; reads cross-ns facts from a disk cache that each lint TEACHES, so a
@@ -639,7 +707,12 @@ client-deps (merge (:client-deps st) (:client provided))
                                       " claim it does not earn"))
       (seq (:unused rep)) (assoc :unused-public (:unused rep))
       (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
-      iso                 (assoc :external iso))))
+      iso                 (assoc :external iso)
+      ;; friction #10: a whole-store green is exactly the verdict an agent
+      ;; commits on, so a host running superseded code has to say so HERE.
+      (host-warning-now st) (assoc :host-stale (host-warning-now st))
+      ;; last, so the recorded verdict is the one actually returned
+      true                  (record-full-check! session nses t0))))
 
 (defn ^:export commit-point!
   "Record a MILESTONE (P4-m7): run the full done pipeline (normalize,

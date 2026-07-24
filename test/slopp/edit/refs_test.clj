@@ -264,3 +264,47 @@
     (testing "an unreferenced target is absent from the index, and refs-to says []"
       (is (nil? (get idx 'bt.core/never-called)))
       (is (= [] (refs/refs-to st 'bt.core/never-called))))))
+
+(deftest occurrences-of-is-the-one-set-a-rename-must-answer-to
+  ;; THE reference graph is a graph of var/namespace references DISCOVERED BY
+  ;; ANALYSIS. Everything else that names a thing — a string, a quoted require
+  ;; symbol, a docstring mention, a -test sibling's own name, a register key —
+  ;; is not a "reference" under that model and had no home, so each rename
+  ;; verb wired up a different subset. Measured on slopp's own store before
+  ;; this landed: 158 string literals name a live namespace, 13 of them
+  ;; load-bearing token strings across 12 sites (a generated deps.edn main-ns,
+  ;; a child JVM's program text, a path assertion) — every one invisible to
+  ;; ns_rename and unreported by it.
+  ;;
+  ;; Conservative rewriting is RIGHT. Silent conservative rewriting is not.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'oc.helper "(ns oc.helper)\n(defn h \"H.\" [] 1)\n")
+                (store/ingest 'oc.helper-test
+                              (str "(ns oc.helper-test (:require [oc.helper :as h]))\n"
+                                   "(defn t \"T.\" [] (h/h))\n"))
+                (store/ingest 'oc.user
+                              (str "(ns oc.user (:require [oc.helper :as h]))\n"
+                                   "(defn u \"Calls oc.helper for real.\" [] (h/h))\n"
+                                   "(defn boot \"B.\" [] (require 'oc.helper) \"oc.helper\")\n"))
+                (as-> s (first (store/record-module-tier s "oc.helper" :pure))))
+        occ (refs/occurrences-of st 'oc.helper)
+        by  (group-by :via occ)]
+    (testing "the require clause — rewritable, and always was"
+      (is (some #(= 'oc.user (:ns %)) (:require by)) (pr-str (:require by))))
+    (testing "a quoted symbol in code is still a symbol to the CST rewrite"
+      (is (some #(= 'boot (:form %)) (:symbol by)) (pr-str (:symbol by))))
+    (testing "a namespace name inside a STRING — reported, never silently rewritten"
+      (let [ss (:string by)]
+        (is (seq ss))
+        (is (every? #(false? (:rewritable %)) ss)
+            "the whole point: these are what the symbol pass cannot reach")
+        (is (some #(and (= 'boot (:form %)) (false? (:prose %))) ss)
+            "a token string — a path, a main-ns, a require target — is LOAD-BEARING")
+        (is (some #(and (= 'u (:form %)) (true? (:prose %))) ss)
+            "a docstring mention is prose: wrong after a rename, not broken")))
+    (testing "the -test sibling names its subject — a convention, not a coincidence"
+      (is (= 'oc.helper-test (:ns (first (:test-sibling by))))))
+    (testing "a register key names the namespace too"
+      (is (seq (:register by)) (pr-str occ)))
+    (testing "nothing is claimed for a namespace nobody mentions"
+      (is (= [] (refs/occurrences-of st 'oc.absent))))))

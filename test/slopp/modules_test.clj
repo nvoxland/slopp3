@@ -999,3 +999,118 @@
                                  :prompt "production mq.app → mp.core already exists")]
           (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external declarations-say-which-axes-they-verified
+  ;; D-surface-honesty at DECLARATION grain. Every register verb checks some
+  ;; axes and not others, and the omissions are deliberate (layering is a
+  ;; whole-GRAPH property, so D-rule-grain keeps it out of write grain). What
+  ;; is NOT defensible is returning the same shape either way: an agent reads
+  ;; "declared" as "checked". Each verb names what it verified, what it did
+  ;; not, and where the unverified axis IS judged.
+  (let [sess (external/open!)]
+    (try
+      (testing "module_purity verified the forms, NOT the require graph"
+        (let [r (api/module-tier! sess "app.core" :pure)]
+          (is (= [:forms] (:verified r)))
+          (is (= [:layering] (:unverified r)))
+          (is (re-find #"full_check" (str (:note r)))
+              "the note must name where layering IS checked")))
+      (testing "an :external tier asserts nothing, so it verified nothing"
+        ;; tier-violations returns [] immediately for :external — the claim is
+        ;; empty, and a verb that reported [:forms] here would be claiming a
+        ;; check it skipped by definition.
+        (let [r (api/module-tier! sess "app.shell" :external)]
+          (is (= [] (:verified r)))))
+      (testing "module_platform verifies nothing about the code at all"
+        (let [r (api/module-platform! sess "app.client" :cljs)]
+          (is (= [] (:verified r)))
+          (is (= [:compilation] (:unverified r)))
+          (is (re-find #"compile_client" (str (:note r))))))
+      (testing "module_dep verified cycles over PRODUCTION edges only"
+        (let [r (api/module-dep! sess "app.core" "app.util")]
+          (is (= [:cycles] (:verified r)))
+          (is (= [:usage] (:unverified r)))))
+      (testing "a refusal carries no axes — it is not a partial answer"
+        (let [r (api/module-tier! sess "has spaces" :pure)]
+          (is (:error r))
+          (is (nil? (:verified r)))
+          (is (nil? (:unverified r)))))
+      (finally (api/close! sess)))))
+
+(deftest tier-report-reads-the-GOVERNING-tier-not-the-modules
+  ;; `tier-for` is THE producer of "which tier governs this namespace": most
+  ;; specific declaration wins, namespace grain, because a pure core routinely
+  ;; lives one level below an effectful module. `tier-report` answered the same
+  ;; question a second way — `(get (:module-tiers store) (module-of ns))` — and
+  ;; the two disagreed on 28 of slopp's own 75 production namespaces.
+  ;;
+  ;; The dangerous direction is the one measured on `slopp.store.mine`, whose
+  ;; own `:external` declaration exists BECAUSE a fold silently governed it
+  ;; `:pure` (frictions #11): the report said `:pure` anyway. A migration aid
+  ;; that misreports where the code stands is worse than none.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'tg.core "(ns tg.core)\n(defn f \"F.\" [] 1)\n")
+               (store/ingest 'tg.core.deep "(ns tg.core.deep)\n(defn g \"G.\" [] 2)\n")
+               (as-> s (first (store/record-module-tier s "tg.core" :external)))
+               (as-> s (first (store/record-module-tier s "tg.core.deep" :pure))))]
+    (is (= :pure (modules/tier-for st 'tg.core.deep))
+        "the deep namespace's own declaration is the most specific")
+    (is (= :pure (:tier (modules/tier-report st 'tg.core.deep)))
+        "the report must name the tier that GOVERNS, from the one producer")
+    (is (= :external (:tier (modules/tier-report st 'tg.core)))
+        "and the module's own declaration still governs the module namespace")))
+
+(deftest ^:external a-tier-or-platform-declaration-can-be-RETIRED
+  ;; `record-module-tier` has accepted `:action :remove` since the rename path
+  ;; needed it, and no TOOL could reach it — so an agent that mis-declared a
+  ;; tier could overwrite it but never retire it. Measured on slopp's own
+  ;; store: five tier entries naming namespaces that no longer exist, listed
+  ;; by query_depends as though they governed something.
+  ;;
+  ;; A store op nothing can reach is its own smell, and a register view that
+  ;; lists things which are not there is the wart D-surface-honesty names.
+  ;; `module_dep` always had `remove: true`; these two now match it.
+  (let [sess (external/open!)]
+    (try
+      (testing "a tier can be declared and then retired"
+        (api/module-tier! sess "rm.core" :pure :prompt "core is pure")
+        (is (= :pure (get-in @sess [:store :module-tiers "rm.core"])))
+        (let [r (api/module-tier! sess "rm.core" nil :remove true :prompt "not any more")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :removed (:action r)) (pr-str r))
+          (is (nil? (get-in @sess [:store :module-tiers "rm.core"]))
+              "retired, not overwritten with a looser tier")))
+      (testing "retiring what was never declared is an ERROR, not a silent no-op"
+        (is (:error (api/module-tier! sess "rm.absent" nil :remove true))))
+      (testing "the same for a platform"
+        (api/module-platform! sess "rm.ui" :cljs :prompt "browser code")
+        (let [r (api/module-platform! sess "rm.ui" nil :remove true :prompt "back to jvm")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :removed (:action r)))
+          (is (nil? (get-in @sess [:store :module-platforms "rm.ui"]))))
+        (is (:error (api/module-platform! sess "rm.absent" nil :remove true))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external module-extract-verifies-ONCE-not-once-per-rename
+  ;; A three-namespace extraction ran past 465s and had to be backgrounded.
+  ;; The cost is structural, not accidental: composites in slopp are written
+  ;; as sequences of user-facing verbs, and each verb carries its own
+  ;; verification because it is a verb. So one logical change pays N of them.
+  ;;
+  ;; The honest bar is that the END STATE is green, and it is the only bar a
+  ;; batch can meet anyway — mid-batch the store has namespaces renamed and
+  ;; callers not yet rewritten, so a verification there is meaningless.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mx.one "(ns mx.one)\n(defn a \"A.\" [] 1)\n")
+      (api/ingest! sess 'mx.two "(ns mx.two)\n(defn b \"B.\" [] 2)\n")
+      (let [verifies #(count (filter (fn [d] (= :verify (:op d)))
+                                     (store/deltas (:store @sess))))
+            before   (verifies)
+            r        (api/module-extract! sess ['mx.one 'mx.two] "mx.core"
+                                          :prompt "regroup under one prefix")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= 2 (count (:renames (:extracted r)))) (pr-str r))
+        (is (= 1 (- (verifies) before))
+            "one transaction, ONE verification — not one per rename"))
+      (finally (api/close! sess)))))

@@ -396,7 +396,13 @@
         blocking (fn [vs] (vec (sort (filter here? vs))))
         b-pure   (blocking (into (set eff-any) (concat nondet console)))
         b-int    (blocking eff-ext)]
-    {:tier     (canonical-tier (get (:module-tiers store) (module-of ns-sym) :external))
+    {;; tier-for is THE producer of "which tier governs this namespace" —
+     ;; namespace grain, most-specific declaration wins. Re-deriving it at
+     ;; MODULE grain here disagreed with it on 28 of slopp's own 75
+     ;; production namespaces, and in the direction that matters: a
+     ;; namespace whose OWN declaration exists precisely because a fold
+     ;; mis-governed it read as the fold's tier anyway.
+     :tier     (tier-for store ns-sym)
      :supports (cond (empty? b-pure) :pure
                      (empty? b-int)  :internal
                      :else           :external)

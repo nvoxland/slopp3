@@ -618,3 +618,71 @@
           (is (re-find #"(?i)narrowed" (str (:scope r)))
               (str "an unstated omission reads as coverage: " (pr-str (:scope r))))))
       (finally (api/close! sess)))))
+
+(deftest ^:external verification-records-what-it-COST-not-only-what-it-found
+  ;; A delta carries :at (when it landed) and nothing about how long the work
+  ;; took, so the only after-the-fact attribution available is the gap between
+  ;; consecutive deltas — which is agent thinking plus tool execution plus
+  ;; idle time, mixed. Measured consequence: a first attribution over this
+  ;; store's own log blamed `done` for 37% of wall clock, when the gap it was
+  ;; reading was unlogged work before a commit_point.
+  ;;
+  ;; The duration rides the verification SUMMARY, so it persists through the
+  ;; :verify delta's :result with no change at any of the twelve call sites.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'ms.core
+                   (str "(ns ms.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [] 1)\n"
+                        "(deftest f-t (is (= 1 (f))))\n"))
+      (api/edit-replace! sess 'ms.core 'f "(defn f \"F.\" [] 1)"
+                         :prompt "a write whose verification actually runs")
+      (let [v (last (filter #(= :verify (:op %)) (store/deltas (:store @sess))))
+            ms (get-in v [:result :ms])]
+        (is (number? ms) (str "the verify delta must record its own cost: " (pr-str v)))
+        (is (<= 0 ms) "a duration is never negative"))
+      (finally (api/close! sess)))))
+
+(deftest ^:external full-check-records-the-whole-store-verdict-and-its-cost
+  ;; Measured on this store's own log: per-write verification is 349 writes
+  ;; for 237s total (median 0s) — free. Everything expensive is elsewhere, and
+  ;; everything expensive wrote NOTHING: full_check (~190s, dominated by the
+  ;; external tier's fresh-JVM boots) left no delta, so its cost could only be
+  ;; guessed from the gap before whatever landed next.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'fc.core
+                   (str "(ns fc.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [] 1)\n"
+                        "(deftest f-t (is (= 1 (f))))\n"))
+      (let [r (external/full-check! sess)]
+        (is (number? (:ms r)) (str "the whole-store check must report its cost: " (pr-str (keys r))))
+        (is (= :green (:status r)) (pr-str r))
+        (let [v (last (filter #(and (= :verify (:op %))
+                                    (= :full-check (:scope (:result %))))
+                              (store/deltas (:store @sess))))]
+          (is (some? v) "the whole-store verdict must land in the journal")
+          (is (number? (get-in v [:result :ms])))
+          (is (= :green (get-in v [:result :status])))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external done-and-the-external-tier-report-their-own-cost
+  ;; done is the most frequently called verdict — 109 calls in one 25-hour
+  ;; window on this store — and the external tier is the dominant cost inside
+  ;; it (~187s of a ~190s full_check, in fresh-JVM boots). The done delta
+  ;; persists its findings, so :ms there makes the frequency×cost product
+  ;; answerable from the log instead of inferred from delta gaps.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'dc.core
+                   (str "(ns dc.core (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn f \"F.\" [] 1)\n"
+                        "(deftest f-t (is (= 1 (f))))\n"))
+      (testing "done reports what the whole done-point cost"
+        (let [r (external/done! sess :label "cost")]
+          (is (number? (get-in r [:findings :ms]))
+              (str "findings: " (pr-str (keys (:findings r)))))))
+      (testing "the external tier reports what a fresh-JVM run cost"
+        (let [x (external/external-test-run! sess)]
+          (is (number? (:ms x)) (pr-str (keys x)))))
+      (finally (api/close! sess)))))

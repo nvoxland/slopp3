@@ -804,32 +804,42 @@
   just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
   red-result :implicated correlation (Rock 2). Results pass through the
   episode-red shaper (direction over repetition); `:boundary? true` (the
-  done-point) bypasses compression and resets the ledger."
+  done-point) bypasses compression and resets the ledger.
+
+  The summary carries `:ms`, the wall time this verification took. It rides
+  the `:verify` delta's `:result` through all twelve `record-verification`
+  call sites, so the journal answers what verification COSTS as well as what
+  it found. Without it the only after-the-fact attribution is the gap between
+  consecutive deltas, which mixes tool execution with agent thinking and gets
+  the answer wrong — the expensive whole-store operations are precisely the
+  ones that leave no delta at all."
   [session default-ns affected & {:keys [edited fresh include-integration? boundary?]}]
-  (cond-> (shape-episode-reds!
-           session
-           (implicate
-            (if (nil? affected)
-              (diagnosed-run! session default-ns nil :edited edited :fresh fresh
-                              :include-integration? include-integration?)
-              (reduce (fn [acc [tns tsyms]]
-                        (merge-with (fn [a b]
-                                      (cond (number? a) (+ a b)
-                                            (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                            :else (or b a)))
-                                    acc
-                                    (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                                    :edited edited :fresh fresh
-                                                    :include-integration? include-integration?)))
-                      {}
-                      (group-by (comp symbol namespace) affected)))
-            (:test-map @session)
-            edited)
-           affected default-ns boundary?)
-    ;; the done-point runs the external tier for REAL right after this, and
-    ;; reports its own cap in :findings — an in-image deferral note there is
-    ;; noise about an implementation detail
-    boundary? (dissoc :external-pending)))
+  (let [t0 (System/currentTimeMillis)
+        r  (cond-> (shape-episode-reds!
+                    session
+                    (implicate
+                     (if (nil? affected)
+                       (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                                       :include-integration? include-integration?)
+                       (reduce (fn [acc [tns tsyms]]
+                                 (merge-with (fn [a b]
+                                               (cond (number? a) (+ a b)
+                                                     (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                                     :else (or b a)))
+                                             acc
+                                             (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                                             :edited edited :fresh fresh
+                                                             :include-integration? include-integration?)))
+                               {}
+                               (group-by (comp symbol namespace) affected)))
+                     (:test-map @session)
+                     edited)
+                    affected default-ns boundary?)
+             ;; the done-point runs the external tier for REAL right after this, and
+             ;; reports its own cap in :findings — an in-image deferral note there is
+             ;; noise about an implementation detail
+             boundary? (dissoc :external-pending))]
+    (assoc r :ms (- (System/currentTimeMillis) t0))))
 
 (defn absorb-trace!
   "Merge an EXTERNAL-tier trace (#121) into the session's test-map and persist
