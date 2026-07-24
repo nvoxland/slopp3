@@ -1,6 +1,6 @@
 (ns slopp.web-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web :as web] [slopp.web.static :as static]))
+            [slopp.web :as web] [slopp.web.static :as static] [slopp.web.router :as router]))
 
 (defn ^{:web/method :get :web/path "/w/mine/:owner" :web/auth :authenticated}
   t-mine
@@ -197,3 +197,23 @@
                                     [:headers "Content-Type"])))))
     (testing "an unknown extension omits the header rather than guessing"
       (is (nil? (get-in (call "thing.zzz") [:headers "Content-Type"]))))))
+
+(deftest query-params-are-parsed-onto-the-request
+  ;; Both adapters put :query-string on the request and NOTHING parsed it,
+  ;; so the first app that wanted `?view=x` had to write its own splitter —
+  ;; and so would the second. Found by building slopp's own UI on this
+  ;; framework: a place the app has to reach around slopp.web is a gap in
+  ;; slopp.web.
+  (testing "the shapes a URL actually arrives in"
+    (is (= {} (router/query-params nil)))
+    (is (= {} (router/query-params "")))
+    (is (= {:view "labeled"} (router/query-params "view=labeled")))
+    (is (= {:a "1" :b "2"} (router/query-params "a=1&b=2")))
+    (is (= {:flag ""} (router/query-params "flag"))
+        "a bare key is present with an empty value — present and empty are not absent"))
+  (testing "percent- and plus-encoding, since a value is arbitrary text"
+    (is (= {:q "a b"} (router/query-params "q=a+b")))
+    (is (= {:q "a/b?c"} (router/query-params "q=a%2Fb%3Fc")))
+    (is (= {:ns "demo.core"} (router/query-params "ns=demo.core"))))
+  (testing "malformed input is data, never a 500"
+    (is (map? (router/query-params "%%%=x&=y&&")))))

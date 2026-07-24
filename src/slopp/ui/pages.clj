@@ -71,6 +71,14 @@
     [:pre {:background "#f4f4f4" :padding "1rem" :border-radius "4px"
            :overflow-x "auto"}]
     [:code {:font-family "ui-monospace, monospace"}]
+    ;; syntax classes: only what the CST can tell apart WITHOUT guessing, so
+    ;; nothing here is coloured on a hunch (leaf-class carries the rest as text)
+    [:.string {:color "#a50"}]
+    [:.keyword {:color "#279"}]
+    [:.number {:color "#279"}]
+    [:.comment {:color "#888" :font-style "italic"}]
+    [:.special {:color "#83d" :font-weight "600"}]
+    [:.delim {:color "#999"}]
     ;; a diff line is a BLOCK so its marker column and its background line
     ;; up down the whole hunk, rather than hugging the text
     [:.del {:display "block" :color "#a33" :background "#fdeeee"}]
@@ -85,6 +93,12 @@
                  [:a {:color "#5c9"}]
                  [:small {:color "#999"}]
                  [:nav {:color "#999"}]
+                 [:.string {:color "#d94"}]
+                 [:.keyword {:color "#7bd"}]
+                 [:.number {:color "#7bd"}]
+                 [:.comment {:color "#777"}]
+                 [:.special {:color "#b9f"}]
+                 [:.delim {:color "#666"}]
                  [:.del {:color "#e88" :background "#2a1a1a"}]
                  [:.add {:color "#6cb" :background "#14241f"}]
                  [:article {:border-left-color "#333"}]
@@ -255,6 +269,10 @@
                    (for [[op line] (:diff f)]
                      [:span {:class (name op)}
                       (str (case op :add "+" :del "-" " ") line "\n")])]]
+                 ;; the diff carries +/- classes and nothing more: its lines are TEXT from
+                 ;; diff-lines, not CST nodes, and half a form does not parse — so
+                 ;; syntax colour here would be a guess where the form page has a tree
+                 nil
                  [:small (plural (:callers f) "caller")]])])])
         [:footer
          [:small "call edges come from a syntactic reader over the store, so"
@@ -262,14 +280,30 @@
     {:status 404 :body {:error "no such range"}}))
 
 (defn ^{:web/read :ui/form} form-view-read
-  "Read performer: one form's page model by ID, or nil when no form has
-  that id."
-  [{:keys [session]} id]
-  (model/form-view session (str id)))
+  "Read performer: one form's page model by ID at the requested rendering
+  FIDELITY. Addressed by BOTH halves of the URL — the id from the path,
+  `?view=` from the query — so it is declared over the whole request
+  rather than one segment.
+
+  nil when no form has that id, or when the fidelity does not exist. Both
+  are a 404, and neither is a reason to render the other thing."
+  [{:keys [session]} {:keys [path-params query-params]}]
+  (model/form-view session (str (:id path-params)) (:view query-params)))
+
+(defn- highlighted
+  "A model token stream as hiccup. Whitespace and unclassified text are
+  emitted BARE — a span per character-run of ordinary code would triple
+  the page for no colour — so the markup carries only what is actually
+  distinguished. The escaper still sees every string, since hiccup escapes
+  text nodes wherever they sit."
+  [tokens]
+  [:pre [:code
+         (for [[cls text] tokens]
+           (if (#{"ws" "text"} cls) text [:span {:class cls} text]))]])
 
 (defn ^{:web/method :get :web/path "/store/form/:id" :web/auth :public
         :web/response :string :web/client false
-        :web/reads {:view [:ui/form [:path-params :id]]}}
+        :web/reads {:view [:ui/form []]}}
   form-page
   "GET /store/form/<id> — one form, by ID: names change and ids do not, so
   the id is the permalink.
@@ -279,9 +313,9 @@
   a change), the form itself, then callees BELOW with each one's signature
   and doc INLINED. The inlining is the point: a link is not visibility, and
   the reason to open this page is usually to read the form WITH what it
-  calls, not instead of it."
+  calls."
   [req]
-  (if-let [{:keys [form ns module source sig doc why warranty
+  (if-let [{:keys [form ns module tokens sig doc why warranty
                    callers callees note]} (:view (:web/reads req))]
     (html/html-response
      (shell form
@@ -306,7 +340,7 @@
                         [:a {:href (str "/store/form/" (:form-id c))} (:form c)]
                         [:span (:form c)])
                   " " [:small (:module c)]])]]))]
-        [:pre [:code source]]
+        (highlighted tokens)
         [:section
          [:h2 "callees"]
          (if (empty? callees)

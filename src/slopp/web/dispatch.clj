@@ -50,8 +50,12 @@
   the request carries none — a pre-resolved :web/identity is respected) →
   ROUTE (404) → POLICY (401 unauthenticated / 403 unauthorized — the
   handler is unreachable un-checked) → declared :web/reads fetched via the
-  app's read performers → the handler, with :path-params, :web/deps (the
-  perform-ctx as a value) and the fetched :web/reads on the request → the
+  app's read performers → the handler, with :path-params, :query-params
+  (parsed from :query-string once, here, so no app writes its own
+  splitter — and a declared read's path addresses it the same way, so
+  [:query-params :view] works exactly like [:path-params :id]),
+  :web/deps (the perform-ctx as a value) and the fetched :web/reads on
+  the request → the
   response's :web/effects interpreted through the app's effect performers,
   BOUNDED by the route's declared :web/effects (a handler cannot emit a kind
   its route did not declare — the runtime half of web-unsafe-get /
@@ -78,6 +82,9 @@
 
       :else
       (let [req' (assoc req :path-params (:path-params row)
+                        ;; parsed ONCE here, so no app writes its own
+                        ;; splitter over the :query-string the adapters carry
+                        :query-params (router/query-params (:query-string req))
                         :web/deps (:web/perform-ctx ctx))
             fetch (fn [[alias [kind path]]]
                     (if-let [f (get (:web/read-performers ctx) kind)]

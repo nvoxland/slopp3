@@ -19,7 +19,7 @@
   core→shell dependency full_check's tier-layering check refuses."
   (:require [slopp.store :as store]
             [slopp.api.query :as query]
-            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n]))
+            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -85,69 +85,6 @@
                    :form (str (:form card)))
       (:sig card) (assoc :sig (pr-str (:sig card))))))
 
-(defn ^:export form-view
-  "One form's page model, addressed by form ID — ids are stable across
-  edits and names are not, so the id is the permalink.
-
-  Built for COLD arrival from a link (Debugger Canvas called the failure
-  the \"lonely bubble\"): the breadcrumb says where this is, `:callers` is a
-  backlink CARD grouped by the `:via` that found each edge, and `:callees`
-  carry their own signature and doc INLINED rather than linked — Code
-  Bubbles measured two-thirds of its win as concurrent visibility, and a
-  link is not visibility.
-
-  nil for an unknown id, so a page can 404 instead of rendering blank."
-  [session form-id]
-  (let [st (:store @session)
-        e  (store/form-by-id st form-id)]
-    (when (and e (:name e))
-      (let [ns-sym  (store/ns-of-form-id st form-id)
-            nm      (:name e)
-            qsym    (symbol (str ns-sym) (str nm))
-            row     (fn [ns- var-]
-                      (let [e (store/form-named st ns- var-)]
-                        (cond-> {:form   (str (symbol (str ns-) (str var-)))
-                                 :ns     (str ns-)
-                                 :module (modules/module-of ns-)}
-                          ;; ids are the permalink, so every edge on the page
-                          ;; is one — a name would break the moment it changes
-                          e (assoc :form-id (:id e)))))
-            callers (->> (refs/refs-to st qsym)
-                         (filter :from-var)
-                         (group-by :via)
-                         (sort-by (comp str key))
-                         (mapv (fn [[via rs]]
-                                 (let [by (sort-by (comp str first)
-                                                   (group-by (juxt :from-ns :from-var) rs))]
-                                   {:via   via
-                                    :count (count by)
-                                    :forms (mapv (fn [[[fns fvar] us]]
-                                                   (assoc (row fns fvar)
-                                                          :calls (count (keep :arity us))))
-                                                 by)}))))
-            callees (->> (refs/refs st)
-                         (filter #(= form-id (:from-form %)))
-                         (group-by (juxt :to-ns :to-name))
-                         (sort-by (comp str first))
-                         (mapv (fn [[[tns tnm] us]]
-                                 (merge (row tns tnm)
-                                        {:via   (:via (first us))
-                                         :calls (count (keep :arity us))}
-                                        (dissoc (json-card (orient/form-card session tns tnm))
-                                                :form)))))]
-        (merge {:form-id form-id
-                :form    (str qsym)
-                :name    (str nm)
-                :ns      (str ns-sym)
-                :module  (modules/module-of ns-sym)
-                :source  (n/string (:node e))
-                :callers callers
-                :callees callees
-                :note    (str "edges come from a syntactic reader over the store, so this"
-                              " is a floor, not a census — a call reached through a"
-                              " binding or built at runtime is not here")}
-               (dissoc (json-card (orient/form-card session ns-sym nm)) :form))))))
-
 (defn- snip
   "Cap `s` at `line-cap` characters with an ellipsis. A landing model is a
   SUMMARY: a milestone whose title line is a whole paragraph, or twenty
@@ -204,3 +141,147 @@
                        :prompts    (mapv snip (take shown asks))}
                 (> (count asks) shown)
                 (assoc :more-prompts (- (count asks) shown)))}))
+
+(def ^:private special-heads
+  "Symbols the tokenizer renders as SPECIAL. Deliberately short: these are
+  the forms whose head changes what the rest of the form means, so seeing
+  them at a glance is what makes a page skimmable. Every other symbol is
+  plain text — a long keyword list buys little and a wrong entry actively
+  misleads, which is worse than no colour."
+  #{"def" "defn" "defn-" "defmacro" "defmulti" "defmethod" "defprotocol"
+    "defrecord" "deftype" "defonce" "deftest" "ns" "let" "letfn" "fn" "if"
+    "if-let" "if-not" "when" "when-let" "when-not" "cond" "condp" "case"
+    "loop" "recur" "for" "doseq" "try" "catch" "finally" "throw" "do"
+    "require" "testing" "is" "reify" "extend-type" "extend-protocol"})
+
+(defn- leaf-class
+  "The token class for a LEAF node: what the CST can tell apart without
+  guessing. Anything unrecognised is `\"text\"` — carried, never dropped,
+  and never coloured on a hunch."
+  [node]
+  (let [tag (n/tag node)]
+    (cond
+      (#{:comment} tag)                     "comment"
+      (#{:whitespace :newline :comma} tag)  "ws"
+      (#{:multi-line} tag)                  "string"
+      (not= :token tag)                     "text"
+      :else
+      (let [v (try (n/sexpr node) (catch Exception _ ::unknown))]
+        (cond
+          (string? v)                       "string"
+          (keyword? v)                      "keyword"
+          (number? v)                       "number"
+          (and (symbol? v)
+               (special-heads (name v)))    "special"
+          :else                             "text")))))
+
+(defn- tokens-of
+  "A CST node as `[[class text] ...]` — the highlight stream for a form,
+  walked out of the tree the store ALREADY has. No lexer, no dependency,
+  no client script, and no regex over text: a string containing a paren is
+  one node here, so it stays one token.
+
+  A branch's own delimiters (`(`, `#{`, `^`, the string quotes) are not
+  separate nodes, so they are recovered as the difference between the
+  branch's printed form and its children's — which stays correct for
+  delimiter shapes nobody enumerated.
+
+  The invariant the specs pin: concatenating the text reproduces the
+  source exactly."
+  [node]
+  (if-not (n/inner? node)
+    [[(leaf-class node) (n/string node)]]
+    (let [s     (n/string node)
+          kids  (n/children node)
+          inner (apply str (map n/string kids))]
+      (if (empty? inner)
+        [["delim" s]]
+        (let [at   (str/index-of s inner)
+              open (subs s 0 at)
+              shut (subs s (+ at (count inner)))
+              mid  (vec (mapcat tokens-of kids))]
+          (cond-> mid
+            (seq open) (->> (into [["delim" open]]))
+            (seq shut) (conj ["delim" shut])))))))
+
+(def ^:private fidelities
+  "The rendering FIDELITIES a form page can be asked for. One value today —
+  literal Clojure — and it is a set rather than an assumption because the
+  labeled notation is a live follow-up. Carrying the parameter now costs
+  nothing; adding it later would mean every permalink already in the wild
+  silently meant \"whatever the default became\"."
+  #{"clojure"})
+
+(defn ^:export form-view
+  "One form's page model, addressed by form ID — ids are stable across
+  edits and names are not, so the id is the permalink.
+
+  Built for COLD arrival from a link (Debugger Canvas called the failure
+  the \"lonely bubble\"): the breadcrumb says where this is, `:callers` is a
+  backlink CARD grouped by the `:via` that found each edge, and `:callees`
+  carry their own signature and doc INLINED rather than linked — Code
+  Bubbles measured two-thirds of its win as concurrent visibility, and a
+  link is not visibility.
+
+  `view` is the rendering FIDELITY (`:views` names the ones that exist).
+  It carries one value on purpose: a labeled notation is a live follow-up,
+  and adding the parameter later would mean every permalink already in the
+  wild silently meant \"whatever the default became\". An unknown fidelity
+  is nil — the same answer as an unknown id — never a quiet downgrade to
+  the one that happens to exist.
+
+  nil for an unknown id, so a page can 404 instead of rendering blank."
+  ([session form-id] (form-view session form-id nil))
+  ([session form-id view]
+   (let [st (:store @session)
+         e  (store/form-by-id st form-id)]
+     (when (and e (:name e) (contains? fidelities (or view "clojure")))
+       (let [ns-sym  (store/ns-of-form-id st form-id)
+             nm      (:name e)
+             qsym    (symbol (str ns-sym) (str nm))
+             row     (fn [ns- var-]
+                       (let [e (store/form-named st ns- var-)]
+                         (cond-> {:form   (str (symbol (str ns-) (str var-)))
+                                  :ns     (str ns-)
+                                  :module (modules/module-of ns-)}
+                           ;; ids are the permalink, so every edge on the page
+                           ;; is one — a name would break the moment it changes
+                           e (assoc :form-id (:id e)))))
+             callers (->> (refs/refs-to st qsym)
+                          (filter :from-var)
+                          (group-by :via)
+                          (sort-by (comp str key))
+                          (mapv (fn [[via rs]]
+                                  (let [by (sort-by (comp str first)
+                                                    (group-by (juxt :from-ns :from-var) rs))]
+                                    {:via   via
+                                     :count (count by)
+                                     :forms (mapv (fn [[[fns fvar] us]]
+                                                    (assoc (row fns fvar)
+                                                           :calls (count (keep :arity us))))
+                                                  by)}))))
+             callees (->> (refs/refs st)
+                          (filter #(= form-id (:from-form %)))
+                          (group-by (juxt :to-ns :to-name))
+                          (sort-by (comp str first))
+                          (mapv (fn [[[tns tnm] us]]
+                                  (merge (row tns tnm)
+                                         {:via   (:via (first us))
+                                          :calls (count (keep :arity us))}
+                                         (dissoc (json-card (orient/form-card session tns tnm))
+                                                 :form)))))]
+         (merge {:form-id form-id
+                 :form    (str qsym)
+                 :name    (str nm)
+                 :ns      (str ns-sym)
+                 :module  (modules/module-of ns-sym)
+                 :view    (or view "clojure")
+                 :views   (vec (sort fidelities))
+                 :source  (n/string (:node e))
+                 :tokens  (tokens-of (:node e))
+                 :callers callers
+                 :callees callees
+                 :note    (str "edges come from a syntactic reader over the store, so this"
+                               " is a floor, not a census — a call reached through a"
+                               " binding or built at runtime is not here")}
+                (dissoc (json-card (orient/form-card session ns-sym nm)) :form)))))))

@@ -180,8 +180,12 @@
       (is (re-find #"<a href=\"/store/ns/demo\.a\.core\">" hello) hello))
     (testing "signature and doc, before the source"
       (is (re-find #"\[x\]" hello) hello)
-      (is (re-find #"Adds one\." hello) hello)
-      (is (re-find #"\(inc x\)" hello) hello))
+      (is (re-find #"Adds one\." hello) hello))
+    (testing "the source is highlighted from the CST, so it reads as code"
+      (is (re-find #"<span class=\"special\">defn</span>" hello) hello)
+      (is (re-find #"<span class=\"string\">&quot;Adds one\.&quot;</span>" hello)
+          "a docstring is ONE token — the tokenizer walks a tree, not text")
+      (is (re-find #"<span class=\"delim\">\(</span>" hello) hello))
     (testing "callers are a CARD, grouped by the via that found each edge"
       (is (re-find #"(?i)static" hello) hello)
       (is (re-find (re-pattern (str "<a href=\"/store/form/" (fid 'demo.b.util 'helper)
@@ -196,3 +200,26 @@
       (is (re-find #"(?i)floor, not a census|syntactic reader" hello) hello))
     (testing "an unknown id is a 404, not a blank page"
       (is (= 404 (:status (page "f-nope")))))))
+
+(deftest the-form-page-carries-its-fidelity-in-the-url
+  ;; The whole point of having the parameter now: a permalink says WHICH
+  ;; rendering it is. A request for a fidelity that does not exist must
+  ;; 404, not quietly serve the one that does — when the labeled notation
+  ;; lands, an old `?view=labeled` link should start working, and until
+  ;; then it must not pretend it already does.
+  (let [st   (store/ingest (store/empty-store) 'demo.core
+                           "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+        ctx  (web/context {:web/namespaces ['slopp.ui.pages]
+                           :web/perform-ctx {:session (atom {:store st})}})
+        fid  (:id (store/form-named st 'demo.core 'f))
+        get- (fn [qs] (web/handle! ctx (cond-> {:request-method :get
+                                                :uri (str "/store/form/" fid)}
+                                         qs (assoc :query-string qs))))]
+    (is (= 200 (:status (get- nil))) "a bare permalink renders the default")
+    (is (= 200 (:status (get- "view=clojure"))))
+    (is (= (:body (get- nil)) (:body (get- "view=clojure")))
+        "the default IS clojure, byte for byte")
+    (is (= 404 (:status (get- "view=labeled"))))
+    (is (= 404 (:status (get- "view=nonsense"))))
+    (testing "a query string the page does not care about changes nothing"
+      (is (= (:body (get- nil)) (:body (get- "utm_source=somewhere")))))))

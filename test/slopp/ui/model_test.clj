@@ -222,3 +222,62 @@
       (let [small (assoc (store/empty-store) :deltas
                          [{:id "d1" :op :add :ns 'demo.core :form-id "f1" :prompt "one ask"}])]
         (is (nil? (get-in (model/timeline (atom {:store small})) [:working :more-prompts])))))))
+
+(deftest source-tokens-are-a-lossless-view-of-the-stored-cst
+  ;; Every stored element carries a rewrite-clj node, so highlighting is a
+  ;; walk over a TREE the store already has — no lexer, no dependency, no
+  ;; client script. The property that makes it safe is losslessness:
+  ;; concatenating the token text reproduces the source byte for byte, so
+  ;; the tokenizer cannot silently drop, reorder or normalise what it
+  ;; renders. Everything it cannot classify is plain text, never omitted.
+  (let [src  (str "(defn greet\n"
+                  "  \"Says hi.\"\n"
+                  "  [nm]\n"
+                  "  ;; a comment\n"
+                  "  {:greeting (str \"hi \" nm) :n 42})\n")
+        st   (store/ingest (store/empty-store) 'demo.core
+                           (str "(ns demo.core)\n\n" src))
+        v    (model/form-view (atom {:store st}) (:id (store/form-named st 'demo.core 'greet)))
+        toks (:tokens v)
+        cls  (fn [c] (mapv second (filter #(= c (first %)) toks)))]
+    (testing "lossless: the tokens ARE the source"
+      (is (= (:source v) (apply str (map second toks)))))
+    (testing "each token is [class text], both strings — JSON has no keywords in arrays"
+      (is (every? #(and (= 2 (count %)) (every? string? %)) toks) (pr-str (take 5 toks))))
+    (testing "the classes the CST can tell apart without guessing"
+      (is (some #{"\"Says hi.\""} (cls "string")))
+      (is (some #{";; a comment\n"} (cls "comment"))
+          "a comment node OWNS its terminating newline — that is what makes it lossless")
+      (is (some #{":greeting"} (cls "keyword")))
+      (is (some #{"42"} (cls "number")))
+      (is (some #{"defn"} (cls "special")) "a definition head reads differently from a call")
+      (is (some #{"("} (cls "delim"))))
+    (testing "a string containing delimiters stays ONE token — this is a tree walk, not a regex"
+      (is (some #{"\"hi \""} (cls "string"))))
+    (testing "unclassifiable text is carried, never dropped"
+      (is (some #{"nm"} (cls "text"))))))
+
+(deftest form-view-takes-a-fidelity-and-names-the-ones-it-has
+  ;; A form page will eventually render more than literal Clojure — a
+  ;; labeled notation is the follow-up project. WHICH fidelity you are
+  ;; looking at belongs in the URL from day one: adding it later means
+  ;; every permalink already in the wild silently meant "whatever the
+  ;; default became". Free now, expensive then, so it exists with ONE value.
+  (let [st   (store/ingest (store/empty-store) 'demo.core
+                           "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+        sess (atom {:store st})
+        fid  (:id (store/form-named st 'demo.core 'f))]
+    (testing "the default is the fidelity we have, and the model names them all"
+      (is (= "clojure" (:view (model/form-view sess fid))))
+      (is (= ["clojure"] (:views (model/form-view sess fid)))
+          "a page offers what EXISTS rather than hard-coding a list"))
+    (testing "asking for it explicitly is the same page"
+      (is (= (model/form-view sess fid) (model/form-view sess fid "clojure"))))
+    (testing "a fidelity that does not exist is nil, not a silent fallback"
+      (is (nil? (model/form-view sess fid "labeled"))
+          "when labeled lands this starts working; until then it must not pretend")
+      (is (nil? (model/form-view sess fid "garbage"))))
+    (testing "an absent parameter is the default, since a bare permalink has none"
+      (is (= "clojure" (:view (model/form-view sess fid nil)))))
+    (testing "still JSON-shaped with the fidelity keys on board"
+      (is (json-shaped? (model/form-view sess fid))))))

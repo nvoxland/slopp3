@@ -56,3 +56,31 @@
                  (sort-by ::captures)
                  first)
             (dissoc ::captures))))
+
+(defn ^:export query-params
+  "A request's `:query-string` as `{:key \"value\"}`, percent- and
+  plus-decoded. `nil`/blank → `{}`.
+
+  A bare key (`\"flag\"`) is PRESENT with an empty value, because present
+  and empty is a different thing from absent and a handler has to be able
+  to tell them apart. A pair whose key or encoding is malformed is dropped
+  rather than thrown: a query string is arbitrary text from the network,
+  and the response to garbage is a page, not a 500.
+
+  The router's other half — matching a path and reading its parameters
+  are the same question asked of the two halves of a URL. `handle!`
+  assocs the result as `:query-params` on every request."
+  [query-string]
+  (if (str/blank? query-string)
+    {}
+    (let [decode (fn [s]
+                   (try (java.net.URLDecoder/decode (str s) "UTF-8")
+                        (catch Exception _ nil)))]
+      (into {}
+            (keep (fn [pair]
+                    (let [[k v] (str/split pair #"=" 2)
+                          k'    (decode k)
+                          v'    (decode (or v ""))]
+                      (when (and (seq k') v')
+                        [(keyword k') v']))))
+            (str/split query-string #"&")))))
