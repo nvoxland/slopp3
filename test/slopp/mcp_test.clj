@@ -1334,3 +1334,22 @@
                      (call! sess "module_extract"
                             {:namespaces ["mx.helper"] :to "mx.core" :dryrun true}))))
       (finally (api/close! sess)))))
+
+(deftest ^:external ui-serve-rides-the-wire-and-is-not-read-only
+  (let [sess (external/open!)]
+    (try
+      (testing "advertised, and NOT read-only — it binds a port"
+        (is (some #(= "ui_serve" (:name %)) tools/tools))
+        (is (not (contains? tools/read-only-tools "ui_serve"))
+            "a readOnlyHint would let plan mode auto-permit binding a port"))
+      (testing "it answers with the bound port and a url that lands on a page"
+        (call! sess "ns_create" {:ns "us.only" :source "(ns us.only)\n(defn f \"F.\" [x] x)\n"})
+        (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
+          (is (pos? (:port r)) (pr-str r))
+          (is (= (str "http://127.0.0.1:" (:port r) "/store") (:url r)))
+          (is (re-find #"<a href=\"/store/ns/us\.only\">"
+                       (slurp (str "http://127.0.0.1:" (:port r) "/store")))
+              "the served session is THIS one — a fresh session would not have us.only")))
+      (finally
+        (call! sess "ui_serve" {:stop true})
+        (api/close! sess)))))

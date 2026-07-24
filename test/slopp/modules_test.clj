@@ -161,18 +161,25 @@
     (let [m {"a.x" #{"b.y"} "b.y" #{"c.z"}}]
       (is (= ["a.x" "b.y" "c.z"] (store/module-path m "a.x" "c.z")))
       (is (nil? (store/module-path m "c.z" "a.x")))))
-  (testing "an adopted cycle (test folding makes them real) blocks nothing unrelated"
+  ;; The gate reads PRODUCTION edges (see
+  ;; cycle-refusal-judges-production-edges-not-test-fixtures), so the
+  ;; fixture is real code rather than hand-placed manifest entries — an
+  ;; adopted cycle from test folding no longer reaches this question at all.
+  (testing "an unrelated edge lands; closing a real chain refuses"
     (let [sess (external/open!)]
       (try
-        ;; simulate adoption having recorded a cycle: api<->db via test folding
-        (swap! sess update :store
-               #(-> % (store/record-module-edge "a.x" "b.y" :add) first
-                    (store/record-module-edge "b.y" "a.x" :add) first))
-        (let [r (api/module-dep! sess "c.z" "a.x" :prompt "unrelated — must land")]
+        (api/ingest! sess 'a.x "(ns a.x)\n(defn f \"F.\" [n] n)\n")
+        (api/module-dep! sess "b.y" "a.x" :prompt "b calls a")
+        (api/ingest! sess 'b.y
+                     "(ns b.y (:require [a.x :as x]))\n(defn g \"G.\" [n] (x/f n))\n")
+        (api/module-dep! sess "c.z" "b.y" :prompt "c calls b")
+        (api/ingest! sess 'c.z
+                     "(ns c.z (:require [b.y :as y]))\n(defn h \"H.\" [n] (y/g n))\n")
+        (let [r (api/module-dep! sess "d.w" "c.z" :prompt "unrelated — must land")]
           (is (nil? (:error r)) (pr-str r)))
-        (let [r (api/module-dep! sess "a.x" "c.z" :prompt "would close a.x→c.z→a.x")]
+        (let [r (api/module-dep! sess "a.x" "c.z" :prompt "would close a.x→c.z→b.y→a.x")]
           (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r)))
-        (let [r (api/module-dep! sess "c.z" "b.y" :prompt "b.y does not reach c.z — fine")]
+        (let [r (api/module-dep! sess "b.y" "d.w" :prompt "d.w reaches nothing — fine")]
           (is (nil? (:error r)) (pr-str r)))
         (finally (api/close! sess))))))
 
@@ -955,3 +962,40 @@
                "the slim slopp-web jar ships only slopp/web/**, so these "
                "requires would not resolve in a user's project: "
                (vec leaks))))))
+
+(deftest ^:external cycle-refusal-judges-production-edges-not-test-fixtures
+  ;; A `-test` namespace folds into its subject's module, so a fixture
+  ;; require manufactures a module edge that no production namespace has.
+  ;; production-manifest already excludes those — "excluding them tells the
+  ;; truth", its own docstring says — and query_depends reports layers from
+  ;; that graph. The cycle GATE was asking the declared graph instead, so
+  ;; the two surfaces disagreed: the architecture view showed a clean DAG
+  ;; while the gate refused an edge for closing a cycle only a test made.
+  ;;
+  ;; Found in anger: slopp.mcp → slopp.ui was refused for closing
+  ;; ui → api → index → mcp → ui, where index → mcp exists only because
+  ;; slopp.index.deps-test calls slopp.mcp/handle!.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mp.core "(ns mp.core)\n(defn shared \"P.\" [x] x)\n")
+      (api/ingest! sess 'mr.tool "(ns mr.tool)\n(defn helper \"H.\" [x] x)\n")
+      (api/module-dep! sess "mq.app" "mp.core" :prompt "production: app calls core")
+      (api/ingest! sess 'mq.app
+                   (str "(ns mq.app (:require [mp.core :as core]))\n"
+                        "(defn use-it \"Uses mp.\" [x] (core/shared x))\n"))
+      (api/module-dep! sess "mp.core" "mr.tool" :prompt "a TEST fixture reaches for a tool")
+      (api/ingest! sess 'mp.core-test
+                   (str "(ns mp.core-test (:require [clojure.test :refer [deftest is]]\n"
+                        "                            [mr.tool :as tool]))\n"
+                        "(deftest fixture-uses-the-tool (is (= 1 (tool/helper 1))))\n"))
+      (testing "the manufactured edge is in the DECLARED manifest"
+        (is (contains? (get (modules/modules-manifest (:store @sess)) "mp.core") "mr.tool")))
+      (testing "an edge blocked only by a test-manufactured path is allowed"
+        (let [r (api/module-dep! sess "mr.tool" "mq.app"
+                                 :prompt "acyclic in production: mq→mp, and mr is a leaf")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "a genuine production cycle is still refused"
+        (let [r (api/module-dep! sess "mp.core" "mq.app"
+                                 :prompt "production mq.app → mp.core already exists")]
+          (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r))))
+      (finally (api/close! sess)))))

@@ -1258,33 +1258,26 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   Commit `:target` ids plug straight into query-changes :from/:to for
   between-milestone diffs. `:sha` (P4-m8) is the milestone's git commit id —
   present once the git projection has minted it (imported markers carry
-  theirs from birth)."
+  theirs from birth).
+
+  This is `history/milestone-rows` — a pure fold over the delta log — plus
+  the one thing that needs the db: joining the shas the git projection
+  pinned. The split is why the reviewer UI can read milestones at :pure."
   [session & {:keys [commit]}]
   (let [{:keys [dir]} @session
+        st   (:store @session)
         shas (when dir
                (try (with-open [conn (db/open! dir)]
                       (db/commit-shas conn))
                     (catch Exception _ nil)))
-        rows (->> (store/deltas (:store @session))
-                  (filter #(= :commit (:op %)))
-                  reverse
-                  (mapv (fn [d]
-                          (cond-> {:commit      (:id d)
-                                   :description (:description d)
-                                   :target      (:target d)
-                                   :status      (:status d)
-                                   :at          (history/human-time (:at d))}
-                            (:agent d) (assoc :agent (:agent d))
-                            (or (:git-sha d) (get shas (:id d)))
-                            (assoc :sha (or (:git-sha d) (get shas (:id d))))))))]
+        join (fn [row]
+               (if-let [s (or (:sha row) (get shas (:commit row)))]
+                 (assoc row :sha s)
+                 row))]
     (if commit
-      (first (filter #(= (str commit) (:commit %)) rows))
-      (mapv (fn [row]
-              (let [lines (str/split-lines (str (:description row)))
-                    body  (count (remove str/blank? (rest lines)))]
-                (cond-> (assoc row :description (first lines))
-                  (pos? body) (assoc :more-lines body))))
-            rows))))
+      (some #(when (= (str commit) (:commit %)) (join %))
+            (history/milestone-rows st))
+      (mapv join (history/milestone-rows st :titles-only true)))))
 
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
@@ -2671,7 +2664,13 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   :module-edge delta carrying its why (:prompt). Adds are refused when the
   resulting graph would contain a cycle; the response carries the module's
   folded dep set and, when any exists, the store's remaining :violations
-  debt."
+  debt.
+
+  The cycle question is asked of PRODUCTION edges — the same graph
+  query_depends draws its layers from. A `-test` namespace folds into its
+  subject's module, so a fixture require manufactures an edge no production
+  namespace has, and judging against those refused architecture that is
+  genuinely acyclic while the architecture view showed a clean DAG."
   [session from to & {:keys [remove prompt agent]}]
   (let [manifest (or (edit.modules/modules-manifest (:store @session)) {})
         from     (str from)
@@ -2695,7 +2694,18 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
        :deps (vec (sort (get manifest from)))}
 
       :else
-      (if-let [back (and (not remove) (store/module-path manifest to from))]
+      (if-let [back (and (not remove)
+                         ;; PRODUCTION edges — the same graph query_depends draws
+                         ;; its layers from. A `-test` namespace folds into its
+                         ;; subject's module, so a fixture require manufactures an
+                         ;; edge no production namespace has; judging against those
+                         ;; refused architecture that is genuinely acyclic while the
+                         ;; architecture view showed a clean DAG.
+                         (store/module-path
+                          (modules/production-manifest
+                           (:store @session)
+                           (modules/module-usage-rows (:store @session)))
+                          to from))]
         {:error (str "that edge CLOSES a dependency cycle: "
                      (clojure.string/join " → " (conj back to))
                      " — point the dependency one way (usually by extracting"

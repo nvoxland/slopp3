@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui.server :as ui] [slopp.api.capabilities :as caps]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -313,6 +313,12 @@
    "store_health"
    (fn [session _a _sym]
      (text! (external/store-health session)))
+   "ui_serve"
+   (fn [session a _sym]
+     (text! (if (:stop a)
+              {:stopped (boolean (ui/stop!))}
+              (ui/serve! session (or (:port a)
+                                     (caps/effective (:store @session) "ui.port"))))))
 "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)

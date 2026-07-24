@@ -2,8 +2,15 @@
   "Read-only store browser: server-rendered hiccup pages over the query
   surfaces — the D-web-html dogfood. Plain links, full-page renders, zero
   writes; rendering arbitrary store source through the escaper is a
-  standing security exercise. Lives in slopp.mcp.** (the server module), NOT
-  slopp.web.**, so it never rides the slim user jar."
+  standing security exercise.
+
+  Lives in slopp.ui.**, slopp's OWN webapp, and never in slopp.web.** —
+  slopp.web is the framework every user's app is built on and ships in the
+  slim jar, so an app page placed there would ride into every user's
+  application. The dependency runs slopp.ui → slopp.web, never back.
+
+  Pages hold hiccup and nothing else; the data they render is assembled by
+  slopp.ui.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
             [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs]))

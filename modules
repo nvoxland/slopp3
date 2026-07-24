@@ -29,7 +29,7 @@ slopp.image: slopp.rt slopp.store
 slopp.index: slopp.api slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.git slopp.store slopp.sync slopp.web
+slopp.mcp: slopp.api slopp.git slopp.store slopp.sync slopp.ui slopp.web
 slopp.merge: slopp.store
 slopp.modules: slopp.api slopp.edit slopp.store
 slopp.multiproc: slopp.api slopp.store
@@ -45,7 +45,7 @@ slopp.sync: slopp.api slopp.boot slopp.git slopp.store
 slopp.sync-plan: slopp.sync
 slopp.trace: slopp.api
 slopp.trivia: slopp.store
-slopp.ui: slopp.store slopp.web
+slopp.ui: slopp.api slopp.edit slopp.store slopp.web
 slopp.unsafe: slopp.api slopp.edit slopp.store
 slopp.verification: slopp.api slopp.image slopp.rt slopp.store
 slopp.warm-spare: slopp.api slopp.image

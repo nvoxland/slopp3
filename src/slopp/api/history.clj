@@ -29,9 +29,12 @@
               (java.time.Instant/ofEpochMilli ms)
               (java.time.ZoneId/systemDefault)))))
 
-(defn diff-lines
+(defn ^:export diff-lines
   "Minimal LCS line diff turning `was` into `now` (either may be nil):
-  [[:same|:del|:add line] ...]. Forms are small — clarity over speed."
+  [[:same|:del|:add line] ...]. Forms are small — clarity over speed.
+
+  Exported: the reviewer UI renders this same diff, and a second LCS in the
+  app layer would be a second answer to what changed in a form."
   [was now]
   (let [a   (if was (vec (str/split-lines was)) [])
         b   (if now (vec (str/split-lines now)) [])
@@ -244,7 +247,11 @@
               (when (:at row) (str "  @ " (:at row))))]))
     rows)))
 
-(defn delta-fids [d]
+(defn ^:export delta-fids
+  "The form ids a delta touched — THE accessor for that question, so the
+  two shapes (`:form-id` for a single write, `:form-ids` for a group) are
+  read in one place and cannot drift apart in a second reader."
+  [d]
   (concat (when (:form-id d) [(:form-id d)]) (:form-ids d)))
 
 (defn collapse-rows [ ds pos rows contains limit]
@@ -417,3 +424,37 @@
                            :namespaces (vec (distinct (keep #(some-> (ns-of %) symbol)
                                                             (:forms d))))}
                     (:undid d) (assoc :undid (:undid d)))))))))
+
+(defn ^:export milestone-rows
+  "Milestones newest first, as a PURE fold over the delta log:
+  `[{:commit :description :target :status :at :agent :sha}]`. `:sha` is
+  present only when the DELTA carries one (imported markers do from birth);
+  the projection's pinning table is a db read and lives one tier up, in
+  `slopp.api/query-commits`, which is this fold plus that join.
+
+  `:titles-only true` is the LIST rung: each description trimmed to its
+  first line, with the remaining non-blank lines counted into
+  `:more-lines`. Needing one sha used to fetch five whole milestone essays.
+
+  Exported: the reviewer UI's timeline is a pure reader and would otherwise
+  have to fold the same log a second time."
+  [store & {:keys [titles-only]}]
+  (let [rows (->> (store/deltas store)
+                  (filter #(= :commit (:op %)))
+                  reverse
+                  (mapv (fn [d]
+                          (cond-> {:commit      (:id d)
+                                   :description (:description d)
+                                   :target      (:target d)
+                                   :status      (:status d)
+                                   :at          (human-time (:at d))}
+                            (:agent d)   (assoc :agent (:agent d))
+                            (:git-sha d) (assoc :sha (:git-sha d))))))]
+    (if-not titles-only
+      rows
+      (mapv (fn [row]
+              (let [lines (str/split-lines (str (:description row)))
+                    body  (count (remove str/blank? (rest lines)))]
+                (cond-> (assoc row :description (first lines))
+                  (pos? body) (assoc :more-lines body))))
+            rows))))

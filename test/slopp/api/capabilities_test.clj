@@ -123,3 +123,14 @@
     (is (nil? (caps/config-refusal
                "auth.static.users.alice"
                "{:password-hash \"9f86d08...\" :groups [\"admin\"]}")))))
+
+(deftest ui-port-is-a-capability-with-a-default-clear-of-the-transport
+  ;; The reviewer UI binds its own port, so it is a setting like every other
+  ;; port. The default deliberately sits away from http.port's, since a
+  ;; store that opts into the HTTP transport runs both at once.
+  (let [entry (caps/find-entry "ui.port")]
+    (is (= "ui.port" (:key entry)))
+    (is (= 7359 (caps/effective (store/empty-store) "ui.port")))
+    (is (nil? (caps/check-value entry "7400")))
+    (is (string? (caps/check-value entry "not-a-port"))
+        "a bad port is refused at the config write, not at bind time")))

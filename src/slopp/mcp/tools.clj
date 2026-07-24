@@ -429,6 +429,11 @@
    {:name "store_health"
     :description "What this store CARRIES, in bytes: the journal per op (heaviest first, :commit tree snapshots counted apart from payloads), the materialized state, and the blob table. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."
     :inputSchema {:type "object" :properties {}}}
+   {:name "ui_serve"
+    :description "Serve the store's own reviewer UI — a browsable HTML view of THIS store for a human: the namespace index, form source, and (growing) the milestone timeline and per-milestone change review. Served on the LIVE session, so warranty and observed examples are the ones this session actually has; the HTTP transport's browser opens a fresh session and shows every form as covered by nothing. Returns {:url :port} — hand the url to the human. `port` overrides the ui.port capability (default 7359); `stop: true` shuts it down. Serving again EVICTS the running server rather than hunting for a free port, and a port someone else holds comes back as a sentence, not a stack trace."
+    :inputSchema {:type "object"
+                  :properties {:port {:type "integer"}
+                               :stop {:type "boolean"}}}}
 {:name "compile_client"
     :description "Compile the store's CLIENT namespaces (:cljc + :cljs, declared via module_platform) to JavaScript with the configured backend (default ClojureScript, compiled ON THE JVM — no Node) and record the output as a served file blob. Compile-error-as-oracle: analyzer warnings and hard errors are anchored to the owning store forms. `output` sets the served path (default public/cljs/main.js). slopp injects its OWN compiler toolchain at build time — never deps_add the compiler."
     :inputSchema {:type "object"

@@ -32,6 +32,8 @@
     :doc "Port the HTTP server binds."}
    {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
+   {:key "ui.port" :type [:int {:min 1 :max 65535}] :default 7359
+    :doc "Port the reviewer UI (ui_serve) binds. Independent of http.port: a store that opts into the HTTP transport runs both listeners at once."}
    {:key "http.static.*" :type [:string] :default nil
     :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public/)."}
    {:key "auth.providers" :type [:set-of [:enum "static" "bearer" "proxy-header" "oidc"]] :default #{}
@@ -109,13 +111,17 @@
                             (bad "a qualified symbol (app.core/-main)"))
         :csv (when (str/blank? v) (bad "a comma-separated list"))))))
 
-(defn effective
+(defn ^:export effective
   "The effective value of capability `k` for this store: the stored
   `capabilities` config value parsed per its registry type, else the
   entry's `:default` — so a registered key with a default never nil-puns.
   Unknown key → nil. A stored value failing its check (reachable only via
   a foreign merge; the write gate refuses it) falls back to the default
-  rather than throwing at serve time."
+  rather than throwing at serve time.
+
+  Exported: it is THE reader for a capability value, and a consumer
+  outside this module reaching into `[:config \"capabilities\" :values]`
+  would skip both the type parsing and the default."
   [store k]
   (let [k (str k)
         entry (find-entry k)

@@ -12,12 +12,16 @@
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "…"))))
 
-^:reads (defn form-card
+^:reads (defn ^:export form-card
   "The INTERFACE view of a form (opacity with a warranty): signature,
   doc line, effect marker, the recorded WHY (last ask), and the warranty
   (covering tests from the trace map) — what a CALLER needs, at ~10x less
   than source. Trusting it is mechanical, not hopeful: every edit re-runs
-  the covering tests, so a violated contract turns red with :implicated."
+  the covering tests, so a violated contract turns red with :implicated.
+
+  Exported: the reviewer UI inlines a callee's card beside the caller
+  rather than linking to it, and assembling sig/doc/why/warranty a second
+  time is how the two views drift apart."
   [session ns-sym nm]
   (when-let [e (store/form-named (:store @session) ns-sym nm)]
     (let [q       (symbol (str ns-sym) (str nm))
