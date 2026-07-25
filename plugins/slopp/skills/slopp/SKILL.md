@@ -117,11 +117,18 @@ measurably bleed tokens.
    over the journal, not a guess. Per-write verification is normally free
    (median 0ms on a 170-namespace store); if yours is not, that is the signal.
    **And each TURN records where its whole wall clock went**: `turn_end`'s
-   delta carries `:timing {:slopp-ms :outside-ms :elapsed-ms :top}`.
-   `:outside-ms` is time slopp was NOT working — your reasoning plus every
-   non-slopp tool — and it is usually the majority (measured on slopp's own
-   development: 78%). Use it before optimizing a tool: if `:slopp-ms` is a
+   delta carries `:timing {:slopp-ms :outside-ms :elapsed-ms :top :refused}`.
+   One turn is one USER ASK — a new ask closes the open turn and opens its
+   own. `:outside-ms` is time slopp was NOT working — your reasoning plus
+   every non-slopp tool — and it is usually the majority (measured on slopp's
+   own development: 78%). Use it before optimizing a tool: if `:slopp-ms` is a
    fifth of the turn, a faster tool is not what you are missing.
+   **`:refused` is the one to act on.** It counts the calls that bounced — a
+   malformed `edit_subform` match, a lint error in the form you were writing,
+   an arity break — as a rate with the tools named. Each is a whole round trip
+   that produced nothing, and they land in the half of the clock nothing else
+   measures. A high rate on one tool is a prompt to read its contract, not to
+   retry harder.
    **Tier vocabulary** (namespaces AND tests): `:pure` (referentially
    transparent) · `:internal` (mutates in-process state only — a memo via
    `slopp.cache`) · `:external` (IO: files, subprocesses, network, db).
