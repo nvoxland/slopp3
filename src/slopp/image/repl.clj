@@ -158,21 +158,28 @@
   Returns nil on success, or {:err msg} so the caller can fall back to a
   fresh image (a jar can't be unloaded, so removes/downgrades never hot-apply).
 
-  MARKS the image dirty, in the image, as a plain interned var. A jar cannot
-  be unloaded, so an image that has taken one can never be returned to its
-  boot baseline and must never be recycled — and this is recorded as a FACT
-  rather than inferred. The first attempt inferred it from the classloader's
-  URL list, and that silently missed: nREPL's DynamicClassLoader is not the
-  one `add-libs` mutates, so two tests that passed alone went red in the full
-  suite. A fact the image carries survives every sweep and cannot be
-  out-clevered."
+  Marks the image dirty BEFORE adding and clears it on clean success, so
+  `dirty` means exactly one thing: **this image's classpath is UNKNOWN.** An
+  add that threw halfway leaves the mark, and an image whose classpath cannot
+  be named can never be pooled — there is no honest key for it.
+
+  A SUCCESSFUL add is not dirty, because the classpath is then precisely the
+  caller's `deps-map` and `park!` keys the pool by it. Treating any dependency
+  as permanently un-recyclable was the first design, and it meant reuse only
+  ever helped stores with no deps at all.
+
+  The mark lives in `user`, which is part of every baseline and so survives
+  the namespace sweep — it outlives the thing that would otherwise erase it.
+  An earlier attempt inferred this from the classloader instead and silently
+  MISSED, because nREPL does not mutate the loader `.getURLs` reads."
   [handle deps-map]
   (when (seq deps-map)
     (let [r (eval-checked!
              handle
              (str "(do (require 'clojure.repl.deps)"
                   " (intern 'user 'slopp-image-dirty true)"
-                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
+                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) ")"
+                  " (ns-unmap 'user 'slopp-image-dirty))"))]
       (when (:err r) r))))
 
 (defn- benign-load-noise?
@@ -400,29 +407,52 @@
 (def ^:export recycle-limits
   "The two bounds on image reuse, and why each exists.
 
-  `:parked` — how many reset images may idle at once. Each is a JVM holding
-  tens of megabytes, and the workload that benefits (a test shard opening and
-  closing sessions in sequence) needs exactly one at a time, so two is
-  generous rather than tuned.
+  `:parked` — how many reset images may idle at once. TWO, and the reasoning
+  for one was wrong. Parking does trade a reaped JVM for a held one, and that
+  memory is spent against every concurrent shard at the same time — four
+  shards holding two apiece is eight extra JVMs. But sessions inside a shard
+  OVERLAP more than the sequential picture suggests: a test that opens a
+  second session, a branch line. At depth one every overlap becomes a
+  destroyed image and a fresh boot, and it measured slower. The dead shard
+  that prompted the experiment did not recur at either depth, so it was load
+  rather than pressure.
 
   `:reuses` — how many tenants one image may serve. `reset-to-baseline!`
   verifies the NAMESPACE SET and nothing beyond it, so anything outside that
   view — a thread a tenant started, a system property it set, a shutdown hook
   it registered — accumulates unseen. The cap turns an unbounded slow leak
   into a bounded one, which is the difference between a wrong answer someday
-  and a slightly slower suite."
+  and a slightly slower suite.
+
+  Both numbers are chosen against a NOISY signal: this box is shared, and
+  `ideas/full-check-is-slow.md` records full runs ranging 172–287s under other
+  load. Re-measure before retuning either, and take a single A/B pair as
+  suggestive rather than settled."
   {:parked 2 :reuses 50})
 
 ^:unsafe (defn ^:export unpark!
-  "Take a reset image from the pool, or NIL when there is none — in which case
-  the caller boots for real, exactly as it always did.
+  "Take a reset image whose classpath is `deps`, or NIL when the pool holds
+  none — in which case the caller boots for real, exactly as it always did.
+
+  The key must MATCH, not merely be compatible: a jar cannot be removed from a
+  running image, so an image carrying more than the caller asked for is not
+  the environment the caller requested. Equality is the only safe comparison,
+  and a miss costs nothing but the boot that would have happened anyway.
 
   Every parked image was verified back to its boot baseline BEFORE it was
   parked, so this hands over something already proven rather than something
-  about to be checked. Nil is the ordinary case and costs nothing."
-  []
-  (when (nil? (System/getenv "SLOPP_NO_RECYCLE"))
-    (peek (first (swap-vals! parked #(cond-> % (seq %) pop))))))
+  about to be checked."
+  ([] (unpark! {}))
+  ([deps]
+   (when (nil? (System/getenv "SLOPP_NO_RECYCLE"))
+     (let [want (or deps {})
+           [old] (swap-vals! parked
+                             (fn [v]
+                               (if-let [i (first (keep-indexed
+                                                  #(when (= want (:deps %2)) %1) v))]
+                                 (into (subvec v 0 i) (subvec v (inc i)))
+                                 v)))]
+       (some #(when (= want (:deps %)) (:image %)) old)))))
 
 (defn ^:export stop!
   "Destroy the image subprocess and release its connection. `image` is the
@@ -456,27 +486,40 @@
   nil)
 
 ^:unsafe (defn ^:export park!
-  "Offer `image` for reuse instead of destroying it. Returns true when it was
-  parked, false when it was stopped — and STOPPING IS THE DEFAULT: every path
-  that cannot prove the image safe to hand on ends in `stop!`.
+  "Offer `image` for reuse under `deps` — the classpath it carries — instead of
+  destroying it. Returns true when it was parked, false when it was stopped,
+  and STOPPING IS THE DEFAULT: every path that cannot prove the image safe to
+  hand on ends in `stop!`.
+
+  **Keyed by classpath, because a classpath is STABLE.** A project declares
+  its dependencies once and every session wants exactly those, so a
+  dep-carrying image is the common case rather than the exceptional one. The
+  first cut treated any dependency as permanently un-recyclable, which meant
+  reuse applied only to stores with NO deps — slopp's own test fixtures, and
+  no real project. A key costs nothing and makes a twenty-dep project recycle
+  exactly as well as an empty one; a mismatch simply boots, which is what
+  everything did before.
+
+  `deps` should be the store's own manifest, which is what put the jars on
+  that image's classpath in the first place — not a probe of the image, since
+  the classloader nREPL actually mutates is not the one a probe can read.
 
   Parked only when all of these hold: recycling is not switched off
   (`SLOPP_NO_RECYCLE`), the image is under its reuse cap, the pool has room,
-  and — the load-bearing one — `reset-to-baseline!` VERIFIED it back to its
-  boot namespace set. A partial reset handed to the next tenant is a false
-  green, the one failure the oracle exists to prevent, so every doubt resolves
-  to a fresh JVM.
-
-  A caller that added libs to an image must NOT park it: `add-libs!` cannot be
-  undone, so its classpath is no longer the one the baseline was taken on."
-  [image]
-  (if (and image
-           (nil? (System/getenv "SLOPP_NO_RECYCLE"))
-           (< (:reuses image 0) (:reuses recycle-limits))
-           (< (count @parked) (:parked recycle-limits))
-           (reset-to-baseline! image))
-    (do (swap! parked conj (update image :reuses (fnil inc 0))) true)
-    (do (stop! image) false)))
+  and `reset-to-baseline!` VERIFIED it back to its boot namespace set. A
+  partial reset handed to the next tenant is a false green, so any doubt
+  resolves to a fresh JVM."
+  ([image] (park! image {}))
+  ([image deps]
+   (if (and image
+            (nil? (System/getenv "SLOPP_NO_RECYCLE"))
+            (< (:reuses image 0) (:reuses recycle-limits))
+            (< (count @parked) (:parked recycle-limits))
+            (reset-to-baseline! image))
+     (do (swap! parked conj {:deps (or deps {})
+                             :image (update image :reuses (fnil inc 0))})
+         true)
+     (do (stop! image) false))))
 
 (defn restart!
   "Stop the image and start a fresh one (the D5 correctness backstop). Returns a

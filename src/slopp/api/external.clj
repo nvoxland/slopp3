@@ -882,7 +882,17 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; D5 staleness backstop, where a genuinely new process IS the point;
           ;; recycling there would undermine the diagnostic that catches a
           ;; stale image, which is the opposite of what this is for.
-          image (or (when (empty? (:deps store)) (repl/unpark!))
+          ;; A recycled image carrying EXACTLY this store's classpath, or nil and a
+          ;; real boot. Keying by deps is what makes this apply to a real
+          ;; project: the first cut refused any store with dependencies, so
+          ;; reuse only ever helped dep-free stores — slopp's own fixtures and
+          ;; nothing a user has.
+          ;;
+          ;; DELIBERATELY only here, at session creation. `fresh-image!` is the
+          ;; D5 staleness backstop, where a genuinely new process IS the point;
+          ;; recycling there would undermine the diagnostic that catches a
+          ;; stale image.
+          image (or (repl/unpark! (:deps store))
                     (repl/start! {:slopp.image.repl/deps (:deps store)}))]
       (swap! session assoc :image image)
       (session/start-spare! session)

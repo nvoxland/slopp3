@@ -219,3 +219,37 @@
         ;; unproven image must never be handed to the next tenant
         (is (nil? (repl/reset-to-baseline! (dissoc img :baseline)))))
       (finally (repl/stop! img)))))
+
+(deftest ^:external parked-images-are-keyed-by-their-classpath
+  ;; The first cut treated "has dependencies" as permanently un-recyclable.
+  ;; That is backwards: a classpath is STABLE — a project declares its deps
+  ;; once and every session wants exactly those — so a dep-carrying image is
+  ;; the common case, not the exceptional one. Refusing it meant reuse applied
+  ;; only to stores with NO dependencies: slopp's own test fixtures, and no
+  ;; real project at all.
+  ;;
+  ;; Exercised ONE AT A TIME on purpose. An earlier version parked two images
+  ;; to compare keys side by side, which quietly made it a test of pool DEPTH
+  ;; as well — and it broke the day the depth changed for reasons that had
+  ;; nothing to do with keying.
+  (repl/drain-parked!)
+  (let [json '{org.clojure/data.json {:mvn/version "2.5.0"}}]
+    (try
+      (testing "a dep-free image is handed back only to a dep-free caller"
+        (let [a (repl/start! {})]
+          (is (true? (repl/park! a {})))
+          (is (nil? (repl/unpark! json))
+              "equality, not compatibility — an image carrying MORE than was
+               asked for is not the environment that was requested")
+          (let [got (repl/unpark! {})]
+            (is (some? got) "and the matching caller gets it")
+            (repl/stop! got))))
+      (testing "a dep-carrying image recycles just as well, under its own key"
+        (let [b (repl/start! {})]
+          (is (true? (repl/park! b json)))
+          (is (nil? (repl/unpark! {})) "a dep-free caller must not get it")
+          (let [got (repl/unpark! json)]
+            (is (some? got) "the whole point: deps do not forfeit reuse")
+            (repl/stop! got))))
+      (is (nil? (repl/unpark! {})) "an empty pool hands over nothing")
+      (finally (repl/drain-parked!)))))
