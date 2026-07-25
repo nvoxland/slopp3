@@ -451,6 +451,26 @@ The oracle must never return a false verdict. Everything here serves that.
    belt-and-braces, since only the REPORTING was missing. Worth collapsing if
    this area is touched again (the reporting needs the partition; the filtering
    does not).
+7b. **Whole-store invariants (`api.external/built-store`, 2026-07-25).** A
+   guard that wants to assert something about the WHOLE store — no prose
+   naming a tool that does not exist, every form certifying or marked fallback
+   — could not reach one. The `^:external` tier runs in a temp dir `build!`
+   filled with SOURCE and no `.slopp/store.db`, so `open! {:dir "."}` returned
+   an empty store and the guard passed on a population of zero.
+   `built-store` reconstructs the store VALUE by ingesting the materialized
+   project the tier is already running in: no db, no origin path plumbed
+   through the runner, no marker in a user's build output.
+   - **It REFUSES on a directory with no source** rather than returning an
+     empty store. That is the whole point — a guard scanning nothing is
+     indistinguishable from a guard finding nothing wrong.
+   - **It answers questions about CODE, not history.** Deltas, module
+     registers, purity tiers and form IDS do not survive the round trip
+     (`ingest` re-mints ids; the journal is not in the build). Anything about
+     provenance needs the live store.
+   - The vacuity was not hypothetical: repointing the one existing own-store
+     guard at it went red immediately on a dead tool name in shipped prose.
+     Own-store guards should now assert their population is non-empty, which
+     is what stops the failure recurring silently.
 8. **The isolation gate (Q7, `edit/isolation-refusal`).** Every replace/add
    path refuses an UNTAGGED deftest that calls a spawning var
    (`edit/spawning-vars`, resolved through the ns's require aliases via
