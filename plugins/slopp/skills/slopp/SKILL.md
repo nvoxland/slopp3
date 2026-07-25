@@ -654,8 +654,11 @@ callees inlined below, and the namespace index — and returns `{:url :port}`.
 Hand over the url and the change screen's, not a wall of pasted source: your
 tools answer questions, a page lets someone LOOK. It runs on your live
 session, so warranty and observed examples are the ones you actually have.
-Serving again evicts the previous server rather than moving the port;
-`{stop: true}` shuts it down. Port comes from the `ui.port` capability.
+**It is already running** — the server starts one at boot and `session_brief`
+reports the url as `:ui`, so hand THAT over rather than calling anything.
+`ui_serve` is for changing the port or restarting it; `{stop: true}` shuts it
+down, and serving again evicts the previous server rather than moving the
+port. Port comes from the `ui.port` capability.
 
 **When you hit a dead end, revert cleanly and say WHY.** `undo` walks back
 your OWN writes by delta — `{deltas n}` for the last n, or `{to :last-commit}`

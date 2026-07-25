@@ -40,6 +40,12 @@ ones that session actually measured. Serving again replaces the running server
 rather than moving to another port, and a port something else holds is reported
 as a sentence. Port comes from the `ui.port` capability (default 7359).
 
+**The server starts it for you.** Because it serves the live session, the UI
+dies with that session — so the MCP server brings one up at boot and
+`session_brief` reports the url as `:ui`. `ui_serve` is for changing the port,
+restarting it, or `stop: true`. A UI that cannot bind never blocks the server:
+it prints a sentence and MCP carries on, exactly as the git listener does.
+
 ## Dependencies and structure
 
 | Tool | What it does |
