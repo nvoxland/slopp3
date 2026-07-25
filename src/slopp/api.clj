@@ -2524,6 +2524,11 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
       host       (assoc :host host)
+      ;; the reviewer UI, when the server brought one up. It is for a HUMAN,
+      ;; and its only other announcement is a line on the server's stderr —
+      ;; which most clients never show anyone. Hand the url over when asked
+      ;; what is going on, rather than making them know to ask for it.
+      (:ui-url @session) (assoc :ui (:ui-url @session))
       relevant   (assoc :relevant relevant))))
 
 ^:reads (defn report

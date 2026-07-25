@@ -1087,6 +1087,39 @@
       (.flush out-writer)))
   nil)
 
+^:unsafe (defn start-ui!
+  "Bring the reviewer UI up beside the MCP server. Returns `ui/serve!`'s map —
+  `{:url :port}`, or `{:error …}` — and NEVER throws.
+
+  The UI dies with the server by design: it serves the LIVE session, because
+  `:test-map` and `:observed` are session-grain and unpersisted, so a UI served
+  from a fresh session would render every form as covered by no tests. That
+  accuracy costs it the server's lifetime, which is the right trade — but it
+  meant a human who wanted the UI had to know to ask for it again after every
+  restart. Starting it here is the other half of that bargain.
+
+  Follows the git listener's stance exactly, and for the same reason: the UI
+  is OPTIONAL and MCP is not. A busy port, a broken adapter, anything at all —
+  it reports a sentence on stderr (stdout is the JSON-RPC channel) and the
+  server carries on. Nothing about a browser page should be able to stop the
+  thing the editor is talking to."
+  ([session]
+   (start-ui! session (caps/effective (:store @session) "ui.port")))
+  ([session port]
+   (let [r (try (ui/serve! session port)
+                (catch Throwable t {:error (or (.getMessage t) (str t))}))]
+     ;; ON THE SESSION, the way the git listener carries :git-url. The stderr
+     ;; banner below goes to the MCP server's log, which most clients never
+     ;; show a human — so autostart without this is a feature nobody can find.
+     ;; session_brief surfaces it, which is where an agent looks and how the
+     ;; human gets told.
+     (when (:url r) (swap! session assoc :ui-url (:url r)))
+     (.println System/err
+               ^String (if (:url r)
+                         (str "slopp UI: " (:url r))
+                         (str "slopp UI unavailable: " (:error r))))
+     r)))
+
 ^:unsafe
 (defn -main
   "Start the stdio MCP server. An optional `dir` argument makes the session
@@ -1131,8 +1164,15 @@
         (catch Throwable t                       ; git is optional; MCP must serve
           (binding [*out* *err*]
             (println (str "slopp git remote unavailable: " (.getMessage t)))))))
+    ;; the reviewer UI comes up with the server, always. It serves the LIVE
+    ;; session and therefore dies with it — that is the trade that keeps its
+    ;; warranty numbers honest — so nothing ever brought it back, and a human
+    ;; who wanted it had to know to ask again after every restart.
+    ;; start-ui! never throws: MCP must serve even when the UI cannot.
+    (start-ui! session)
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally
         (when-let [srv (:git-server @session)] (server/stop-server! srv))
+        (ui/stop!)
         (api/close! session)))))

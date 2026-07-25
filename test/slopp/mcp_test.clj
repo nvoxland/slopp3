@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.ui.server :as ui-server]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1467,3 +1467,46 @@
           (is (some #(= "edit_add_form" (:tool %)) (get-in t [:refused :by-tool]))
               (pr-str t))))
       (finally (api/close! sess)))))
+
+(deftest ^:external the-ui-comes-up-with-the-server-and-never-blocks-it
+  ;; The reviewer UI died with every server restart and nothing brought it
+  ;; back, so a human who wanted it had to know to ask for it. It should just
+  ;; be there.
+  ;;
+  ;; The constraint that shapes this: the UI is OPTIONAL and the MCP server is
+  ;; not. The git listener already established the pattern — it starts beside
+  ;; the server, and a failure prints a sentence to stderr and is otherwise
+  ;; ignored, because "git is optional; MCP must serve". A UI that threw on a
+  ;; busy port would take the whole server down over a browser page.
+  (let [sess (external/open!)]
+    (try
+      (testing "a port someone else holds degrades to a sentence, never a throw"
+        (let [;; 127.0.0.1 EXPLICITLY, not the wildcard: a ServerSocket on 0.0.0.0
+              ;; does not stop http-kit binding 127.0.0.1 on the same port, so
+              ;; a wildcard occupier makes this pass while proving nothing —
+              ;; which is exactly what it did on the first run.
+              sock (java.net.ServerSocket.
+                    0 50 (java.net.InetAddress/getByName "127.0.0.1"))
+              busy (.getLocalPort sock)]
+          (try
+            (let [r (mcp/start-ui! sess busy)]
+              (is (nil? (:url r)) (pr-str r))
+              (is (re-find #"(?i)not available" (str (:error r))) (pr-str r)))
+            (finally (.close sock)))))
+      (testing "a free port comes up and reports where it is"
+        (let [free (let [s (java.net.ServerSocket. 0)
+                         p (.getLocalPort s)]
+                     (.close s) p)
+              r    (mcp/start-ui! sess free)]
+          (is (= free (:port r)) (pr-str r))
+          (is (re-find (re-pattern (str ":" free "/")) (str (:url r))) (pr-str r))
+          (testing "and the url reaches the HUMAN, not just the server's log"
+            ;; the stderr banner goes to the MCP server's log, which most
+            ;; clients never show anyone — so without this, autostart is a
+            ;; feature that cannot be found
+            (is (= (:url r) (:ui-url @sess)))
+            (is (= (:url r) (:ui (api/session-brief sess)))))
+          (ui-server/stop!)))
+      (finally
+        (ui-server/stop!)
+        (api/close! sess)))))
