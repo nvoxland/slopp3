@@ -255,7 +255,7 @@
   toolchain there (the compiler + malli), so the agent never hand-adds slopp's
   plumbing. Shells the compiler in a fresh JVM (no Node — real
   org.clojure/clojurescript on the JVM), then anchors warnings to store forms
-  (name-addressed, no file:line) and file_puts the JS. Returns {:compiled
+  (name-addressed, no file:line) and stores the JS (file_put). Returns {:compiled
   <ns-count> :warnings [...anchored...] :output <path> :bytes n} on success,
   {:error ... :warnings ...} on a compile failure, or {:note ...} when there is
   no client code. `:output` sets the served path (default \"public/cljs/main.js\")."

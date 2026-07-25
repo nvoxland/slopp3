@@ -985,6 +985,61 @@ client-deps (merge (:client-deps st) (:client provided))
         (do (deliver p t) session)   ; async: rides home to await-image!
         (throw t)))))
 
+^:reads (defn ^:export built-store
+  "The store value reconstructed from the MATERIALIZED PROJECT at `dir`
+  (default: the working directory) — the seam a whole-store invariant test
+  needs, and the thing every own-store guard has been missing.
+
+  **The problem it solves.** A guard that wants to assert something about the
+  whole store — no prose naming a tool that does not exist, every form
+  certifying or marked fallback — cannot reach one. The `^:external` tier runs
+  in a temp dir that `build!` filled with SOURCE and no `.slopp/store.db`, so
+  `(open! {:slopp.api/dir \".\"})` hands back an EMPTY store, the scan finds
+  nothing, and the guard passes on nothing. `slopp-prose-never-names-a-tool-
+  that-does-not-exist` has been green that way since it was written, and
+  `root-cause-fix-plan` item 2 has been blocked on exactly this.
+
+  The store is recoverable without any of it: the code is on disk, and
+  ingesting it back yields what a code-shaped invariant needs — namespaces,
+  forms, CSTs. No db, no origin path plumbed through the runner, no marker
+  file in a user's build output.
+
+  **REFUSES rather than returning an empty store.** A directory with no
+  Clojure under `src/` throws. That is the whole point: vacuity has to be
+  loud, because a guard scanning nothing is indistinguishable from a guard
+  finding nothing wrong, and this seam exists to end that.
+
+  **What it is NOT.** Deltas, module registers, purity tiers and form IDS do
+  not survive the round trip — `ingest` re-mints ids, and the journal is not
+  in the build at all. This answers questions about CODE. A question about
+  history or provenance needs the live store and is not what this is for."
+  ([] (built-store "."))
+  ([dir]
+   (let [root  (io/file dir)
+         clj?  #(and (.isFile ^java.io.File %)
+                     (re-find #"\.cljc?$" (.getName ^java.io.File %)))
+         srcs  (for [sub ["src" "test"]
+                     :let [d (io/file root sub)]
+                     :when (.isDirectory ^java.io.File d)
+                     f (file-seq d)
+                     :when (clj? f)]
+                 [(->> (.relativize (.toPath (io/file root sub)) (.toPath ^java.io.File f))
+                       str
+                       (#(str/replace % #"\.cljc?$" ""))
+                       (#(str/replace % #"/" "."))
+                       (#(str/replace % #"_" "-"))
+                       symbol)
+                  (slurp f)])]
+     (when-not (seq srcs)
+       (throw (ex-info (str "no source under " (.getPath root) "/src — this is"
+                            " not a materialized slopp project, and returning an"
+                            " empty store here is how a whole-store guard comes"
+                            " to pass on nothing")
+                       {:dir (.getPath root)})))
+     (reduce (fn [st [ns-sym src]] (store/ingest st ns-sym src))
+             (store/empty-store)
+             srcs))))
+
 (defn ^:export ^{:live-handle true
         :malli/schema
         [:=> [:cat [:? [:map

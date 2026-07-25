@@ -1118,40 +1118,50 @@
   ;; including query_impact/query_flow/query_references inside query_depends'
   ;; OWN description, two in the cheat-sheet, and query_outline in a
   ;; missing-form ERROR — which fires exactly when someone is already lost.
-  (let [sess (external/open! {:slopp.api/dir "."})]
-    (try
-      (let [known  (into #{} (map :name) tools/tools)
-            ;; two exclusions, both deliberate rather than convenient:
-            ;;   git_map    — a SQLITE TABLE, not a tool (every use is in the
-            ;;                sha-mapping code; the prefix alone lies here)
-            ;;   edit_group — documented as DELIBERATELY not on the wire, so
-            ;;                prose naming its absence is correct
-            exempt #{"git_map" "edit_group"}
-            pat    #"\b((?:query|edit|ns|module|deps|branch|git|turn|config|file)_[a-z0-9_]+)"
-            st     (:store @sess)
-            bad    (vec (distinct
-                         (for [nsx  (keys (:namespaces st))
-                               :when (not (str/ends-with? (str nsx) "-test"))
-                               e    (store/forms st nsx)
-                               :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                               text (filter string? (tree-seq coll? seq s))
-                               [_ nm] (re-seq pat text)
-                               :when (not (known nm))
-                               :when (not (exempt nm))]
-                           (str nm " named by " nsx "/" (:name e)))))]
-        (testing "the detector still fires — a check that cannot fail is not a check"
-          ;; the discipline done-advisories enforce with :fires-on. This guard
-          ;; went green by FIXING 11 real names; without a positive case it
-          ;; would look identically healthy if the pattern or the registry
-          ;; lookup silently broke.
-          (is (re-find pat "see query_nonexistent_thing {x} for details"))
-          (is (not (known "query_nonexistent_thing")))
-          (is (known "query_depends") "the registry lookup must recognise a REAL tool"))
-        (is (empty? bad)
-            (str "prose names " (count bad) " tool(s) that do not exist — an"
-                 " agent following this guidance pays a failed call to find"
-                 " out: " (pr-str bad))))
-      (finally (api/close! sess)))))
+  ;;
+  ;; **It then spent its whole life scanning NOTHING.** It opened a session on
+  ;; "." — which in the external tier is the materialized build dir, source
+  ;; but no `.slopp/store.db` — so the store was empty, `bad` was empty, and
+  ;; the assertion passed on a population of zero. `built-store` reconstructs
+  ;; the store from the code actually present, which is what this always
+  ;; needed; the non-empty assertions below are what stops it regressing to
+  ;; vacuous a second time.
+  (let [st     (external/built-store)
+        known  (into #{} (map :name) tools/tools)
+        ;; two exclusions, both deliberate rather than convenient:
+        ;;   git_map    — a SQLITE TABLE, not a tool (every use is in the
+        ;;                sha-mapping code; the prefix alone lies here)
+        ;;   edit_group — documented as DELIBERATELY not on the wire, so
+        ;;                prose naming its absence is correct
+        exempt #{"git_map" "edit_group"}
+        pat    #"\b((?:query|edit|ns|module|deps|branch|git|turn|config|file)_[a-z0-9_]+)"
+        prod   (remove #(str/ends-with? (str %) "-test") (keys (:namespaces st)))
+        bad    (vec (distinct
+                     (for [nsx  prod
+                           e    (store/forms st nsx)
+                           :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                           text (filter string? (tree-seq coll? seq s))
+                           [_ nm] (re-seq pat text)
+                           :when (not (known nm))
+                           :when (not (exempt nm))]
+                       (str nm " named by " nsx "/" (:name e)))))]
+    (testing "there is a POPULATION — this guard scanned an empty store for its whole life"
+      (is (< 50 (count prod))
+          (str "expected slopp's production namespaces, got " (count prod)))
+      (is (some #(= 'slopp.mcp.tools %) prod)
+          "the namespace that DEFINES the tool descriptions must be in scope"))
+    (testing "the detector still fires — a check that cannot fail is not a check"
+      ;; the discipline done-advisories enforce with :fires-on. This guard
+      ;; went green by FIXING 11 real names; without a positive case it
+      ;; would look identically healthy if the pattern or the registry
+      ;; lookup silently broke.
+      (is (re-find pat "see query_nonexistent_thing {x} for details"))
+      (is (not (known "query_nonexistent_thing")))
+      (is (known "query_depends") "the registry lookup must recognise a REAL tool"))
+    (is (empty? bad)
+        (str "prose names " (count bad) " tool(s) that do not exist — an"
+             " agent following this guidance pays a failed call to find"
+             " out: " (pr-str bad)))))
 
 (deftest ^:external query-capabilities-rides-the-wire
   (let [sess (external/open!)]

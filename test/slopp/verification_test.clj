@@ -690,3 +690,40 @@
         (let [x (external/external-test-run! sess)]
           (is (number? (:ms x)) (pr-str (keys x)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external built-store-reaches-the-code-this-build-actually-contains
+  ;; THE prerequisite for any whole-store invariant, and the reason
+  ;; root-cause-fix-plan item 2 has been blocked since it was written.
+  ;;
+  ;; An own-store guard wants to assert something about slopp's own code —
+  ;; "no prose names a tool that does not exist", "every form certifies or is
+  ;; marked fallback". It cannot: the external tier runs in a materialized
+  ;; temp dir that carries the SOURCE but no `.slopp/store.db`, so
+  ;; `(open! {:dir "."})` yields an EMPTY store, the scan finds nothing, and
+  ;; the guard passes on nothing. A check that cannot fail is not a check.
+  ;;
+  ;; The store value is recoverable without any of that: the code is right
+  ;; there on disk, and ingesting it back gives exactly what a code-shaped
+  ;; invariant needs. No db, no path plumbing through the runner, no origin
+  ;; marker in a user's build output.
+  (let [st (external/built-store)]
+    (testing "it is slopp's own code, not an empty shell"
+      (is (< 100 (count (:namespaces st)))
+          (str "expected slopp's namespaces, got " (count (:namespaces st))))
+      (is (contains? (:namespaces st) 'slopp.api))
+      (is (contains? (:namespaces st) 'slopp.store))
+      (is (seq (store/forms st 'slopp.api))))
+    (testing "test namespaces come too — guards care about prose in both"
+      (is (contains? (:namespaces st) 'slopp.verification-test)))
+    (testing "and this very form is in it — the build is current, not stale"
+      (is (some #(= 'built-store-reaches-the-code-this-build-actually-contains
+                    (:name %))
+                (store/forms st 'slopp.verification-test)))))
+  (testing "an empty or absent project REFUSES — vacuity must be loud"
+    ;; the whole failure mode this exists to prevent: a guard that silently
+    ;; scans nothing looks identical to a guard that found nothing wrong
+    (let [empty-dir (str (java.nio.file.Files/createTempDirectory
+                          "slopp-nobuild"
+                          (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (is (thrown-with-msg? Exception #"(?i)no source|not a materialized"
+                            (external/built-store empty-dir))))))
