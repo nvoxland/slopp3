@@ -13,9 +13,27 @@ The oracle must never return a false verdict. Everything here serves that.
      (in-image); `slopp.image.testmain` wraps cognitect's runner with it (external,
      item 7). The runners genuinely differ; the wrapping must never be copied,
      because a second tracer is a second truth.
-   - `traced-run` drops `^:external` tests **unconditionally, by design** —
-     they spawn images and would recurse in-image. That is not an oversight to
-     "fix": the external tier is where they run, and it traces them there.
+   - `traced-run` drops `^:external` tests **unconditionally, by design**.
+     That is not an oversight to "fix": the external tier is where they run,
+     and it traces them there. **Two different reasons, and they were conflated
+     for a long time** (`edit/reentrant-vars` vs `edit/image-spawning-vars`,
+     split 2026-07-24):
+     - **Re-entrant** (`external-test-run!`, `mcp/-main`, `boot/-main`,
+       `bench/-main`, `mcp/call!`, `git/start-server!`) — these run the whole
+       suite or a server that never returns, so in-image they really would
+       re-enter themselves without bound.
+     - **Image-spawning** (`open!`, `restart!`, `repl/start!`, the `sync/*`
+       verbs) — these spawn ONE image and terminate at depth two. They do NOT
+       recurse. They are excluded for COST (~830ms per boot, one level deeper
+       than the in-image tier already runs) and for TRACE POLLUTION (the runner
+       instruments `src` vars to attribute test→form coverage; a fixture store
+       in the same runtime muddies it).
+     Saying "would recurse" for the second group was false, and reasoning from
+     it made the process boundary look more fundamental than it is — it sent
+     one investigation toward an in-process image that solves nothing
+     (`ideas/the-image-is-too-heavy-a-unit.md`). What a session actually needs
+     is a clean NAMESPACE SPACE, which is why an image can be recycled rather
+     than respawned.
    - **Two copies of `slopp.rt` exist** and each has its own consumer: the
      KERNEL FILE (`src/slopp/rt.clj`, shipped in the uberjar) is what
      `repl/inject-rt!` evals into every image; the STORE namespace is what
