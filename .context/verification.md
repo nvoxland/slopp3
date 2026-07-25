@@ -173,6 +173,34 @@ The oracle must never return a false verdict. Everything here serves that.
    `done`, and `commit_point` pass `:include-integration? true` and run
    them. It's a plain runtime-meta filter; `affected-tests` is unaffected
    (skipped tests just never enter the trace).
+3b. **Image RECYCLING (2026-07-24).** An image's expensive part is the Clojure
+   runtime, and that runtime is identical in every image — measured, 830ms of
+   class loading against 9.2ms to unmap and reload a 3-namespace store. So
+   `api/close!` PARKS its image (`repl/park!`) and `boot-image!` takes a
+   parked one (`repl/unpark!`) instead of spawning. **External tier 265.8s →
+   77.2s.**
+   - **`repl/reset-to-baseline!` is the safety, and it VERIFIES rather than
+     assumes.** `inject-rt!` records the baseline namespace set at the one
+     moment it is pristine; the reset sweeps and then ASKS the image what it
+     has left, refusing unless every survivor is baseline or runtime
+     machinery. Every refusal path ends in `stop!`, so the worst case is the
+     old behaviour.
+   - **`dirty-probe`**: `add-libs!` interns a flag IN the image, checked
+     before anything is swept. A jar cannot be unloaded, so such an image can
+     never be baseline again. Guarding this at the call site was discipline
+     and missed (a session gains deps after it opens); fingerprinting the
+     classloader missed silently (nREPL does not mutate the loader the probe
+     read). Anything that dirties an image in a new way MUST mark it there.
+   - **The sweep leaves `clojure.*` / `nrepl.*`** — removing the runtime's own
+     lazily-loaded machinery left `add-libs` unable to load a jar at all.
+   - **`fresh-image!` deliberately does NOT recycle.** It is the D5 staleness
+     backstop; a genuinely new process is the whole point, and recycling there
+     would undermine the diagnostic that catches a stale image.
+   - Bounded by `recycle-limits` (2 parked, 50 reuses) because the check sees
+     namespaces and nothing else; `SLOPP_NO_RECYCLE` switches it off entirely.
+     Isolation is pinned by `api-test/a-recycled-session-cannot-see-the-
+     previous-tenant`, whose `:reuses` assertion exists so it cannot pass
+     vacuously the day recycling stops happening.
 4. **Warm spare.** `{:warm-spare? true}` keeps a `future`-started image
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the
