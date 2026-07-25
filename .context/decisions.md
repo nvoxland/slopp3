@@ -1959,12 +1959,12 @@ attributes), nothing in this design depends on it, and plain links + forms
   YUI-compressor (drags Rhino). No new integrity machinery: a
   `[:link {:href "/styles/app.css"}]` is a literal `:href`, so the
   EXISTING `web-dangling-route-refs` advisory covers CSS links for free —
-  verified live, `/store/style.css`'s route reports `:rendered-by`
+  verified live, `/css/style.css`'s route reports `:rendered-by`
   `[slopp.http.browse/shell]`. Raw/vendored CSS uses the static-asset
   path, not the renderer. `render` rides the slim jar (`slopp/web/**`).
 - **Dogfood**: `slopp.http.browse` — the read-only store browser
   (`/store`, `/store/ns/:ns`, `/store/source/:ns/:name`, and
-  `/store/style.css` — its own stylesheet as garden data with a
+  `/css/style.css` — its own stylesheet as garden data with a
   dark-mode `@media` block) in the server module (never rides the slim
   jar), plain links, full-page renders, arbitrary store source through
   the escaper as a standing security exercise; wired into
@@ -2034,7 +2034,7 @@ loop. Decisions:
   or slim jar. `compile-client!` (an `:external` op) materializes the store,
   shells `clojure -M:cljs` in a fresh JVM (reusing `run-cmd!`/`clojure-bin`
   verbatim), and `file_put`s the JS — served by the EXISTING static mount with
-  zero new serving code (`public/cljs/main.js` → `/assets/cljs/main.js`).
+  zero new serving code (`public/cljs/main.js` → `/js/main.js`).
 - **The write-path enabler**: a `:cljs` form references `js/*` and can't load
   into the oracle, so the base write ops (`add-form!`/`edit-replace!`/`ingest!`/
   `create-ns!`; `delete-form!` already) pass `:load? (store/jvm-loadable? …)` to

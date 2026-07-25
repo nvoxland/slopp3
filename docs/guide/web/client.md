@@ -44,7 +44,7 @@ Every `:cljc` and `:cljs` namespace compiles with the configured backend --
 real ClojureScript, running on the JVM, no Node -- into one `:simple` bundle
 recorded as a served blob. The default output path is `public/cljs/main.js`, so
 a `http.static./assets` mount pointing at `public` serves it at
-`/assets/cljs/main.js`:
+`/js/main.js`:
 
 ```clj
 config_file {path "capabilities" key "http.static./assets" value "public"}
@@ -55,7 +55,7 @@ name, with no file or line. Reference the bundle from a page's head, and let a
 top-level `defonce` start it so the page needs no inline script:
 
 ```clj
-:html/head [[:script {:src "/assets/cljs/main.js" :defer true}]]
+:html/head [[:script {:src "/js/main.js" :defer true}]]
 ```
 
 ```clj

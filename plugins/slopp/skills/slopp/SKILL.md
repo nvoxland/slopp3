@@ -555,11 +555,18 @@ Cypress/Playwright territory someday).
 - **Compile with `compile_client`** — it compiles every `:cljc`+`:cljs`
   namespace with the configured backend (real ClojureScript, **on the JVM, no
   Node**) to one `:simple` bundle, recorded as a served blob (default
-  `public/cljs/main.js` → `/assets/cljs/main.js` via a static mount).
+  `public/cljs/main.js`, served at a URL you choose via a static mount).
   Compile-error-as-oracle: analyzer warnings and hard errors are anchored to
   the owning store form. Reference the bundle with `[:script {:src
-  "/assets/cljs/main.js" :defer true}]` from `page`'s `:html/head`; a top-level
+  "/js/main.js" :defer true}]` from `page`'s `:html/head`; a top-level
   `(defonce _ (main))` self-starts it so the page needs no inline JS.
+  **Address it by what it IS, not by what built it** — `/js/main.js`, not
+  `/assets/cljs/main.js`. A URL is an address that ends up in bookmarks and
+  caches; `cljs` names a toolchain you might change, and nothing about
+  serving JavaScript changes if you do.
+  **And a `:src` is a route reference** — `web-dangling-route-refs` checks it
+  like an `:href`, so a bundle you link but never mount fails `done` instead
+  of 404ing silently in a browser.
 - **slopp provisions its OWN toolchain — you never `deps_add` the compiler or
   malli.** There are TWO dep configs: **yours** (the `deps_add` manifest —
   application libraries, delta-tracked, in `deps_list`) and **slopp's** (the
