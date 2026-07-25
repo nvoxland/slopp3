@@ -873,7 +873,17 @@ client-deps (merge (:client-deps st) (:client provided))
   oracle use instead of killing the server at startup. Returns the session."
   [session store conn agent-id ttl]
   (try
-    (let [image (repl/start! {:slopp.image.repl/deps (:deps store)})]
+    (let [;; A recycled image when one is parked AND this store adds nothing to
+          ;; the classpath — `add-libs!` cannot be undone, so an image that
+          ;; carried deps is no longer the baseline it was parked against.
+          ;; Nil falls through to a real boot, exactly as before.
+          ;;
+          ;; DELIBERATELY only here, at session creation. `fresh-image!` is the
+          ;; D5 staleness backstop, where a genuinely new process IS the point;
+          ;; recycling there would undermine the diagnostic that catches a
+          ;; stale image, which is the opposite of what this is for.
+          image (or (when (empty? (:deps store)) (repl/unpark!))
+                    (repl/start! {:slopp.image.repl/deps (:deps store)}))]
       (swap! session assoc :image image)
       (session/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)

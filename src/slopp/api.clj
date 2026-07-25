@@ -95,7 +95,11 @@
   timeout, so the cap only guards a wedged future thread."
   [session]
   (letfn [(safely! [f] (try (f) (catch Throwable _ nil)))]
-    (safely! #(repl/stop! (:image @session)))
+    ;; PARK, not stop: the image's Clojure runtime is identical to the one the
+    ;; next session would spend ~830ms rebuilding. park! verifies the image
+    ;; back to its boot baseline and STOPS it whenever it cannot — so the
+    ;; worst case here is exactly the old behaviour.
+    (safely! #(repl/park! (:image @session)))
     (safely! #(when-let [spare (:spare @session)]
                 (repl/stop! (deref spare 65000 nil))))   ; reap even if still booting
     (safely! #(when-let [^java.sql.Connection conn (:db @session)]

@@ -1,6 +1,6 @@
 (ns slopp.api-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -371,3 +371,30 @@
           (is (= [] (:pruned r2)) (pr-str r2))
           (is (= [] (:kept r2)) (pr-str r2))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-recycled-session-cannot-see-the-previous-tenant
+  ;; The isolation an image gives is the whole reason the external tier exists,
+  ;; and reuse is only acceptable if it survives intact. The previous attempt
+  ;; at cheaper images (the warm pool) also had to prove this, and its test —
+  ;; pooled-open-stays-isolated — is the shape being repeated here.
+  ;;
+  ;; The :reuses assertion is the load-bearing one. Without it this test would
+  ;; pass trivially the day recycling silently stopped happening, which is the
+  ;; vacuous-guard failure this codebase has been bitten by before.
+  (repl/drain-parked!)
+  (let [a (external/open!)]
+    (api/ingest! a 'tenant.one "(ns tenant.one)\n(defn secret \"S.\" [] 42)\n")
+    (is (= 42 (first (repl/eval! (:image @a) "(tenant.one/secret)")))
+        "the first tenant really did load into its image")
+    (api/close! a))
+  (let [b (external/open!)]
+    (try
+      (is (pos? (:reuses (:image @b) 0))
+          "the second session must actually REUSE an image, or this proves nothing")
+      (is (nil? (first (repl/eval! (:image @b) "(find-ns 'tenant.one)")))
+          "and must not be able to see the previous tenant's namespaces")
+      (is (nil? (first (repl/eval! (:image @b) "(resolve 'tenant.one/secret)"))))
+      (api/ingest! b 'tenant.two "(ns tenant.two)\n(defn v \"V.\" [] 7)\n")
+      (is (= 7 (first (repl/eval! (:image @b) "(tenant.two/v)")))
+          "a recycled image is fully WORKING, not merely empty")
+      (finally (api/close! b) (repl/drain-parked!)))))

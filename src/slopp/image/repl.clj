@@ -113,10 +113,128 @@
        (keep :value)
        (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
 
+^:unsafe (defn- eval-outcome
+  "Classify a completed nREPL eval's messages: `{:values [...]}` (plus
+   `:stderr` when the eval WROTE to stderr without failing) or `{:err msg}`.
+
+   The verdict comes from nREPL's `eval-error` STATUS, which is the only thing
+   that actually knows. Reading `:err` — the stderr STREAM — as the verdict
+   instead meant any library that prints at load turned a successful eval into
+   an error AND discarded its values: garden's `WARNING: abs already refers to
+   …` did exactly that, and because a second eval finds the namespace already
+   loaded and prints nothing, it was non-reproducible on the retry.
+
+   A failure's message keeps the stderr text, which is where the exception's
+   own message lives (`:ex` names only the class), falling back to the class
+   when the eval failed silently."
+  [msgs]
+  (let [stderr  (str/join (keep :err msgs))
+        failed? (some #(some #{"eval-error"} (:status %)) msgs)]
+    (if failed?
+      {:err (str/trim (if (str/blank? stderr)
+                        (or (some :ex msgs) "eval-error")
+                        stderr))}
+      (cond-> {:values (->> msgs (keep :value)
+                            (mapv (fn [v] (try (read-string v)
+                                               (catch Exception _ v)))))}
+        (not (str/blank? stderr)) (assoc :stderr stderr)))))
+
+^:unsafe (defn ^:export eval-checked!
+  "Like `eval!` but surfaces evaluation errors instead of silently dropping
+  them (F-3c2 — an eval that throws must not look like an empty result).
+  Returns `{:values [...]}` — with `:stderr` when the eval printed there
+  without failing — or `{:err msg}`. `eval-outcome` does the classifying, and
+  it reads nREPL's `eval-error` status rather than the stderr stream. `image`
+  is the opaque handle — see `eval!` for why it is not destructured."
+  [image code]
+  (eval-outcome
+   (doall (nrepl/message (:client image) {:op "eval" :code code
+                                          :session (:session image)}))))
+
+(defn ^:export add-libs!
+  "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via
+  Clojure 1.12 `clojure.repl.deps/add-libs` — no restart. Idempotent for
+  already-present coords (so it also reconciles an adopted bare spare).
+  Returns nil on success, or {:err msg} so the caller can fall back to a
+  fresh image (a jar can't be unloaded, so removes/downgrades never hot-apply).
+
+  MARKS the image dirty, in the image, as a plain interned var. A jar cannot
+  be unloaded, so an image that has taken one can never be returned to its
+  boot baseline and must never be recycled — and this is recorded as a FACT
+  rather than inferred. The first attempt inferred it from the classloader's
+  URL list, and that silently missed: nREPL's DynamicClassLoader is not the
+  one `add-libs` mutates, so two tests that passed alone went red in the full
+  suite. A fact the image carries survives every sweep and cannot be
+  out-clevered."
+  [handle deps-map]
+  (when (seq deps-map)
+    (let [r (eval-checked!
+             handle
+             (str "(do (require 'clojure.repl.deps)"
+                  " (intern 'user 'slopp-image-dirty true)"
+                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
+      (when (:err r) r))))
+
+(defn- benign-load-noise?
+  "True when a `load-file` stderr chunk carries ONLY compiler noise — var-shadow
+  `WARNING:`s (e.g. garden.color's `abs` re-refer) or reflection warnings — and
+  no genuine failure. nREPL reports a real load failure via an `eval-error`
+  STATUS (which load-checked! collects separately), so warning-only stderr must
+  not be counted as an error (friction #9: garden's benign warning surfaced as a
+  restart-load ERROR that obscured every red diagnosis)."
+  [chunk]
+  (let [lines (remove str/blank? (str/split-lines (str chunk)))]
+    (boolean
+     (and (seq lines)
+          (every? #(or (str/starts-with? % "WARNING:")
+                       (str/starts-with? % "Reflection warning"))
+                  lines)))))
+
+^:unsafe (defn ^:export load-checked!
+  "Like `load!` but surfaces evaluation failures instead of silently dropping
+  them (T4 — a failed load must never leave the store and image out of step).
+  Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
+  `eval!` for why it is not destructured."
+  [image src path]
+  (let [msgs (doall (nrepl/message
+                     (:client image)
+                     {:op "load-file" :file src :file-path path
+                      :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
+                      :session (:session image)}))
+        errs (concat (remove benign-load-noise? (keep :err msgs))
+                     (mapcat (fn [m]
+                               (when (some #{"eval-error"} (:status m))
+                                 [(or (:ex m) "eval-error")]))
+                             msgs))]
+    (if (seq errs)
+      {:err (str/trim (str/join " " (distinct errs)))}
+      {:values (->> msgs (keep :value)
+                    (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+
+(def ^:export dirty-probe
+  "The expression that asks an image whether it can still be recycled —
+  evaluated identically wherever the question is asked, so no two callers can
+  disagree about what dirty means.
+
+  Today it means exactly one thing: `add-libs!` has run. A jar cannot be
+  unloaded, so an image that has taken one can never return to its boot
+  baseline. `add-libs!` interns the flag in `user`, which is part of every
+  baseline and therefore survives the namespace sweep — the mark outlives the
+  thing that would otherwise erase it.
+
+  This replaced a classloader fingerprint (`.getURLs` on `RT/baseLoader`) that
+  looked more rigorous and was wrong: nREPL does not mutate the loader the
+  probe read, so a dirtied image passed verification and two tests that were
+  green in isolation went red in the full suite. **An inferred signal that can
+  silently miss is worse than none**, because it buys confidence it has not
+  earned. Anything that dirties an image in a new way must mark it here."
+  "(boolean (resolve 'user/slopp-image-dirty))")
+
 (defn- inject-rt!
   "Load slopp's runtime support (slopp.rt — traced test execution) into the
   image, ensure the parent-death watchdog is aboard, wrap rt against itself
-  (#126), then return to `user`. Every owned image carries all of it.
+  (#126), record the BASELINE namespace set, then return to `user`. Every
+  owned image carries all of it.
 
   The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
   whichever slopp/rt.clj is on the READING process's classpath, and that differs
@@ -130,6 +248,12 @@
   inside; it is already on the stack by then, which is exactly why it measured
   zero covering tests while 213 exercised it.
 
+  The same timing argument gives `:baseline` its only correct moment: the
+  namespace set here is the image with rt aboard and NO store code, which is
+  exactly what `reset!` must be able to return to before a second tenant may
+  have it. Failing to capture it is never fatal — an image with no baseline
+  simply refuses to be recycled.
+
   The WATCHDOG (see `watchdog-src`) normally boards the child's own command
   line, before nREPL starts — this re-run is the safety net for images
   launched with a custom :cmd; the name guard makes it land exactly once."
@@ -137,8 +261,12 @@
   (eval! handle (slurp (io/resource "slopp/rt.clj")))
   (eval! handle "(when-let [f (resolve 'slopp.rt/self-instrument!)] (f))")
   (eval! handle watchdog-src)
-  (eval! handle "(in-ns 'user)")
-  handle)
+  (let [handle (assoc handle :baseline
+                      (try {:nses (first (eval! handle "(set (map ns-name (all-ns)))"))
+                            :cp   (first (eval! handle dirty-probe))}
+                           (catch Throwable _ nil)))]
+    (eval! handle "(in-ns 'user)")
+    handle))
 
 (defn ^:export ^{:live-handle true
         :malli/schema
@@ -186,93 +314,115 @@
          (throw (ex-info (str "image boot failed: " (ex-message t))
                          {:pid (.pid proc)} t)))))))
 
-^:unsafe (defn- eval-outcome
-  "Classify a completed nREPL eval's messages: `{:values [...]}` (plus
-   `:stderr` when the eval WROTE to stderr without failing) or `{:err msg}`.
+^:unsafe (defn ^:export reset-to-baseline!
+  "Return `image` to the state it recorded at boot, so the next tenant gets it
+  as if freshly launched — or NIL, meaning it could not be proven clean and
+  the caller must destroy it and boot for real.
 
-   The verdict comes from nREPL's `eval-error` STATUS, which is the only thing
-   that actually knows. Reading `:err` — the stderr STREAM — as the verdict
-   instead meant any library that prints at load turned a successful eval into
-   an error AND discarded its values: garden's `WARNING: abs already refers to
-   …` did exactly that, and because a second eval finds the namespace already
-   loaded and prints nothing, it was non-reproducible on the retry.
+  **Why this exists.** An image's expensive part is the Clojure runtime, and
+  that runtime is IDENTICAL in every image: measured on one box, 830ms of
+  Clojure+nREPL class loading against 9.2ms to unmap and reload a
+  three-namespace store. What differs between two tenants is the store's
+  namespaces, which for a test store is one to three tiny ones. The process
+  was ~90x too heavy a unit for the difference it was buying.
 
-   A failure's message keeps the stderr text, which is where the exception's
-   own message lives (`:ex` names only the class), falling back to the class
-   when the eval failed silently."
-  [msgs]
-  (let [stderr  (str/join (keep :err msgs))
-        failed? (some #(some #{"eval-error"} (:status %)) msgs)]
-    (if failed?
-      {:err (str/trim (if (str/blank? stderr)
-                        (or (some :ex msgs) "eval-error")
-                        stderr))}
-      (cond-> {:values (->> msgs (keep :value)
-                            (mapv (fn [v] (try (read-string v)
-                                               (catch Exception _ v)))))}
-        (not (str/blank? stderr)) (assoc :stderr stderr)))))
+  Clojure does give a single root for the code half — `Namespace/namespaces`
+  is a static registry and `remove-ns` is the sweep. It gives none for the
+  classpath half, which is why that case is refused rather than reset.
 
-^:unsafe (defn ^:export eval-checked!
-  "Like `eval!` but surfaces evaluation errors instead of silently dropping
-  them (F-3c2 — an eval that throws must not look like an empty result).
-  Returns `{:values [...]}` — with `:stderr` when the eval printed there
-  without failing — or `{:err msg}`. `eval-outcome` does the classifying, and
-  it reads nREPL's `eval-error` status rather than the stderr stream. `image`
-  is the opaque handle — see `eval!` for why it is not destructured."
-  [image code]
-  (eval-outcome
-   (doall (nrepl/message (:client image) {:op "eval" :code code
-                                          :session (:session image)}))))
+  **Two conditions, both learned the hard way.**
+  - DIRTY (`dirty-probe`) — refused BEFORE anything is swept. Today that means
+    `add-libs!` has run: a jar cannot be unloaded, so the image can never be
+    baseline again. Guarding this at the CALL SITE was discipline, not a
+    guarantee (a session can gain deps after it opens); fingerprinting the
+    classloader silently MISSED (nREPL does not mutate the loader the probe
+    read). Recording the fact where it happens is what finally closed it.
+  - The SWEEP covers what a TENANT can define, and deliberately leaves
+    `clojure.*` / `nrepl.*` alone. Removing Clojure's own lazily-loaded
+    machinery — `clojure.repl.deps` above all — left `add-libs` unable to put
+    a jar on the classpath at all, so a recycled session could not take a
+    dependency. Those namespaces are the runtime's, not a tenant's, and
+    leaking them between tenants leaks nothing a tenant wrote.
 
-(defn ^:export add-libs!
-  "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via
-  Clojure 1.12 `clojure.repl.deps/add-libs` — no restart. Idempotent for
-  already-present coords (so it also reconciles an adopted bare spare).
-  Returns nil on success, or {:err msg} so the caller can fall back to a
-  fresh image (a jar can't be unloaded, so removes/downgrades never hot-apply)."
-  [handle deps-map]
-  (when (seq deps-map)
-    (let [r (eval-checked!
-             handle
-             (str "(do (require 'clojure.repl.deps)"
-                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) "))"))]
-      (when (:err r) r))))
+  **The safety is the verification, not the removal.** `remove-ns` is not
+  trusted: the image is asked what it has AFTERWARDS, and unless every
+  survivor is either in the recorded baseline or runtime machinery, this
+  returns nil. A partial reset handed to the next tenant is a false green —
+  the one failure the whole oracle exists to prevent — so any doubt refuses.
+  No baseline recorded, or a probe that throws, is itself a doubt.
 
-(defn- benign-load-noise?
-  "True when a `load-file` stderr chunk carries ONLY compiler noise — var-shadow
-  `WARNING:`s (e.g. garden.color's `abs` re-refer) or reflection warnings — and
-  no genuine failure. nREPL reports a real load failure via an `eval-error`
-  STATUS (which load-checked! collects separately), so warning-only stderr must
-  not be counted as an error (friction #9: garden's benign warning surfaced as a
-  restart-load ERROR that obscured every red diagnosis)."
-  [chunk]
-  (let [lines (remove str/blank? (str/split-lines (str chunk)))]
-    (boolean
-     (and (seq lines)
-          (every? #(or (str/starts-with? % "WARNING:")
-                       (str/starts-with? % "Reflection warning"))
-                  lines)))))
+  Residual, stated rather than hidden: a store that named a namespace
+  `clojure.…` or `nrepl.…` would survive the sweep. Nothing in slopp creates
+  such a name, and the alternative — sweeping the runtime's own namespaces —
+  is measured to break dependency loading.
 
-^:unsafe (defn ^:export load-checked!
-  "Like `load!` but surfaces evaluation failures instead of silently dropping
-  them (T4 — a failed load must never leave the store and image out of step).
-  Returns {:values [...]} or {:err msg}. `image` is the opaque handle — see
-  `eval!` for why it is not destructured."
-  [image src path]
-  (let [msgs (doall (nrepl/message
-                     (:client image)
-                     {:op "load-file" :file src :file-path path
-                      :file-name (subs path (inc (or (str/last-index-of path "/") -1)))
-                      :session (:session image)}))
-        errs (concat (remove benign-load-noise? (keep :err msgs))
-                     (mapcat (fn [m]
-                               (when (some #{"eval-error"} (:status m))
-                                 [(or (:ex m) "eval-error")]))
-                             msgs))]
-    (if (seq errs)
-      {:err (str/trim (str/join " " (distinct errs)))}
-      {:values (->> msgs (keep :value)
-                    (mapv (fn [v] (try (read-string v) (catch Exception _ v)))))})))
+  Also clears `rt/touched-sink`, which lives in `slopp.rt` and therefore
+  SURVIVES the sweep: a leftover sink would silently drain the next tenant's
+  trace into the previous tenant's collector.
+
+  **Deliberately not used by `fresh-image!`.** That call is the D5 staleness
+  backstop — a genuinely new process is the whole point of it, and recycling
+  there would undermine the diagnostic that catches a stale image."
+  [image]
+  (when-let [{:keys [nses]} (:baseline image)]
+    (try
+      (when-not (first (eval! image dirty-probe))
+        (let [b (set nses)]
+          (eval! image
+                 (str "(do (when-let [v (resolve 'slopp.rt/touched-sink)]"
+                      "      (reset! (var-get v) nil))"
+                      "    (let [runtime? (fn [n] (or (.startsWith (name n) \"clojure.\")"
+                      "                               (.startsWith (name n) \"nrepl.\")))]"
+                      ;; QUOTED: the baseline is data. Unquoted, the image tries
+                      ;; to resolve every namespace name in it as a var and the
+                      ;; whole form throws — which this then correctly refuses
+                      ;; on, but silently, since eval! surfaces values not errors.
+                      "      (doseq [n (map ns-name (all-ns))]"
+                      "        (when-not (or (contains? '" (pr-str b) " n) (runtime? n))"
+                      "          (remove-ns n))))"
+                      "    (in-ns 'user) :reset)"))
+          ;; ASK, do not assume: the image reports what it actually has left,
+          ;; and every survivor must be baseline or runtime machinery
+          (let [left (set (first (eval! image "(set (map ns-name (all-ns)))")))
+                runtime? (fn [n] (or (.startsWith (name n) "clojure.")
+                                     (.startsWith (name n) "nrepl.")))]
+            (when (every? #(or (contains? b %) (runtime? %)) left)
+              image))))
+      (catch Throwable _ nil))))
+
+(defonce ^{:ambient-ok "process-global by necessity: an image is an OS
+  subprocess, so the pool of reusable ones is a property of this JVM and not
+  of any session. Bounded, and every path that cannot prove an image clean
+  destroys it instead of adding it here."}
+  parked
+  (atom []))
+
+(def ^:export recycle-limits
+  "The two bounds on image reuse, and why each exists.
+
+  `:parked` — how many reset images may idle at once. Each is a JVM holding
+  tens of megabytes, and the workload that benefits (a test shard opening and
+  closing sessions in sequence) needs exactly one at a time, so two is
+  generous rather than tuned.
+
+  `:reuses` — how many tenants one image may serve. `reset-to-baseline!`
+  verifies the NAMESPACE SET and nothing beyond it, so anything outside that
+  view — a thread a tenant started, a system property it set, a shutdown hook
+  it registered — accumulates unseen. The cap turns an unbounded slow leak
+  into a bounded one, which is the difference between a wrong answer someday
+  and a slightly slower suite."
+  {:parked 2 :reuses 50})
+
+^:unsafe (defn ^:export unpark!
+  "Take a reset image from the pool, or NIL when there is none — in which case
+  the caller boots for real, exactly as it always did.
+
+  Every parked image was verified back to its boot baseline BEFORE it was
+  parked, so this hands over something already proven rather than something
+  about to be checked. Nil is the ordinary case and costs nothing."
+  []
+  (when (nil? (System/getenv "SLOPP_NO_RECYCLE"))
+    (peek (first (swap-vals! parked #(cond-> % (seq %) pop))))))
 
 (defn ^:export stop!
   "Destroy the image subprocess and release its connection. `image` is the
@@ -291,6 +441,42 @@
   (when-let [^java.io.Closeable conn (:conn image)]
     (try (.close conn) (catch Exception _)))
   nil)
+
+^:unsafe (defn ^:export drain-parked!
+  "Stop every parked image and empty the pool. For shutdown, and for any test
+  that needs to reason about a cold pool — a parked image is still a JVM
+  subprocess, and an unreaped one is a leaked JVM.
+
+  Not required for correctness on abnormal death: every image carries the
+  parent-death watchdog, so a parked one dies with this process even on
+  SIGKILL. This is the tidy path, not the safety net."
+  []
+  (doseq [img (first (swap-vals! parked (constantly [])))]
+    (try (stop! img) (catch Throwable _ nil)))
+  nil)
+
+^:unsafe (defn ^:export park!
+  "Offer `image` for reuse instead of destroying it. Returns true when it was
+  parked, false when it was stopped — and STOPPING IS THE DEFAULT: every path
+  that cannot prove the image safe to hand on ends in `stop!`.
+
+  Parked only when all of these hold: recycling is not switched off
+  (`SLOPP_NO_RECYCLE`), the image is under its reuse cap, the pool has room,
+  and — the load-bearing one — `reset-to-baseline!` VERIFIED it back to its
+  boot namespace set. A partial reset handed to the next tenant is a false
+  green, the one failure the oracle exists to prevent, so every doubt resolves
+  to a fresh JVM.
+
+  A caller that added libs to an image must NOT park it: `add-libs!` cannot be
+  undone, so its classpath is no longer the one the baseline was taken on."
+  [image]
+  (if (and image
+           (nil? (System/getenv "SLOPP_NO_RECYCLE"))
+           (< (:reuses image 0) (:reuses recycle-limits))
+           (< (count @parked) (:parked recycle-limits))
+           (reset-to-baseline! image))
+    (do (swap! parked conj (update image :reuses (fnil inc 0))) true)
+    (do (stop! image) false)))
 
 (defn restart!
   "Stop the image and start a fresh one (the D5 correctness backstop). Returns a

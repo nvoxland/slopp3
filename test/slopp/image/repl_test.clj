@@ -167,3 +167,55 @@
   (testing "unreadable values ride through as strings, as before"
     (is (= {:values ["#object[Foo]"]}
            (#'slopp.image.repl/eval-outcome [{:value "#object[Foo]"}])))))
+
+(deftest ^:external reset-returns-an-image-to-baseline-or-refuses
+  ;; Measured: a fresh image costs ~830ms of Clojure+nREPL class loading, and
+  ;; that runtime is IDENTICAL in every image. What differs is the store's
+  ;; namespaces — one to three tiny ones for a test store, ~9ms to unmap and
+  ;; reload. So the unit is about 90x too heavy for what it is asked to do.
+  ;;
+  ;; Clojure DOES give one root for the code half: `Namespace/namespaces` is a
+  ;; static registry and `remove-ns` is the sweep. It gives no such root for
+  ;; the classpath half — a jar cannot be un-added — which is why that case is
+  ;; recorded as a fact and refused outright rather than reset.
+  ;;
+  ;; The whole safety of reuse rests on this fn being able to say NO.
+  (let [img (repl/start! {})]
+    (try
+      (testing "a fresh image records what baseline means for it, and is clean"
+        (is (seq (:nses (:baseline img))) "the namespace set, before any store code")
+        (is (contains? (set (:nses (:baseline img))) 'slopp.rt)
+            "rt is injected before the snapshot, so it survives every reset")
+        (is (false? (first (repl/eval! img repl/dirty-probe)))))
+      (testing "a tenant's namespaces are gone after reset"
+        (repl/eval! img "(ns leak.core) (def marker 42) (defn f [] marker)")
+        (is (= 42 (first (repl/eval! img "(deref (resolve 'leak.core/marker))")))
+            "the tenant really is loaded")
+        (is (some? (repl/reset-to-baseline! img)) "and the reset verifies clean")
+        (is (nil? (first (repl/eval! img "(find-ns 'leak.core)")))
+            "the next tenant must not be able to see it")
+        (is (nil? (first (repl/eval! img "(resolve 'leak.core/marker)")))))
+      (testing "reset is repeatable — a recycled image can be recycled again"
+        (repl/eval! img "(ns leak.two) (def m 1)")
+        (is (some? (repl/reset-to-baseline! img)))
+        (is (nil? (first (repl/eval! img "(find-ns 'leak.two)")))))
+      (testing "the image still WORKS after a reset — clean is not the same as dead"
+        (is (= 3 (first (repl/eval! img "(+ 1 2)"))))
+        (repl/eval! img "(ns leak.three) (def m 7)")
+        (is (= 7 (first (repl/eval! img "(deref (resolve 'leak.three/m))")))
+            "a fresh tenant loads normally afterwards")
+        (repl/reset-to-baseline! img))
+      (testing "an image that took a DEPENDENCY is refused forever after"
+        ;; A jar cannot be unloaded, so such an image can never be baseline
+        ;; again. Inferring this from the classloader silently MISSED — nREPL
+        ;; does not mutate the loader the probe read — and two tests that were
+        ;; green in isolation went red in the full suite. It is now the fact
+        ;; add-libs! records, checked before anything is swept.
+        (repl/eval! img "(intern 'user 'slopp-image-dirty true)")
+        (is (nil? (repl/reset-to-baseline! img))
+            "dirty is refused outright, not reset and hoped over"))
+      (testing "an image with NO recorded baseline is refused"
+        ;; nothing to verify against means nothing can be proven clean, and an
+        ;; unproven image must never be handed to the next tenant
+        (is (nil? (repl/reset-to-baseline! (dissoc img :baseline)))))
+      (finally (repl/stop! img)))))
