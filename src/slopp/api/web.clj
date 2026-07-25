@@ -38,12 +38,24 @@
 
 (def ^:private url-attrs
   "Hiccup tag → the attributes that name a URL ON THAT ELEMENT, per HTML.
-   `:href` is a URL on <a>, <link>, <area> and <base>; `:action` on <form>.
-   Everywhere else both are inert attributes the browser ignores, so a map
-   carrying one is not a route reference — it is ordinary data that happens to
-   share a key name. This table is why `link-refs` needs no heuristics: the
-   question 'is this a link' is answered by the HTML spec, not by guessing."
-  {:a #{:href} :link #{:href} :area #{:href} :base #{:href} :form #{:action}})
+   `:href` is a URL on <a>, <link>, <area> and <base>; `:action` on <form>;
+   `:src` on the elements that FETCH one — script, img, iframe, source,
+   track, embed, audio, video. Everywhere else these are inert attributes the
+   browser ignores, so a map carrying one is not a route reference — it is
+   ordinary data that happens to share a key name. This table is why
+   `link-refs` needs no heuristics: the question 'is this a link' is answered
+   by the HTML spec, not by guessing.
+
+   `:src` was missing until 2026-07-25, and the omission was not academic:
+   slopp's OWN reviewer UI carried `[:script {:src \"/assets/cljs/main.js\"}]`
+   in the shell of every page, served by nothing, 404ing on every request
+   since the wave that added it — and `web-dangling-route-refs`, the gate
+   built to fail `done` on exactly that, could not see it. A fetched URL is
+   as dangling as a clicked one; the browser just fails more quietly."
+  {:a #{:href} :link #{:href} :area #{:href} :base #{:href}
+   :form #{:action}
+   :script #{:src} :img #{:src} :iframe #{:src} :source #{:src}
+   :track #{:src} :embed #{:src} :audio #{:src} :video #{:src}})
 
 (defn- hiccup-tag
   "The ELEMENT of a hiccup tag keyword, with hiccup's `#id` / `.class` sugar

@@ -334,3 +334,38 @@
       (is (nil? (get joined 'shop.api/add!))))
     (testing "a test touching no route joins to nothing"
       (is (not-any? #(contains? % 'shop.api-test/elsewhere) (vals joined))))))
+
+(deftest src-is-a-route-reference-too
+  ;; `url-attrs` answers "is this a link" from the HTML spec rather than by
+  ;; guessing, which is right — and it listed only :href (a/link/area/base)
+  ;; and :action (form). `:src` was simply missing, so a <script> or an <img>
+  ;; pointing at a path nothing serves was invisible to the gate built to
+  ;; catch exactly that.
+  ;;
+  ;; Found in anger: slopp's OWN reviewer UI shipped
+  ;; `[:script {:src "/assets/cljs/main.js"}]` in the shell of every page,
+  ;; served by nothing, 404ing on every request since the wave that added it.
+  ;; The gate that should have failed `done` never saw it.
+  (let [st (store/ingest (store/empty-store) 'sr.pages
+                         (str "(ns sr.pages)\n"
+                              "(defn ^{:web/method :get :web/path \"/real\""
+                              "        :web/auth :public :web/response :string}\n"
+                              "  page [_req]\n"
+                              "  [:html [:head\n"
+                              "    [:script {:src \"/nowhere/main.js\"}]\n"
+                              "    [:script {:src \"/real\"}]\n"
+                              "    [:img {:src \"/missing.png\"}]]])\n"))
+        refs (web/ui-route-refs st)
+        by-path (into {} (map (juxt :path identity)) refs)]
+    (testing "a script src is a route reference"
+      (is (contains? by-path "/nowhere/main.js") (pr-str refs))
+      (is (= :src (:attr (by-path "/nowhere/main.js")))))
+    (testing "an img src is one too"
+      (is (contains? by-path "/missing.png") (pr-str refs)))
+    (testing "and one that IS served does not dangle"
+      (let [{:keys [dangling]} (web/dangling-route-refs st)
+            paths (set (map :path dangling))]
+        (is (contains? paths "/nowhere/main.js"))
+        (is (contains? paths "/missing.png"))
+        (is (not (contains? paths "/real"))
+            "a src pointing at a declared endpoint is served, like any href")))))

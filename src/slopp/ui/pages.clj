@@ -53,9 +53,9 @@
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
       (n/string (:node e)))))
 
-(defn ^{:web/method :get :web/path "/store/style.css" :web/auth :public :web/response :string :web/client false}
+(defn ^{:web/method :get :web/path "/css/style.css" :web/auth :public :web/response :string :web/client false}
   store-stylesheet
-  "GET /store/style.css — the browser's own styling as garden data (CSS as
+  "GET /css/style.css — the browser's own styling as garden data (CSS as
   Clojure data, tracked like every other form). A safe GET; served text/css."
   [_req]
   (css/css-response
@@ -104,16 +104,66 @@
                  [:article {:border-left-color "#333"}]
                  [:footer {:border-top-color "#333"}])]))
 
+(defn ^{:web/read :ui/client-js} client-js-read
+  "Read performer: the compiled client bundle from the files manifest, where
+  `compile_client` put it — or nil when nothing has been compiled."
+  [{:keys [session]} _]
+  ;; file-content returns the polymorphic ENTRY ({:content …}, plus
+  ;; :content-type for a binary), never the bare string — one accessor so no
+  ;; consumer branches on the shape. Take the content.
+  (:content (store/file-content (:store @session) "public/cljs/main.js")))
+
+(defn ^{:web/method :get :web/path "/js/main.js" :web/auth :public
+        :web/response :string :web/client false
+        :web/reads {:js [:ui/client-js []]}}
+  client-bundle
+  "GET /js/main.js — the compiled client bundle, read from the files manifest
+  where `compile_client` put it.
+
+  A declared ENDPOINT rather than an `http.static.*` mount, because this is
+  slopp's OWN UI: requiring a user to configure a static mount before slopp's
+  reviewer page works would be asking them to wire up our plumbing. The mount
+  mechanism stays what it is for — a user's own assets.
+
+  `/js/`, not `/assets/cljs/`. The URL is an ADDRESS, not a description of
+  the toolchain that produced the file; it said `cljs` because ClojureScript
+  compiled it, which is exactly the kind of implementation detail that ends
+  up in someone's bookmark. Nothing about serving JavaScript changes if the
+  compiler does.
+
+  204 when nothing has been compiled, so a store that never ran
+  `compile_client` gets an empty body rather than a 404 the page cannot tell
+  apart from a broken route."
+  [req]
+  ;; :web/raw — the adapters write the body VERBATIM. Without it the
+  ;; dispatcher encodes the body as JSON and stamps application/json, which a
+  ;; browser refuses to execute as a script: the bundle arrives, all 1.5MB of
+  ;; it, and does nothing. Same reason css-response carries it.
+  (if-let [js (:js (:web/reads req))]
+    {:status 200 :web/raw true
+     :headers {"Content-Type" "text/javascript; charset=utf-8"} :body js}
+    {:status 204 :web/raw true
+     :headers {"Content-Type" "text/javascript; charset=utf-8"} :body ""}))
+
 (defn- shell
-  "html/page with the store-browser stylesheet linked — the one place the
-  link literal lives, so every page joins /store/style.css. The compiled
-  client bundle (slopp.client.nsview → /assets/cljs/main.js) rides here too;
-  it self-starts and no-ops on pages without a #ns-filter box."
+  "html/page with the reviewer stylesheet and client bundle linked — the one
+  place those two literals live, so every page joins the same URLs.
+
+  Both are addressed off the ROOT by what they ARE: `/css/style.css` and
+  `/js/main.js`. They were `/store/style.css` and `/assets/cljs/main.js`,
+  which said two wrong things — a stylesheet is not a store resource (it sat
+  under the namespace-index family for no reason), and `cljs` named the
+  toolchain that produced the file rather than the file. The script was
+  served by nothing at all and 404'd on every page from the wave that added
+  it until 2026-07-25, which is a story about `:src` missing from the
+  dangling-route gate's attribute table.
+
+  The bundle self-starts and no-ops on pages without a #ns-filter box."
   [title & body]
   (apply html/page
          {:html/title title
-          :html/head [[:link {:rel "stylesheet" :href "/store/style.css"}]
-                      [:script {:src "/assets/cljs/main.js" :defer true}]]}
+          :html/head [[:link {:rel "stylesheet" :href "/css/style.css"}]
+                      [:script {:src "/js/main.js" :defer true}]]}
          body))
 
 (defn ^{:web/method :get :web/path "/store" :web/auth :public :web/response :string :web/client false

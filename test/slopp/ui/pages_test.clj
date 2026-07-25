@@ -48,7 +48,7 @@
         (is (re-find #"<li[^>]*class=\"ns-row\"" body) body)))
     (testing "every page links the compiled client bundle (a literal src the integrity check joins)"
       (doseq [uri ["/store" "/store/ns/demo.core"]]
-        (is (re-find #"<script[^>]*src=\"/assets/cljs/main\.js\""
+        (is (re-find #"<script[^>]*src=\"/js/main\.js\""
                      (:body (web/handle! ctx {:request-method :get :uri uri})))
             uri)))))
 
@@ -57,13 +57,13 @@
         ctx (web/context {:web/namespaces ['slopp.ui.pages]
                           :web/perform-ctx {:session (atom {:store st})}})]
     (testing "the stylesheet is served as text/css, CSS-as-data"
-      (let [r (web/handle! ctx {:request-method :get :uri "/store/style.css"})]
+      (let [r (web/handle! ctx {:request-method :get :uri "/css/style.css"})]
         (is (= 200 (:status r)))
         (is (= "text/css; charset=utf-8" (get-in r [:headers "Content-Type"])))
         (is (re-find #"@media\(prefers-color-scheme:dark\)" (:body r)))))
     (testing "every page links the stylesheet (a literal href the integrity check joins)"
       (doseq [uri ["/store" "/store/ns/demo.core" "/store/source/demo.core/f"]]
-        (is (re-find #"<link href=\"/store/style\.css\" rel=\"stylesheet\">"
+        (is (re-find #"<link href=\"/css/style\.css\" rel=\"stylesheet\">"
                      (:body (web/handle! ctx {:request-method :get :uri uri})))
             uri)))))
 
@@ -223,3 +223,31 @@
     (is (= 404 (:status (get- "view=nonsense"))))
     (testing "a query string the page does not care about changes nothing"
       (is (= (:body (get- nil)) (:body (get- "utm_source=somewhere")))))))
+
+(deftest the-client-bundle-is-served-as-something-a-browser-will-RUN
+  ;; Two failures deep, this one. The bundle existed in the files manifest the
+  ;; whole time; nothing mounted it, so /assets/cljs/main.js 404'd on every
+  ;; page. Then, once served, it came back as application/json — 1.5MB of
+  ;; JavaScript a browser will not execute. A 200 is not the bar; the bar is
+  ;; that the script RUNS.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+                (as-> s (first (store/record-file-put s "public/cljs/main.js"
+                                                     "console.log('hi');"))))
+        ctx (web/context {:web/namespaces ['slopp.ui.pages]
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r   (web/handle! ctx {:request-method :get :uri "/js/main.js"})]
+    (is (= 200 (:status r)))
+    (is (= "console.log('hi');" (:body r))
+        "verbatim — not JSON-encoded, which is what :web/raw buys")
+    (is (re-find #"javascript" (str (get-in r [:headers "Content-Type"])))
+        (str "a browser refuses to execute a non-JS type: "
+             (pr-str (get-in r [:headers "Content-Type"])))))
+  (testing "a store that never compiled a client gets an empty body, not a 404"
+    ;; a 404 here is indistinguishable from a broken route, and the page
+    ;; cannot tell the difference either
+    (let [ctx (web/context
+               {:web/namespaces ['slopp.ui.pages]
+                :web/perform-ctx {:session (atom {:store (store/empty-store)})}})
+          r   (web/handle! ctx {:request-method :get :uri "/js/main.js"})]
+      (is (= 204 (:status r)) (pr-str r)))))
