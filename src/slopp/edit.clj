@@ -353,17 +353,52 @@
            " if the boundary code is intentional:\n"
            (str/join "\n" violations)))))
 
-(def spawning-vars
-  "Vars whose call spawns slopp images/sessions/JVMs. A deftest that touches
-  one CANNOT run in-image — per-write verification runs tests in the image,
-  and these vars spawn images: the run would recurse (Q7). Resolution is
-  alias-based (see require-aliases); fully-qualified calls hit directly."
-  '#{slopp.api/open! slopp.api/restart! slopp.api/external-test-run!
-     slopp.image.repl/start! slopp.git/start-server!
-     slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
-     slopp.sync/maybe-auto-import!
+(def reentrant-vars
+  "Vars that run the WHOLE suite, or a server that never returns. A deftest
+  touching one CANNOT run in-image and the reason really is recursion: the
+  in-image run would invoke the suite, which contains this test, which invokes
+  the suite again — unbounded — or it would block forever on a server that
+  does not return.
+
+  Kept apart from `image-spawning-vars` because the two are excluded for
+  DIFFERENT reasons and saying so matters. Telling an agent that `api/open!`
+  \"would recurse\" is false, and reasoning from it makes the process boundary
+  look more fundamental than it is."
+  '#{slopp.api/external-test-run!
      slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
-     slopp.boot/-main slopp.bench.benchmark/-main})
+     slopp.boot/-main slopp.bench.benchmark/-main
+     slopp.git/start-server!})
+
+(def image-spawning-vars
+  "Vars that spawn ONE image and return. A deftest touching one is still kept
+  out of the in-image tier, but NOT because it would recurse — it terminates
+  at depth two. Two other reasons hold:
+
+  - **Cost.** The in-image tier runs inside a child JVM already, so each such
+    test would boot another JVM one level deeper. Measured: ~830ms of class
+    loading per boot, and the external tier carries ~400 of them.
+  - **Trace pollution.** The runner instruments `src` vars to attribute
+    test→form coverage. A fixture store loading into the same runtime muddies
+    the attribution the warranty numbers are built on.
+
+  Neither is recursion, and conflating them with `reentrant-vars` is what made
+  the process boundary look load-bearing in ways it is not — the isolation a
+  session needs is a clean NAMESPACE SPACE, which is why an image can be
+  recycled (`repl/reset-to-baseline!`) rather than respawned."
+  '#{slopp.api/open! slopp.api/restart! slopp.image.repl/start!
+     slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
+     slopp.sync/maybe-auto-import!})
+
+(def spawning-vars
+  "Every var whose call keeps a deftest out of the in-image tier — the union
+  of `reentrant-vars` (would run the whole suite again, or never return) and
+  `image-spawning-vars` (spawns one image and terminates, excluded for cost
+  and trace pollution). Membership is the question every caller asks; WHICH
+  half decides what the refusal should say.
+
+  Resolution is alias-based (see `require-aliases`); fully-qualified calls hit
+  directly."
+  (into reentrant-vars image-spawning-vars))
 
 (defn require-aliases
   "{alias full-ns} (plus identity entries for the full names) from `ns-sym`'s
@@ -420,10 +455,25 @@
                                          (symbol (str full) (name sym))))]
                                (when (contains? spawning-vars (or q sym)) sym)))
                            (all-symbols node))]
-        (str "this test calls " hit " — it spawns slopp images/sessions, and"
-             " running it in-image would recurse. Tag it ^:external:"
-             " (deftest ^:external " (second s) " …) — external tests run in"
-             " the external suite (test_run {:external true})")))))
+        ;; the reason has to be the one that is TRUE of this var. Telling an
+        ;; agent that api/open! "would recurse" is false — it spawns one image
+        ;; and terminates — and reasoning from it makes the process boundary
+        ;; look more fundamental than it is.
+        (let [q (or (when-let [a (some-> (namespace hit) symbol)]
+                      (when-let [full (aliases a)] (symbol (str full) (name hit))))
+                    hit)]
+          (str "this test calls " hit " — "
+               (if (contains? reentrant-vars q)
+                 (str "it runs the whole suite (or a server that never"
+                      " returns), so in-image it would re-enter itself without"
+                      " bound")
+                 (str "it spawns a slopp image, which costs a JVM per test one"
+                      " level deeper than the in-image tier already runs, and"
+                      " loading a fixture store into that runtime pollutes the"
+                      " test→form trace the warranty numbers come from"))
+               ". Tag it ^:external:"
+               " (deftest ^:external " (second s) " …) — external tests run in"
+               " the external suite (test_run {:external true})"))))))
 
 (defn ambiguous-form-error
   "nil when exactly one element of `ns-sym` bears on `nm`; otherwise the

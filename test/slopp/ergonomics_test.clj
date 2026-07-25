@@ -133,7 +133,27 @@
     (testing "the ^:external tag admits it"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
                                  "(deftest ^:external t (is (some? (api/open!))))")]
-        (is (nil? (:error r)) (pr-str r))))))
+        (is (nil? (:error r)) (pr-str r))))
+    ;; The refusal used to tell every caller its test "would recurse". That is
+    ;; true of the vars that run the WHOLE suite or server — those really do
+    ;; re-enter without bound — and false of `open!`, which spawns one image
+    ;; and terminates at depth two. The conflation made the process boundary
+    ;; look more fundamental than it is, and reasoning from it is what sent an
+    ;; investigation toward an in-process image that solves nothing.
+    (testing "a one-image spawn is refused for its COST, and says so"
+      (let [r (edit/replace-form store 'iso.demo-test 'setup
+                                 "(deftest t (is (some? (api/open!))))")]
+        (is (not (re-find #"(?i)recurse" (str (:error r))))
+            (str "open! terminates at depth two — claiming recursion is false: "
+                 (pr-str (:error r))))
+        (is (re-find #"(?i)JVM per test|costs a JVM" (str (:error r)))
+            (pr-str (:error r)))))
+    (testing "a var that re-enters the whole suite still says RECURSE"
+      (let [r (edit/replace-form store 'iso.demo-test 'setup
+                                 "(deftest t (is (some? (api/external-test-run! nil))))")]
+        (is (:error r) (pr-str r))
+        (is (re-find #"(?i)recurse|re-enter" (str (:error r)))
+            (str "this one genuinely does: "  (pr-str (:error r))))))))
 
 (deftest missing-form-errors-teach
   (let [store (store/ingest (store/empty-store) 'mf.core
