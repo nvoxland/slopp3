@@ -1399,3 +1399,61 @@
               (str "turn_begin + query_project, and nothing from turn one: "
                    (pr-str t)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-new-ask-rotates-the-turn
+  ;; A turn is supposed to be ONE USER ASK — that is what makes it the unit
+  ;; the verbatim prompt is recorded against, and the unit wall-clock timing
+  ;; is folded onto. It was neither: the gate opened a turn only when none was
+  ;; open, and nothing ever closed one, so a single turn spanned an entire
+  ;; session. Measured on slopp's own store: five :turn-begin deltas across a
+  ;; session with roughly fifteen asks, and ZERO :turn-end.
+  ;;
+  ;; Two things were lost by that, and the second is the worse one. The timing
+  ;; never landed, because it rides turn-end. And every ask after the first
+  ;; was absent from the journal entirely — for a system whose whole claim is
+  ;; recorded provenance.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-turnrotate"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (external/open! {:slopp.api/dir dir})
+        ask! (fn [prompt]
+               (spit (io/file dir ".slopp" "pending-intent")
+                     (str "{\"session-id\":\"sess-rot\",\"prompt\":\"" prompt "\"}")))
+        turns (fn [op] (filter #(= op (:op %)) (store/deltas (:store @sess))))]
+    (try
+      (swap! sess assoc :require-turns? true)
+      (io/make-parents (io/file dir ".slopp" "pending-intent"))
+      (ask! "first ask: add a widget")
+      (call! sess "ns_create" {:ns "rot.core" :source "(ns rot.core)\n(defn f [] 1)\n"})
+      (is (= 1 (count (turns :turn-begin))) "the first ask opens a turn")
+      (testing "a SECOND ask closes the first turn and opens its own"
+        (ask! "second ask: rename the widget")
+        (call! sess "edit_add_form" {:ns "rot.core" :source "(defn g \"G.\" [] 2)"})
+        (is (= 2 (count (turns :turn-begin))) "two asks, two turns")
+        (is (= 1 (count (turns :turn-end))) "and the first one was closed"))
+      (testing "the journal carries BOTH asks, not just the first"
+        (is (seq (query/query-search-history sess "first ask")))
+        (is (seq (query/query-search-history sess "second ask"))))
+      (testing "the closed turn carries where its wall clock went"
+        (let [t (:timing (first (turns :turn-end)))]
+          (is (some? t) "timing rides turn-end, which is why it never landed")
+          (is (pos? (:calls t)))
+          (is (= (:elapsed-ms t) (+ (:slopp-ms t) (:outside-ms t))))
+          (is (= 0 (get-in t [:refused :count]))
+              "nothing bounced in that turn, and it says zero rather than
+               omitting the key")))
+      (testing "a REFUSED call is counted, by the shape it really arrives in"
+        ;; not a hand-built fixture: this drives an actual refusal through the
+        ;; wire, so the heuristic that reads it is pinned against the real
+        ;; payload rather than against my idea of the payload
+        (ask! "third ask: try something that will not work")
+        (call! sess "edit_add_form" {:ns "rot.core" :source "(defn h \"H.\" [] 3)"})
+        (call! sess "edit_add_form" {:ns "rot.core" :source "(defn h \"dup.\" [] 4)"})
+        (ask! "fourth ask: close the third turn")
+        (call! sess "edit_add_form" {:ns "rot.core" :source "(defn k \"K.\" [] 5)"})
+        (let [t (:timing (last (turns :turn-end)))]
+          (is (pos? (get-in t [:refused :count]))
+              (str "a duplicate add is refused and must be counted: " (pr-str t)))
+          (is (some #(= "edit_add_form" (:tool %)) (get-in t [:refused :by-tool]))
+              (pr-str t))))
+      (finally (api/close! sess)))))

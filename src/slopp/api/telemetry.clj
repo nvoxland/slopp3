@@ -101,4 +101,15 @@
        :outside-ms (- span in)
        :elapsed-ms span
        :slopp-share (str (int (* 100 (/ in (double (max span 1))))) "%")
-       :top        (vec (take 5 by))})))
+       :top        (vec (take 5 by))
+       ;; REFUSED calls — a malformed match, a lint error in the form being
+       ;; written, an arity break. Each is a whole round trip that produced
+       ;; nothing, and they live in the 78% of wall clock spent outside slopp,
+       ;; where nothing had ever counted them. Always present, zero when
+       ;; clean: an absent key would read as unmeasured.
+       :refused    (let [r (filter :refused? calls)]
+                     {:count (count r)
+                      :pct   (int (* 100 (/ (count r) (double (count calls)))))
+                      :by-tool (vec (sort-by (juxt (comp - :n) :tool)
+                                             (map (fn [[t cs]] {:tool t :n (count cs)})
+                                                  (group-by :tool r))))})})))

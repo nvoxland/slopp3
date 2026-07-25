@@ -237,10 +237,23 @@ client-deps (merge (:client-deps st) (:client provided))
                       :else (testrun/auto-parallel (count full-set)
                                            (.availableProcessors (Runtime/getRuntime))))
             shard-nses (when (and (> par 1) (seq full-set)) full-set)
+            ;; A NARROWED run shards too, along namespace lines. Without this
+            ;; :only forced par=1 and one serial JVM, so a 130-test impacted
+            ;; set cost more than the sharded full suite and `done` deferred
+            ;; it instead — measured, 37.5% of recent dones, six of fifteen
+            ;; deferrals in the 52–136 range that the trace map had picked out
+            ;; correctly. Small sets stay serial: sharding four tests buys
+            ;; nothing and costs three extra JVM boots.
+            only-par (when (and (seq only) (nil? ns) (> (count only) 8))
+                       (testrun/auto-parallel
+                        (count (distinct (keep #(namespace (symbol (str %))) only)))
+                        (.availableProcessors (Runtime/getRuntime))))
+            only-groups (when (and only-par (> only-par 1))
+                          (testrun/only-shards (:store @session) only only-par))
             ;; narrowed runs need the filter-free alias: the :test alias bakes
             ;; -r \".*\" (inline tests, Q13) which UNIONS with -n and defeats it
             alias (or alias
-                      (if (or ns aff (seq only) (seq nses) (seq shard-nses))
+                      (if (or ns aff (seq only) (seq nses) shard-nses)
                         ":test-run" ":test"))
             dir (str (java.nio.file.Files/createTempDirectory
                       "slopp-external"
@@ -250,13 +263,26 @@ client-deps (merge (:client-deps st) (:client provided))
             (if (:error b)
               (stamp b)
               (let [result
-                    (if (seq shard-nses)
+                    (if (or (seq shard-nses) (seq only-groups))
                       (let [;; balanced by IMAGE BOOTS, not by index: the shards run concurrently,
                             ;; so this tier costs its SLOWEST shard. Round-robin split
                             ;; slopp's own 402 boots [139 100 90 73] — one shard still
                             ;; had 66 to go after the fastest had finished.
-                            shards (testrun/balance-shards (:store @session) shard-nses par)
-                            runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir grp)))
+                            ;; ONE shard shape for both cases: the namespaces to discover, and the
+                            ;; vars to run within them (nil = the whole namespace).
+                            ;; Balanced by IMAGE BOOTS either way — the shards run
+                            ;; concurrently, so this tier costs its SLOWEST shard.
+                            shards (if (seq only-groups)
+                                     (mapv (fn [g]
+                                             {:nses (distinct
+                                                     (map #(symbol (namespace (symbol (str %)))) g))
+                                              :only g})
+                                           only-groups)
+                                     (mapv (fn [g] {:nses g})
+                                           (testrun/balance-shards (:store @session)
+                                                                   shard-nses par)))
+                            runs   (mapv (fn [grp] (future (testrun/run-shard! alias dir
+                                                                              (:nses grp) (:only grp))))
                                          shards)
                             outs0  (mapv deref runs)
                             ;; a shard with NO parseable summary is a JVM-level death
@@ -265,7 +291,10 @@ client-deps (merge (:client-deps st) (:client provided))
                             dead?  (fn [o] (nil? (testrun/parse-test-summary
                                                   (str (:out o) "\n" (:err o)))))
                             outs   (mapv (fn [grp o]
-                                           (if (dead? o) (testrun/run-shard! alias dir grp) o))
+                                           (if (dead? o)
+                                             (testrun/run-shard! alias dir
+                                                                 (:nses grp) (:only grp))
+                                             o))
                                          shards outs0)
                             retries (count (filter dead? outs0))
                             out    (str/join "\n" (map #(str (:out %) "\n" (:err %)) outs))
@@ -362,6 +391,26 @@ client-deps (merge (:client-deps st) (:client provided))
   (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
                        (catch Throwable _ nil))]
     (orient/host-warning info (orient/code-deltas-since st (:booted-at info 0)))))
+
+(def ^:export external-slice-cap
+  "How many impacted `^:external` tests `done` will run before deferring to
+  `full_check`.
+
+  It was 40, and the reason was mechanical rather than principled: a narrowed
+  run could not shard (`:only` forced `par` = 1 and one serial JVM), so a
+  large impacted set cost MORE than the sharded full suite and deferring was
+  the least-bad option available. `testrun/only-shards` removed that, so the
+  number is re-derived from what deferrals actually looked like.
+
+  Measured over 40 consecutive dones: 15 deferred, and they cluster at both
+  ends — six between 52 and 136 tests, nine between 339 and 394 of 409. The
+  first group is real narrowing the trace map had computed correctly and
+  nothing ran; 150 converts all of it. The second is a change to the core,
+  where the impacted set IS the suite and narrowing saves nothing — that is
+  what `full_check` is for, and no selection can improve on it.
+
+  A var so a test can bind it rather than build 151 fixture tests to cross it."
+  150)
 
 (defn ^:export done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
@@ -490,14 +539,25 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; cap is on TESTS: p50 is 12 covering tests and a cap of 40 fits
                 ;; ~71% of forms, while the tail (p90 = 218) is the core-form
                 ;; case that honestly wants the whole suite anyway.
+                ;; The cap was 40 because a narrowed run could not shard — :only forced
+                ;; one serial JVM, so a large impacted set cost MORE than the
+                ;; sharded full suite and deferring was the least-bad option.
+                ;; `only-shards` removed that, so the number is re-derived from
+                ;; what deferrals actually looked like: measured over 40 recent
+                ;; dones, 15 deferred, six of them between 52 and 136 tests —
+                ;; sets the trace map had picked out correctly and nothing ran.
+                ;; 150 converts all six. Past that the impacted set approaches
+                ;; the whole suite (the other nine were 339–394 of 409), where
+                ;; narrowing saves nothing and full_check is the honest answer.
                 (when (seq iso-only)
-                  (if (<= (count iso-only) 40)
+                  (if (<= (count iso-only) external-slice-cap)
                     (external-test-run! session :only iso-only)
                     {:pending {:count (count iso-only)
                                :tests (vec (take 5 iso-only))
-                               :note  (str "first 5 shown — over the per-done cap, so these"
-                                           " deferred; test_run {external true} or"
-                                           " full_check runs them all")}}))))
+                               :note  (str "first 5 shown — this impacted set is most of the"
+                                           " external suite, so narrowing it saves nothing;"
+                                           " full_check runs the whole store and is the"
+                                           " honest answer to a change this broad")}}))))
         findings (let [lint-errors (count (filter #(= :error (:level %)) lint))
       lint-warns  (vec (for [f lint :when (= :warning (:level f))]
                          (select-keys f [:form :type :message])))

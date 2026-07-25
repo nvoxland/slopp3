@@ -44,3 +44,40 @@
       (is (= 4 (count (testrun/balance-shards st ['bs.a-test] 4)))))
     (testing "deterministic — a split that varies between runs is unrepeatable"
       (is (= shards (testrun/balance-shards st nses 2))))))
+
+(deftest only-shards-splits-a-narrowed-run-along-namespace-lines
+  ;; `done` defers its external tests on 37.5% of calls, measured over the
+  ;; last 40. Six of those fifteen deferrals were 52–136 tests — sets the
+  ;; trace map identified correctly and the RUNNER could not act on, because
+  ;; narrowing and sharding were mutually exclusive: with :only set, full-set
+  ;; is nil, par is 1, and the run is one serial JVM. Deferring was the
+  ;; least-bad option available, not a judgement about safety.
+  ;;
+  ;; A namespace cannot straddle two shards: the command needs -n per
+  ;; namespace alongside -v per var, and cognitect resolves a named var only
+  ;; within a DISCOVERED namespace.
+  (let [mk (fn [n opens]
+             (str "(ns " n " (:require [slopp.api.external :as external]\n"
+                  "                    [clojure.test :refer [deftest is]]))\n"
+                  (apply str (for [i (range opens)]
+                               (str "(deftest ^:external t" i
+                                    " (is (some? (external/open!))))\n")))))
+        st (-> (store/empty-store)
+               (store/ingest 'slopp.api.external
+                             "(ns slopp.api.external)\n(defn open! \"A session.\" [] {})\n")
+               (store/ingest 'os.heavy-test (mk "os.heavy-test" 6))
+               (store/ingest 'os.light-test (mk "os.light-test" 1)))
+        only '[os.heavy-test/t0 os.heavy-test/t1 os.light-test/t0]
+        shards (testrun/only-shards st only 2)]
+    (testing "every named test lands exactly once"
+      (is (= (set only) (set (apply concat shards))))
+      (is (= (count only) (count (apply concat shards)))))
+    (testing "a namespace never straddles shards — -v resolves only within -n"
+      (doseq [sh shards]
+        (is (apply = (map #(namespace (symbol (str %))) sh))
+            (str "shard mixes namespaces: " (pr-str sh)))))
+    (testing "shards are weighted by image boots, like every other split"
+      (is (some #(= 1 (count %)) shards)
+          (str "the 6-boot namespace should stand alone: " (pr-str shards))))
+    (testing "fewer namespaces than shards yields no empty shards to run"
+      (is (every? seq (testrun/only-shards st '[os.light-test/t0] 4))))))

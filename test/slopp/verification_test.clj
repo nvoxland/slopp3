@@ -261,7 +261,11 @@
                    (str "(ns ds.two-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest b-t (is (= 2 2)))\n"))
       (let [tries (atom {})
-            fake  (fn [_alias _dir grp]
+            ;; run-shard! gained a fourth arg — the shard's var subset, nil for
+            ;; a whole-namespace shard. A stub that does not accept it fails
+            ;; with an arity error rather than a wrong answer, which is the
+            ;; right direction, but it still has to track the real signature.
+            fake  (fn [_alias _dir grp & [_only]]
                     (let [n (get (swap! tries update (vec grp) (fnil inc 0))
                                  (vec grp))]
                       (if (= 1 n)
@@ -560,7 +564,7 @@
       (let [green-out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."]
         (testing "sharded: green summaries with a nonzero max exit is :error"
           (with-redefs-fn {#'testrun/run-shard!
-                           (fn [_ _ _] {:exit 137 :out green-out :err ""})}
+                           (fn [_ _ _ & _] {:exit 137 :out green-out :err ""})}
             #(let [r (external/external-test-run! sess :parallel 2)]
                (is (= :error (:status r))
                    (pr-str (select-keys r [:status :exit :note]))))))

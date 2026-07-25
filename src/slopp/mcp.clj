@@ -532,6 +532,20 @@
     (api/await-image! session))
   (api/sync-with-journal! session)      ; m5b: absorb other servers' commits      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
+  ;; A NEW ASK IS A NEW TURN. The gate used to open one only when none was
+  ;; open, and nothing ever closed one, so a single turn spanned an entire
+  ;; session: measured on slopp's own store, five :turn-begin deltas across
+  ;; ~15 asks and ZERO :turn-end. Two things were lost by that — the turn's
+  ;; wall-clock timing, which rides turn-end and therefore never landed, and
+  ;; worse, EVERY ASK AFTER THE FIRST, which never reached the journal at all.
+  ;; Rotating costs two marker deltas per ask.
+  (when (and (:pending-intent @session)
+             (:require-turns? @session)
+             (contains? tools/write-tools name)
+             (not (#{"done" "commit_point"} name)))
+    (let [ag (or (:agent arguments) (:agent-id @session))]
+      (when (api/turn-open? session ag)
+        (api/turn-end! session :agent ag))))
   (when (and (:require-turns? @session)
              (contains? tools/write-tools name)
              ;; done/commit_point CLOSE work; always allowed
@@ -1028,7 +1042,18 @@
       ;; after the call, so a tool that reads the ring (turn_end) never sees
       ;; its own half-finished entry
       (swap! session update :slopp.api.telemetry/calls (fnil conj [])
-             {:tool (:name params) :start t0 :end (System/currentTimeMillis)})
+             {:tool (:name params) :start t0 :end (System/currentTimeMillis)
+              ;; A REFUSAL, by the two shapes one can arrive in: a thrown
+              ;; exception (:isError, set above) or slopp's own
+              ;; refusal-as-data, which `text!` pr-strs so the payload opens
+              ;; with `{:error`. This is a heuristic and it UNDER-counts — a
+              ;; result carrying :error behind another key reads as clean —
+              ;; which is the safe direction for a waste metric: it will never
+              ;; invent a problem, only miss one.
+              :refused? (boolean
+                         (or (:isError r)
+                             (some-> (:text (first (:content r)))
+                                     (clojure.string/starts-with? "{:error"))))})
       {:jsonrpc "2.0" :id id :result r})
     "ping" {:jsonrpc "2.0" :id id :result {}}
     (when id

@@ -516,12 +516,18 @@
                           (for [i (range 41)]
                             (str "(deftest ^:external w" i " (is (= 1 (core/f 1))))\n\n")))
                    :agent "t")
-      (testing "over the cap: defers to the milestone gate, REPORTED as tests"
-        (let [r (external/done! sess :label "wide hub" :agent "t")]
-          (is (nil? (:external r)) "above the cap, nothing runs")
-          (is (<= 41 (get-in r [:findings :external-pending :count]))
-              (pr-str (:findings r)))
-          (is (seq (get-in r [:findings :external-pending :tests])))))
+      (testing "over the cap: defers to full_check, REPORTED as tests"
+        ;; BIND the cap rather than build enough fixture tests to cross it.
+        ;; The number is re-derived whenever its rationale changes — it was 40
+        ;; only because a narrowed run could not shard — so a test that
+        ;; hardcodes the value breaks on every re-derivation while saying
+        ;; nothing about the behaviour it means to pin.
+        (with-redefs [external/external-slice-cap 10]
+          (let [r (external/done! sess :label "wide hub" :agent "t")]
+            (is (nil? (:external r)) "above the cap, nothing runs")
+            (is (<= 41 (get-in r [:findings :external-pending :count]))
+                (pr-str (:findings r)))
+            (is (seq (get-in r [:findings :external-pending :tests]))))))
       (finally (api/close! sess)))))
 
 (deftest ^:external unused-publics-gate-the-done

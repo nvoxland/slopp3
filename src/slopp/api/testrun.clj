@@ -150,14 +150,42 @@
             (vec (repeat n []))
             (sort-by (juxt #(- (get w % 0)) str) nses))))
 
+(defn ^:export only-shards
+  "Split `only` — qualified test vars — into at most `n` shards, along
+  NAMESPACE lines and weighted the same way whole-namespace shards are.
+
+  A namespace cannot straddle two shards. The shard command passes `-n` per
+  namespace alongside `-v` per var, and cognitect's var filter resolves a name
+  only within a DISCOVERED namespace, so splitting one namespace's vars across
+  shards would silently drop tests.
+
+  **Why this exists.** Narrowing and sharding used to be mutually exclusive:
+  with `:only` set, `full-set` was nil, `par` fell to 1, and the run was one
+  serial JVM. So a narrowed run of 130 tests cost more than the sharded full
+  suite, and `done` deferred instead — measured, on 37.5% of recent calls,
+  with six of fifteen deferrals in the 52–136 range. The trace map had
+  identified those tests correctly; the runner simply could not act on the
+  answer. This is the runner catching up to the index."
+  [store only n]
+  (let [by-ns  (group-by #(symbol (namespace (symbol (str %)))) only)
+        shards (balance-shards store (keys by-ns) n)]
+    (filterv seq (mapv #(vec (mapcat by-ns %)) shards))))
+
 (defn ^{:export "slopp.verification"} run-shard!
   "Shell one test shard: a fresh `clojure -M<alias>` over `grp`'s namespaces
   in the materialized `dir`, bounded by `shard-timeout-ms` via `run-cmd!`.
-  The seam the shard-death retry rides."
-  [alias dir grp]
-  (run-cmd! (concat [repl/clojure-bin (str "-M" alias)]
-                    (mapcat #(vector "-n" (str %)) grp))
-            dir))
+  The seam the shard-death retry rides.
+
+  With `only` (qualified test vars), the shard runs just those — `-n` per
+  namespace AND `-v` per var, because cognitect's var filter resolves a name
+  only within a namespace it has discovered. `grp` must still name every
+  namespace `only` mentions; `only-shards` builds both halves together."
+  ([alias dir grp] (run-shard! alias dir grp nil))
+  ([alias dir grp only]
+   (run-cmd! (concat [repl/clojure-bin (str "-M" alias)]
+                     (mapcat #(vector "-n" (str %)) grp)
+                     (mapcat #(vector "-v" (str %)) only))
+             dir)))
 
 (defn ^{:export "slopp.verification"} read-traces
   "Merge the form traces this run's shards wrote into the built `dir` (#121):

@@ -60,3 +60,38 @@
     (testing "no calls is nil, not a zeroed record that reads as measured"
       (is (nil? (telemetry/call-timing [])))
       (is (nil? (telemetry/call-timing nil))))))
+
+(deftest call-timing-counts-the-calls-that-were-REFUSED
+  ;; The measurement nobody had taken. 78% of a session's wall clock is spent
+  ;; outside slopp — agent reasoning and non-slopp tools — and the largest
+  ;; identifiable waste in that half is calls that get refused and retried: a
+  ;; malformed edit_subform match, a lint error in a form being written, an
+  ;; arity break. Each costs a full round trip and none was ever counted.
+  ;;
+  ;; Reported as a RATE with the tools named, because the actionable form is
+  ;; "a fifth of your writes bounced, mostly on edit_subform" — a raw count
+  ;; says nothing about whether it is worth changing anything.
+  (let [calls [{:tool "query_slice"    :start 0    :end 50}
+               {:tool "edit_subform"   :start 100  :end 200 :refused? true}
+               {:tool "edit_subform"   :start 300  :end 400 :refused? true}
+               {:tool "edit_subform"   :start 500  :end 600}
+               {:tool "edit_add_form"  :start 700  :end 900 :refused? true}
+               {:tool "done"           :start 1000 :end 3000}]
+        t (telemetry/call-timing calls)]
+    (testing "the rate, and the tools that bounced"
+      (is (= 3 (get-in t [:refused :count])))
+      (is (= 50 (get-in t [:refused :pct])) "3 of 6 calls")
+      (is (= [{:tool "edit_subform" :n 2} {:tool "edit_add_form" :n 1}]
+             (get-in t [:refused :by-tool]))
+          "largest first — the one to fix is the one that bounces most"))
+    (testing "refused calls still count toward the time they cost"
+      (is (= 3 (count (filter #(= "edit_subform" (:tool %)) calls)))
+          "fixture sanity")
+      (is (= 300 (:ms (first (filter #(= "edit_subform" (:tool %)) (:top t)))))
+          "100 + 100 + 100 — a bounced call costs its wall time like any other"))
+    (testing "a clean turn says so with a zero, not by omitting the key"
+      ;; absence would read as unmeasured, which is the conflation this
+      ;; codebase keeps paying for
+      (let [clean (telemetry/call-timing [{:tool "done" :start 0 :end 10}])]
+        (is (= 0 (get-in clean [:refused :count])))
+        (is (= [] (get-in clean [:refused :by-tool])))))))
