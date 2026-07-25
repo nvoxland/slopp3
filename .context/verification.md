@@ -177,8 +177,17 @@ The oracle must never return a false verdict. Everything here serves that.
    runtime, and that runtime is identical in every image — measured, 830ms of
    class loading against 9.2ms to unmap and reload a 3-namespace store. So
    `api/close!` PARKS its image (`repl/park!`) and `boot-image!` takes a
-   parked one (`repl/unpark!`) instead of spawning. **External tier 265.8s →
-   77.2s.**
+   parked one (`repl/unpark!`) instead of spawning. **Controlled A/B, same
+   box back to back: external tier 247.3s off → 161.7s on, −35%.** (Earlier
+   uncontrolled runs read 77s and were reported as 3.4×; they had no off-arm
+   and later runs on the same code ranged 156–260s. Only the pair counts.)
+   - **The pool is keyed by CLASSPATH** (`park!`/`unpark!` take the store's
+     `:deps`). A classpath is stable — a project declares its deps once and
+     every session wants exactly those — so a dep-carrying image is the common
+     case. The first cut treated any dependency as permanently un-recyclable,
+     which meant reuse applied only to dep-free stores: slopp's own fixtures
+     and no real project. Match is by EQUALITY, since a jar cannot be removed
+     and an image carrying more than was asked for is not what was requested.
    - **`repl/reset-to-baseline!` is the safety, and it VERIFIES rather than
      assumes.** `inject-rt!` records the baseline namespace set at the one
      moment it is pristine; the reset sweeps and then ASKS the image what it
