@@ -1,4 +1,15 @@
 (ns slopp.api.modules-test
+  "Cover for the module-level answers: what is dead, what is visible, and
+  whether an operation's declared intent actually landed.
+
+  These questions are whole-store by nature — a var is unused only if NOTHING
+  anywhere references it — so the fixtures ingest a real store rather than
+  mock a graph. It costs nothing (ingest and the reference graph are pure) and
+  it means the tests exercise the same derivation production does.
+
+  Where a test asserts an exemption (a marker discharging the unused gate), it
+  asserts the unexempted case alongside it: a report that had simply stopped
+  finding anything would satisfy the first half on its own."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.edit.modules :as edit.modules]))
 
@@ -335,3 +346,78 @@
       (is (nil? (edit.modules/namespace-purpose-warning
                  (store/ingest (store/empty-store) 'app.empty "(ns app.empty)\n")
                  'app.empty))))))
+
+(deftest an-escape-marker-carrying-its-WHY-discharges-the-same
+  ;; Every escape dial takes a bare keyword today — `^:unused-ok`, which says
+  ;; nothing about why no caller is expected. The dial becomes self-documenting
+  ;; provenance the moment it carries a reason, the way `:prompt` rides every
+  ;; delta and `^{:covers "ns/name — why"}` already does.
+  ;;
+  ;; The compatibility question comes FIRST, because asking agents to say why
+  ;; would be actively harmful if the map form silently stopped discharging:
+  ;; every escape anyone wrote that way would turn into a gate failure with no
+  ;; hint that the shape was the problem.
+  (let [ing (fn [src] (store/ingest (store/empty-store) 'mw.core src))]
+    (testing "no marker at all: the gate fires — the discriminating half"
+      ;; without this, the assertions below would pass on a report that had
+      ;; simply stopped finding anything
+      (is (= '[mw.core/f]
+             (:unused (modules/unused-report (ing "(ns mw.core)\n(defn f \"F.\" [x] x)\n")
+                                             '[mw.core])))))
+    (testing "the bare keyword discharges, as it always has"
+      (is (= [] (:unused (modules/unused-report
+                          (ing "(ns mw.core)\n(defn ^:unused-ok f \"F.\" [x] x)\n")
+                          '[mw.core])))))
+    (testing "and the map form carrying a WHY discharges identically"
+      (is (= [] (:unused (modules/unused-report
+                          (ing (str "(ns mw.core)\n"
+                                    "(defn ^{:unused-ok \"library surface for external consumers\"}\n"
+                                    "  f \"F.\" [x] x)\n"))
+                          '[mw.core])))))
+    (testing "the same for ^:entry-point, the other keep-alive dial"
+      (is (= [] (:unused (modules/unused-report
+                          (ing (str "(ns mw.core)\n"
+                                    "(defn ^{:entry-point \"boot --call dispatch\"}\n"
+                                    "  f \"F.\" [x] x)\n"))
+                          '[mw.core])))))
+    (testing "a marker with a why still polices itself when the var IS called"
+      ;; the stale-marker check reads the same dial, so the richer form must
+      ;; not become a permanent silent opt-out
+      (is (= '[mw.core/f]
+             (:stale (modules/unused-report
+                      (ing (str "(ns mw.core)\n"
+                                "(defn ^{:unused-ok \"nobody calls this\"} f \"F.\" [x] x)\n"
+                                "(defn ^:unused-ok g \"G.\" [x] (f x))\n"))
+                      '[mw.core])))))))
+
+(deftest a-planned-export-is-checked-against-the-COMMITTED-store
+  ;; The incident: `export-mark` silently SKIPPED meta-wrapped names, so
+  ;; `(def ^:dynamic *pre-commit-hook* …)` came out of a move with no
+  ;; `^:export` on it. The move's own gate pre-check had passed, because it
+  ;; trusted the PLANNED export while the store carried no marker. Caught a
+  ;; session later by the debt view — which reads reality.
+  ;;
+  ;; Verification must check REALITY, not intent. An operation that reports
+  ;; what it MEANT to do is indistinguishable from one that did it.
+  (let [st (store/ingest (store/empty-store) 'pe.deep.core
+                         (str "(ns pe.deep.core)\n"
+                              "(defn ^:export landed \"L.\" [x] x)\n"
+                              "(def ^:dynamic *missed* nil)\n"
+                              "(defn plain \"P.\" [x] x)\n"))
+        row (fn [nm] {:to 'pe.deep.core :name nm :to-export true})]
+    (testing "a planned export that IS on the committed form reports nothing"
+      (is (= [] (modules/unlanded-exports st [(row 'landed)]))))
+    (testing "a planned export the store does not carry is REPORTED"
+      ;; the meta-wrapped name — the exact shape the marker pass skipped
+      (is (= '[pe.deep.core/*missed*]
+             (modules/unlanded-exports st [(row '*missed*)]))))
+    (testing "several rows report every miss, not just the first"
+      (is (= '[pe.deep.core/*missed* pe.deep.core/plain]
+             (modules/unlanded-exports st [(row 'landed) (row '*missed*) (row 'plain)]))))
+    (testing "rows that planned NO export are not this check's business"
+      (is (= [] (modules/unlanded-exports
+                 st [{:to 'pe.deep.core :name 'plain :to-export nil}]))))
+    (testing "a subtree export (a string level) counts as planned too"
+      (is (= '[pe.deep.core/plain]
+             (modules/unlanded-exports
+              st [{:to 'pe.deep.core :name 'plain :to-export "pe.other"}]))))))

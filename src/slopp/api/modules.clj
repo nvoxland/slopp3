@@ -193,3 +193,24 @@
                      (when (< (rank supports) (rank declared))
                        [m {:declared declared :supports supports}]))))
            by-mod)}))
+
+(defn ^:export unlanded-exports
+  "Of the move `rows` that PLANNED an export (`:to-export` truthy), the ones
+  the store does NOT actually carry — a postcondition, read back from the
+  committed value rather than from the plan.
+
+  Verification must check REALITY, not intent. The incident this exists for:
+  the marker pass silently skipped META-WRAPPED names, so `(def ^:dynamic
+  *pre-commit-hook* …)` came out of a move unexported while the move's own
+  gate pre-check passed — because the pre-check consulted the PLANNED export
+  and the store carried no marker. It surfaced a session later, via the debt
+  view, which reads reality.
+
+  An operation that reports what it MEANT to do is indistinguishable from one
+  that did it, and the difference only shows up somewhere else, later. One
+  read-back at the tail of the op is the whole cost."
+  [store rows]
+  (vec (sort (for [{:keys [to name to-export]} rows
+                   :when to-export
+                   :when (not (modules/export-level store to name))]
+               (symbol (str to) (str name))))))

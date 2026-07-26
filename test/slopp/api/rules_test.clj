@@ -507,3 +507,46 @@
           (is (= :red (get-in r [:findings :test-status]))
               "a tier the code does not satisfy is a declaration that lies")))
       (finally (api/close! sess)))))
+
+(deftest ^:external done-asks-about-assertions-that-were-never-watched-fail
+  ;; The cheaper half of `assertions-that-cannot-fail`. Both instances in that
+  ;; file were assertions ADDED to an already-green test — the one path
+  ;; red-first does not cover by construction, since nothing about the new
+  ;; assertion is ever observed failing.
+  ;;
+  ;; Needs a real session: the check reads a BASELINE (the last done) and reads
+  ;; red out of the `:verify` deltas, and a source-only fixture has neither.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'anr.core "(ns anr.core)\n(defn f \"F.\" [] 1)\n")
+      (api/ingest! sess 'anr.core-test
+                   (str "(ns anr.core-test\n"
+                        "  (:require [clojure.test :refer [deftest is]]\n"
+                        "            [anr.core :as c]))\n"
+                        "(deftest t-f (is (= 1 (c/f))))\n"))
+      (external/done! sess :label "baseline")
+      (testing "an assertion added to a test that stayed green is asked about"
+        (api/edit-replace! sess 'anr.core-test 't-f
+                           "(deftest t-f (is (= 1 (c/f))) (is (some? (c/f))))"
+                           :prompt "extend the test")
+        (let [f (get-in (external/done! sess :label "extended") [:findings :assertions-never-red])]
+          (is (some #(= 'anr.core-test/t-f (:form %)) f) (pr-str f))
+          (is (re-find #"never went red" (str (:teach (first f)))) (pr-str f))))
+      (testing "a test that actually BOUNCED is not asked about"
+        ;; it went red, so its assertions were exercised — nothing to say
+        (api/edit-replace! sess 'anr.core 'f "(defn f \"F.\" [] 2)"
+                           :prompt "break it so the test goes red")
+        (api/edit-replace! sess 'anr.core-test 't-f
+                           "(deftest t-f (is (= 2 (c/f))) (is (some? (c/f))) (is (pos? (c/f))))"
+                           :prompt "catch the test up and add another assertion")
+        (let [f (get-in (external/done! sess :label "after a red") [:findings :assertions-never-red])]
+          (is (nil? (some #(= 'anr.core-test/t-f (:form %)) f))
+              (str "t-f was observed failing this episode: " (pr-str f)))))
+      (testing "and it is advisory — a question does not turn the done red"
+        (api/edit-replace! sess 'anr.core-test 't-f
+                           "(deftest t-f (is (= 2 (c/f))) (is (some? (c/f))) (is (pos? (c/f))) (is (int? (c/f))))"
+                           :prompt "one more assertion, nothing broken")
+        (let [r (external/done! sess :label "still green")]
+          (is (seq (get-in r [:findings :assertions-never-red])) "it fired")
+          (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
+      (finally (api/close! sess)))))

@@ -16,14 +16,16 @@
             [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs] [slopp.ui.model :as model] [clojure.string :as str]))
 
 (defn- form-doc
-  "A form's docstring, read off the stored node's sexpr (nil when absent)."
+  "A form's docstring, or nil — through `store/form-docstring`, which is the
+  only thing that knows when index 2 is a docstring and when it is a `def`'s
+  VALUE.
+
+  It read index 2 directly and took any string it found, so
+  `(def greeting \"hello\")` rendered \"hello\" as the form's documentation.
+  Wrong-index reads do not throw; they return something plausible, which is
+  why this class keeps surviving review."
   [e]
-  (try
-    (let [sx (n/sexpr (:node e))]
-      (when (seq? sx)
-        (let [d (nth sx 2 nil)]
-          (when (string? d) d))))
-    (catch Exception _ nil)))
+  (store/form-docstring (:node e)))
 
 (defn ^{:web/read :browse/namespaces} namespaces-read
   "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."

@@ -1968,13 +1968,28 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                         #(store/record-verification
                                           % touched summary)
                                         [])
-                      (cond-> {:moved-to to-ns
-                               :moved (:moved plan)
-                               :rewrote (count (:rewrites plan))
-                               :callers (vec (sort (distinct (map :ns (vals (:rewrites plan))))))
-                               :group gid
-                               :test summary}
-                        (seq edges) (assoc :edges-declared edges))))))))))))
+                      (let [;; POSTCONDITION, read back from the store this move actually
+                            ;; COMMITTED rather than from its plan. The gate pre-check
+                            ;; consults the PLANNED export, so a marker pass that skips a
+                            ;; name — it once skipped every meta-wrapped one, leaving
+                            ;; `^:dynamic` vars unexported — passes the gate and surfaces
+                            ;; a session later, somewhere else.
+                            miss (modules/unlanded-exports (:store @session) rows)]
+                        (cond-> {:moved-to to-ns
+                                 :moved (:moved plan)
+                                 :rewrote (count (:rewrites plan))
+                                 :callers (vec (sort (distinct (map :ns (vals (:rewrites plan))))))
+                                 :group gid
+                                 :test summary}
+                          (seq edges) (assoc :edges-declared edges)
+                          (seq miss)
+                          (assoc :export-not-landed miss
+                                 :export-note
+                                 (str "the move planned an export for "
+                                      (str/join ", " miss)
+                                      " and the committed store carries no marker —"
+                                      " mark the name(s) ^:export directly; callers"
+                                      " outside the subtree will not resolve them"))))))))))))))
 
 (defn ns-rename!
   "Rename a WHOLE namespace: its ns decl, every require clause, and every

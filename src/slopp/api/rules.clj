@@ -1,8 +1,27 @@
 (ns slopp.api.rules
+  "The checks that need an EPISODE, and the registry that runs them.
+
+  A write gate sees one form and must decide immediately, so it can only ask
+  questions one form answers. Everything here needs more: what the last done
+  looked like, which tests bounced along the way, what the whole reference
+  graph says. That is the dividing line — not severity, and not importance.
+
+  Two standing rules shape every entry. **A finding must be
+  DISCHARGEABLE**: a rule you cannot act on gets scrolled past, which is worse
+  than no rule because it teaches that findings are noise. And **a rule must
+  be measured over the real store before it ships** (D-rule-grounding) — the
+  withdrawn `:positional-form-access` advisory produced 4-5 false positives out
+  of 5 and would have looked thorough.
+
+  `done-advisories` is the registry; `catalog` holds the prose and the
+  coverage test keeps the two from drifting. Each entry carries either a
+  `:fires-on` fixture or a `:selftest-note` saying why it cannot have one — a
+  rule that silently stops firing is indistinguishable from a clean codebase,
+  which is exactly what `ambient-state` did for its entire life."
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -500,6 +519,208 @@
                 (keep #(edit.modules/namespace-purpose-warning st* %)
                       (distinct (keep #(store/ns-of-form-id st* %) changed))))))
 
+(defn assertions-never-red-check
+  "Done-advisory: a changed `deftest` GAINED assertions and was never observed
+   FAILING since the last done — so the new assertions have only ever been seen
+   green, which proves nothing about them.
+
+   Red-first is usually stated as \"test before code\". The load-bearing part is
+   narrower: every assertion must be watched fail at least once. Adding an `is`
+   to an already-passing test skips that silently, and it is how both instances
+   in `assertions-that-cannot-fail` got in — including one written two hours
+   after its author put \"measure, don't assume\" into the shipped skill. A rule
+   that relies on remembering is not a rule.
+
+   Red is read from the `:verify` deltas since the baseline, which name the
+   failing test: if it bounced at any point while you were working on it, its
+   assertions were exercised and there is nothing to say. New tests are skipped
+   — they have no baseline, and red-first stubs already make a genuinely new
+   spec go red.
+
+   Advisory, and it stays advisory: only the author knows whether an added
+   assertion was watched fail in a way slopp did not record.
+
+   **Measured over the store's whole lifetime before shipping** (D-rule-
+   grounding), at WRITE grain: 104 assertion-additions, of which 82 were never
+   observed red between the two versions and 22 were. So the shape is common —
+   about four in five — which is the argument for the rule rather than against
+   it, since every one of those 82 is an assertion nobody watched fail.
+
+   Write grain OVERSTATES what this reports: the rule works at EPISODE grain
+   against the last done, so an addition followed later in the same episode by
+   a red collapses to \"watched\". Measured on the episode that introduced this
+   rule, it fired zero times — new tests are skipped, and new tests are most of
+   what a working episode adds.
+
+   **The one false-positive path, stated because it is real:** red is read from
+   `:verify` deltas, and only WRITES write those. Breaking the subject with a
+   write and watching the test bounce is recorded; a bare `test_run` against an
+   already-broken subject is not. That path is narrow — the ordinary way to
+   break something is to write it — and it is why this asks rather than
+   refuses."
+  [_session st* changed]
+  (let [ds       (store/deltas st*)
+        baseline (->> ds (filter #(= :done (:op %))) last :id)]
+    (if-not baseline
+      []
+      (let [old-srcs (store/sources-at st* baseline)
+            after    (->> ds (drop-while #(not= baseline (:id %))) rest)
+            ever-red (into #{} (for [d after
+                                     f (get-in d [:result :failures])
+                                     :let [t (:test f)]
+                                     :when t]
+                                 (str t)))]
+        (vec (keep
+              (fn [fid]
+                (let [e       (store/form-by-id st* fid)
+                      ns-sym  (store/ns-of-form-id st* fid)
+                      old-src (get old-srcs fid)]
+                  (when (and e ns-sym old-src (:name e))
+                    (let [qsym (symbol (str ns-sym) (str (:name e)))
+                          old  (try (n/sexpr (p/parse-string old-src)) (catch Exception _ nil))
+                          new  (try (n/sexpr (:node e)) (catch Exception _ nil))
+                          n    (when (and old new) (shape/assertions-added old new))]
+                      (when (and n (pos? n) (not (ever-red (str qsym))))
+                        {:form  qsym
+                         :teach (str n " assertion form(s) added to a test that never went"
+                                     " red this episode — a green you did not watch fail"
+                                     " proves nothing. Break the subject once and confirm"
+                                     " the NEW assertions go red, or they are coverage"
+                                     " theatre that reads as verification")})))))
+              changed))))))
+
+(defn marker-why-check
+  "Done-advisory: a changed form carries an escape marker as a BARE keyword,
+   so the dial says that a rule was waived and nothing about why.
+
+   `(defn ^:unused-ok spare …)` — ok for what reason? `(defn ^:entry-point
+   call-main! …)` — invoked by WHAT? The map form answers in place:
+   `^{:unused-ok \"library surface for external consumers\"}`,
+   `^{:entry-point \"boot --call dispatch, quoted in parse-args\"}`. The why
+   rides the marker exactly as `:prompt` rides every delta, and the dial
+   becomes provenance instead of a mute flag. `^{:covers \"ns/name — why\"}`
+   already works this way and is the worked example.
+
+   Every read site tests the marker for TRUTH, so a string discharges exactly
+   as `true` does and the two forms are interchangeable — pinned by
+   `api.modules-test/an-escape-marker-carrying-its-WHY-discharges-the-same`,
+   because asking for the richer form would be actively harmful if it silently
+   stopped discharging.
+
+   **Measured before shipping** (D-rule-grounding): 22 marker instances in the
+   store, 21 bare, 19 of those in production code. A small, finite, wholly
+   dischargeable population — and it fires only when you TOUCH such a form, so
+   it cannot become standing noise.
+
+   **Two dials are deliberately NOT here.** `^:export` already gives its string
+   value a meaning (the subtree prefix it widens to), so a why needs a
+   different shape and a decision this rule should not pre-empt. And this reads
+   NAME metadata only, so a form-level `^:unsafe (defn …)` is out of scope —
+   the marker sits on the form rather than the symbol, and the store's sexpr
+   accessors unwrap it away."
+  [_session st* changed]
+  (let [dials {:unused-ok    "why is no caller expected?"
+               :entry-point  "what invokes it from outside — CLI flag, wire tool, eval template?"
+               :ambient-ok   "why does this global state belong at the top level?"
+               :breaking-ok  "who downstream did you tell, and what broke?"
+               :foreign-keys "whose map is it?"
+               :legacy-ok    "what makes this worth keeping as-is?"
+               :side-effect  "what does requiring it register?"}]
+    (vec (for [fid changed
+               :let [e (store/form-by-id st* fid)]
+               :when (and e (:name e))
+               :let [s (store/form-sexpr (:node e))
+                     m (when (and s (symbol? (second s))) (meta (second s)))]
+               [k ask] dials
+               :when (true? (get m k))]
+           {:form  (symbol (str (store/ns-of-form-id st* fid)) (str (:name e)))
+            :teach (str "^:" (name k) " says a rule was waived and nothing about why — "
+                        ask " Say it in place: ^{:" (name k) " \"…\"}. A string"
+                        " discharges exactly as the bare keyword does, and the"
+                        " dial becomes provenance instead of a mute flag")}))))
+
+(defn ambiguous-index-check
+  "Done-advisory: a changed form reads INDEX 2 of a store form, where the
+   meaning of that position depends on an optional earlier element.
+
+   This codebase's worst bug: `ambient-def?` read `(nth s 2)` for a `def`'s
+   VALUE — which is where a DOCSTRING sits — so it never once fired on a
+   documented global, i.e. on every global anyone had bothered to justify, and
+   looked healthy for its entire life while nine accumulated. The same class
+   recurred in `contract-drift` a day later, and again in `slopp.ui.pages/
+   form-doc`, which showed a `def`'s value as its docstring on the reviewer
+   page until this rule found it.
+
+   Wrong-index reads are silent by construction — nil is falsy, so the check
+   just does not fire — which is why discipline has never been enough here.
+
+   See `shape/ambiguous-index-reads` for the predicate and the measurement.
+   The two store ACCESSORS are exempt: they index 2 because they are the code
+   that knows when it is a docstring and when it is a value, and flagging them
+   would be flagging the fix."
+  [_session st* changed]
+  (let [exempt #{'slopp.store/form-docstring 'slopp.store/def-init}]
+    (vec (for [fid changed
+               :let [e (store/form-by-id st* fid)]
+               :when (and e (:name e))
+               :let [ns-sym (store/ns-of-form-id st* fid)
+                     qsym   (symbol (str ns-sym) (str (:name e)))
+                     s      (store/form-sexpr (:node e))
+                     hits   (when s (shape/ambiguous-index-reads s (contains? exempt qsym)))]
+               :when (seq hits)]
+           {:form  qsym
+            :teach (str (str/join ", " hits) " reads index 2 of a store form,"
+                        " where a DOCSTRING and a def's VALUE share the position."
+                        " Use store/form-docstring, store/def-init or"
+                        " store/form-symbol — the accessors exist because a wrong"
+                        " index yields nil rather than throwing, so the rule that"
+                        " reads it simply stops firing and looks healthy")}))))
+
+(defn spa-consequences-check
+  "Done-advisory: an endpoint gained `:web/spa` this episode — state what that
+   changed, once.
+
+   Declaring a client-routed prefix is the single biggest behavioural change
+   available in one piece of metadata, and nothing said so. Before: a bad deep
+   link under the prefix was a 404, resolved and refused by the server. After:
+   the server serves the document (it cannot know the path is bad), the client
+   fetches, gets its own 404, and renders a not-found screen. **The HTTP status
+   for every path under that prefix changed from 404 to 200.**
+
+   That is correct — it is what `:web/spa` is FOR — but it is a real semantic
+   change that only surfaced here because two existing tests happened to assert
+   the old status.
+
+   Fires only for the episode that ADDED the declaration, like
+   `shell-widening`: it asks once, while the reason is still in context, and
+   cannot decay into a standing warning to scroll past. It teaches rather than
+   checks, and the boundary inventory still reports `:spa/client-routing` as an
+   UNCHECKED exit — nothing compares the client's route table to the server's,
+   and a teach is not a check."
+  [_session st* changed]
+  (let [ds       (store/deltas st*)
+        baseline (->> ds (filter #(= :done (:op %))) last :id)
+        old-srcs (when baseline (store/sources-at st* baseline))
+        spa?     (fn [form] (when (and (seq? form) (symbol? (second form)))
+                              (:web/spa (meta (second form)))))]
+    (vec (for [fid changed
+               :let [e (store/form-by-id st* fid)]
+               :when (and e (:name e))
+               :let [new (store/form-sexpr (:node e))
+                     old (some-> (get old-srcs fid) p/parse-string store/form-sexpr)
+                     ps  (spa? new)]
+               ;; only when the declaration is NEW: either the form is new, or
+               ;; its previous version did not carry one
+               :when (and ps (not (spa? old)))]
+           {:form  (symbol (str (store/ns-of-form-id st* fid)) (str (:name e)))
+            :teach (str "every path under " (pr-str ps) " now answers 200, not 404 —"
+                        " the server serves this document for any path below the"
+                        " prefix and NOT-FOUND moves into the client. Make sure the"
+                        " client renders a not-found screen for a path its own"
+                        " router does not know, or a bad deep link shows a blank"
+                        " pane at a URL that looks valid. The prefix ROOT is not"
+                        " covered by the fallback and still needs its own route")}))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -532,6 +753,31 @@
     :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
    {:key :ambient-state :severity :advisory :check #'ambient-state-check
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+   ;; an escape marker that says nothing about WHY it is there. The dial is
+   ;; provenance the moment it carries a reason — ^{:covers "ns/name — why"}
+   ;; already works this way and is the worked example.
+   {:key :marker-why :severity :advisory :check #'marker-why-check
+    :fires-on "(ns rf.core)\n(defn ^:unused-ok spare \"S.\" [x] x)\n"}
+   ;; the single biggest behavioural consequence available in one piece of
+   ;; metadata, and nothing said it: declaring :web/spa turns every path under
+   ;; the prefix from 404 into 200 and moves not-found into the client.
+   {:key :spa-consequences :severity :advisory :check #'spa-consequences-check
+    :selftest-note (str "fires only when the declaration is NEW vs the last-done"
+                        " baseline, so a source-only fixture (which has no"
+                        " baseline) cannot show the transition; covered by"
+                        " api.web-test/declaring-a-spa-prefix-says-what-it-changed")}
+   ;; Pattern 1's bug class, with the predicate that finally discriminates:
+   ;; not "positional access" (4-5 false positives out of 5) but indexing a
+   ;; position whose MEANING depends on an optional earlier element, in code
+   ;; that is demonstrably reading store forms.
+   {:key :ambiguous-index :severity :advisory :check #'ambiguous-index-check
+    ;; self-contained on purpose: an earlier fixture used `n/sexpr` and
+    ;; `rf.core` requires no such alias, so it never loaded and the rule
+    ;; "did not fire". The self-test caught it, which is the whole point of
+    ;; having one — but a fixture must exercise the rule, not the loader.
+    :fires-on (str "(ns rf.core)\n"
+                   "(defn ^:unused-ok doc-of \"D.\" [e]\n"
+                   "  (let [sx (:node e)] (nth sx 2 nil)))\n")}
    {:key :namespace-purpose :severity :advisory :check #'namespace-purpose-check
     ;; the fixture's ns form deliberately carries NO docstring — that is the
     ;; whole finding, and it is what 100 of slopp's own 177 namespaces looked
@@ -541,6 +787,16 @@
     :fires-on (str "(ns rf.core)\n"
                    "(defn producer [] {:a 1})\n"
                    "(defn consumer [] (let [r (producer)] (empty? (:b r))))\n")}
+   ;; the GENERAL case behind key-not-returned, which catches only the one
+   ;; vacuous shape. This asks the question that shape was an instance of:
+   ;; were these assertions ever watched fail? Both instances in
+   ;; `assertions-that-cannot-fail` were assertions ADDED to an already-green
+   ;; test, which is the one path red-first does not cover by construction.
+   {:key :assertions-never-red :severity :advisory :check #'assertions-never-red-check
+    :selftest-note (str "needs a prior done to have a baseline AND :verify deltas"
+                        " to read red from — a source-only fixture has neither;"
+                        " covered by rules-test/"
+                        "done-asks-about-assertions-that-were-never-watched-fail")}
    {:key :bare-throw       :severity :advisory :check #'bare-throw-check
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
    ;; teaching that LIES: a string naming a var the store no longer has. Gates

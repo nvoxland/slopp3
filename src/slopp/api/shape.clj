@@ -1,4 +1,17 @@
 (ns slopp.api.shape
+  "What a form's SHAPE says — arities, the keys it reads, the keys it can
+  return, the assertions it makes, the positions it indexes.
+
+  Everything here answers a question some rule needs, and every one is written
+  to be SOUND in the same direction: bail rather than guess. `return-keys`
+  yields nil when it cannot bound the set, so a rule built on it fires only
+  when the answer is certain. `assertions-added` counts what was written
+  rather than what a macro expands to. `ambiguous-index-reads` narrows until
+  the measured false positives are gone.
+
+  That bias is not fastidiousness — it is what makes the rules above
+  dischargeable. A shape answer that guesses produces findings nobody can act
+  on, and this codebase has already withdrawn one advisory for exactly that."
   (:require [slopp.store :as store]
             [slopp.api.breakage :as breakage]))
 
@@ -243,3 +256,74 @@
       (cond-> {:reads reads :producers producers}
         (seq unknown)  (assoc :unknown-shape unknown)
         (seq mismatch) (assoc :mismatch mismatch)))))
+
+(defn ^:export assertions-added
+  "How many assertion FORMS `new-form` has that `old-form` did not, when both
+  are `deftest` sexprs — zero for anything else, and never negative.
+
+  The load-bearing half of red-first is not \"test before code\", it is that
+  every assertion was observed FAILING at least once. Adding an `is` to an
+  already-green test skips that, and nothing downstream notices: `(is (empty?
+  (:unused r)))` where the callee never returns `:unused` is `(empty? nil)`,
+  green whatever the code does. `key-not-returned` catches that specific
+  vacuous shape; this counts the general case, whatever the assertion says.
+
+  Counts `is` and `are` forms anywhere inside, including nested `testing`
+  blocks, which is where they hide. An `are` counts ONCE even though it
+  expands to many — the honest count of what was WRITTEN, since counting the
+  expansion needs macro knowledge this does not have, and the advisory says
+  \"assertion form\" for that reason.
+
+  Rewriting an assertion adds none, deliberately: a rewrite re-runs and is
+  watched wherever it lands. It is the NEW ones that were never watched."
+  [old-form new-form]
+  (let [test?   (fn [f] (and (seq? f) (contains? #{'deftest 'clojure.test/deftest} (first f))))
+        assert? (fn [f] (and (seq? f) (contains? #{'is 'are 'clojure.test/is 'clojure.test/are}
+                                                 (first f))))
+        n       (fn [f] (count (filter assert? (tree-seq coll? seq f))))]
+    (if (and (test? old-form) (test? new-form))
+      (max 0 (- (n new-form) (n old-form)))
+      0)))
+
+(defn ^:export ambiguous-index-reads
+  "Reads of index 2 in `form` (a sexpr) that are walking a STORE FORM — the
+  narrow predicate behind this codebase's worst bug class.
+
+  \"Positional access\" is the wrong predicate and was measured so: a first cut
+  of that rule produced 4-5 false positives out of 5, because ordinary list
+  manipulation and a `defmethod`'s DISPATCH VALUE both live at index 2
+  legitimately. The real defect is narrower — **indexing a position whose
+  MEANING depends on an optional earlier element.** Index 2 of a `def` is the
+  docstring, or the VALUE when undocumented. Index 2 of a `defmethod` is the
+  dispatch value and cannot shift.
+
+  Three conditions, and each one is carrying a measured false positive:
+
+  1. the form must demonstrably READ STORE FORMS (`form-sexpr`, `n/sexpr`, a
+     `:node`) — otherwise `(nth xs 2)` on a vector of rows is flagged;
+  2. it must not mention `defmethod` — the three legitimate dispatch reads in
+     this store all do, and index 2 there is unambiguous;
+  3. it must not be `store/form-docstring` or `store/def-init` themselves —
+     they index 2 BECAUSE they are the code that knows the rule, and flagging
+     the accessor is flagging the fix.
+
+  **Measured over the whole store: 5 candidate sites, 4 explained by 2 and 3,
+  and the one that survived was a real live bug** — `slopp.ui.pages/form-doc`
+  showed a `def`'s value as its docstring on the reviewer page. That is the
+  discharge rate the withdrawn rule could not reach.
+
+  The failure is silent by construction, which is why it needs a rule at all: a
+  wrong index does not throw, it returns something plausible."
+  [form exempt?]
+  (let [nodes (tree-seq coll? seq form)
+        walks? (some #(contains? #{'form-sexpr 'slopp.store/form-sexpr 'sexpr
+                                   'n/sexpr 'rewrite-clj.node/sexpr :node}
+                                 %)
+                     nodes)
+        method? (some #(= 'defmethod %) nodes)
+        at-2?  (fn [f] (and (seq? f)
+                            (contains? #{'nth 'get} (first f))
+                            (= 2 (nth (vec f) 2 nil))))]
+    (if (or exempt? (not walks?) method?)
+      []
+      (vec (map pr-str (filter at-2? nodes))))))

@@ -1,4 +1,17 @@
 (ns slopp.api.web-test
+  "Cover for the web surface's DERIVATIONS — what slopp reads off endpoint
+  metadata, as opposed to what happens when a request arrives.
+
+  The runtime is `slopp.web`'s business and is tested portlessly there. Here
+  the subject is everything derived BEFORE that: which routes a store
+  declares, which URL attributes count as route references, what a contract
+  declaration obliges, and what a declaration's consequences are worth saying
+  out loud.
+
+  That last one is a genre of its own and worth naming: `:web/spa` changes
+  every status code under a prefix from 404 to 200, so the test asserts that
+  slopp SAYS so once, and stops. A consequence nobody states is one somebody
+  discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.api.web :as web] [slopp.api :as api] [slopp.api.external :as external]))
@@ -396,3 +409,43 @@
       (is (not (contains? paths "/store/form/f1")) (pr-str dangling)))
     (testing "a path outside every prefix still dangles"
       (is (contains? paths "/nope/x") (pr-str dangling)))))
+
+(deftest ^:external declaring-a-spa-prefix-says-what-it-changed
+  ;; `:web/spa` is the biggest behavioural change available in one piece of
+  ;; metadata: every path under the prefix stops being a 404 and starts being a
+  ;; 200, with not-found moving into the client. Nothing said so — the change
+  ;; was noticed only because two existing tests asserted the old status.
+  ;;
+  ;; It fires once, for the episode that DECLARED it, so it cannot decay into a
+  ;; standing warning.
+  (let [sess (external/open!)]
+    (try
+      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+                        :prompt "the web rules are inert until the store opts in")
+      (api/ingest! sess 'spa.ui
+                   (str "(ns spa.ui)\n"
+                        "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
+                        "        :web/client false :web/response :string}\n"
+                        "  doc \"The document.\" [_] {:status 200 :body \"<html></html>\"})\n"))
+      (external/done! sess :label "baseline")
+      (testing "adding the declaration states the consequence"
+        (api/edit-replace! sess 'spa.ui 'doc
+                           (str "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
+                                "        :web/client false :web/response :string\n"
+                                "        :web/spa [\"/store\"]}\n"
+                                "  doc \"The document.\" [_] {:status 200 :body \"<html></html>\"})")
+                           :prompt "the client routes /store")
+        (let [f (get-in (external/done! sess :label "spa") [:findings :spa-consequences])]
+          (is (some #(= 'spa.ui/doc (:form %)) f) (pr-str f))
+          (is (re-find #"200" (str (:teach (first f)))) (pr-str f))
+          (is (re-find #"(?i)not-found" (str (:teach (first f)))) (pr-str f))))
+      (testing "it does NOT re-fire while the declaration merely stands"
+        (api/edit-replace! sess 'spa.ui 'doc
+                           (str "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
+                                "        :web/client false :web/response :string\n"
+                                "        :web/spa [\"/store\"]}\n"
+                                "  doc \"The document, reworded.\" [_] {:status 200 :body \"<html></html>\"})")
+                           :prompt "touch the form without touching the declaration")
+        (let [f (get-in (external/done! sess :label "again") [:findings :spa-consequences])]
+          (is (nil? f) (pr-str f))))
+      (finally (api/close! sess)))))

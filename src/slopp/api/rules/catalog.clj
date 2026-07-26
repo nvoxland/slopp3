@@ -1,4 +1,15 @@
-(ns slopp.api.rules.catalog)
+(ns slopp.api.rules.catalog
+  "The PROSE half of every rule: what it means, and how to discharge it.
+
+  Deliberately nothing else. Severity lives where the rule is implemented and
+  is joined back in, because when it was a column here it drifted — the
+  catalog claimed `:advisory` for a rule that refused. Execution lives in the
+  two registries. What remains is the part no registry can hold: the sentence
+  an agent reads when a finding fires.
+
+  Being a separate, inert data def is what makes it POLICEABLE: a coverage
+  test asserts that every registered rule has an entry here and vice versa, so
+  a new rule cannot ship without saying what it wants and how to satisfy it.")
 
 (def ^:export rule-catalog
   "The unified DECLARATIVE catalog of every D9 rule across both grains — each a
@@ -72,6 +83,43 @@
    {:rule :ambient-state :grain :done
     :escape "pass state in as an arg, or accept it (a legit top-level cache)"
     :teach "a global (def _ (atom/ref/agent/volatile! …)) — ambient mutable state a slice can't track"}
+   {:rule :assertions-never-red :grain :done
+    :escape "break the subject once and watch the new assertions go red (test_run on that one test), or accept it — advisory, because only you know whether you already did"
+    :teach (str "a changed deftest GAINED assertion forms and never went red this"
+                " episode, so the new ones have only ever been seen green. The"
+                " load-bearing half of red-first is not test-before-code, it is"
+                " that every assertion was WATCHED FAIL at least once — adding"
+                " one to an already-passing test skips that and nothing else"
+                " notices. key-not-returned catches the one silently-vacuous"
+                " shape; this asks the general question")}
+   {:rule :marker-why :grain :done
+    :escape "write the reason into the marker — ^{:unused-ok \"why\"} discharges exactly as ^:unused-ok does — or accept it; advisory, never blocking"
+    :teach (str "an escape marker on a changed form is a BARE keyword, so it says"
+                " a rule was waived and nothing about why. ^:unused-ok — ok for"
+                " what reason? ^:entry-point — invoked by WHAT? The map form"
+                " answers in place and the dial becomes provenance instead of a"
+                " mute flag, the way :prompt rides every delta and"
+                " ^{:covers \"ns/name — why\"} already does. NOT ^:export (its"
+                " string already means the subtree it widens to)")}
+   {:rule :ambiguous-index :grain :done
+    :escape "read through store/form-docstring, store/def-init or store/form-symbol — or accept it; advisory, never blocking"
+    :teach (str "a changed form indexes position 2 of a STORE FORM, where a"
+                " docstring and a def's VALUE share the slot. This is the"
+                " codebase's worst bug class and it is SILENT: a wrong index"
+                " yields nil, nil is falsy, and the rule reading it stops firing"
+                " while looking healthy. NOT 'positional access' in general —"
+                " that predicate measured 4-5 false positives out of 5; a"
+                " defmethod's dispatch value at index 2 cannot shift and is not"
+                " flagged")}
+   {:rule :spa-consequences :grain :done
+    :escape "nothing to discharge — it states a consequence once, for the episode that declared the prefix"
+    :teach (str "an endpoint gained :web/spa this episode: every path under the"
+                " declared prefix now answers 200 instead of 404, and NOT-FOUND"
+                " moves into the client. Correct, and what :web/spa is for — but"
+                " a real semantic change that no surface mentioned, and one that"
+                " two existing tests caught only by asserting the old status."
+                " The prefix ROOT is not covered by the fallback and still needs"
+                " its own route")}
    {:rule :namespace-purpose :grain :done
     :escape "add a docstring to the ns form saying why the namespace exists — or accept it; this is advisory and never blocks"
     :teach (str "a namespace the episode touched states no PURPOSE. Its inventory is"
