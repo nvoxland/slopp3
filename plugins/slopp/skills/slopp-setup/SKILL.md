@@ -57,6 +57,22 @@ pushes/pulls the **local repo's** `slopp` branch, and you do all origin
 interaction with regular git, on both branches. (`slopp` here is the plugin's
 bundled CLI, on your PATH; it's the same jar the MCP server runs.)
 
+**After ANY adoption — this import, `git_clone`, or pointing slopp at an
+existing codebase — run `store_doctor` once.** Every gate slopp has runs at the
+WRITE, so code that arrived another way has never met one. The doctor is the
+only surface that looks for what the current rules would never have let in:
+hand-written `(declare …)` the ordering pipeline cannot see, two elements in
+one namespace defining ONE name (a form-addressed edit cannot say which you
+mean, and the last wins at load), and metadata that LOOKS like one of slopp's
+dials but is not (`^:unusedok` waives nothing while reading as though it does).
+Each finding names the call that fixes it.
+
+It is a different question from the other two, and all three are worth knowing
+apart: `full_check` asks whether the store is CORRECT, `store_health` what it
+COSTS in bytes, `store_doctor` what it CARRIES that no longer belongs. A store
+written entirely through slopp comes back clean — which is exactly why it is
+worth running on one that wasn't.
+
 ## The branch-ownership model
 
 slopp owns exactly ONE branch — store config `git-branch`, default `"slopp"`.

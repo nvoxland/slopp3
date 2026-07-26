@@ -240,7 +240,9 @@ dial stops being a mute flag. Same for `^:entry-point` (invoked by WHAT?),
 `^:ambient-ok`, `^:breaking-ok`, `^:foreign-keys`, `^:legacy-ok`,
 `^:side-effect`. A bare one on a form you touched draws the `marker-why`
 advisory. The exception is `^{:export "x.y.z"}`, whose string already means
-the subtree it widens to.
+the subtree it widens to. **A marker slopp does not know waives nothing while
+reading exactly as though it does** — `^:unusedok` is not `^:unused-ok`, and
+nothing fails; `store_doctor` is what finds those.
 
 **Tiers are not your problem:** `done` runs the WHOLE in-image suite plus
 the `^:external` tests your changes impact (in a separate JVM,
@@ -763,9 +765,15 @@ not in fact seen it (a subagent shares the session), its `:detail` id is a
 `query_detail` away.
 History is ONE door:
 `query_history` routes by args ({} episodes · {ns name} a form's life ·
-{ns name at} time-travel · {at} was-green-at · {contains} which asks
+{ns name at} time-travel · {ns name effort true} what that form COST to get
+green · {at} was-green-at · {contains} which asks
 touched X · {dead_ends true} the SCRAPPED explorations, {dead_ends "some.ns"}
 those that touched it); `report {since, contains}` for summaries and handoffs.
+The number to read in `effort` is `:cycles` — red→green RECOVERIES, i.e. things
+that had to be fixed. A form with two versions and two cycles was harder than
+one with twenty and none, and nothing else tells you that. It carries
+`:measured` because verification only started timing itself recently, so a
+recorded total covers part of a long form's life and says which part.
 
 **When the answer is for a HUMAN, serve it: `ui_serve`.** It starts a
 browsable view of the store — a milestone timeline, a per-milestone change

@@ -273,6 +273,22 @@ second copy.
   numbers. → **D-kondo-config**.
 - **Never warn about what a tool can fix** (sort the requires, don't lint them).
   → **D-kondo-config**.
+- **A registry must be able to notice what it does not contain.** A list of
+  what a system has is complete the day it is written and describes nothing a
+  year later. Every registry here now carries a drift check that asks the
+  STORE rather than the list — and both new ones found real gaps within
+  minutes: the marker registry was missing three markers in live use
+  (`:external`, `:live-handle`, `:teach`), the crossing inventory five.
+  → **D-rule-grounding**.
+- **Two registries over one vocabulary need COVERAGE, not disjointness.** The
+  first cut of that check asserted the marker and crossing registries do not
+  overlap, and failed immediately on `:generated`, which is genuinely both a
+  name dial and a crossing signal. A key claimed by BOTH is fine; a key claimed
+  by NEITHER is invisible to both guards, and both then report clean.
+- **Declare the dimension, then ENFORCE it, or it is an annotation.** Every
+  done-advisory now says whether it applies to `:production`, `:tests` or
+  `:both`, and the runner filters on it — before that, three rules had reached
+  three different answers to the same question and none had written it down.
 - **Gate and report read ONE declaration.** A second declaration of "what
   blocks" is a second place to disagree, silently. → **D-kondo-config**,
   **D-rule-grain**.
