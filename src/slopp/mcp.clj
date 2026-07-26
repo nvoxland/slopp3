@@ -906,6 +906,7 @@
                                                         (throw (ex-info "edit_subform needs :form (the containing form's name; :name works too)" {}))))
                                                          match src
                                                          :text (:text a)
+                                                         :wrap (:wrap a)
                                                          :where (:where a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))

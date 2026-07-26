@@ -1427,21 +1427,28 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
 (defn edit-subform!
   "Item 5 — paredit's invariant, agent-shaped: replace the UNIQUE structural
   occurrence of `match` inside form `form-name` with `new-src`
-  (content-addressed; wrap/unwrap are just 'new subform containing/omitting
-  the old'). With `:text true` the match is RAW TEXT instead — the escape
-  hatch for string literals and docstrings. With `:where {k v ...}` the
+  (content-addressed). With `:text true` the match is RAW TEXT instead — the
+  escape hatch for string literals and docstrings. With `:where {k v ...}` the
   target is the unique MAP containing those entries (registry-style edits
   by key, no exact text needed) and `match` is ignored. Rides the full
   replace pipeline: dialect gate on the RESULTING form, rebase/conflict
-  commit, verification, provenance."
-  [session ns-sym form-name match new-src & {:keys [prompt agent text where]}]
+  commit, verification, provenance.
+
+  With `:wrap true`, `new-src` is a TEMPLATE and `$1` is the matched form —
+  `(let [n 1] $1)` nests what was there inside what you wrote. This docstring
+  used to say wrap was 'just a new subform containing the old', which was true
+  and not cheap: expressing it meant retyping the matched form inside the
+  replacement, so a two-line change to a large form became a large paste.
+  `$1` is the same template mechanism `change_signature` uses for call sites."
+  [session ns-sym form-name match new-src & {:keys [prompt agent text where wrap]}]
   (let [plan (cond
                (seq where) (refactor/keyed-replace-plan (:store @session) ns-sym
                                                         form-name where new-src)
                text        (refactor/text-replace-plan (:store @session) ns-sym
                                                        form-name match new-src)
                :else       (refactor/subform-replace-plan (:store @session) ns-sym
-                                                          form-name match new-src))]
+                                                          form-name match new-src
+                                                          (boolean wrap)))]
     (if (:error plan)
       plan
       (edit-replace! session ns-sym form-name (:new-form-src plan)

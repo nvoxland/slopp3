@@ -422,3 +422,59 @@
     (testing "the outer marker survives and :export lands on the NAME"
       (is (re-find #"\^:reads" src) src)
       (is (re-find #"\(defn \^:export wrapped" src) src))))
+
+(deftest fill-template-is-the-one-dollar-n-substitution
+  ;; `change_signature` already templates call sites with `$1..$9`, inlined in
+  ;; `rewrite-call-sites`. `wrap` needs the same thing, and a second copy of a
+  ;; substitution rule is how two surfaces come to disagree about what `$1`
+  ;; means — Pattern 2, four instances.
+  (testing "positional substitution, the change_signature case"
+    (is (= "(f b a)" (refactor/fill-template "(f $2 $1)" ["a" "b"]))))
+  (testing "one hole used once, the wrap case"
+    (is (= "(let [x 1] (inc y))"
+           (refactor/fill-template "(let [x 1] $1)" ["(inc y)"]))))
+  (testing "a hole used TWICE substitutes both"
+    (is (= "(if p (f x) (f x))" (refactor/fill-template "(if p $1 $1)" ["(f x)"]))))
+  (testing "a template with no hole comes back unchanged"
+    ;; the CALLER decides whether that is an error — for wrap it is, for a
+    ;; zero-arg call-site rewrite it is correct
+    (is (= "(f)" (refactor/fill-template "(f)" []))))
+  (testing "a hole with no argument is left alone rather than throwing"
+    ;; change_signature checks arity separately and reports it as a finding;
+    ;; silently dropping the text would be worse than leaving it visible
+    (is (= "(f $3)" (refactor/fill-template "(f $3)" ["a"])))))
+
+(deftest subform-wrap-nests-a-matched-form-in-a-template
+  ;; The measured friction: introducing `(let [why (f r)] …)` around existing
+  ;; code means matching a fragment that opens a delimiter it does not close,
+  ;; which is correctly refused — so the only expressible edit was to restate
+  ;; the whole enclosing form. Three times in one session, ~40 lines each.
+  ;;
+  ;; The transformation is NESTING, and the write verbs only expressed
+  ;; replace-in-place and insert-beside.
+  (let [st (store/ingest (store/empty-store) 'w.core
+                         "(ns w.core)\n(defn f [r]\n  (swap! r inc)\n  r)\n")]
+    (testing "the matched form lands inside the template at $1"
+      (let [p (refactor/subform-replace-plan st 'w.core 'f "(swap! r inc)"
+                                             "(let [n (count @r)] $1)" true)]
+        (is (nil? (:error p)) (pr-str p))
+        (is (str/includes? (:new-form-src p) "(let [n (count @r)] (swap! r inc))")
+            (:new-form-src p))
+        (is (str/includes? (:new-form-src p) "\n  r)")
+            "the rest of the form is untouched")))
+    (testing "a template with no $1 is REFUSED, not silently a plain replace"
+      ;; without the hole the matched form would VANISH, which is a different
+      ;; operation than the one asked for
+      (let [p (refactor/subform-replace-plan st 'w.core 'f "(swap! r inc)"
+                                             "(let [n 1] (swap! r inc))" true)]
+        (is (:error p))
+        (is (str/includes? (:error p) "$1") (:error p))))
+    (testing "without the flag the same call is an ordinary replace"
+      (let [p (refactor/subform-replace-plan st 'w.core 'f "(swap! r inc)"
+                                             "(reset! r 0)" false)]
+        (is (str/includes? (:new-form-src p) "(reset! r 0)"))
+        (is (not (str/includes? (:new-form-src p) "swap!")))))
+    (testing "a match that is not there refuses exactly as it always did"
+      (let [p (refactor/subform-replace-plan st 'w.core 'f "(nope)"
+                                             "(let [n 1] $1)" true)]
+        (is (:error p))))))

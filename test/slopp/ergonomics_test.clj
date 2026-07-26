@@ -15,7 +15,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.string :as str]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -515,4 +515,40 @@
           (is (:error r) (pr-str r))
           (is (not (str/includes? (str (:error r)) "ns_add_require"))
               (str "nothing can supply this: " (pr-str r)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external wrap-nests-existing-code-without-retyping-it
+  ;; The motivating edit, verbatim in shape: introduce a binding around a call
+  ;; that is already there. Before `wrap`, the only expressible form of this
+  ;; was to restate the whole enclosing form, because a match that opens a
+  ;; delimiter it does not close is correctly refused — so a two-line change
+  ;; to a 40-line form cost a 40-line paste, three times in one session.
+  (let [sess (external/open!)
+        src  #(render/render-ns (:store @sess) 'wr.core)]
+    (try
+      (api/ingest! sess 'wr.core
+                   (str "(ns wr.core)\n"
+                        "(defn handle \"H.\" [r]\n"
+                        "  (swap! r inc)\n"
+                        "  @r)\n"))
+      (testing "the matched form ends up INSIDE the template, untouched"
+        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+                                     "(let [before @r] $1 before)"
+                                     :wrap true
+                                     :prompt "capture the prior value")]
+          (is (nil? (:error res)) (pr-str res))
+          (is (str/includes? (src) "(let [before @r] (swap! r inc) before)") (src))
+          (is (str/includes? (src) "@r)") "the rest of the fn survived")))
+      (testing "a template with no $1 is refused rather than deleting the match"
+        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+                                     "(do 1)" :wrap true :prompt "no hole")]
+          (is (:error res) (pr-str res))
+          (is (str/includes? (str (:error res)) "$1") (pr-str res))))
+      (testing "and the ordinary non-wrap path still REPLACES rather than nesting"
+        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+                                     "(swap! r dec)"
+                                     :prompt "plain replace still works")]
+          (is (nil? (:error res)) (pr-str res))
+          (is (str/includes? (src) "(swap! r dec)") (src))
+          (is (not (str/includes? (src) "(swap! r inc)")) (src))))
       (finally (api/close! sess)))))
