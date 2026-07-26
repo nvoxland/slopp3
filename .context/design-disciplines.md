@@ -284,13 +284,23 @@ second copy.
   numbers. → **D-kondo-config**.
 - **Never warn about what a tool can fix** (sort the requires, don't lint them).
   → **D-kondo-config**.
+- **Own the process TREE, not the process.** `.destroy` reaches the child
+  only, and slopp's runners exist to spawn more processes — so killing one
+  without its subtree leaves precisely the workers, orphaned and unreachable.
+  Snapshot descendants BEFORE killing (a dead handle reports none), kill the
+  parent first so it stops spawning, then sweep. And scope reaping to a
+  session: killing "leftovers" globally would kill a concurrent server's work.
 - **Teach in the MESSAGE; a new result key is a distribution problem.** A
   refusal's message reaches every caller by construction. A new key must be
   added to ~12 hand-maintained per-tool allowlists in `mcp/call-tool!`, and
   four keys have silently failed to arrive that way (`:dry-run`'s payload,
   `:drift`, `:external-pending`, and a `:fix` hint built and tested correctly
   one layer down). The feature exists, the tests pass, and the agent sees the
-  old behaviour — which is the worst shape a failure can have.
+  old behaviour — which is the worst shape a failure can have. *Closed
+  2026-07-26 by `tools/wire-keys` + a guard that refuses a fifteenth list. The
+  general lesson survives the fix: **N independent allowlists over one value
+  are never protecting anything** — a key absent from a result is absent from
+  the output regardless, so each list was a guess, and guesses lose things.*
 - **A registry must be able to notice what it does not contain.** A list of
   what a system has is complete the day it is written and describes nothing a
   year later. Every registry here now carries a drift check that asks the
