@@ -998,3 +998,42 @@ against the real store, at ~0.9s for a 36-form milestone page. Whether it
 makes a human faster or better-oriented is untested, and should stay
 untested rather than assumed — a human review session is the experiment,
 and it has not happened.
+
+---
+
+## 2026-07-25 — the first read of the turn instrument, and what it cost to trust
+
+Nine turns had recorded `:timing` since rotation landed. Reading them was the
+whole point of building it, and the reading changed the instrument twice.
+
+**The aggregate, and why it was wrong.** 492 calls, 74,490s elapsed, 4,660s of
+it slopp — a 6% share. Two of the nine turns were sessions nobody was in: one
+recorded 46 calls, 224s of work and 45,501s elapsed, reporting `:slopp-share
+"0%"`. A true division and a false statement.
+
+**Excluding those two, the seven active turns are 22% slopp / 78% outside** —
+the same 78% measured session-wide before the instrument existed. The figure
+was right; the instrument could not state it, because turns rotate on the
+WRITE-tool gate (deliberately — rotating on any call would break the
+`readOnlyHint` read-only tools advertise) and so a turn straddles a human going
+to bed, with the gap landing in `:outside-ms` beside agent reasoning.
+
+**Refusals: 57 of 492 calls, 11.6%. Forty-one of the 57 were writes; 23 were
+`edit_subform` alone.** The rate is actionable and the CAUSE was recorded
+nowhere, so the only advice the number could ever support was "read that tool's
+contract" — the guess, not the finding.
+
+**What the reading is worth as a method.** Both defects were invisible from the
+inside: the code was correct, the tests were green, and each number was a
+correct computation over the wrong population. Neither would have been found by
+building more instrument. The generalisable rule — *an instrument's first real
+reading is a test of the instrument, and should be budgeted as one* — sits
+alongside the older lesson from the same file that a tight cluster of numbers
+feels like precision and is not.
+
+**And the discipline the fix followed:** no classification table for the
+refusals. Writing one from source greps would have invented a taxonomy rather
+than derived it, which is what got `:positional-form-access` withdrawn at 4-5
+false positives out of 5. The turn record carries the verbatim messages,
+bounded, so the classes come from data on the next read. That read has not
+happened; it needs turns, not analysis.

@@ -117,18 +117,23 @@ measurably bleed tokens.
    over the journal, not a guess. Per-write verification is normally free
    (median 0ms on a 170-namespace store); if yours is not, that is the signal.
    **And each TURN records where its whole wall clock went**: `turn_end`'s
-   delta carries `:timing {:slopp-ms :outside-ms :elapsed-ms :top :refused}`.
-   One turn is one USER ASK — a new ask closes the open turn and opens its
-   own. `:outside-ms` is time slopp was NOT working — your reasoning plus
-   every non-slopp tool — and it is usually the majority (measured on slopp's
-   own development: 78%). Use it before optimizing a tool: if `:slopp-ms` is a
-   fifth of the turn, a faster tool is not what you are missing.
+   delta carries `:timing {:slopp-ms :outside-ms :idle-ms :elapsed-ms :top
+   :refused}`. One turn is one USER ASK — a new ask closes the open turn and
+   opens its own. `:outside-ms` is time slopp was NOT working — your reasoning
+   plus every non-slopp tool — and it is usually the majority (measured on
+   slopp's own development: 78%). Use it before optimizing a tool: if
+   `:slopp-ms` is a fifth of the turn, a faster tool is not what you are
+   missing. `:idle-ms` is separate and is the session nobody was in: turns
+   rotate on the write-tool gate, so one can straddle a human going away, and
+   `:slopp-share` is taken against ACTIVE time so a pause never reads as slopp
+   being slow.
    **`:refused` is the one to act on.** It counts the calls that bounced — a
    malformed `edit_subform` match, a lint error in the form you were writing,
-   an arity break — as a rate with the tools named. Each is a whole round trip
-   that produced nothing, and they land in the half of the clock nothing else
-   measures. A high rate on one tool is a prompt to read its contract, not to
-   retry harder.
+   an arity break — as a rate with the tools named, plus `:samples`, the
+   verbatim messages the bounced calls answered with. Each is a whole round
+   trip that produced nothing, and they land in the half of the clock nothing
+   else measures. Read the samples before changing anything: a high rate on one
+   tool is a prompt to read its contract, not to retry harder.
    **Tier vocabulary** (namespaces AND tests): `:pure` (referentially
    transparent) · `:internal` (mutates in-process state only — a memo via
    `slopp.cache`) · `:external` (IO: files, subprocesses, network, db).
@@ -142,6 +147,14 @@ measurably bleed tokens.
    change was broad, when you DELETED A CALLER (dead surface appears in
    namespaces you never touched — the one thing episode scope structurally
    cannot see), or before a commit you want to stand behind.
+   **`:crossings` is the one section a green does NOT cover.** Everything else
+   full_check reports is an edge inside the store; this names the exits — a
+   contract becoming JSON, form metadata becoming a route table, `.cljc` going
+   to the ClojureScript compiler — that nothing checks. It is ADVISORY and
+   never flips the status, because these are standing holes rather than
+   regressions. It is there so a whole-store green is not read as ruling out
+   what it never examined; if your change crossed one of those edges, that
+   edge is yours to test.
 7. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
    (it runs `done` and gates on that verdict — it has no checks of its own)
    unless the user asks for more.
@@ -586,6 +599,88 @@ Cypress/Playwright territory someday).
   (`m/validate`) is JVM-verified by the oracle here AND compiled into the
   browser bundle, so the same contract checks both sides. Keep the schema and
   any pure transform in `.cljc`; the `.cljs` stays thin.
+- **In `.cljs`, definitions must PRECEDE their callers.** There are no
+  top-level forward declarations, so a helper written below its caller
+  compiles to an undeclared-var warning. `edit_move {ns name before}` fixes
+  it — but the cold-load gate refuses a move while the violation stands, so
+  break the forward reference first (revert or edit the caller), move, then
+  re-apply. Writing helpers before callers avoids the whole dance.
+
+### Non-trivial apps: a REST API and an SPA that consumes it
+
+For anything past a few pages, the shape that keeps SCALING is **a JSON API
+with declared contracts, consumed by client-side code** — not HTML assembled
+on the server for the browser to slot in. The reason is not fashion: the API
+is an explicit, testable boundary. One call (`query_routes`) answers what the
+app can do, each endpoint is `=` on data with no mocks, and the frontend
+consumes a GENERATED contract instead of sharing the server's internals.
+Server-rendered pages and static content stay fully supported — they just
+stop being the assumption once the app grows.
+
+- **Address the JSON surface at `/api/*`** and keep it separate from the
+  pages. Same reason URLs name what they ARE: a reader (and an agent) can see
+  the whole data surface without reading handlers.
+- **Views are `.cljc`, so the SAME function renders on both sides.** The
+  server renders it into the page; the client re-renders it after a fetch. One
+  renderer means a click and a refresh cannot show different things — the
+  drift that otherwise only a browser reveals.
+- **Take the WIRE shape in a shared view**, not the server's shape. JSON has
+  no symbols and no keywords-as-values; a view taking the server's shape
+  renders correctly on the server and renders `nil`s in the browser.
+- **THE test of whether you got the split right: your UI tests are in-image**
+  (~0.5 ms each), asserting on returned hiccup DATA — `(get-in v [2 1])`. If
+  UI tests need the external tier or a browser, too much logic drifted into
+  `.cljs`. That is the check on the whole discipline, and it is why a view
+  that returns data beats one that returns a framework's component object.
+- **Progressive enhancement beats a hard SPA when a server route exists.**
+  Intercept plain left-clicks only — leave middle-clicks and cmd/ctrl/shift
+  clicks to the browser, or the enhancement takes away open-in-a-new-tab. And
+  on a failed fetch, fall back to a full page load: a stale pane under a new
+  URL is the SPA failure mode that lies to the reader.
+- **One list of served namespaces, not a literal per server.** Routes and
+  `:web/read` performers can live in different namespaces (reads resolve by
+  VOCABULARY, store-wide, so an API endpoint can reuse a page's read). A
+  server given only half answers **500, not 404** — much harder to diagnose.
+  If two servers mount the same app, they share one `def`.
+- **Mark transport endpoints `^{:web/client false}`.** Anything that is not
+  the app's own API — health, metrics, an RPC transport — otherwise gets a
+  typed browser `fetch` wrapper generated for it. The same flag is what keeps
+  HTML page endpoints out of the client.
+
+#### If you go all the way: no server-rendered pages at all
+
+- **Serve ONE document** — head, an empty `<div id="app">`, nothing else —
+  and declare `:web/spa` with the prefixes your client router owns. Note the
+  prefix ROOT is not covered (`["/store"]` generates `/store/*`), so `/store`
+  itself needs its own route.
+- **Consequence to state out loud: every path under a declared prefix now
+  answers 200.** Not-found moves into the client. A bad deep link that used
+  to 404 now serves the document and the client renders "not found" after its
+  fetch 404s. That is correct, and it is a real change in what your status
+  codes mean.
+- **`route-for` in `.cljc`, returning nil for unknown paths.** With server
+  rendering gone this IS your routing table, so make it a pure function and
+  test it in-image. Never default an unknown path to a screen — that tells
+  the reader they are somewhere they are not.
+- **ONE pure `app-view` from state to the whole page.** Then *every* screen
+  is an in-image assertion on hiccup data, including the two an SPA invents:
+  **loading** and **not-found**. Both render as a blank pane if nobody
+  handles them, and a blank pane is indistinguishable from a screen whose
+  content is empty.
+- **Clear the previous screen's data before fetching.** Leaving it up under
+  the new URL shows one thing while the address bar claims another.
+- **Endpoint tests must ROUND-TRIP through JSON.** `web/handle!` returns the
+  body as Clojure DATA — the adapter serializes — so a keyword sails through
+  a `[:x :string]` contract in-image and reaches the browser as a string. A
+  test that does not serialize is checking a value no client receives. Watch
+  for vacuous validation too: `[:sequential …]` over an empty list checks
+  nothing inside it, so give fixtures at least one real element.
+- **`:uri` and `:query-string` are separate request keys.** Putting `?a=b`
+  into `:uri` means no route matches, and the 404 you get looks exactly like
+  the one you were trying to assert.
+- **Send data, never markup.** Syntax highlighting ships as `[class text]`
+  pairs and diffs ship as lines; the client decides what an element is. That
+  is what keeps one renderer instead of two.
 - **Dev loop (optional):** `config_file {path "client" key "auto-compile" value
   "true"}` recompiles the bundle after a client-ns write — ASYNC and
   non-blocking (single-flight + coalescing): the write returns
@@ -645,8 +740,12 @@ by key-set, with the diff in `:mismatch`. **Renaming a key, or asking who
 supplies one, is this read — never a grep.** `:unknown-shape` names the
 callers passing a non-literal: trust `:mismatch` only as far as that list
 is empty · `query_brief` (the edit dossier) ·
-`query_macroexpand`. Re-reads are FREE: an unchanged view returns a tiny
-`:unchanged` stub — re-fetch instead of carrying source in context.
+`query_macroexpand`. Re-reads are FREE: a view you already received THIS ASK
+returns a tiny `:unchanged` stub — re-fetch instead of carrying source in
+context. The stub is scoped to the ask, so after a context clear or a
+compaction the next ask gets payloads again; when one does appear and you have
+not in fact seen it (a subagent shares the session), its `:detail` id is a
+`query_detail` away.
 History is ONE door:
 `query_history` routes by args ({} episodes · {ns name} a form's life ·
 {ns name at} time-travel · {at} was-green-at · {contains} which asks

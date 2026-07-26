@@ -203,18 +203,79 @@
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
+(defn- departed-vars
+  "The names in `interned` that `new-source` no longer defines — what a live
+  reload leaves behind.
+
+  `load-string` re-defines every form the new source contains and says nothing
+  about the ones it does not, so a DELETE reaches a `--live` host as \"still
+  there\". The store is correct, the suite is green, and the running server
+  keeps answering from a var whose definition is gone. Worse for routes than
+  for anything else: a stale route SHADOWS a catch-all, so deleting a page
+  makes the SPA that replaced it look broken.
+
+  Two directions of error, and they are not symmetric. Missing a departed name
+  leaves a stale var — the old behaviour. Reporting a name the source DOES
+  define unmaps live code. So every def shape counts, and source that will not
+  read departs NOTHING."
+  [interned new-source]
+  (let [defined (try
+                  (->> (read-string {:read-cond :allow}
+                                    (str "[" new-source "]"))
+                       (keep (fn [f]
+                               ;; a leading metadata wrapper needs no unwrapping
+                               ;; here: the READER attaches ^:unsafe to the list
+                               ;; itself, so (defn f …) is what arrives either
+                               ;; way. The store's accessors see a CST, which is
+                               ;; why they must unwrap and this must not.
+                               (when (and (seq? f) (symbol? (second f)))
+                                 (second f))))
+                       set)
+                  (catch Throwable _ ::unreadable))]
+    (if (= ::unreadable defined)
+      #{}
+      (into #{} (remove defined) interned))))
+
+(defn- reload-ns!
+  "Load `new-source` into `ns-sym` and drop the vars it no longer defines.
+
+  The unmapping runs only AFTER a successful load, and the ordering is the
+  safety property: a reload that throws leaves the namespace exactly as it
+  was. Gutting first would turn a compile error into a dead namespace, which
+  is strictly worse than the stale var this exists to remove."
+  [ns-sym new-source]
+  (let [before (when-let [n (find-ns ns-sym)]
+                 (set (keys (ns-interns n))))]
+    (load-string new-source)
+    (when-let [n (find-ns ns-sym)]
+      (doseq [s (departed-vars before new-source)]
+        (ns-unmap n s)))))
+
 (defn watch-live!
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
   green-gate means only compilable code ever loads. Caveat: long-lived instances
   (servers, background threads) keep their old closure code until re-created.
 
+  **A reload also DROPS what the new source stopped defining.** `load-string`
+  re-defines the forms it is given and is silent about the rest, so without
+  this a deleted form keeps answering in the running host — the store correct,
+  the suite green, and the server serving a definition that no longer exists.
+  See `departed-vars` for why the error directions are not symmetric.
+
   Resilient by construction: the ENTIRE poll body is guarded, so a transient
   store error (contention, a swapped db file) logs and RETRIES instead of
   killing the daemon and serving stale code forever. The version baseline
   advances only when every changed namespace reloaded — a failed one keeps its
   OLD source in the baseline AND holds the version back, so the next poll
-  retries it rather than treating it as already seen."
+  retries it rather than treating it as already seen.
+
+  **A failure that keeps failing says so, and says why.** The retry note used
+  to read the same hopeful sentence forever while a reload had been stuck for
+  many minutes, and the REASON existed only in the server log — a file no
+  slopp surface exposes, on a system whose whole claim is that the store
+  answers everything. `boot-info` now carries the message and the consecutive
+  attempt count, so a verdict marked suspect can say what to do about it."
   [dir & {:keys [interval-ms] :or {interval-ms 500}}]
   (let [conn (loop []
                ;; an unadopted dir has no store until its first write
@@ -234,14 +295,14 @@
                                               (not= (get prev %) (get now %)))
                                         (dependency-order now))
                         failed  (reduce (fn [failed ns-sym]
-                                          (try (load-string (get now ns-sym))
+                                          (try (reload-ns! ns-sym (get now ns-sym))
                                                (stamp-loaded! ns-sym)
                                                failed
                                                (catch Throwable t
                                                  (log! "live-reload failed for " ns-sym
                                                        ": " (.getMessage t))
-                                                 (conj failed ns-sym))))
-                                        #{} changed)
+                                                 (assoc failed ns-sym (str (.getMessage t))))))
+                                        {} changed)
                         loaded  (remove failed changed)]
                     (when (seq loaded)
                       (log! "live-reloaded: " (str/join " " loaded)))
@@ -249,14 +310,25 @@
                     ;; listed until a later poll reloads it (it also holds
                     ;; the version baseline back, below)
                     (swap! boot-info
-                           #(when % (-> %
-                                        (assoc :last-reload-at (System/currentTimeMillis)
-                                               :failed (vec (sort failed)))
-                                        (update :reloads (fnil + 0) (count loaded)))))
+                           #(when %
+                              (-> %
+                                  (assoc :last-reload-at (System/currentTimeMillis)
+                                         :failed (vec (sort (keys failed)))
+                                         ;; the REASON, and how long it has been
+                                         ;; true — "the next poll retries" is not
+                                         ;; news the twentieth time
+                                         :failed-why
+                                         (not-empty
+                                          (into {}
+                                                (for [[ns-sym why] failed]
+                                                  [ns-sym
+                                                   {:why why
+                                                    :attempts (inc (get-in % [:failed-why ns-sym :attempts] 0))}]))))
+                                  (update :reloads (fnil + 0) (count loaded)))))
                     ;; a failed ns keeps its OLD source so it still looks changed,
                     ;; and holding dv back keeps the version-change branch firing
                     [(if (seq failed) dv dv2)
-                     (reduce #(assoc %1 %2 (get prev %2)) now failed)])))
+                     (reduce #(assoc %1 %2 (get prev %2)) now (keys failed))])))
               (catch Throwable t
                 (log! "live-reload poll error (continuing): " (.getMessage t))
                 [dv prev]))]

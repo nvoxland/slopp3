@@ -35,6 +35,62 @@ jobs:
         env:
           SLOPP_CLOJURE: clojure
         run: clojure -M:test
+  # The kernel (slopp.rt, slopp.boot) exists TWICE and both copies are live:
+  # a hand-maintained file on main serves a main-checkout dev run — which is
+  # how the benchmarks execute — while the store's projection is what the jar
+  # ships and what build! materializes for the external tier.
+  #
+  # No TEST can compare them. In every context a test runs, the "file" IS the
+  # store's rendering, so the comparison is a tautology that passes vacuously;
+  # that one was written and caught here already. The two copies are only both
+  # reachable from a checkout that can see both refs, which is this job.
+  #
+  # They have drifted three times. Twice found by hand days later; the third
+  # found by this check on its first run — the store copy had never gained
+  # add-manifest-libs!, so "java -jar slopp.jar <dir> works for ANY app" was
+  # true only of the copy no user runs. A store-wide rename cannot see a file,
+  # so every future rename has the same blind spot.
+  kernel-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slopp/main
+          fetch-depth: 0   # main must be reachable — it is the other copy
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2
+            ~/.gitlibs
+            ~/.deps.clj
+            ~/.clojure
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+      # The checked-out tree IS slopp/main, so src/slopp/*.clj here is the
+      # store's projection; main's copy comes out of git. Surface + behaviour
+      # parity, not identity: form order, the store-only markers and the ns
+      # form's requires differ legitimately and forever.
+      #
+      # The trailing argument NAMES the divergences that are deliberate. Today
+      # that is boot's watch-live!, whose store docstring explains its own
+      # ^:unsafe marker — prose that is true there and meaningless in a copy
+      # that gets slurped into a child image. The declaration polices itself:
+      # if it stops describing a real difference the check fails asking you to
+      # drop it, so this list cannot quietly become a mute button.
+      - name: The kernel's two copies still agree
+        run: |
+          git show main:src/slopp/rt.clj   > /tmp/rt-main.clj
+          git show main:src/slopp/boot.clj > /tmp/boot-main.clj
+          clojure -M -m slopp.sync kernel /tmp/rt-main.clj   src/slopp/rt.clj
+          clojure -M -m slopp.sync kernel /tmp/boot-main.clj src/slopp/boot.clj 'watch-live!'
   test-via-slopp:
     runs-on: ubuntu-latest
     steps:

@@ -144,6 +144,104 @@ form already has.
 
 Full derivation, 5-whys and measurements: `ideas/the-non-form-citizens.md`.
 
+## Core 6 — verification stops at the boundary, and every crossing is hand-built
+
+**Root.** Derived from the SPA wave (16 frictions, `ideas/spa-wave-frictions.md`).
+Sort them by *where the value was when it went wrong* and all but one land in
+the same place: at a **crossing**, where something leaves the world slopp
+verifies.
+
+| Crossing | What went wrong |
+|---|---|
+| form data → a third-party interpreter (garden) | `clojure.core/>` rendered into a CSS selector; the rule landed on `.app` and the whole app was 16rem wide, behind a 200 |
+| form metadata → an assembled route table | a context accepted a namespace list that could not perform the reads its own routes declared — 500, not 404 |
+| endpoint contract → JSON → browser | a keyword passed a `[:x :string]` contract in-image and arrived as a string; the test validated a value no client receives |
+| `:cljc` source → the ClojureScript compiler | `(first "line")` is a char here and a string there; `defonce` arity; `#js` |
+| a spec → generated code | `pay!` generated `pay!!`; transport endpoints wrapped as browser `fetch` clients by default |
+
+Inside the boundary the machinery is excellent, and the wave proved it: the
+module gate refused a views→client-subtree call, named all three legitimate
+answers, and `ns_rename` reported the `-test` sibling it had not rewritten.
+That is Core 2's graph paying off. **Nothing comparable exists at the exits.**
+
+**Five whys.** Why do frictions cluster at crossings? Verification is attached
+to the WRITE of a form. → Why? Because the form is slopp's unit of storage,
+editing, hot-reload and provenance (Core 5). → Why doesn't that cover a
+crossing? A crossing is not a form; it is a relationship between a form and
+something *outside* — a library, a wire format, another platform, another
+process. → Why is that relationship invisible? THE reference graph models
+form→form edges and has no representation for an edge that leaves the store.
+→ **Base cause: slopp models edges inside the store and has none for an edge
+that exits it, so every exit is unverified by construction and each one grows
+an ad-hoc, hand-written check — or none.**
+
+**Discipline.** Read this as Core 2 turned outward. Core 2 says *any
+relationship the system lets you express, it must be able to see*; Core 6 says
+**any boundary the system lets a value cross, it must check AT the crossing —
+and report in the AUTHOR's vocabulary, not the checker's.**
+
+The second half is not decoration; it is where the crossing bites twice. The
+checker lives on the far side, so its vocabulary is the far side's: the
+dialect gate refused `#js` by naming `read-string`, a symbol absent from the
+source. `compile_client` anchors *warnings* to the owning form beautifully and
+reports a hard *failure* as a bare path — no message, no form, no line. A
+report phrased in the far side's terms makes the author debug a translation
+they never wrote.
+
+**Tells that you are in this core:**
+
+- A guard that validates one TYPE of the data it forwards (strings, for
+  injection) while forwarding everything else unexamined.
+- A test that asserts on data that has not yet crossed the boundary its
+  contract describes — the cheapest correct-looking test, and wrong. Watch
+  for vacuous validation alongside it: `[:sequential …]` over an empty list
+  checks nothing inside it.
+- A derived artifact (route table, stylesheet, generated namespace, wrapper
+  spec) assembled from verified forms and handed on with no check that the
+  ASSEMBLY is coherent. Each form was legal; the composition was not.
+- An error message naming a symbol, file or process the author never wrote.
+
+**Distinguish from Core 5.** A stale `--live` host serving a deleted route is
+Core 5's *Copies* citizen (a copy without a version stamp on the verdict), not
+this — and `full_check`'s `:host-stale` verdict-note is that machinery already
+working. Core 6 is about the crossing itself, not about a second copy of
+something that has one.
+
+*(That one turned out to have a root below the copy, found 2026-07-25:
+`load-string` re-defines what a namespace's new source contains and is silent
+about what it does not, so a DELETE reached every `--live` host as "still
+there" — for every deleted form, not just routes. `reload-ns!` now unmaps what
+departed. Routes only made it visible, because a stale route shadows the SPA
+catch-all.)*
+
+**The chassis, 2026-07-25 — `slopp.api.crossings`.** The base cause named a
+missing REPRESENTATION, so that is what got built: a registry of exit KINDS —
+what leaves, to where, `:checked-by`, `:blind` — plus the markers slopp owns
+that deliberately stay inside, derived over the store, with `full_check`
+reporting the exits nothing checks.
+
+**It verifies nothing, and that is the design.** Nothing could: the far side is
+another system, and the checker that would know lives there and speaks that
+system's vocabulary — which is the second half of this core restated. What it
+buys is that **an exit with no checker and an exit that does not exist stop
+looking identical.** That is D-surface-honesty applied to the boundary itself.
+
+Two properties keep an inventory from decaying into a document, and both are
+general enough to reuse:
+
+- **Classification must be TOTAL.** Every marker slopp owns is either an exit
+  or declared internal-with-a-reason; a marker in neither list is a finding. It
+  caught five on its first real run against slopp's own store. Without the
+  second list the classification is partial, and a partial one is worse than
+  none — every internal marker reads as a hole and the one real hole drowns,
+  which is the precision failure that got `:positional-form-access` withdrawn.
+- **It must be DERIVED, not hand-listed.** A list of exits cannot notice a new
+  exit; a derivation over the store can.
+
+Scoped to slopp's own marker vocabulary on purpose: a user's namespaced
+metadata is theirs, and treating it as an unclassified exit would bury the
+finding in a store slopp knows nothing about.
+
 ---
 
 ## Disciplines catalog (the standing rules)

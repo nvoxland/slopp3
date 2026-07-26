@@ -141,3 +141,67 @@ unresolved-namespace finding.
 One rough edge worth knowing: the `!`-effect warning fires on idiomatic
 ClojureScript entry points, because `^:export main` touches the DOM. It is
 advisory, not a refusal.
+
+## Non-trivial apps: a REST API and an SPA that consumes it
+
+Past a handful of pages, the shape that keeps scaling is **a JSON API with
+declared contracts, consumed by client-side code** -- rather than HTML
+assembled on the server for the browser to slot in. Server-rendered pages and
+static content stay fully supported; they just stop being the assumption.
+
+The reason is not taste. The API is an explicit, testable boundary: one call
+(`query_routes`) answers what the app can do, each endpoint is a function of
+data you can assert on with `=`, and the frontend consumes a *generated*
+contract instead of sharing the server's internals. HTML-over-the-wire models
+blur exactly that boundary -- the server computes presentation, and there is
+no contract left to point at.
+
+Address the JSON surface at `/api/*`, and keep it separate from the pages, for
+the same reason URLs name what they *are*: the whole data surface stays
+readable without opening a single handler.
+
+### Views go in `.cljc`, and that is what keeps them cheap to test
+
+The rule from [the platform split](#sharing-real-logic), applied to UI:
+
+> Views, state transitions and formatting are `.cljc` pure functions. Only
+> mounting and event binding are `.cljs`.
+
+Then the *same function* renders on both sides -- the server renders it into
+the page, the client re-renders it after a fetch. One renderer means a click
+and a refresh cannot show different things, which is the kind of drift only a
+browser would otherwise reveal.
+
+It also means a view is an ordinary in-image test asserting on returned hiccup
+**data** (`(get-in v [2 1])`) -- no browser, no headless Chrome, no JS test
+runner. **That is the check on whether you got the split right: if UI tests
+need the external tier, too much logic drifted into `.cljs`.**
+
+Two details that bite:
+
+- **Take the wire shape in a shared view**, not the server's shape. JSON has
+  no symbols; a view built around the server's data renders correctly on the
+  server and renders `nil`s in the browser.
+- **In `.cljs`, definitions must precede callers** -- there are no top-level
+  forward declarations. `edit_move {ns name before}` fixes it, but break the
+  forward reference first: the cold-load gate refuses a move while the
+  violation stands.
+
+### Enhance progressively where a server route already exists
+
+Intercept plain left-clicks only. Middle-clicks and cmd/ctrl/shift clicks mean
+*open in a new tab*, and hijacking them takes away a capability the
+enhancement did not give. On a failed fetch, fall back to a full page load: a
+stale pane under a new URL is the SPA failure mode that lies to the reader.
+
+### Two wiring rules the framework enforces
+
+- **One list of served namespaces.** Routes and `:web/read` performers can
+  live in different namespaces -- reads resolve by *vocabulary*, store-wide,
+  so an API endpoint can reuse a page's read. `web/context` refuses a
+  namespace list that cannot perform the reads its own routes declare, naming
+  each unservable kind and the route that wanted it. Without that check the
+  symptom is a **500, not a 404**, which is much harder to read from outside.
+- **Mark transport endpoints `^{:web/client false}`.** Health, metrics, an RPC
+  transport -- anything that is not the app's own API otherwise gets a typed
+  browser `fetch` wrapper generated for it.

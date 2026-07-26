@@ -2219,3 +2219,149 @@ namespaces (today `store/ingest` bypasses the module gate, so a `done`/
 `full_check` module analysis over a generated ns in a real store is the open
 question part 3 will surface). Program roadmap: `.context/roadmap.md` (typed API
 contracts).
+
+## D-spa (2026-07-25) — REST API plus a client-side SPA is the supported architecture
+
+The question the user asked behind a UI request: what shape of web application
+does slopp support as a NON-TRIVIAL app grows? Answer, a user call: **a REST
+API with declared contracts, consumed by a client-side SPA.** Server-rendered
+HTML and static content stay fully supported; they stop being the assumption.
+
+The user's argument, and the reason it is the right one: SPA is not about
+"fatness", it is about responsiveness and dynamic behaviour that a
+server-rendered page cannot reach. And the organising property for an AGENT
+rather than a human: **the API is an explicit, versioned, independently
+testable boundary.** One place to ask what the app can do (`query_routes`),
+each endpoint testable as `=` on data, and a frontend consuming a GENERATED
+contract instead of sharing implicit server internals. That is what lets an
+agent keep reasoning about an app as it grows past the size where it can hold
+the whole thing at once.
+
+**This is not a new bet — it is the best-built ground slopp already has.**
+D-web-contracts shipped the contracts, the generated typed client and the
+`stale-client` advisory; D-web-cljs shipped one store, one dialect, compiled on
+the JVM. Declaring SPA the supported architecture mostly names what those
+already imply and closes the gaps around them.
+
+### The rule that keeps the frontend verifiable: `:cljc` except the DOM
+
+A `:cljs` namespace cannot load into the JVM oracle; a `:cljc` one can
+(`store/jvm-loadable?`, `image/load-ns!`). That single fact sets the
+discipline:
+
+> **Views, state transitions and formatting are `:cljc` pure functions. Only
+> mounting and event binding are `:cljs`.**
+
+Then a view is an ORDINARY in-image test — ~0.5 ms, against the ~368 ms
+anything in the external tier costs — asserting on returned hiccup DATA. No
+browser, no headless Chrome, no cljs test runner, no new test tier. This
+generalises a pattern that was already working locally:
+`slopp.ui.client.nsfilter` and `.nsschema` are `:cljc` with `-test` siblings
+while `.nsview` is `:cljs` glue.
+
+**The check on the whole discipline: if UI tests land in the external tier,
+the split is wrong.** That is the observable, and it is why the rule is stated
+as a tier property rather than a style preference.
+
+### Renderer: Replicant, chosen for testability rather than taste
+
+A Replicant view is `(fn [state] hiccup)` — data in, data out — so it is
+trivially `:cljc` and `=`-testable on the JVM, and the same views render to
+strings on the JVM, which keeps SSR and static available without a second code
+path. It has zero dependencies. A React component (Reagent/UIx) returns a
+component object bound to the React runtime, which is exactly what pushes its
+tests into a JS runtime and out of the cheap tier.
+
+**Honest cost, recorded rather than glossed:** no component ecosystem. An app
+needing a heavyweight third-party React component (a data grid, a charting
+library) is not served by this road, and the right answer then is to say so.
+Reagent/UIx stay usable at the cost of the in-image test property.
+
+### Rejected, with reasons
+
+- **HTML-over-the-wire** — Ripley, LiveView/Blazor-style, htmx. They blur the
+  API boundary this decision is organised around: the server computes
+  presentation and there is no contract to point at. Websockets remain
+  addable later for push WITHOUT changing the model — a socket carrying JSON
+  events is not a socket carrying markup.
+- **Electric Clojure.** NOT because of macros: an earlier draft of this
+  argument claimed Electric forces app authors to write custom macros, and
+  that was simply wrong — authors use ITS macros (`e/defn`, `e/server`,
+  `e/client`) and slopp handles library macros routinely (garden's `at-media`
+  sits in `ui.pages/store-stylesheet` today). The real objection is that
+  `e/defn` does not expand to Clojure. It is compiled by Electric's own
+  compiler, which INFERS where each expression runs — and that is precisely
+  the decision slopp's purity tiers and gates exist to make. Both cannot hold
+  it. It also puts views outside the in-image test property, makes
+  `query_macroexpand` stop teaching, and adds a second hot-reload path.
+  Currently `v3-alpha-SNAPSHOT`. Reasonable as a deliberate opt-out for one
+  app; wrong as the road.
+- **Any `app-shell`/nav primitive in `slopp.web`** (user constraint, explicit).
+  A framework carrying an opinion about navigation has stopped being a
+  framework. The three-pane shell lives in `slopp.ui`, the application.
+
+### The correction this is built on
+
+The first instinct recorded here was to argue AGAINST a client framework
+because slopp's gates can see server-rendered hiccup and cannot see React.
+That is backwards and is rejected: **capability first, then make it
+verifiable.** Choosing an architecture by what the current gates happen to
+inspect is how a tool's limitations become a product's ceiling.
+
+### Shipped so far
+
+- **SPA deep-link fallback** — a DECLARED fallback for a path prefix
+  (`:web/spa`, `slopp.web.routes/spa-rows`, ordered exact → static → fallback)
+  so a refreshed client route serves the app document. Declared rather than a
+  catch-all precisely so the gates still read it and a genuinely missing path
+  still 404s — a fallback that swallows 404s is worse than none.
+- **The bundle served without ceremony**, at `/js/main.js` with `:web/raw`,
+  and `api.cljs/served-by-a-mount?` so a compiled bundle nothing serves is a
+  finding rather than a 404 discovered in a browser.
+- **`url-attrs` extended to `:src`**, which immediately caught a real shipped
+  bug: `/assets/cljs/main.js` had 404'd on every page since the wave that
+  added it, behind a 200 for the page itself.
+- **The three-pane reviewer UI** on `slopp.ui.views` (`:cljc`, `:pure`) as the
+  first dogfood of the `:cljc` rule.
+- **The `/api/*` surface and the first real consumer of `generate_client`.**
+  `slopp.ui.contracts` (`:cljc`, `:pure`) holds named malli schema vars;
+  `slopp.ui.api` (`:pure`) declares `GET /api/namespaces` and
+  `GET /api/ns/:ns` against them, REUSING the page's `:web/read` performers
+  (reads resolve by vocabulary, so the JSON and the HTML cannot disagree —
+  one answer, two representations). `generate_client` emits
+  `slopp.ui.client.api`, and `slopp.ui.client.nsview` calls it: a left-nav
+  click fetches the outline and re-renders `views/ns-outline-main`, the SAME
+  `:cljc` view the server renders into the same pane. Renderer: Replicant.
+- **Endpoint tests validate the response against the schema var the client is
+  generated from**, so a handler drifting from its own contract is a red in
+  the in-image tier rather than a runtime surprise in a browser.
+
+### What the dogfood immediately found
+
+Building on the model is what surfaced these; all four are fixed, and the
+first is the one worth remembering:
+
+- **`web/context` accepted a namespace list it could not perform the reads
+  of.** Because reads resolve by VOCABULARY store-wide, an endpoint reusing
+  another namespace's performer is correct and encouraged — which means a
+  half-complete `:web/namespaces` assembles fine and answers **500, not 404**,
+  at request time. `context` now computes the set difference at assembly and
+  refuses, naming each unservable kind with the route that declared it.
+  Generalizable: *when resolution is by NAME across a scope the caller
+  assembles by hand, the assembly step is where it must be checked.*
+- **The generated client appended a second `!`** to endpoints already named
+  with one — the dialect's own convention for an effectful fn. `call-endpoint!`
+  generated `call-endpoint!!`.
+- **Transport endpoints were wrapped by default.** `/mcp`, `/call` and
+  `/metrics` would have shipped as typed browser `fetch` wrappers; they now
+  declare `:web/client false` and carry honest contracts.
+- **`compile_client`'s `:serve-with` hint claimed nothing served the bundle**
+  while `/js/main.js` was returning it with a 200 — it only ever asked about
+  static mounts, and an endpoint that reads the file serves it too. Fixed by
+  making the message state the question it asked rather than a conclusion it
+  had not earned (D-surface-honesty).
+
+Deferred: extending client-route integrity to the client-side route table;
+`:web/spa` is built but nothing declares it, because the reviewer UI has real
+server routes for every client route and is progressively enhanced rather than
+a hard SPA. Remaining frictions: `ideas/spa-wave-frictions.md`.
