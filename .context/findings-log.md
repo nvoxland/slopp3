@@ -1037,3 +1037,42 @@ than derived it, which is what got `:positional-form-access` withdrawn at 4-5
 false positives out of 5. The turn record carries the verbatim messages,
 bounded, so the classes come from data on the next read. That read has not
 happened; it needs turns, not analysis.
+
+---
+
+## 2026-07-25 (later) — the refusal samples, first read: 22 bounces, and the classes come out of data
+
+The instrument's own follow-up. One turn has run under the version that keeps
+verbatim refusal messages, and the point of the exercise was to check that the
+CLASSES could be derived rather than invented — the reason no taxonomy was
+written when the counting shipped.
+
+They can. 22 refusals, `edit_subform` 10, `edit_add_form` 5, `test_run` 5,
+`edit_replace_form` 4, `query_store` 2, `query_eval` 1. Reading the messages,
+four shapes:
+
+1. **A write naming an alias the ns form does not have yet** (`No such
+   namespace: kernel`, `No such namespace: str`). Every one is the same
+   two-step: add the require, resend the identical form. The largest
+   mechanically-avoidable class in the sample.
+2. **`edit_subform` matching a FRAGMENT that opens a delimiter it does not
+   close** — trying to wrap existing code in a new `let`. The refusal already
+   teaches the fix and hands back `:suggestion`; the cost is the round trip,
+   not the recovery.
+3. **`edit_subform` matching text that occurs twice** — a snippet present in
+   both a fixture and the assertion about it. Recoverable from `:source-now`.
+4. **Probe iteration** (`query_store` / `query_eval` refusing `read-string`,
+   an unknown var). Not waste in the same sense: these are the cost of asking
+   the store a question that turned out to be malformed, and each answer
+   taught the next.
+
+**n=1, and the sample is one agent on one kind of work**, so nothing should be
+built off it yet — the ordering above is a hypothesis, not a ranking. What IS
+established is the method: the classes were read off recorded messages instead
+of guessed from source greps, which is exactly what the design refused to
+short-cut. Another few turns and class 1 is worth acting on.
+
+**Worth noting against the earlier reading:** these 22 came from a turn whose
+refusals were mostly MY errors of composition, not slopp's contract being
+unclear. A refusal rate is not automatically a defect rate, and the samples are
+what make that distinguishable.

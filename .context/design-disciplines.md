@@ -258,6 +258,16 @@ second copy.
 - **A metric/rule must only count findings someone can discharge.** Withdraw a
   rule at high false-positive rate rather than ship it to look thorough (the
   `:positional-form-access` guard, pulled at 4–5/5). → **D-rule-grounding**.
+  *Withdrawn is not dead: that guard came back on 2026-07-25 as
+  `:ambiguous-index`, once the predicate stopped being "positional access" and
+  became **indexing a position whose MEANING depends on an optional earlier
+  element**, restricted to code demonstrably reading store forms. Each of the
+  three narrowing conditions carries one of the original false positives, and
+  the rewritten rule measured 5 candidates / 1 finding — which was a live bug
+  (a `def`'s VALUE rendered as its docstring in the reviewer UI). The lesson is
+  not "withdraw and forget" but that a rule is only as good as the sentence
+  defining it, and the first sentence is usually the symptom rather than the
+  defect.*
 - **One question tiers a lint: could a form legitimately look like this
   MID-EDIT?** No → `:error`; yes → `:warning`; worthless → `:off` with the
   numbers. → **D-kondo-config**.

@@ -176,7 +176,7 @@ measurably bleed tokens.
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form. Whole-word only, so `region-ish` survives a `region` sweep. **`dry-run` first and check the count against what you expected** — a mismatch means your pattern is catching something else. Two gotchas: it rewrites prose DESCRIBING the rename (a comment explaining `a -> b` comes out saying `b -> b`), and if a live GATE enforces the thing you are renaming, you need two phases — teach the gate to accept BOTH spellings, sweep, then tighten. A gate runs from the old compiled code while the group rewrites it, so a one-shot sweep is refused at the first form it re-tags |
-| Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers). **Propose the cluster you want and let it close the set for you** — it refuses a two-way split and NAMES the forms that would leave a cycle ("the moved set calls [x y] (staying)"). Add those and retry. Guessing the seam leaves a cycle; the refusal IS the analysis |
+| Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers). **Propose the cluster you want and let it close the set for you** — it refuses a two-way split and NAMES the forms that would leave a cycle ("the moved set calls [x y] (staying)"). Add those and retry. Guessing the seam leaves a cycle; the refusal IS the analysis. Read `:export-not-landed` on the result: the move checks its own POSTCONDITION against the committed store, so a planned export the store did not actually get is reported rather than discovered later |
 | Regroup whole namespaces under one prefix | `module_extract {namespaces to}` — the MODULE-grain move, for a namespace that grew into its own component or a set that wants one owning prefix. Each named ns takes its subtree and `-test` sibling. **`dry-run` first, always**: going from two segments to three makes a namespace package-private, so every outside caller breaks at once, and the plan is the only place you see WHICH vars must be hoisted and WHICH CALLERS force each. The write order is the design — hoist (`^:export`), then rename, then declare the edges the moved store actually references — so no intermediate state is one the gate would refuse. Refuses a regroup that would leave a production cycle; a `-test` back-edge is not one |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
 | Comments between forms | `edit_trivia` |
@@ -233,6 +233,15 @@ string-eval'd or runtime-resolved entries. The dial polices itself: a
 marker on a var that IS called fails with "remove the flag". Fixture
 namespaces in tests follow the same rule (and edits must KEEP the marker).
 
+**Every escape marker takes a WHY, and should carry one.**
+`^{:unused-ok "library surface for external consumers"}` discharges exactly
+as the bare `^:unused-ok` does — a string is as truthy as `true` — and the
+dial stops being a mute flag. Same for `^:entry-point` (invoked by WHAT?),
+`^:ambient-ok`, `^:breaking-ok`, `^:foreign-keys`, `^:legacy-ok`,
+`^:side-effect`. A bare one on a form you touched draws the `marker-why`
+advisory. The exception is `^{:export "x.y.z"}`, whose string already means
+the subtree it widens to.
+
 **Tiers are not your problem:** `done` runs the WHOLE in-image suite plus
 the `^:external` tests your changes impact (in a separate JVM,
 automatically; a large slice defers and rides findings as
@@ -272,7 +281,10 @@ skips that, and nothing downstream notices: `(is (empty? (:unused r)))` where
 `full-check!` never returns `:unused` is `(empty? nil)` → passes no matter what
 the code does. A green you never watched fail proves nothing. When you extend a
 passing test, break the subject once and confirm the NEW assertions go red — or
-you have written coverage theatre that reads as verification.
+you have written coverage theatre that reads as verification. **`done` asks
+about this now** (`assertions-never-red`): a test that gained assertions and
+never bounced this episode comes back as an advisory, because a rule that
+relies on you remembering is not a rule.
 
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
@@ -657,7 +669,10 @@ stop being the assumption once the app grows.
   answers 200.** Not-found moves into the client. A bad deep link that used
   to 404 now serves the document and the client renders "not found" after its
   fetch 404s. That is correct, and it is a real change in what your status
-  codes mean.
+  codes mean. `done` says it once, for the episode that adds the declaration
+  (`spa-consequences`) — and `full_check`'s `:crossings` keeps listing it as an
+  UNCHECKED exit, because nothing compares your client's route table to the
+  server's.
 - **`route-for` in `.cljc`, returning nil for unknown paths.** With server
   rendering gone this IS your routing table, so make it a pure function and
   test it in-image. Never default an unknown path to a screen — that tells
