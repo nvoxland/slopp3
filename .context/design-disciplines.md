@@ -25,8 +25,19 @@ cost (reads are 52% of the token bill and got the least optimization, P8), and
 in reachability (real capabilities one registry entry from unreachable).
 
 Cores 1–4 below are that asymmetry seen from four angles. **Core 5** is a
-different axis and was added later (2026-07-24): not a category of mistake but
-a category of CITIZEN — what the form-shaped machinery does not cover.
+different axis (2026-07-24): not a category of mistake but a category of
+CITIZEN — what the form-shaped machinery does not cover. **Core 6** (2026-07-25)
+is a category of PLACE — the boundary, where verification stops. **Core 7**
+(2026-07-26) is a category of INTENT — what the agent means to do, against
+write verbs named for where they write; and **Core 6b** is Core 6's second
+half, promoted once it turned out not to be boundary-specific.
+
+Cores 6b and 7 were both derived by 5-whys over the OPEN frictions and then
+confirmed against the RESOLVED ones, which is where the evidence is stronger:
+each had been paid for roughly fifteen and seven times respectively, always as
+an instance, never as a class. That is the signature worth learning — **a class
+being retired one instance at a time looks like steady progress and reads, in
+`ideas/done/`, like a list of unrelated fixes.**
 
 ## Core 1 — reads inherit unearned trust
 
@@ -320,6 +331,110 @@ second copy.
 - **Measure MECHANICAL changes on the deterministic wire-cost meter; reserve
   lifetime evals for BEHAVIORAL questions at n≥3.** A per-step delta off ONE
   lifetime run is noise (steps you never touched swung ±30%). (P10.)
+
+## Core 7 — the edit surface is positional; the agent's intent is transformational
+
+**Root.** Derived 2026-07-26 by 5-whys over every open friction, then checked
+against the ~45 resolved ones — where the evidence is much stronger.
+
+slopp's write verbs are named for WHERE they write: replace this form, add a
+form, insert after that one, replace this subform. The agent's unit of intent
+is a TRANSFORMATION: wrap this in a binding, split this def in two, reorder
+these, extract that, rename this concept. Every transformation without a verb
+must be decomposed into positional edits by hand — and slopp's own gates make
+the intermediate states illegal, so the decomposition is a puzzle rather than
+a sequence.
+
+The purest instance, from the SPA wave: reordering two forms in a `.cljs`
+namespace took *"revert the caller, move the helpers, re-apply the caller —
+three writes to reorder two forms"*, because every single-step move was
+refused citing the violation that was already there.
+
+**The evidence is that slopp has been paying for this for its whole life.**
+Every named refactor verb exists because someone felt the decomposition, and
+`ideas/done/` records each birth separately without ever connecting them:
+
+| Verb | Its recorded reason for existing |
+|---|---|
+| `rename_sweep` | *"~60 error-prone manual edits into ~8 verified sweeps"* |
+| `change_signature` | *"rewrites the defn AND its call sites as one intent"* |
+| `edit_requalify` | *"namespaces a boundary fn's option keys as one intent"* |
+| `edit_move_forms` | *"would have been one call and none of the damage would have happened"* |
+| `edit_extract`, `module_extract`, `edit_rename`, `undo`, `episode_revert`, `cleanup` | same shape |
+
+Plus the automatic passes: `resolve-cold-load` (auto-reorder + auto-declare),
+`fix-declares!`, done's require-pruning and normalize. **Roughly fifteen
+derived transformations, each shipped as its own named thing.**
+
+**slopp already wrote the principle down — one grain too high.** From the
+`edit_group` decision: *"It stays as an internal primitive for transformations
+a TOOL derives from ONE intent … whose intermediates are invalid by
+construction and which nobody was asked to reason about,"* with its own test:
+***"does the AGENT choose the steps, or does the TOOL derive them from one
+stated intent? `rename_sweep {from to}` is one intent. `edit_group [step step
+step]` is a shopping list."*** That was scoped to multi-form ops on the wire
+and never generalised, so nobody asked it one grain down.
+
+**The near-controlled pair.** `auto-avoid-declare` is the same transformation
+observed in both states. Derived (`:clj`): the pipeline computes a topological
+order and realises it, *deliberately silently* — *"no `:reordered` result key
+(form ordering is a file concept; surfacing it re-anchors the agent to 'think
+about the file')."* The agent never learns the problem exists. Not derived
+(`:cljs`, before the fix): the three-write dance above. Same transformation,
+opposite outcomes, one variable.
+
+**Discipline.** Ask the `edit_group` question at EVERY grain, not just above
+the form: *does the agent choose the steps, or does the tool derive them from
+one stated intent?* When the agent must choose, the intermediate states are
+usually ones the gates reject — so the cost is not the typing, it is planning
+a legal path through slopp's own safety.
+
+**Tells that you are in this core:**
+- A recorded workaround of the form "revert X, do Y, re-apply X".
+- An edit whose cost is dominated by RESTATING code that is not changing.
+- A refusal that is correct at every step while no single step reaches a legal
+  state.
+- A new named refactor op that feels obviously right — it is, and it is also
+  the fifteenth instance of an unnamed class.
+
+**Status.** The grain analysis is the actionable part: derived transformations
+exist at store, module, namespace, forms and form grain. BELOW the form there
+was exactly one (`edit_extract`), which is the proof the shape works down
+there — and every open Core 7 friction is sub-form. `edit_subform {wrap}`
+(2026-07-26) is the second: match a complete form, and `$1` in the template is
+where it lands, so introducing a binding around existing code costs the
+template instead of a retype. Its siblings — split, reorder-within, unwrap —
+are still unbuilt.
+
+## Core 6b — a check reports where it RUNS, not where the author WROTE
+
+**Root.** Core 6's second half, promoted 2026-07-26 because it turned out not
+to be boundary-specific. Four of its seven recorded instances are checks that
+never cross anything.
+
+A check is written where the data is convenient — after the reader expanded a
+literal, inside the analysis representation, at the layer that holds the map —
+and its message names what IT is looking at. That message is correct from the
+checker's position and useless from the author's, and nothing verifies the
+difference.
+
+| Instance | What the author wrote | What the message named |
+|---|---|---|
+| dialect gate on `#js` | `#js {}` | `read-string` (absent from the source) |
+| `edit_subform {where}` | `{:rule "ambient-state"}` | the author's own input, restated |
+| `query_source {targets}` | `["a.b/c"]` | `no conversion to symbol` |
+| cljs hard compile failure | a `defonce` arity error | a path into a temp dir |
+| a write missing an alias | `(str/join …)` | `No such namespace: str` |
+
+**Discipline.** A refusal must name the construct AS WRITTEN, and name the
+next call. Two fixes are usually available and the second is better: improve
+the message, or make the refusal unnecessary — `query_source {targets}` was
+fixed by ACCEPTING every unambiguous spelling, because refusing taught a rule
+that did not need to exist.
+
+**Tell:** the message names a symbol, file, layer or process the author never
+typed. If you cannot find the named thing in the source you just wrote, the
+message is speaking the checker's vocabulary.
 
 ## Wrong directions (measured dead ends — don't re-walk)
 

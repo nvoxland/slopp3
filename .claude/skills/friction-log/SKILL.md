@@ -78,7 +78,8 @@ entry carries:
 
 Individual frictions are usually instances of a few shared roots. Before
 writing a fix, ask "why" until you hit something structural, then check it
-against the four cores in `.context/design-disciplines.md`:
+against the cores in `.context/design-disciplines.md` (there are seven now;
+the four below are the originals):
 
 1. **Reads inherit unearned trust** — a surface reported success without
    checking; absence-of-check shares a representation with absence-of-finding.
@@ -90,8 +91,15 @@ against the four cores in `.context/design-disciplines.md`:
 4. **The agent is an unreliable narrator** — the answer is a system guarantee,
    never "try harder / add a skill line."
 
-If a friction fits none of the four, that itself is worth flagging — it may be
-a fifth core.
+If a friction fits none of them, that itself is worth flagging — it may be a
+new core. Three have been added that way (5, 6, 7), and the tell was the same
+each time: a fix that felt obviously right and turned out to be the Nth
+instance of an unnamed class.
+
+**Check `ideas/done/` before concluding a friction is one-off.** The resolved
+population is far larger than the open one, and a class being retired one
+instance at a time reads there as a list of unrelated fixes — which is exactly
+how Core 7 stayed invisible through roughly fifteen of its own fixes.
 
 ## 5. Close it — class over instance
 
