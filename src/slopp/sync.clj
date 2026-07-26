@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store.kernel :as kernel]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -645,8 +645,8 @@
     (catch Exception _ nil)))
 
 (defn -main
-  "clojure -M -m slopp.sync clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"
-  [& [cmd a b]]
+  "clojure -M -m slopp.sync clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir> | kernel <file-copy> <store-copy> [accepted,names]"
+  [& [cmd a b c]]
   (let [r (case cmd
             "clone"  (clone! a b)
             "import" (import! (or a "."))
@@ -657,7 +657,17 @@
             "test"   (let [sess (external/open! {:slopp.api/dir a})]
                        (try (external/external-test-run! sess)
                             (finally (api/close! sess))))
-            {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir>"})]
+            ;; The kernel exists as a hand-maintained file AND as a store
+            ;; namespace, and no TEST can compare them: in every context a
+            ;; test runs, the "file" IS the store's rendering, so the
+            ;; comparison is a tautology. Both copies are only reachable from
+            ;; a shell that can see two git refs — so the check lives here,
+            ;; takes both sides as paths, and the caller decides where each
+            ;; came from.
+            "kernel" (kernel/kernel-parity
+                      (slurp a) (slurp b)
+                      (into #{} (map symbol) (remove str/blank? (str/split (or c "") #","))))
+            {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir> | kernel <file-copy> <store-copy> [accepted,names]"})]
     (println (pr-str r))
     (shutdown-agents)
-    (when (or (:error r) (= :red (:status r))) (System/exit 1))))
+    (when (or (:error r) (false? (:ok r)) (= :red (:status r))) (System/exit 1))))

@@ -1,4 +1,4 @@
-(ns slopp.ui.client.nsfilter
+(ns slopp.ui.nsfilter
   "Platform-neutral (.cljc) predicate for the store-browser namespace filter:
   does a namespace row match the current search box text? Pure string logic,
   verified by the JVM oracle (slopp.client.nsfilter-test) AND compiled to JS

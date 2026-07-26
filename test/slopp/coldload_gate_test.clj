@@ -180,3 +180,35 @@
       (is (re-find #"(?i)cycl" (str (edit/cold-load-errors cyclic '[cy.core])))))
     (testing "a one-way require is clean"
       (is (nil? (edit/cold-load-errors clean '[ok.core ok.core.edge]))))))
+
+(deftest ^:external cljs-writes-get-the-same-reorder-as-clojure
+  ;; Define-before-use is a property of the SOURCE, not of whether the JVM
+  ;; loads it — ClojureScript has the same rule and its compiler warns. But
+  ;; the auto-reorder sat behind the `load?` flag, which is false for :cljs,
+  ;; so a :cljs write landed the forward reference SILENTLY.
+  ;;
+  ;; That is the setup for a trap with no exit. The bad state is created
+  ;; without a word; then every edit_move that would fix it is refused by the
+  ;; cold-load gate citing the violation that is ALREADY there, so no single
+  ;; move reaches a legal state. Escaping it took reverting the caller,
+  ;; moving, and re-applying — three writes to reorder two forms.
+  (let [sess (external/open!)]
+    (try
+      (api/module-platform! sess "cljsord" :cljs :prompt "browser code")
+      (api/ingest! sess 'cljsord.view
+                   "(ns cljsord.view)\n(defn init [] 1)\n(defn helper [] 2)\n")
+      (testing "a :cljs write referencing a later form reorders, like Clojure"
+        (let [r (api/edit-replace! sess 'cljsord.view 'init
+                                   "(defn init [] (helper))"
+                                   :prompt "use the helper" :agent "t")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[cljsord.view helper init]
+                 (mapv :name (store/forms (:store @sess) 'cljsord.view)))
+              "the callee has to be ordered above its caller")
+          (is (nil? (edit/cold-load-errors (:store @sess) '[cljsord.view]))
+              "and the namespace has to be clean afterwards, not merely quiet")))
+      (testing "so the trap never forms: no move is needed to escape"
+        ;; the point of the fix — an agent working in :cljs never reaches the
+        ;; state where every legal move is refused
+        (is (nil? (edit/cold-load-errors (:store @sess) '[cljsord.view]))))
+      (finally (api/close! sess)))))

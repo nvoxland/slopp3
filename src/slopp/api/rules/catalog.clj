@@ -72,6 +72,15 @@
    {:rule :ambient-state :grain :done
     :escape "pass state in as an arg, or accept it (a legit top-level cache)"
     :teach "a global (def _ (atom/ref/agent/volatile! …)) — ambient mutable state a slice can't track"}
+   {:rule :namespace-purpose :grain :done
+    :escape "add a docstring to the ns form saying why the namespace exists — or accept it; this is advisory and never blocks"
+    :teach (str "a namespace the episode touched states no PURPOSE. Its inventory is"
+                " DERIVED — query_project, the module surface and the outline all"
+                " list its forms — so the docstring is for what no tool can derive:"
+                " why it exists, what to expect inside, and how it relates to its"
+                " neighbours. NOT a list of what it contains. review_scan :purpose"
+                " answers the same question for the whole store; generated and"
+                " empty namespaces are exempt (there is no author to ask)")}
    {:rule :bare-throw :grain :done
     :escape "return data / (ex-info …) at the boundary, or accept the throw"
     :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}

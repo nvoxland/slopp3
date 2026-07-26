@@ -309,7 +309,14 @@
                               :reason "form changed concurrently — re-read and retry"}}
         transform (fn [base]
                     (let [out (raw-transform base)]
-                      (if (or (:error out) (not load?))
+                      ;; NOT gated on `load?`. Ordering is a property of the SOURCE, and
+                      ;; ClojureScript has the same define-before-use rule (its
+                      ;; compiler warns). Skipping the reorder for :cljs let a
+                      ;; forward reference land SILENTLY — and since the move gate
+                      ;; still refused any move while a violation stood, no single
+                      ;; edit_move reached a legal state. Created without a word,
+                      ;; then unfixable by the tool the error message recommends.
+                      (if (:error out)
                         out
                         (if-let [rz (edit/resolve-cold-load
                                      (:store out) ns-sym

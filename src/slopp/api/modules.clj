@@ -1,7 +1,7 @@
 (ns slopp.api.modules
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient]))
 
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
@@ -104,7 +104,7 @@
                              ex  (:export (meta (second s)))]]
                    (cond-> {:ns nsx :name (second s)}
                      sig             (assoc :sig sig)
-                     doc             (assoc :doc (first (str/split-lines doc)))
+                     doc             (assoc :doc (orient/doc-summary doc))
                      (and deep? ex)  (assoc :export (if (true? ex) true (str ex)))))]
     (if (empty? nses)
       {:error (str "nothing named " m

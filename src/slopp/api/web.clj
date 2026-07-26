@@ -25,6 +25,12 @@
            ;; contract-carrying endpoint reported :schema? false
            :web/request  (:web/request meta)
            :web/response (:web/response meta)
+           ;; the client-route prefixes this document also answers for, when it
+           ;; declares any. Surfaced rather than expanded into synthetic
+           ;; catch-all rows: query_routes should show what the author
+           ;; DECLARED, and three `/store/*spa-path` rows would read as
+           ;; surface nobody wrote.
+           :web/spa   (:web/spa meta)
            :schema?   (contains? meta :web/response)
            :effectful? (boolean (:web/effectful meta))})
         (modules/web-endpoint-rows store)))
@@ -181,15 +187,25 @@
                                             (str file-prefix "/"
                                                  (subs path (inc (count url-prefix))))))))
                              mounts))
+        ;; a document declaring :web/spa answers for client routes BELOW each
+        ;; prefix, so a link to /store/form/f1 is served even though no
+        ;; endpoint declares that path. Scoped, exactly as the fallback rows
+        ;; are: a path outside every prefix still dangles, which is the half
+        ;; of this that keeps the gate worth having.
+        spa-prefixes (into #{} (mapcat :web/spa) routes)
+        client-route? (fn [path]
+                        (some #(str/starts-with? path (str % "/")) spa-prefixes))
         served? (fn [{:keys [kind method path]}]
                   (case kind
                     :exact  (boolean (or (router/match routes method path)
-                                         (static-file? path)))
+                                         (static-file? path)
+                                         (client-route? path)))
                     :prefix (boolean
                              (or (some #(str/starts-with? (str (:path %)) path) routes)
                                  (some (fn [[url-prefix _]]
                                          (str/starts-with? path (str url-prefix "/")))
-                                       mounts)))
+                                       mounts)
+                                 (client-route? path)))
                     false))]
     {:dangling   (vec (remove served? (remove #(= :unresolved (:kind %)) refs)))
      :unresolved (filterv #(= :unresolved (:kind %)) refs)}))

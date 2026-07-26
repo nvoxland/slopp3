@@ -51,3 +51,43 @@
       (is (= 503 (:status r)))
       (is (= "1" (get-in r [:headers "X-A"])))
       (is (= "text/css; charset=utf-8" (get-in r [:headers "Content-Type"]))))))
+
+(deftest a-function-in-a-rule-is-refused-not-stringified
+  ;; This one SHIPPED. `[:.app > :nav {:width "16rem"}]` reads as a vector
+  ;; containing clojure.core/> — the numeric comparison fn — because a bare
+  ;; `>` is not garden's child combinator. Garden then rendered the function
+  ;; OBJECT into the output:
+  ;;
+  ;;   .app{width:16rem}                        <- the > :nav simply vanished
+  ;;   clojure.core$_GT_@185af676 nav aside{…}  <- and reappeared here
+  ;;
+  ;; So a rule meant for the left pane silently applied to the whole app
+  ;; container, which was 16rem wide in a browser for a whole wave. Nothing
+  ;; failed: the endpoint returned 200 and valid-looking CSS.
+  ;;
+  ;; A function in CSS data is ALWAYS a mistake — there is no rule under
+  ;; which one is meaningful — so it is refused rather than rendered.
+  (testing "a fn in selector position is refused, and the message teaches"
+    (let [e (try (css/render [:.app > :nav {:width "16rem"}])
+                 nil
+                 (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (some? e) "garden would otherwise stringify the function object")
+      (is (re-find #"(?i)function" (ex-message e)) (ex-message e))
+      (is (re-find #"\.app>nav|combinator" (ex-message e))
+          (str "the message has to name the fix, not just the sin: "
+               (ex-message e)))))
+  (testing "the ordinary rules this guard sits in front of still render"
+    ;; the two combinators, pinned because getting them backwards is exactly
+    ;; what produced the shipped bug:
+    (testing "a combinator inside ONE keyword is the child selector"
+      (is (= ".app>nav{width:16rem}"
+             (css/render [:.app>nav {:width "16rem"}]))))
+    (testing "NESTING is the descendant selector"
+      (is (= "header ul{margin:0}"
+             (css/render [:header [:ul {:margin 0}]]))))
+    (testing "and sibling keywords are a GROUP, not a descendant"
+      ;; `[:.app :nav {…}]` looks like \".app nav\" and means \".app, nav\" —
+      ;; it styles every nav on the page, which is how a breadcrumb inside
+      ;; main picks up left-pane styling
+      (is (= ".app,nav{width:16rem}"
+             (css/render [:.app :nav {:width "16rem"}]))))))

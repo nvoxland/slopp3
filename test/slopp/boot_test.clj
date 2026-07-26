@@ -1,4 +1,20 @@
 (ns slopp.boot-test
+  "Cover for the KERNEL's boot path — the one layer with nothing behind it.
+
+  Everywhere else in slopp a mistake is caught by the image, the suite, or a
+  gate. `slopp.boot` is what brings those into existence: it reads a store's
+  source out of sqlite and loads it into a bare JVM. A bug here does not fail
+  a test, it fails to start.
+
+  So the tests aim at the decisions rather than the plumbing — dependency
+  order, which namespaces are JVM-loadable, what a reload leaves behind. Those
+  are cheap, pure, and each one has an expensive failure mode: the wrong order
+  is an unbootable store, and the wrong reload is a server answering from code
+  that no longer exists.
+
+  `slopp.boot` also exists as a hand-maintained FILE, and both copies are
+  live. `slopp.store.kernel` is what keeps them honest; this covers what they
+  do."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.boot :as boot]))
 
@@ -62,3 +78,73 @@
         "undeclared defaults to :jvm")
     (is (true? (boot/jvm-loadable? {} 'anything))
         "no register at all — everything loads, as before the client wave")))
+
+(deftest a-reload-must-drop-the-vars-the-new-source-no-longer-defines
+  ;; `load-string` of a namespace's new source re-defines every form it
+  ;; contains and says nothing about the ones it does not. So a DELETE
+  ;; propagates as "still there" into every --live host: the store is correct,
+  ;; the suite is green, and the running server keeps answering from a var
+  ;; whose definition no longer exists.
+  ;;
+  ;; Cost, when it happened: six deleted page endpoints kept serving, and
+  ;; because a stale route SHADOWS the SPA fallback, the symptom pointed at
+  ;; the feature just written rather than at the reload. The worst kind of
+  ;; misleading evidence.
+  ;;
+  ;; This is the decision half — which names departed — kept pure so it can be
+  ;; tested here instead of against a running daemon.
+  (testing "a deleted form is departed; a changed one and a new one are not"
+    (is (= '#{gone}
+           (#'boot/departed-vars '#{keep changed gone}
+                                 "(ns a) (defn keep [] 1) (defn changed [] 99) (defn fresh [] 2)"))))
+  (testing "every shape a namespace defines counts, or the check deletes live code"
+    ;; a name it fails to see reads as departed, and unmapping a var that IS
+    ;; defined is strictly worse than leaving a stale one
+    (is (= #{} (#'boot/departed-vars
+                '#{f g h k m}
+                (str "(ns a)\n"
+                     "^:unsafe (defn f [] 1)\n"        ; metadata-wrapped
+                     "(defn- g [] 2)\n"                ; private
+                     "(def h 3)\n"
+                     "(defmulti k :x)\n"
+                     "(defmacro m [] nil)\n")))))
+  (testing "unreadable source departs NOTHING — a stale var beats a deleted one"
+    ;; the conservative direction: if the new source cannot be read, keep
+    ;; today's behaviour rather than guessing
+    (is (= #{} (#'boot/departed-vars '#{f} "(ns a) (defn f [] (this is not"))))
+  (testing "and it never reports a name the namespace did not have"
+    (is (= #{} (#'boot/departed-vars #{} "(ns a) (defn f [] 1)")))))
+
+^:unsafe (deftest ^:external reloading-a-namespace-drops-what-the-new-source-deleted
+  ;; `departed-vars` decides; this is the seam that ACTS on it. A rule
+  ;; implemented correctly and called wrongly is Pattern 2 in the failure log,
+  ;; four instances, and the tell is always that each side looks right alone.
+  ;;
+  ;; External because it interns real vars in a real namespace: it is the
+  ;; reload, not a model of one. ^:unsafe because asking "is this var still
+  ;; there?" IS the assertion, so it must resolve by name — the carrier forms
+  ;; the dialect prefers all capture the var and would answer about a binding
+  ;; that no longer exists.
+  (let [nsx  'slopp.boot-reload-probe
+        var! (fn [n] (ns-resolve nsx (symbol n)))]
+    (try
+      (#'boot/reload-ns! nsx "(ns slopp.boot-reload-probe)
+                              (defn keeper [] 1)
+                              (defn doomed [] 2)")
+      (is (some? (var! "keeper")))
+      (is (some? (var! "doomed")) "both live after the first load")
+      (testing "a reload without the second form leaves NOTHING behind"
+        (#'boot/reload-ns! nsx "(ns slopp.boot-reload-probe)
+                                (defn keeper [] 99)")
+        (is (nil? (var! "doomed"))
+            "the deleted form must stop answering — this is the whole bug")
+        (is (= 99 ((var! "keeper")))
+            "and the surviving form is the NEW definition, not a casualty"))
+      (testing "a reload that throws leaves the namespace alone"
+        ;; the conservative direction: a stale var beats a gutted namespace
+        (is (thrown? Throwable
+                     (#'boot/reload-ns!
+                      nsx "(ns slopp.boot-reload-probe) (defn x [] (no-such-thing))")))
+        (is (some? (var! "keeper"))
+            "a failed reload must not take the working code with it"))
+      (finally (remove-ns nsx)))))

@@ -17,17 +17,43 @@
                     {:value s})))
   s)
 
-(defn ^:export render
+(defn ^{:export true
+        :teach "combinators: :.a>b (ONE keyword) is CHILD, [:.a [:b …]] (nesting) is DESCENDANT, [:.a :b …] (siblings) is a selector GROUP — a bare > is clojure.core/> and refuses."}
+  render
   "Garden rules → a minified CSS string. Every string in the rule data — a
   selector or a value — is validated against CSS block-breakout first
   ({ } <), because garden renders those strings verbatim (an interpolated
   string is otherwise an injection door). Structured garden values (units,
   colors, media queries) are safe. For raw or vendored CSS, serve a static
   .css asset instead. CSS as Clojure data is the stylesheet analogue of
-  hiccup pages."
+  hiccup pages.
+
+  Also REFUSES a function anywhere in the rule data. There is no rule under
+  which a function is meaningful CSS, and garden does not reject one — it
+  stringifies it, so `clojure.core$_GT_@185af676` lands in a selector and the
+  browser silently drops that rule. The way this happens in practice is a
+  bare `>` reaching for a child combinator: it reads as `clojure.core/>`, and
+  the neighbouring selector keyword is swallowed with it. That shipped here —
+  `[:.app > :nav {:width \"16rem\"}]` rendered as `.app{width:16rem}`, so the
+  whole application container was 16rem wide in a browser for a wave, behind
+  a 200 and valid-looking CSS.
+
+  The three combinators, since two of them look alike:
+  `[:.app>nav …]` (one keyword) is CHILD, `[:.app [:nav …]]` (nesting) is
+  DESCENDANT, and `[:.app :nav …]` (siblings) is a selector GROUP."
   [& rules]
-  (doseq [s (filter string? (tree-seq coll? seq (vec rules)))]
-    (check-breakout s))
+  (doseq [x (tree-seq coll? seq (vec rules))]
+    (cond
+      (string? x) (check-breakout x)
+      (or (fn? x) (var? x))
+      (throw (ex-info (str "a function in CSS rule data — garden renders it into"
+                           " the output instead of refusing, so the rule is lost"
+                           " silently. A bare `>` is the usual cause: it reads as"
+                           " clojure.core/>, not a child combinator. Write the"
+                           " combinator inside ONE keyword (:.app>nav), nest for"
+                           " a descendant ([:.app [:nav …]]), and remember that"
+                           " sibling keywords are a GROUP, not a descendant.")
+                      {:css/offender (pr-str x)}))))
   (or (apply garden/css {:pretty-print? false} rules) ""))
 
 (defn ^:export css-response

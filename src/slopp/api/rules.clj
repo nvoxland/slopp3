@@ -484,6 +484,22 @@
                       " someone happened to edit one of these forms. Declare"
                       " this namespace's own tier, or move the effects out.")}))))
 
+(defn namespace-purpose-check
+  "Done-advisory: a namespace the episode touched states no PURPOSE.
+
+  Namespace-grained where its siblings are form-grained, which is the point —
+  a namespace's INVENTORY is derived and shown everywhere (`query_project`,
+  the module surface, the outline), so the docstring is the only home for
+  what no tool can derive: why it exists, what to expect inside, how it
+  relates to its neighbours.
+
+  Scoped to the episode's namespaces so it nags where you are working;
+  `review_scan`'s `:purpose` answers the same question for the whole store."
+  [_session st* changed]
+  (vec (sort-by :ns
+                (keep #(edit.modules/namespace-purpose-warning st* %)
+                      (distinct (keep #(store/ns-of-form-id st* %) changed))))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -515,7 +531,12 @@
    {:key :breaking-changes :severity :advisory :check #'breaking-check
     :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
    {:key :ambient-state :severity :advisory :check #'ambient-state-check
- :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+    :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
+   {:key :namespace-purpose :severity :advisory :check #'namespace-purpose-check
+    ;; the fixture's ns form deliberately carries NO docstring — that is the
+    ;; whole finding, and it is what 100 of slopp's own 177 namespaces looked
+    ;; like when this rule was written
+    :fires-on "(ns rf.core)\n(defn f [] 1)\n"}
 {:key :key-not-returned :severity :advisory :check #'key-not-returned-check
     :fires-on (str "(ns rf.core)\n"
                    "(defn producer [] {:a 1})\n"

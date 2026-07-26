@@ -1,4 +1,18 @@
 (ns slopp.api.orient
+  "What a session needs to know before it does anything — assembled purely.
+
+  `session_brief` is the one call a fresh context is told to make, so this is
+  where the answer to \"where am I, and what should I distrust?\" is built. The
+  sections are pure functions of already-recorded facts: the store value, the
+  kernel's boot-info record, the delta counts. Nothing here queries; the
+  effectful callers gather, and this shapes.
+
+  The bias throughout is toward saying what is WRONG or STALE rather than what
+  is present. A brief that lists everything is a brief nobody reads; a brief
+  that names the one namespace whose reload failed is what stopped three
+  debugging arcs from starting. Notes COMPOSE rather than replace each other,
+  because a host can be stale for more than one reason at once and picking a
+  winner hides the rest."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -11,6 +25,41 @@
   [s n]
   (let [s (str s)]
     (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+
+(def ^:private doc-summary-cap
+  "The character budget for a doc summary. Composites carry MANY of these, so
+  one verbose docstring must not eat the result."
+  120)
+
+(defn doc-summary
+  "The first SENTENCE of `doc`, capped — what a card or a module surface row
+  shows.
+
+  Replaces a raw character cut, which ended mid-word and produced fragments
+  that look like content: `slopp.web.css/render`'s card used to read
+  \"Garden rules → a minified CSS string. Every string in the rule data — a\".
+  A trailing fragment is worse than a clean stop, because it reads as though
+  the thought finished.
+
+  A sentence ends at `.`/`!`/`?` followed by whitespace and a capital or an
+  opening bracket — NOT at every period, or `1.5 KB` and `e.g.` split in half
+  and the result reads worse than the cut it replaces.
+
+  Over the cap it still truncates, but on a WORD boundary with an ellipsis:
+  the budget is the point, and the full text is one `query_slice` away.
+
+  nil for nil or blank — never `\"\"` or a bare ellipsis, which would put an
+  empty `:doc` key on a card and read as \"documented, with nothing to say\"."
+  [doc]
+  (let [s (some-> doc str str/trim (str/replace #"\s+" " "))]
+    (when-not (str/blank? s)
+      (let [end (some-> (re-find #"^(.*?[.!?])(?=\s+[A-Z(\[])" s) second)
+            one (or end s)]
+        (if (<= (count one) doc-summary-cap)
+          one
+          (let [cut (subs one 0 doc-summary-cap)
+                sp  (str/last-index-of cut " ")]
+            (str (str/trimr (if (and sp (< 40 sp)) (subs cut 0 sp) cut)) "…")))))))
 
 ^:reads (defn ^:export form-card
   "The INTERFACE view of a form (opacity with a warranty): signature,
@@ -34,6 +83,16 @@
                                           (drop 2 (or body ())))]
                         (when (seq arities) (vec arities))))
           why     (get (store/prompt-by-form (:store @session)) (:id e))
+          ;; the TRAP, if the author declared one. Separate from :doc on
+          ;; purpose: a doc's first line says what the form does, and the
+          ;; thing that stops a caller misusing it is never in the first
+          ;; line. Same :teach vocabulary every rule uses for
+          ;; explain-at-point-of-use.
+          ;; a STRING only. Metadata is read as data and never evaluated, so
+          ;; ^{:teach (str "a" "b")} is a LIST — rendering it would put
+          ;; `(str "a" "b")` on the card, confident-looking and useless.
+          teach   (let [t (:teach (meta (second (or body ()))))]
+                    (when (string? t) (not-empty t)))
           covered (let [ks (store/form-trace-keys ns-sym e)]
                     ;; any name the form defines can carry its evidence (#129):
                     ;; a defprotocol's card counts tests that called m or n
@@ -52,9 +111,10 @@
                        (catch Exception _ nil)))]
       (cond-> {:form q :warranty {:covered covered}}
         sig  (assoc :sig sig)
-        doc  (assoc :doc (snip (first (str/split-lines doc)) 90))
+        doc  (assoc :doc (doc-summary doc))
         (str/ends-with? (str nm) "!") (assoc :effectful true)
-        why  (assoc :why (snip why 90))
+        why   (assoc :why (snip why 90))
+        teach (assoc :teach teach)
         examples (assoc :examples examples)))))
 
 (defn fit-report
@@ -89,6 +149,17 @@
                   (assoc :note (str "rolled up by namespace, showing 20 of "
                                     (count rolled) " — {contains} narrows"))))))))))
 
+(def stuck-reload-attempts
+  "Consecutive failed reload polls after which a namespace is STUCK rather
+  than retrying — three.
+
+  Low on purpose, and it can be: a reload is deterministic over the same
+  source, so the second identical failure already tells you the third is
+  coming. Three is one more than the argument needs, which leaves room for a
+  genuine transient (a half-written db page, a contended read) without leaving
+  room for false hope."
+  3)
+
 (defn ^:export host-brief
   "The serving host's code-currency section for session_brief, as data —
   pure assembly over the kernel's boot-info record (`info`), the count of
@@ -102,16 +173,37 @@
   a reload failure is NAMED, because a silently held-back namespace is how
   three debugging arcs started. The notes COMPOSE — a snapshot host ON a
   branch gets both stances (review V-F3, the branch caveat used to be
-  unreachable in snapshot mode)."
+  unreachable in snapshot mode).
+
+  **A reload failure carries its REASON and its age.** It used to say the
+  failure was \"in the server log\" — a file nothing here exposes, which on a
+  system whose claim is that the store answers everything is the wrong answer
+  twice over. And it promised \"the next poll retries\" identically for many
+  minutes: a reload is deterministic over the same source, so repeated failure
+  is not a transient to wait out. Past `stuck-reload-attempts` the note stops
+  reassuring and says what actually fixes it."
   [info deltas-since-boot on-branch?]
   (when info
     (let [failed (seq (:failed info))
+          why    (:failed-why info)
+          reason (fn [ns-sym]
+                   (when-let [w (get-in why [ns-sym :why])]
+                     (str ns-sym ": " w)))
+          tries  (apply max 0 (keep #(get-in why [% :attempts]) failed))
+          stuck? (>= tries stuck-reload-attempts)
           parts  (cond-> []
                    failed
                    (conj (str "live-reload FAILED for " (str/join ", " failed)
-                              " — the host still runs their previous code; the"
-                              " next poll retries, and the failure is in the"
-                              " server log"))
+                              " — the host still runs their previous code"
+                              (when-let [rs (seq (keep reason failed))]
+                                (str " (" (str/join "; " rs) ")"))
+                              (if stuck?
+                                (str "; this has failed " tries
+                                     " polls running and a reload is"
+                                     " deterministic over the same source, so"
+                                     " it will not fix itself — restart the"
+                                     " server")
+                                "; the next poll retries")))
 
                    (and (not failed) (= :snapshot (:mode info))
                         (pos? (or deltas-since-boot 0)))
@@ -128,6 +220,7 @@
       (cond-> {:mode (:mode info) :booted-at (:booted-at info)}
         (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
         failed                 (assoc :failed (vec failed))
+        (seq why)              (assoc :failed-why why)
         note                   (assoc :note note)))))
 
 (defn ^:export code-deltas-since

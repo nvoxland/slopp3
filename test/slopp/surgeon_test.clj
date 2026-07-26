@@ -323,7 +323,14 @@
             (str "a global atom that no episode ever touched: "
                  (pr-str (:advisories r)))))
       (testing "a clean namespace reports no advisories"
-        (api/ingest! sess 'adv.clean "(ns adv.clean)\n(defn add [x y] (+ x y))\n")
+        ;; the ns docstring is part of being CLEAN now: a namespace that never
+        ;; says what it is for is an advisory, so a fixture claiming zero
+        ;; advisories has to state a purpose like any other namespace
+        (api/ingest! sess 'adv.clean
+                     (str "(ns adv.clean\n"
+                          "  \"Arithmetic helpers, kept apart from adv.core so the\n"
+                          "  advisory fixtures do not share state.\")\n\n"
+                          "(defn add [x y] (+ x y))\n"))
         (let [r (api/cleanup! sess 'adv.clean)]
           (is (empty? (:advisories r)) (pr-str (:advisories r)))))
       (finally (api/close! sess)))))

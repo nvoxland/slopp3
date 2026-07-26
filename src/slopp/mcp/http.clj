@@ -13,7 +13,7 @@
   (:require [slopp.api :as api]
             [slopp.mcp :as mcp]
             [slopp.api.external :as external]
-            [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static]))
+            [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static] [slopp.ui.server :as ui-server]))
 
 (defn ^:export start-server!
   "Start the transport on `port` over a fresh session (`opts` as api/open!):
@@ -42,7 +42,7 @@
                                     (some-> (:db @session)
                                             (db/get-blob (:sha e))))
                        :content-type content-type})))
-        srv     (web/serve! {:web/namespaces ['slopp.mcp.http 'slopp.ui.pages]
+        srv     (web/serve! {:web/namespaces (into ['slopp.mcp.http] ui-server/served-namespaces)
                              :web/routes (static/mount-routes mounts reader)
                              :web/host "127.0.0.1"
                              :web/port port
@@ -73,7 +73,10 @@
   @(promise))
 
 (defn ^{:web/method :post :web/path "/call" :web/auth :public
-        :web/effectful true}
+        :web/effectful true
+        :web/client false
+        :web/request [:map [:name :string] [:arguments [:maybe :map]]]
+        :web/response [:map [:result :string]]}
   call-endpoint!
   "POST /call {name arguments} → {:result <tool text>}: one tool dispatch,
   the curl/scripting transport. :web/effectful — it dispatches into
@@ -92,7 +95,15 @@
     {:status 200 :body {:result text}}))
 
 (defn ^{:web/method :post :web/path "/mcp" :web/auth :public
-        :web/effectful true}
+        :web/effectful true
+        :web/client false
+        ;; :map, deliberately, and not a tighter shape: JSON-RPC is an OPEN
+        ;; envelope by specification — method, params and result vary per
+        ;; call and grow with the protocol. A narrower schema here would be
+        ;; a contract that refuses valid traffic, which is worse than a wide
+        ;; one that tells the truth.
+        :web/request [:map [:method {:optional true} :string]]
+        :web/response :map}
   mcp-endpoint!
   "POST /mcp: native MCP JSON-RPC over streamable HTTP — N clients share
   this ONE session/store/image (Phase 4 m1). A notification (nil dispatch
@@ -110,7 +121,11 @@
       {:status 202}
       {:status 200 :body resp})))
 
-(defn ^{:web/method :get :web/path "/metrics" :web/auth :public} metrics-endpoint
+(defn ^{:web/method :get :web/path "/metrics" :web/auth :public
+        :web/client false
+        :web/response [:map [:calls [:sequential
+                                     [:map [:tool [:maybe :string]]
+                                      [:t :int] [:in :int] [:out :int]]]]]} metrics-endpoint
   "GET /metrics → {:calls [{:tool :t :in :out} …]}: per-call payload sizes.
   A deref is a READ — no bang, and exactly what web-unsafe-get allows a
   GET to do."

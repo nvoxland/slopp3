@@ -39,7 +39,8 @@
           (apply (get performers kind) perform-ctx args))
         nil)))
 
-(defn handle!
+(defn ^{:teach "the response :body comes back as Clojure DATA — the ADAPTER serializes. An in-image test validating a wire contract must round-trip through JSON first, or a keyword passes a [:x :string] schema here and arrives as a string."}
+  handle!
   "The whole request pipeline, callable in-process — request map in,
   response map out; the socket is an adapter's concern. `ctx`:
   {:web/routes [rows] :web/read-performers {kind→f}

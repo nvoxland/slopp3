@@ -1,7 +1,9 @@
 (ns slopp.web.router
   (:require [clojure.string :as str]))
 
-(defn ^{:export "slopp.api"} match
+(defn ^{:export "slopp.api"
+        :teach "matches :uri ALONE — :query-string is a separate request key. A \"/x?y=z\" put in :uri matches no route and 404s, which looks exactly like the 404 you were testing for."}
+  match
   "Match `method` + `uri` against `routes` (rows carrying :method :path
   :handler, the query_routes shape). Returns the matched row with
   `:path-params` merged ({:id \"42\"} for \"/api/users/:id\"), or nil.

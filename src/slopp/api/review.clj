@@ -154,5 +154,14 @@
                             :largest (first (last (sort-by second sized)))
                             :p95     (nth ls (min (dec n) (int (* 0.95 n))))
                             :median  (nth ls (quot n 2))}))}
+      ;; NAMESPACE grain, so it cannot ride :top (which ranks forms). A
+      ;; namespace that never says what it is FOR is the gap a newcomer hits
+      ;; first, and the one thing no tool can derive around — the inventory
+      ;; is already shown everywhere.
+      true (assoc :purpose
+                  (let [ws (keep #(edit.modules/namespace-purpose-warning st %) nses)]
+                    (cond-> {:stated (- (count nses) (count ws)) :missing (count ws)}
+                      (seq ws) (assoc :namespaces (vec (sort (map :ns ws)))
+                                      :teach (:teach (first ws))))))
       (seq ns-lint)          (assoc :ns-lint ns-lint)
       (> (count rows) limit) (assoc :omitted (- (count rows) limit)))))

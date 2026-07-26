@@ -60,8 +60,74 @@
    "                                           :message (str \"WARNING: \" (try (ana/error-message wt extra) (catch Throwable _ (name wt))))})))]]\n"
    "              (b/build (apply b/inputs dirs) {:output-to \"" output-to "\" :output-dir \"" output-dir "\" :optimizations " optimizations "})\n"
    "              nil)\n"
-   "            (catch Throwable e (str (.getMessage e) (some->> (.getCause e) (.getMessage) (str \" / \")))))]\n"
+   ;; the WHOLE cause chain plus the ex-data LOCATION. The outermost
+   ;; message is usually "failed compiling file:…" and the reason is in a
+   ;; cause; the file and line live in ex-data. Keeping only .getMessage
+   ;; threw both away, which is why a hard failure used to reach the agent
+   ;; as a bare temp-dir path (anchor-error consumes :error-at).
+   "            (catch Throwable e\n"
+   "              (let [chain (->> (iterate #(.getCause ^Throwable %) e)\n"
+   "                               (take-while some?) (take 8))\n"
+   ;; the first ex-data carrying a LINE, not merely the first carrying
+   ;; ex-data: the outer "failed compiling" exception has ex-data with no
+   ;; location, so taking it anchors nothing while looking like it worked.
+   "                    d     (first (filter :line (keep ex-data chain)))]\n"
+   ;; the messages as a VECTOR, joined by the consumer. A separator string
+   ;; literal here sits three levels of escaping deep — source → -e argument
+   ;; → generated program — and one level too many turns " / " into a
+   ;; character literal, which is exactly how this line first shipped broken.
+   ;; Sending data instead of a formatted string removes the nesting.
+   "                {:msgs (vec (distinct (keep #(.getMessage ^Throwable %) chain)))\n"
+   ;; coerced, because this crosses a PROCESS boundary as EDN: ex-data's
+   ;; :file is an object, and pr-str of it comes back as #object[…] which
+   ;; the reader on this side refuses. Only readable scalars may cross.
+   "                 :at  (when d {:file (str (:file d))\n"
+   "                               :line (when (number? (:line d)) (:line d))\n"
+   "                               :column (when (number? (:column d)) (:column d))})})))]\n"
    "  (println (str \"" result-marker "\" (pr-str {:warnings @ws :error res}))))\n"))
+
+(defn anchor-error
+  "Anchor a hard cljs compile FAILURE to a store form, the way
+  [[anchor-warnings]] anchors an analyzer warning: `{:error msg}` plus
+  `:form` and `:at` when the location resolves.
+
+  `at` is the compiler's `{:file :line}` — `file` being a path inside the
+  throwaway materialization dir, which is precisely why it must not reach the
+  agent. slopp's standing invariant is that no `file:line` is ever handed
+  out; warnings honoured it and errors did not, because the runner kept only
+  `.getMessage` and dropped the `ex-data` carrying the location.
+
+  The path→namespace step is real work, not a string replace: ClojureScript
+  munges `-` to `_` in file names, so `app/my_view.cljs` is `app.my-view`.
+
+  A location that does not resolve to a store namespace anchors NOTHING and
+  says so by omission rather than guessing — an anchor pointing at the wrong
+  form is worse than no anchor (Core 1)."
+  [store msg {:keys [file line]}]
+  (let [nsx (when file
+              (some-> (re-matches #"(?:file:)?(?:.*?/)?((?:[^/]+/)*[^/]+)\.clj[sc]$"
+                                  (str file))
+                      second
+                      (str/replace "/" ".")
+                      (str/replace "_" "-")
+                      symbol))
+        ok? (boolean (and nsx line (contains? (:namespaces store) nsx)))
+        e   (when ok? (render/owner-form store nsx line 1))
+        at  (when ok? (nth (str/split-lines (render/render-ns store nsx))
+                           (dec line) nil))]
+    (cond-> {:error (-> (str msg)
+                        ;; the compiler names the materialization dir, often
+                        ;; more than once. :form and :at carry the location
+                        ;; properly now, so the path is both redundant and a
+                        ;; breach of the no-file:line invariant — and it
+                        ;; points into a temp dir the agent never created.
+                        (str/replace #"\s*at line \d+(?::\d+)?" "")
+                        (str/replace #"(?:file:)?\S*\.clj[sc]\b" "")
+                        (str/replace #"\s*/\s*/\s*" " / ")
+                        (str/replace #"\s{2,}" " ")
+                        (str/replace #"^[\s/]+|[\s/]+$" ""))}
+      e  (assoc :form (symbol (str nsx) (str (or (:name e) (:id e)))))
+      at (assoc :at (str/trim at)))))
 
 (defmulti compile-client*
   "Compile the client namespaces materialized under `dir` with a specific
@@ -147,7 +213,14 @@
                    (for [b bad] {:endpoint endpoint :schema-ref (:sym b)
                                  :ns (:ns b) :issue (:kind b) :platform (:platform b)}))
            (update acc :wrappers conj
-                   {:fn-name  (symbol (str name (when (#{:post :put :patch :delete} method) "!")))
+                   {:fn-name  (symbol (str name
+                                       ;; not a second bang: a mutating endpoint
+                                       ;; named with one is already following the
+                                       ;; dialect's convention, and `pay!!` is the
+                                       ;; generator fighting the house style
+                                       (when (and (#{:post :put :patch :delete} method)
+                                                  (not (.endsWith (str name) "!")))
+                                         "!")))
                     :method   method
                     :path     (:web/path meta)
                     :endpoint endpoint
@@ -246,6 +319,28 @@
     (str "(ns " ns-sym "\n  " requires ")\n\n"
          (str/join "\n\n" (map render-wrapper wrappers)))))
 
+(defn- served-by-a-mount?
+  "Whether any `http.static.*` mount would serve `path`.
+
+  A mount key's tail is the URL prefix and its value a files-manifest path
+  prefix (`http.static./js = public/cljs` serves `public/cljs/main.js` at
+  `/js/main.js`), so the question is just whether some mount's value is a
+  prefix of the written path.
+
+  NOT the same question as \"is this file reachable over HTTP\", and the
+  caller's message must not say it is. An ENDPOINT that reads the file serves
+  it just as well — slopp's own reviewer UI does exactly that, and this
+  predicate reported the bundle unserved while `/js/main.js` was returning it
+  with a 200. Detecting that case generically means scanning source for the
+  path as a string, which a docstring mentioning it would trip; saying what
+  was actually checked is both cheaper and honest."
+  [store path]
+  (boolean
+   (some (fn [[k v]]
+           (and (re-matches #"http\.static\..+" (str k))
+                (str/starts-with? (str path) (str v))))
+         (get-in store [:config "capabilities" :values]))))
+
 (defn ^:export compile-client!
   "Compile the store's CLIENT namespaces (:cljc + :cljs) to JavaScript with the
   configured backend (build/client-compiler, default :clojurescript) and record
@@ -277,17 +372,37 @@
               (let [{:keys [warnings error]} (compile-client* compiler dir)
                     anchored (anchor-warnings st (or warnings []))]
                 (if error
-                  {:error error :warnings anchored}
+                  ;; the runner sends {:msg :at}; a legacy/fallback string still
+                  ;; works, it simply anchors nothing
+                  (merge (if (map? error)
+                           (anchor-error st (str/join " / " (:msgs error)) (:at error))
+                           (anchor-error st (str error) nil))
+                         {:warnings anchored})
                   (let [js (slurp (io/file dir "out" "main.js"))]
                     (session/commit-appended!
                      session
                      (fn [s] (first (store/record-file-put s output js)))
                      [])
-                    {:compiled  (count client)
-                     :namespaces (mapv str (sort client))
-                     :warnings  anchored
-                     :output    output
-                     :bytes     (count js)})))))
+                    ;; A bundle nothing serves is the failure this just had: slopp's own sat
+                    ;; in the manifest for two waves while every page 404'd on it,
+                    ;; because serving it needs an http.static.* mount and nothing
+                    ;; said so. Serving it IS one line — the gap was
+                    ;; discoverability, so the tool that wrote the file names the
+                    ;; line, and goes quiet once a mount covers the path.
+                    (cond-> {:compiled  (count client)
+                             :namespaces (mapv str (sort client))
+                             :warnings  anchored
+                             :output    output
+                             :bytes     (count js)}
+                      (not (served-by-a-mount? (:store @session) output))
+                      (assoc :serve-with
+                             (let [dir (or (second (re-matches #"(.*)/[^/]+" output))
+                                           output)]
+                               (str "no http.static mount serves " output
+                                    " — config_file {path \"capabilities\" key"
+                                    " \"http.static./js\" value \"" dir "\"} mounts it"
+                                    " at /js/. (An endpoint that reads the file"
+                                    " serves it too; this checked mounts only.)")))))))))
           (finally
             (letfn [(rm! [f]
                       (when (.isDirectory f) (run! rm! (.listFiles f)))

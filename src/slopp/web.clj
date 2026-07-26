@@ -1,7 +1,7 @@
 (ns slopp.web
   (:require [slopp.web.routes :as routes]
             [slopp.web.dispatch :as dispatch]
-            [slopp.web.server.jdk :as jdk] [slopp.web.server.httpkit :as httpkit]))
+            [slopp.web.server.jdk :as jdk] [slopp.web.server.httpkit :as httpkit] [clojure.string :as str]))
 
 (defn enforce
   "In-handler guard for what route policy can't see (row-level authz: is
@@ -42,14 +42,46 @@
   :web/auth-config <the provider config identity resolves through>}`: the
   route table and both performer vocabularies derive from the namespaces'
   VAR metadata — the same contract the store gates enforced at write time —
-  with the explicit rows appended."
+  with the explicit rows appended.
+
+  REFUSES a context whose routes declare reads or effects no performer here
+  can serve. Reads resolve by VOCABULARY store-wide, so an endpoint in one
+  namespace legitimately reuses a performer declared in another — which means
+  a `:web/namespaces` list missing half the app assembles happily and answers
+  **500, not 404**, at request time, with the detail server-side and a
+  generic error in the body. That is the worst pairing available: the failure
+  with no check is also the one that is hardest to read from the outside.
+
+  Everything the check needs is already in hand here, so it costs a set
+  difference. Found by dogfooding: adding an `/api` namespace to this repo's
+  own reviewer UI hit it immediately, because the endpoints and their read
+  performers live in different namespaces on purpose."
   [{:web/keys [namespaces routes perform-ctx max-body-bytes auth-config]}]
-  (cond-> {:web/routes (into (routes/from-namespaces namespaces) routes)
-           :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
-           :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
-           :web/perform-ctx perform-ctx
-           :web/max-body-bytes (or max-body-bytes 1048576)}
-    auth-config (assoc :web/auth-config auth-config)))
+  (let [ctx (cond-> {:web/routes (into (routes/from-namespaces namespaces) routes)
+                     :web/read-performers (routes/performers-from-namespaces namespaces :web/read)
+                     :web/effect-performers (routes/performers-from-namespaces namespaces :web/effect)
+                     :web/perform-ctx perform-ctx
+                     :web/max-body-bytes (or max-body-bytes 1048576)}
+              auth-config (assoc :web/auth-config auth-config))
+        missing (for [row (:web/routes ctx)
+                      [decl performers] [[:web/reads (:web/read-performers ctx)]
+                                         [:web/effects (:web/effect-performers ctx)]]
+                      kind (let [d (get row decl)]
+                             ;; :web/reads is {key [kind & path]}; :web/effects
+                             ;; is a plain collection of kinds
+                             (if (map? d) (map (comp first val) d) (seq d)))
+                      :when (not (contains? performers kind))]
+                  (str kind " (" (:method row) " " (:path row) ")"))]
+    (when (seq missing)
+      (throw (ex-info (str "this context declares "
+                           (if (next missing) "kinds that no performer" "a kind that no performer")
+                           " in :web/namespaces can serve: "
+                           (str/join ", " (distinct missing))
+                           " — a route whose performer is missing answers 500, not 404,"
+                           " so the namespace list is checked here rather than at request time")
+                      {:web/missing-performers (vec (distinct missing))
+                       :web/namespaces (vec namespaces)})))
+    ctx))
 
 (defn handle!
   "Run one request through the FULL pipeline — route, policy, declared

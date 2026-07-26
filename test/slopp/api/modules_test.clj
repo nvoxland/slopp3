@@ -291,3 +291,47 @@
     (testing "missing-doc skips a ^:generated public defn, keeps the undocumented real one"
       (is (nil? (edit.modules/missing-doc-warning st 'gc.client 'create-order!)))
       (is (some? (edit.modules/missing-doc-warning st 'gc.client 'orphan))))))
+
+(deftest a-namespace-has-to-say-what-it-is-for
+  ;; A namespace's INVENTORY is derived — query_project, the module surface
+  ;; and the outline all list its forms. What no tool can derive is why the
+  ;; namespace exists, what to expect inside it, and how it relates to its
+  ;; neighbours. That is the whole content of an ns docstring, and 100 of
+  ;; slopp's own 177 namespaces had none — including slopp.web.css, whose
+  ;; unstated garden conventions cost a shipped bug.
+  (let [with (store/ingest (store/empty-store) 'app.good
+                           (str "(ns app.good\n"
+                                "  \"Why this exists and how it relates to app.other.\")\n\n"
+                                "(defn f [] 1)\n"))
+        without (store/ingest (store/empty-store) 'app.bare "(ns app.bare)\n\n(defn f [] 1)\n")]
+    (testing "a namespace stating its purpose draws nothing"
+      (is (nil? (edit.modules/namespace-purpose-warning with 'app.good))))
+    (testing "a bare ns form is an advisory naming the namespace"
+      (let [w (edit.modules/namespace-purpose-warning without 'app.bare)]
+        (is (= 'app.bare (:ns w)) (pr-str w))
+        (is (true? (:missing-purpose w)))))
+    (testing "the teaching says what a purpose IS, and what it is not"
+      ;; the failure mode to head off is a docstring that lists the forms —
+      ;; that is derived, and restating it is a second copy that drifts
+      (let [t (str (:teach (edit.modules/namespace-purpose-warning without 'app.bare)))]
+        (is (re-find #"(?i)why" t) t)
+        (is (re-find #"(?i)not.*(list|inventor)" t)
+            (str "it has to say NOT an inventory: " t))))
+    (testing "a docstring that is only an inventory is still no purpose"
+      ;; deliberately NOT enforced by shape — a heuristic that guesses at
+      ;; prose quality would fire on good docstrings, and Core 2 says fix the
+      ;; analysis before restricting the language. The teach line carries it.
+      (is (nil? (edit.modules/namespace-purpose-warning
+                 (store/ingest (store/empty-store) 'app.listy
+                               "(ns app.listy \"Contains f, g and h.\")\n\n(defn f [] 1)\n")
+                 'app.listy))
+          "stated but poor is a review question, not a gate question"))
+    (testing "a GENERATED namespace is exempt — its author is a tool"
+      (let [gen (store/ingest (store/empty-store) 'app.client
+                              (str "(ns app.client)\n\n"
+                                   "(defn ^{:generated \"app.api/f\"} f \"Doc.\" [] 1)\n"))]
+        (is (nil? (edit.modules/namespace-purpose-warning gen 'app.client)))))
+    (testing "an EMPTY namespace is exempt — there is nothing to describe yet"
+      (is (nil? (edit.modules/namespace-purpose-warning
+                 (store/ingest (store/empty-store) 'app.empty "(ns app.empty)\n")
+                 'app.empty))))))

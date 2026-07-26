@@ -18,10 +18,14 @@
                   :properties {:ns {:type "string"}
                                :full {:type "boolean"}
                                :targets {:type "array"
-                                         :items {:type "object"
-                                                 :properties {:ns {:type "string"}
-                                                              :name {:type "string"}}
-                                                 :required ["ns"]}}}}}
+                                         :description (str "each target is \"ns/name\" (or plain"
+                                                           " \"ns\" for its outline), or the"
+                                                           " equivalent {ns, name} object")
+                                         :items {:oneOf [{:type "string"}
+                                                         {:type "object"
+                                                          :properties {:ns {:type "string"}
+                                                                       :name {:type "string"}}
+                                                          :required ["ns"]}]}}}}}
    {:name "query_brief"
     :description "THE form dossier, one call: source + effect flags + cross-ns callers + the tests covering it + the recorded WHY (last prompt/intent). Prefer this over separate source/references/lineage reads when you're about to change a form."
     :inputSchema {:type "object"

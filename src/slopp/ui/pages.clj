@@ -53,14 +53,84 @@
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
       (n/string (:node e)))))
 
+(defn- document
+  "The application document: head, an empty mount point, nothing else.
+
+  This is the ONLY HTML the server produces. Every screen is the client
+  rendering data from `/api/*`, so there is no per-page template here and no
+  second renderer that could disagree with the browser's.
+
+  It is deliberately EMPTY rather than server-rendered-then-hydrated. A
+  pre-rendered shell would be a second implementation of every screen — the
+  exact drift the `:cljc` views exist to prevent — and slopp's reviewer UI
+  is a local tool, so first-paint latency is not the constraint that would
+  justify it."
+  []
+  (html/html-response
+   (html/page
+    {:html/title "slopp"
+     :html/head [[:link {:rel "stylesheet" :href "/css/style.css"}]
+                 [:script {:src "/js/main.js" :defer true}]]}
+    [:div {:id "app"}])))
+
 (defn ^{:web/method :get :web/path "/css/style.css" :web/auth :public :web/response :string :web/client false}
   store-stylesheet
   "GET /css/style.css — the browser's own styling as garden data (CSS as
-  Clojure data, tracked like every other form). A safe GET; served text/css."
+  Clojure data, tracked like every other form). A safe GET; served text/css.
+
+  Combinators, because two of the three look alike and getting them wrong
+  shipped a broken layout: `:.app>nav` (one keyword) is CHILD, `[:.app [:nav]]`
+  (nesting) is DESCENDANT, and `[:.app :nav]` (siblings) is a selector GROUP.
+  A bare `>` is none of them — it reads as `clojure.core/>` and garden renders
+  the function object, which `web.css/render` now refuses."
   [_req]
   (css/css-response
    [[:body {:font-family "system-ui, sans-serif" :line-height 1.5
-            :max-width "50rem" :margin "2rem auto" :padding "0 1rem"}]
+            :margin 0 :padding 0}]
+    ;; THE THREE PANES. Auto-sized outer columns rather than fixed ones, so a
+    ;; page passing no :local or :detail leaves no gap where a pane would have
+    ;; been — the shell omits the element and the grid simply has less in it.
+    [:.app {:display "grid" :gap "0"
+            :grid-template-columns "auto minmax(0, 1fr) auto"
+            ;; an explicit second row, so the bar keeps its own height and the
+            ;; panes take everything under it instead of sharing one row
+            :grid-template-rows "auto minmax(0, 1fr)"
+            :min-height "100vh"}]
+    ;; THE GLOBAL BAR — spans every column, and reads as a bar: horizontal,
+    ;; one line tall, its own background. Before this it was a vertical
+    ;; bulleted list sitting in the first column, which made the app's global
+    ;; navigation look like part of the left pane.
+    [:header {:grid-column "1 / -1"
+              :display "flex" :align-items "center" :gap "1.5rem"
+              :height "3rem" :padding "0 1.25rem"
+              :border-bottom "1px solid #ddd" :background "#fafafa"
+              :font-size "0.95rem"}]
+    [:header [:ul {:list-style "none" :margin 0 :padding 0
+                   :display "flex" :gap "1.5rem"}]]
+    [:header [:a {:text-decoration "none"}]]
+    ;; CHILD, not descendant: a breadcrumb <nav> inside <main> must not pick
+    ;; up left-pane styling.
+    [:.app>nav {:border-right "1px solid #ddd" :padding "1rem"
+                :width "16rem" :overflow-y "auto"}]
+    [:.app>nav [:ul {:list-style "none" :margin 0 :padding 0}]]
+    [:.app>nav [:li {:padding "0.15rem 0"}]]
+    [:#ns-filter {:width "100%" :box-sizing "border-box"
+                  :padding "0.35rem 0.5rem" :margin-bottom "0.75rem"
+                  :border "1px solid #ccc" :border-radius "4px"
+                  :font-size "0.9rem" :background "transparent"
+                  :color "inherit"}]
+    [:main {:padding "1.25rem" :max-width "60rem"}]
+    [:aside {:border-left "1px solid #ddd" :padding "1rem" :width "20rem"
+             :font-size "0.9rem" :overflow-y "auto"}]
+    [:.active {:font-weight "600"}]
+    ;; narrow: stack. Three independently-scrolling boxes on a phone is worse
+    ;; than a long document.
+    (gs/at-media {:max-width "60rem"}
+                 [:.app {:grid-template-columns "minmax(0, 1fr)"}]
+                 [:.app>nav {:width "auto" :border-right "none"
+                             :border-bottom "1px solid #ddd"}]
+                 [:aside {:width "auto" :border-left "none"
+                          :border-top "1px solid #ddd"}])
     [:h1 {:font-size "1.4rem"}]
     [:h2 {:font-size "1.1rem" :margin-top "1.75rem"}]
     [:h3 {:font-size "1rem" :margin-bottom "0.25rem"}]
@@ -89,6 +159,10 @@
               :padding-top "0.6rem"}]
     (gs/at-media {:prefers-color-scheme :dark}
                  [:body {:background "#111" :color "#ddd"}]
+                 [:header {:background "#191919" :border-bottom-color "#333"}]
+                 [:.app>nav {:border-right-color "#333"}]
+                 [:aside {:border-left-color "#333"}]
+                 [:#ns-filter {:border-color "#444"}]
                  [:pre {:background "#1c1c1c"}]
                  [:a {:color "#5c9"}]
                  [:small {:color "#999"}]
@@ -145,136 +219,49 @@
     {:status 204 :web/raw true
      :headers {"Content-Type" "text/javascript; charset=utf-8"} :body ""}))
 
-(defn- shell
-  "html/page with the reviewer stylesheet and client bundle linked — the one
-  place those two literals live, so every page joins the same URLs.
-
-  Both are addressed off the ROOT by what they ARE: `/css/style.css` and
-  `/js/main.js`. They were `/store/style.css` and `/assets/cljs/main.js`,
-  which said two wrong things — a stylesheet is not a store resource (it sat
-  under the namespace-index family for no reason), and `cljs` named the
-  toolchain that produced the file rather than the file. The script was
-  served by nothing at all and 404'd on every page from the wave that added
-  it until 2026-07-25, which is a story about `:src` missing from the
-  dangling-route gate's attribute table.
-
-  The bundle self-starts and no-ops on pages without a #ns-filter box."
-  [title & body]
-  (apply html/page
-         {:html/title title
-          :html/head [[:link {:rel "stylesheet" :href "/css/style.css"}]
-                      [:script {:src "/js/main.js" :defer true}]]}
-         body))
-
-(defn ^{:web/method :get :web/path "/store" :web/auth :public :web/response :string :web/client false
-        :web/reads {:namespaces [:browse/namespaces []]}}
-  store-index-page
-  "GET /store — the namespace index. `:public` deliberately: the co-hosted
-  /call and /mcp endpoints on this server already expose strictly more
-  than read-only source.
-
-  Progressive enhancement: the compiled client filter (slopp.client.nsview,
-  served at /assets/cljs/main.js) wires the #ns-filter box to the .ns-row
-  items; with JS off the full list still renders server-side."
-  [req]
-  (html/html-response
-   (shell "store"
-     [:main
-      [:h1 "namespaces"]
-      [:input {:id "ns-filter" :type "search" :autocomplete "off"
-               :placeholder "filter namespaces…" :aria-label "filter namespaces"}]
-      [:ul {:id "ns-list"}
-       (for [{:keys [ns forms]} (:namespaces (:web/reads req))]
-         [:li {:class "ns-row"}
-          [:a {:href (str "/store/ns/" ns)} (str ns)]
-          (str " (" forms ")")])]])))
-
-(defn ^{:web/method :get :web/path "/store/ns/:ns" :web/auth :public :web/response :string :web/client false
-        :web/reads {:outline [:browse/ns-outline [:path-params :ns]]}}
-  store-ns-page
-  "GET /store/ns/:ns — one namespace's forms, each name linking its source."
-  [req]
-  (let [{:keys [ns forms] :as outline} (:outline (:web/reads req))]
-    (if-not outline
-      {:status 404 :body {:error "no such namespace"}}
-      (html/html-response
-       (shell (str ns)
-         [:main
-          [:p [:a {:href "/store"} "← all namespaces"]]
-          [:h1 (str ns)]
-          [:ul
-           (for [{:keys [name doc]} forms]
-             [:li [:a {:href (str "/store/source/" ns "/" name)} (str name)]
-              (when doc [:small (str " — " doc)])])]])))))
-
-(defn ^{:web/method :get :web/path "/store/source/:ns/:name" :web/auth :public :web/response :string :web/client false
-        :web/reads {:source [:browse/form-source [:path-params]]}}
-  store-source-page
-  "GET /store/source/:ns/:name — one form's source in [:pre [:code]],
-  through the escaper (arbitrary store text rendered safely IS the
-  standing security dogfood)."
-  [req]
-  (let [{:keys [ns name]} (:path-params req)
-        src (:source (:web/reads req))]
-    (if-not src
-      {:status 404 :body {:error "no such form"}}
-      (html/html-response
-       (shell (str ns "/" name)
-         [:main
-          [:p [:a {:href (str "/store/ns/" ns)} "← back"]]
-          [:pre [:code src]]])))))
-
 (defn ^{:web/read :ui/timeline} timeline-read
   "Read performer: the reviewer landing model — milestones plus the
   working set."
   [{:keys [session]} _]
   (model/timeline session))
 
-(defn- plural
-  "`n` with `word`, pluralised by adding an s. Enough for the counts these
-  pages state, and it keeps \"1 forms\" — which reads as a bug in the data
-  rather than in the sentence — out of the review."
-  [n word]
-  (str n " " word (when (not= 1 n) "s")))
+(defn ^{:web/method :get :web/path "/store" :web/auth :public
+        :web/response :string :web/client false}
+  store-root
+  "GET /store — the same application document as `/`.
 
-(defn ^{:web/method :get :web/path "/" :web/auth :public :web/response :string :web/client false
-        :web/reads {:timeline [:ui/timeline []]}}
-  landing-page
-  "GET / — the reviewer's front door. Two questions in the order they get
-  asked: what is in flight, and what has been finished. Every milestone
-  row links its own change screen through the range the MODEL computed, so
-  this stays a template."
-  [req]
-  (let [{:keys [milestones working]} (:timeline (:web/reads req))]
-    (html/html-response
-     (shell "review"
-       [:main
-        [:h1 "review"]
-        [:section
-         [:h2 "in flight"]
-         (if (zero? (:forms working))
-           [:p "nothing since " [:code (str (:since working))]
-            " — the working set is clean"]
-           [:div
-            [:p (str (plural (:forms working) "form") " in "
-                     (plural (count (:namespaces working)) "namespace")
-                     " since " (:since working))]
-            [:ul (for [p (:prompts working)] [:li p])]
-            (when-let [n (:more-prompts working)]
-              [:p [:small (str "… and " (plural n "more ask"))]])])]
-        [:section
-         [:h2 "milestones"]
-         [:ol
-          (for [m milestones]
-            [:li
-             (if (:range m)
-               [:a {:href (str "/change/" (:range m))} (:description m)]
-               [:span (:description m)])
-             " "
-             [:small (:at m)
-              (when-let [n (:more-lines m)]
-                (str " · " (plural n "more line")))]])]]
-        [:p [:a {:href "/store"} "browse namespaces →"]]]))))
+  It exists as its own route because `:web/spa [\"/store\"]` generates
+  `/store/*spa-path`, which needs at least one segment below the prefix. The
+  prefix ROOT is deliberately not covered by the fallback — serving the app
+  at a prefix root should be an intent the app states, not something a
+  catch-all quietly picks up.
+
+  Two routes rather than one is the honest cost of that stance."
+  [_req]
+  (document))
+
+(defn ^{:web/method :get :web/path "/" :web/auth :public
+        :web/response :string :web/client false
+        :web/spa ["/store" "/change"]}
+  app-document
+  "GET / — and, through `:web/spa`, every client route beneath `/store` and
+  `/change`.
+
+  ONE endpoint where six server-rendered pages used to be. It answers with
+  the same empty document every time; which screen appears is
+  `views/route-for` reading the URL in the browser.
+
+  `:web/spa` is what makes a deep link survive a refresh: `/store/form/f123`
+  is real to the client router and meaningless to the server's, so without a
+  declared fallback a reload would 404. Declared and SCOPED rather than a
+  root catch-all — a path outside these prefixes still 404s, so a typo is
+  still distinguishable from a page.
+
+  Note the prefix ROOTS are not covered by the generated catch-alls
+  (`/store/*` needs a segment below it), which is why `/store` itself is a
+  separate route rather than a side effect of the fallback."
+  [_req]
+  (document))
 
 (defn ^{:web/read :ui/change} change-read
   "Read performer: the review of one `from..to` range, or nil when the
@@ -284,50 +271,6 @@
   (let [[from to] (str/split (str range-str) #"\.\." 2)]
     (when (and (seq from) (seq to))
       (model/change-view session from to))))
-
-(defn ^{:web/method :get :web/path "/change/:range" :web/auth :public
-        :web/response :string :web/client false
-        :web/reads {:change [:ui/change [:path-params :range]]}}
-  change-page
-  "GET /change/<from>..<to> — the review of one milestone. Module →
-  namespace → form, and per form: the recorded ASK first (a reviewer reads
-  intent before code), then the line diff, then the blast radius.
-
-  The whole range is one path segment because a reviewer copies it as one
-  thing; the read performer splits it."
-  [req]
-  (if-let [{:keys [from to count modules]} (:change (:web/reads req))]
-    (html/html-response
-     (shell (str from ".." to)
-       [:main
-        [:p [:a {:href "/"} "← review"]]
-        [:h1 (str from ".." to)]
-        [:p (plural count "form")]
-        (for [m modules]
-          [:section
-           [:h2 (:module m) " " [:small (plural (:count m) "form")]]
-           (for [n (:namespaces m)]
-             [:div
-              [:h3 (:ns n)]
-              (for [f (:forms n)]
-                [:article
-                 [:h4 [:a {:href (str "/store/form/" (:form-id f))} (:form f)]
-                  " " [:small (name (:status f))]]
-                 (when (:why f) [:p [:em (:why f)]])
-                 [:pre
-                  [:code
-                   (for [[op line] (:diff f)]
-                     [:span {:class (name op)}
-                      (str (case op :add "+" :del "-" " ") line "\n")])]]
-                 ;; the diff carries +/- classes and nothing more: its lines are TEXT from
-                 ;; diff-lines, not CST nodes, and half a form does not parse — so
-                 ;; syntax colour here would be a guess where the form page has a tree
-                 nil
-                 [:small (plural (:callers f) "caller")]])])])
-        [:footer
-         [:small "call edges come from a syntactic reader over the store, so"
-          " caller counts are a floor, not a census"]]]))
-    {:status 404 :body {:error "no such range"}}))
 
 (defn ^{:web/read :ui/form} form-view-read
   "Read performer: one form's page model by ID at the requested rendering
@@ -339,69 +282,3 @@
   are a 404, and neither is a reason to render the other thing."
   [{:keys [session]} {:keys [path-params query-params]}]
   (model/form-view session (str (:id path-params)) (:view query-params)))
-
-(defn- highlighted
-  "A model token stream as hiccup. Whitespace and unclassified text are
-  emitted BARE — a span per character-run of ordinary code would triple
-  the page for no colour — so the markup carries only what is actually
-  distinguished. The escaper still sees every string, since hiccup escapes
-  text nodes wherever they sit."
-  [tokens]
-  [:pre [:code
-         (for [[cls text] tokens]
-           (if (#{"ws" "text"} cls) text [:span {:class cls} text]))]])
-
-(defn ^{:web/method :get :web/path "/store/form/:id" :web/auth :public
-        :web/response :string :web/client false
-        :web/reads {:view [:ui/form []]}}
-  form-page
-  "GET /store/form/<id> — one form, by ID: names change and ids do not, so
-  the id is the permalink.
-
-  Laid out for a COLD arrival from a link. Breadcrumb first (where am I),
-  callers ABOVE (who depends on this — the thing you need before you judge
-  a change), the form itself, then callees BELOW with each one's signature
-  and doc INLINED. The inlining is the point: a link is not visibility, and
-  the reason to open this page is usually to read the form WITH what it
-  calls."
-  [req]
-  (if-let [{:keys [form ns module tokens sig doc why warranty
-                   callers callees note]} (:view (:web/reads req))]
-    (html/html-response
-     (shell form
-       [:main
-        [:nav [:a {:href "/store"} "store"] " / " module " / "
-         [:a {:href (str "/store/ns/" ns)} ns]]
-        [:h1 form]
-        (when sig [:p [:code sig]])
-        (when doc [:p doc])
-        (when why [:p [:em why]])
-        [:p [:small (plural (:covered warranty) "covering test")]]
-        [:section
-         [:h2 "callers"]
-         (if (empty? callers)
-           [:p [:small "nothing in this store calls it"]]
-           (for [g callers]
-             [:div
-              [:h3 (name (:via g)) " " [:small (plural (:count g) "form")]]
-              [:ul
-               (for [c (:forms g)]
-                 [:li (if (:form-id c)
-                        [:a {:href (str "/store/form/" (:form-id c))} (:form c)]
-                        [:span (:form c)])
-                  " " [:small (:module c)]])]]))]
-        (highlighted tokens)
-        [:section
-         [:h2 "callees"]
-         (if (empty? callees)
-           [:p [:small "it calls nothing else in this store"]]
-           (for [c callees]
-             [:article
-              [:h3 (if (:form-id c)
-                     [:a {:href (str "/store/form/" (:form-id c))} (:form c)]
-                     [:span (:form c)])
-               " " [:small (:module c)]]
-              (when (:sig c) [:p [:code (:sig c)]])
-              (when (:doc c) [:p (:doc c)])]))]
-        [:footer [:small note]]]))
-    {:status 404 :body {:error "no such form"}}))

@@ -217,3 +217,31 @@
     (is (= {:ns "demo.core"} (router/query-params "ns=demo.core"))))
   (testing "malformed input is data, never a 500"
     (is (map? (router/query-params "%%%=x&=y&&")))))
+
+(deftest a-context-cannot-promise-reads-it-cannot-perform
+  ;; Reads resolve by VOCABULARY store-wide, so an endpoint in one namespace
+  ;; can and should reuse a performer declared in another. Good property —
+  ;; but it means a context assembled from HALF the namespaces answers 500,
+  ;; not 404, at request time, with the detail server-side and a generic
+  ;; error in the body. That is the worst of both: the failure with no check
+  ;; is also the failure that is hardest to read.
+  ;;
+  ;; Every input needed is already in hand at assembly. So assemble-time is
+  ;; where it is caught.
+  (testing "a route declaring a read nobody performs is refused at assembly"
+    (let [e (try (web/context {:web/namespaces ['slopp.web-test]
+                              :web/routes [{:method :get :path "/orphan"
+                                            :handler identity
+                                            :auth :public
+                                            :web/reads {:x [:nobody/serves-this []]}}]})
+                 nil
+                 (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (some? e) "assembling this context has to fail, not defer to a 500")
+      (is (re-find #"nobody/serves-this" (ex-message e))
+          (str "the message has to name the unservable KIND: " (ex-message e)))
+      (is (re-find #"/orphan" (ex-message e))
+          (str "and the route that declared it: " (ex-message e)))))
+  (testing "a context that can perform every read it declares assembles"
+    ;; the guard must not fire on the ordinary case, including a route with
+    ;; no declared reads at all
+    (is (map? (web/context {:web/namespaces ['slopp.web-test]})))))

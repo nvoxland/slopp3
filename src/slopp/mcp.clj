@@ -291,7 +291,16 @@
             (when (and sid (not (:env-agent? @session)))
               (swap! session assoc :agent-id sid))
             (when-not (str/blank? (or prompt ""))
-              (swap! session assoc :pending-intent prompt :last-intent prompt))))))))
+              ;; a new ask is a new READER, potentially: /clear and automatic
+              ;; compaction both land here and neither is visible any other
+              ;; way. `told!` scopes its sent-view hashes to this counter, so
+              ;; the first read of a view in a fresh context is always a
+              ;; payload. It bumps for READ-ONLY asks too — turns do not, and
+              ;; a read-only planning ask is where the withholding was first
+              ;; hit.
+              (swap! session #(-> %
+                                  (assoc :pending-intent prompt :last-intent prompt)
+                                  (update ::ask (fnil inc 0)))))))))))
 
 (def ^:private env-handlers!
   "call-tool dispatch \u2014 deps/branches/build/help (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
@@ -497,24 +506,88 @@
 
 (defn- told!
   "Knowledge-differential reads: the session keeps a hash of every
-  cacheable VIEW it has sent; an identical re-read returns a tiny
-  :unchanged stub instead of the payload. Re-fetching becomes FREE, so
-  agents never carry views in context 'just in case' — the whole
-  don't-hoard stance depends on cheap re-asks. Any store change alters
-  the payload, so staleness is impossible by construction."
+  cacheable VIEW it has sent, SCOPED TO THE CURRENT ASK; an identical
+  re-read within that ask returns a tiny :unchanged stub instead of the
+  payload. Re-fetching becomes FREE, so agents never carry views in
+  context 'just in case' — the whole don't-hoard stance depends on cheap
+  re-asks, and reads are 52% of all output. Any store change alters the
+  payload, so staleness is impossible by construction.
+
+  **The ask scope is the correction, and it is about WHOSE knowledge this
+  is.** The record lives in the SERVER session, which lasts for the
+  process; the claim it makes is about the READER, which resets on
+  `/clear`, on automatic compaction, and for every subagent. Unscoped, the
+  two diverged and the stub said \"you already know\" to a context that had
+  never seen it — measured twice, once mid-plan after a clear and once
+  mid-build after an automatic compact. Not staleness: WITHHOLDING, with
+  absence-of-payload wearing absence-of-change's clothes.
+
+  The ASK is the boundary and the TURN is not: turns rotate on the
+  write-tool gate, so a read-only planning ask never rotates one — and that
+  is precisely where this was first hit. `absorb-pending-intent!` bumps
+  `::ask` for every prompt the hook records, read-only included.
+
+  `:detail` is the escape for the case the scope cannot cover: a subagent
+  shares the session and runs inside the parent's ask, so it can be told
+  \"you already know\" about something it has never seen. The payload is
+  spooled and the id named, which is the same door `query_detail` already
+  opens for trimmed responses — previously the only way to a read-only
+  tool's withheld payload was a write-capable tool that prompts for
+  permission in plan mode."
   [session tool a payload]
   (let [k [tool (select-keys a [:ns :name :targets :since :detail :depth
                                 :limit :contains :full :at :collapse :format
                                 :on :direction])]
-        h (hash payload)]
+        h [(get @session ::ask 0) (hash payload)]]
     (if (and (= h (get-in @session [::told k]))
              (< 130 (count (pr-str payload))))
       {:unchanged true
        :view (str tool (when (:ns a) (str " " (:ns a)))
                   (when (:name a) (str "/" (:name a))))
-       :note "identical to what this session already received"}
+       :detail (spool! session (pr-str payload))
+       :note "identical to what this session already received — query_detail {id} if you have not"}
       (do (swap! session assoc-in [::told k] h)
           payload))))
+
+(defn normalize-targets
+  "Normalize `query_source`'s `targets` into `[{:ns sym :name sym?} …]`.
+
+  Accepts every UNAMBIGUOUS spelling, because refusing one taught a rule that
+  did not need to exist: `{:ns \"a.b\" :name \"c\"}`, the qualified string
+  `\"a.b/c\"`, a bare `\"a.b\"`, and the symbol `a.b/c` an agent writing EDN
+  reaches for first.
+
+  Previously only the map worked. A string went `(:ns \"a.b/c\")` → nil →
+  `(symbol nil)`, and the caller got `no conversion to symbol` — a message
+  naming an internal call they never made, with no statement of what WAS
+  accepted. Being liberal at the boundary is the better fix than a better
+  error message.
+
+  A shape it cannot use is REFUSED rather than dropped: a target that
+  silently vanishes reads as \"that form has no source\", which is a different
+  and false answer (Core 1)."
+  [targets]
+  (mapv
+   (fn [t]
+     (cond
+       (map? t)
+       (cond-> {:ns (symbol (str (:ns t)))}
+         (:name t) (assoc :name (symbol (str (:name t)))))
+
+       (or (string? t) (symbol? t))
+       (let [s (str t)
+             i (str/index-of s "/")]
+         (if (and i (pos? i) (< (inc i) (count s)))
+           {:ns (symbol (subs s 0 i)) :name (symbol (subs s (inc i)))}
+           {:ns (symbol s)}))
+
+       :else
+       (throw (ex-info (str "query_source targets: cannot read " (pr-str t)
+                            " — a target is {:ns \"a.b\"} or {:ns \"a.b\" :name \"c\"},"
+                            " or the string/symbol form \"a.b/name\" (\"a.b\" alone"
+                            " gives that namespace's outline)")
+                       {:target t}))))
+   targets))
 
 (defn- call-tool! [session {:keys [name arguments]}]
   ;; async-image boot: the store loaded synchronously (this dispatch is live),
@@ -619,14 +692,11 @@
                                                                     " forms you need (targets"
                                                                     " [{ns name}]) or pass full:"
                                                                     " true for the whole namespace")})]
-                                          (if-let [ts (:targets a)]
+                                          (if-let [ts (some-> (:targets a) normalize-targets seq)]
                                             (mapv (fn [t]
                                                     (if (or full? (:name t))
-                                                      (first (query/query-sources
-                                                              session
-                                                              [(cond-> {:ns (symbol (:ns t))}
-                                                                 (:name t) (assoc :name (symbol (:name t))))]))
-                                                      (gate (symbol (:ns t)))))
+                                                      (first (query/query-sources session [t]))
+                                                      (gate (:ns t))))
                                                   ts)
                                             (if full?
                                               (query/query-source session (sym :ns))
@@ -1011,6 +1081,28 @@
     (flush)
     (System/exit (if (:isError r) 1 0))))
 
+(defn- refusal-text
+  "The message a REFUSED call answered with, or nil if it was not a refusal.
+
+  A refusal arrives in two shapes: a thrown exception, which `handle!` has
+  already marked `:isError`, or slopp's own refusal-as-data, which `text!`
+  pr-strs so the payload opens with `{:error`. This is the whole predicate as
+  well as the message — `:refused?` is `(some? (refusal-text r))` — because
+  asking the same question at two call sites is how they drift, and the
+  failure log has four instances of that shape already.
+
+  It UNDER-counts, deliberately: a result carrying `:error` behind another key
+  reads as clean. That is the safe direction for a waste metric — it will
+  never invent a problem, only miss one. What it must not do is lose a
+  refusal it has already been told about, so an `:isError` with no text still
+  answers non-nil."
+  [r]
+  (let [t (:text (first (:content r)))]
+    (cond
+      (and t (str/starts-with? t "{:error")) t
+      (:isError r) (or t "error")
+      :else nil)))
+
 ^:unsafe (defn handle!
   "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees
@@ -1038,22 +1130,20 @@
                (try (call-tool! session params)
                     (catch Exception e
                       (assoc (text! (str "error: " (ex-message e)))
-                             :isError true))))]
+                             :isError true))))
+          why (refusal-text r)]
       ;; after the call, so a tool that reads the ring (turn_end) never sees
       ;; its own half-finished entry
       (swap! session update :slopp.api.telemetry/calls (fnil conj [])
              {:tool (:name params) :start t0 :end (System/currentTimeMillis)
-              ;; A REFUSAL, by the two shapes one can arrive in: a thrown
-              ;; exception (:isError, set above) or slopp's own
-              ;; refusal-as-data, which `text!` pr-strs so the payload opens
-              ;; with `{:error`. This is a heuristic and it UNDER-counts — a
-              ;; result carrying :error behind another key reads as clean —
-              ;; which is the safe direction for a waste metric: it will never
-              ;; invent a problem, only miss one.
-              :refused? (boolean
-                         (or (:isError r)
-                             (some-> (:text (first (:content r)))
-                                     (clojure.string/starts-with? "{:error"))))})
+              ;; A REFUSAL and the reason it gave, from ONE derivation — see
+              ;; `refusal-text` for the two shapes it arrives in and for the
+              ;; deliberate under-count. The message rides along because a
+              ;; count with no cause can only ever support "read that tool's
+              ;; contract", which is the guess rather than the finding;
+              ;; `call-timing` bounds and truncates what reaches the delta.
+              :refused? (some? why)
+              :error    why})
       {:jsonrpc "2.0" :id id :result r})
     "ping" {:jsonrpc "2.0" :id id :result {}}
     (when id

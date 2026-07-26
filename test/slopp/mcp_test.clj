@@ -1,4 +1,18 @@
 (ns slopp.mcp-test
+  "Cover for the WIRE — `slopp.mcp`, the JSON-RPC boundary agents actually
+  reach slopp through.
+
+  The distinction from the api-level test namespaces is the whole point: those
+  ask whether an operation is correct, this asks whether the protocol surface
+  in front of it is. Argument validation, trimming and spooling, refusal
+  shapes, the tool schemas matching what the tools accept, turn rotation, and
+  what the session ring records — all things an operation can be perfectly
+  correct behind.
+
+  Most of it is `^:external`: a wire test wants a real session, and several
+  want a second process. The handful of in-image tests here are the pure
+  helpers the boundary derives (payload shaping, refusal extraction), and
+  those belong in-image precisely because they run ~700x cheaper there."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.edn :as edn]
             [cheshire.core :as json]
@@ -1357,9 +1371,11 @@
         (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
           (is (pos? (:port r)) (pr-str r))
           (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r)))
-          (is (re-find #"<a href=\"/store/ns/us\.only\">"
-                       (slurp (str (:url r) "store")))
-              "the served session is THIS one — a fresh session would not have us.only")))
+          (is (re-find #"us\.only" (slurp (str (:url r) "api/namespaces")))
+              "the served session is THIS one — a fresh session would not have
+               us.only. Asserted against the API rather than the document,
+               because the document is now an empty mount point and carries
+               no store content at all.")))
       (finally
         (call! sess "ui_serve" {:stop true})
         (api/close! sess)))))
@@ -1510,3 +1526,138 @@
       (finally
         (ui-server/stop!)
         (api/close! sess)))))
+
+(deftest targets-accepts-the-shapes-a-reader-would-try
+  ;; Core 6, the reporting half: a refusal must speak the AUTHOR's vocabulary.
+  ;; `query_source {targets}` accepted only [{:ns … :name …}] and died on
+  ;; ["ns/name"] — the shape the tool index's own `{targets}` shorthand
+  ;; suggests — with `no conversion to symbol`, naming an internal call the
+  ;; caller never made and saying nothing about what IS accepted.
+  ;;
+  ;; Being liberal here is the better fix than a better error: "ns/name" is
+  ;; unambiguous, so refusing it taught a rule that did not need to exist.
+  (testing "the map shape, unchanged"
+    (is (= [{:ns 'a.b :name 'c}] (mcp/normalize-targets [{:ns "a.b" :name "c"}])))
+    (is (= [{:ns 'a.b}] (mcp/normalize-targets [{:ns "a.b"}]))))
+  (testing "a qualified string is the same thing, and now lands"
+    (is (= [{:ns 'a.b :name 'c}] (mcp/normalize-targets ["a.b/c"])))
+    (is (= [{:ns 'a.b}] (mcp/normalize-targets ["a.b"])))
+    (testing "including names that are legal Clojure and awkward to parse"
+      (is (= [{:ns 'a.b :name 'swap!}] (mcp/normalize-targets ["a.b/swap!"])))
+      (is (= [{:ns 'a.b :name '->rec}] (mcp/normalize-targets ["a.b/->rec"])))))
+  (testing "symbols too — an agent writing EDN reaches for those first"
+    (is (= [{:ns 'a.b :name 'c}] (mcp/normalize-targets ['a.b/c]))))
+  (testing "a shape it cannot use is REFUSED, naming what is accepted"
+    ;; not silently dropped: a target that vanishes reads as \"that form has
+    ;; no source\", which is a different and false answer
+    (let [e (try (mcp/normalize-targets [42]) nil
+                 (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (some? e))
+      (is (re-find #"\{:ns" (ex-message e)) (ex-message e))
+      (is (re-find #"\"[a-z.]+/[a-z]+\"" (ex-message e)) (ex-message e))
+      (is (re-find #"42" (ex-message e)) "and what it actually got"))))
+
+(deftest refusal-text-is-the-one-derivation-of-both-refusal-facts
+  ;; `:refused?` and the message the turn record samples are the same
+  ;; question asked twice, and Pattern 2 in the failure log is four instances
+  ;; of exactly that shape drifting apart. So the predicate IS the extraction:
+  ;; a refusal is a call that has text to show for it.
+  (testing "slopp's own refusal-as-data — the payload opens with {:error"
+    (is (= "{:error \"no match for `(inc x)` in my.app.orders/place!\"}"
+           (#'mcp/refusal-text
+            {:content [{:text "{:error \"no match for `(inc x)` in my.app.orders/place!\"}"}]}))))
+  (testing "a thrown exception, which the dispatcher already marked"
+    (is (= "error: boom"
+           (#'mcp/refusal-text {:isError true :content [{:text "error: boom"}]}))))
+  (testing "a clean result is nil, so the predicate is the extraction"
+    (is (nil? (#'mcp/refusal-text {:content [{:text "{:ok true, :delta \"d1\"}"}]})))
+    (is (nil? (#'mcp/refusal-text {}))))
+  (testing "an :isError with no text still reads as refused, never as clean"
+    ;; the under-count is deliberate elsewhere; losing a KNOWN refusal
+    ;; because it happened to be quiet is not the same thing
+    (is (some? (#'mcp/refusal-text {:isError true})))))
+
+(deftest an-unchanged-stub-must-not-outlive-the-reader-it-is-about
+  ;; `told!`'s guarantee — "identical to what this session already received" —
+  ;; is true of the SERVER session and false of the reader. The server session
+  ;; lives for the process; the reader resets on /clear, on automatic
+  ;; compaction, and on every subagent. Hit twice for real: six read-only
+  ;; calls came back as stubs to a context that had just been cleared, and
+  ;; again mid-build after an automatic /compact — so it is not something a
+  ;; user can avoid by not typing a command.
+  ;;
+  ;; This is not staleness (that part of the docstring holds); it is
+  ;; WITHHOLDING. Absence-of-payload shares a representation with
+  ;; absence-of-change: "I am not telling you" presented as "you already
+  ;; know".
+  ;;
+  ;; The ASK is the right boundary and the turn is not: turns rotate on the
+  ;; write-tool gate, so a read-only planning ask never rotates one — and a
+  ;; read-only planning ask is exactly where this was first hit.
+  (let [sess    (atom {})
+        payload {:routes (vec (range 60))}]
+    (testing "a re-read inside ONE ask still stubs — that saving is the point"
+      ;; reads are 52% of all output and stable whole-store views are the fat;
+      ;; the fix must narrow the withholding, not delete it
+      (is (= payload (#'mcp/told! sess "query_routes" {} payload)))
+      (is (:unchanged (#'mcp/told! sess "query_routes" {} payload))))
+    (testing "a NEW ASK re-tells it, because the reader may be new"
+      (swap! sess update :slopp.mcp/ask (fnil inc 0))
+      (is (= payload (#'mcp/told! sess "query_routes" {} payload))))
+    (testing "and it stubs again within that new ask"
+      (is (:unchanged (#'mcp/told! sess "query_routes" {} payload))))))
+
+(deftest an-unchanged-stub-carries-a-way-back-to-the-payload
+  ;; Expiring at the ask boundary covers /clear and compaction, but not a
+  ;; SUBAGENT: it shares the server session, runs inside the parent's ask, and
+  ;; has seen nothing. So there must still be an in-band way out — and today
+  ;; there is none, because `query_detail` only spools TRIMMED responses, not
+  ;; stubs. A read-only tool's payload was reachable only by calling a
+  ;; write-capable one (`config_file`), which prompts for permission in plan
+  ;; mode: the detour that made this cost a whole planning turn.
+  (let [sess    (atom {})
+        payload {:routes (vec (range 60))}]
+    (#'mcp/told! sess "query_routes" {} payload)
+    (let [stub (#'mcp/told! sess "query_routes" {} payload)]
+      (is (:unchanged stub))
+      (is (string? (:detail stub)) "the stub names its own escape")
+      (is (= (pr-str payload)
+             (get-in @sess [:slopp.mcp/spool :entries (:detail stub)]))
+          "and the id resolves in the spool query_detail already reads"))))
+
+(deftest ^:external a-new-ask-re-tells-a-view-the-session-already-sent
+  ;; The in-image cover pins `told!`'s scoping; this pins the SEAM — that the
+  ;; ask counter is actually bumped by the thing that records the prompt. A
+  ;; rule implemented at the wrong call site is this codebase's Pattern 2, and
+  ;; the tell is always that two surfaces disagree while each looks right
+  ;; alone.
+  ;;
+  ;; Read-only on purpose. Turns rotate on the write-tool gate, so nothing
+  ;; here rotates a turn — and the withholding was first hit in a read-only
+  ;; planning ask, which is the case a turn-scoped fix would have missed.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-retell"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        sess (external/open! {:slopp.api/dir dir})
+        ask! (fn [prompt]
+               (spit (io/file dir ".slopp" "pending-intent")
+                     (str "{\"session-id\":\"sess-retell\",\"prompt\":\"" prompt "\"}")))]
+    (try
+      (io/make-parents (io/file dir ".slopp" "pending-intent"))
+      (ask! "first ask: what rules are on")
+      (let [one (call! sess "query_rules" {})]
+        (is (not (str/includes? one "unchanged")) "the first read is the payload")
+        (testing "a re-read inside the SAME ask is the stub — the saving stands"
+          (is (str/includes? (call! sess "query_rules" {}) "unchanged"))))
+      (testing "after a NEW ask the same read is the payload again"
+        (ask! "second ask, fresh context: what rules are on")
+        (let [again (call! sess "query_rules" {})]
+          (is (not (str/includes? again "unchanged"))
+              "a cleared or compacted reader has seen none of this")
+          (is (str/includes? again "rules") (subs again 0 (min 200 (count again))))))
+      (testing "and the stub, when it does appear, names the door out"
+        (let [stub (call! sess "query_rules" {})]
+          (is (str/includes? stub "unchanged"))
+          (is (str/includes? stub ":detail")
+              "a read-only tool's withheld payload must not need a write-capable one")))
+      (finally (api/close! sess)))))

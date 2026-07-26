@@ -183,6 +183,49 @@
       (when-let [vs (module-violations manifest rows)]
         (str/join "; " (map :error vs))))))
 
+(defn ^:export namespace-purpose-warning
+  "Namespace-purpose rule: a namespace should state what it is FOR.
+
+  Its INVENTORY is derived — `query_project`, the module surface and the
+  outline all list its forms — so a docstring that lists them is a second
+  copy that drifts. What no tool can derive is the part worth writing: why
+  this namespace exists, what to expect inside it, and how it relates to its
+  neighbours.
+
+  Advisory, and namespace-grained. Like [[missing-doc-warning]] it is meant
+  to nag WHERE YOU ARE WORKING — the done-point reports it for namespaces the
+  episode touched — while `review_scan` and `full_check` answer the
+  whole-store question.
+
+  Deliberately NOT a shape check. A heuristic guessing whether prose is a
+  purpose or an inventory would fire on good docstrings, and Core 2's rule is
+  to fix the analysis before restricting the language. Absence is objective;
+  quality is a review question. The teaching carries the rest.
+
+  Two exemptions, both because there is no author to nag: a GENERATED
+  namespace (every named form carries `^:generated` — `generate_client`'s
+  output documents itself), and an EMPTY one (nothing to describe yet)."
+  [store ns-sym]
+  (when (contains? (:namespaces store) ns-sym)
+    (let [es      (store/forms store ns-sym)
+          named   (remove #(= (str (:name %)) (str ns-sym)) es)
+          gen?    (fn [e] (let [s (store/form-sexpr (:node e))]
+                            (boolean (and (seq? s) (symbol? (second s))
+                                          (:generated (meta (second s)))))))
+          ns-form (first es)]
+      (when (and ns-form
+                 (seq named)
+                 (not (every? gen? named))
+                 (nil? (some #(when (string? %) %)
+                             (take 2 (drop 2 (store/form-sexpr (:node ns-form)))))))
+        {:ns ns-sym
+         :missing-purpose true
+         :teach (str ns-sym " states no purpose. Add a docstring to its ns form"
+                     " saying WHY it exists, what to expect inside, and how it"
+                     " relates to its neighbours — NOT a list of what it"
+                     " contains, which query_project and the module surface"
+                     " already derive and show.")}))))
+
 (defn ^:export missing-doc-warning
   "Public-surface documentation rule (module system): a defn/defmacro on
   the module surface — depth<=2 namespace, or a deeper var hoisted by

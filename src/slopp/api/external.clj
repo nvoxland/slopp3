@@ -1,6 +1,20 @@
 (ns slopp.api.external
+  "The api's IO face — the operations that leave this process.
+
+  Opening a session boots a JVM and a sqlite connection; the external test
+  tier spawns processes; `build!` writes files; `commit_point!` reaches git.
+  Those live here rather than in `slopp.api` so the tier boundary is a
+  namespace boundary too, which is what lets the pure core behind it be
+  declared pure and tested at ~0.5ms instead of ~370ms.
+
+  It is also where the WHOLE-STORE questions land — `full_check!`,
+  `built-store` — because each needs the store AND something outside it: a
+  fresh JVM, or a materialized project on disk. `built-store` in particular
+  exists to end a specific failure: a whole-store invariant with no store to
+  reach passes on a population of zero, which is indistinguishable from
+  passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -577,7 +591,11 @@ client-deps (merge (:client-deps st) (:client provided))
                                                st*
                                                (store/ns-of-form-id st* fid)
                                                (:name e)))))
-                                    changed))))]
+                                    changed))))
+      ;; the same nag-where-you-work grain, one level up: a namespace the
+      ;; episode touched that never says what it is FOR. Whole-store is
+      ;; review_scan's question, not this one's.
+      ]
   (cond-> {:test-status (cond (or (pos? failures) iso-red?
                                   ;; lint errors — which INCLUDE dead public
                                   ;; surface, folded in as ERROR rows by
@@ -621,6 +639,7 @@ client-deps (merge (:client-deps st) (:client provided))
     (seq lint-warns)  (assoc :lint-warnings lint-warns)
     (:pending iso)    (assoc :external-pending (:pending iso))
     (seq missing-doc) (assoc :missing-doc missing-doc)
+    
     (seq advisories)  (merge advisories)
     (seq (:unused unused-rep)) (assoc :unused-public (:unused unused-rep))
     (seq (:stale unused-rep))  (assoc :stale-unused-ok (:stale unused-rep))
@@ -771,6 +790,12 @@ client-deps (merge (:client-deps st) (:client provided))
       ;; friction #10: a whole-store green is exactly the verdict an agent
       ;; commits on, so a host running superseded code has to say so HERE.
       (host-warning-now st) (assoc :host-stale (host-warning-now st))
+      ;; Core 6: everything above is an edge INSIDE the store. A green here
+      ;; says nothing about what LEAVES it, and reads as though it did — so
+      ;; name the exits nothing checks, right where the green is about to be
+      ;; believed. Advisory: these are standing documented holes, not
+      ;; regressions.
+      (crossings/finding st) (assoc :crossings (crossings/finding st))
       ;; last, so the recorded verdict is the one actually returned
       true                  (record-full-check! session nses t0))))
 

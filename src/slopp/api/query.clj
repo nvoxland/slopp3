@@ -235,7 +235,7 @@
             (cond-> {:name (:name d)}
               (:fixed-arities d)      (assoc :arities (vec (sort (:fixed-arities d))))
               (:varargs-min-arity d)  (assoc :varargs-min (:varargs-min-arity d))
-              (and detail (:doc d))   (assoc :doc (first (str/split-lines (:doc d))))
+              (and detail (:doc d))   (assoc :doc (orient/doc-summary (:doc d)))
               (derive/test-definition? d) (assoc :test? true)
               (and (not (derive/test-definition? d))
                    (contains? eff (symbol (str ns-sym) (str (:name d)))))

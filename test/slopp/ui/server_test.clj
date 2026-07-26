@@ -19,8 +19,13 @@
           (is (pos? (:port r)) "port 0 means ephemeral — echoing 0 back would be a lie")
           (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r))
               "the url lands on the reviewer's front door"))
-        (testing "the page renders the handed-over session"
-          (is (re-find #"demo\.only\.here" (slurp (str "http://127.0.0.1:" (:port r) "/store"))))))
+        (testing "the served DATA comes from the handed-over session"
+          ;; the document is an empty mount point now and carries no store
+          ;; content at all, so the proof moved one layer down to the API the
+          ;; client fetches. Same evidence: a namespace that exists ONLY in
+          ;; this session appears, so this session is what is being served.
+          (is (re-find #"demo\.only\.here"
+                       (slurp (str "http://127.0.0.1:" (:port r) "/api/namespaces"))))))
       (finally (server/stop!)))))
 
 (deftest ^:external ui-serve-evicts-itself-and-names-a-taken-port

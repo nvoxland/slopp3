@@ -166,6 +166,20 @@
     (testing "one wrapper per endpoint; mutating verbs get a ! suffix"
       (is (= '[create-order! get-order] (mapv :fn-name wrappers)))
       (is (= [:post :get] (mapv :method wrappers))))
+    (testing "an endpoint already named with ! does not get a second one"
+      ;; slopp's own store hit this: POST /call is `call-endpoint!` and
+      ;; generated `call-endpoint!!`. Naming a mutating endpoint with a bang
+      ;; is the DIALECT'S OWN convention, so the generator meeting that
+      ;; convention with a double bang is it fighting the house style.
+      (let [st2 (store/ingest st 'shop.api2
+                              (str "(ns shop.api2)\n\n"
+                                   "(defn ^{:web/method :post :web/path \"/api/pay\""
+                                   " :web/request shop.contracts/order"
+                                   " :web/response shop.contracts/order}"
+                                   " pay! [req] req)\n"))
+            names (mapv :fn-name (:wrappers (cljs/client-wrapper-specs st2)))]
+        (is (some #{'pay!} names) (pr-str names))
+        (is (not (some #{'pay!!} names)) (pr-str names))))
     (testing "schema refs resolve to fully-qualified vars in the :cljc contracts ns"
       (is (= 'shop.contracts/order (get-in (first wrappers) [:request :sym])))
       (is (= 'shop.contracts/order (get-in (first wrappers) [:response :sym])))
@@ -268,3 +282,90 @@
       (is (= '[data] (mapv :fn-name wrappers))))
     (testing "opting out is not a problem to report — it is a declaration"
       (is (empty? problems) (pr-str problems)))))
+
+(deftest ^:external compiling-a-bundle-says-how-to-serve-it
+  ;; The bundle existed in the files manifest from the wave that added it, and
+  ;; every page 404'd on it for two more, because serving it needs an
+  ;; http.static.* mount and nothing said so. Serving it IS one config line —
+  ;; the gap was never capability, it was that the line was undiscoverable.
+  ;;
+  ;; Discoverability lives in the RESULT, not in a doc someone might read:
+  ;; the tool that wrote the file names the mount that would serve it, and
+  ;; says nothing once one exists.
+  (let [sess (external/open!)]
+    (try
+      (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+                     :client true :prompt "the cljs compiler")
+      (api/module-platform! sess "sv.client" :cljs :prompt "browser code")
+      (api/ingest! sess 'sv.client "(ns sv.client)\n(defn greet [n] (str \"Hi \" n))\n")
+      (testing "nothing serves the output yet, so the result says how"
+        (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (re-find #"http\.static\." (str (:serve-with r)))
+              (str "expected the mount line: " (pr-str r)))
+          (is (re-find #"config_file" (str (:serve-with r))) (pr-str r))))
+      (testing "once a mount covers it, the hint goes away"
+        ;; repeating advice already taken is how a result becomes noise
+        (api/config-file! sess "capabilities" :key "http.static./js"
+                          :value "public/cljs" :prompt "serve the bundle")
+        (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
+          (is (nil? (:serve-with r)) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest a-hard-compile-error-anchors-like-a-warning
+  ;; Core 6: verification stops at the boundary. Analyzer WARNINGS cross the
+  ;; cljs compile beautifully — anchor-warnings turns {:ns :line} into a form
+  ;; and a snippet, so a cljs warning reads like a clj compile error. A hard
+  ;; FAILURE crossed as `failed compiling file:cljs-src/slopp/ui/client/app.cljs`:
+  ;; a path into a temp directory the agent never created, with no message, no
+  ;; form and no line. It also breaks slopp's own standing invariant that no
+  ;; file:line ever reaches the agent.
+  ;;
+  ;; The information exists — ClojureScript throws ex-data carrying the file
+  ;; and line. The runner was dropping it on the floor.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'app.view
+                             "(ns app.view)\n\n(defn a [] 1)\n\n(defn b [] (a))\n"))
+        st (first (store/record-module-platform st "app.view" :cljs))]
+    (testing "a located error becomes a form anchor, not a path"
+      (let [r (cljs/anchor-error st "Wrong number of args passed to defonce"
+                                 {:file "cljs-src/app/view.cljs" :line 5})]
+        (is (= 'app.view/b (:form r)) (pr-str r))
+        (is (= "(defn b [] (a))" (:at r)))
+        (is (= "Wrong number of args passed to defonce" (:error r)))
+        (testing "and no file path survives into the result"
+          (is (not (re-find #"cljs-src|\.cljs" (pr-str r))) (pr-str r)))))
+    (testing "the compiler's own message is stripped of paths and line numbers"
+      ;; this is what a real one looks like, and it repeats the temp-dir path
+      ;; TWICE plus a line number — all of which :form and :at now carry
+      ;; properly. Leaving them keeps slopp's no-file:line invariant broken in
+      ;; the one field the agent actually reads.
+      (let [r (cljs/anchor-error
+               st
+               (str "failed compiling file:cljs-src/app/view.cljs"
+                    " / Wrong number of args (3) passed to: cljs.core/defonce"
+                    " at line 5 cljs-src/app/view.cljs")
+               {:file "cljs-src/app/view.cljs" :line 5})]
+        (is (= 'app.view/b (:form r)))
+        (is (not (re-find #"cljs-src|\.cljs|at line" (:error r))) (:error r))
+        (testing "while the part that says what is WRONG survives intact"
+          (is (re-find #"Wrong number of args \(3\) passed to: cljs\.core/defonce"
+                       (:error r))))))
+    (testing "an underscore in a path is a hyphen in a namespace"
+      ;; the munging is the whole reason this needs a function rather than a
+      ;; string replace at the call site
+      (let [st2 (-> (store/empty-store)
+                    (store/ingest 'app.my-view "(ns app.my-view)\n\n(defn a [] 1)\n"))
+            st2 (first (store/record-module-platform st2 "app.my-view" :cljs))]
+        (is (= 'app.my-view/a
+               (:form (cljs/anchor-error st2 "boom"
+                                         {:file "cljs-src/app/my_view.cljs" :line 3}))))))
+    (testing "an unlocatable error still carries its message, and says no more"
+      ;; Core 1: never let \"could not anchor\" and \"anchored fine\" look alike
+      (let [r (cljs/anchor-error st "something went wrong" nil)]
+        (is (= "something went wrong" (:error r)))
+        (is (nil? (:form r)))
+        (is (nil? (:at r))))
+      (let [r (cljs/anchor-error st "boom" {:file "cljs-src/nope/gone.cljs" :line 2})]
+        (is (= "boom" (:error r)))
+        (is (nil? (:form r)) "a file with no matching store namespace anchors nothing")))))

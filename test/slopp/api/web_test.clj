@@ -369,3 +369,30 @@
         (is (contains? paths "/missing.png"))
         (is (not (contains? paths "/real"))
             "a src pointing at a declared endpoint is served, like any href")))))
+
+(deftest client-routes-under-a-declared-spa-prefix-are-served
+  ;; `:web/spa` says a document serves client routes under a prefix, so a link
+  ;; to /store/form/f1 IS served even though no endpoint declares that path.
+  ;; The gate has to know, or every in-app link in a client-routed app reads
+  ;; as dangling and the finding becomes noise someone learns to ignore.
+  ;;
+  ;; The other half matters more: a link OUTSIDE every declared prefix must
+  ;; still be flagged. A gate that treats a fallback as "anything goes" has
+  ;; given up the only thing it does.
+  (let [st (store/ingest (store/empty-store) 'sp.pages
+                         (str "(ns sp.pages)\n"
+                              "(defn ^{:web/method :get :web/path \"/\""
+                              "        :web/auth :public :web/response :string\n"
+                              "        :web/spa [\"/store\"]}\n"
+                              "  app [_req]\n"
+                              "  [:html [:body\n"
+                              "    [:a {:href \"/store/form/f1\"} \"a client route\"]\n"
+                              "    [:a {:href \"/nope/x\"} \"nothing serves this\"]]])\n"))
+        {:keys [dangling]} (web/dangling-route-refs st)
+        paths (set (map :path dangling))]
+    (testing "the endpoint row carries the declared prefixes, so a reader sees them"
+      (is (= ["/store"] (:web/spa (first (web/endpoints st))))))
+    (testing "a client route under the prefix is served by the fallback"
+      (is (not (contains? paths "/store/form/f1")) (pr-str dangling)))
+    (testing "a path outside every prefix still dangles"
+      (is (contains? paths "/nope/x") (pr-str dangling)))))
