@@ -1,10 +1,23 @@
 (ns slopp.edit-test
+  "Cover for `slopp.edit` — the pure edit layer.
+
+  Store value in, store value out, so nearly everything here is in-image and
+  instant. Two things are worth knowing about the assertions:
+
+  The refusal MESSAGES are as much the subject as the return values. A gate
+  that refuses correctly and says nothing useful costs a round trip every time
+  it fires, so tests assert on what the message NAMES — the next call, the
+  construct as written, the alias that would fix it.
+
+  And the negative cases carry their weight: a hint that fires when nothing
+  can supply it is worse than no hint, because it sends the next call
+  somewhere real and useless."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.store.render :as render]
             [slopp.image.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit] [slopp.edit.refs :as refs] [slopp.edit.hotload :as hotload]))
+            [slopp.edit :as edit] [slopp.edit.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 
@@ -251,3 +264,38 @@
       (is (some? (:node (edit/parse-form "(def x \"\\u001f\")")))))
     (testing "ordinary source is untouched"
       (is (some? (:node (edit/parse-form "(defn f \"D.\" [] 1)")))))))
+
+(deftest a-missing-alias-names-the-require-to-add
+  ;; The most frequent mechanical friction measured in a real session: ~8
+  ;; writes refused with a bare `No such namespace: X`, each one followed by
+  ;; `ns_add_require` and then a resend of the BYTE-IDENTICAL form. Three round
+  ;; trips for a two-step slopp has all the information to collapse — and it
+  ;; fired once more while this very test was being written.
+  ;;
+  ;; Every other structural refusal here names the next call: the module gate
+  ;; gives the exact `module_dep`, the tier gate the exact `module_purity`.
+  ;; This one repeated what the compiler said.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'slopp.store.kernel "(ns slopp.store.kernel)\n(defn f [] 1)\n")
+               (store/ingest 'app.core "(ns app.core)\n(defn g [] 2)\n"))]
+    (testing "a store namespace whose LAST SEGMENT is the alias"
+      (let [h (#'edit/missing-alias-hint st "No such namespace: kernel" 'app.core)]
+        (is (some? h))
+        (is (str/includes? h "slopp.store.kernel"))
+        (is (str/includes? h "ns_add_require"))
+        (is (str/includes? h "app.core") "the require goes on the ns being WRITTEN")))
+    (testing "a well-known clojure alias, which no store namespace can supply"
+      (let [h (#'edit/missing-alias-hint st "No such namespace: str" 'app.core)]
+        (is (some? h))
+        (is (str/includes? h "clojure.string"))))
+    (testing "an alias nothing can supply says NOTHING rather than guessing"
+      ;; a wrong suggestion costs more than none: it sends the next call
+      ;; somewhere real and useless
+      (is (nil? (#'edit/missing-alias-hint st "No such namespace: zzz" 'app.core))))
+    (testing "an unrelated compile error is left alone"
+      (is (nil? (#'edit/missing-alias-hint st "Unable to resolve symbol: q" 'app.core))))
+    (testing "ambiguity names every candidate instead of picking one"
+      (let [st2 (store/ingest st 'other.kernel "(ns other.kernel)\n(defn h [] 3)\n")
+            h   (#'edit/missing-alias-hint st2 "No such namespace: kernel" 'app.core)]
+        (is (str/includes? h "slopp.store.kernel"))
+        (is (str/includes? h "other.kernel"))))))

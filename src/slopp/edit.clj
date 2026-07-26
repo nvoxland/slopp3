@@ -592,6 +592,42 @@
                 e  (assoc :form (symbol (str nsx) (str (or (:name e) (:id e)))))
                 at (assoc :at (str/trim at))))))))))
 
+(defn- missing-alias-hint
+  "For a `No such namespace: X` compile failure, the `ns_add_require` call that
+  would supply `X` — or nil when nothing can, because a wrong suggestion costs
+  more than none.
+
+  The commonest mechanical friction measured on real sessions: a write naming
+  an alias the ns form does not have yet is refused with the compiler's own
+  sentence, and the recovery is always the same two-step — add the require,
+  resend the byte-identical form. Three round trips. Every other structural
+  refusal in slopp names the next call (`module_dep`, `module_purity`); this
+  one repeated what the compiler said.
+
+  Two sources, in order: a STORE namespace whose last segment is the alias
+  (`kernel` → `slopp.store.kernel`), which is how the convention actually
+  works here, and the handful of clojure.* aliases everyone uses. Ambiguity
+  names every candidate rather than picking — the point is to save the lookup,
+  not to guess."
+  [store err ns-sym]
+  (when-let [alias (second (re-find #"No such namespace:\s+([\w.$-]+)" (str err)))]
+    (let [well-known {"str" 'clojure.string  "set"  'clojure.set
+                      "edn" 'clojure.edn     "io"   'clojure.java.io
+                      "walk" 'clojure.walk   "pp"   'clojure.pprint
+                      "async" 'clojure.core.async}
+          from-store (filter #(= alias (last (str/split (str %) #"\."))) 
+                             (keys (:namespaces store)))
+          cands      (or (seq (sort-by str from-store))
+                         (some-> (well-known alias) vector))]
+      (when (seq cands)
+        (str "add the require first — "
+             (str/join " or "
+                       (for [c cands]
+                         (str "ns_add_require {ns \"" ns-sym "\", require \"["
+                              c " :as " alias "]\"}")))
+             (when (next cands) " (several namespaces could supply it)")
+             ", then resend this form unchanged")))))
+
 (defn compile-error
   "The standard compile-failure result every 'failed to compile' surface
   returns: `{:error <prefix + clean message> :form qsym :at snippet}` when
@@ -599,15 +635,26 @@
   `{:error <prefix + clean message>}`. The `(file.clj:line:col)` coordinate
   is ALWAYS stripped from the message — row/col never reaches an agent, even
   as a fallback (a coordinate no tool consumes is noise, not a clue).
-  `prefix` is the op label ('rename failed to compile: ')."
-  [store err prefix]
-  (let [clean (str prefix
-                   (str/trim (str/replace (str err)
-                                          #"\s*(?:at\s+)?\([\w/._-]+\.clj:\d+(?::\d+)?\)\.?"
-                                          "")))]
-    (if-let [a (anchor-error store err)]
-      (assoc a :error clean)
-      {:error clean})))
+  `prefix` is the op label ('rename failed to compile: ').
+
+  Given the namespace being written, an unresolvable ALIAS gets the
+  `ns_add_require` call appended TO THE MESSAGE. Two reasons it goes there
+  rather than into a `:fix` key, and the second is the load-bearing one:
+  every other structural refusal in slopp teaches in its message, and each
+  edit tool maintains its OWN result-key allowlist — a new key reaches
+  nobody until ten of them are updated, which has silently happened to three
+  keys already. `:error` is in all of them."
+  ([store err prefix] (compile-error store err prefix nil))
+  ([store err prefix ns-sym]
+   (let [clean (str prefix
+                    (str/trim (str/replace (str err)
+                                           #"\s*(?:at\s+)?\([\w/._-]+\.clj:\d+(?::\d+)?\)\.?"
+                                           "")))
+         hint  (when ns-sym (missing-alias-hint store err ns-sym))
+         msg   (if hint (str clean " — " hint) clean)]
+     (if-let [a (anchor-error store err)]
+       (assoc a :error msg)
+       {:error msg}))))
 
 (defn require-cycles
   "Namespace require CYCLES reachable from `ns-syms`, as a vector of paths

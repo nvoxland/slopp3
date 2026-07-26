@@ -1,4 +1,16 @@
 (ns slopp.edit.hotload
+  "Where a PURE edit meets the LIVE image.
+
+  `slopp.edit` computes a new store value and touches nothing; the image is a
+  running process with vars already interned. This namespace is the seam, and
+  it exists separately because the ORDERING across it is load-bearing:
+  hot-load into the image FIRST, commit only if it compiled. A form that fails
+  to compile rejects the whole edit, so there is never a committed store the
+  image cannot run.
+
+  Getting that backwards is the failure mode the whole design is arranged
+  against — a store the oracle disagrees with makes every verification result
+  a claim about the wrong code."
   (:require [rewrite-clj.node :as n]
             [slopp.edit :as edit]
             [slopp.store.render :as render]
@@ -40,7 +52,7 @@
       :else
       (if-let [err (hot-load-form! (:image system) (:store r)
                                    (:form-id (:delta r)))]
-        (edit/compile-error (:store r) err "form failed to compile: ")
+        (edit/compile-error (:store r) err "form failed to compile: " ns-sym)
         {:system   (assoc system :store (:store r))
          :delta    (:delta r)
          :warnings (:warnings r)}))))

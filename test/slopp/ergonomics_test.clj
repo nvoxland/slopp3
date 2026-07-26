@@ -1,8 +1,21 @@
 (ns slopp.ergonomics-test
+  "Cover for the SHAPE of the working loop, not the correctness of any one
+  operation.
+
+  Everything here started as a logged friction: a refusal that named no next
+  call, a write that needed a step nobody could have known about, a result
+  that reported success without checking. So the assertions are unusual for
+  this codebase — they are mostly about what a MESSAGE says, because the
+  message is the entire fix when the operation was already correct.
+
+  That makes them worth keeping even though they look soft. A gate that
+  refuses correctly and teaches nothing costs a round trip every single time
+  it fires, and the round trips land in the ~78% of a session's wall clock
+  that no other metric sees."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.string :as str]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -459,4 +472,47 @@
               (str "the refusal must name the fix: " (pr-str (:error r))))))
       (testing "the form is untouched — a refusal changes nothing"
         (is (re-find #"\[a b\] \(\+ a b\)" (query/query-source sess 'nt.core))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-refused-write-carries-the-require-it-needs
+  ;; The most frequent mechanical friction measured on a real session: ~8
+  ;; writes refused with a bare `No such namespace: X`, each followed by
+  ;; `ns_add_require` and a resend of the BYTE-IDENTICAL form. Three round
+  ;; trips for a two-step slopp has all the information to collapse.
+  ;;
+  ;; The helper is pinned in `edit-test`; this pins the SEAM, and the seam is
+  ;; where the first attempt died. It put the hint in a `:fix` KEY — and every
+  ;; edit tool maintains its own result-key allowlist, so the key was stripped
+  ;; at the wire and the refusal looked exactly as it always had. Three keys
+  ;; have been lost that way before. The MESSAGE is the channel that survives,
+  ;; and it is where every other structural refusal in slopp teaches anyway.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'ma.core "(ns ma.core)\n(defn f \"F.\" [] 1)\n")
+      (testing "the refusal names the ns_add_require call and says to resend"
+        (let [r (api/edit-replace! sess 'ma.core 'f
+                                   "(defn f \"F.\" [] (str/join \",\" [1 2]))"
+                                   :prompt "use an alias this ns does not have")
+              e (str (:error r))]
+          (is (:error r) (pr-str r))
+          (is (str/includes? e "ns_add_require") e)
+          (is (str/includes? e "clojure.string") e)
+          (is (str/includes? e "ma.core")
+              "the require goes on the ns being WRITTEN")))
+      (testing "and the two-step it names actually works"
+        (api/add-require! sess 'ma.core "[clojure.string :as str]"
+                          :prompt "the require the refusal asked for")
+        (let [r (api/edit-replace! sess 'ma.core 'f
+                                   "(defn f \"F.\" [] (str/join \",\" [1 2]))"
+                                   :prompt "resend unchanged, as the refusal said")]
+          (is (nil? (:error r)) (pr-str r))))
+      (testing "an ordinary compile error is left alone rather than guessed at"
+        ;; a wrong suggestion costs more than none: it sends the next call
+        ;; somewhere real and useless
+        (let [r (api/edit-replace! sess 'ma.core 'f
+                                   "(defn f \"F.\" [] (no-such-fn 1))"
+                                   :prompt "a genuine unresolved symbol")]
+          (is (:error r) (pr-str r))
+          (is (not (str/includes? (str (:error r)) "ns_add_require"))
+              (str "nothing can supply this: " (pr-str r)))))
       (finally (api/close! sess)))))

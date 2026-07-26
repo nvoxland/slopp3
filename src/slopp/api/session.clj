@@ -1,4 +1,18 @@
-(ns slopp.api.session (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs]))
+(ns slopp.api.session
+  "The write ENGINE — image lifecycle, the rebasing commit, and verification.
+
+  Every operation in `slopp.api` is a pure transform handed to `rebased-write!`
+  or its group sibling, which runs it inside a `swap!` so concurrent writes to
+  DIFFERENT forms rebase and land without locks, gates the result once before
+  committing, hot-loads it, and verifies exactly the tests the change reaches.
+  The operations above supply intent; the sequencing lives here.
+
+  The practical consequence, and it decides where fixes belong: a rule
+  implemented HERE lands for every write, and one implemented in an operation
+  lands for that operation. Four gates were once hand-pasted at four write
+  sites because the chokepoint was not used, and every later fix to them had
+  to be applied four times."
+  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -351,7 +365,7 @@
                                               (select-keys lr [:carried])))))]
                     (if (:err load-res)
                       (edit/compile-error (:store out) (:err load-res)
-                                          "form failed to compile: ")
+                                          "form failed to compile: " ns-sym)
                       (do (when *pre-commit-hook* (*pre-commit-hook*))
                           (if (try-commit! session base (:store out) [ns-sym])
                             (cond-> out
@@ -386,7 +400,7 @@
                                       (select-keys lr [:carried])))))]
             (if (:err load-res)
               (edit/compile-error (:store out0) (:err load-res)
-                                  "form failed to compile: ")
+                                  "form failed to compile: " ns-sym)
               (do (when *pre-commit-hook* (*pre-commit-hook*))
                   (let [res (volatile! nil)]
                     (swap! session update :store
