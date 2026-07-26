@@ -273,6 +273,13 @@ second copy.
   numbers. → **D-kondo-config**.
 - **Never warn about what a tool can fix** (sort the requires, don't lint them).
   → **D-kondo-config**.
+- **Teach in the MESSAGE; a new result key is a distribution problem.** A
+  refusal's message reaches every caller by construction. A new key must be
+  added to ~12 hand-maintained per-tool allowlists in `mcp/call-tool!`, and
+  four keys have silently failed to arrive that way (`:dry-run`'s payload,
+  `:drift`, `:external-pending`, and a `:fix` hint built and tested correctly
+  one layer down). The feature exists, the tests pass, and the agent sees the
+  old behaviour — which is the worst shape a failure can have.
 - **A registry must be able to notice what it does not contain.** A list of
   what a system has is complete the day it is written and describes nothing a
   year later. Every registry here now carries a drift check that asks the
