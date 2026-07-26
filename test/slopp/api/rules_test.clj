@@ -1,4 +1,21 @@
 (ns slopp.api.rules-test
+  "Cover for the done-advisories — and, as much, for the REGISTRY they live in.
+
+  Two genres here, and the second is easy to overlook. Per-rule tests ask
+  whether a check is correct. Registry tests ask whether the chassis still
+  holds: does every rule have prose, does every rule still FIRE on its own
+  fixture, does every rule declare whether it applies to tests. Those failures
+  are silent and shared — a rule that stopped firing looks exactly like a clean
+  codebase, which is how `ambient-state` reported one finding for its entire
+  life while nine globals accumulated.
+
+  So the registry tests are the ones that earn their keep by failing. Three
+  new rules were refused by the coverage test in one session for shipping
+  without prose, and the fires-on self-test caught a fixture that had been
+  exercising the loader rather than the rule.
+
+  Mostly `^:external`: a done-advisory's input is an episode, which needs a
+  real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.external :as external] [slopp.api.rules.catalog :as catalog]))
 
@@ -550,3 +567,50 @@
           (is (seq (get-in r [:findings :assertions-never-red])) "it fired")
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (api/close! sess)))))
+
+(deftest every-done-advisory-declares-whether-it-applies-to-tests
+  ;; Standing structural ask #5, from the modernization sweep: "Tests are
+  ;; subject to different rules than production, and this keeps biting — a
+  ;; :pure tier stranded its own test namespace; effect naming flagged three
+  ;; test helpers. Each was fixed ad hoc. It should be a declared dimension of
+  ;; the rule registry, instead of each rule rediscovering the question."
+  ;;
+  ;; The WRITE gates already declare it — `^{:rule/applies-to :production}` on
+  ;; seven of them. The done-advisories never did, so each one answers by
+  ;; accident: `assertions-never-red` is about tests ONLY, `namespace-purpose`
+  ;; exempts them, `marker-why` fires in them incidentally and nobody decided
+  ;; that. Three different answers, none written down.
+  (doseq [{:keys [key applies-to]} rules/done-advisories]
+    (is (contains? #{:production :tests :both} applies-to)
+        (str key " does not declare :applies-to — :production, :tests or :both."
+             " Undeclared means the next person reads the implementation to"
+             " find out, which is how the same question got three different"
+             " answers")))
+  (testing "the declarations are not all the same, or the dimension is decorative"
+    (let [vs (set (map :applies-to rules/done-advisories))]
+      (is (< 1 (count vs))
+          (str "every advisory claims " vs " — a dimension with one value is"
+               " not carrying information")))))
+
+(deftest applies-to-actually-filters-and-never-silently-drops
+  ;; Declaring the dimension is half of ask #5; the runner acting on it is the
+  ;; half that makes it a guarantee. Without this test `:applies-to` is an
+  ;; annotation, and the earlier test would pass on a registry nobody reads.
+  (let [prod {:form 'app.core/f}
+        test {:form 'app.core-test/t-f}
+        nsf  {:ns 'app.core-test}
+        wide {:note "about the store as a whole"}
+        f    #'rules/in-scope]
+    (testing ":production keeps production and drops tests"
+      (is (= [prod] (f :production [prod test])))
+      (is (= [] (f :production [nsf]))))
+    (testing ":tests is the mirror"
+      (is (= [test] (f :tests [prod test])))
+      (is (= [nsf] (f :tests [nsf]))))
+    (testing ":both keeps everything, and is the default the runner falls back to"
+      (is (= [prod test nsf] (f :both [prod test nsf]))))
+    (testing "a finding naming NEITHER a form nor a namespace is ALWAYS kept"
+      ;; it is about the store, not about a namespace — dropping it because it
+      ;; could not be classified would be the worse error, and silent
+      (is (= [wide] (f :production [wide])))
+      (is (= [wide] (f :tests [wide]))))))

@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -599,7 +599,7 @@
    `^{:entry-point \"boot --call dispatch, quoted in parse-args\"}`. The why
    rides the marker exactly as `:prompt` rides every delta, and the dial
    becomes provenance instead of a mute flag. `^{:covers \"ns/name — why\"}`
-   already works this way and is the worked example.
+   and `^{:teach \"…\"}` already work this way and are the worked examples.
 
    Every read site tests the marker for TRUTH, so a string discharges exactly
    as `true` does and the two forms are interchangeable — pinned by
@@ -607,37 +607,29 @@
    because asking for the richer form would be actively harmful if it silently
    stopped discharging.
 
+   **The dials come from `markers/asking`**, not from a list here. This check
+   shipped with its own inline copy on the same day the missing registry was
+   diagnosed, which made it the FIFTH place hardcoding a marker list — the
+   exact instance-over-class failure the registry exists to end.
+
    **Measured before shipping** (D-rule-grounding): 22 marker instances in the
    store, 21 bare, 19 of those in production code. A small, finite, wholly
    dischargeable population — and it fires only when you TOUCH such a form, so
-   it cannot become standing noise.
-
-   **Two dials are deliberately NOT here.** `^:export` already gives its string
-   value a meaning (the subtree prefix it widens to), so a why needs a
-   different shape and a decision this rule should not pre-empt. And this reads
-   NAME metadata only, so a form-level `^:unsafe (defn …)` is out of scope —
-   the marker sits on the form rather than the symbol, and the store's sexpr
-   accessors unwrap it away."
+   it cannot become standing noise."
   [_session st* changed]
-  (let [dials {:unused-ok    "why is no caller expected?"
-               :entry-point  "what invokes it from outside — CLI flag, wire tool, eval template?"
-               :ambient-ok   "why does this global state belong at the top level?"
-               :breaking-ok  "who downstream did you tell, and what broke?"
-               :foreign-keys "whose map is it?"
-               :legacy-ok    "what makes this worth keeping as-is?"
-               :side-effect  "what does requiring it register?"}]
-    (vec (for [fid changed
-               :let [e (store/form-by-id st* fid)]
-               :when (and e (:name e))
-               :let [s (store/form-sexpr (:node e))
-                     m (when (and s (symbol? (second s))) (meta (second s)))]
-               [k ask] dials
-               :when (true? (get m k))]
-           {:form  (symbol (str (store/ns-of-form-id st* fid)) (str (:name e)))
-            :teach (str "^:" (name k) " says a rule was waived and nothing about why — "
-                        ask " Say it in place: ^{:" (name k) " \"…\"}. A string"
-                        " discharges exactly as the bare keyword does, and the"
-                        " dial becomes provenance instead of a mute flag")}))))
+  (vec (for [fid changed
+             :let [e (store/form-by-id st* fid)]
+             :when (and e (:name e))
+             :let [s (store/form-sexpr (:node e))
+                   m (when (and s (symbol? (second s))) (meta (second s)))]
+             {:keys [marker asks]} (markers/asking)
+             :when (true? (get m marker))]
+         {:form  (symbol (str (store/ns-of-form-id st* fid)) (str (:name e)))
+          :teach (str "^:" (name marker) " says a rule was waived and nothing"
+                      " about why — " asks " Say it in place: ^{:" (name marker)
+                      " \"…\"}. A string discharges exactly as the bare keyword"
+                      " does, and the dial becomes provenance instead of a mute"
+                      " flag")})))
 
 (defn ambiguous-index-check
   "Done-advisory: a changed form reads INDEX 2 of a store form, where the
@@ -724,7 +716,7 @@
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
-   :check :fires-on} entries. `:check` is `(session store changed) ->
+   :applies-to :check :fires-on} entries. `:check` is `(session store changed) ->
    findings-seq` (empty when clean); `:severity` is `:error` (its findings flip
    `test-status` red — a real failure) or `:advisory` (a heuristic that never
    does). A NEW done-time finding registers HERE, in ONE entry, instead of
@@ -733,6 +725,16 @@
    sees them — and a carried `#'var` is NOT a call, so the analyzer no longer
    taints this data def effectful.
 
+   `:applies-to` is `:production`, `:tests` or `:both`, and `run-done-advisories!`
+   ENFORCES it. Standing structural ask #5: tests are subject to different rules
+   than production and it kept biting, because every check answered the question
+   for itself and none of them said so — `assertions-never-red` is about tests
+   ONLY, `namespace-purpose` covers both, `bare-throw` is a boundary-contract
+   rule that has no business in a fixture. Three answers, arrived at three
+   different ways. The write gates already declared this
+   (`^{:rule/applies-to :production}`); severity lives here rather than on the
+   var for advisories, and so does this.
+
    `:fires-on` is a source string the check MUST report a finding for, enforced
    by `rules-test/every-advisory-fires-on-its-own-fixture`. A rule that stops
    firing is otherwise indistinguishable from a clean codebase: `ambient-state`
@@ -740,28 +742,30 @@
    fired on a documented global, looking healthy for its entire life while
    nine of them accumulated. A rule with no automatic fixture must say why in
    `:selftest-note` rather than silently omitting one."
-  [{:key :schema-drift     :severity :error    :check #'schema-drift-check!
+  [{:key :schema-drift     :severity :error    :applies-to :production :check #'schema-drift-check!
     :selftest-note "generative mg/check against a live impl — needs a booted image, covered by api.schema-test/drift-flags-a-lying-schema"}
-   {:key :key-typos        :severity :advisory :check #'key-typos-check
+   {:key :key-typos        :severity :advisory :applies-to :both :check #'key-typos-check
     ;; an ESTABLISHED key must be used by >= 2 unchanged forms before a
     ;; near-duplicate counts as a typo rather than a new coinage
     :fires-on (str "(ns rf.core)\n"
                    "(defn one [] {:rf/status 1})\n"
                    "(defn two [] {:rf/status 2})\n"
                    "(defn typo [] {:rf/staus 3})\n")}
-   {:key :breaking-changes :severity :advisory :check #'breaking-check
+   {:key :breaking-changes :severity :advisory :applies-to :production :check #'breaking-check
     :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
-   {:key :ambient-state :severity :advisory :check #'ambient-state-check
+   {:key :ambient-state :severity :advisory :applies-to :both :check #'ambient-state-check
+    ;; a global atom in a test is exactly as invisible to a slice as one in
+    ;; production, and test fixtures are where they breed
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
    ;; an escape marker that says nothing about WHY it is there. The dial is
    ;; provenance the moment it carries a reason — ^{:covers "ns/name — why"}
    ;; already works this way and is the worked example.
-   {:key :marker-why :severity :advisory :check #'marker-why-check
+   {:key :marker-why :severity :advisory :applies-to :both :check #'marker-why-check
     :fires-on "(ns rf.core)\n(defn ^:unused-ok spare \"S.\" [x] x)\n"}
    ;; the single biggest behavioural consequence available in one piece of
    ;; metadata, and nothing said it: declaring :web/spa turns every path under
    ;; the prefix from 404 into 200 and moves not-found into the client.
-   {:key :spa-consequences :severity :advisory :check #'spa-consequences-check
+   {:key :spa-consequences :severity :advisory :applies-to :production :check #'spa-consequences-check
     :selftest-note (str "fires only when the declaration is NEW vs the last-done"
                         " baseline, so a source-only fixture (which has no"
                         " baseline) cannot show the transition; covered by"
@@ -770,7 +774,7 @@
    ;; not "positional access" (4-5 false positives out of 5) but indexing a
    ;; position whose MEANING depends on an optional earlier element, in code
    ;; that is demonstrably reading store forms.
-   {:key :ambiguous-index :severity :advisory :check #'ambiguous-index-check
+   {:key :ambiguous-index :severity :advisory :applies-to :both :check #'ambiguous-index-check
     ;; self-contained on purpose: an earlier fixture used `n/sexpr` and
     ;; `rf.core` requires no such alias, so it never loaded and the rule
     ;; "did not fire". The self-test caught it, which is the whole point of
@@ -778,12 +782,14 @@
     :fires-on (str "(ns rf.core)\n"
                    "(defn ^:unused-ok doc-of \"D.\" [e]\n"
                    "  (let [sx (:node e)] (nth sx 2 nil)))\n")}
-   {:key :namespace-purpose :severity :advisory :check #'namespace-purpose-check
+   {:key :namespace-purpose :severity :advisory :applies-to :both :check #'namespace-purpose-check
     ;; the fixture's ns form deliberately carries NO docstring — that is the
     ;; whole finding, and it is what 100 of slopp's own 177 namespaces looked
     ;; like when this rule was written
     :fires-on "(ns rf.core)\n(defn f [] 1)\n"}
-{:key :key-not-returned :severity :advisory :check #'key-not-returned-check
+   {:key :key-not-returned :severity :advisory :applies-to :both :check #'key-not-returned-check
+    ;; explicitly BOTH: a vacuous assertion does its worst damage in a test,
+    ;; because a test is the only code whose job is to fail
     :fires-on (str "(ns rf.core)\n"
                    "(defn producer [] {:a 1})\n"
                    "(defn consumer [] (let [r (producer)] (empty? (:b r))))\n")}
@@ -792,25 +798,27 @@
    ;; were these assertions ever watched fail? Both instances in
    ;; `assertions-that-cannot-fail` were assertions ADDED to an already-green
    ;; test, which is the one path red-first does not cover by construction.
-   {:key :assertions-never-red :severity :advisory :check #'assertions-never-red-check
+   {:key :assertions-never-red :severity :advisory :applies-to :tests :check #'assertions-never-red-check
     :selftest-note (str "needs a prior done to have a baseline AND :verify deltas"
                         " to read red from — a source-only fixture has neither;"
                         " covered by rules-test/"
                         "done-asks-about-assertions-that-were-never-watched-fail")}
-   {:key :bare-throw       :severity :advisory :check #'bare-throw-check
+   {:key :bare-throw       :severity :advisory :applies-to :production :check #'bare-throw-check
+    ;; a boundary-contract rule: a test helper throwing a bare Exception is
+    ;; nobody's API
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
    ;; teaching that LIES: a string naming a var the store no longer has. Gates
    ;; can't see a var inside a string, so renames/moves leave the prose behind
    ;; and it ships as confident wrong guidance (d9077 shipped
    ;; slopp.index/analyze in two places after the form moved).
-   {:key :stale-reference :severity :advisory :check #'stale-reference-check
+   {:key :stale-reference :severity :advisory :applies-to :both :check #'stale-reference-check
     :fires-on (str "(ns rf.core)\n"
                    "(defn live [x] x)\n"
                    "(defn teach \"see rf.core/gone for details\" [x] x)\n")}
    ;; a SECOND copy of a vocabulary the store retired — the shape that shipped
    ;; a live NPE (a rank table still spelling the old tiers) and that made
    ;; shell-widening silently dead (a match set nothing could satisfy).
-   {:key :retired-vocabulary :severity :advisory :check #'retired-vocabulary-check
+   {:key :retired-vocabulary :severity :advisory :applies-to :both :check #'retired-vocabulary-check
     :selftest-note (str "needs a store-level `vocabulary` config to have anything"
                         " retired — a source-only fixture cannot carry one;"
                         " covered by rules-test/"
@@ -820,12 +828,12 @@
    ;; belonged in the namespace that was just widened; only the agent who did
    ;; it can. It fires ONLY for the episode that declared the tier, so it asks
    ;; once and cannot become a standing warning to scroll past.
-   {:key :shell-widening  :severity :advisory :check #'shell-widening-check
+   {:key :shell-widening  :severity :advisory :applies-to :production :check #'shell-widening-check
     :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
    ;; the OTHER half of the same pair. shell-widening asks when the
    ;; DECLARATION moves; this fires when the POPULATION does — a rename or a
    ;; relocation folds existing code under a tier no write will ever re-check.
-   {:key :tier-governance :severity :error :check #'tier-governance-check
+   {:key :tier-governance :severity :error :applies-to :production :check #'tier-governance-check
     :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus an inherited"
                         " tier — a source-only fixture can carry neither; covered"
                         " by rules-test/"
@@ -834,21 +842,21 @@
    ;; and the real file the human branch carries at the same path. Nothing
    ;; compared them until build.clj drifted far enough to reintroduce a fixed
    ;; jar-corruption bug for anyone building from a published checkout.
-   {:key :tracked-file-drift :severity :advisory :check #'tracked-file-drift-check!
+   {:key :tracked-file-drift :severity :advisory :applies-to :production :check #'tracked-file-drift-check!
     :selftest-note (str "compares the manifest against the WORKING TREE, which a"
                         " source-only fixture has no copy of — covered by"
                         " rules-test/tracked-file-drift-reports-a-second-copy-that-moved")}
    ;; a publicly-writable endpoint should be a decision, not an omission —
    ;; the question grade, like shell-widening: only the author knows
-   {:key :web-public-mutation :severity :advisory :check #'web-public-mutation-check
+   {:key :web-public-mutation :severity :advisory :applies-to :production :check #'web-public-mutation-check
     :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
-{:key :web-dangling-route-refs :severity :error :check #'dangling-route-refs-check
+   {:key :web-dangling-route-refs :severity :error :applies-to :production :check #'dangling-route-refs-check
     :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
-   {:key :stale-client :severity :advisory :check #'client-stale-check
+   {:key :stale-client :severity :advisory :applies-to :production :check #'client-stale-check
     :selftest-note (str "needs a recorded client/generated-sig config (a source-only"
                         " fixture cannot carry one) — covered by rules-test/"
                         "client-stale-advisory-fires-on-endpoint-drift")}
-   {:key :inline-schema-dup :severity :advisory :check #'inline-schema-dup-check
+   {:key :inline-schema-dup :severity :advisory :applies-to :production :check #'inline-schema-dup-check
     :fires-on (str "(ns ds.api)\n"
                    "(defn ^{:web/method :post :web/path \"/a\" :web/request [:map [:x :int]]"
                    " :web/response :map} a [r] r)\n"
@@ -856,17 +864,53 @@
                    " :web/response :map} b [r] r)\n")}
    ])
 
+(defn- in-scope
+  "`findings` filtered to those an advisory declaring `applies-to` should
+  report — the enforcement half of standing structural ask #5.
+
+  A finding names the form it is about (`:form`, qualified) or the namespace
+  (`:ns`), so the runner can answer \"is this a test namespace?\" once instead
+  of each check re-deriving it. Before this, three advisories gave three
+  different answers to the same question and none of them said so: one was
+  about tests ONLY, one exempted them, one fired in them by accident.
+
+  A finding naming NEITHER a form nor a namespace is kept whatever the
+  declaration says — it is about the store as a whole, and silently dropping
+  it would be the worse error."
+  [applies-to findings]
+  (if (= :both applies-to)
+    findings
+    (let [test-ns? (fn [f]
+                     (when-let [s (or (some-> (:form f) namespace)
+                                      (some-> (:ns f) str))]
+                       (str/ends-with? s "-test")))]
+      (vec (filter (fn [f]
+                     (case (test-ns? f)
+                       nil  true                       ; store-wide: always kept
+                       true (= :tests applies-to)
+                       false (= :production applies-to)))
+                   findings)))))
+
 (defn run-done-advisories!
   "Run every registered done-advisory `:check` over the episode's changes —
    EXCEPT those a project dialed `:off` (`edit.modules/rule-severity`) — and
    return `{:key findings}` for the checks that FIRED (non-empty result), ready
    to merge into `done!`'s findings. `!` — `schema-drift-check!` evals in the
-   image."
+   image.
+
+   Findings are filtered through each advisory's declared `:applies-to`
+   (`in-scope`). Standing structural ask #5: tests are subject to different
+   rules than production and it kept biting, because every check answered the
+   question for itself — a `:pure` tier stranded its own test namespace, effect
+   naming flagged three test helpers, and each was fixed ad hoc. The write
+   gates already declared it (`^{:rule/applies-to :production}`); the
+   done-advisories now do too, and the runner is what makes the declaration
+   mean something rather than document an intention."
   [session st* changed]
   (into {}
-        (keep (fn [{:keys [key severity check]}]
+        (keep (fn [{:keys [key severity check applies-to]}]
                 (when (not= :off (edit.modules/rule-severity st* key severity))
-                  (let [r (check session st* changed)]
+                  (let [r (in-scope (or applies-to :both) (check session st* changed))]
                     (when (seq r) [key r])))))
         done-advisories))
 

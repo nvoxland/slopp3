@@ -39,3 +39,40 @@
             "blank lines don't count; needing one sha should not fetch five essays")))
     (testing "a log with no milestones is empty, not nil"
       (is (= [] (history/milestone-rows (store/empty-store)))))))
+
+(deftest form-effort-joins-provenance-verification-and-cost
+  ;; The semantic × history combination, applied to the question the journal
+  ;; can answer and a git log cannot: *what did it cost to get this form
+  ;; green?* Versions and red→green cycles come from the whole lifetime; the
+  ;; wall-clock only from deltas written after verification started recording
+  ;; `:ms`.
+  ;;
+  ;; That gap is the interesting part. A bare sum would read as "this form cost
+  ;; 480ms" when it means "the three versions we measured cost 480ms", so the
+  ;; result carries its own coverage.
+  (let [versions [{:delta "d1" :status :red   :prompt "first cut"     :ms 10}
+                  {:delta "d2" :status :red   :prompt "fix the arity" :ms 20}
+                  {:delta "d3" :status :green :prompt "fix the arity"}
+                  {:delta "d4" :status :green :prompt "tidy"}
+                  {:delta "d5" :status :red   :prompt "extend it"     :ms 5}
+                  {:delta "d6" :status :green :prompt "extend it"     :ms 7}]
+        e        (history/form-effort 'app.core/f versions)]
+    (testing "the shape of the work, over the whole lifetime"
+      (is (= 'app.core/f (:form e)))
+      (is (= 6 (:versions e)))
+      (is (= 3 (:reds e)))
+      (is (= 2 (:cycles e))
+          "two red→green recoveries — d2→d3 and d5→d6; d3→d4 is green→green"))
+    (testing "distinct ASKS, not deltas — one intent can take several writes"
+      (is (= 4 (:asks e)) "first cut / fix the arity / tidy / extend it"))
+    (testing "recorded cost, and how much of the life it actually covers"
+      (is (= 42 (:verification-ms e)) "10 + 20 + 5 + 7")
+      (is (= {:with-cost 4 :of 6} (:measured e))
+          "most of a long-lived form predates the timing instrument, and a sum
+           that does not say so reads as a total"))
+    (testing "a form with NO recorded cost reports no total rather than zero"
+      ;; zero would read as "measured, and it was free"
+      (let [e2 (history/form-effort 'app.core/g [{:delta "d1" :status :green :prompt "add"}])]
+        (is (nil? (:verification-ms e2)))
+        (is (= {:with-cost 0 :of 1} (:measured e2)))
+        (is (= 0 (:cycles e2)))))))

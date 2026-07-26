@@ -1661,3 +1661,26 @@
           (is (str/includes? stub ":detail")
               "a read-only tool's withheld payload must not need a write-capable one")))
       (finally (api/close! sess)))))
+
+(deftest ^:external store-doctor-rides-the-wire-read-only
+  ;; The legacy sweep. Its population is an ADOPTED store — code that came in
+  ;; through git_clone/import and predates every rule slopp has — so the
+  ;; detectors are pinned on fixtures in `api.doctor-test`, and what this
+  ;; asserts is the wiring plus the honest baseline.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'sd.core "(ns sd.core)\n(defn ^:unused-ok f \"F.\" [x] x)\n")
+      (let [r (edn/read-string (call! sess "store_doctor" {}))]
+        (testing "it answers, and says what it looked at"
+          (is (pos? (:scanned r)) (pr-str r))
+          (is (true? (:healthy r)) (pr-str r)))
+        (testing "a store written THROUGH slopp is clean, which is the point"
+          ;; every form here went through the write gates, so none of these
+          ;; shapes could have got in — a clean result is the expected one and
+          ;; is why the detectors cannot be validated from this store
+          (is (= [] (:unmanaged-declares r)))
+          (is (= [] (:duplicate-names r)))
+          (is (= [] (:unknown-markers r)))))
+      (testing "and it is read-only, so plan mode can auto-permit it"
+        (is (contains? tools/read-only-tools "store_doctor")))
+      (finally (api/close! sess)))))

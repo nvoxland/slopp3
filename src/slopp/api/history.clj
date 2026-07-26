@@ -7,17 +7,30 @@
   (:require [clojure.string :as str]
             [slopp.store :as store]))
 
+(defn verify-after
+  "The `:verify` delta a write PRODUCED: the first one at or after `at-id`,
+  since a write is immediately followed by its verification. Nil when none
+  followed.
+
+  Split out because `status-after` and the per-version COST both need it, and
+  asking the same question at two call sites is this codebase's Pattern 2 —
+  four instances, every one found only after two surfaces had already
+  disagreed about the same fact."
+  [store at-id]
+  (->> (store/deltas store)
+       (drop-while #(not= at-id (:id %)))
+       (filter #(= :verify (:op %)))
+       first))
+
 (defn status-after
   "The verification outcome a delta PRODUCED: the first `:verify` at or after
   `at-id` (a write is immediately followed by its verify) — :green / :red /
   :unknown. This is 'did THIS version land green', vs `status-at`'s 'what
   was the state standing AT this point'."
   [store at-id]
-  (let [ds (drop-while #(not= at-id (:id %)) (store/deltas store))
-        v  (first (filter #(= :verify (:op %)) ds))]
-    (if-let [r (:result v)]
-      (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
-      :unknown)))
+  (if-let [r (:result (verify-after store at-id))]
+    (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
+    :unknown))
 
 (defn human-time
   "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
@@ -458,3 +471,39 @@
                 (cond-> (assoc row :description (first lines))
                   (pos? body) (assoc :more-lines body))))
             rows))))
+
+(defn ^:export form-effort
+  "What one form COST to get green — the semantic × history join, over the
+  `versions` the caller already derived.
+
+  A git log can tell you a file changed twelve times. This says how many of
+  those landed RED, how many red→green recoveries it took, how many distinct
+  ASKS shaped it, and how much verification time is recorded against it —
+  provenance × verification × cost, all out of one journal.
+
+  `:cycles` is the number the others cannot supply and the one worth reading:
+  a red→green transition is a thing that had to be FIXED, so a form with two
+  versions and two cycles was harder than one with twenty and none.
+
+  **`:measured` is not decoration.** Verification only started recording `:ms`
+  recently, so most of a long-lived form's history carries no cost at all — a
+  bare sum reads as \"this form cost 42ms\" when it means \"the four versions we
+  measured cost 42ms\". `:verification-ms` is nil rather than 0 when nothing was
+  measured, because zero would read as \"measured, and it was free\".
+
+  Takes versions rather than the store deliberately: `query-form-history`
+  already derives them with their statuses and intents, and a second walk here
+  is the shape that lets two surfaces disagree about one form's life."
+  [qsym versions]
+  (let [vs      (vec versions)
+        costs   (keep :ms vs)
+        cycles  (count (filter (fn [[a b]] (and (= :red (:status a))
+                                                (= :green (:status b))))
+                               (map vector vs (rest vs))))]
+    {:form            qsym
+     :versions        (count vs)
+     :reds            (count (filter #(= :red (:status %)) vs))
+     :cycles          cycles
+     :asks            (count (distinct (keep #(or (:prompt %) (:turn-intent %)) vs)))
+     :verification-ms (when (seq costs) (reduce + costs))
+     :measured        {:with-cost (count costs) :of (count vs)}}))

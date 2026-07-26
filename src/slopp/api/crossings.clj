@@ -130,8 +130,23 @@
 
   The guard on the guard. `store-crossings` can only report a marker as
   unclassified if it appears in a STORE; this asks the same question of the
-  vocabulary itself, so a marker slopp defines and no store has used yet still
-  has to be decided about."
+  VOCABULARY, so a marker slopp defines and no store has used yet still has to
+  be decided about.
+
+  **Scope: NAMESPACED keys only, and the split from `slopp.api.rules.markers`
+  is deliberate rather than an oversight.** The two registries ask different
+  questions about disjoint key spaces:
+
+  - here — `:web/*`, `:malli/*`, `:rule/*`: does data pass through this key to
+    something OUTSIDE the store, and does anything check it there?
+  - there — `:unused-ok`, `:entry-point`, `:unsafe`: does this dial waive a
+    rule, and should it say why?
+
+  Merging them would report every escape dial as an unclassified crossing,
+  which is precision failure by construction. `markers/undeclared` excludes
+  namespaced keywords for the mirrored reason, so between them the store's
+  marker vocabulary is partitioned rather than double-counted — pinned by
+  `crossings-test/the-two-marker-registries-partition-the-vocabulary`."
   []
   (let [owned (into (set (keys internal-markers)) (mapcat :markers) kinds)]
     (vec (sort (remove owned

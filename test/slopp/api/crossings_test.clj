@@ -10,7 +10,7 @@
   Pure over a store value, so in-image and sub-millisecond."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.api.crossings :as crossings]))
+            [slopp.api.crossings :as crossings] [slopp.api.external :as external] [slopp.api.rules.markers :as markers]))
 
 (deftest the-inventory-reports-holes-and-refuses-to-miss-a-new-one
   ;; Core 6: slopp models edges INSIDE the store — the reference graph — and
@@ -105,3 +105,41 @@
       ;; noise on every full_check of every store forever.
       (is (nil? (crossings/finding
                  (store/ingest (store/empty-store) 'plain "(ns plain)\n(defn f [] 1)")))))))
+
+(deftest ^:external the-two-marker-registries-COVER-the-vocabulary
+  ;; Two registries describe slopp's markers: this one asks whether a key
+  ;; carries data ACROSS the store's edge, `slopp.api.rules.markers` asks
+  ;; whether a dial waives a rule and should say why. Splitting them is
+  ;; correct — merging would report every escape dial as an unclassified
+  ;; crossing — but a split needs something checking the seam.
+  ;;
+  ;; **The invariant is COVERAGE, not disjointness**, and the first version of
+  ;; this test got that wrong. It asserted the two sets do not overlap and
+  ;; immediately failed on `:generated`, which is genuinely BOTH: a
+  ;; name-metadata dial slopp owns, and the signal `:generated/client` uses to
+  ;; find the forms that crossed into generated code. A marker can have two
+  ;; properties; requiring the registries not to overlap asserted something the
+  ;; system does not have and should not.
+  ;;
+  ;; What actually rots is a key claimed by NEITHER — it falls down the gap and
+  ;; both guards report clean about it, which is indistinguishable from clean.
+  (let [st        (external/built-store)
+        in-use    (markers/in-use st)
+        crossing? (into (set (keys crossings/internal-markers))
+                        (mapcat :markers) crossings/kinds)
+        dial?     (into #{} (map :marker) markers/marker-registry)
+        clojures  #{:private :dynamic :macro :tag :doc :arglists :added
+                    :deprecated :const :inline :test :author :since :no-doc}
+        orphans   (into #{} (remove #(or (crossing? %) (dial? %) (clojures %))) in-use)]
+    (testing "there is a population"
+      (is (< 20 (count in-use)) (pr-str in-use)))
+    (testing "no marker slopp uses falls between the two registries"
+      (is (= #{} orphans)
+          (str "these keys are claimed by neither registry, so both report"
+               " clean about them: " (pr-str orphans))))
+    (testing "and the overlap is the ONE marker that really is both"
+      ;; pinned rather than tolerated: a second overlap is a question worth
+      ;; being asked, even though overlap per se is legal
+      (is (= #{:generated} (set (filter dial? crossing?)))
+          "a marker in both registries has two properties — fine, but say
+           which one and why rather than letting the set grow quietly"))))

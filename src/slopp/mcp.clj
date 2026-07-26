@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui.server :as ui] [slopp.api.capabilities :as caps]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -322,6 +322,9 @@
    "store_health"
    (fn [session _a _sym]
      (text! (external/store-health session)))
+   "store_doctor"
+   (fn [session _a _sym]
+     (text! (doctor/diagnose (:store @session))))
    "ui_serve"
    (fn [session a _sym]
      (text! (if (:stop a)
@@ -768,6 +771,11 @@
                                             (assoc (query/query-form-at session (sym :ns) (sym :name)
                                                                      :at (:at a))
                                                    :kind :form-at)
+
+                                            (and nm (:effort a))
+                                            (assoc (query/query-form-history session (sym :ns) (sym :name)
+                                                                             :effort true)
+                                                   :kind :form-effort)
 
                                             nm
                                             {:kind :form-history

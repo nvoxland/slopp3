@@ -114,12 +114,20 @@
 
 (defn ^:export query-form-history
   "Every content version of `nm`'s form, oldest first, with the intent that
-  produced it, when, and the verification state it landed in:
-  [{:delta :op :prompt :source :status :at :turn-intent}]. `:status`
+  produced it, when, the verification state it landed in, and what that
+  verification COST:
+  [{:delta :op :prompt :source :status :at :turn-intent :ms}]. `:status`
   (was-green-at, HM2) is the project's verification state governing each
-  version — semantic × history, per form. `:format \"text\"` (HM4) renders
-  the form's LIFE as a per-version LINE-diff story instead."
-  [session ns-sym nm & {:keys [format]}]
+  version — semantic × history, per form.
+
+  Three views over ONE derivation of the form's life, because a second walk is
+  how two surfaces come to disagree about the same version:
+  - default — the versions as data;
+  - `:format \"text\"` (HM4) — the form's LIFE as a per-version LINE-diff story;
+  - `:effort true` — what the form COST to get green (`history/form-effort`):
+    red→green cycles, distinct asks, recorded time, and how much of the life
+    that time actually covers."
+  [session ns-sym nm & {:keys [format effort]}]
   (let [st (:store @session)
         id (:id (store/form-named st ns-sym nm))]
     (when id
@@ -131,10 +139,19 @@
                                      :prompt (:prompt d) :source src
                                      :status (history/status-after st (:id d))
                                      :at (history/human-time (:at d))}
-                              (ti (:id d)) (assoc :turn-intent (ti (:id d))))))]
-        (if (= "text" (some-> format name))
+                              (ti (:id d)) (assoc :turn-intent (ti (:id d)))
+                              ;; the cost the verification recorded, present
+                              ;; only for versions written after verification
+                              ;; started timing itself — form-effort reports
+                              ;; that coverage rather than summing past it
+                              (get-in (history/verify-after st (:id d)) [:result :ms])
+                              (assoc :ms (get-in (history/verify-after st (:id d))
+                                                 [:result :ms])))))]
+        (cond
+          effort (history/form-effort (symbol (str ns-sym) (str nm)) versions)
+          (= "text" (some-> format name))
           (history/render-form-history-text (symbol (str ns-sym) (str nm)) versions)
-          versions)))))
+          :else versions)))))
 
 (defn ^:export query-search-history
   "Delta-log search — the 'which prompts touched X' query. Case-insensitive

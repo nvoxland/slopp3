@@ -1,4 +1,21 @@
-(ns slopp.mcp.tools)
+(ns slopp.mcp.tools
+  "The tool descriptors — what an agent sees before it calls anything.
+
+  This is the highest-leverage prose in the system and the easiest to
+  under-weight: most agents never read a docstring, a doc page or a skill.
+  They read this. A description that omits an argument means nobody finds it;
+  one that names a tool that no longer exists costs a failed call to discover.
+
+  The schemas are ENFORCED, not advisory. `call-tool!` refuses any argument a
+  schema does not declare, which makes an accurate schema a precondition
+  rather than a courtesy — the strictness was added after four rounds of
+  silently-ignored arguments, and it immediately surfaced one real gap where
+  a tool read a key it had never advertised.
+
+  Split per group so the registry stays editable without touching a monolith,
+  and `read-only-tools` rides alongside because the same fact — this never
+  modifies the store — decides both the MCP `readOnlyHint` and whether a
+  client has to prompt.")
 
 (def orientation-tools
   "Read/orient tool descriptors: project, search, source, dossiers, the oracle. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
@@ -114,12 +131,13 @@
                                :contains {:type "string"}
                                :limit {:type "integer"}}}}
    {:name "query_history"
-    :description "EVERYTHING that happened, one tool: no args = change history (collapse=true for episode rows); {ns name} = one form's life; {ns name at} = TIME-TRAVEL to a past delta/milestone; {at} = was-green-at; {contains} = which asks/prompts touched X; {dead_ends true} = SCRAPPED explorations (reverts) with their why + the forms they dropped, {dead_ends \"some.ns\"} narrows to ones that touched it — check it before re-walking a path someone already abandoned. format=text for humans. For summaries/handoffs use report."
+    :description "EVERYTHING that happened, one tool: no args = change history (collapse=true for episode rows); {ns name} = one form's life; {ns name at} = TIME-TRAVEL to a past delta/milestone; {ns name effort true} = what that form COST to get green (red→green cycles, distinct asks, recorded verification time + how much of its life that covers); {at} = was-green-at; {contains} = which asks/prompts touched X; {dead_ends true} = SCRAPPED explorations (reverts) with their why + the forms they dropped, {dead_ends \"some.ns\"} narrows to ones that touched it — check it before re-walking a path someone already abandoned. format=text for humans. For summaries/handoffs use report."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :at {:type "string"} :contains {:type "string"}
                                :limit {:type "integer"}
                                :collapse {:type "boolean"}
+                               :effort {:type "boolean"}
                                :dead_ends {:type ["boolean" "string"]}
                                :format {:type "string" :enum ["edn" "text"]}}}}
    {:name "query_changes"
@@ -434,6 +452,9 @@
    {:name "store_health"
     :description "What this store CARRIES, in bytes: the journal per op (heaviest first, :commit tree snapshots counted apart from payloads), the materialized state, and the blob table. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."
     :inputSchema {:type "object" :properties {}}}
+   {:name "store_doctor"
+    :description "The LEGACY sweep: elements that predate a rule slopp now enforces and that no ordinary tool can reach — hand-written (declare …) the ordering pipeline cannot see, two elements in one namespace defining ONE name (a form-addressed edit cannot say which you mean, and the last wins at load), and metadata that looks like one of slopp's dials but is not (^:unusedok waives nothing while reading as though it does). Every finding carries the call that fixes it. A THIRD question: full_check asks whether the store is CORRECT, store_health what it COSTS in bytes, this what is in here that the current rules would never have let in. Reach for it right after adopting an existing codebase (git_clone / import), where every form predates every rule — a store written entirely through slopp is normally clean."
+    :inputSchema {:type "object" :properties {}}}
    {:name "ui_serve"
     :description "Serve the store's own reviewer UI — a browsable HTML view of THIS store for a human: the namespace index, form source, and (growing) the milestone timeline and per-milestone change review. Served on the LIVE session, so warranty and observed examples are the ones this session actually has; the HTTP transport's browser opens a fresh session and shows every form as covered by nothing. Returns {:url :port} — hand the url to the human. `port` overrides the ui.port capability (default 7359); `stop: true` shuts it down. Serving again EVICTS the running server rather than hunting for a free port, and a port someone else holds comes back as a sentence, not a stack trace."
     :inputSchema {:type "object"
@@ -545,7 +566,11 @@
     "query_changes" "query_commits" "query_git" "session_brief" "report"
     "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules" "query_rule_telemetry"
     "query_capabilities" "query_routes"
-    "help" "deps_list" "file_list" "file_get" "file_history"})
+    "help" "deps_list" "file_list" "file_get" "file_history"
+    ;; both only READ: health is SQLite LENGTH, doctor is a fold over the store
+    ;; value. Plan mode is exactly when someone assessing an adopted codebase
+    ;; reaches for them, and that is the mode where a prompt costs most.
+    "store_health" "store_doctor"})
 
 (def tools
   "Every tool descriptor the server advertises — concatenated from the
