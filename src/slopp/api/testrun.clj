@@ -1,4 +1,22 @@
 (ns slopp.api.testrun
+  "Running the store's tests in processes OUTSIDE this one.
+
+  The `^:external` tier exists because those tests spawn their own images, so
+  running them in-image would recurse. That makes this the one namespace whose
+  subject is a process tree rather than a value — it shells a runner JVM per
+  shard, and each of those spawns a fresh image JVM per test.
+
+  Owning that tree is the recurring problem here, not a detail. Every runner
+  is BOUNDED (a hung test used to wedge `done` and the milestone gate
+  forever), and killing one now takes its whole subtree with it (`reap!`) —
+  because destroying the runner alone leaves exactly the processes that do the
+  damage, orphaned and reachable by nothing. Two abandoned runs once took a
+  machine to load average 20 that way.
+
+  The rest is shard arithmetic: how many JVMs to use, which namespaces go in
+  which shard, and how to merge their summaries into one honest verdict —
+  including refusing to call a run green when the JVM printed green and then
+  died."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [slopp.image.repl :as repl] [slopp.image.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.edit.refs :as refs]))
@@ -95,12 +113,44 @@
   talking."
   (* 20 60 1000))
 
+(defn ^{:export "slopp.verification"} reap!
+  "Kill `proc` and everything it spawned. Returns nil.
+
+  `.destroy` reaches the CHILD only. A test-runner JVM's whole job is to spawn
+  a fresh image JVM per test, so killing it without its subtree leaves exactly
+  the processes that do the damage — now orphaned, reparented, and reachable
+  by nothing slopp holds. Measured once: two runs' worth of abandoned shards
+  each spawning an image every few seconds, load average past 20, a trivial
+  `query_search` hanging, recovery by hand with `pkill`.
+
+  **Order is the whole design.** Snapshot the descendants first, because a
+  dead handle reports none. Then kill the PARENT, so it stops spawning more
+  while the sweep runs. Then the subtree, politely and then forcibly.
+
+  It is safe on a process that has already exited: the snapshot is empty and
+  every destroy is a no-op."
+  [^Process proc]
+  (let [kids (vec (.toList (.descendants (.toHandle proc))))]
+    (.destroy proc)
+    (when-not (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)
+      (.destroyForcibly proc))
+    (doseq [^java.lang.ProcessHandle h kids] (.destroy h))
+    (doseq [^java.lang.ProcessHandle h kids]
+      (when (.isAlive h) (.destroyForcibly h)))
+    nil))
+
 (defn ^{:export "slopp.verification"} run-cmd!
   "Run `cmd` (a seq of strings) in `dir`, sh-shaped {:exit :out :err}, killed
-  at `timeout-ms` (destroy, then destroyForcibly): :exit 124 and no parseable
-  summary, which the shard-death retry treats honestly as a dead JVM. Output
-  is drained on its own thread so a chatty child cannot fill the pipe and
-  deadlock the wait."
+  at `timeout-ms` WITH EVERYTHING IT SPAWNED (`reap!`): :exit 124 and no
+  parseable summary, which the shard-death retry treats honestly as a dead
+  JVM. Output is drained on its own thread so a chatty child cannot fill the
+  pipe and deadlock the wait.
+
+  The subtree is the point. This used to `.destroy` the child alone, which
+  for a test-runner JVM means killing the one process that was NOT the
+  problem — its per-test image JVMs survived, orphaned, and kept being
+  spawned right up to the moment the runner died. Two abandoned runs took a
+  machine to load average 20 that way."
   ([cmd dir] (run-cmd! cmd dir shard-timeout-ms))
   ([cmd dir timeout-ms]
    (let [pb   (doto (ProcessBuilder. ^java.util.List (mapv str cmd))
@@ -110,12 +160,11 @@
          out  (future (slurp (.getInputStream proc)))]
      (if (.waitFor proc timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
        {:exit (.exitValue proc) :out (deref out 10000 "") :err ""}
-       (do (.destroy proc)
-           (when-not (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)
-             (.destroyForcibly proc))
+       (do (reap! proc)
            {:exit 124
             :out (str (deref out 1000 "")
-                      "\n[slopp] test runner exceeded " timeout-ms "ms — killed")
+                      "\n[slopp] test runner exceeded " timeout-ms
+                      "ms — killed, with every process it had spawned")
             :err ""})))))
 
 (defn ^:export balance-shards

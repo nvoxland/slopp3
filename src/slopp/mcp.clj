@@ -678,8 +678,7 @@
       "ns_add_require" (text! (-> (api/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
-                                    (select-keys [:error :warnings :existing-warnings
-                                                  :test :affected :delta])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "query_project" (text! (told! session name a
                                         (query/query-project session :since (:since a)
@@ -760,9 +759,7 @@
       "episode_revert" (text! (-> (api/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
-                                    (select-keys [:error :conflict :reverted
-                                                  :skipped-shared :note :test
-                                                  :group :affected])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "query_history" (text! (told! session name a
                                         (let [nm (:name a)]
@@ -825,22 +822,18 @@
                                                        (src :source) :prompt (:prompt a)
                                                        :agent (:agent a))
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
-                                    (select-keys [:error :warnings :existing-warnings :hint :forms
-                                                  :untested :image-healed :test :affected :delta
-                                                  :red-first :carried-errors :note :advisories])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (src :source)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
-                                    (select-keys [:error :warnings :existing-warnings :hint
-                                                  :untested :image-healed :test :affected :delta
-                                                  :red-first :carried-errors :note :advisories])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
-                                    (select-keys [:error :test :affected :delta])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "edit_rename" (let [old (or (:old a) (:name a) (:from a))
                                 new (or (:new a) (:to a))]
@@ -849,13 +842,12 @@
                             (text! (-> (api/rename! session (sym :ns) (symbol old)
                                                    (symbol new) :prompt (:prompt a)
                                                    :agent (:agent a))
-                                      (select-keys [:error :renamed :test :affected :delta
-                                                    :mentions :hint])
+                                      (select-keys tools/wire-keys)
                                       (summarize (:verbose a)))))
       "ns_remove_require" (text! (-> (api/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
-                                    (select-keys [:error :test :affected :delta])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "full_check" (text! (external/full-check! session :affected (:affected a)))
       "edit_requalify" (text! (-> (api/requalify-boundary-keys!
@@ -864,10 +856,7 @@
                                    :prompt (:prompt a)
                                    :agent (:agent a)
                                    :dry-run (or (:dry-run a) (:dry_run a)))
-                                  (select-keys [:error :dry-run :keys :to-ns :forms :in-code
-                                                :unknown-shape :note :group :deltas
-                                                :warnings :existing-warnings
-                                                :changed-nses :test :affected])
+                                  (select-keys tools/wire-keys)
                                   (summarize (:verbose a))))
       "rename_sweep" (let [{:keys [from to]} a]
                             (when-not (and from to)
@@ -876,12 +865,7 @@
                                                          :prompt (:prompt a)
                                                          :agent (:agent a)
                                                          :dry-run (or (:dry-run a) (:dry_run a)))
-                                      (select-keys [:error :source-now :renamed-namespaces :forms
-                                                    :group :warnings :existing-warnings
-                                                    :changed-nses :test :affected :deltas
-                                                    ;; a preview's whole payload — omitting
-                                                    ;; these made dry-run look like a no-op
-                                                    :dry-run :in-code :in-strings :note])
+                                      (select-keys tools/wire-keys)
                                       (summarize (:verbose a)))))
       "edit_subform" (let [after  (:after a)
                                 anchor (or (:match a) (:from a))
@@ -910,15 +894,12 @@
                                                          :where (:where a)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
-                                      (select-keys [:error :source-now :suggestion :conflict
-                                                    :warnings :existing-warnings
-                                                    :untested :image-healed :test :affected :delta :ms])
+                                      (select-keys tools/wire-keys)
                                       (summarize (:verbose a)))))
       "edit_revert" (text! (-> (api/revert-form! session (sym :ns) (sym :name)
                                                       :to (:to a) :prompt (:prompt a)
                                                       :agent (:agent a))
-                                    (select-keys [:error :conflict :warnings :test
-                                                  :affected :delta :ms])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "edit_move" (text! (api/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
@@ -940,8 +921,7 @@
                                                   (sym :name) subform
                                                   :at (:at a)
                                                   :prompt (:prompt a))
-                                    (select-keys [:error :source-now :extracted
-                                                  :group :test :affected])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))))
       "done" (text! (external/done! session :label (:label a)
                                                   :agent (:agent a)))
@@ -1027,18 +1007,14 @@
                                                      :export (:export a)
                                                      :prompt (:prompt a)
                                                      :agent (:agent a))
-                                    (select-keys [:error :conflict :moved-to
-                                                  :moved :rewrote :callers
-                                                  :test :group])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "change_signature" (text! (-> (api/change-signature! session (sym :ns)
                                                            (sym :name)
                                                            (src :source) (:calls a)
                                                            :prompt (:prompt a)
                                                            :agent (:agent a))
-                                    (select-keys [:error :step :group :rewrote :manual
-                                                  :warnings :existing-warnings :changed-nses
-                                                  :image-healed :test :affected :deltas])
+                                    (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       (throw (ex-info (str "unknown tool: " name ". Available: "
                            (str/join ", " (map :name tools/tools)))

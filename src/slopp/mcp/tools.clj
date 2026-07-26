@@ -660,3 +660,35 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
          "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
          "ns_delete" "done" "commit_point" "deps_add" "deps_remove"
          "deps_pure" "change_signature"]))
+
+(def wire-keys
+  "Every key a write result may carry to the agent — ONE list, replacing the
+  fourteen hand-maintained `select-keys` allowlists in `call-tool!`.
+
+  **The union is safe, and that is the whole argument.** A key absent from a
+  result is absent from the output whatever the allowlist says, so a per-tool
+  list never protected anything — each was an independent guess at what that
+  one operation returns. What they did instead was lose things: `:dry-run`'s
+  payload, `:drift`, `:external-pending` and a `:fix` hint have each been
+  built, tested and correct one layer down while the agent saw the old
+  behaviour. `summarize`'s docstring has recorded that happening three times;
+  the fourth is what produced this.
+
+  Measured before consolidating: 14 lists, 39 distinct keys, and exactly TWO
+  (`:error`, `:test`) appearing in all of them.
+
+  Bulk payloads are not excluded here but by `summarize`, which strips
+  `:source`/`:sources`/`:node` off deltas — a size concern, not a routing one,
+  and it belongs where the shaping happens."
+  #{;; refusals and the recovery they name
+    :error :conflict :note :hint :suggestion :source-now :fix
+    ;; what landed
+    :delta :deltas :group :forms :affected :renamed :renamed-namespaces
+    :mentions :changed-nses :reverted :skipped-shared :moved-to :moved :rewrote
+    :callers :edges-declared :export-not-landed :export-note
+    :extracted :step :to-ns :keys :unknown-shape
+    ;; what it cost and whether to believe it
+    :test :ms :untested :image-healed :red-first :carried-errors
+    :warnings :existing-warnings :advisories :drift :manual
+    ;; a preview's whole point
+    :dry-run :in-code :in-strings})

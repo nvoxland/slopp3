@@ -1,4 +1,13 @@
 (ns slopp.api.testrun-test
+  "Cover for the external runner, split along the line that matters: the
+  shard ARITHMETIC is pure and cheap to test, the PROCESS ownership is
+  neither.
+
+  So the arithmetic tests (how many shards, which namespaces in each, how
+  summaries merge) run in-image on data, and the process tests spawn a real
+  tree and assert on real PIDs — because the failure they guard against is
+  one you cannot model. A test that pretends to kill a process proves nothing
+  about whether the orphans died."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.api.testrun :as testrun]))
@@ -81,3 +90,35 @@
           (str "the 6-boot namespace should stand alone: " (pr-str shards))))
     (testing "fewer namespaces than shards yields no empty shards to run"
       (is (every? seq (testrun/only-shards st '[os.light-test/t0] 4))))))
+
+(deftest ^:external killing-a-runner-kills-the-processes-it-spawned
+  ;; The incident: two full-suite runs timed out CLIENT-side, the server-side
+  ;; shard JVMs kept executing, and each kept spawning a fresh per-test image
+  ;; JVM every few seconds. Load average hit 20+ and even a trivial
+  ;; query_search hung. Recovery was manual pkill.
+  ;;
+  ;; `run-cmd!` was already bounded and already called .destroy — but destroy
+  ;; reaches the child ONLY. A test-runner JVM's whole job is to spawn image
+  ;; JVMs, so killing it without its subtree leaves exactly the processes that
+  ;; do the damage, now orphaned and unreachable by anything.
+  ;;
+  ;; The ORDER matters and is asserted below: kill the parent FIRST so it
+  ;; stops spawning more, then sweep what it already started.
+  (let [pb   (doto (ProcessBuilder. ["bash" "-c" "sleep 30 & sleep 30"])
+               (.redirectErrorStream true))
+        proc (.start pb)]
+    (try
+      (Thread/sleep 500)                          ; let the child spawn its own
+      (let [kids (vec (.toList (.descendants (.toHandle proc))))]
+        (testing "the fixture really does have a subtree, or this proves nothing"
+          (is (pos? (count kids))
+              "no descendants spawned — the fixture is not exercising the bug"))
+        (testrun/reap! proc)
+        (testing "the parent is dead"
+          (is (not (.isAlive proc))))
+        (testing "and so is everything it spawned"
+          (is (every? #(not (.isAlive %)) kids)
+              (str "orphans survived: "
+                   (pr-str (mapv #(.pid %) (filter #(.isAlive %) kids)))))))
+      (finally
+        (.destroyForcibly proc)))))

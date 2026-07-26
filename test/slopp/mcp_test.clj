@@ -1684,3 +1684,29 @@
       (testing "and it is read-only, so plan mode can auto-permit it"
         (is (contains? tools/read-only-tools "store_doctor")))
       (finally (api/close! sess)))))
+
+(deftest ^:external no-tool-keeps-its-own-result-key-allowlist
+  ;; Four keys have been built, tested and correct one layer down while the
+  ;; agent saw the old behaviour — `:dry-run`'s payload, `:drift`,
+  ;; `:external-pending`, and a `:fix` hint. Each looked like a missing
+  ;; feature rather than a dropped one, which is the worst shape a failure can
+  ;; have. `summarize`'s docstring records three of them and asks for this.
+  ;;
+  ;; The rule: `call-tool!` selects result keys from ONE registry
+  ;; (`tools/wire-keys`) and never from a literal list. A literal list is a
+  ;; fifteenth chance to disagree about what reaches an agent.
+  (let [st  (external/built-store)
+        src (n/string (:node (store/form-named st 'slopp.mcp 'call-tool!)))
+        literal-lists (re-seq #"select-keys \[[^\]]+\]" src)]
+    (testing "there is a population — this reads the real dispatch"
+      (is (< 1000 (count src)) "call-tool! source not found")
+      (is (re-find #"wire-keys" src)
+          "the dispatch does not mention the registry at all"))
+    (testing "no hand-maintained allowlist survives"
+      (is (empty? literal-lists)
+          (str (count literal-lists) " tool(s) still select from a literal list"
+               " instead of tools/wire-keys — each is a fresh chance to drop a"
+               " key silently: " (pr-str (take 3 literal-lists)))))
+    (testing "and the registry is not empty, which would pass vacuously"
+      (is (< 20 (count tools/wire-keys)))
+      (is (contains? tools/wire-keys :error)))))
