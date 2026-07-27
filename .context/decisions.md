@@ -2618,14 +2618,25 @@ random ports and so hard to know where to look."*
 
 ### The hub cannot own the data plane, and that is not a preference
 
-`ui.server/serve!` takes the session as an ARGUMENT. Its docstring already
-says why: `:test-map` and `:observed` are session-grain and never persisted,
-so a UI served from a fresh session renders every form as covered by no tests
-and exercised by no examples. The HTTP transport demonstrates this today.
+`ui.server/serve!` takes the session as an ARGUMENT.
 
-So a hub process that opened `<dir>/.slopp/store.db` for each registered
-project would reproduce that failure at every project at once. Whatever else
-the hub is, it is not the thing that answers questions about a store.
+**Corrected 2026-07-27.** This section originally said `:test-map` and
+`:observed` were "session-grain and never persisted", so a fresh session would
+render every form as covered by nothing. That is FALSE:
+`session/persist-trace!` writes the trace map to store meta at every verified
+run and `open!` loads it back, with `load-observations` the same for
+`:observed`. A fresh session is not blank.
+
+The conclusion is unchanged, and the true reason is sharper. A fresh session is
+**behind**: it shows the warranty as of the last verified run, not the one
+being changed, which is wrong exactly when someone is watching it change. And
+being behind is not free — it costs a second booted image, that project's
+classpath, and that project's version. A hub fronting N projects would need N
+of each. Whatever else the hub is, it is not the thing that answers questions
+about a store.
+
+Recorded rather than quietly patched because a decision defended by a reason
+that does not hold is a decision someone will undo the moment they check.
 
 **The rule: the hub knows only what a heartbeat tells it; everything else it
 proxies.** It never opens a db and never renders a form. The consequence

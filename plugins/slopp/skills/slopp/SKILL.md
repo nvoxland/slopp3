@@ -856,8 +856,10 @@ port.
 
 **On a machine running several slopp projects, hand over the HUB's url
 instead.** Each server serves its own UI — it must, because warranty and
-observed examples are session-grain — so each one binds a port derived from
-its store dir, and those are not addresses a human should have to collect.
+observed examples are only CURRENT in the session doing the work; another
+process reading the same store sees the last verified run, not the one you are
+changing — so each one binds a port derived from its store dir, and those are
+not addresses a human should have to collect.
 The hub is one process the user starts (`slopp --main slopp.ui.hub/-main
 --port 7359`; it needs no store), every project registers with it every ten
 seconds, and it fronts them all at one url with a project picker. A project

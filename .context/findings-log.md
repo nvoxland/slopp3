@@ -973,9 +973,13 @@ Five reviewer-shaped questions against the live store, milestone
 All five answered. Two observations worth keeping:
 
 - **The warranty count is only right because the UI runs on the LIVE
-  session.** `:test-map` is session-grain and unpersisted; served from a
-  fresh session every one of those reads would have said zero. This is the
-  single design decision the eval actually validated.
+  session.** Served from a fresh session those reads would have been STALE —
+  the warranty as of the last verified run, not the one being changed. (This
+  entry originally said "session-grain and unpersisted … would have said
+  zero"; corrected 2026-07-27 — `session/persist-trace!` persists the trace and
+  `open!` reloads it, so the failure mode is staleness, not emptiness. The
+  observation itself stands.) This is the single design decision the eval
+  actually validated.
 - **One answer looked wrong and was not.** A scraping script grabbed the
   wrong `<em>` and attributed another form's ask to `query-params`;
   checking the page directly showed the correct value. Worth recording
