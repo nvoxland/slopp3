@@ -262,7 +262,9 @@
                :response {:kind :var :sym 'shop.contracts/order :ns 'shop.contracts}}])]
     (testing "one ns form plus one defn per wrapper (structural parse is checked end-to-end at ingest)"
       (is (re-find #"\(ns shop\.client\.api" src) src)
-      (is (= 2 (count (re-seq #"\(defn " src))))
+      (is (= 2 (count (re-seq #"\(defn \^\{:generated " src)))
+          "one WRAPPER per endpoint — counted by its provenance marker, so the
+           namespace's own helpers do not read as endpoints")
       (is (= (count (re-seq #"\(" src)) (count (re-seq #"\)" src))) "balanced parens"))
     (testing "the ns requires malli + the schema's contracts ns"
       (is (re-find #"malli\.core" src))
@@ -276,7 +278,19 @@
     (testing "request validation on a body verb; response validation both; path param substituted"
       (is (re-find #"m/validate shop\.contracts/order params" src) "request validated out")
       (is (re-find #"m/decode shop\.contracts/order" src) "response decoded in")
-      (is (re-find #"\(str \"/api/orders/\" \(:id params\)\)" src) "path param interpolated"))))
+      (is (re-find #"\(str \"/api/orders/\" \(:id params\)\)" src) "path param interpolated"))
+    (testing "every fetch goes through a BASE the app can set, so a slopp app
+              can be served under a path prefix (D-ui-hub part 2). Default \"\"
+              is exactly today's behaviour — an app served at the root emits
+              the same urls it always did"
+      (is (re-find #"\(defonce \^:export base \(atom \"\"\)\)" src)
+          "an exported base the mounting app sets once")
+      (is (re-find #"\(defn \^:export set-base! \[b\] \(reset! base b\)\)" src)
+          "set through a FN, not by reaching into the atom — a defn is the
+           surface a generated namespace should offer, and it is also the
+           thing clj-kondo resolves across a cljs namespace boundary")
+      (is (= 2 (count (re-seq #"js/fetch \(url " src)))
+          "EVERY wrapper routes through it — one that did not would 404 under a prefix"))))
 
 (deftest ^:external generate-client-writes-a-protected-cljs-namespace
   (let [sess (external/open!)]

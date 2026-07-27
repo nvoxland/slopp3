@@ -13,7 +13,7 @@
   `:cljc` — because that is the part that stopped being tested."
   (:require [replicant.dom :as r]
             [slopp.ui.client.api :as api]
-            [slopp.ui.views :as views] [slopp.ui.client.sketch :as sketch]))
+            [slopp.ui.views :as views] [slopp.ui.client.sketch :as sketch] [slopp.ui.basepath :as bp]))
 
 (defonce state
   ;; The whole application state: {:path :screen :params :data :namespaces
@@ -27,6 +27,17 @@
   ;; A comment rather than a docstring: `defonce` takes a name and an init
   ;; and nothing else, in both Clojure and ClojureScript.
   (atom {}))
+
+(defonce base
+  ;; The path prefix this app is mounted under — "" when served directly, and
+  ;; "/p/<slug>" behind the UI hub's proxy (D-ui-hub part 2). Read ONCE from
+  ;; the mount point's data-base, which the server put there, because a page
+  ;; cannot work out where it is mounted from its own URL: /p/slopp2/store and
+  ;; /store are indistinguishable without being told.
+  ;;
+  ;; The prefix is added and removed by slopp.ui.basepath, which is :cljc and
+  ;; tested in-image — this namespace holds only the value.
+  (atom ""))
 
 (defn render!
   "Render the current state into the mount point.
@@ -58,6 +69,25 @@
     :form     (api/form {:id (:id params)})
     nil))
 
+(defn load-projects!
+  "Ask the HUB which projects it is fronting, and put them in state.
+
+  Deliberately NOT a generated wrapper and deliberately NOT prefixed. Every
+  other fetch here addresses THIS project through `@api/base`; this one
+  addresses the hub at the origin root, because `/p/<slug>/api/projects` would
+  be proxied straight back to a project that does not serve it.
+
+  A failure is silence. Served directly there is no hub, `/api/projects` 404s,
+  and the switcher renders as nothing — which is the ordinary single-project
+  case rather than an error worth showing anyone."
+  []
+  (-> (js/fetch "/api/projects" (clj->js {:method "GET"}))
+      (.then (fn [resp] (if (.-ok resp) (.json resp) (throw (js/Error. "no hub")))))
+      (.then (fn [body]
+               (swap! state assoc :projects (js->clj body :keywordize-keys true))
+               (render!)))
+      (.catch (fn [_] nil))))
+
 (defn show!
   "Route `path`, render the loading state, then fetch and render the screen.
 
@@ -72,7 +102,9 @@
   [path push?]
   (let [{:keys [screen params]} (or (views/route-for path)
                                     {:screen nil :params {}})]
-    (when push? (.pushState js/history nil "" path))
+    ;; `path` is an APP path throughout — the router, the state and every href
+    ;; the views emit are all prefix-free. It becomes a browser url only here.
+    (when push? (.pushState js/history nil "" (bp/prefixed @base path)))
     (swap! state assoc :path path :screen screen :params params
            :data nil :error nil)
     (render!)
@@ -134,10 +166,30 @@
      (when (= "ns-filter" (.-id (.-target e)))
        (swap! state assoc :filter (.-value (.-target e)))
        (render!))))
+  ;; switching project is a full page load, not a route: the target is a
+  ;; different application served by a different process, and pretending
+  ;; otherwise would mean this bundle rendering another store's data
+  (js/document.addEventListener
+   "change"
+   (fn [e]
+     (when (.contains (.-classList (.-target e)) "project-switcher")
+       (js/window.location.assign (.-value (.-target e))))))
   (js/window.addEventListener
    "popstate"
-   (fn [_] (show! (.-pathname js/location) false)))
-  (show! (.-pathname js/location) false))
+   (fn [_] (show! (bp/strip @base (.-pathname js/location)) false)))
+  ;; learn where we are mounted BEFORE anything fetches or routes: the
+  ;; generated api wrappers hold their own base, and the url we arrived on
+  ;; needs the prefix taken off before the router sees it (D-ui-hub part 2)
+  (let [b (bp/normalize (some-> (js/document.getElementById "app")
+                                (.getAttribute "data-base")))]
+    (reset! base b)
+    (api/set-base! b)
+    ;; the slug is the last segment of the mount point — it is what marks the
+    ;; current option in the switcher, and the hub is the only thing that
+    ;; knows it, so it arrives the same way the base does
+    (swap! state assoc :project (last (.split b "/")))
+    (load-projects!))
+  (show! (bp/strip @base (.-pathname js/location)) false))
 
 (defonce ^:unused-ok bootstrap
   ;; compile_client emits a :simple bundle whose top-level forms run when the

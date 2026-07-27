@@ -13,7 +13,7 @@
   slopp.ui.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs] [slopp.ui.model :as model] [clojure.string :as str] [slopp.ui.views :as views] [slopp.api.artifacts :as artifacts]))
+            [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs] [slopp.ui.model :as model] [clojure.string :as str] [slopp.ui.views :as views] [slopp.api.artifacts :as artifacts] [slopp.ui.basepath :as bp]))
 
 (defn- form-doc
   "A form's docstring, or nil — through `store/form-docstring`, which is the
@@ -56,8 +56,19 @@
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
       (n/string (:node e)))))
 
+(defn- request-base
+  "The path prefix this request arrived under, from the proxy's
+  `X-Slopp-Base` header — `\"\"` when there is none.
+
+  A header rather than configuration, because the prefix is a fact about THIS
+  request, not about the project: the same server answers directly on its own
+  port AND through a hub, and a configured value would be wrong for one of
+  them."
+  [req]
+  (bp/normalize (get-in req [:headers "x-slopp-base"])))
+
 (defn- document
-  "The application document: head, an empty mount point, nothing else.
+  "The application document, served under path prefix `base` (\"\" = the root).
 
   This is the ONLY HTML the server produces. Every screen is the client
   rendering data from `/api/*`, so there is no per-page template here and no
@@ -65,16 +76,26 @@
 
   It is deliberately EMPTY rather than server-rendered-then-hydrated. A
   pre-rendered shell would be a second implementation of every screen — the
-  exact drift the `:cljc` views exist to prevent — and slopp's reviewer UI
-  is a local tool, so first-paint latency is not the constraint that would
-  justify it."
-  []
-  (html/html-response
-   (html/page
-    {:html/title "slopp"
-     :html/head [[:link {:rel "stylesheet" :href "/css/style.css"}]
-                 [:script {:src "/js/main.js" :defer true}]]}
-    [:div {:id "app"}])))
+  exact drift the `:cljc` views exist to prevent — and slopp's reviewer UI is
+  a local tool, so first-paint latency is not the constraint that would
+  justify it.
+
+  Every url it emits is prefixed, and the mount point carries the base as
+  `data-base` — which is how the CLIENT learns where it is mounted, for both
+  the generated api wrappers and the router. A page cannot be asked to guess
+  that, and behind the hub's proxy a bare `/js/main.js` resolves at the HUB,
+  which does not serve it (D-ui-hub part 2)."
+  [base]
+  (let [b (bp/normalize base)]
+    (html/html-response
+     (html/page
+      {:html/title "slopp"
+       :html/head [[:link {:rel "stylesheet" :href (bp/prefixed b "/css/style.css")}]
+                   [:script {:src (bp/prefixed b "/js/main.js") :defer true}]]}
+      ;; the attribute appears only when there IS a prefix, so an app served at
+      ;; the root emits the document it always did, byte for byte — the client
+      ;; reads a missing attribute as no base
+      [:div (cond-> {:id "app"} (seq b) (assoc :data-base b))]))))
 
 (defn ^{:web/read :ui/client-js} client-js-read
   "Read performer: the compiled client bundle, or nil when nothing has been
@@ -145,8 +166,8 @@
   catch-all quietly picks up.
 
   Two routes rather than one is the honest cost of that stance."
-  [_req]
-  (document))
+  [req]
+  (document (request-base req)))
 
 (defn ^{:web/method :get :web/path "/" :web/auth :public
         :web/response :string :web/client false
@@ -168,8 +189,8 @@
   Note the prefix ROOTS are not covered by the generated catch-alls
   (`/store/*` needs a segment below it), which is why `/store` itself is a
   separate route rather than a side effect of the fallback."
-  [_req]
-  (document))
+  [req]
+  (document (request-base req)))
 
 (defn ^{:web/read :ui/change} change-read
   "Read performer: the review of one `from..to` range, or nil when the

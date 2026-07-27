@@ -154,6 +154,30 @@
 
         :else nil))))
 
+(defn project-switcher
+  "The top-nav control for moving between the projects a UI hub is fronting,
+  or nil when there is nothing to move between.
+
+  Nil is the ORDINARY case, not a failure: a project served directly has no
+  hub to ask, the fetch 404s, and the control simply is not there. An empty
+  dropdown would take up the same space to say the same nothing.
+
+  A project that has stopped answering stays in the list, disabled and
+  labelled — the same stance the hub's own picker takes. Disappearing from a
+  control mid-session is how a reader concludes they imagined a project.
+
+  Options carry the hub's `/p/<slug>/` address as their value; switching is a
+  full page load, because the target is a different application served by a
+  different process."
+  [projects current]
+  (when (seq projects)
+    (into [:select {:class "project-switcher" :data-region "nav/switcher"}]
+          (for [{:keys [slug available] nm :name} projects]
+            [:option (cond-> {:value (str "/p/" slug "/")}
+                       (= slug current) (assoc :selected true)
+                       (not available)  (assoc :disabled true))
+             (str nm (when-not available " — not running"))]))))
+
 (defn app-shell
   "The three-pane application shell: global sections across the top,
   section-local navigation on the left, in-page detail on the right, content
@@ -173,9 +197,9 @@
   Lives in `slopp.ui`, deliberately NOT in `slopp.web`: three panes is this
   application's design, and a framework carrying an opinion about navigation
   has stopped being a framework."
-  [{:nav/keys [sections local detail]} & content]
+  [{:nav/keys [sections local detail switcher]} & content]
   (cond-> [:div {:class "app"}
-           [:header {:data-region "nav/sections"} (nav-links sections)]]
+           [:header {:data-region "nav/sections"} (nav-links sections) switcher]]
     (some? local)  (conj [:nav {:data-region "nav/local"} local])
     true           (conj (into [:main {:data-region "main"}] content))
     (seq detail)   (conj (into [:aside {:data-region "nav/detail"}] detail))))
@@ -508,7 +532,8 @@
   `:data` nil means the fetch is still in flight. That state has to render
   something, because the alternative is a blank pane that looks exactly like
   a screen with no content."
-  [{:keys [path screen params data modules error] filter-text :filter}]
+  [{:keys [path screen params data modules error projects project]
+    filter-text :filter}]
   (let [code?  (#{:code :ns :source} screen)
         local  (when code? (module-nav (or modules []) (:ns params) filter-text))
         main   (cond
@@ -525,7 +550,8 @@
                          :form     (form-main data)))
         detail (when (and (= :form screen) data (nil? error))
                  (form-rail data))]
-    (app-shell (cond-> {:nav/sections (marked-sections (or path "/"))}
+    (app-shell (cond-> {:nav/sections (marked-sections (or path "/"))
+                        :nav/switcher (project-switcher projects project)}
                  local  (assoc :nav/local local)
                  detail (assoc :nav/detail detail))
                main)))

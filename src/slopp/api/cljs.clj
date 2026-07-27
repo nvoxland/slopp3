@@ -316,7 +316,7 @@
          "  \"" verb " " path " — generated client wrapper (D-web-contracts).\"\n"
          "  " arglist "\n"
          (or validate "")
-         "  (-> (js/fetch " (path-expr path) " " opts ")\n"
+         "  (-> (js/fetch (url " (path-expr path) ") " opts ")\n"
          "      (.then (fn [resp] (.json resp)))\n"
          handle ")")))
 
@@ -338,6 +338,14 @@
                          (apply str (for [n schema-nses] (str "\n            " n)))
                          ")")]
     (str "(ns " ns-sym "\n  " requires ")\n\n"
+         ;; Every wrapper's path is root-absolute, which makes this namespace
+         ;; unservable behind a proxy that mounts the app under a prefix —
+         ;; /api/x resolves at the PROXY, and the page arrives and does
+         ;; nothing (D-ui-hub part 2). One base, set once by whatever mounts
+         ;; the app; "" is exactly the behaviour every existing app has.
+         "(defonce ^:export base (atom \"\"))\n\n"
+         "(defn ^:export set-base! [b] (reset! base b))\n\n"
+         "(defn- url [p] (str @base p))\n\n"
          (str/join "\n\n" (map render-wrapper wrappers)))))
 
 (defn- served-by-a-mount?

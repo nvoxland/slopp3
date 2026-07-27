@@ -127,14 +127,18 @@
   Between the hub's last heartbeat and this request the process may simply
   have gone, and telling the human two different stories about one situation
   helps nobody."
-  [entry path query]
-  (let [base (str/replace (str (:url entry)) #"/+$" "")
-        uri  (str base "/" path (when (seq query) (str "?" query)))]
+  [entry path query base]
+  (let [root (str/replace (str (:url entry)) #"/+$" "")
+        uri  (str root "/" path (when (seq query) (str "?" query)))]
     (try
       (let [client (java.net.http.HttpClient/newHttpClient)
             resp   (.send client
                           (-> (java.net.http.HttpRequest/newBuilder)
                               (.uri (java.net.URI. uri))
+                              ;; the project emits root-absolute urls; without
+                              ;; this every one of them would resolve HERE
+                              ;; instead of at the project (D-ui-hub part 2)
+                              (.header "X-Slopp-Base" base)
                               (.GET)
                               (.build))
                           (java.net.http.HttpResponse$BodyHandlers/ofByteArray))
@@ -163,7 +167,7 @@
       (unavailable 503 (assoc entry :known? true))
 
       :else
-      (forward entry (or path "") (:query-string req)))))
+      (forward entry (or path "") (:query-string req) (str "/p/" slug)))))
 
 (defn- picker-response
   "The landing page: every project that has checked in, linked.

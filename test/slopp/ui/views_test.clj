@@ -400,3 +400,23 @@
     (testing "a module with no sketch entry still gets its rect — partial data degrades"
       (let [v (views/module-graph (assoc picture :sketch {"other" [{:d "M 0 0"}]}))]
         (is (= 1 (count (tags v :rect))))))))
+
+(deftest the-project-switcher-is-absent-without-a-hub-and-honest-with-one
+  (testing "no hub in front means no project list means NO switcher — the
+            dropdown degrades to nothing rather than to an empty control, and
+            that is the ordinary single-project case, not a failure"
+    (is (nil? (views/project-switcher [] "slopp2")))
+    (is (nil? (views/project-switcher nil "slopp2"))))
+  (let [ps [{:slug "slopp2" :name "slopp2" :available true}
+            {:slug "invoices" :name "Invoices" :available false}]
+        sw (views/project-switcher ps "slopp2")
+        s  (pr-str sw)]
+    (testing "one option per project, addressed by the hub's own /p/<slug>/"
+      (is (str/includes? s "/p/slopp2/"))
+      (is (str/includes? s "/p/invoices/")))
+    (testing "the project you are looking at is the selected one"
+      (is (str/includes? s ":selected true")))
+    (testing "a project that stopped answering is still LISTED and says so,
+              rather than vanishing from the control mid-session"
+      (is (str/includes? s "Invoices"))
+      (is (str/includes? s "not running")))))

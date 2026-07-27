@@ -3,10 +3,16 @@
             [malli.transform :as mt]
             slopp.ui.contracts))
 
+(defonce ^:export base (atom ""))
+
+(defn ^:export set-base! [b] (reset! base b))
+
+(defn- url [p] (str @base p))
+
 (defn ^{:generated "slopp.ui.api/namespaces"} ^:export namespaces
   "GET /api/namespaces — generated client wrapper (D-web-contracts)."
   []
-  (-> (js/fetch "/api/namespaces" (clj->js {:method "GET"}))
+  (-> (js/fetch (url "/api/namespaces") (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/namespace-list (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -18,7 +24,7 @@
 (defn ^{:generated "slopp.ui.api/ns-outline"} ^:export ns-outline
   "GET /api/ns/:ns — generated client wrapper (D-web-contracts)."
   [params]
-  (-> (js/fetch (str "/api/ns/" (:ns params)) (clj->js {:method "GET"}))
+  (-> (js/fetch (url (str "/api/ns/" (:ns params))) (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/ns-outline (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -30,7 +36,7 @@
 (defn ^{:generated "slopp.ui.api/timeline"} ^:export timeline
   "GET /api/timeline — generated client wrapper (D-web-contracts)."
   []
-  (-> (js/fetch "/api/timeline" (clj->js {:method "GET"}))
+  (-> (js/fetch (url "/api/timeline") (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/timeline (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -42,7 +48,7 @@
 (defn ^{:generated "slopp.ui.api/change"} ^:export change
   "GET /api/change/:range — generated client wrapper (D-web-contracts)."
   [params]
-  (-> (js/fetch (str "/api/change/" (:range params)) (clj->js {:method "GET"}))
+  (-> (js/fetch (url (str "/api/change/" (:range params))) (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/change-view (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -54,7 +60,7 @@
 (defn ^{:generated "slopp.ui.api/form"} ^:export form
   "GET /api/form/:id — generated client wrapper (D-web-contracts)."
   [params]
-  (-> (js/fetch (str "/api/form/" (:id params)) (clj->js {:method "GET"}))
+  (-> (js/fetch (url (str "/api/form/" (:id params))) (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/form-view (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -66,7 +72,7 @@
 (defn ^{:generated "slopp.ui.api/source"} ^:export source
   "GET /api/source/:ns/:name — generated client wrapper (D-web-contracts)."
   [params]
-  (-> (js/fetch (str "/api/source/" (:ns params) "/" (:name params)) (clj->js {:method "GET"}))
+  (-> (js/fetch (url (str "/api/source/" (:ns params) "/" (:name params))) (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/form-source (js->clj body :keywordize-keys true) (mt/json-transformer))]
@@ -78,7 +84,7 @@
 (defn ^{:generated "slopp.ui.api/modules"} ^:export modules
   "GET /api/modules — generated client wrapper (D-web-contracts)."
   []
-  (-> (js/fetch "/api/modules" (clj->js {:method "GET"}))
+  (-> (js/fetch (url "/api/modules") (clj->js {:method "GET"}))
       (.then (fn [resp] (.json resp)))
       (.then (fn [body]
                (let [data (m/decode slopp.ui.contracts/module-index (js->clj body :keywordize-keys true) (mt/json-transformer))]

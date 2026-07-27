@@ -105,7 +105,12 @@
                                            {:status 200 :web/raw true
                                             :headers {"Content-Type" "text/plain; charset=utf-8"}
                                             :body (str "from the project"
-                                                       (some->> (:query-string req) (str " ?")))})}]
+                                                       (some->> (:query-string req) (str " ?")))})}
+                               {:method :get :path "/base" :auth :public
+                                :handler (fn [req]
+                                           {:status 200 :web/raw true
+                                            :headers {"Content-Type" "text/plain; charset=utf-8"}
+                                            :body (str (get-in req [:headers "x-slopp-base"]))})}]
                   :web/host "127.0.0.1" :web/port 0})
         hub     (hub/serve! 0)]
     (try
@@ -127,6 +132,10 @@
                 and dropping it silently breaks every filtered view"
         (is (= "from the project ?q=1"
                (:body (fetch! (str (:url hub) "p/toy/hello?q=1"))))))
+      (testing "the project is TOLD which prefix it is mounted under, which is
+                the only way its document can emit urls that come back here
+                rather than to the hub's root (D-ui-hub part 2)"
+        (is (= "/p/toy" (:body (fetch! (str (:url hub) "p/toy/base"))))))
       (testing "the picker lists the project it is fronting"
         (let [{:keys [status body]} (fetch! (:url hub))]
           (is (= 200 status))

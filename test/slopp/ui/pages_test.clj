@@ -124,3 +124,23 @@
       (is (= "F does a thing." (doc 'f))))
     (testing "an undocumented defn reports none"
       (is (nil? (doc 'g))))))
+
+(deftest the-document-honours-a-proxys-base-path
+  (testing "served directly it emits exactly the urls it always did — this is
+            the default and the case that must not regress"
+    (let [body (str (:body (pages/app-document {})))]
+      (is (re-find #"href=\"/css/style\.css\"" body))
+      (is (re-find #"src=\"/js/main\.js\"" body))))
+  (testing "behind the hub's proxy every asset url carries the prefix, or the
+            page arrives and does nothing: /js/main.js would resolve at the
+            HUB, which does not serve it (D-ui-hub part 2)"
+    (let [body (str (:body (pages/app-document
+                            {:headers {"x-slopp-base" "/p/slopp2"}})))]
+      (is (re-find #"href=\"/p/slopp2/css/style\.css\"" body))
+      (is (re-find #"src=\"/p/slopp2/js/main\.js\"" body))))
+  (testing "and the mount point carries the base, which is how the CLIENT
+            learns it — the generated api wrappers and the router both need it,
+            and a page cannot be asked to guess where it is mounted"
+    (let [body (str (:body (pages/app-document
+                            {:headers {"x-slopp-base" "/p/slopp2"}})))]
+      (is (re-find #"data-base=\"/p/slopp2\"" body)))))
