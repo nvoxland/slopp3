@@ -84,6 +84,12 @@ manifest. Two mechanisms:
   bytes live in a blob table and the delta carries only the sha. That is what
   lets a store serve [static assets](web/running.md#static-assets) and a build
   emit real bytes.
+- **Artifacts** are the third case, and the line is recoverability rather than
+  authorship: a file you can *regenerate* -- a compiled bundle, a downloaded
+  library -- does not belong on the files manifest at all. `compile_client`
+  and `js_dep` register those instead as a sha plus a recipe, with the bytes
+  in a gitignored on-disk cache. An artifact that is deleted is rebuilt; a
+  file that is deleted is lost. `store_health` reports what the cache costs.
 - `config_file {path key value format}` -- *semantic* key/value config, stored
   per key with per-key history and serialized into the right format at
   projection time. `format: "manifest"` covers `META-INF/MANIFEST.MF`.

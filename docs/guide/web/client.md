@@ -41,14 +41,19 @@ compile_client {}
 ```
 
 Every `:cljc` and `:cljs` namespace compiles with the configured backend --
-real ClojureScript, running on the JVM, no Node -- into one `:simple` bundle
-recorded as a served blob. The default output path is `public/cljs/main.js`, so
-a `http.static./assets` mount pointing at `public` serves it at
-`/js/main.js`:
+real ClojureScript, running on the JVM, no Node -- into one `:simple` bundle.
+The default output path is `public/cljs/main.js`, so a `http.static./assets`
+mount pointing at `public` serves it at `/js/main.js`:
 
 ```clj
 config_file {path "capabilities" key "http.static./assets" value "public"}
 ```
+
+The bundle is an **artifact**, not a tracked file: the store records its sha
+and a recipe, and the bytes live in a gitignored on-disk cache. That keeps a
+2 MB bundle out of the delta log -- inline, fifteen compiles of it were 30 MB
+of journal. A clone starts with an empty cache, which is normal: `build`
+reports the gap as `missing-artifacts` and `compile_client` fills it.
 
 Compile errors and analyzer warnings are anchored to the owning store form, by
 name, with no file or line. Reference the bundle from a page's head, and let a

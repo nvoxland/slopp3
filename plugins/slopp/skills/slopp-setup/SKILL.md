@@ -118,6 +118,25 @@ ordinary git.
   projection (build scripts). Keep external-system config (CI workflows,
   READMEs) on the human branch instead — only config the app itself consumes
   belongs in the store.
+- **A file you can REGENERATE does not belong on that manifest.** Compiled
+  bundles and downloaded libraries are `:artifacts`: the bytes live on disk
+  under `.slopp/artifacts/<sha>` (gitignored), and the journal carries only
+  the sha and a recipe for getting them back. `compile_client` and `js_dep`
+  register them for you — the split matters because putting one on the files
+  manifest inlines its bytes into a delta on every single write of it. In
+  this store that was 30.5 MB of journal, 99.8% of it fifteen copies of one
+  bundle; as an artifact the same bundle costs 300 bytes. The line is
+  recoverability, not authorship: **an artifact that is deleted is rebuilt, a
+  file that is deleted is lost.** A clone with an empty cache reports what is
+  missing and how to get it, rather than failing.
+- `store_health` is where cost shows up, artifacts included — its `:orphaned`
+  figure is cache nothing references any more. Superseded artifacts are
+  reclaimed automatically when a new one replaces them.
+- **Check `:missing-artifacts` on a `build` result.** A fresh clone has the
+  manifest and an empty cache, which is the designed state, not an error —
+  each entry names the file and the call that refills it. `build` reports
+  instead of refusing, because `compile_client` builds on its way to
+  regenerating the very artifact that may be missing.
 - `deps_add {lib, version}` — the store's dependency manifest (hot-loads
   into the live image; no restart).
 
