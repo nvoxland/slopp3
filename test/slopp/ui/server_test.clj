@@ -9,10 +9,11 @@
 
 (deftest ^:external ui-serve-serves-the-callers-own-session
   ;; The point of a second listener. slopp.mcp.http/start-server! opens a
-  ;; FRESH session, and :test-map / :observed are session-grain and never
-  ;; persisted — a UI served that way shows every form as covered by no
-  ;; tests. The proof is a namespace that exists ONLY in the session handed
-  ;; over: if the page can see it, the page is reading that session.
+  ;; FRESH session, which is not blank — :test-map and :observed persist and
+  ;; reload — but is BEHIND the session doing the work, and costs a second
+  ;; image to be behind in. The proof is a namespace that exists ONLY in the
+  ;; session handed over: if the page can see it, the page is reading that
+  ;; session.
   (let [st   (store/ingest (store/empty-store) 'demo.only.here
                            "(ns demo.only.here)\n\n(defn f [] 1)\n")
         sess (atom {:store st})]

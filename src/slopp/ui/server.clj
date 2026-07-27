@@ -2,9 +2,11 @@
   "The listener a project serves its OWN reviewer UI on.
 
   One per MCP process, over the live session — which is the whole reason this
-  is not the MCP transport: warranty and observed examples are session-grain
-  and unpersisted, so a UI served from a fresh session shows every form as
-  covered by nothing.
+  is not the MCP transport. Warranty and observed examples ARE persisted
+  (`session/persist-trace!` at every verified run, reloaded by `open!`), so a
+  fresh session is not blank; it is BEHIND. It sees the last snapshot rather
+  than what the agent is working against right now, and it would boot a second
+  image to see even that.
 
   Its address is derived rather than configured (D-ui-hub). The fixed
   `ui.port` default worked for one project on a machine and collided for the
@@ -89,9 +91,14 @@
   `{:url :port}` — or `{:error :port}` when the port is taken.
 
   The session is passed in rather than opened here, and that is the whole
-  reason this is not the MCP transport: `:test-map` and `:observed` are
-  session-grain and never persisted, so a UI served from a fresh session
-  renders every form as covered by no tests and exercised by no examples.
+  reason this is not the MCP transport. Not because the warranty is unwritable
+  — `session/persist-trace!` writes `:test-map` to store meta at every verified
+  run and `open!` loads it back, so a fresh session is not blank. Because what
+  it loads is the last SNAPSHOT: the trace an agent is working against mid-
+  episode is ahead of the persisted one, `:observed` the same, and opening a
+  session to find out would boot a second image of code this process already
+  has. A page that showed the warranty as of the last write instead of as of
+  now would be wrong exactly when someone is watching it change.
 
   Two stances, both learned by Clerk the hard way. Serving again EVICTS the
   running server instead of hunting for a free port — a url you were handed

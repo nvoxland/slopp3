@@ -4,9 +4,9 @@
 
   A slopp UI hub is one process per machine that a human starts and points a
   browser at, while every MCP server keeps serving its OWN store over its own
-  loopback port — it has to, because warranty and observed examples are
-  session-grain and a hub that opened the db itself would render every form as
-  covered by nothing (D-ui-hub). What is left for the hub to know is exactly
+  loopback port — it has to, because answering for a store means owning its
+  live session and its booted image, and a hub would need one of each per
+  project it fronts (D-ui-hub). What is left for the hub to know is exactly
   what a heartbeat tells it, and this namespace is that knowledge: a plain map
   of dir → entry, with a clock passed in.
 

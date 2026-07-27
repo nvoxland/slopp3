@@ -1220,11 +1220,13 @@
   heartbeat to the hub. Returns `ui/serve!`'s map — `{:url :port}`, or
   `{:error …}` — and NEVER throws.
 
-  The listener still serves the LIVE session and still dies with the server,
-  because `:test-map` and `:observed` are session-grain and unpersisted; a UI
-  served from a fresh session renders every form as covered by no tests. That
-  accuracy is what forces the whole hub design (D-ui-hub): a hub cannot answer
-  for a store, so every project answers for itself and the hub proxies.
+  The listener still serves the LIVE session and still dies with the server.
+  `:test-map` and `:observed` are persisted and reloaded, so a fresh session is
+  not blank — it is STALE, showing the warranty as of the last verified run
+  rather than the one being changed, and it would boot a second image to show
+  it. That accuracy is what forces the whole hub design (D-ui-hub): a hub
+  cannot answer for a store, so every project answers for itself and the hub
+  proxies.
 
   What changed is the ADDRESS. The port is derived from the store dir instead
   of defaulting to a fixed 7359, so projects on one machine never collide, and

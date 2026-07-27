@@ -6,10 +6,11 @@
   one fixed port, which works for exactly one project and then either
   collides or scatters across ports nobody can guess (D-ui-hub).
 
-  What it is NOT is the thing that answers questions about a store. Warranty
-  and observed examples are session-grain and unpersisted, so a process that
-  opened someone else's `store.db` would render every form as covered by
-  nothing. Every project keeps serving its own pages and its own `/api/*`
+  What it is NOT is the thing that answers questions about a store. Not
+  because it could not read one — warranty and observed examples are persisted
+  — but because reading it well means being the process that OWNS it: the live
+  session ahead of the last snapshot, the booted image, that project's
+  classpath and version. A hub answering for N stores would need N of each. Every project keeps serving its own pages and its own `/api/*`
   from its own live session; this process holds a registry fed by heartbeats,
   renders a picker, and PROXIES. It never opens a db and never renders a
   form, which is also what lets a hub front projects from other releases.
