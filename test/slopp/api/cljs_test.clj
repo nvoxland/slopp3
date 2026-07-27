@@ -443,3 +443,85 @@
       (is (not-any? #(= "public/js/excalidraw.js" (:file %)) fl)))
     (testing "a store that vendors nothing produces nothing, not an empty declaration"
       (is (empty? (cljs/foreign-libs-for {}))))))
+
+(deftest a-published-contract-becomes-a-client-plan
+  ;; The consuming half of contract publication. A contract is plain DATA, so
+  ;; this needs no server, no store and no fixtures — which is the property
+  ;; that makes generating against someone else's API cheap to test at all.
+  (let [document {:slopp/contract-version 1
+                  :endpoints [{:method :get :path "/api/things" :name 'things
+                               :request nil :response [:sequential :string]}
+                              {:method :post :path "/api/things" :name 'create!
+                               :request [:map [:name :string]]
+                               :response [:map [:id :int]]}]}
+        plan (cljs/contract->plan document 'demo.client.contracts)
+        by-fn (into {} (map (juxt (comp str :fn-name) identity)) (:wrappers plan))
+        defs  (into {} (map (juxt :name :schema)) (:defs plan))]
+
+    (testing "one wrapper per endpoint, named the way local generation names them"
+      ;; create! already carries the bang the dialect asks of a mutating verb,
+      ;; so the generator must not add a second one.
+      (is (= #{"things" "create!"} (set (keys by-fn)))))
+
+    (testing "each schema becomes a def named from its endpoint, since the author's names did not survive publication"
+      (is (= {'things-response [:sequential :string]
+              'create-request  [:map [:name :string]]
+              'create-response [:map [:id :int]]}
+             defs))
+      (is (not (contains? defs 'create!-request))
+          "the bang belongs to the wrapper, not to a schema's name"))
+
+    (testing "wrappers reference those defs as vars, so the generated client reads like a local one"
+      (is (= {:kind :var :sym 'demo.client.contracts/things-response
+              :ns 'demo.client.contracts}
+             (:response (by-fn "things"))))
+      (is (= {:kind :var :sym 'demo.client.contracts/create-request
+              :ns 'demo.client.contracts}
+             (:request (by-fn "create!")))))
+
+    (testing "a verb with no body carries no request schema at all"
+      (is (= {:kind :none} (:request (by-fn "things")))))
+
+    (testing "an unknown contract version is refused rather than guessed at"
+      (let [p (cljs/contract->plan (assoc document :slopp/contract-version 99)
+                                   'demo.client.contracts)]
+        (is (empty? (:wrappers p)))
+        (is (seq (:problems p))
+            "a consumer that silently generated from a shape it does not know
+             would fail later, further away, and with no clue why")))))
+
+(deftest a-generated-contracts-namespace-is-ordinary-verified-source
+  ;; The schemas land as SOURCE in the consuming store, not as data parsed at
+  ;; runtime. That is what makes the round trip "print a form, read a form" —
+  ;; the thing the store already does on every write — instead of a schema
+  ;; importer nobody can be sure of.
+  (let [src (cljs/render-contracts-ns
+             'demo.client.contracts
+             [{:name 'things-response :schema [:sequential :string] :endpoint 'things}
+              {:name 'create-request :schema [:map [:name :string]] :endpoint 'create!}])]
+
+    (testing "a real ns form, so the JVM oracle verifies it like any other namespace"
+      (is (str/starts-with? src "(ns demo.client.contracts")))
+
+    (testing "each schema is a plain def of the published value"
+      ;; a large schema gets its own line, so pin NAME PAIRED WITH VALUE
+      ;; rather than their layout — the bug worth catching is a def bound to
+      ;; the wrong schema, which a whitespace-sensitive match would miss.
+      (is (str/includes? src "things-response"))
+      (is (str/includes? src "[:sequential :string]")))
+
+    (testing "every def says which endpoint it came from — generated, not hand-written"
+      (is (str/includes? src "{:generated \"things\"}"))
+      (is (str/includes? src "{:generated \"create!\"}")))
+
+    (testing "the store parses it into exactly the defs it claims"
+      ;; the wire format's safety argument, checked rather than asserted: if
+      ;; a published schema could not survive as source, ingest is where that
+      ;; shows up.
+      (let [st   (store/ingest (store/empty-store) 'demo.client.contracts src)
+            form (fn [n] (str (store/form-named st 'demo.client.contracts n)))]
+        (is (str/includes? (form 'things-response) "[:sequential :string]"))
+        (is (str/includes? (form 'create-request) "[:map [:name :string]]"))
+        (is (not (str/includes? (form 'things-response) "[:map [:name :string]]"))
+            "each def carries ITS OWN schema — a renderer that paired names with
+             values by position would pass every presence check above")))))

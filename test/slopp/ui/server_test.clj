@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ui.server :as server]
             [slopp.store :as store]
-            [slopp.web :as web]))
+            [slopp.web :as web] [clojure.edn :as edn]))
 
 (deftest ^:external ui-serve-serves-the-callers-own-session
   ;; The point of a second listener. slopp.mcp.http/start-server! opens a
@@ -83,3 +83,24 @@
     (testing "an ephemeral session has no dir to derive from, so it takes
               whatever port is free rather than refusing to serve"
       (is (= 0 (server/preferred-port (store/empty-store) nil nil))))))
+
+(deftest ^:external a-real-server-publishes-its-own-contract
+  ;; serve! is the only thing that knows which namespaces it serves, so that
+  ;; list reaches the read performer through perform-ctx. Forget to thread it
+  ;; and /api/contracts still answers 200 — with zero endpoints. A consumer
+  ;; would generate an empty client from it and nothing would look broken
+  ;; until a call that was never generated went missing.
+  ;;
+  ;; In-image tests cannot catch this: they build perform-ctx themselves, so
+  ;; they pass whether or not the SERVER does. Only a real serve! can tell.
+  (let [sess (atom {:store (store/empty-store)})]
+    (try
+      (let [r   (server/serve! sess 0)
+            doc (edn/read-string
+                 (slurp (str "http://127.0.0.1:" (:port r) "/api/contracts")))
+            paths (set (map :path (:endpoints doc)))]
+        (is (= 1 (:slopp/contract-version doc)))
+        (is (contains? paths "/api/timeline")
+            "a server that forgot to thread its namespace list publishes nothing")
+        (is (contains? paths "/api/modules")))
+      (finally (server/stop!)))))

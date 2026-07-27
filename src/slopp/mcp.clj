@@ -339,9 +339,14 @@
               (api.cljs/compile-client! session))))
    "generate_client"
    (fn [session a _sym]
-     (text! (if (:ns a)
-              (api.cljs/generate-client! session :ns (symbol (:ns a)))
-              (api.cljs/generate-client! session))))
+     (text! (cond
+              ;; a contract URL generates against an API this store CONSUMES —
+              ;; two namespaces, and nothing reads the producer's store
+              (:from a) (if (:ns a)
+                          (api.cljs/generate-client-from! session (:from a) :ns (symbol (:ns a)))
+                          (api.cljs/generate-client-from! session (:from a)))
+              (:ns a)   (api.cljs/generate-client! session :ns (symbol (:ns a)))
+              :else     (api.cljs/generate-client! session))))
    "deps_pure"
    (fn [session a sym]
      (text! (if (false? (:pure a))

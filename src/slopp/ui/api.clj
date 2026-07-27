@@ -131,3 +131,24 @@
   and this endpoint cannot disagree with the model about what a module is."
   [req]
   {:status 200 :body (:modules (:web/reads req))})
+
+(defn ^{:web/method :get :web/path "/api/contracts" :web/auth :public
+        :web/client false
+        :web/response :string
+        :web/reads {:contract [:ui/contract []]}}
+  contract
+  "GET /api/contracts — the shape of this API, as EDN.
+
+  What makes a reviewer UI in a DIFFERENT store possible: it generates its
+  typed client from this document instead of sharing slopp's contracts
+  namespace. `:web/client false` because generating a typed wrapper for the
+  endpoint that describes the wrappers is circular and useless.
+
+  EDN, not JSON, and `:web/raw` so the adapter leaves it alone. A malli schema
+  is data made of keywords, symbols and vectors; JSON would render `:string`
+  and `\"string\"` identically and the far end could not tell them apart."
+  [req]
+  {:status 200
+   :web/raw true
+   :headers {"Content-Type" "application/edn"}
+   :body (pr-str (:contract (:web/reads req)))})

@@ -13,7 +13,7 @@
   slopp.ui.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs] [slopp.ui.model :as model] [clojure.string :as str] [slopp.ui.views :as views] [slopp.api.artifacts :as artifacts] [slopp.ui.basepath :as bp]))
+            [slopp.web.html :as html] [slopp.web.css :as css] [garden.stylesheet :as gs] [slopp.ui.model :as model] [clojure.string :as str] [slopp.ui.views :as views] [slopp.api.artifacts :as artifacts] [slopp.ui.basepath :as bp] [slopp.web.contract :as contract]))
 
 (defn- form-doc
   "A form's docstring, or nil — through `store/form-docstring`, which is the
@@ -415,3 +415,14 @@
             (into [(first svg) (second svg)
                    [:style [:html/raw (css/render module-graph-styles)]]]
                   (drop 2 svg)))}))
+
+(defn ^{:web/read :ui/contract} contract-read
+  "The shape of this app's own API, for a consumer that generates a typed
+  client against it.
+
+  The namespace list arrives through `perform-ctx` rather than being reached
+  for here: only the SERVER knows what it serves, and a performer that imported
+  that list would invert the dependency (slopp.ui.server already requires this
+  namespace). It is data on the way in, like every other dep."
+  [ctx _]
+  (contract/contract-document (:served-namespaces ctx)))

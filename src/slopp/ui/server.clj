@@ -106,7 +106,8 @@
     (let [srv (web/serve! {:web/namespaces served-namespaces
                            :web/host "127.0.0.1"
                            :web/port port
-                           :web/perform-ctx {:session session}})
+                           :web/perform-ctx {:session session
+                                           :served-namespaces served-namespaces}})
           p   (:port srv)
           url (str "http://127.0.0.1:" p "/")]
       (reset! current {:server srv :port p :url url})

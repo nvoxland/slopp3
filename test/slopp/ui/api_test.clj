@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.ui.api]
             [slopp.ui.contracts :as contracts]
-            [slopp.web :as web] [slopp.ui.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str]))
+            [slopp.web :as web] [slopp.ui.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -216,3 +216,87 @@
     (testing "and it draws the actual store"
       (is (re-find #"demo\.a" body))
       (is (re-find #"demo\.b" body)))))
+
+(deftest the-contract-endpoint-publishes-what-the-client-is-generated-from
+  ;; The seam that lets the reviewer UI live in its OWN store: it consumes this
+  ;; document instead of reading slopp's contracts namespace. So the property
+  ;; that matters is not "some document is served" but "the schema published
+  ;; for an endpoint IS the var that endpoint declares" — anything weaker and a
+  ;; generated client would validate against a shape the server never promised.
+  (let [ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store (store/empty-store)})
+                                            :served-namespaces server/served-namespaces}})
+        r   (web/handle! ctx {:request-method :get :uri "/api/contracts"})
+        doc (edn/read-string (:body r))
+        by-path (into {} (map (juxt :path identity)) (:endpoints doc))]
+
+    (testing "EDN verbatim — JSON would flatten a keyword schema into a string"
+      (is (= 200 (:status r)))
+      (is (:web/raw r) "the body must arrive untouched by the adapter's encoder")
+      (is (= "application/edn" (get-in r [:headers "Content-Type"]))))
+
+    (testing "the document is versioned and lists the typed endpoints"
+      (is (= 1 (:slopp/contract-version doc)))
+      (is (= #{"/api/namespaces" "/api/ns/:ns" "/api/timeline" "/api/change/:range"
+               "/api/form/:id" "/api/source/:ns/:name" "/api/modules"}
+             (set (keys by-path)))))
+
+    (testing "the published schema IS the var the endpoint declares"
+      (is (= contracts/timeline (:response (by-path "/api/timeline"))))
+      (is (= contracts/module-index (:response (by-path "/api/modules")))))
+
+    (testing "a GET publishes an explicit nil request, not a missing key"
+      (is (contains? (by-path "/api/timeline") :request))
+      (is (nil? (:request (by-path "/api/timeline")))))
+
+    (testing "pages, the bundle and the contract itself are not part of a TYPED contract"
+      (is (not (contains? by-path "/")))
+      (is (not (contains? by-path "/js/main.js")))
+      (is (not (contains? by-path "/api/contracts"))))))
+
+(deftest ^:external a-consumer-generates-an-equivalent-client-from-the-published-contract
+  ;; The fixed point the whole split rests on. A store that has never seen
+  ;; slopp.ui.contracts generates, from HTTP alone, a client equivalent to the
+  ;; one local generation produces from the store. If this holds, the reviewer
+  ;; UI can live in its own project; if it does not, the wire format is lossy
+  ;; and nothing downstream is worth building.
+  ;;
+  ;; Two processes' worth of separation in one JVM: the producer serves over a
+  ;; real socket, and the consumer is a genuinely separate session and store.
+  (let [producer (atom {:store (store/empty-store)})
+        consumer (external/open!)]
+    (try
+      (let [r   (server/serve! producer 0)
+            out (cljs/generate-client-from!
+                 consumer (str "http://127.0.0.1:" (:port r) "/api/contracts")
+                 :ns 'demo.client.api)
+            st  (:store @consumer)
+            src (fn [ns- n] (str (store/form-named st ns- n)))]
+
+        (testing "the same wrappers local generation produces, by name"
+          (is (= #{"namespaces" "ns-outline" "timeline" "change" "form" "source" "modules"}
+                 (set (:wrappers out)))
+              (pr-str out)))
+
+        (testing "the schemas survived the wire VALUE for value"
+          ;; not 'a schema is present' — the same schema, identical to the var
+          ;; the server validates its own responses against.
+          (is (str/includes? (src 'demo.client.contracts 'timeline-response)
+                             (pr-str contracts/timeline)))
+          (is (str/includes? (src 'demo.client.contracts 'modules-response)
+                             (pr-str contracts/module-index))))
+
+        (testing "both namespaces are born on the platform that can use them"
+          (is (= :cljc (store/platform-for st 'demo.client.contracts))
+              "the oracle verifies it AND the bundle compiles it")
+          (is (= :cljs (store/platform-for st 'demo.client.api))))
+
+        (testing "the client points at the generated schemas, not at inlined copies"
+          (is (str/includes? (src 'demo.client.api 'timeline)
+                             "demo.client.contracts/timeline-response")))
+
+        (testing "an endpoint that opted out of the client stays out"
+          (is (nil? (store/form-named st 'demo.client.api 'contract)))))
+      (finally
+        (server/stop!)
+        (api/close! consumer)))))
