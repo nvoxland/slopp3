@@ -9,8 +9,14 @@ slopp <dir>                             # serve MCP over stdio on a store
 slopp --call <tool> [json|edn|@file]    # one-shot tool call, no session
 slopp --main slopp.sync/-main import .  # build a store from the repo's slopp branch
 slopp --main slopp.sync/-main test .    # isolated suite from a store build
+slopp --main slopp.ui.hub/-main         # the UI hub for every project on this machine
 slopp --doctor                          # self-check the wiring end to end
 ```
+
+The hub takes `--port` (default 7359) and needs no store — it never opens one.
+It is the one address to remember when you run more than one slopp project:
+every MCP server registers with it and it fronts them all. See
+[the store browser](../reference/tools.md#one-hub-many-projects).
 
 Without the plugin, `java -jar slopp.jar ...` takes the same arguments.
 

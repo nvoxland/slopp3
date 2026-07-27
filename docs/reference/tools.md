@@ -38,13 +38,63 @@ back a url. It answers the questions a tool result is a poor shape for:
 It runs on the session that is already open, so covering-test counts are the
 ones that session actually measured. Serving again replaces the running server
 rather than moving to another port, and a port something else holds is reported
-as a sentence. Port comes from the `ui.port` capability (default 7359).
+as a sentence.
 
 **The server starts it for you.** Because it serves the live session, the UI
 dies with that session — so the MCP server brings one up at boot and
 `session_brief` reports the url as `:ui`. `ui_serve` is for changing the port,
 restarting it, or `stop: true`. A UI that cannot bind never blocks the server:
 it prints a sentence and MCP carries on, exactly as the git listener does.
+
+### One hub, many projects
+
+Every MCP server serves its own UI, and it has to: covering-test counts and
+observed examples live in a session, so a process that opened someone else's
+store would show every form as covered by nothing. That means one listener per
+project, which is why its port is **derived from the store directory** rather
+than fixed — stable across restarts, and never the same as the project next to
+it. You are not expected to know that number.
+
+The address you remember belongs to the **hub**, one process per machine that
+you start yourself:
+
+```sh
+slopp --main slopp.ui.hub/-main --port 7359     # needs no store, runs anywhere
+```
+
+Every MCP server checks in with it every ten seconds, carrying its name,
+directory and url. The hub lists them at `/`, fronts each one at
+`/p/<name>/…`, and greys out a project that has stopped answering rather than
+dropping it from the list. Registering and keeping alive are the same call, so
+you can start the hub after your editors, or restart it, and everything
+reappears within one interval.
+
+Every project's own UI grows a project dropdown in its top nav when a hub is
+in front of it, so you switch without going back to the picker. Served
+directly there is no hub to ask and the dropdown simply isn't there.
+
+Two capabilities configure it:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ui.hub-port` | `7359` | The hub this project registers with. `0` = register with no hub. |
+| `ui.port` | *unset* | The port this project's own listener binds. Unset = derived from the store dir. Set it only to pin a fixed address. |
+
+### Serving a slopp app under a path prefix
+
+The hub fronts projects at `/p/<name>/`, which means a slopp app has to work
+somewhere other than the root — and that is a general capability, not a hub
+detail. Any slopp web app can now be served under a prefix behind a reverse
+proxy:
+
+- Send **`X-Slopp-Base: /your/prefix`** with the proxied request. It is read
+  per request, not configured, because the same server may also be answering
+  directly on its own port.
+- The document then emits its asset urls prefixed and passes the base to the
+  browser on the mount point.
+- The **generated client** exposes `set-base!`; call it once when you mount
+  the app and every typed wrapper's path follows. The default is `""`, which
+  is exactly the behaviour an app served at the root already had.
 
 ## Dependencies and structure
 

@@ -749,6 +749,15 @@ before the request leaves. Rules of the road:
   one the server validates); `generate_client` SKIPS an endpoint whose schema
   isn't shippable and reports it in `:problems`. A `inline-schema-dup` advisory
   nudges a shape shared across endpoints toward a named `.cljc` var.
+- **Serving under a path prefix: `set-base!`.** Every wrapper's path is
+  root-absolute (`/api/orders`), so behind a reverse proxy that mounts the app
+  at `/app/…` they all resolve at the PROXY and the page does nothing. The
+  generated ns exports `set-base!` — call it once where you mount, and every
+  wrapper follows. Default `""` is the served-at-the-root behaviour, so an app
+  that needs none of this does nothing. Server side, send
+  `X-Slopp-Base: /your/prefix` with the proxied request: the document reads it
+  per REQUEST (not from config — the same server may also be answering
+  directly on its own port) and emits its own asset urls prefixed.
 - **A page endpoint opts OUT: `^{:web/client false}`.** An HTML page is a
   `:web/path` form like any other, so it would otherwise get a typed wrapper
   whose `.json` parse can never succeed. Declare it rather than relying on the
@@ -805,7 +814,17 @@ session, so warranty and observed examples are the ones you actually have.
 reports the url as `:ui`, so hand THAT over rather than calling anything.
 `ui_serve` is for changing the port or restarting it; `{stop: true}` shuts it
 down, and serving again evicts the previous server rather than moving the
-port. Port comes from the `ui.port` capability.
+port.
+
+**On a machine running several slopp projects, hand over the HUB's url
+instead.** Each server serves its own UI — it must, because warranty and
+observed examples are session-grain — so each one binds a port derived from
+its store dir, and those are not addresses a human should have to collect.
+The hub is one process the user starts (`slopp --main slopp.ui.hub/-main
+--port 7359`; it needs no store), every project registers with it every ten
+seconds, and it fronts them all at one url with a project picker. A project
+that stops answering is greyed out, not dropped. Configure with the
+`ui.hub-port` capability (`0` = don't register).
 
 **When you hit a dead end, revert cleanly and say WHY.** `undo` walks back
 your OWN writes by delta — `{deltas n}` for the last n, or `{to :last-commit}`

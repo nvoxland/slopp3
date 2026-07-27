@@ -2605,3 +2605,153 @@ projection — the precise failure this design was supposed to make impossible.
 Run the check that can only be run once BEFORE you delete what makes it
 possible, and run it over the whole population: a sample would have found the
 renderer drift and missed this entirely.
+
+## D-ui-hub (2026-07-27, user decision) — one UI process per machine; each project serves its own data
+
+`slopp.mcp/-main` autostarted the reviewer UI on `ui.port`, a capability
+whose default is the fixed 7359. That works for exactly one project. Run two
+MCP servers on a machine and the second one's UI reports `port 7359 is not
+available` — and the fix that suggests itself, giving each project its own
+port, trades a conflict for a worse problem: an address nobody can guess.
+The user named both halves: *"they will either conflict ports, or have
+random ports and so hard to know where to look."*
+
+### The hub cannot own the data plane, and that is not a preference
+
+`ui.server/serve!` takes the session as an ARGUMENT. Its docstring already
+says why: `:test-map` and `:observed` are session-grain and never persisted,
+so a UI served from a fresh session renders every form as covered by no tests
+and exercised by no examples. The HTTP transport demonstrates this today.
+
+So a hub process that opened `<dir>/.slopp/store.db` for each registered
+project would reproduce that failure at every project at once. Whatever else
+the hub is, it is not the thing that answers questions about a store.
+
+**The rule: the hub knows only what a heartbeat tells it; everything else it
+proxies.** It never opens a db and never renders a form. The consequence
+worth having: the hub is version-DUMB, so the UI code ships with each
+project's jar and a hub from another release still works.
+
+### The split
+
+- **Hub** — `slopp.ui.hub`, started by a human: `slopp --main
+  slopp.ui.hub/-main --port 7359`. No kernel change is needed; `boot/parse-args`
+  already trampolines any store CLI, the jar bundles slopp's own source, and a
+  CWD with no store simply has nothing extra to load, so the hub runs from
+  anywhere. It owns the registry, the project picker, the top-nav dropdown,
+  and a reverse proxy at `/p/<slug>/*`.
+- **Project** — every MCP process keeps its own listener and serves ALL of it:
+  pages, `/api/*`, the client bundle, over the LIVE session exactly as today.
+  Only its address changes.
+
+### Ports: derived, because a conflict should be impossible rather than configured away
+
+The project listener binds a port DERIVED from the store dir, falling back to
+an ephemeral one when taken. This is `git.server/derived-port` +
+`bind-localhost!` verbatim, already proven for the git remote: stable across
+restarts, "a preference, not a guarantee", and the ACTUAL bound port is what
+gets reported. Nobody needs to know it — the hub is the address you remember.
+
+**What stops autostarting is the thing on the well-known port.** 7359 becomes
+the hub's, and the hub is user-started. The per-project listener still comes
+up with the MCP, because the alternative — up only on `ui_serve` — means the
+dropdown can only list projects someone already activated by hand, which is
+the zero-ceremony property the autostart existed to buy.
+
+### Registration IS the heartbeat
+
+One idempotent `POST /api/register` every 10s carrying
+`{:name :dir :url :pid :version :started-at :status}`. Not "register once,
+then keep alive": the same call for both, because that single choice buys
+three things a register/heartbeat split does not. The hub may be started
+AFTER the projects. The hub may be RESTARTED without bouncing every MCP. And
+there is one code path to get right instead of two. Recovery time is one
+interval.
+
+The hub marks an entry stale at 3 missed beats (30s) and **greys it in the
+dropdown rather than dropping it** — a project you were just looking at
+should not vanish from the list when its editor closes. Clean shutdown
+deregisters for the fast path. The registry is in-memory only, so a hub
+restart forgets genuinely dead projects and heartbeats repopulate the live
+ones; nothing needs pruning.
+
+`:status` is the seam for "working / idle" later. A heartbeat is already a
+periodic push from the process that knows, and the hub renders the string
+without interpreting it — which is what keeps the hub version-dumb as slopp
+grows things to report.
+
+### Reaching a project: proxy, not redirect
+
+`/p/<slug>/*` forwards to the registered project's loopback URL. One origin,
+so no CORS and no ephemeral port in the address bar; URLs stay bookmarkable
+across a derived-port fallback; and an unavailable project is a RENDERED
+PAGE rather than a failed fetch in a console. `web.router` already ranks
+trailing splats below static segments and single captures, so adding the
+catch-all steals no route, and `java.net.http` is already in production use
+(`web.auth/fetch-jwks!`).
+
+The cost, accepted: the cljs client needs a base path, injected by
+`ui.pages/app-document` rather than assumed to be `/`.
+
+The slug is the store's `app.name` when set, else the dir basename,
+disambiguated by a short dir hash when two projects collide. The registry is
+keyed on the canonical dir, which is the identity; the slug is only an
+address.
+
+### Config
+
+- `ui.port` keeps its name and changes meaning: the port THIS project's own
+  listener binds. Default becomes derived-from-dir; an explicit value is an
+  override for someone who wants a fixed address.
+- `ui.hub-port` (new, default 7359): the hub this project registers with.
+  `0` disables registration — a project that wants no hub simply doesn't beat.
+
+### What this revises
+
+The `start-ui!` bargain recorded in its own docstring: *"the UI dies with the
+server by design … starting it here is the other half of that bargain."* The
+accuracy half is UNCHANGED and is in fact the reason for this whole shape —
+the UI still serves the live session and still dies with it. What is revised
+is only the address: it stops being a fixed well-known port that a second
+project cannot have.
+
+### Part 2 (2026-07-27) — a slopp app can be served under a path prefix
+
+Part 1 shipped a hub whose links reached a page that did not boot: the
+project's document and its generated client emit ROOT-ABSOLUTE urls, so
+behind `/p/<slug>/` every one of them resolved at the hub. The defect is
+general — no slopp app could be served under a prefix — and the hub was
+merely the first thing to notice.
+
+- **`slopp.ui.basepath`** (`:cljc`, `:pure`) holds the whole rule:
+  `normalize`, `prefixed`, `strip`. Both ends need it — the server builds
+  urls, the browser takes them apart — and a second implementation is how
+  the two quietly disagree. Pure, so the BROWSER half is covered by in-image
+  tests. The match is on a segment boundary: `starts-with?` would hand
+  `/p/slopp22/x` to `/p/slopp2`'s router.
+- **The prefix travels per REQUEST**, as `X-Slopp-Base` set by the proxy, not
+  as configuration. The same server answers directly on its own port AND
+  through a hub, so a configured value would be wrong for one of them.
+- **The generated client gained an exported `base`** (`slopp.api.cljs`) that
+  every wrapper's path routes through. Default `""` is exactly what every
+  existing app already emitted. This is a general capability — any slopp app
+  behind a reverse proxy wants it — not a hub special case.
+- **`data-base` appears only when there IS a prefix**, so an app at the root
+  renders the document it always did, byte for byte.
+- **`views/project-switcher`** is the in-project dropdown. Absent when there
+  is no hub (the fetch 404s), which is the single-project case rather than a
+  failure; a silent project stays listed and labelled. Its fetch is the one
+  that deliberately does NOT carry the base — it addresses the hub at the
+  origin root, because `/p/<slug>/api/projects` would proxy back to a project
+  that does not serve it. Switching is a full page load: the target is a
+  different application in a different process.
+
+**What only the socket test could find.** `ui.hub/forward` already bound a
+local named `base` to the project's own url, so the new parameter was
+shadowed and every project was told it was mounted at
+`http://127.0.0.1:<port>`. Every in-image test passed. The wire test asserted
+what the project ACTUALLY received and failed immediately — the same lesson as
+the served-namespaces list: a value that crosses a process boundary has to be
+checked on the far side of it.
+
+Open, and cosmetic only: `ideas/ui-hub-styling.md`.
