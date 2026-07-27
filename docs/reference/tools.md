@@ -118,7 +118,52 @@ guide](../guide/web/index.md).
 | `query_routes` | The declared web surface: every endpoint's method, path, auth policy and handler, `:rendered-by` (the forms whose links/forms target it), plus the derived effect/read vocabularies. Empty with teaching until `http.enabled`. |
 | `module_platform {module platform}` | Declare a namespace's target platform: `:jvm`, `:cljc`, or `:cljs`. Namespace path, most-specific wins. |
 | `compile_client {output?}` | Compile every `:cljc` and `:cljs` namespace to one JS bundle with the configured backend. Warnings anchor to the owning form. |
-| `generate_client {ns?}` | Write the typed `fetch` client from the endpoints' declared contracts, as an edit-protected `:cljs` namespace. |
+| `generate_client {ns? from?}` | Write the typed `fetch` client as an edit-protected `:cljs` namespace — from the endpoints this store serves, or with `from` from a contract another API publishes. |
+
+### Generating a client for an API you don't own
+
+The typed client normally comes from endpoints in the same store. When the API
+lives somewhere else — a UI in its own project, another service, anything across
+a process boundary — the producer publishes its shape and the consumer generates
+from that. Neither store reads the other.
+
+The producer serves `slopp.web.contract/contract-document` over its own
+namespace list:
+
+```clojure
+{:slopp/contract-version 1
+ :endpoints [{:method :get :path "/api/timeline" :name timeline
+              :request nil :response [:map [:milestones …]]}]}
+```
+
+as EDN (`:web/raw true`, `Content-Type: application/edn`), on an endpoint marked
+`^{:web/client false}` — describing the wrappers needs no wrapper. It lives in
+`slopp.web`, so it ships in the `slopp-web` slim jar and any app can publish.
+
+The consumer then runs:
+
+```
+generate_client {from "http://127.0.0.1:7359/api/contracts"}
+```
+
+which writes **two** namespaces: a `:cljc` contracts namespace of the published
+schemas, and the usual `:cljs` client pointing at it. Both are `^:generated` —
+regenerate, never hand-edit.
+
+Three things worth knowing:
+
+- **EDN rather than JSON or OpenAPI.** A malli schema is keywords, symbols and
+  vectors; JSON would render `:string` and `"string"` identically. OpenAPI is
+  lossless only in the malli → JSON Schema direction, so leading with it forces
+  an importer into the path — keep EDN as the source of truth and derive
+  OpenAPI later if a non-Clojure consumer needs one.
+- **Schema names come from endpoints.** Metadata is evaluated at def time, so
+  the producer's schema names never existed at runtime. `timeline` yields
+  `timeline-response`, and a schema shared by two endpoints arrives inlined in
+  both.
+- **The version is there to be refused.** An unrecognised
+  `:slopp/contract-version` generates nothing and reports a problem, rather than
+  guessing at a shape it doesn't know.
 
 ## The oracle
 

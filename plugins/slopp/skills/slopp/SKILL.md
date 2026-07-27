@@ -764,6 +764,44 @@ before the request leaves. Rules of the road:
   response schema — `:string` is a perfectly good JSON response, so the schema
   can't tell HTML from JSON; only you can.
 
+**Consuming someone else's API: publish a contract, generate against it.**
+Everything above assumes the endpoints and the client live in ONE store. When
+they don't — a UI in its own project, two services, anything across a process
+boundary — the producer publishes its shape and the consumer generates from
+that. Neither store reads the other.
+
+- **Producer: serve `slopp.web.contract/contract-document`.** It takes your
+  served namespace list and returns `{:slopp/contract-version 1 :endpoints […]}`
+  — method, path, name, and the request/response schemas as VALUES. Serve it as
+  EDN with `:web/raw true` and `Content-Type: application/edn`; mark the
+  endpoint `^{:web/client false}` (describing the wrappers doesn't need a
+  wrapper). It ships in the `slopp-web` slim jar, so any app can publish, not
+  just one whose code lives in a store.
+- **Consumer: `generate_client {from "http://host/api/contracts"}`.** Writes
+  TWO namespaces — a `:cljc` contracts ns of the published schemas, and the
+  usual `:cljs` client pointing at it. Both `^:generated`; regenerate, never
+  hand-edit.
+- **EDN, not JSON, and not OpenAPI.** A malli schema is keywords, symbols and
+  vectors; JSON renders `:string` and `"string"` identically and the far end
+  can't tell them apart. OpenAPI would work but only one direction is
+  lossless (malli → JSON Schema), so it forces an importer into the path; keep
+  EDN as the source of truth and derive OpenAPI later if a non-Clojure consumer
+  ever needs it.
+- **Names come from ENDPOINTS, not from the producer's schema names.** Metadata
+  is evaluated at def time, so `^{:web/response contracts/timeline}` is already
+  a plain vector by the time anything can read it — the name `timeline` never
+  existed at runtime. The consumer gets `timeline-response`, and a schema shared
+  by two endpoints arrives inlined in both.
+- **The version is there to be refused.** An unrecognised
+  `:slopp/contract-version` generates nothing and reports a problem, rather than
+  guessing at a shape it doesn't know.
+- **Pass the served-namespace list to your performers as data.** Only the
+  server knows what it serves. Thread it through `:web/perform-ctx` — reaching
+  for it from a page namespace inverts the dependency, and forgetting it
+  entirely publishes an empty contract with a 200, which a consumer will
+  happily generate an empty client from. Test that one over a real socket: an
+  in-image test builds `perform-ctx` itself and passes either way.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`

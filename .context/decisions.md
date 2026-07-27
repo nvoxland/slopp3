@@ -2755,3 +2755,73 @@ the served-namespaces list: a value that crosses a process boundary has to be
 checked on the far side of it.
 
 Open, and cosmetic only: `ideas/ui-hub-styling.md`.
+
+### D-ui-hub part 3 (2026-07-27, user decision) — the UI becomes its own slopp project, and talks HTTP
+
+Part 1 made the hub a separate PROCESS; its code still lived in slopp's store.
+That left one store holding two applications, which is what made the
+route-collision gate refuse `ui.hub/picker` claiming `:get /` — right for one
+app, wrong for two — and made the dev process stand in for a deployment that
+will never exist. It also meant the UI was not a dogfood at all: it reached
+straight into `slopp.api.query`, `slopp.edit.refs` and `slopp.store`, which no
+user's app can do.
+
+**Decided:** the reviewer UI moves to its OWN slopp project (`../slopp-ui`,
+separate repo, separate store, separate `--live` session). It never opens a
+store; it calls project APIs over HTTP. **Two real projects, not a
+"subproject" concept** — a concept invented for one consumer would re-fake the
+thing the split exists to stop faking. **SPA only**: the server-rendered no-JS
+path goes away rather than being maintained as a second way everything works.
+Versioning and packaging are explicitly DEFERRED (one person controls both
+sides and can restart at will).
+
+**The API shape is published as malli forms over EDN, NOT OpenAPI.** malli →
+JSON Schema is the supported direction, so an OpenAPI view stays derivable from
+an EDN source of truth; leading with OpenAPI would force a lossy JSON-Schema →
+malli importer into the critical path permanently. EDN also preserves what a
+malli schema is made of — JSON renders `:string` and `"string"` identically.
+
+**Two measurements reshaped the design mid-flight, and both are worth keeping:**
+
+- **`slopp.web` cannot read the store.** No `slopp.web.*` namespace requires
+  anything outside `slopp.web.*`; that self-containment is exactly what lets it
+  ship as the slim jar. So the publisher is a pure derivation over route rows,
+  and it ships — any slopp-web app can publish its own contract. The rejected
+  alternative (a store-aware publisher that preserved schema NAMES) would have
+  made publishing a privilege of slopp-the-tool, which is the insider shape
+  this split exists to remove.
+- **Var metadata carries the EVALUATED schema.** `(:web/response (meta
+  #'slopp.ui.api/timeline))` is a vector `=` to `slopp.ui.contracts/timeline`,
+  already flattened. The author's schema names never exist at runtime, so a
+  consumer names schemas from ENDPOINTS (`timeline-response`) and a shared
+  schema arrives inlined at each use. Names are a source-level convenience the
+  wire never had.
+
+`generate_client {from <url>}` writes TWO generated namespaces in the consuming
+store: a `:cljc` contracts ns of the published schemas, and the `:cljs` client
+pointing at it. `render-client-ns` and `render-wrapper` needed NO changes —
+`resolve-schema-ref` already emitted `{:kind :var}` refs, so the remote path
+renders through the existing generator.
+
+**The proof this rests on** is a fixed point, not an assertion: a store that has
+never seen `slopp.ui.contracts` generates, from HTTP alone, a client with the
+same wrapper names and schemas equal value-for-value to the vars the server
+validates its own responses against (`slopp.ui.api-test`, `^:external`).
+
+**What only the socket test could find, again.** `serve!` initially did not
+thread its served-namespace list into `:web/perform-ctx`, so `/api/contracts`
+answered **200 with zero endpoints** — a consumer would have generated an empty
+client and nothing would have looked broken. In-image tests cannot catch this:
+they build `perform-ctx` themselves and pass either way. Same lesson as part
+2's `base` shadowing, now twice: **a value that crosses a process boundary has
+to be checked on the far side of it.**
+
+Consequence to accept: once the split lands, a project's own port serves JSON
+only, so "start the MCP, open the URL" stops working without the UI process.
+`X-Slopp-Base` also stops being load-bearing for the hub path (the UI server
+knows its own base natively); it remains valid as a general reverse-proxy
+capability.
+
+Frictions found while building: `ideas/ui-split-frictions.md` — notably that a
+`def` computed from another form stays STALE after an in-image edit, which made
+a new tool parameter silently unusable in the session that added it.
