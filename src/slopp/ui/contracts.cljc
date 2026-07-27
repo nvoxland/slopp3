@@ -188,3 +188,50 @@
    [:modules [:sequential module-row]]
    [:picture module-picture]
    [:cycles [:sequential [:sequential :string]]]])
+
+(def project-row
+  "One project on the hub's wire: where it is, what it calls itself, and
+  whether it is answering right now.
+
+  `:available` rather than `:available?` to match [[module-row]]'s
+  `:foundation` — a JSON key is read by more than the ClojureScript client,
+  and a `?` in it is a Clojure habit rather than a wire fact.
+
+  `:status` is `:maybe` and free text on purpose. It is whatever the project
+  said about itself in its last beat, and the hub renders it without
+  interpreting it — which is what lets a project report something new
+  (working, idle, mid-restart) without the hub shipping a new release."
+  [:map
+   [:slug :string]
+   [:name :string]
+   [:dir :string]
+   [:url :string]
+   [:available :boolean]
+   [:last-seen :int]
+   [:version [:maybe :string]]
+   [:status [:maybe :string]]])
+
+(def project-list
+  "`GET /api/projects` — every project that has checked in with this hub,
+  stale ones included and flagged, sorted.
+
+  Composed from [[project-row]] so the composition is a real reference edge."
+  [:sequential project-row])
+
+(def project-beat
+  "`POST /api/register` — one project's check-in.
+
+  Registration and keepalive are the same call (D-ui-hub), so this is the
+  only shape a project ever sends. `:dir` is the identity; everything else
+  may change between beats, including the name.
+
+  The optional keys are the ones a project might not know about itself, and
+  each is `:maybe` as well as optional because a client sending an explicit
+  null is telling the truth about not knowing."
+  [:map
+   [:name :string]
+   [:dir :string]
+   [:url :string]
+   [:pid {:optional true} [:maybe :int]]
+   [:version {:optional true} [:maybe :string]]
+   [:status {:optional true} [:maybe :string]]])

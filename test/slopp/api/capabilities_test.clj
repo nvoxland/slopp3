@@ -124,16 +124,27 @@
                "auth.static.users.alice"
                "{:password-hash \"9f86d08...\" :groups [\"admin\"]}")))))
 
-(deftest ui-port-is-a-capability-with-a-default-clear-of-the-transport
-  ;; The reviewer UI binds its own port, so it is a setting like every other
-  ;; port. The default deliberately sits away from http.port's, since a
-  ;; store that opts into the HTTP transport runs both at once.
+(deftest ui-ports-are-two-settings-and-the-project-one-defaults-to-derived
+  ;; D-ui-hub. A machine runs many slopp projects, so the port a project's own
+  ;; UI listener binds cannot have a fixed default — that is a guaranteed
+  ;; collision. Unset means DERIVED from the store dir: stable across
+  ;; restarts, conflict-free, and nobody has to know it, because the address a
+  ;; human remembers is the hub's.
   (let [entry (caps/find-entry "ui.port")]
     (is (= "ui.port" (:key entry)))
-    (is (= 7359 (caps/effective (store/empty-store) "ui.port")))
+    (is (nil? (caps/effective (store/empty-store) "ui.port"))
+        "unset = derive from the dir; an explicit value is for someone who wants a fixed address")
     (is (nil? (caps/check-value entry "7400")))
     (is (string? (caps/check-value entry "not-a-port"))
-        "a bad port is refused at the config write, not at bind time")))
+        "a bad port is refused at the config write, not at bind time"))
+  ;; The well-known port belongs to the HUB now, and the hub is started by a
+  ;; human. This default is the one number both halves read: the project uses
+  ;; it to find a hub, the hub CLI uses it to bind.
+  (let [entry (caps/find-entry "ui.hub-port")]
+    (is (= "ui.hub-port" (:key entry)))
+    (is (= 7359 (caps/effective (store/empty-store) "ui.hub-port")))
+    (is (nil? (caps/check-value entry "0"))
+        "0 is legal and means: this project registers with no hub")))
 
 (deftest ^:external config-writes-say-whether-anything-validated-them
   ;; `capabilities` is the ONLY path with a registry behind it. Every other

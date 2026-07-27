@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.ui.heartbeat :as hb]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -329,8 +329,9 @@
    (fn [session a _sym]
      (text! (if (:stop a)
               {:stopped (boolean (ui/stop!))}
-              (ui/serve! session (or (:port a)
-                                     (caps/effective (:store @session) "ui.port"))))))
+              (ui/serve! session (ui/preferred-port (:store @session)
+                                                    (:dir @session)
+                                                    (:port a))))))
 "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)
@@ -1181,27 +1182,66 @@
       (.flush out-writer)))
   nil)
 
+^:unsafe (defn start-heartbeat!
+  "Start this project checking in with the UI hub, and record the handle on
+  the session. Never throws; returns the hub url it beats to, or nil.
+
+  `ui.hub-port` 0 means \"no hub\", and a hub that simply is not running is the
+  ordinary case rather than a failure — the beat retries forever and costs
+  nothing, so the project appears in the picker within one interval of a hub
+  starting later. Registering and keeping alive are the same call, deliberately
+  (D-ui-hub).
+
+  The banner names the HUB's address, not this project's derived port, because
+  the hub url is the one a human is meant to remember and the derived one is an
+  implementation detail they should never have to type."
+  [session dir url]
+  (try
+    (let [port (caps/effective (:store @session) "ui.hub-port")]
+      (when (and dir port (pos? (long port)))
+        (let [hub    (hb/hub-url port)
+              handle (hb/start! hub #(hb/payload (:store @session) dir url))]
+          (swap! session assoc :ui-heartbeat handle :ui-hub hub)
+          (.println System/err ^String (str "slopp UI hub: " hub
+                                            " (open this to switch projects)"))
+          hub)))
+    (catch Throwable t
+      (.println System/err ^String (str "slopp UI hub registration unavailable: "
+                                        (.getMessage t)))
+      nil)))
+
 ^:unsafe (defn start-ui!
-  "Bring the reviewer UI up beside the MCP server. Returns `ui/serve!`'s map —
-  `{:url :port}`, or `{:error …}` — and NEVER throws.
+  "Bring this project's UI listener up beside the MCP server and start its
+  heartbeat to the hub. Returns `ui/serve!`'s map — `{:url :port}`, or
+  `{:error …}` — and NEVER throws.
 
-  The UI dies with the server by design: it serves the LIVE session, because
-  `:test-map` and `:observed` are session-grain and unpersisted, so a UI served
-  from a fresh session would render every form as covered by no tests. That
-  accuracy costs it the server's lifetime, which is the right trade — but it
-  meant a human who wanted the UI had to know to ask for it again after every
-  restart. Starting it here is the other half of that bargain.
+  The listener still serves the LIVE session and still dies with the server,
+  because `:test-map` and `:observed` are session-grain and unpersisted; a UI
+  served from a fresh session renders every form as covered by no tests. That
+  accuracy is what forces the whole hub design (D-ui-hub): a hub cannot answer
+  for a store, so every project answers for itself and the hub proxies.
 
-  Follows the git listener's stance exactly, and for the same reason: the UI
-  is OPTIONAL and MCP is not. A busy port, a broken adapter, anything at all —
-  it reports a sentence on stderr (stdout is the JSON-RPC channel) and the
-  server carries on. Nothing about a browser page should be able to stop the
-  thing the editor is talking to."
-  ([session]
-   (start-ui! session (caps/effective (:store @session) "ui.port")))
-  ([session port]
-   (let [r (try (ui/serve! session port)
-                (catch Throwable t {:error (or (.getMessage t) (str t))}))]
+  What changed is the ADDRESS. The port is derived from the store dir instead
+  of defaulting to a fixed 7359, so projects on one machine never collide, and
+  a taken port falls back to an ephemeral one — the registered url carries
+  whatever was actually bound. Nobody needs to know this number; the address a
+  human remembers is the hub's.
+
+  Follows the git listener's stance exactly, and for the same reason: the UI is
+  OPTIONAL and MCP is not. A busy port, a missing hub, anything at all — it
+  reports a sentence on stderr (stdout is the JSON-RPC channel) and the server
+  carries on. Nothing about a browser page should be able to stop the thing the
+  editor is talking to."
+  ([session] (start-ui! session nil))
+  ([session explicit-port]
+   (let [dir  (:dir @session)
+         want (ui/preferred-port (:store @session) dir explicit-port)
+         try! (fn [p] (try (ui/serve! session p)
+                           (catch Throwable t {:error (or (.getMessage t) (str t))})))
+         r0   (try! want)
+         ;; a derived port is a PREFERENCE: something else already holding it
+         ;; must not cost this project its UI, so fall back to whatever is free.
+         r    (if (and (:error r0) (not (zero? (long want)))) (try! 0) r0)]
      ;; ON THE SESSION, the way the git listener carries :git-url. The stderr
      ;; banner below goes to the MCP server's log, which most clients never
      ;; show a human — so autostart without this is a feature nobody can find.
@@ -1212,6 +1252,7 @@
                ^String (if (:url r)
                          (str "slopp UI: " (:url r))
                          (str "slopp UI unavailable: " (:error r))))
+     (when (:url r) (start-heartbeat! session dir (:url r)))
      r)))
 
 ^:unsafe
@@ -1268,5 +1309,8 @@
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally
         (when-let [srv (:git-server @session)] (server/stop-server! srv))
+        ;; deregister BEFORE the listener goes: the hub should learn we are
+        ;; leaving from us, not by ageing us out thirty seconds later.
+        (hb/stop! (:ui-heartbeat @session))
         (ui/stop!)
         (api/close! session)))))

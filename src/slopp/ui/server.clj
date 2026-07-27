@@ -1,5 +1,17 @@
 (ns slopp.ui.server
-  (:require [slopp.web :as web]
+  "The listener a project serves its OWN reviewer UI on.
+
+  One per MCP process, over the live session — which is the whole reason this
+  is not the MCP transport: warranty and observed examples are session-grain
+  and unpersisted, so a UI served from a fresh session shows every form as
+  covered by nothing.
+
+  Its address is derived rather than configured (D-ui-hub). The fixed
+  `ui.port` default worked for one project on a machine and collided for the
+  second; now nobody needs to know this port at all, because the address a
+  human remembers belongs to `slopp.ui.hub`, which proxies here."
+  (:require [slopp.api.capabilities :as caps]
+            [slopp.web :as web]
             [slopp.ui.pages] [slopp.ui.api]))
 
 (defonce ^:private current
@@ -37,6 +49,40 @@
   list carrying only one of the two namespaces answers 500 rather than 404,
   which is a much worse way to find out."
   ['slopp.ui.pages 'slopp.ui.api])
+
+(defn ^:export derived-port
+  "A localhost port DERIVED from the store dir for this project's own UI
+  listener — stable across restarts, and different for every project on the
+  machine.
+
+  This is what replaced a fixed `ui.port` default (D-ui-hub). One well-known
+  port worked for exactly one project and collided for the second; deriving
+  makes the collision structurally impossible instead of configured away, and
+  nobody needs to know the number, because the address a human remembers is
+  the hub's.
+
+  SALTED, unlike `slopp.git.server/derived-port`, which hashes the bare dir.
+  One MCP process binds both listeners, so sharing the formula would have
+  every project reliably colliding with itself.
+
+  A preference, not a guarantee: a taken port falls back to an ephemeral one
+  at bind time, and the registered url carries whatever was actually bound."
+  [dir]
+  (+ 49152 (mod (hash (str "slopp-ui:" dir)) 16384)))
+
+(defn ^:export preferred-port
+  "Which port this project's UI listener should try: an explicit request
+  first, then the configured `ui.port`, then [[derived-port]] for `dir`, then
+  0 (ephemeral) when there is no dir to derive from.
+
+  ONE resolution, because two callers ask — the autostart in `slopp.mcp` and
+  the `ui_serve` tool. Two copies of this ladder disagreeing would put the UI
+  on an address neither of them reported."
+  [store dir explicit]
+  (or explicit
+      (caps/effective store "ui.port")
+      (some-> dir derived-port)
+      0))
 
 (defn ^:export serve!
   "Serve the reviewer UI on `port` over the CALLER's session, and return

@@ -2593,6 +2593,10 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       ;; which most clients never show anyone. Hand the url over when asked
       ;; what is going on, rather than making them know to ask for it.
       (:ui-url @session) (assoc :ui (:ui-url @session))
+    ;; the HUB's url when this project registered with one — that is the
+    ;; address to hand a human on a machine running several projects, and
+    ;; the per-project one above is a derived port nobody should type
+    (:ui-hub @session) (assoc :ui-hub (:ui-hub @session))
       relevant   (assoc :relevant relevant))))
 
 ^:reads (defn report

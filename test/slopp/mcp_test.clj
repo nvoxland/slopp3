@@ -1496,7 +1496,10 @@
   ;; busy port would take the whole server down over a browser page.
   (let [sess (external/open!)]
     (try
-      (testing "a port someone else holds degrades to a sentence, never a throw"
+      (testing "a port someone else holds FALLS BACK rather than costing this
+                project its UI — the autostart's port is a preference derived
+                from the dir, not an address anyone asked for (D-ui-hub), and
+                the url it reports is whatever was actually bound"
         (let [;; 127.0.0.1 EXPLICITLY, not the wildcard: a ServerSocket on 0.0.0.0
               ;; does not stop http-kit binding 127.0.0.1 on the same port, so
               ;; a wildcard occupier makes this pass while proving nothing —
@@ -1506,9 +1509,9 @@
               busy (.getLocalPort sock)]
           (try
             (let [r (mcp/start-ui! sess busy)]
-              (is (nil? (:url r)) (pr-str r))
-              (is (re-find #"(?i)not available" (str (:error r))) (pr-str r)))
-            (finally (.close sock)))))
+              (is (some? (:url r)) (pr-str r))
+              (is (not= busy (:port r)) (pr-str r)))
+            (finally (.close sock) (ui-server/stop!)))))
       (testing "a free port comes up and reports where it is"
         (let [free (let [s (java.net.ServerSocket. 0)
                          p (.getLocalPort s)]
@@ -1521,7 +1524,12 @@
             ;; clients never show anyone — so without this, autostart is a
             ;; feature that cannot be found
             (is (= (:url r) (:ui-url @sess)))
-            (is (= (:url r) (:ui (api/session-brief sess)))))
+            (is (= (:url r) (:ui (api/session-brief sess))))
+            ;; and when there IS a hub, its url too — the skill tells an
+            ;; agent to hand THAT over on a multi-project machine, and
+            ;; session_brief is the only place an agent would see it
+            (swap! sess assoc :ui-hub "http://127.0.0.1:7359/")
+            (is (= "http://127.0.0.1:7359/" (:ui-hub (api/session-brief sess)))))
           (ui-server/stop!)))
       (finally
         (ui-server/stop!)

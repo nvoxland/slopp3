@@ -529,3 +529,49 @@
                  local  (assoc :nav/local local)
                  detail (assoc :nav/detail detail))
                main)))
+
+(defn hub-picker
+  "The hub's landing page: one row per project that has checked in, live ones
+  as links and silent ones greyed but still listed.
+
+  Server-rendered and script-free on purpose. The hub ships no client bundle
+  because every screen worth looking at belongs to a PROJECT and is served by
+  that project's own process (D-ui-hub); a picker that needed a bundle would
+  be the hub growing exactly the half it is supposed not to have.
+
+  A stale row stays a row. The project you were reading five minutes ago
+  should still be on the page when its editor closes, saying what happened,
+  rather than leaving you to wonder whether you imagined it.
+
+  `:cljc` like every other view, so it takes the projects as DATA and reaches
+  for nothing — `slopp.ui.registry` is JVM-only (it formats a hash) and a
+  view that required it could not compile into the client."
+  [projects]
+  [:div {:class "hub"}
+   [:h1 "slopp"]
+   (if (seq projects)
+     (into [:ul {:class "projects"}]
+           (for [{:keys [slug dir available status] nm :name} projects]
+             [:li {:class (if available "project" "project stale")}
+              [:a {:href (str "/p/" slug "/")} nm]
+              [:span {:class "dir"} dir]
+              [:span {:class "status"} (if available (or status "running") "not running")]]))
+     [:p "No project has checked in yet. Start an MCP server on a slopp store "
+      "and it registers itself within a few seconds."])])
+
+(defn project-unavailable
+  "The page the hub serves in place of a project that is registered but not
+  answering, and the one it serves for a slug nobody holds.
+
+  This page IS the argument for proxying rather than redirecting (D-ui-hub).
+  A redirect to a dead port gives the human a browser error page about a
+  refused connection; here the same situation is slopp explaining, in its own
+  words, which project is not running and what to do about it."
+  [{:keys [slug known?] nm :name}]
+  [:div {:class "hub unavailable"}
+   [:h1 (or nm slug)]
+   (if known?
+     [:p "This project is registered but is not answering. Its slopp server "
+      "has probably stopped — start it again and this page will work."]
+     [:p "No project is registered under " [:code slug] "."])
+   [:p [:a {:href "/"} "All projects"]]])

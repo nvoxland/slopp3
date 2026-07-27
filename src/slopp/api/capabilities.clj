@@ -32,8 +32,10 @@
     :doc "Port the HTTP server binds."}
    {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
-   {:key "ui.port" :type [:int {:min 1 :max 65535}] :default 7359
-    :doc "Port the reviewer UI (ui_serve) binds. Independent of http.port: a store that opts into the HTTP transport runs both listeners at once."}
+   {:key "ui.port" :type [:int {:min 1 :max 65535}] :default nil
+    :doc "Port this project's own UI/API listener binds. Unset = DERIVED from the store dir — stable across restarts and collision-free, which a fixed default cannot be on a machine running several projects. Set it only to pin a fixed address."}
+   {:key "ui.hub-port" :type [:int {:min 0 :max 65535}] :default 7359
+    :doc "The UI hub this project registers with (slopp --main slopp.ui.hub/-main --port N). The one number both halves read: the project beats to it, the hub CLI binds it. 0 = register with no hub."}
    {:key "http.static.*" :type [:string] :default nil
     :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public/)."}
    {:key "auth.providers" :type [:set-of [:enum "static" "bearer" "proxy-header" "oidc"]] :default #{}
