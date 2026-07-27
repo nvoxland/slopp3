@@ -9,6 +9,8 @@
             [slopp.edit :as edit]
             [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
 
+;; ---------------------------------------------------------------------------
+;; form-symbol must see through ^:unsafe (else the form is un-addressable)
 (deftest form-symbol-unwraps-meta
   (testing "a plain def is named"
     (is (= 'f (store/name-of-source "(defn f [x] x)"))))
@@ -16,6 +18,8 @@
     (is (= 'g (store/name-of-source
                "^:unsafe (defn g [x] (binding [*out* *out*] x))")))))
 
+;; ---------------------------------------------------------------------------
+;; the dialect gate opt-out
 (deftest unsafe-bypasses-dialect-bans
   (testing "a plain banned form is rejected (D3)"
     (is (:error (edit/parse-form "(defn h [x] (binding [*out* *out*] x))"))))
@@ -44,6 +48,8 @@
       (is (edit/reads? n))
       (is (edit/unsafe? n)))))
 
+;; ---------------------------------------------------------------------------
+;; end-to-end: an ^:unsafe form loads, is addressable, and round-trips
 (deftest ^:external unsafe-form-ingests-loads-and-is-addressable
   (let [sess (external/open!)]
     (try

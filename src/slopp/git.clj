@@ -13,8 +13,9 @@
     milestones extend the remote's history — pushes stay fast-forward.
 
   Ids: a git commit id IS the hash of its bytes, so stability comes from
-  DETERMINISM — each commit is a pure function of its marker delta (:tree
-  snapshot, :agent, :at, :description) and its parent. `git_map` (main store.db)
+  DETERMINISM — each commit is a pure function of its marker delta (:agent,
+  :at, :description), its parent, and the tree DERIVED by folding the journal
+  up to that marker. `git_map` (main store.db)
   pins delta→sha at first projection: query surfaces read it, and it lets
   re-projection skip a commit whose object is already live in the repo.
 
@@ -39,6 +40,8 @@
            [org.eclipse.jgit.treewalk TreeWalk]
            [org.eclipse.jgit.util FS]))
 
+;; ---------------------------------------------------------------------------
+;; repo + mapping table
 (defn open-repo!
   "An in-memory bare repo (JGit DFS `InMemoryRepository`) — the projection is
   regenerated into it from the journal on demand; nothing touches disk. Built
@@ -119,6 +122,8 @@
                         VALUES (?,?,?,?)" delta-id fp sha line])
   (lookup-sha conn delta-id fp))
 
+;; ---------------------------------------------------------------------------
+;; trees
 (defn- commit-paths
   "{path content} for a milestone's tree: every namespace under src/ (test
   namespaces under test/ — same layout as build!), the generated deps.edn
@@ -143,58 +148,8 @@
                      files)
                 (map (fn [[p entry]] [p (store/render-config entry)]) configs))))
 
-(defn- backfill-tree
-  "Best-effort {ns-sym source} at delta `target-id`, for markers that carry
-  no :tree (pre-P4-m8 history, retroactive :target markers): fold the
-  journal's content deltas into per-ns ordered form sources. LOSSY by design
-  — deltas don't record inter-form trivia (top-level comments/blank lines) —
-  but deterministic; once projected, the sha is pinned in git_map anyway."
-  [deltas target-id]
-  (let [upto  (reduce (fn [acc d]
-                        (let [acc (conj acc d)]
-                          (if (= target-id (:id d)) (reduced acc) acc)))
-                      [] deltas)
-        state (reduce
-               (fn [{:keys [owner] :as acc} d]
-                 (case (:op d)
-                   (:ingest :add :replace :rename :normalize)
-                   (let [srcs     (:sources d)
-                         new-fids (remove owner
-                                          (or (:form-ids d)
-                                              (some-> (:form-id d) vector)
-                                              (keys srcs)))]
-                     (-> acc
-                         (update :owner into (map #(vector % (:ns d)) new-fids))
-                         (update :order update (:ns d) (fnil into []) new-fids)
-                         (update :sources merge srcs)))
-
-                   :delete
-                   (update acc :sources dissoc (:form-id d))
-
-                   :rename-ns
-                   (let [{:keys [old new]} d]
-                     (-> acc
-                         (update :owner update-vals #(if (= old %) new %))
-                         (update :order
-                                 (fn [o] (-> o
-                                             (assoc new (get o old))
-                                             (dissoc old))))
-                         (update :sources merge (:sources d))))
-
-                   ;; markers, :move (ordering is cosmetic here), unknown: skip
-                   acc))
-               {:owner {} :order {} :sources {}}
-               upto)]
-    (into (sorted-map)
-          (keep (fn [[ns-sym fids]]
-                  (let [live (filter #(contains? (:sources state) %)
-                                     (distinct fids))]
-                    (when (seq live)
-                      [ns-sym (apply str (map #(str (get (:sources state) %)
-                                                    "\n")
-                                              live))]))))
-          (:order state))))
-
+;; ---------------------------------------------------------------------------
+;; commits + refs
 (defn- author-email ^String [agent]
   (let [s (str/replace (str agent) #"[^A-Za-z0-9._-]" ".")]
     (str (if (str/blank? s) "slopp" s) "@slopp")))
@@ -334,6 +289,8 @@
               (.flush ins)
               (set-branch-ref! repo (str "wip/" line-name) (.name cid)))))))))
 
+;; ---------------------------------------------------------------------------
+;; projection
 (defn project-journal!
   "Walk one journal's deltas in order, minting a git commit in the in-memory
   repo for every :commit marker whose object isn't already present. Parent =
@@ -346,34 +303,73 @@
   re-inserted deterministically (same sha). Returns the tip sha (= base when
   no markers) or nil.
 
+  **Each milestone's tree is DERIVED, not stored.** The store is folded from
+  the journal as this walk proceeds, so reaching a marker means holding the
+  store as it stood there, and the tree is `render-ns` over it. Milestones
+  used to carry a byte-exact snapshot of every namespace instead — 82 MB
+  across 272 of them here, 39% of the journal — because comments lived
+  positionally and could not be reconstructed. They are form-owned content
+  now, so the log is a complete account and the snapshot has no job.
+
+  ONE pass matters: folding from empty per marker is quadratic in the journal.
+
+  A marker normally targets the delta immediately before it, which is exactly
+  where the fold stands when the walk reaches it. `commit_point {:target ...}`
+  can mark an EARLIER spot, so those positions are rendered as the walk passes
+  them and held until their marker arrives — the only trees kept in memory.
+
+  A delta that will not replay (a retired `:trivia`) is SKIPPED rather than
+  fatal: it edited `:sep` elements the renderer no longer reads, so the state
+  it would rebuild is state nothing consults.
+
   `ctx` is an OPAQUE handle from `open-ctx!` — see `close-ctx!`."
   [ctx line-label deltas & {:keys [base]}]
   (let [map-conn         (:slopp.git/map-conn ctx)
-        ^Repository repo (:slopp.git/repo ctx)]
-    (reduce
-     (fn [parent d]
-       (if (= :commit (:op d))
-         (if-let [gsha (:git-sha d)]
-           (do (record-sha! map-conn (:id d) (fingerprint d) gsha line-label)
-               gsha)
-           (let [fp     (fingerprint d)
-                 pinned (lookup-sha map-conn (:id d) fp)]
-             (if (and pinned
-                      (.has (.getObjectDatabase repo) (ObjectId/fromString pinned)))
-               pinned
-               ;; :tree inline = a delta written before the column split (still honored);
-               ;; then its own column, read ON DEMAND (never loaded at session
-               ;; open); then the lossy backfill for markers that never had one.
-               (let [tree (or (:tree d)
-                              (db/tree-at map-conn (:id d))
-                              (backfill-tree deltas (:target d)))
-                     sha  (insert-commit! repo parent d tree
-                                          #(db/get-blob map-conn %))]
-                 (record-sha! map-conn (:id d) fp sha line-label)
-                 sha))))
-         parent))
-     base
-     deltas)))
+        ^Repository repo (:slopp.git/repo ctx)
+        dv       (vec deltas)
+        retro    (into #{}
+                       (keep (fn [i]
+                               (let [d (nth dv i)]
+                                 (when (and (= :commit (:op d))
+                                            (:target d)
+                                            (not= (:target d)
+                                                  (:id (get dv (dec i)))))
+                                   (:target d)))))
+                       (range (count dv)))
+        tree-of  (fn [st]
+                   (into (sorted-map)
+                         (map (fn [n] [n (render/render-ns st n)]))
+                         (keys (:namespaces st))))]
+    (:parent
+     (reduce
+      (fn [{:keys [parent store held]} d]
+        (let [store' (or (store/replay-delta store d) store)
+              held'  (cond-> held
+                       (retro (:id d)) (assoc (:id d) (tree-of store')))]
+          (if-not (= :commit (:op d))
+            {:parent parent :store store' :held held'}
+            (let [sha (if-let [gsha (:git-sha d)]
+                        (do (record-sha! map-conn (:id d) (fingerprint d)
+                                         gsha line-label)
+                            gsha)
+                        (let [fp     (fingerprint d)
+                              pinned (lookup-sha map-conn (:id d) fp)]
+                          (if (and pinned
+                                   (.has (.getObjectDatabase repo)
+                                         (ObjectId/fromString pinned)))
+                            pinned
+                            (let [tree (or (get held' (:target d)) (tree-of store'))
+                                  s    (insert-commit! repo parent d tree
+                                                       #(db/get-blob map-conn %))]
+                              (record-sha! map-conn (:id d) fp s line-label)
+                              s))))]
+              ;; NOT dissoc'd: two markers can name the same target — a milestone's
+              ;; own target is the delta before it, which is exactly what an
+              ;; earlier retroactive marker also points at. Releasing it at the
+              ;; first reader left the second rendering the CURRENT state.
+              {:parent sha :store store' :held held'}))))
+      {:parent base :store (store/empty-store) :held {}}
+      dv))))
 
 (defn- branch-journals
   "[[name dir]] for every on-disk branch that has a store.db — checked
@@ -429,6 +425,24 @@
             (set-branch-ref! repo nm sha))
           {:refs refs})))))
 
+;; ---------------------------------------------------------------------------
+;; import: git push → slopp (M3)
+;;
+;; The net content change lands as ingests (new files) + ONE verified edit
+;; group; each incoming commit is preserved as a :commit marker carrying its
+;; original sha. Conservative by design — git is a guest writer, and guests
+;; don't get the ambiguous cases (anonymous forms, ns-decl edits, deletions
+;; of whole files): those reject with the reason on the pusher's terminal.
+
+;; ---------------------------------------------------------------------------
+;; smart-HTTP server (M2: clone/fetch; M3 adds receive-pack)
+;;
+;; The protocol endpoints, verbatim from the smart-http spec:
+;;   GET  /slopp.git/info/refs?service=git-upload-pack   → refs advertisement
+;;   POST /slopp.git/git-upload-pack                     → pack negotiation
+;; JGit's UploadPack owns the wire format (setBiDirectionalPipe false =
+;; stateless RPC); we only route bytes. v0 protocol — the Git-Protocol:
+;; version=2 header is deliberately ignored (spec-legal fallback).
 ^:reads (defn tree-at
   "{path text} for the whole tree of commit `sha` — UTF-8 blobs, sorted.
   Works on any repo handle (the in-memory projection or an on-disk remote)."

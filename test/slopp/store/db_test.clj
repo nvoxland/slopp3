@@ -130,33 +130,6 @@
         (is (= {"app.core" :pure "app.shell" :external} (:module-tiers loaded)))
         (.close conn2)))))
 
-(deftest commit-tree-lives-outside-the-parsed-payload
-  ;; 94% of this store's journal is :commit :tree snapshots (~1.35MB each, 239
-  ;; of them) — re-parsed on EVERY session open even though only the git
-  ;; projection reads them (measured: 7.4s of a 9.4s load-store). The tree now
-  ;; lives in its own column: load-store never selects or parses it, and
-  ;; db/delta-tree fetches it on demand. Byte-exactness matters — git shas are
-  ;; content-addressed off this tree.
-  (let [dir  (str (java.nio.file.Files/createTempDirectory
-                   "slopp-tree" (make-array java.nio.file.attribute.FileAttribute 0)))
-        conn (db/open! dir)
-        tree {'a.core "(ns a.core)\n\n;; trivia survives\n(defn f [] 1)\n"}
-        d    {:id "d1" :op :commit :ns '*session*
-              :description "m" :target "d0" :tree tree}]
-    (try
-      (is (true? (db/append! conn (store/empty-store) [d] [] nil)))
-      (testing "a loaded delta carries no :tree — the bytes are never parsed at open"
-        (let [ld (first (filter #(= "d1" (:id %)) (:deltas (db/load-store conn))))]
-          (is (some? ld))
-          (is (nil? (:tree ld)))
-          (is (= "m" (:description ld)) "the small payload fields still round-trip")
-          (is (= "d0" (:target ld)))))
-      (testing "the tree round-trips byte-exactly, on demand"
-        (is (= tree (db/delta-tree conn "d1"))))
-      (testing "a non-commit delta has no tree and asking is nil, not an error"
-        (is (nil? (db/delta-tree conn "nope"))))
-      (finally (.close conn)))))
-
 (deftest blobs-are-not-pulled-into-memory-at-open
   ;; The same "don't read it at open" lever as the commit trees: all-blobs
   ;; pulled EVERY blob's bytes into the store value at every session open, and
@@ -215,6 +188,11 @@
   ;; "tens of KB". full_check counts namespaces and tests; nothing counted
   ;; bytes. The cheapest guard against the next one is a number nobody has to
   ;; go looking for.
+  ;;
+  ;; That snapshot is gone — the projection derives each tree from the log —
+  ;; so there is no :tree-bytes any more. What has to keep working is the
+  ;; habit: per-op bytes, heaviest FIRST, so an outlier is the first thing
+  ;; read rather than something you find by scrolling.
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-health" (make-array java.nio.file.attribute.FileAttribute 0)))
         conn (db/open! dir)
@@ -222,93 +200,23 @@
                            "(ns sh.core)\n\n(defn f \"F.\" [x] x)\n")]
     (try
       (is (true? (db/append! conn st
-                             [{:id "d1" :op :ingest :ns 'sh.core :prompt "seed"}
-                              {:id "d2" :op :commit :ns '*session* :description "m"
-                               :target "d1"
-                               :tree {'sh.core "(ns sh.core)\n(defn f [x] x)\n"}}]
+                             [{:id "d1" :op :ingest :ns 'sh.core :prompt "seed"
+                               :sources {"f1" "(ns sh.core)"}}
+                              {:id "d2" :op :commit :ns '*session* :target "d1"
+                               :description (apply str (repeat 400 "m"))}]
                              ['sh.core] nil)))
       (let [s (db/journal-stats conn)]
-        (testing "the journal is measured, payload and tree counted APART"
+        (testing "the journal is measured"
           (is (= 2 (get-in s [:deltas :n])))
-          (is (pos? (get-in s [:deltas :payload-bytes])))
-          (is (pos? (get-in s [:deltas :tree-bytes]))
-              "commit trees are the thing that grew unwatched — count them alone"))
+          (is (pos? (get-in s [:deltas :payload-bytes]))))
         (testing "per-op rows, heaviest first, so the outlier is the first thing read"
           (let [ops (map :op (get-in s [:deltas :by-op]))]
             (is (= #{"ingest" "commit"} (set ops)))
-            (is (= "commit" (first ops)) "the tree-carrying op leads")))
+            (is (= "commit" (first ops)) "the heaviest op leads")))
         (testing "state is measured too, so history-vs-state is visible"
           (is (pos? (get-in s [:elements :n])))
           (is (pos? (get-in s [:elements :source-bytes])))
           (is (= 0 (get-in s [:blobs :n])))))
-      (finally (.close conn)))))
-
-(deftest tree-diffs-round-trip-against-their-base
-  ;; 388MB — 75% of this journal — is :tree snapshots, and almost every entry
-  ;; in one is byte-identical to the milestone before it: median 5 namespaces
-  ;; change out of 191. The tree cannot be RE-DERIVED (trivia lives in the
-  ;; elements table, which holds only current state), so it has to be stored —
-  ;; but it does not have to be stored whole.
-  (let [base {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"
-              'b.core "(ns b.core)\n(defn g [] 2)\n"
-              'c.core "(ns c.core)\n(defn h [] 3)\n"}
-        next {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"   ; unchanged
-              'b.core "(ns b.core)\n(defn g [] 22)\n"              ; changed
-              'd.core "(ns d.core)\n(defn i [] 4)\n"}]             ; added, c removed
-    (testing "a diff carries only what moved"
-      (let [[tag df] (db/tree-diff base next "d100" 0)]
-        (is (= :slopp.store.db/tree-diff tag)
-            "TAGGED, not key-discriminated: a tree is a symbol-keyed sorted-map,
-             so looking up a keyword in one throws instead of returning nil")
-        (is (= "d100" (:base df)))
-        (is (= #{'b.core 'd.core} (set (keys (:changed df))))
-            "an unchanged namespace must not be re-stored — that is the whole point")
-        (is (= #{'c.core} (set (:removed df))))))
-    (testing "applying it reproduces the tree BYTE-exactly — a git sha depends on it"
-      (is (= next (db/tree-apply base (db/tree-diff base next "d100" 0)))))
-    (testing "trivia survives the round trip"
-      (is (= (get next 'a.core)
-             (get (db/tree-apply base (db/tree-diff base next "d100" 0)) 'a.core))))
-    (testing "no base means a full snapshot, which is what an old marker already holds"
-      (let [df (db/tree-diff nil next nil 0)]
-        (is (map? df) "a full tree stays a plain {ns source} map — old rows stay readable")
-        (is (= next df))
-        (is (= next (db/tree-apply nil df)) "and applying one is the identity")))
-    (testing "depth counts the chain, so reconstruction can be bounded"
-      (is (= 1 (:depth (second (db/tree-diff base next "d100" 0)))))
-      (is (= 4 (:depth (second (db/tree-diff base next "d100" 3))))
-          "one more link than the diff it is based on"))
-    (testing "at the bound the chain RESTARTS with a full snapshot"
-      (is (vector? (db/tree-diff base next "d100" (dec db/max-tree-chain)))
-          "one short of the bound still diffs")
-      (is (= next (db/tree-diff base next "d100" db/max-tree-chain))
-          "an unbounded chain makes projecting a fresh repo quadratic")
-      (is (= next (db/tree-diff base next "d100" (inc db/max-tree-chain)))))))
-
-(deftest tree-at-resolves-a-diff-chain-back-to-a-full-tree
-  (let [dir  (str (Files/createTempDirectory
-                   "slopp-treechain" (make-array FileAttribute 0)))
-        conn (db/open! dir)
-        t1   {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"
-              'b.core "(ns b.core)\n(defn g [] 2)\n"}
-        t2   (assoc t1 'b.core "(ns b.core)\n(defn g [] 22)\n")
-        t3   (-> t2 (dissoc 'a.core) (assoc 'c.core "(ns c.core)\n(defn h [] 3)\n"))
-        mk   (fn [id tree] {:id id :op :commit :ns '*session*
-                            :description (str "m" id) :target "d0" :tree tree})]
-    (try
-      (is (true? (db/append! conn (store/empty-store)
-                             [(mk "d1" t1)
-                              (mk "d2" (db/tree-diff t1 t2 "d1" 0))
-                              (mk "d3" (db/tree-diff t2 t3 "d2" 1))]
-                             [] nil)))
-      (testing "every marker resolves to its FULL tree, whatever it stores"
-        (is (= t1 (db/tree-at conn "d1")) "a full snapshot")
-        (is (= t2 (db/tree-at conn "d2")) "one link back")
-        (is (= t3 (db/tree-at conn "d3")) "two links back, through an add and a remove"))
-      (testing "trivia is intact at the end of the chain — the reason this is stored at all"
-        (is (= (get t2 'a.core) (get (db/tree-at conn "d2") 'a.core))))
-      (testing "a marker with no tree is still nil, not an error"
-        (is (nil? (db/tree-at conn "nope"))))
       (finally (.close conn)))))
 
 (deftest a-forms-comment-survives-persist-and-reload

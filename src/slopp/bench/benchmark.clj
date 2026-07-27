@@ -19,6 +19,7 @@
            [java.nio.file.attribute FileAttribute]
            [java.time LocalDate]))
 
+;; --- the sample apps ---
 (def calculator
   ;; v3: the two-form fix is two REPL-style writes (episodes are inferred)
   {:name "calculator" :v 3 :test-ns "calc.core"
@@ -85,6 +86,7 @@
 
 (def apps [calculator inventory wordstats])
 
+;; --- runner ---
 (defn- call!
   "One tool call through the real wire shape; returns measured sizes + text."
   [session {:keys [tool args]}]

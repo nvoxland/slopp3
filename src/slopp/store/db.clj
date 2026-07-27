@@ -40,23 +40,18 @@
          (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS meta (
                               k TEXT PRIMARY KEY, v TEXT NOT NULL)"])
-         ;; `tree` is DELIBERATELY its own column, not part of `payload`: a :commit
-         ;; marker's byte-exact tree snapshot is ~1.35MB, and payloads are parsed
-         ;; on EVERY session open while only the git projection ever reads a tree
-         ;; (measured: 239 markers = 94% of this journal, 7.4s of a 9.4s load).
-         ;; load-store selects explicit columns and never touches it; read it
-         ;; with db/delta-tree.
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS deltas (
                               seq     INTEGER PRIMARY KEY AUTOINCREMENT,
                               id      TEXT UNIQUE NOT NULL,
                               op      TEXT NOT NULL,
                               ns      TEXT NOT NULL,
-                              payload TEXT NOT NULL,
-                              tree    TEXT)"])
-         ;; stores created before the column: SQLite has no ADD COLUMN IF NOT
-         ;; EXISTS, so adding it twice is the expected no-op
-         (try (jdbc/execute! conn ["ALTER TABLE deltas ADD COLUMN tree TEXT"])
-              (catch java.sql.SQLException _ nil))
+                              payload TEXT NOT NULL)"])
+         ;; a `tree` column used to hold each milestone's byte-exact snapshot of
+         ;; every namespace — 94% of a 344MB journal at its worst, still 82MB
+         ;; (39%) when it was removed. An older store has the column and its
+         ;; rows; nothing reads or writes them, and DROP COLUMN rewrites the
+         ;; whole table, so it is left where it is rather than paid for at every
+         ;; open. `git/project-journal!` derives the tree by folding the log.
          (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS deltas_ns ON deltas(ns)"])
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS elements (
                               ns      TEXT NOT NULL,
@@ -267,9 +262,9 @@
                                   (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
                           (fn [nsm] (update nsm :elements store/fold-comments)))
       :deltas     (mapv row->delta
-                        ;; EXPLICIT columns — never SELECT `tree`. The whole point of splitting it
-      ;; out is that ~1.35MB per :commit marker is neither fetched nor parsed
-      ;; here; db/delta-tree reads it on demand for the git projection.
+                        ;; EXPLICIT columns, not SELECT * — an older store still has a dead
+      ;; `tree` column holding ~1.35MB per :commit marker, and naming the
+      ;; columns is what keeps it from being fetched and parsed at every open.
                         (jdbc/execute! conn ["SELECT id, op, ns, payload FROM deltas
                                               ORDER BY seq"]))
       :next-id    next-id
@@ -412,14 +407,10 @@
         (when (not= head expected-head)
           (throw (ex-info "journal head moved" {::head-moved true})))
         (doseq [d new-deltas]
-          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload, tree)
-                              VALUES (?,?,?,?,?)"
+          (jdbc/execute! tx ["INSERT INTO deltas (id, op, ns, payload)
+                              VALUES (?,?,?,?)"
                              (:id d) (name (:op d)) (str (:ns d))
-                             ;; :tree is split OUT of the payload — it is the
-                             ;; one huge, rarely-read field, and payloads are
-                             ;; parsed on every session open
-                             (pr-str (dissoc d :id :op :ns :tree))
-                             (some-> (:tree d) pr-str)]))
+                             (pr-str (dissoc d :id :op :ns))]))
         (write-snapshot! tx store nses)
         true))
     (catch clojure.lang.ExceptionInfo e
@@ -445,112 +436,34 @@
      (write-snapshot! tx store nses))
    nil))
 
-(def ^:export max-tree-chain
-  "How many diffs may chain before a milestone stores a FULL tree again.
-
-  Reconstruction walks back to the nearest full snapshot, so an unbounded
-  chain makes projecting a fresh repo quadratic in the number of milestones.
-  A full snapshot every 25 costs ~4% of the old all-snapshots footprint while
-  keeping any single reconstruction to at most 25 small reads."
-  25)
-
-(defn ^:export tree-diff
-  "Encode `next` (a `{ns-sym source}` tree) against `prev`, returning either a
-  tagged DIFF — `[::tree-diff {:base <marker-id> :depth n :changed {ns src}
-  :removed [ns]}]` — or `next` itself when there is no base to diff against.
-
-  Measured motivation: 75% of this store's journal is `:tree` snapshots, and a
-  median of 5 namespaces out of 191 change between milestones. A full snapshot
-  therefore re-stores ~184 byte-identical entries, 1.36 MB at a time, 272 times
-  over.
-
-  A full snapshot stays a PLAIN map, deliberately: that is exactly the shape
-  every existing row already holds, so old markers keep reading without a
-  migration and without a version flag.
-
-  The diff is TAGGED rather than distinguished by a key, because a tree is a
-  symbol-keyed sorted-map — `(:base t)` on one routes through the comparator
-  and throws `ClassCastException: Symbol cannot be cast to Keyword`. A
-  discriminator that can throw on a valid input is not a discriminator; a
-  vector-vs-map check cannot.
-
-  `depth` is the chain length, carried so a reconstruction can be bounded — a
-  diff chain that never restarts makes projecting a fresh repo quadratic.
-
-  This is not re-derivation and cannot become it: a past tree is NOT
-  reconstructible from the journal, because inter-form trivia lives in the
-  `elements` table, which holds only current state. The bytes have to be
-  stored. They just do not have to be stored whole."
-  [prev next base-id depth]
-  (if-not (and base-id (seq prev) (< (or depth 0) max-tree-chain))
-    next
-    [::tree-diff
-     {:base    base-id
-      :depth   (inc (or depth 0))
-      :changed (into (sorted-map)
-                     (remove (fn [[ns-sym src]] (= src (get prev ns-sym))))
-                     next)
-      :removed (vec (sort (remove (set (keys next)) (keys prev))))}]))
-
-(defn ^:export tree-apply
-  "Rebuild a full `{ns-sym source}` tree from `prev` and `diff`.
-
-  A `diff` that is not tagged — a plain full snapshot, which is what every
-  pre-existing marker holds — is returned as-is, so one call site handles both
-  encodings. The check is on the TAG rather than on a key, because looking a
-  keyword up in a symbol-keyed sorted-map throws rather than returning nil.
-
-  Byte-exactness is the whole contract: a git commit sha is the hash of these
-  bytes, so a rebuilt tree that differs from the stored one by a single space
-  mints a different commit and breaks a push."
-  [prev diff]
-  (if-not (and (vector? diff) (= ::tree-diff (first diff)))
-    diff
-    (let [{:keys [changed removed]} (second diff)]
-      (as-> (or prev {}) t
-        (apply dissoc t removed)
-        (merge t changed)
-        (into (sorted-map) t)))))
-
-^:reads (defn ^:export delta-tree
-          "The byte-exact rendered `:tree` snapshot of `:commit` delta `id`, parsed
-  ON DEMAND, or nil when there is none — a non-commit, a retroactive `:target`
-  marker (which never captures one), or a delta written before the split, whose
-  tree still rides its payload. It lives in its own column because it is ~1.35MB
-  per milestone and ONLY the git projection reads it, while payloads are parsed
-  at every session open; `slopp.git/project-journal!` falls back to the payload's
-  `:tree`, then to `backfill-tree`, so old markers keep projecting."
-          [conn id]
-          (some-> (jdbc/execute-one! conn ["SELECT tree FROM deltas WHERE id = ?" id])
-                  :deltas/tree
-                  edn/read-string))
-
 ^:reads (defn ^:export journal-stats
-          "What the store CARRIES, in bytes: the journal (per op, heaviest first,
-  with commit `tree` snapshots counted APART from payloads), the materialized
-  state, and the blob table. A pure read straight off SQLite's LENGTH — nothing
-  is parsed, so it stays cheap on a large journal.
+          "What the store CARRIES, in bytes: the journal (per op, heaviest
+  first), the materialized state, and the blob table. A pure read straight off
+  SQLite's LENGTH — nothing is parsed, so it stays cheap on a large journal.
 
-  This exists because nothing measured cost. A byte-exact `:tree` snapshot
-  inline in every `:commit` payload reached 94% of a 344MB journal — ~1.35MB per
-  milestone against a design note estimating \"tens of KB\" — and went unnoticed
-  across 239 milestones while `full_check` happily counted namespaces and tests.
-  A store can rot by GROWING, and only a number catches that."
+  This exists because nothing measured cost. A byte-exact `:tree` snapshot in
+  every `:commit` reached 94% of a 344MB journal — ~1.35MB per milestone
+  against a design note estimating \"tens of KB\" — and went unnoticed across
+  239 milestones while `full_check` happily counted namespaces and tests. It
+  was NAMED here and still grew to 82MB before it was removed. A store can rot
+  by GROWING, and only a number catches that.
+
+  The snapshot is gone (the projection derives each tree from the log), so
+  there is no longer a `:tree-bytes` figure. The habit it taught is the point:
+  when a delta starts carrying something big, count it here first."
           [conn]
           (let [rows (jdbc/execute!
                       conn ["SELECT op,
-                                    COUNT(*)                        AS n,
-                                    SUM(LENGTH(payload))            AS pbytes,
-                                    SUM(LENGTH(COALESCE(tree, ''))) AS tbytes
+                                    COUNT(*)             AS n,
+                                    SUM(LENGTH(payload)) AS pbytes
                              FROM deltas GROUP BY op"])
                 by-op (->> rows
                            ;; next.jdbc qualifies a real column by its table (:deltas/op) while a
                            ;; computed alias comes back bare — read both rather than betting
                            (map (fn [r] {:op (or (:deltas/op r) (:op r))
                                          :n (or (:n r) 0)
-                                         :payload-bytes (or (:pbytes r) 0)
-                                         :tree-bytes (or (:tbytes r) 0)}))
-                           (sort-by #(- (+ (:payload-bytes %) (:tree-bytes %))))
+                                         :payload-bytes (or (:pbytes r) 0)}))
+                           (sort-by #(- (:payload-bytes %)))
                            vec)
                 els  (jdbc/execute-one!
                       conn ["SELECT COUNT(*) AS n, SUM(LENGTH(source)) AS b FROM elements"])
@@ -558,31 +471,6 @@
                       conn ["SELECT COUNT(*) AS n, SUM(LENGTH(bytes)) AS b FROM blobs"])]
             {:deltas   {:n (reduce + 0 (map :n by-op))
                         :payload-bytes (reduce + 0 (map :payload-bytes by-op))
-                        :tree-bytes    (reduce + 0 (map :tree-bytes by-op))
                         :by-op by-op}
              :elements {:n (or (:n els) 0) :source-bytes (or (:b els) 0)}
              :blobs    {:n (or (:n bl) 0) :bytes (or (:b bl) 0)}}))
-
-^:reads (defn ^:export tree-at
-          "The FULL `{ns-sym source}` tree for `:commit` delta `id`, resolving a
-  diff chain back to its snapshot, or nil when there is none.
-
-  Callers ask for a tree and get a tree; how it is encoded on the way down is
-  this function's business. `delta-tree` remains the raw single-row read —
-  everything that needs a usable tree wants THIS.
-
-  Walks `:base` pointers back to a full snapshot collecting diffs, then
-  replays them forward. The walk is bounded by how often a full snapshot is
-  written (`max-tree-chain`); a chain that never restarts would make
-  projecting a fresh repo quadratic. A broken chain — a base that is missing
-  or itself treeless — resolves against what it can reach rather than
-  throwing, because a partially reachable history should still project."
-          [conn id]
-          (loop [cur id, chain ()]
-            (if-let [t (delta-tree conn cur)]
-              (if-let [base (when (and (vector? t) (= ::tree-diff (first t)))
-                              (:base (second t)))]
-                (recur base (conj chain t))
-                (reduce tree-apply t chain))
-              (when (seq chain)
-                (reduce tree-apply {} chain)))))

@@ -852,9 +852,10 @@ client-deps (merge (:client-deps st) (:client provided))
   honestly. Re-requesting a milestone on an UNCHANGED store returns the
   existing marker instead of minting an empty one. With `:target` (a past
   delta id) it is a pure retroactive marker: no done runs, status is
-  derived from the log at that spot — and no `:tree` snapshot is captured
-  (the live store is past the target by definition; projection backfills,
-  lossily). `:extra` merges op-specific payload into the marker delta
+  derived from the log at that spot. No milestone captures a tree at all now;
+  the projection folds the journal, so a retroactive marker gets the exact
+  state it names rather than a lossy reconstruction of it. `:extra` merges
+  op-specific payload into the marker delta
   (P4-m8 uses it for `:git-sha` on imported commits)."
   [session description & {:keys [agent force target extra]}]
   (let [mark! (fn [target status result-extra delta-extra]
@@ -915,24 +916,14 @@ client-deps (merge (:client-deps st) (:client provided))
                           (api/last-judged-done st))
                 status  (or (:test-status verdict) (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
-                ;; P4-m8: snapshot the rendered tree — byte-exact, trivia intact —
-                ;; so the git projection is a pure function of this marker delta
-                tree   (into (sorted-map)
-                             (map (fn [n] [n (render/render-ns st n)]))
-                             (keys (:namespaces st)))
-                ;; …stored as a DIFF against the previous milestone. The tree
-                ;; cannot be re-derived (trivia lives in the elements table,
-                ;; which holds only CURRENT state), so the bytes must be kept —
-                ;; but a median of 5 namespaces out of 191 change between
-                ;; milestones, so a full snapshot re-stores ~184 identical
-                ;; entries every time. A periodic full one bounds the walk back.
-                conn   (:db @session)
-                prev-m (->> (store/deltas st) (filter #(= :commit (:op %))) last)
-                prev-t (when (and conn prev-m) (db/tree-at conn (:id prev-m)))
-                prev-d (or (when (and conn prev-m)
-                             (:depth (db/delta-tree conn (:id prev-m))))
-                           0)
-                tree   (db/tree-diff prev-t tree (:id prev-m) prev-d)
+                ;; NO tree is captured. A milestone used to carry a byte-exact
+                ;; snapshot of every namespace, because comments lived
+                ;; positionally in the elements table — CURRENT state only —
+                ;; and so could not be re-derived. That cost 82 MB here, 39% of
+                ;; the journal, and by the end it was already a diff chain
+                ;; against the previous milestone. Comments are form-owned
+                ;; content now, so the log is a complete account and
+                ;; `git/project-journal!` folds it to render the tree it needs.
                 ;; a SUMMARY of done's findings, not a second implementation:
                 ;; name the findings that actually fired so the refusal is
                 ;; actionable without re-deriving anything
@@ -958,7 +949,7 @@ client-deps (merge (:client-deps st) (:client provided))
                :status :red :done (:done cp) :test (:test cp)
                :findings verdict}
               (mark! head status {:done (:done cp)}
-                     (cond-> (merge {:tree tree} extra)
+                     (cond-> (or extra {})
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
                        (or (seq (:config st)) (modules/modules-config-entry st))
@@ -1245,17 +1236,18 @@ client-deps (merge (:client-deps st) (:client provided))
                      :green)}))))
 
 (defn ^:export store-health
-  "What this store CARRIES, in bytes — the journal per op (heaviest first, with
-  `:commit` tree snapshots counted APART from payloads), the materialized state,
-  the blob table, and the on-disk artifact cache. Cheap: SQLite LENGTH and
-  `File.length` only, nothing parsed.
+  "What this store CARRIES, in bytes — the journal per op (heaviest first), the
+  materialized state, the blob table, and the on-disk artifact cache. Cheap:
+  SQLite LENGTH and `File.length` only, nothing parsed.
 
   Reach for it when a session feels slow to open, before growing what a delta
   carries, and periodically. `full_check` answers whether the store is CORRECT;
   this answers what it COSTS, and nothing else did — which is how a byte-exact
-  tree snapshot inline in every milestone reached 94% of a 344MB journal,
-  unnoticed across 239 of them, against a design note estimating \"tens of KB\".
-  A store can rot by growing.
+  tree snapshot in every milestone reached 94% of a 344MB journal, unnoticed
+  across 239 of them, against a design note estimating \"tens of KB\". Naming it
+  was not enough either: it was still 82MB, 39% of the journal, when the
+  snapshot was finally removed rather than made cheaper. A store can rot by
+  growing.
 
   `:artifacts` is here because derived files now live OUTSIDE the journal. That
   change removed 30MB from the delta log, and would have re-created the very

@@ -16,6 +16,8 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "slopp-deps-test" (make-array FileAttribute 0))))
 
+;; ---------------------------------------------------------------------------
+;; M1a: the delta model (store)
 (deftest deps-delta-model
   (let [s0 (store/empty-store)]
     (testing "a fresh store has an empty manifest"
@@ -75,6 +77,8 @@
         (is (seq (:conflicts m)))
         (is (= {:mvn/version "1.2.0"} (get-in (:store m) [:deps 'a/lib])))))))
 
+;; ---------------------------------------------------------------------------
+;; M1b: persistence (db meta materialization)
 (deftest ^:external db-materializes-and-reloads-deps
   (let [dir  (temp-dir)
         conn (db/open! dir)]
@@ -89,6 +93,8 @@
           (is (= {'a/lib {:mvn/version "1.0"}} (:deps (db/load-store conn))))))
       (finally (.close conn)))))
 
+;; ---------------------------------------------------------------------------
+;; M1c: the api ops — reaching the live image classpath + durable round-trip
 (deftest ^:external deps-add-hot-loads-into-image
   (let [sess (external/open!)]
     (try
@@ -173,6 +179,8 @@
       (is (contains? (:aliases m) :native))
       (is (contains? (:deps m) 'org.clojure/data.json)))))
 
+;; ---------------------------------------------------------------------------
+;; M4: dependency surface analysis (clj-kondo over the dep's own jars)
 (deftest dep-surface-analysis
   (testing "a dep's own jars are external (classpath diff) and analyzed"
     (let [jars (deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
@@ -204,6 +212,8 @@
         (is (pos? (:vars r))))
       (finally (api/close! sess)))))
 
+;; ---------------------------------------------------------------------------
+;; M6: native-compat gate (GraalVM reachability metadata)
 (deftest native-verdict-detects-metadata
   (testing "a dep without reachability metadata → :none (warn, not incompatible)"
     (is (= :none (:verdict (deps/native-verdict

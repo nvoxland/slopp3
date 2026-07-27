@@ -9,6 +9,7 @@
        "(defn caller [a] (tainted a))\n"      ; effectful via tainted, mis-named
        "(defn ok! [a] (reset! a 0))\n"))
 
+; effectful, correctly named
 (deftest analyze-and-effects
   (let [an (analyze/analyze src)]
     (testing "effectful reachability propagates through the call graph (D6)"

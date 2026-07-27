@@ -382,7 +382,8 @@
   (a delta id, normally the head the done-point just produced) with a human-facing
   `description`. The important-done grain above turns; git's annotated
   tag, inside the journal. `extra` merges op-specific payload into the delta
-  (P4-m8: `:tree` rendered-source snapshot, `:git-sha` import identity) —
+  (`:git-sha` import identity; it used to carry a `:tree` snapshot of every
+  namespace, which the projection now derives from the log instead) —
   it must not carry the core keys (:id :op :ns :parent :at :description
   :target). Returns [store' delta]."
   [store description & {:keys [agent target status extra]}]
@@ -1033,17 +1034,39 @@
   (slopp.store.fields) — a NEW op registers there once and this path knows
   it; only the element-content machinery lives here.
 
-  `:ingest` and `:move` still fall through to a reload, but no longer because
-  the journal is missing something: `:ingest` now carries `:sources` AND
-  `:comments`, and `:move` carries `{:form-id :before}`, so both COULD be
-  replayed. A full reload is merely slower, never wrong, so this is an
-  optimization that has not been taken rather than a gap in the log.
-
-  A historic `:trivia` delta lands here too and takes the same reload. That
-  op is retired: it edited `:sep` elements the renderer no longer reads, so
-  replaying one would rebuild state nothing consults."
+  **A nil is a claim that the journal is not enough**, and it costs more than
+  a reload: the git projection derives each milestone's tree by folding the
+  log, so an op that cannot replay is a milestone whose bytes cannot be
+  reconstructed. That is what the stored `:tree` snapshot used to paper over.
+  Every op slopp writes today replays; the default is for a RETIRED op (a
+  historic `:trivia`, which edited `:sep` elements nothing reads any more)
+  and for anything a future version adds without teaching this."
   [store d]
-  (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
+  (let [with-d  (fn [st] (bump-next-id (update st :deltas conj d) d))
+        idx-of  (fn [elems pred]
+                  (first (keep-indexed (fn [i e] (when (pred e) i)) elems)))
+        ;; `apply-changeset` rewrites nodes BY FORM-ID, possibly across
+        ;; namespaces — :replace, :rename, :normalize, and the refactors all
+        ;; land here. A refactor's delta names the SOURCE namespace, which is
+        ;; why "these forms now live in :ns" would be a plausible, wrong
+        ;; reading: the relocation rides separate :add/:delete/:ingest deltas.
+        rewrite (fn [st]
+                  (reduce-kv
+                   (fn [s fid src]
+                     (let [ns-sym (ns-of-form-id s fid)]
+                       (if-not ns-sym
+                         s                            ; unknown form: ignore
+                         (update-in s [:namespaces ns-sym :elements]
+                                    (fn [elems]
+                                      (mapv (fn [e]
+                                              (if (= fid (:id e))
+                                                (let [node (p/parse-string src)]
+                                                  (assoc e :node node
+                                                         :name (form-symbol node)
+                                                         :names (form-symbols node)))
+                                                e))
+                                            elems))))))
+                   st (:sources d)))]
     (cond
       (contains? fields/markers (:op d))
       (with-d store)
@@ -1053,12 +1076,48 @@
 
       :else
       (case (:op d)
-        :comment
-        (let [ns-sym (:ns d)
-              fid    (:form-id d)
-              txt    (:text d)]
+        :ingest
+        ;; the whole namespace, from the log: :form-ids IS the order,
+        ;; :sources the content, :comments what each form owns. Before those
+        ;; were recorded this had to say "rebuild from the elements table",
+        ;; which is the gap that made a commit point underivable.
+        (let [srcs (:sources d)
+              cmts (:comments d)]
           (with-d
-            (update-in store [:namespaces ns-sym :elements]
+            (assoc-in store [:namespaces (:ns d) :elements]
+                      (mapv (fn [fid]
+                              (let [node (p/parse-string (get srcs fid))]
+                                (cond-> {:id fid :kind :form
+                                         :name (form-symbol node)
+                                         :names (form-symbols node) :node node}
+                                  (get cmts fid) (assoc :comment (get cmts fid)))))
+                            (:form-ids d)))))
+
+        :move
+        ;; the form id is authoritative, the anchor is a NAME within the same
+        ;; namespace. A missing form or a vanished anchor leaves the order
+        ;; alone rather than guessing — the same choice `:add` makes.
+        (let [fid (:form-id d), before (:before d)]
+          (with-d
+            (update-in store [:namespaces (:ns d) :elements]
+                       (fn [elems]
+                         (let [i       (idx-of elems #(= fid (:id %)))
+                               moved   (when i (nth elems i))
+                               without (if i
+                                         (into (subvec elems 0 i) (subvec elems (inc i)))
+                                         elems)
+                               j       (when i
+                                         (idx-of without #(and (= :form (:kind %))
+                                                               (= before (:name %)))))]
+                           (if j
+                             (into (conj (subvec without 0 j) moved) (subvec without j))
+                             elems))))))
+
+        :comment
+        (let [fid (:form-id d)
+              txt (:text d)]
+          (with-d
+            (update-in store [:namespaces (:ns d) :elements]
                        (fn [elems]
                          (mapv (fn [e]
                                  (if (= fid (:id e))
@@ -1066,24 +1125,16 @@
                                    e))
                                elems)))))
 
-        (:replace :rename :normalize)
-        (with-d
-          (reduce-kv
-           (fn [st fid src]
-             (let [ns-sym (ns-of-form-id st fid)]
-               (if-not ns-sym
-                 st                                  ; unknown form: ignore
-                 (update-in st [:namespaces ns-sym :elements]
-                            (fn [elems]
-                              (mapv (fn [e]
-                                      (if (= fid (:id e))
-                                        (let [node (p/parse-string src)]
-                                          (assoc e :node node
-                                                 :name (form-symbol node)
-                                                 :names (form-symbols node)))
-                                        e))
-                                    elems))))))
-           store (:sources d)))
+        (:replace :rename :normalize :move-forms :extract-ns :module-extract)
+        (with-d (rewrite store))
+
+        :rename-ns
+        ;; the rewrite re-addresses every mention; the namespaces map rekeys
+        ;; separately, exactly as `api/ns-rename!` does it
+        (let [old (:old d), new (:new d)]
+          (with-d
+            (update (rewrite store) :namespaces
+                    (fn [m] (-> m (dissoc old) (assoc new (get m old)))))))
 
         :add
         (let [ns-sym (:ns d)
@@ -1101,21 +1152,16 @@
                                  ;; anchored add (:before = anchor form-id):
                                  ;; same position as the writer; gone → append
                                  anchor-idx (when (:before d)
-                                              (first (keep-indexed
-                                                      (fn [i e] (when (= (:before d) (:id e)) i))
-                                                      elems)))]
+                                              (idx-of elems #(= (:before d) (:id %))))]
                              (place-form elems form-elem anchor-idx)))))))
 
         :delete
-        (let [ns-sym (:ns d)
-              fid    (:form-id d)]
+        (let [fid (:form-id d)]
           (with-d
-            (update-in store [:namespaces ns-sym :elements]
+            (update-in store [:namespaces (:ns d) :elements]
                        (fn [elems]
-                         (if-let [idx (first (keep-indexed
-                                              (fn [i e] (when (= fid (:id e)) i))
-                                              elems))]
-                           (into (subvec elems 0 idx) (subvec elems (inc idx)))
+                         (if-let [i (idx-of elems #(= fid (:id %)))]
+                           (into (subvec elems 0 i) (subvec elems (inc i)))
                            elems)))))
 
         :ns-delete
@@ -1124,7 +1170,7 @@
         (when-not (seq (body-forms store (:ns d)))
           (with-d (update store :namespaces dissoc (:ns d))))
 
-        ;; :ingest / :move / :trivia / anything unregistered → full reload
+        ;; a retired or unknown op → full reload
         nil))))
 
 (defn append-form
@@ -1282,6 +1328,7 @@
                         (seq comments) (assoc :comments comments)
                         agent (assoc :agent agent)))))))))
 
+;; --- Phase 4 m2: the CRDT merge -------------------------------------------
 (defn method-registrations
   "The defmethod registrations of `ns-sym`, as tracer attribution rows:
   [form-ns multi-sym dispatch-sexpr form-key]. `dispatch-sexpr` is the SOURCE

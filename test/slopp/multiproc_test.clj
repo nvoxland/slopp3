@@ -132,6 +132,14 @@
              (slopp.store.render/render-ns r 'ir.core)))
       (is (= (:next-id w) (:next-id r)))
       (is (= (store/deltas w) (store/deltas r))))
-    (testing ":ingest in the suffix signals full-reload fallback"
-      (let [w2 (store/ingest w 'ir.extra "(ns ir.extra)\n")]
-        (is (nil? (store/replay-delta r (last (store/deltas w2)))))))))
+    (testing ":ingest in the suffix replays too — it used to force a reload"
+      ;; The fallback was honest while `:ingest` recorded no per-form sources:
+      ;; the elements table was the only account of what a namespace held. It
+      ;; carries `:sources` and `:comments` now, so a whole new namespace
+      ;; arrives incrementally like everything else — and it HAS to, because
+      ;; the git projection derives each milestone's tree by folding the log.
+      (let [w2 (store/ingest w 'ir.extra "(ns ir.extra)\n\n(defn z [] 1)\n")
+            r2 (store/replay-delta r (last (store/deltas w2)))]
+        (is (some? r2))
+        (is (= (slopp.store.render/render-ns w2 'ir.extra)
+               (slopp.store.render/render-ns r2 'ir.extra)))))))

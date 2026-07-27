@@ -22,6 +22,7 @@
 (defn- log! [& parts]
   (.println System/err ^String (apply str parts)))
 
+;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
 ^:reads (defn- open-conn
   "The store db under `dir`, or NIL when `dir` has no store yet.
 
@@ -79,6 +80,7 @@
                        (filter #(= "form" (:elements/kind %)))
                        (group-by #(symbol (:elements/ns %)))))))
 
+;; --- dependency order (internal requires only) ---
 (defn- internal-requires
   "The in-store namespaces `source`'s ns form requires (external libs dropped)."
   [source all-nses]
@@ -106,6 +108,7 @@
           (recur (conj order ready) (vec (remove #{ready} remaining)) (conj done ready))
           (into order remaining))))))
 
+;; --- load into the CURRENT jvm ---
 (defn- stamp-loaded! [ns-sym]
   ;; mark the ns loaded so a later internal (require ...) is a no-op (there is
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
@@ -198,6 +201,7 @@
         sources))
     {}))
 
+;; --- live mode: track the store, reload changed nses into this jvm ---
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
@@ -354,6 +358,7 @@
                 [dv prev]))]
         (recur dv' prev')))))
 
+;; --- entry ---
 (defn parse-args
   "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...]
                            [--call tool [args]].

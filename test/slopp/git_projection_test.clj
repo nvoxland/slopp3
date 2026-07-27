@@ -1,9 +1,14 @@
 (ns slopp.git-projection-test
-  "P4-m8: git compatibility layer, projection core. Commit points carry a
-  byte-exact rendered :tree in their marker delta; slopp.git projects them
-  lazily and deterministically into an in-memory repo (no on-disk repo) — same
+  "P4-m8: git compatibility layer, projection core. A commit point is a bare
+  marker — slopp.git DERIVES its tree by folding the journal up to it, then
+  projects deterministically into an in-memory repo (no on-disk repo): same
   journal, same shas, every time. Native d<n> ids stay authoritative; git_map
-  pins each marker's sha at first projection."
+  pins each marker's sha at first projection.
+
+  The marker used to carry a byte-exact rendered :tree instead, because
+  comments lived positionally and could not be reconstructed. They are
+  form-owned content now, so folding the log is exact and the snapshot — 39%
+  of this journal — is gone."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -52,13 +57,16 @@
         (String. (.getBytes (.open repo (.getObjectId tw 0))) "UTF-8")))))
 
 (deftest ^:external record-commit-extra-round-trips
-  ;; the schemaless payload carries op-specific extras (P4-m8: :tree, :git-sha)
+  ;; the schemaless payload carries op-specific extras — `:git-sha` on an
+  ;; imported commit is the live one. It used to carry `:tree` too, and the
+  ;; example is deliberately not that any more: a milestone carries no tree.
   (let [st (store/ingest (store/empty-store) 'gp.core seed)
         [st2 d] (store/record-commit st "v1" :agent "alice"
-                                     :extra {:tree {'gp.core seed}
-                                             :git-sha "abc"})]
-    (is (= {'gp.core seed} (:tree d)))
+                                     :extra {:git-sha "abc"
+                                             :author {:name "Alice"
+                                                      :email "a@example.com"}})]
     (is (= "abc" (:git-sha d)))
+    (is (= {:name "Alice" :email "a@example.com"} (:author d)))
     (testing "still a no-content marker for foreign-journal sync"
       (is (some? (store/replay-delta st d))))
     (testing "the db round-trips the payload exactly"
@@ -69,24 +77,37 @@
           (is (= d (first (db/deltas-after conn 0))))
           (finally (.close conn) (rm-rf! dir)))))))
 
-(deftest ^:external commit-point-snapshots-the-rendered-tree
-  (let [sess (external/open!)]
+(deftest ^:external a-milestone-carries-no-tree
+  ;; The inverse of what this used to assert, and the regression it guards is
+  ;; expensive rather than subtle: a milestone once snapshotted every
+  ;; namespace's rendered source into its own delta, which reached 82 MB
+  ;; across 272 markers here — 39% of the journal — and 94% of a 344 MB
+  ;; journal in an earlier round, unnoticed across 239 milestones. Nothing
+  ;; measured it, so nothing complained.
+  ;;
+  ;; The tree is DERIVED now: `git/project-journal!` folds the log. What has
+  ;; to stay true is that deriving it loses nothing, so this checks the
+  ;; projected blob rather than the marker — including the comment, which is
+  ;; the content that could not be reconstructed before and is the whole
+  ;; reason the snapshot existed.
+  (let [dir  (temp-dir)
+        sess (external/open! {:slopp.api/dir dir})]
     (try
       (api/ingest! sess 'gp.core seed)
       (let [r (external/commit-point! sess "v1: f ships" :agent "alice")
             d (->> (store/deltas (:store @sess))
                    (filter #(= (:commit r) (:id %))) first)]
         (is (nil? (:error r)) (pr-str r))
-        (testing "byte-exact rendered source, trivia included"
-          (is (= (query/query-source sess 'gp.core) (get (:tree d) 'gp.core)))
-          (is (str/includes? (get (:tree d) 'gp.core) ";; top-level trivia")))
-        (testing "a retroactive :target marker carries NO tree (backfill path)"
-          (let [r2 (external/commit-point! sess "was here" :agent "alice"
-                                      :target (:target r))
-                d2 (->> (store/deltas (:store @sess))
-                        (filter #(= (:commit r2) (:id %))) first)]
-            (is (nil? (:error r2)) (pr-str r2))
-            (is (nil? (:tree d2))))))
+        (testing "the marker delta carries no rendered source at all"
+          (is (nil? (:tree d))))
+        (testing "and the projection still renders it exactly, comment included"
+          (let [ctx (git/open-ctx! dir)]
+            (try
+              (let [tip (get-in (git/ensure-projected! ctx) [:refs "main"])
+                    src (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj")]
+                (is (= (query/query-source sess 'gp.core) src))
+                (is (str/includes? (str src) ";; top-level trivia")))
+              (finally (git/close-ctx! ctx))))))
       (finally (api/close! sess)))))
 
 (deftest ^:external projection-mints-deterministic-shas
@@ -166,7 +187,18 @@
           (finally (git/close-ctx! ctx))))
       (finally (api/close! sess)))))
 
-(deftest ^:external retroactive-target-is-lossy-but-pinned
+(deftest ^:external retroactive-target-projects-the-state-it-names
+  ;; `commit_point {:target ...}` marks a spot the journal has already walked
+  ;; past. That tree used to be REBUILT by folding content deltas — right
+  ;; state, but trivia-lossy, because comments lived positionally and were in
+  ;; no delta. This test pinned that loss.
+  ;;
+  ;; Comments are form-owned content now, so the fold is exact and the
+  ;; approximation is gone. What is still worth pinning is that a retroactive
+  ;; marker gets the state it NAMES rather than the state at the end of the
+  ;; walk — and it shares its target delta with the earlier milestone, which
+  ;; is the case that broke first: released after its first reader, the
+  ;; retroactive tree silently became the CURRENT one.
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.api/dir dir})]
     (try
@@ -176,18 +208,20 @@
                            :prompt "newer work" :agent "alice")
         (external/commit-point! sess "v2" :agent "alice")
         (external/commit-point! sess "v1.5 was actually here" :agent "alice"
-                           :target (:target r1))
+                                :target (:target r1))
         (let [ctx (git/open-ctx! dir)]
           (try
             (let [tip  (get-in (git/ensure-projected! ctx) [:refs "main"])
                   info (commit-info (:slopp.git/repo ctx) tip)]
               (testing "the retroactive marker is the newest commit (journal order)"
                 (is (str/starts-with? (:message info) "v1.5 was actually here")))
-              (testing "its tree is the OLD state — reconstructed, trivia-lossy"
+              (testing "its tree is the state at its TARGET, not at the walk's end"
                 (let [src (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj")]
                   (is (str/includes? (str src) "(+ x 10)"))
-                  (is (not (str/includes? (str src) "(+ 10 x)")))
-                  (is (not (str/includes? (str src) ";; top-level trivia")))))
+                  (is (not (str/includes? (str src) "(+ 10 x)")))))
+              (testing "and it is exact — the comment survives the reconstruction"
+                (let [src (blob-text (:slopp.git/repo ctx) tip "src/gp/core.clj")]
+                  (is (str/includes? (str src) ";; top-level trivia"))))
               (testing "re-projection returns the PINNED sha"
                 (is (= tip (get-in (git/ensure-projected! ctx) [:refs "main"])))))
             (finally (git/close-ctx! ctx)))))
@@ -209,39 +243,4 @@
               (is (str/includes? (:message (commit-info (:slopp.git/repo ctx) tip))
                                  "Slopp-Status: red")))
             (finally (git/close-ctx! ctx)))))
-      (finally (api/close! sess)))))
-
-(deftest ^:external a-second-milestone-stores-only-what-changed
-  ;; The reconstruction tests pass whether or not the saving happens — a full
-  ;; snapshot resolves correctly too. This is the one that fails if milestones
-  ;; go back to storing all 191 namespaces every time, which was 75% of this
-  ;; store's journal.
-  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]
-    (try
-      (api/ingest! sess 'gp.core seed)
-      (doseq [n '[gp.other gp.third gp.fourth gp.fifth]]
-        (api/ingest! sess n (str "(ns " n ")\n\n;; untouched by the second milestone\n"
-                                 "(defn q [] 9)\n")))
-      (external/commit-point! sess "v1: both ship" :agent "alice")
-      (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
-                         :prompt "flip arg order" :agent "alice")
-      (external/commit-point! sess "v2: one changed" :agent "alice")
-      (let [ms  (->> (store/deltas (:store @sess)) (filter #(= :commit (:op %))))
-            t1  (:tree (first ms))
-            raw (:tree (last ms))
-            t2  (second raw)]
-        (testing "the FIRST milestone is a full snapshot — there is nothing to diff against"
-          (is (map? t1) "a plain {ns source} map, the shape every old marker holds")
-          (is (= #{'gp.core 'gp.other 'gp.third 'gp.fourth 'gp.fifth}
-                 (set (keys t1)))))
-        (testing "the second stores a TAGGED diff naming its base"
-          (is (= :slopp.store.db/tree-diff (first raw)) (pr-str raw))
-          (is (= (:id (first ms)) (:base t2)))
-          (is (= 1 (:depth t2))))
-        (testing "carrying ONLY the namespace that changed"
-          (is (= #{'gp.core} (set (keys (:changed t2))))
-              "gp.other is byte-identical and must not be re-stored")
-          (is (empty? (:removed t2))))
-        (testing "and the diff is dramatically smaller than the snapshot it replaces"
-          (is (< (count (pr-str raw)) (count (pr-str t1))))))
       (finally (api/close! sess)))))

@@ -75,6 +75,7 @@
     (assert (= 1 (count nodes)) "rename: form no longer parses to one node")
     (first nodes)))
 
+;; --- extract (Phase-3 op #2) ---
 (defn- node-span
   "Exclusive end position of a node printed as `s` starting at [row col]."
   [[row col] s]

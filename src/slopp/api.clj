@@ -2774,6 +2774,16 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                       ")\n")
                  :agent agent)))))
 
+;; --- query.* (read) ---
+
+;; --- verification (D1 tracing + D5 restart-as-diagnostic) ---
+
+;; --- edit.* / runtime ---
+
+;; ---------------------------------------------------------------------------
+;; External dependencies (Tier 1) — the per-store manifest
+
+;; --- Phase 4 m3: branches within one repo -------------------------------
 (defn module-tier!
   "Declare a module's purity TIER — the functional-core gate's dial (D9):
   :pure (referentially transparent), :internal (may mutate IN-PROCESS state

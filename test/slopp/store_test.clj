@@ -462,3 +462,104 @@
     (testing "and survives rendering"
       (is (= "(ns d.core)\n\n#_(defn old [] 1)\n(defn fresh [] 2)\n"
              (render/render-ns s 'd.core))))))
+
+(deftest replay-covers-ingest-and-move
+  ;; `replay-delta` returning nil means "I cannot do this — reload everything".
+  ;; That was honest while the log was incomplete: `:ingest` predated
+  ;; `:sources`/`:comments`, so the elements table was the only record of what
+  ;; a namespace contained. It is not honest now, and the cost has changed:
+  ;; a nil used to mean a slow reload, and it is about to mean a milestone
+  ;; whose tree cannot be reconstructed — which is the whole basis for
+  ;; deleting the stored snapshot.
+  (let [base (store/empty-store)
+        s1   (store/ingest base 'r.core
+                           "(ns r.core)\n\n;; the helper\n(defn a [] 1)\n\n(defn b [] 2)\n")
+        d1   (last (store/deltas s1))]
+    (testing ":ingest replays from the log alone — order, sources and comments"
+      (let [back (store/replay-delta base d1)]
+        (is (some? back) "ingest must not force a reload")
+        (is (= (render/render-ns s1 'r.core) (render/render-ns back 'r.core)))))
+    (testing ":move replays to the same order the live write produced"
+      (let [[s2 d2] (store/move-form s1 'r.core 'b 'a)
+            back    (store/replay-delta s1 d2)]
+        (is (some? back) "move must not force a reload")
+        (is (= (render/render-ns s2 'r.core) (render/render-ns back 'r.core)))
+        (is (= ['r.core 'b 'a]
+               (mapv :name (get-in back [:namespaces 'r.core :elements]))))))))
+
+(deftest replay-covers-the-changeset-ops
+  ;; Four ops forced a full reload for no reason at all. Every one of them is
+  ;; `apply-changeset`, which rewrites nodes BY FORM-ID wherever they live —
+  ;; exactly what `:replace` already did. The relocation people assume these
+  ;; carry rides separate `:add`/`:delete`/`:ingest` deltas, which always
+  ;; replayed; only `:rename-ns` does something extra, and it is one rekey.
+  ;;
+  ;; Worth pinning rather than reasoning about: the delta names a SOURCE
+  ;; namespace (`move-forms` records `from-ns`), so reading the shape and
+  ;; guessing "these forms now live here" builds a plausible, wrong replay.
+  (let [s0  (store/ingest (store/empty-store) 'cs.core "(ns cs.core)\n\n(defn a [] 1)\n")
+        fid (:id (first (filter #(= 'a (:name %))
+                                (get-in s0 [:namespaces 'cs.core :elements]))))]
+    (testing "move-forms / extract-ns / module-extract are rewrites, like :replace"
+      (doseq [op [:move-forms :extract-ns :module-extract]]
+        (let [[s1 d] (store/apply-changeset s0 op 'cs.core
+                                            {fid (p/parse-string "(defn a [] 99)")})
+              back   (store/replay-delta s0 d)]
+          (is (some? back) (str op " must not force a reload"))
+          (is (= (render/render-ns s1 'cs.core) (render/render-ns back 'cs.core))))))
+    (testing ":rename-ns rewrites AND rekeys the namespace"
+      (let [[s1 d] (store/apply-changeset s0 :rename-ns 'cs.core
+                                          {fid (p/parse-string "(defn a [] 2)")}
+                                          :extra {:old 'cs.core :new 'cs.moved})
+            s2     (update s1 :namespaces
+                           (fn [m] (-> m (dissoc 'cs.core) (assoc 'cs.moved (get m 'cs.core)))))
+            back   (store/replay-delta s0 d)]
+        (is (some? back) ":rename-ns must not force a reload")
+        (is (nil? (get-in back [:namespaces 'cs.core])) "the old name is gone")
+        (is (= (render/render-ns s2 'cs.moved) (render/render-ns back 'cs.moved)))))))
+
+(deftest folding-the-journal-reproduces-the-store
+  ;; THE invariant. Once the git projection derives each milestone's tree by
+  ;; folding the log, "the journal is a complete account" stops being a design
+  ;; slogan and becomes the thing a push depends on. An op that does not
+  ;; replay is a milestone whose bytes cannot be reconstructed.
+  ;;
+  ;; Run against slopp's own 13,000-delta journal while the stored `:tree`
+  ;; snapshots still existed — the one chance to check a reconstruction
+  ;; against an independent record of the same thing — it found the gap this
+  ;; suite could not: 30 comments that lived in the elements table and in NO
+  ;; delta, because `fold-comments` migrates at LOAD and a load writes
+  ;; nothing. Every test was green; the journal was still incomplete.
+  ;;
+  ;; This is the synthetic standing version. It is weaker than that check by
+  ;; construction — it only covers the ops it exercises — so a NEW op earns
+  ;; its place here as well as in `replay-delta`.
+  (let [s0     (store/ingest (store/empty-store) 'j.core
+                             "(ns j.core)\n\n;; the seed\n(defn a [] 1)\n\n(defn b [] 2)\n")
+        [s1 _] (store/append-form s0 'j.core (p/parse-string "(defn c [] 3)"))
+        [s2 _] (store/append-form s1 'j.core (p/parse-string "(defn d [] 4)") :before 'b)
+        fid    (:id (first (filter #(= 'a (:name %))
+                                   (get-in s2 [:namespaces 'j.core :elements]))))
+        [s3 _] (store/apply-changeset s2 :replace 'j.core
+                                      {fid (p/parse-string "(defn a [] 100)")})
+        [s4 _] (store/set-comment s3 'j.core 'c ";; added later")
+        [s5 _] (store/move-form s4 'j.core 'c 'a)
+        [s6 _] (store/remove-form s5 'j.core 'b)
+        [s7 _] (store/set-comment s6 'j.core 'a "")
+        s8     (store/ingest s7 'j.other "(ns j.other)\n\n(defn z [] 9)\n")
+        folded (reduce (fn [s d] (when s (store/replay-delta s d)))
+                       (store/empty-store)
+                       (store/deltas s8))]
+    (testing "every delta replays — a nil here is an unreconstructible milestone"
+      (is (some? folded)))
+    (testing "and the result renders identically, namespace for namespace"
+      (is (= (set (keys (:namespaces s8))) (set (keys (:namespaces folded)))))
+      (doseq [n (keys (:namespaces s8))]
+        (is (= (render/render-ns s8 n) (render/render-ns folded n))
+            (str n " does not survive a journal round trip"))))
+    (testing "including the comment lifecycle — set, carried, and cleared"
+      (is (= ";; added later"
+             (:comment (first (filter #(= 'c (:name %))
+                                      (get-in folded [:namespaces 'j.core :elements]))))))
+      (is (nil? (:comment (first (filter #(= 'a (:name %))
+                                         (get-in folded [:namespaces 'j.core :elements])))))))))
