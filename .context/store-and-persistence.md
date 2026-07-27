@@ -179,9 +179,18 @@ sites derive from it:
   `query-lineage` should match it (it matches `:form-id` and `:form-ids`),
   and register the op in `slopp.store.fields` (a marker op joins `markers`,
   else foreign-journal sync falls through to a full reload and a merge
-  REFUSES it). `:commit` (P4-m7
-  milestones) is a marker — since P4-m8 its payload also carries `:tree`
-  (byte-exact rendered {ns source} snapshot) and, on imports, `:git-sha`.
+  REFUSES it). `:commit` (P4-m7 milestones) is a marker carrying only its
+  description, target and status — plus `:git-sha` on imports.
+- **`replay-delta` is TOTAL, and that is load-bearing rather than tidy.** A nil
+  return means "the journal is not enough, reload from the elements table",
+  and the git projection now derives each milestone's tree by folding the log
+  — so an op that cannot replay is a milestone whose bytes cannot be
+  reconstructed. Six ops used to return nil (`:ingest`, `:move`, `:rename-ns`,
+  `:move-forms`, `:extract-ns`, `:module-extract`); all six carry what they
+  need and now replay. The four `apply-changeset` ops are pure node rewrites
+  BY FORM-ID — the relocation people assume they carry rides separate
+  `:add`/`:delete`/`:ingest` deltas, and the delta names the SOURCE namespace,
+  so "these forms now live in `:ns`" is a plausible and wrong reading.
 - **External dependency manifest (P4-deps):** `:deps-add`/`:deps-remove` are
   STATE-carrying deltas (not pure markers) — `replay-delta` assoc/dissoc's
   `(:deps store)` (lib→coord) so foreign-sync reconstructs the manifest
@@ -204,11 +213,28 @@ sites derive from it:
   needs an FS to resolve file-path remotes); the whole projection is
   **generated from the journal on demand**. `store.db` is the source of truth;
   the git repo is a pure, rebuildable cache.
-- **Everything served is a pure function of the journal.** Each `:commit` delta
-  carries a byte-exact `:tree` snapshot and `insert-commit!` is deterministic, so
-  a fresh in-memory repo mints IDENTICAL shas — `project-journal!` inserts a
-  commit whenever its object isn't already live in the repo (insert-if-absent,
-  keyed on the `git_map` pin).
+- **Everything served is a pure function of the journal, and now literally
+  so.** `project-journal!` folds the log as it walks, so reaching a `:commit`
+  marker means holding the store as it stood there, and the tree is `render-ns`
+  over it. `insert-commit!` is deterministic, so a fresh in-memory repo mints
+  identical shas — `project-journal!` inserts a commit whenever its object
+  isn't already live in the repo (insert-if-absent, keyed on the `git_map`
+  pin).
+  - Each marker used to carry a byte-exact `:tree` snapshot instead: 82 MB
+    across 272 markers (39% of the journal), and 94% of a 344 MB journal in an
+    earlier round. It existed because comments lived positionally in the
+    elements table — CURRENT state only — so a past milestone's bytes were
+    genuinely unreconstructible. Once comments became form-owned content the
+    log was complete and the snapshot had no job.
+  - **ONE pass matters.** Folding from empty per marker is quadratic in the
+    journal; threading the store through the existing walk is not.
+  - A marker normally targets the delta immediately before it, which is exactly
+    where the fold stands on arrival. `commit_point {:target ...}` can name an
+    EARLIER delta, so those positions are rendered as the walk passes them and
+    held. **A held tree is not released at its first reader** — a milestone's
+    own target is the delta before it, which is what an earlier retroactive
+    marker also points at, and dropping it there left the retroactive commit
+    silently projecting the CURRENT state.
 - `git_map` (main store.db) pins each `:commit` delta → sha at first projection,
   keyed `(delta_id, fingerprint)` (fingerprint = SHA-256 of `[id at description
   target]`); query surfaces read it, and it's the insert-skip key above.

@@ -2556,3 +2556,52 @@ Trailing content at the end of a namespace has no form to own it. It is kept
 as an inert `:sep` rather than destroyed, and is not rendered; a namespace-level
 `:comment` field is the suggested home. Zero cases in this store. Blank-line
 grouping *within* a namespace is deliberately lost.
+
+### Step 4 (2026-07-27) — the snapshot goes, and the journal has to earn it
+
+Deleting the tree snapshot was not a deletion. `project-journal!` needs a tree
+per milestone, and the only honest replacement is to DERIVE it — which means
+the journal has to actually be a complete account rather than be described as
+one. Two things had to become true first.
+
+**`replay-delta` is TOTAL.** Six ops returned nil, meaning "reload from the
+elements table": `:ingest`, `:move`, `:rename-ns`, `:move-forms`,
+`:extract-ns`, `:module-extract` — 861 deltas here. A nil used to cost a slow
+reload; it now costs a milestone whose bytes cannot be reconstructed. All six
+already carried what they needed. Four are `apply-changeset`, which rewrites
+nodes BY FORM-ID wherever they live, so they collapse into the `:replace`
+case — the relocation people assume they carry rides separate
+`:add`/`:delete`/`:ingest` deltas. Note the trap: a refactor's delta names the
+SOURCE namespace, so inferring "these forms now live in `:ns`" from the shape
+gives a plausible, wrong replay. Read the writer.
+
+**`project-journal!` folds the log as it walks**, one pass — per-marker folding
+is quadratic in the journal. A marker normally targets the delta before it,
+which is where the fold stands on arrival; a retroactive `:target` is rendered
+as the walk passes it and HELD. A held tree must survive its first reader:
+a milestone's own target is the delta before it, which is what an earlier
+retroactive marker also points at, and releasing it there left the retroactive
+commit projecting the current state instead.
+
+**Result:** 87,154,688 bytes reclaimed, `store.db` 230 MB → 143 MB (537 MB at
+the start of this arc). Gone: `commit-point!`'s capture, `db/tree-diff` /
+`tree-apply` / `tree-at` / `delta-tree` / `max-tree-chain`, `git/backfill-tree`
+and its lossy-reconstruction problem, the `tree` column, `:tree-bytes`.
+
+**Accepted consequence:** historic milestones re-render, so their shas change
+(the trial projection moved the local tip from `9880a5c` to `30b60f0`). That is
+the settled trade — `git_map` records what was already pushed, and git is an
+interface between slopp repos rather than something slopp reproduces. The next
+push rewrites that branch's history once.
+
+**The method, which is the part worth keeping.** The 272 stored trees were an
+independent record of the same thing the fold computes — usable exactly once,
+before deletion. Checking against all of them (not a sample) found what the
+whole green suite could not: **zero `:comment` deltas existed in the entire
+journal**, because `fold-comments` migrates at LOAD and a load writes nothing.
+All 30 comments lived only in the elements table. Deleting the trees at that
+moment would have silently dropped every comment from every future git
+projection — the precise failure this design was supposed to make impossible.
+Run the check that can only be run once BEFORE you delete what makes it
+possible, and run it over the whole population: a sample would have found the
+renderer drift and missed this entirely.
