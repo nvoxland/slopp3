@@ -31,8 +31,12 @@ operating model, not a special multi-agent mode.
 ## Reading source
 
 There are no `.clj` files, so reads go through the VFS, which renders a
-namespace's forms back to lossless source (comments and whitespace included)
-and memoizes the result.
+namespace's forms back to source and memoizes the result. A namespace IS an
+ordered list of forms: each form carries its own comment, and the blank line
+between forms is supplied by the renderer rather than stored. So the source
+you read is normalized the way `gofmt` normalizes -- incoming spacing is not
+preserved, and there is nothing in a namespace that the delta log does not
+record.
 
 | Question | Call |
 |---|---|

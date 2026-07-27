@@ -2,10 +2,23 @@
 
 ## In-memory model (`slopp.store` — pure functions over values)
 
-- A namespace = ordered vector of **elements**:
-  `{:id :kind :form :name :names :node}` for semantic forms, `{:kind :sep :node}`
-  for whitespace/comment trivia kept only so rendering is lossless. `:node` is a
-  rewrite-clj CST node.
+- A namespace = ordered vector of **forms**:
+  `{:id :kind :form :name :names :node}`, plus an optional `:comment` — the
+  block rendered directly above that form. `:node` is a rewrite-clj CST node.
+  That is the whole model.
+- **There used to be a second element kind, `{:kind :sep :node}`** — whitespace,
+  blank lines and comments, positional and idless, kept so rendering could be
+  lossless. Lumping those together forced byte preservation: a comment stored
+  positionally is content the delta log never recorded, which is why a
+  milestone had to snapshot every namespace's bytes to keep it. Splitting them
+  dissolved the requirement. **The space between forms is RENDERING** —
+  `render-ns` supplies one blank line, nothing stores it — and **a comment is
+  CONTENT owned by a form**, travelling in that form's delta like anything
+  else. `store/fold-comments` is the single place the old shape becomes the
+  new one; it runs on `ingest` AND on db load, so any store migrates itself
+  the first time it is opened. A `#_` discard folds too: it is code, and
+  dropping it silently would be the one genuinely bad outcome.
+  Rationale and measurements: `ideas/done/whitespace-is-rendering.md`.
 - **A form defines a SET of names (`:names`, via `form-symbols`) — #128.**
   `:name` (via `form-symbol` + `def-heads`) is the PRIMARY name, for labels;
   `:names` is what addressing uses. They differ for most def forms, and the old
@@ -102,23 +115,36 @@
 
 ## Rendering (`slopp.store.render`)
 
-- `render-ns` = concat of element node strings — byte-exact round trip with
-  ingestion (tested over a corpus; keep it that way).
-- `element-offsets` = each element's [row col] start within the rendered
-  source. This is the bridge from clj-kondo positions to store elements —
-  rename correctness depends on it.
-- **Appended forms are blank-line separated** (`store/place-form`): a tail
-  append or a `:before` insert places the new form with one blank line between
-  it and its neighbours (the top-level convention), absorbing trailing
-  whitespace-only trivia first so the gap is neither doubled nor dropped (a
-  trailing COMMENT is preserved). INGESTED seps are untouched — only NEW forms
-  follow the convention, so existing projections never reflow. `place-form` is
-  SHARED by `append-form` (live write) and `replay-delta`'s `:add` (journal
-  replay); the two MUST agree or a reopen / foreign-sync would render
-  differently from the write that produced it
-  (`multiproc-test/incremental-sync-replays-the-suffix-exactly` is the guard).
-  Before this, appends used a single `\n` — the dogfooding papercut where added
-  forms jammed together (`ideas/git-bridge-friction.md` 1b).
+- `render-ns` = forms joined by ONE BLANK LINE, each preceded by its own
+  `:comment` if it has one, one trailing newline. It does not round-trip
+  ingestion byte-for-byte and is not supposed to: it NORMALIZES, the way
+  `gofmt` does, which is what makes a namespace's bytes a pure function of the
+  store rather than of whoever typed them.
+- **There are FOUR implementations of that one rule**, and they have each
+  disagreed at least once:
+  `store.render/render-ns` (the reference), `store.db/rendered-sources` (rows →
+  the git wip ref), `slopp.boot/store-sources` (the kernel — cannot call the
+  others, since its whole property is booting a store with no slopp code
+  loaded), and `element-offsets` below, which must SIMULATE the rendering
+  rather than reproduce it. Change one and check all four; the compiler will
+  not tell you.
+- `element-offsets` = each form's [row col] start within the rendered source.
+  This is the bridge from clj-kondo positions to store elements — rename
+  correctness depends on it. **It fails silently**: when it went on assuming
+  concatenation after the renderer started synthesizing, `change_signature` and
+  `rename` returned clean plans containing NO call sites.
+- **Placement is just position** (`store/place-form`): a tail append or a
+  `:before` insert is a plain vector insert, because the blank line comes from
+  the renderer. It stays SHARED by `append-form` (live write) and
+  `replay-delta`'s `:add` (journal replay); the two MUST agree on POSITION or a
+  reopen / foreign-sync would render differently from the write that produced
+  it (`multiproc-test/incremental-sync-replays-the-suffix-exactly` is the
+  guard). This used to also juggle whitespace — absorbing trailing trivia,
+  preserving a trailing comment, choosing one newline or two — and got it
+  wrong: `slopp.api.session` alone carried 33 single-newline separators against
+  11 blank-line ones, the dogfooding papercut where added forms jammed together
+  (`ideas/git-bridge-friction.md` 1b). One rule in one place cost 345 bytes
+  across the whole store and removed the class.
 
 ## The fold-field registry (`slopp.store.fields`, D-fold-field-registry)
 

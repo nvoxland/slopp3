@@ -453,11 +453,12 @@ executed — O4's first real verification). Native remains apps-only; slopp
 itself is uberjar-only. boot's --live watcher is a daemon thread (a live
 server used to hang its JVM after stdin EOF).
 
-E4 ✅ **Trivia and string content are addressable.** `edit_trivia` replaces
-the ENTIRE comment/blank-line run before a named form (or the ns tail) —
-`:trivia` delta anchored on the form-id, foreign replay converges, forms
-untouched by construction (no image work, like move). Text is normalized to
-start/end with a newline; empty = delete; code forms refused. And
+E4 ✅ **Trivia and string content are addressable.** *(Revised 2026-07-27 —
+see D-comments-are-content below; the trivia half of this is superseded.)*
+`edit_trivia` replaced the ENTIRE comment/blank-line run before a named form
+(or the ns tail) — `:trivia` delta anchored on the form-id, foreign replay
+converges, forms untouched by construction (no image work, like move). Text
+normalized to start/end with a newline; empty = delete; code forms refused. And
 `edit_subform {text: true}` does RAW-TEXT replace inside a form (unique
 occurrence, result must reparse to ONE form) — docstrings and string
 literals, riding the full gated replace pipeline. Live-fired: the stale
@@ -2365,3 +2366,193 @@ Deferred: extending client-route integrity to the client-side route table;
 `:web/spa` is built but nothing declares it, because the reviewer UI has real
 server routes for every client route and is progressively enhanced rather than
 a hard SPA. Remaining frictions: `ideas/spa-wave-frictions.md`.
+
+## D-module-view (2026-07-26) — the Code screen is a module map, and the diagram is DATA
+
+The Code section opened on a flat alphabetical list of every namespace — on
+this store 186 rows, **103 of them tests**. That reads as generated API docs,
+not as a code explorer, and it contradicts slopp's own high-to-low stance:
+modules → namespaces → forms. User ask. What was settled:
+
+### The picture is computed here and rendered as hiccup SVG
+
+**Rejected: Excalidraw-the-library**, after measuring it. 0.18 removed UMD
+(ESM-only, React 19 peer, and React 19 removed UMD too); `exportToSvg` from the
+main package is NOT React-free — it re-exports from a chunk with a top-level
+`import … from "react"`; and `@excalidraw/utils`, which genuinely is React-free,
+is **19.6 MB raw / 14 MB gzipped** because it inlines 230 base64 WOFF2 font
+subsets. Decisive on its own: **Excalidraw does no layout at all** — every
+x/y/w/h is supplied by the caller, which is why
+`@excalidraw/mermaid-to-excalidraw` exists (Mermaid computes positions via
+dagre/ELK and hands Excalidraw finished coordinates).
+
+**Rejected: mermaid.** It is a document-embedding tool: a string in, opaque SVG
+out. That forfeits the three properties D-spa is built on — views as `:cljc`
+pure fns `=`-testable in-image at ~0.5 ms, Replicant owning its subtree, and
+interaction as data. Hover-to-dim or click-to-select would mean mutating a
+foreign library's output DOM inside a Replicant tree.
+
+**Chosen:** `slopp.ui.graph` (`:cljc`, `:pure`) computes the geometry;
+`slopp.ui.views/module-graph` emits SVG as hiccup. The seam is a data
+structure, so nodes are real elements carrying `data-module`, styling is class
+names the stylesheet owns, and the whole diagram is an ordinary in-image test
+instead of a screenshot. The hand-drawn look, if wanted, is **rough.js** —
+27.7 KB raw / 8.9 KB gzip, a plain IIFE setting `window.rough`, no DOM needed
+for the generator, deterministic given a nonzero seed (MINSTD). It is also
+what Excalidraw itself uses; the `seed` field on every Excalidraw element
+exists to seed it.
+
+### Substrate banding: the honest way to draw fewer edges
+
+Auto-layout draws every edge, and 33 arrows over 14 boxes is busy no matter how
+good the router is. `slopp.ui.graph/substrate` computes a FOUNDATION band —
+sinks that at least two modules depend on, plus one level of hub promotion
+(fan-in ≥ a quarter of the graph, all of whose own deps are banded sinks). On
+this store that is `boot`/`cache`/`web`/`store`, and it removes 16 of 33 edges.
+
+Two calibration decisions, both measured against this store and both load-bearing
+for a graph that is NOT this store:
+
+- **Promotion is one level deep.** Unbounded, it cascades through `store` into
+  `git` and `image`, which are components by any reading.
+- **A sink with ONE dependent is not foundation.** `rt` stays an ordinary node
+  because its single edge from `image` is the informative kind; banding it
+  would move it away from its only consumer.
+
+A graph with no sinks yields the empty set and every edge is drawn. **That
+degradation is the point** — this view ships to stores that are cyclic and
+lopsided, and "there is no foundation to name" is the honest picture. Cycles
+are surfaced as a CALLOUT above the diagram, not left to be spotted in it: on a
+tangled store that is the most useful sentence on the screen.
+
+### Layout is hand-rolled, with a stated trigger to stop
+
+`store/module-layers` supplies SCC-condensed topological layers, so only
+within-layer ordering and coordinates are written here. **Recorded honestly:
+there is NO crossing reduction, and edge routing is a bow heuristic** (a
+sideways offset scaled by layer span) rather than dummy-node routing. Both are
+invisible on this store because no layer exceeds two nodes — the diagram looking
+good here is evidence slopp's architecture is tidy, NOT that the layout is.
+
+**The trigger:** point it at a genuinely messy store (many modules, wide layers,
+cycles). If it is a hairball, adopt ELK rather than growing the heuristic. The
+seam makes that contained — positions are data, so only the geometry stage
+changes, not `substrate`, the view, the contract, the export, or any test.
+Costs, already measured: elkjs is client-side and async, which loses the
+in-image property; Eclipse ELK on the JVM keeps it but drags EMF + Guava onto
+the KERNEL classpath (every `:jvm`/`:cljc` store ns must resolve there) and
+forces a jar rebuild.
+
+### Tests are counted, never listed — and the count is by REACH
+
+Test namespaces are gone from the nav. They fold into their subject's module,
+so listing them puts two things at one rung that are not peers. They resurface
+on the namespace page as `:tested-by`, linked, with an explicit "no tests"
+rather than silence — silence reads the same as a page that does not show
+coverage.
+
+**The count is by reach, not by folding**, and the bug that forced it is worth
+keeping: folding reported `slopp.git` as having NO tests, because its three test
+namespaces are top-level (`slopp.git-projection-test`) and fold into modules of
+their own. A zero is meant to be a finding; one wrong zero devalues every zero
+on the screen. Direct requires only — an unbounded closure on a real store
+reaches most of the suite and distinguishes nothing, the same reason
+`covered-by` bounds its static reach.
+
+### Export is SVG, not `.excalidraw`
+
+Getting the diagram OUT is a real goal (user). `GET /api/modules.svg` renders
+the SAME view function the screen does — a second drawing routine is how the
+two quietly diverge — and INLINES the stylesheet, because an SVG carrying class
+names and no CSS opens as black rectangles, which reads as a broken export.
+
+`.excalidraw` was considered and dropped. Its advantage over SVG is real objects
+with bound arrows that stay attached when a node moves — but bindings are the
+fiddliest part of the schema (`startBinding`/`endBinding` with `focus`/`gap`,
+and master has already migrated to `mode: "inside"|"orbit"` + `fixedPoint` while
+published 0.18.1 has not), so the version we would realistically ship is boxes
+plus UNBOUND arrows: barely better than SVG for editing. That would mean
+tracking a 25-field element schema we do not consume, with no library to run a
+contract suite against — the unverified-fake problem, volunteered for.
+
+### Still open
+
+The external-JS dependency capability (`js_dep`), which D-web-cljs already
+defers as "the npm/JS dependency world (its own later record)". Scoped in
+`ideas/external-js-dependencies.md`.
+
+## D-comments-are-content (2026-07-27) — whitespace is rendering; the form is the only unit
+
+Came out of asking why a milestone needs a byte-exact tree snapshot, which
+was the wrong question. The right one is why slopp stored whitespace at all.
+
+### Byte-exactness was never a real requirement
+
+`byte-exact` appeared in three places in the store and they were all one
+decision: `commit-point!`'s tree snapshot. The reasoning was that a git sha
+hashes bytes, so the projection must be a pure function of the marker delta.
+True, and irrelevant — **`git_map` already records each milestone's sha.** You
+do not recompute an answer you wrote down.
+
+Settled with the user: **git is an EXTERNAL INTERFACE between slopp repos, not
+something slopp reproduces.** Push a milestone, record its sha, use it as the
+parent next time; pull and map incoming shas back onto slopp commits. Nothing
+needs slopp to re-derive a historic tree. The only surviving requirement is
+that rendering be *stable* — same store, same output — which is the contract
+`gofmt` has, and slopp already normalizes forms on write, so it already did
+not preserve incoming formatting.
+
+### So: an element is a form
+
+A namespace was an ordered vector of `:form` (addressable, has an id) and
+`:sep` (whitespace, blank lines, comments — positional, idless). Lumping
+whitespace and comments together as "trivia" is what forced byte
+preservation: a comment stored positionally is content the delta log never
+recorded, so the only way to keep it across time was to snapshot bytes.
+
+Split them and the requirement dissolves:
+
+- **Whitespace between forms is RENDERING.** `render-ns` joins forms with one
+  blank line. Never stored, never diffed, never merged.
+- **Comments are CONTENT**, owned by the form they describe, carried in that
+  form's delta (`:comment` op, `:comments` on `:ingest`) like anything else.
+- **`#_` discards fold like comments.** A discard is code; dropping it
+  silently would be the one genuinely bad outcome.
+
+Nothing in a namespace is then outside the journal, which makes a commit point
+DERIVABLE and the snapshot jobless.
+
+### What it cost and what it bought
+
+Measured on this store: 4,509 element rows of which **2,300 were seps**, 97%
+of them the literal `"\n\n"`; all sep bytes 7,780; 67 rows carried a comment,
+3,893 bytes. **82 MB of tree snapshots existed to preserve 7.8 KB of
+information that was not in the journal.** Normalizing every namespace to one
+rule cost **+345 bytes** across all 191 — `place-form` had been giving a
+tail-appended form a single newline, so most forms rendered jammed together
+(`slopp.api.session` alone: 33 single-newline separators against 11
+blank-line ones).
+
+Deleted: `edit_trivia` and the `:trivia` op (superseding E4's trivia half),
+`store/replace-trivia`, `place-form`'s whitespace juggling, the trailing-sep
+handling in `remove-form`/`move-form`/`:delete` replay, and every sep row.
+Still to delete (`ideas/whitespace-is-rendering.md` step 4): the tree
+snapshot, the `tree-diff`/`tree-apply`/`tree-at` chain built the day before
+this, `backfill-tree`, and the `tree` column.
+
+### The rendering rule now has FOUR implementations
+
+`store.render/render-ns` (reference), `store.db/rendered-sources` (the git wip
+ref), `slopp.boot/store-sources` (the kernel — architecturally forbidden to
+call the others, and the module gate enforces it), and `render/element-offsets`
+which must SIMULATE the rendering to map clj-kondo positions back to forms.
+Three of the four were found disagreeing, none by reasoning and all by a red
+suite; `element-offsets` fails SILENTLY, returning clean `change_signature`
+and `rename` plans with no call sites in them. Change one, check all four.
+
+### Open
+
+Trailing content at the end of a namespace has no form to own it. It is kept
+as an inert `:sep` rather than destroyed, and is not rendered; a namespace-level
+`:comment` field is the suggested home. Zero cases in this store. Blank-line
+grouping *within* a namespace is deliberately lost.

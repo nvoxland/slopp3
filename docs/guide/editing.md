@@ -21,7 +21,7 @@ brief.
 | Pull a helper out | `edit_extract` |
 | Move forms to another namespace | `edit_move_forms` |
 | Reorder, delete, revert | `edit_move` / `edit_delete_form` / `edit_revert` |
-| Comments between forms | `edit_trivia` |
+| Comment on a form | `edit_comment` |
 | Change a form's name metadata | `edit_subform {text: true}` on the `defn` head |
 
 Never rename by editing call sites, and never hand-edit an `ns` form.

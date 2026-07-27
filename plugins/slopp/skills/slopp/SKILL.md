@@ -181,7 +181,7 @@ measurably bleed tokens.
 | Extract helper / move forms to another ns | `edit_extract` / `edit_move_forms` (new OR existing target; callers everywhere rewritten; `export: true` for a deep target with outside callers). **Propose the cluster you want and let it close the set for you** — it refuses a two-way split and NAMES the forms that would leave a cycle ("the moved set calls [x y] (staying)"). Add those and retry. Guessing the seam leaves a cycle; the refusal IS the analysis. Read `:export-not-landed` on the result: the move checks its own POSTCONDITION against the committed store, so a planned export the store did not actually get is reported rather than discovered later |
 | Regroup whole namespaces under one prefix | `module_extract {namespaces to}` — the MODULE-grain move, for a namespace that grew into its own component or a set that wants one owning prefix. Each named ns takes its subtree and `-test` sibling. **`dry-run` first, always**: going from two segments to three makes a namespace package-private, so every outside caller breaks at once, and the plan is the only place you see WHICH vars must be hoisted and WHICH CALLERS force each. The write order is the design — hoist (`^:export`), then rename, then declare the edges the moved store actually references — so no intermediate state is one the gate would refuse. Refuses a regroup that would leave a production cycle; a `-test` back-edge is not one |
 | Reorder / delete / undo | `edit_move` / `edit_delete_form` / `edit_revert` |
-| Comments between forms | `edit_trivia` |
+| Comment on a form | `edit_comment {ns name text}` — the block rendered above it. A comment BELONGS to a form; there is no such thing as a comment between forms |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
 | Retire a declaration | `remove: true` on `module_dep`, `module_purity`, `module_platform` — all three. Retiring is not the same as declaring the permissive value: `:external`/`:jvm` is a CLAIM, absence is no claim |
@@ -609,6 +609,22 @@ Cypress/Playwright territory someday).
   store HAS client code. The compiler backend is a per-project config
   (`config_file {path "client" key "compiler"}`, default `:clojurescript`) —
   cherry/squint are future backends, same source.
+- **An external JS library goes through `js_dep`, and declaring IS vendoring.**
+  `js_dep {name, version, format, global, file, source}` records the library
+  AND stores its bytes in one act — `:source` is a path to bytes you already
+  fetched, because there is no npm client in the loop. slopp writes a
+  `deps.cljs` at compile time, so `(:require [roughjs :as rough])` resolves
+  through `:global-exports` to the browser global. `format` is `:iife`/`:umd`
+  (concatenated into the bundle) or `:esm` (import map). The bytes are an
+  ARTIFACT — sha and a `{:kind :download :npm …}` recipe in the journal, bytes
+  on disk — so a vendored library never bloats your delta log.
+- **Test the library boundary by testing the DATA, not a fake of it.** A
+  hand-written fake needs a contract suite run against the real thing to stay
+  honest, and slopp's oracle cannot run JS — so the fake could never be
+  checked. Keep the analysis and the emitted structure in `.cljc` where the
+  oracle verifies them at full speed, and let the `.cljs` adapter be thin
+  enough that reading it is the review. `compile_client` is the only oracle
+  the JS side gets; that is a reason to put almost nothing there.
 - **Read platforms at a glance** with `query_depends {modules true}` — a
   `:platforms` map names the `:cljs`/`:cljc` namespaces (undeclared = `:jvm`).
 - **Share real logic AND libraries in `.cljc`** — a malli schema in `.cljc`
@@ -811,7 +827,7 @@ query_rules query_rule_telemetry query_capabilities query_routes
 query_macroexpand query_branches query_commits
 query_git query_detail review_scan · ns_create
 ns_add_require ns_remove_require ns_rename ns_delete · edit_add_form
-edit_replace_form edit_delete_form edit_subform edit_trivia
+edit_replace_form edit_delete_form edit_subform edit_comment
 edit_rename change_signature rename_sweep edit_requalify edit_extract
 edit_move_forms module_extract edit_move edit_revert undo episode_revert cleanup ·
 branch_create branch_switch
@@ -819,4 +835,4 @@ branch_merge branch_delete merge_from · deps_add deps_remove deps_list
 deps_pure · module_dep module_purity · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
 test_run draft_test done full_check commit_point restart build help ·
-ui_serve compile_client generate_client store_health
+ui_serve compile_client generate_client js_dep store_health

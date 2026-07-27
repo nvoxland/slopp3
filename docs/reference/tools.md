@@ -104,7 +104,7 @@ guide](../guide/web/index.md).
 | `edit_subform {ns form source}` | A change inside a big form, by `match`, `text: true`, or `where: {key value}`. |
 | `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). |
 | `edit_move {ns name before}` | Reorder within a namespace. |
-| `edit_trivia {ns text}` | Replace the comment and blank-line run before a form. |
+| `edit_comment {ns name text}` | Set (or clear) the comment block rendered above a form. The comment is owned by the form, so it travels with it. |
 | `edit_revert {ns name to?}` | Revert one form to an earlier version. |
 | `change_signature {ns name source calls}` | New `defn` plus a `$1..$9` call-site template, as one intent. |
 | `edit_rename {ns old new}` | Rename a form and all its references, shadow-safe. |
@@ -125,8 +125,8 @@ guide](../guide/web/index.md).
 | `commit_point {description}` | Record a milestone. Green-gated; `force: true` records a red honestly. `target` marks an earlier spot. |
 | `test_run` | Spot-check specific tests. `{external true}` for the external tier, `{all true}` for the whole in-image suite. |
 | `draft_test {ns name code?}` | Draft a `deftest` from observed calls. Writes nothing. |
-| `build {dir main?}` | Materialize every namespace to `.clj` files. `main` adds a GraalVM native-image recipe. |
-| `store_health` | What the store costs in bytes: journal by op, materialized state, blob table. `full_check` answers whether it is correct; this answers what it weighs. |
+| `build {dir main?}` | Materialize every namespace to `.clj` files. `main` adds a GraalVM native-image recipe. Returns `missing-artifacts` for any derived file absent from the cache, each with the call that refills it. |
+| `store_health` | What the store costs in bytes: journal by op, materialized state, blob table, and the on-disk artifact cache (`:orphaned` is the reclaimable part). `full_check` answers whether it is correct; this answers what it weighs. |
 
 ## Architecture
 
@@ -170,7 +170,8 @@ that every register view has to carry.
 | `deps_remove {lib}` | Drop a library. |
 | `deps_list` | The dependency manifest. |
 | `deps_pure {target}` | Assert a dependency target is pure, so callers are not `!`-flagged. |
-| `file_put` / `file_remove` / `file_list` / `file_get` | Non-code files on the files manifest. `encoding: "base64"` plus `content-type` stores binary content-addressed -- the journal carries only the sha. |
+| `file_put` / `file_remove` / `file_list` / `file_get` | Non-code files on the files manifest -- authored, versioned, projected to git. `source` (a path on disk) or `encoding: "base64"` stores the bytes content-addressed. A file you can REGENERATE belongs in `:artifacts` instead, not here. |
+| `js_dep {name version format global file source}` | Declare an external JavaScript library. Declaring is vendoring: `source` names bytes on disk, which become an artifact with a download recipe. |
 | `file_history {path}` | A tracked file's change history. |
 | `config {key value?}` | Read or set store config. |
 | `config_file {path key value format}` | Structured config with per-key history, serialized into the projection. |
