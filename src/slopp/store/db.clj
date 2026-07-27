@@ -17,7 +17,7 @@
             [clojure.java.io :as io]
             [next.jdbc :as jdbc]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n] [slopp.store.fields :as fields]))
+            [rewrite-clj.node :as n] [slopp.store.fields :as fields] [slopp.store :as store] [clojure.string :as str]))
 
 (defn ^:export open!
   "Open (creating if needed) the store db under `dir`; returns the connection.
@@ -65,7 +65,13 @@
                               form_id TEXT,
                               name    TEXT,
                               source  TEXT NOT NULL,
+                              comment TEXT,
                               PRIMARY KEY (ns, pos))"])
+         ;; a form OWNS the comment rendered above it (whitespace-is-rendering).
+         ;; Same story as `tree` above: SQLite has no ADD COLUMN IF NOT EXISTS,
+         ;; so adding it to an existing store throws and that is the no-op.
+         (try (jdbc/execute! conn ["ALTER TABLE elements ADD COLUMN comment TEXT"])
+              (catch java.sql.SQLException _ nil))
          ;; content-addressed dependency analysis (P4-deps M4/M6), keyed by
          ;; "lib@version" — a surface/native verdict is a pure fn of the coord
          (jdbc/execute! conn ["CREATE TABLE IF NOT EXISTS dep_surface (
@@ -109,8 +115,9 @@
   (let [kind (keyword (:elements/kind row))
         node (parse-node (:elements/source row))]
     (if (= :form kind)
-      {:id   (:elements/form_id row) :kind :form
-       :name (some-> (:elements/name row) symbol) :node node}
+      (cond-> {:id   (:elements/form_id row) :kind :form
+               :name (some-> (:elements/name row) symbol) :node node}
+        (:elements/comment row) (assoc :comment (:elements/comment row)))
       {:kind :sep :node node})))
 
 (defn- row->delta [row]
@@ -161,17 +168,30 @@
                        id (pr-str verdict)]))
 
 ^:reads (defn ^:export rendered-sources
-  "{ns-sym rendered-source} straight from the element rows — the `source`
-  column is each element's canonical serialization, so concatenation by pos
-  IS the render-ns output, byte-exact. The live state without parsing,
-  replaying, or a session (P4-m8 wip projection reads it per request)."
+  "{ns-sym rendered-source} straight from the element rows — the live state
+  without parsing, replaying, or a session (the wip projection reads it per
+  request).
+
+  It must agree with `render-ns` exactly, which means SYNTHESIZING the same
+  separators rather than concatenating what is stored: forms joined by one
+  blank line, a form's `comment` directly above it, `sep` rows ignored.
+  Concatenation was byte-exact only while whitespace lived in the rows. Once
+  the renderer started supplying it, the old version quietly produced a
+  DIFFERENT tree here — dropping every comment and jamming forms together —
+  so the wip ref reported uncommitted work against a clean journal, forever."
   [conn]
-  (reduce (fn [m row]
-            (update m (symbol (:elements/ns row))
-                    (fnil str "") (:elements/source row)))
-          {}
-          (jdbc/execute! conn ["SELECT ns, source FROM elements
-                                ORDER BY ns, pos"])))
+  (into {}
+        (map (fn [[ns-sym rows]]
+               [ns-sym (str (str/join "\n\n"
+                                      (map (fn [r]
+                                             (if-let [c (:elements/comment r)]
+                                               (str c "\n" (:elements/source r))
+                                               (:elements/source r)))
+                                           rows))
+                            "\n")]))
+        (->> (jdbc/execute! conn ["SELECT ns, kind, source, comment FROM elements
+                                   WHERE kind = 'form' ORDER BY ns, pos"])
+             (group-by #(symbol (:elements/ns %))))))
 
 ^:reads (defn ^:export commit-shas
   "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
@@ -239,11 +259,13 @@
                               conn ["SELECT v FROM meta WHERE k = 'next-id'"])
                              :meta/v Long/parseLong)]
     (into
-     {:namespaces (reduce (fn [m row]
-                            (update-in m [(symbol (:elements/ns row)) :elements]
-                                       (fnil conj []) (row->element row)))
-                          {}
-                          (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
+     {:namespaces (update-vals
+                          (reduce (fn [m row]
+                                    (update-in m [(symbol (:elements/ns row)) :elements]
+                                               (fnil conj []) (row->element row)))
+                                  {}
+                                  (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"]))
+                          (fn [nsm] (update nsm :elements store/fold-comments)))
       :deltas     (mapv row->delta
                         ;; EXPLICIT columns — never SELECT `tree`. The whole point of splitting it
       ;; out is that ~1.35MB per :commit marker is neither fetched nor parsed
@@ -341,10 +363,11 @@
     (jdbc/execute! tx ["DELETE FROM elements WHERE ns = ?" (str ns-sym)])
     (doseq [[pos e] (map-indexed vector
                                  (get-in store [:namespaces ns-sym :elements]))]
-      (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source)
-                          VALUES (?,?,?,?,?,?)"
+      (jdbc/execute! tx ["INSERT INTO elements (ns,pos,kind,form_id,name,source,comment)
+                          VALUES (?,?,?,?,?,?,?)"
                          (str ns-sym) pos (name (:kind e)) (:id e)
-                         (some-> (:name e) str) (n/string (:node e))])))
+                         (some-> (:name e) str) (n/string (:node e))
+                         (:comment e)])))
   (jdbc/execute! tx ["INSERT INTO meta (k,v) VALUES ('next-id', ?)
                       ON CONFLICT(k) DO UPDATE SET v = excluded.v"
                      (str (:next-id store))])
@@ -422,6 +445,73 @@
      (write-snapshot! tx store nses))
    nil))
 
+(def ^:export max-tree-chain
+  "How many diffs may chain before a milestone stores a FULL tree again.
+
+  Reconstruction walks back to the nearest full snapshot, so an unbounded
+  chain makes projecting a fresh repo quadratic in the number of milestones.
+  A full snapshot every 25 costs ~4% of the old all-snapshots footprint while
+  keeping any single reconstruction to at most 25 small reads."
+  25)
+
+(defn ^:export tree-diff
+  "Encode `next` (a `{ns-sym source}` tree) against `prev`, returning either a
+  tagged DIFF — `[::tree-diff {:base <marker-id> :depth n :changed {ns src}
+  :removed [ns]}]` — or `next` itself when there is no base to diff against.
+
+  Measured motivation: 75% of this store's journal is `:tree` snapshots, and a
+  median of 5 namespaces out of 191 change between milestones. A full snapshot
+  therefore re-stores ~184 byte-identical entries, 1.36 MB at a time, 272 times
+  over.
+
+  A full snapshot stays a PLAIN map, deliberately: that is exactly the shape
+  every existing row already holds, so old markers keep reading without a
+  migration and without a version flag.
+
+  The diff is TAGGED rather than distinguished by a key, because a tree is a
+  symbol-keyed sorted-map — `(:base t)` on one routes through the comparator
+  and throws `ClassCastException: Symbol cannot be cast to Keyword`. A
+  discriminator that can throw on a valid input is not a discriminator; a
+  vector-vs-map check cannot.
+
+  `depth` is the chain length, carried so a reconstruction can be bounded — a
+  diff chain that never restarts makes projecting a fresh repo quadratic.
+
+  This is not re-derivation and cannot become it: a past tree is NOT
+  reconstructible from the journal, because inter-form trivia lives in the
+  `elements` table, which holds only current state. The bytes have to be
+  stored. They just do not have to be stored whole."
+  [prev next base-id depth]
+  (if-not (and base-id (seq prev) (< (or depth 0) max-tree-chain))
+    next
+    [::tree-diff
+     {:base    base-id
+      :depth   (inc (or depth 0))
+      :changed (into (sorted-map)
+                     (remove (fn [[ns-sym src]] (= src (get prev ns-sym))))
+                     next)
+      :removed (vec (sort (remove (set (keys next)) (keys prev))))}]))
+
+(defn ^:export tree-apply
+  "Rebuild a full `{ns-sym source}` tree from `prev` and `diff`.
+
+  A `diff` that is not tagged — a plain full snapshot, which is what every
+  pre-existing marker holds — is returned as-is, so one call site handles both
+  encodings. The check is on the TAG rather than on a key, because looking a
+  keyword up in a symbol-keyed sorted-map throws rather than returning nil.
+
+  Byte-exactness is the whole contract: a git commit sha is the hash of these
+  bytes, so a rebuilt tree that differs from the stored one by a single space
+  mints a different commit and breaks a push."
+  [prev diff]
+  (if-not (and (vector? diff) (= ::tree-diff (first diff)))
+    diff
+    (let [{:keys [changed removed]} (second diff)]
+      (as-> (or prev {}) t
+        (apply dissoc t removed)
+        (merge t changed)
+        (into (sorted-map) t)))))
+
 ^:reads (defn ^:export delta-tree
           "The byte-exact rendered `:tree` snapshot of `:commit` delta `id`, parsed
   ON DEMAND, or nil when there is none — a non-commit, a retroactive `:target`
@@ -472,3 +562,27 @@
                         :by-op by-op}
              :elements {:n (or (:n els) 0) :source-bytes (or (:b els) 0)}
              :blobs    {:n (or (:n bl) 0) :bytes (or (:b bl) 0)}}))
+
+^:reads (defn ^:export tree-at
+          "The FULL `{ns-sym source}` tree for `:commit` delta `id`, resolving a
+  diff chain back to its snapshot, or nil when there is none.
+
+  Callers ask for a tree and get a tree; how it is encoded on the way down is
+  this function's business. `delta-tree` remains the raw single-row read —
+  everything that needs a usable tree wants THIS.
+
+  Walks `:base` pointers back to a full snapshot collecting diffs, then
+  replays them forward. The walk is bounded by how often a full snapshot is
+  written (`max-tree-chain`); a chain that never restarts would make
+  projecting a fresh repo quadratic. A broken chain — a base that is missing
+  or itself treeless — resolves against what it can reach rather than
+  throwing, because a partially reachable history should still project."
+          [conn id]
+          (loop [cur id, chain ()]
+            (if-let [t (delta-tree conn cur)]
+              (if-let [base (when (and (vector? t) (= ::tree-diff (first t)))
+                              (:base (second t)))]
+                (recur base (conj chain t))
+                (reduce tree-apply t chain))
+              (when (seq chain)
+                (reduce tree-apply {} chain)))))

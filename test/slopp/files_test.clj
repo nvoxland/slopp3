@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc] [slopp.api.artifacts :as artifacts]))
 
 (def wf ".github/workflows/test.yml")
 
@@ -197,3 +197,88 @@
                png (java.nio.file.Files/readAllBytes
                     (.toPath (java.io.File. dir "public/i.png")))))))
       (finally (api/close! sess)))))
+
+(deftest a-vendored-js-declaration-can-be-checked-against-its-blob
+  (let [b64      "Ly8gcm91Z2gK"                       ; "// rough\n"
+        [s1 _]   (store/record-file-put (store/empty-store)
+                                        "public/js/rough-4.6.6.js" b64
+                                        :content-type "text/javascript")
+        real-sha (get-in s1 ["public/js/rough-4.6.6.js" :sha])
+        real-sha (or real-sha (get-in s1 [:files "public/js/rough-4.6.6.js" :sha]))
+        [s2 d]   (store/record-js-dep s1 "roughjs"
+                                      {:version "4.6.6" :format :iife
+                                       :global "rough"
+                                       :file "public/js/rough-4.6.6.js"
+                                       :sha real-sha
+                                       :source-url "https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"
+                                       :license "MIT"}
+                                      :prompt "the sketch renderer")]
+    (testing "the declaration lands in its own manifest, keyed by name"
+      (is (= "4.6.6" (get-in s2 [:js-deps "roughjs" :version])))
+      (is (= :iife (get-in s2 [:js-deps "roughjs" :format])))
+      (is (= "rough" (get-in s2 [:js-deps "roughjs" :global]))))
+    (testing "the why rides the delta, like every other declaration"
+      (is (= "the sketch renderer" (:prompt d)))
+      (is (= :js-dep (:op d))))
+    (testing "and the recorded sha MATCHES the blob — provenance nothing checks is decoration"
+      (is (= (get-in s2 [:files (get-in s2 [:js-deps "roughjs" :file]) :sha])
+             (get-in s2 [:js-deps "roughjs" :sha]))))
+    (testing "retraction removes the declaration and leaves the bytes alone"
+      (let [[s3 _] (store/record-js-dep s2 "roughjs" nil :remove true)]
+        (is (nil? (get-in s3 [:js-deps "roughjs"])))
+        (is (some? (get-in s3 [:files "public/js/rough-4.6.6.js"])))))))
+
+(deftest ^:external js-dep-vendors-and-declares-in-one-act
+  ;; Each refusal here stands for a failure INVISIBLE to the compiler: the
+  ;; bundle builds clean and the diagram is blank in a tab. That is the whole
+  ;; argument for a verb rather than a bare store write.
+  (let [sess (external/open!)
+        tmp  (java.io.File/createTempFile "rough" ".js")]
+    (try
+      (spit tmp "var rough=1;\n")
+      (testing "a format typo would be a silent no-op at compile time"
+        (is (re-find #":iife, :umd or :esm"
+                     (str (:error (api/js-dep! sess "roughjs"
+                                               {:version "4.6.6" :format :iffe
+                                                :global "rough"
+                                                :file "public/js/rough.js"}
+                                               :source (str tmp)))))))
+      (testing "an :iife library with no :global has nothing to map a require onto"
+        (is (re-find #":global"
+                     (str (:error (api/js-dep! sess "roughjs"
+                                               {:version "4.6.6" :format :iife
+                                                :file "public/js/rough.js"}
+                                               :source (str tmp)))))))
+      (testing "no :source at all — declaring IS vendoring, so the bytes must exist"
+        (is (re-find #":source"
+                     (str (:error (api/js-dep! sess "roughjs"
+                                               {:version "4.6.6" :format :iife
+                                                :global "rough"
+                                                :file "public/js/rough.js"}))))))
+      (testing "a good declaration vendors the bytes and records the coordinate"
+        (let [r (api/js-dep! sess "roughjs"
+                             {:version "4.6.6" :format :iife :global "rough"
+                              :file "public/js/rough.js"
+                              :npm "roughjs@4.6.6" :npm-path "bundled/rough.js"
+                              :integrity "sha512-abc" :license "MIT"}
+                             :source (str tmp)
+                             :prompt "the sketch renderer")
+              st (:store @sess)]
+          (is (= "roughjs" (:declared r)) (pr-str r))
+          (testing "the library is a DERIVED artifact, not an authored file"
+            (is (some? (get-in st [:artifacts "public/js/rough.js"])))
+            (is (nil? (get-in st [:files "public/js/rough.js"]))
+                "one path, one manifest"))
+          (testing "and its recipe is the registry coordinate, which is re-fetchable"
+            (let [recipe (get-in st [:artifacts "public/js/rough.js" :recipe])]
+              (is (= :download (:kind recipe)))
+              (is (= "roughjs@4.6.6" (:npm recipe)))
+              (is (= "bundled/rough.js" (:npm-path recipe)))
+              (is (= "sha512-abc" (:integrity recipe)))))
+          (testing "the sha is computed from the bytes, and the cache holds them"
+            (is (= 64 (count (:sha r))))
+            (is (.exists (artifacts/cache-file (:dir @sess) (:sha r)))))))
+      (testing "retraction drops the declaration"
+        (is (= {:retracted "roughjs"} (api/js-dep! sess "roughjs" nil :remove true)))
+        (is (nil? (get-in (:store @sess) [:js-deps "roughjs"]))))
+      (finally (.delete tmp) (api/close! sess)))))

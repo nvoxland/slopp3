@@ -122,13 +122,20 @@
   ;; agents can't consume file:line (reads are name-addressed, edits are
   ;; anchor-addressed) — the boundary translates VFS coordinates into the
   ;; owning FORM plus a match-ready snippet.
-  (let [st (store/ingest (store/empty-store) 'an.err
-                         (str "(ns an.err)\n"
-                              "(defn ok \"O.\" [x] x)\n"
-                              "(defn broken \"B.\" [x]\n"
-                              "  (nope-not-a-fn x))\n"))]
+  (let [st  (store/ingest (store/empty-store) 'an.err
+                          (str "(ns an.err)\n"
+                               "(defn ok \"O.\" [x] x)\n"
+                               "(defn broken \"B.\" [x]\n"
+                               "  (nope-not-a-fn x))\n"))
+        ;; derived, not hardcoded: rendering SYNTHESIZES the space between
+        ;; forms, so a literal row here silently encodes one renderer version
+        ;; and goes red on the next. What is under test is the translation.
+        row (->> (str/split-lines (render/render-ns st 'an.err))
+                 (keep-indexed (fn [i l] (when (str/includes? l "nope-not-a-fn") (inc i))))
+                 first)]
     (testing "a located error resolves to form + snippet"
-      (let [a (edit/anchor-error st "Syntax error compiling at (an/err.clj:4:3).\nUnable to resolve symbol: nope-not-a-fn")]
+      (let [a (edit/anchor-error st (str "Syntax error compiling at (an/err.clj:" row ":3).\n"
+                                         "Unable to resolve symbol: nope-not-a-fn"))]
         (is (= 'an.err/broken (:form a)) (pr-str a))
         (is (= "(nope-not-a-fn x))" (:at a)))))
     (testing "unlocatable text stays nil — the caller keeps the raw message"
@@ -136,11 +143,17 @@
       (is (nil? (edit/anchor-error st nil))))))
 
 (deftest compile-error-anchors-or-falls-back
-  (let [st (store/ingest (store/empty-store) 'ce.core
-                         "(ns ce.core)\n(defn f \"F.\" [x] (boom x))\n")]
+  (let [st  (store/ingest (store/empty-store) 'ce.core
+                          "(ns ce.core)\n(defn f \"F.\" [x] (boom x))\n")
+        ;; derived: rendering synthesizes the space between forms, so a
+        ;; literal row encodes one renderer version and goes red on the next
+        row (->> (str/split-lines (render/render-ns st 'ce.core))
+                 (keep-indexed (fn [i l] (when (str/includes? l "boom") (inc i))))
+                 first)]
     (testing "resolvable coordinate → form + snippet, coordinate stripped"
       (let [r (edit/compile-error
-               st "Syntax error compiling boom at (ce/core.clj:2:18).\nUnable to resolve symbol: boom"
+               st (str "Syntax error compiling boom at (ce/core.clj:" row ":18).\n"
+                       "Unable to resolve symbol: boom")
                "form failed to compile: ")]
         (is (= 'ce.core/f (:form r)))
         (is (re-find #"boom" (:at r)))

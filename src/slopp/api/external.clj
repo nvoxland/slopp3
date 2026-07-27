@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -60,6 +60,37 @@
       {:runtime (select-keys repl/inherent-deps '[metosin/malli])
        :client  (if clib {clib ccoord} {})})
     {:runtime {} :client {}}))
+
+(defn- materialize-artifacts!
+  "Copy every registered artifact into `target`, returning what could NOT be
+  resolved — `[{:path :sha :recipe :refill :why}]`, empty when all landed.
+
+  Derived files hold a sha and a recipe in the store and their bytes in the
+  on-disk cache, so a cold clone has a manifest and an empty cache. That is
+  the designed state, not an error — but a build that skips the file and
+  still reports `{:built …}` turns it into the failure the recipe exists to
+  prevent: the compile breaks much later as a missing namespace, nowhere near
+  the cause.
+
+  Reports rather than refuses, deliberately. `compile_client` calls `build!`
+  on its way to regenerating the very artifact that may be missing, so a
+  refusal here would make the one path that can fix the gap the one path
+  that cannot run."
+  [session st target]
+  (vec
+   (keep (fn [[path _]]
+           (let [r    (artifacts/fetch (:dir @session) st (str path))
+                 file (io/file target (str path))]
+             (if-let [^bytes bs (:bytes r)]
+               (do (io/make-parents file)
+                   (io/copy bs file)
+                   nil)
+               {:path   (str path)
+                :sha    (:sha r)
+                :recipe (:recipe r)
+                :why    (or (:why r) (:error r))
+                :refill (artifacts/refill-instruction (str path) (:recipe r))})))
+         (:artifacts st))))
 
 (defn ^:export build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
@@ -161,7 +192,9 @@ client-deps (merge (:client-deps st) (:client provided))
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
-          (cond-> {:built (str target)}
+          (cond-> (let [missing (materialize-artifacts! session st target)]
+                        (cond-> {:built (str target)}
+                          (seq missing) (assoc :missing-artifacts missing)))
             main
             (assoc :native
                    (let [an    (analyze/analyze (render/render-ns st entry-ns))
@@ -887,6 +920,19 @@ client-deps (merge (:client-deps st) (:client provided))
                 tree   (into (sorted-map)
                              (map (fn [n] [n (render/render-ns st n)]))
                              (keys (:namespaces st)))
+                ;; …stored as a DIFF against the previous milestone. The tree
+                ;; cannot be re-derived (trivia lives in the elements table,
+                ;; which holds only CURRENT state), so the bytes must be kept —
+                ;; but a median of 5 namespaces out of 191 change between
+                ;; milestones, so a full snapshot re-stores ~184 identical
+                ;; entries every time. A periodic full one bounds the walk back.
+                conn   (:db @session)
+                prev-m (->> (store/deltas st) (filter #(= :commit (:op %))) last)
+                prev-t (when (and conn prev-m) (db/tree-at conn (:id prev-m)))
+                prev-d (or (when (and conn prev-m)
+                             (:depth (db/delta-tree conn (:id prev-m))))
+                           0)
+                tree   (db/tree-diff prev-t tree (:id prev-m) prev-d)
                 ;; a SUMMARY of done's findings, not a second implementation:
                 ;; name the findings that actually fired so the refusal is
                 ;; actionable without re-deriving anything
@@ -1201,15 +1247,23 @@ client-deps (merge (:client-deps st) (:client provided))
 (defn ^:export store-health
   "What this store CARRIES, in bytes — the journal per op (heaviest first, with
   `:commit` tree snapshots counted APART from payloads), the materialized state,
-  and the blob table. Cheap: SQLite LENGTH only, nothing parsed.
+  the blob table, and the on-disk artifact cache. Cheap: SQLite LENGTH and
+  `File.length` only, nothing parsed.
 
   Reach for it when a session feels slow to open, before growing what a delta
   carries, and periodically. `full_check` answers whether the store is CORRECT;
   this answers what it COSTS, and nothing else did — which is how a byte-exact
   tree snapshot inline in every milestone reached 94% of a 344MB journal,
   unnoticed across 239 of them, against a design note estimating \"tens of KB\".
-  A store can rot by growing."
+  A store can rot by growing.
+
+  `:artifacts` is here because derived files now live OUTSIDE the journal. That
+  change removed 30MB from the delta log, and would have re-created the very
+  blind spot this tool was built for if the bytes had simply moved somewhere
+  nothing counted. Its `:orphaned` figure is the reclaimable one."
   [session]
-  (if-let [conn (:db @session)]
-    (db/journal-stats conn)
-    {:note "no durable store on disk yet — nothing has been written"}))
+  (let [{:keys [db dir store]} @session]
+    (merge (if db
+             (db/journal-stats db)
+             {:note "no durable store on disk yet — nothing has been written"})
+           {:artifacts (artifacts/cache-stats dir store)})))

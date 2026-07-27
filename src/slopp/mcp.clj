@@ -384,7 +384,27 @@
      (text! (api/file-put! session (:path a) (:content a)
                            :prompt (:prompt a) :agent (:agent a)
                            :encoding (:encoding a)
-                           :content-type (:content-type a))))
+                           :content-type (:content-type a)
+                           :source (:source a))))
+"js_dep"
+   (fn [session a _sym]
+     ;; format crosses the wire as a string; keywordize HERE so the verb's
+     ;; own check sees a keyword and can name the keywords it wants
+     (text! (api/js-dep! session (:name a)
+                         {:version    (:version a)
+                          :format     (some-> (:format a) not-empty keyword)
+                          :global     (:global a)
+                          :file       (:file a)
+                          ;; registry-anchored provenance: npm versions are
+                          ;; immutable, so this is re-fetchable and verifiable
+                          ;; where a CDN url only records how the bytes arrived
+                          :npm        (:npm a)
+                          :npm-path   (:npm-path a)
+                          :integrity  (:integrity a)
+                          :source-url (:source-url a)
+                          :license    (:license a)}
+                         :prompt (:prompt a) :agent (:agent a)
+                         :remove (:remove a) :source (:source a))))
    "file_remove"
    (fn [session a _sym]
      (text! (api/file-remove! session (:path a)
@@ -905,11 +925,10 @@
                                                 :before (sym :before)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_trivia" (text! (api/edit-trivia! session (sym :ns)
-                                                  (some-> (:before a) symbol)
-                                                  (:text a)
-                                                  :prompt (:prompt a)
-                                                  :agent (:agent a)))
+      "edit_comment" (text! (api/set-comment! session (sym :ns) (sym :name)
+                                                   (:text a)
+                                                   :prompt (:prompt a)
+                                                   :agent (:agent a)))
       "edit_extract" (let [subform (or (:form a) (:source a) (:subform a))]
                        (if-not (or subform (:at a))
                          (text! {:error (str "edit_extract needs :form (the exact subform"

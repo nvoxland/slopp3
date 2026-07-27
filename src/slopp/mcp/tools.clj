@@ -177,13 +177,13 @@
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :before {:type "string"} :prompt {:type "string"}}
                   :required ["ns" "name" "before"]}}
-   {:name "edit_trivia"
-    :description "Replace the comment/blank-line run before form `before` (omit = namespace tail) with `text`. Trivia only; forms untouched."
+   {:name "edit_comment"
+    :description "Set (or clear, with empty text) the comment rendered above form `name`. Owned by the form; no anchor, no verification."
     :inputSchema {:type "object"
-                  :properties {:ns {:type "string"} :before {:type "string"}
+                  :properties {:ns {:type "string"} :name {:type "string"}
                                :text {:type "string"}
                                :prompt {:type "string"}}
-                  :required ["ns" "text"]}}
+                  :required ["ns" "name" "text"]}}
    {:name "edit_replace_form"
     :description "Replace a whole top-level form (verified write)."
     :inputSchema {:type "object"
@@ -383,14 +383,49 @@
                                :value {:type "string"}}
                   :required ["key"]}}
    {:name "file_put"
-    :description "Track a non-code file on the files manifest (rides every projected tree). Text by default; encoding \"base64\" stores BINARY content-addressed (content-type labels it) — the journal carries only the sha."
+    :description (str "Track a non-code file on the files manifest (rides every projected"
+                      " tree). Text by default; encoding \"base64\" stores BINARY"
+                      " content-addressed (content-type labels it) — the journal carries"
+                      " only the sha. `source` reads the bytes from a PATH on disk instead"
+                      " of taking them inline, which is what you want for a vendored"
+                      " library, font or image: inline means reading the file into your"
+                      " own context and writing it straight back out.")
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}
                                :content {:type "string"}
+                               :source {:type "string"}
                                :encoding {:type "string"}
                                :content-type {:type "string"}
                                :prompt {:type "string"}}
-                  :required ["path" "content"]}}
+                  :required ["path"]}}
+{:name "js_dep"
+    :description (str "Vendor and declare a JavaScript library — the third dependency world."
+                      " ONE call: source names the bytes on disk, and they are written to"
+                      " the content-addressed artifact cache with a :download recipe, so"
+                      " the journal carries a sha and a way back rather than the library."
+                      " Anchor provenance to the REGISTRY — npm \"roughjs@4.6.6\" +"
+                      " npm-path \"bundled/rough.js\" + integrity — because npm versions are"
+                      " immutable, where a CDN url only says how the bytes arrived this"
+                      " time. format is \"iife\"/\"umd\" (concatenated into the bundle via"
+                      " deps.cljs :foreign-libs, and global names what it sets on window)"
+                      " or \"esm\" (loaded by the page). file is where it sits in the"
+                      " project tree. remove retracts the declaration. Read them back with"
+                      " query_store over :js-deps.")
+    :inputSchema {:type "object"
+                  :properties {:name {:type "string"}
+                               :version {:type "string"}
+                               :format {:type "string"}
+                               :global {:type "string"}
+                               :file {:type "string"}
+                               :source {:type "string"}
+                               :npm {:type "string"}
+                               :npm-path {:type "string"}
+                               :integrity {:type "string"}
+                               :source-url {:type "string"}
+                               :license {:type "string"}
+                               :remove {:type "boolean"}
+                               :prompt {:type "string"}}
+                  :required ["name"]}}
    {:name "file_remove"
     :description "Drop a path from the files manifest."
     :inputSchema {:type "object"

@@ -1,9 +1,22 @@
 (ns slopp.store.db-test
+  "Tests for the SQLite layer: what the journal keeps, and what it costs.
+
+  The store is a delta log, so these tests are about durability rather than
+  behaviour — a store that round-trips wrong loses work, and one that round-
+  trips right but grows without bound eventually stops opening. Both failures
+  have happened here, which is why both are pinned: byte-exactness of what is
+  written and read back, and the SHAPE of what gets written in the first place.
+
+  The recurring lesson is that a store can rot by GROWING. A byte-exact tree
+  snapshot in every milestone reached 94% of a 344MB journal, unnoticed across
+  239 of them, and was re-parsed at every session open. What came of that —
+  the tree in its own column, read on demand, stored as a diff against the
+  previous milestone — is most of what is tested here."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.store.render :as render]
             [slopp.store.db :as db]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc])
+            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -25,7 +38,10 @@
         (.close conn)
         (let [conn2  (db/open! dir)
               loaded (db/load-store conn2)]
-          (is (= src (render/render-ns loaded 'ns))
+          ;; against the STORE's render, not the raw source: spacing is normalized
+          ;; at ingest now, so comparing to `src` would be testing the
+          ;; renderer's retired byte-exact contract rather than persistence
+          (is (= (render/render-ns s 'ns) (render/render-ns loaded 'ns))
               (str "render round-trip failed for: " (pr-str src)))
           (is (= (store/deltas s) (store/deltas loaded)))
           (is (= (map :id (store/forms s 'ns)) (map :id (store/forms loaded 'ns))))
@@ -225,4 +241,131 @@
           (is (pos? (get-in s [:elements :n])))
           (is (pos? (get-in s [:elements :source-bytes])))
           (is (= 0 (get-in s [:blobs :n])))))
+      (finally (.close conn)))))
+
+(deftest tree-diffs-round-trip-against-their-base
+  ;; 388MB — 75% of this journal — is :tree snapshots, and almost every entry
+  ;; in one is byte-identical to the milestone before it: median 5 namespaces
+  ;; change out of 191. The tree cannot be RE-DERIVED (trivia lives in the
+  ;; elements table, which holds only current state), so it has to be stored —
+  ;; but it does not have to be stored whole.
+  (let [base {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"
+              'b.core "(ns b.core)\n(defn g [] 2)\n"
+              'c.core "(ns c.core)\n(defn h [] 3)\n"}
+        next {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"   ; unchanged
+              'b.core "(ns b.core)\n(defn g [] 22)\n"              ; changed
+              'd.core "(ns d.core)\n(defn i [] 4)\n"}]             ; added, c removed
+    (testing "a diff carries only what moved"
+      (let [[tag df] (db/tree-diff base next "d100" 0)]
+        (is (= :slopp.store.db/tree-diff tag)
+            "TAGGED, not key-discriminated: a tree is a symbol-keyed sorted-map,
+             so looking up a keyword in one throws instead of returning nil")
+        (is (= "d100" (:base df)))
+        (is (= #{'b.core 'd.core} (set (keys (:changed df))))
+            "an unchanged namespace must not be re-stored — that is the whole point")
+        (is (= #{'c.core} (set (:removed df))))))
+    (testing "applying it reproduces the tree BYTE-exactly — a git sha depends on it"
+      (is (= next (db/tree-apply base (db/tree-diff base next "d100" 0)))))
+    (testing "trivia survives the round trip"
+      (is (= (get next 'a.core)
+             (get (db/tree-apply base (db/tree-diff base next "d100" 0)) 'a.core))))
+    (testing "no base means a full snapshot, which is what an old marker already holds"
+      (let [df (db/tree-diff nil next nil 0)]
+        (is (map? df) "a full tree stays a plain {ns source} map — old rows stay readable")
+        (is (= next df))
+        (is (= next (db/tree-apply nil df)) "and applying one is the identity")))
+    (testing "depth counts the chain, so reconstruction can be bounded"
+      (is (= 1 (:depth (second (db/tree-diff base next "d100" 0)))))
+      (is (= 4 (:depth (second (db/tree-diff base next "d100" 3))))
+          "one more link than the diff it is based on"))
+    (testing "at the bound the chain RESTARTS with a full snapshot"
+      (is (vector? (db/tree-diff base next "d100" (dec db/max-tree-chain)))
+          "one short of the bound still diffs")
+      (is (= next (db/tree-diff base next "d100" db/max-tree-chain))
+          "an unbounded chain makes projecting a fresh repo quadratic")
+      (is (= next (db/tree-diff base next "d100" (inc db/max-tree-chain)))))))
+
+(deftest tree-at-resolves-a-diff-chain-back-to-a-full-tree
+  (let [dir  (str (Files/createTempDirectory
+                   "slopp-treechain" (make-array FileAttribute 0)))
+        conn (db/open! dir)
+        t1   {'a.core "(ns a.core)\n\n;; trivia\n(defn f [] 1)\n"
+              'b.core "(ns b.core)\n(defn g [] 2)\n"}
+        t2   (assoc t1 'b.core "(ns b.core)\n(defn g [] 22)\n")
+        t3   (-> t2 (dissoc 'a.core) (assoc 'c.core "(ns c.core)\n(defn h [] 3)\n"))
+        mk   (fn [id tree] {:id id :op :commit :ns '*session*
+                            :description (str "m" id) :target "d0" :tree tree})]
+    (try
+      (is (true? (db/append! conn (store/empty-store)
+                             [(mk "d1" t1)
+                              (mk "d2" (db/tree-diff t1 t2 "d1" 0))
+                              (mk "d3" (db/tree-diff t2 t3 "d2" 1))]
+                             [] nil)))
+      (testing "every marker resolves to its FULL tree, whatever it stores"
+        (is (= t1 (db/tree-at conn "d1")) "a full snapshot")
+        (is (= t2 (db/tree-at conn "d2")) "one link back")
+        (is (= t3 (db/tree-at conn "d3")) "two links back, through an add and a remove"))
+      (testing "trivia is intact at the end of the chain — the reason this is stored at all"
+        (is (= (get t2 'a.core) (get (db/tree-at conn "d2") 'a.core))))
+      (testing "a marker with no tree is still nil, not an error"
+        (is (nil? (db/tree-at conn "nope"))))
+      (finally (.close conn)))))
+
+(deftest a-forms-comment-survives-persist-and-reload
+  ;; A comment is CONTENT owned by its form. If it lives only in memory the
+  ;; store forgets it on restart, which is the same failure as storing it
+  ;; positionally — just later.
+  (let [dir  (str (Files/createTempDirectory
+                   "slopp-comment" (make-array FileAttribute 0)))
+        conn (db/open! dir)
+        st   (store/ingest (store/empty-store) 'cmt.core
+                           "(ns cmt.core)\n\n(defn f [] 1)\n")
+        [st' d] (store/set-comment st 'cmt.core 'f
+                                   ";; --- section divider ---\n;; second line")]
+    (try
+      (db/persist! conn st' d)
+      (let [back (db/load-store conn)
+            f-el (first (filter #(= 'f (:name %))
+                                (get-in back [:namespaces 'cmt.core :elements])))]
+        (testing "the comment comes back attached to its form"
+          (is (= ";; --- section divider ---\n;; second line" (:comment f-el))))
+        (testing "and renders identically to before the round trip"
+          (is (= (render/render-ns st' 'cmt.core)
+                 (render/render-ns back 'cmt.core)))))
+      (finally (.close conn)))))
+
+(deftest loading-folds-a-positional-comment-onto-the-form-it-describes
+  ;; Migration, at load, so it applies to every store rather than being a
+  ;; one-off. Idempotent: after folding there are no comment seps left.
+  ;;
+  ;; The blank line BETWEEN comment and form has to be absorbed. In this
+  ;; store, 0 of 67 comments sit directly above their form — every one is
+  ;; followed by a "\n" sep — so a fold that only removes the comment leaves
+  ;; a stray gap where there used to be none.
+  (let [dir  (str (Files/createTempDirectory
+                   "slopp-fold" (make-array FileAttribute 0)))
+        conn (db/open! dir)
+        src  (str "(ns fc.core)\n\n"
+                  ";; --- section ---\n"
+                  ";; second line\n"
+                  "\n"
+                  "(defn f [] 1)\n")
+        st   (store/ingest (store/empty-store) 'fc.core src)]
+    (try
+      (db/persist! conn st (last (store/deltas st)))
+      (let [back  (db/load-store conn)
+            elems (get-in back [:namespaces 'fc.core :elements])
+            f-el  (first (filter #(= 'f (:name %)) elems))]
+        (testing "the comment is now owned by the form below it"
+          (is (= ";; --- section ---\n;; second line" (:comment f-el))))
+        (testing "and no comment-carrying sep survives"
+          (is (not-any? #(and (= :sep (:kind %))
+                              (re-find #"\S" (n/string (:node %))))
+                        elems)))
+        (testing "rendering keeps the gap ABOVE the comment and drops the one below"
+          (is (= "(ns fc.core)\n\n;; --- section ---\n;; second line\n(defn f [] 1)\n"
+                 (render/render-ns back 'fc.core))))
+        (testing "it is idempotent — loading again changes nothing"
+          (is (= (render/render-ns back 'fc.core)
+                 (render/render-ns (db/load-store conn) 'fc.core)))))
       (finally (.close conn)))))

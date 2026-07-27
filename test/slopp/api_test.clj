@@ -1,6 +1,20 @@
 (ns slopp.api-test
+  "Tests for the operation surface as a SESSION sees it, rather than for any
+  one function.
+
+  `slopp.api` is where the store, the image and the filesystem meet, and the
+  bugs that live here are bugs of composition: a materialization that serves
+  two-day-old truth because nothing recorded what it was built from, a
+  recycled session that can still see the previous tenant, an async boot that
+  defers the connection along with the oracle. None of those are visible from
+  inside a single function, so these tests open a real session, drive it
+  through the public verbs, and assert on what it ends up holding.
+
+  Mostly `^:external` for that reason. The narrower units — the artifact
+  cache, history, deps, queries — have their own test namespaces under
+  `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.api.artifacts :as artifacts])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -398,3 +412,70 @@
       (is (= 7 (first (repl/eval! (:image @b) "(tenant.two/v)")))
           "a recycled image is fully WORKING, not merely empty")
       (finally (api/close! b) (repl/drain-parked!)))))
+
+(deftest ^:external store-health-counts-the-artifact-cache
+  ;; store_health exists because uncounted bytes accumulate — a tree snapshot
+  ;; reached 94% of a 344MB journal across 239 milestones with nothing
+  ;; measuring it. Moving the compiled bundle out of the delta log and into a
+  ;; directory no tool reported would have been that same mistake with a
+  ;; better hiding place.
+  (let [dir  (str (Files/createTempDirectory
+                   "slopp-health" (make-array FileAttribute 0)))
+        sess (external/open! {:slopp.api/dir dir})]
+    (try
+      (api/create-ns! sess 'health.core :source "(ns health.core)\n\n(defn f \"F.\" [x] x)\n")
+      (let [kept   (artifacts/put! dir (.getBytes "referenced\n" "UTF-8")
+                                   {:kind :build :tool "compile_client"})
+            _      (artifacts/put! dir (.getBytes "left behind\n" "UTF-8") {:kind :build})
+            _      (swap! sess update :store
+                          #(first (store/record-artifact % "public/x.js" kept)))
+            health (external/store-health sess)]
+        (testing "the journal is still reported"
+          (is (pos? (get-in health [:deltas :n]))))
+        (testing "and so is the cache the journal no longer carries"
+          (is (= 2 (get-in health [:artifacts :n])))
+          (is (= (:bytes kept) (get-in health [:artifacts :live :bytes]))
+              "measured against the SESSION's store, not an empty one")
+          (is (= 1 (get-in health [:artifacts :orphaned :n]))
+              "and the reclaimable half is called out separately")))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (api/close! sess)
+          (rm! (io/file dir)))))))
+
+(deftest ^:external build-reports-artifacts-it-could-not-materialize
+  ;; The materialization loop swallowed misses: `when-let` on :bytes skipped
+  ;; the file and the build returned {:built …} regardless. That is the
+  ;; failure the recipe exists to make legible, reproduced one line under a
+  ;; comment saying so — a cold clone would compile against a tree quietly
+  ;; missing a file and hit it much later as something unrelated.
+  (let [dir  (str (Files/createTempDirectory
+                   "slopp-build-miss" (make-array FileAttribute 0)))
+        out  (str (Files/createTempDirectory
+                   "slopp-build-out" (make-array FileAttribute 0)))
+        sess (external/open! {:slopp.api/dir dir})]
+    (try
+      (api/create-ns! sess 'miss.core :source "(ns miss.core)\n\n(defn f \"F.\" [x] x)\n")
+      (let [entry (artifacts/put! dir (.getBytes "compiled bytes\n" "UTF-8")
+                                  {:kind :build :tool "compile_client"})]
+        (swap! sess update :store
+               #(first (store/record-artifact % "public/cljs/main.js" entry)))
+        (testing "cache hit: the file lands and the build stays quiet"
+          (let [r (external/build! sess out)]
+            (is (empty? (:missing-artifacts r)) (pr-str r))
+            (is (.exists (io/file out "public/cljs/main.js")))))
+        (testing "cache cleared: the build REPORTS the gap rather than omitting it silently"
+          (.delete (artifacts/cache-file dir (:sha entry)))
+          (.delete (io/file out "public/cljs/main.js"))
+          (let [r (external/build! sess out)
+                m (first (:missing-artifacts r))]
+            (is (= 1 (count (:missing-artifacts r))) (pr-str r))
+            (is (= "public/cljs/main.js" (:path m)))
+            (is (re-find #"compile_client" (str (:refill m))) (pr-str m))
+            (is (not (.exists (io/file out "public/cljs/main.js")))
+                "the file really is absent — the report is describing reality"))))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (api/close! sess)
+          (rm! (io/file dir))
+          (rm! (io/file out)))))))

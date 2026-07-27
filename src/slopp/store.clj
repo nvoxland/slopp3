@@ -1,12 +1,20 @@
 (ns slopp.store
   "In-memory form store + append-only delta log — the system of record (C2/C3/C4).
 
-  A namespace is an ordered sequence of *elements*: each element is either a
-  semantic `:form` (a top-level sexpr, carrying a stable synthetic id + derived
-  name + its rewrite-clj CST node) or a `:sep` (whitespace/comment/newline node
-  kept only so rendering is lossless). Forms are the identified, versioned units;
-  separators are incidental trivia (a Phase-1 simplification — a later model may
-  attach leading trivia to the form it precedes).
+  **A namespace is an ordered sequence of FORMS.** Each carries a stable
+  synthetic id, a derived name, its rewrite-clj CST node, and optionally a
+  `:comment` — the block rendered directly above it. That is the whole model.
+
+  It used to also hold `:sep` elements: whitespace, blank lines and comments,
+  positional and idless, kept so that rendering could be lossless. Lumping
+  those together forced slopp to preserve BYTES, because a comment stored
+  positionally is content the delta log never recorded — which is why a
+  milestone had to carry a byte-exact snapshot of every namespace to keep it.
+  Splitting them dissolves the requirement: the space between forms is
+  RENDERING (`slopp.store.render` supplies it, nothing stores it), and a
+  comment is CONTENT owned by the form it describes, travelling in that form's
+  delta like anything else. `fold-comments` is the one place the old shape
+  turns into the new one, and it runs on ingest and on load.
 
   Ids are a monotonic counter here (single-agent Phase 1). Phase-4 multi-agent
   needs globally-unique ids (uuid / lamport)."
@@ -196,8 +204,7 @@
   (:deltas store))
 
 (defn remove-form
-  "Remove the form named `nm` from `ns-sym` (plus its immediately following
-  separator, so no doubled blank line remains); ONE `:delete` delta. Returns
+  "Remove the form named `nm` from `ns-sym`; ONE `:delete` delta. Returns
   [store' delta], or nil if no such form.
 
   `nm` may be a name the form defines OR its form id — names win, matching
@@ -212,10 +219,7 @@
                   (first (keep-indexed (fn [i e] (when (by-id e) i)) elems)))]
     (when idx
       (let [fid          (:id (nth elems idx))
-            drop-next?   (and (< (inc idx) (count elems))
-                              (= :sep (:kind (nth elems (inc idx)))))
-            new-elems    (into (subvec elems 0 idx)
-                               (subvec elems (+ idx (if drop-next? 2 1))))
+            new-elems    (into (subvec elems 0 idx) (subvec elems (inc idx)))
             [did store'] (gen-id store "d")
             delta        (cond-> {:id did :parent (:id (last (:deltas store)))
                                   :op :delete :ns ns-sym :form-id fid :name nm
@@ -229,9 +233,9 @@
          delta]))))
 
 (defn move-form
-  "Move the form named `nm` (with its trailing separator) to just before the
-  form named `before-nm` (S2 — fixes append-only forward references). ONE
-  `:move` delta. Returns [store' delta], or nil if either form is missing."
+  "Move the form named `nm` to just before the form named `before-nm` (S2 —
+  fixes append-only forward references). ONE `:move` delta. Returns
+  [store' delta], or nil if either form is missing."
   [store ns-sym nm before-nm & {:keys [prompt group agent system]}]
   (let [elems  (get-in store [:namespaces ns-sym :elements])
         idx-of (fn [es n]
@@ -241,20 +245,16 @@
         i (idx-of elems nm)
         j (idx-of elems before-nm)]
     (when (and i j (not= nm before-nm))
-      (let [unit-end  (if (and (< (inc i) (count elems))
-                               (= :sep (:kind (nth elems (inc i)))))
-                        (+ i 2)
-                        (inc i))
-            unit      (subvec elems i unit-end)
-            without   (into (subvec elems 0 i) (subvec elems unit-end))
+      (let [moved     (nth elems i)
+            without   (into (subvec elems 0 i) (subvec elems (inc i)))
             j'        (idx-of without before-nm)
             new-elems (-> (subvec without 0 j')
-                          (into unit)
+                          (conj moved)
                           (into (subvec without j')))
             [did store'] (gen-id store "d")
             delta (cond-> {:id did :parent (:id (last (:deltas store)))
                            :op :move :ns ns-sym
-                           :form-id (:id (nth elems i)) :before before-nm
+                           :form-id (:id moved) :before before-nm
                            :prompt prompt :at (now-ms)}
                     group  (assoc :group group)
                     agent  (assoc :agent agent)
@@ -610,52 +610,53 @@
                                        layers)))))
      :cycles (vec (filter #(> (count %) 1) comps))}))
 
-(defn replace-trivia
-  "Replace the ENTIRE trivia run (comments/whitespace `:sep` elements)
-  immediately before form `anchor` (a form name; nil = the run after the
-  LAST form) in `ns-sym` with `text`. The text is normalized to start and
-  end with a newline (empty = a single newline, i.e. delete the gap); text
-  containing any CODE form is refused. ONE `:trivia` delta carrying the
-  anchor's form-id, so foreign replay converges. Returns [store' delta] or
-  {:error msg}."
-  [store ns-sym anchor text & {:keys [prompt agent]}]
-  (let [elems (get-in store [:namespaces ns-sym :elements])]
-    (if-not elems
-      {:error (str "no namespace " ns-sym)}
-      (let [aidx (when anchor
-                   (first (keep-indexed
-                           (fn [i e] (when (and (= :form (:kind e))
-                                                (= anchor (:name e))) i))
-                           elems)))]
-        (if (and anchor (nil? aidx))
-          {:error (str "no form named " anchor " in " ns-sym)}
-          (let [norm  (if (str/blank? (str text))
-                        "\n"
-                        (cond-> (str text)
-                          (not (str/starts-with? (str text) "\n")) (->> (str "\n"))
-                          (not (str/ends-with? (str text) "\n"))   (str "\n")))
-                nodes (n/children (p/parse-string-all norm))]
-            (if (some n/sexpr-able? nodes)
-              {:error "trivia only — the text contains a code form (use edit_add_form for forms)"}
-              (let [end   (or aidx (count elems))
-                    start (loop [i end]
-                            (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
-                              (recur (dec i))
-                              i))
-                    seps  (mapv (fn [nd] {:kind :sep :node nd}) nodes)
-                    [did store'] (gen-id store "d")
-                    delta (cond-> {:id did :parent (:id (last (:deltas store)))
-                                   :op :trivia :ns ns-sym :at (now-ms)
-                                   :text norm}
-                            aidx   (assoc :before (:id (nth elems aidx)))
-                            prompt (assoc :prompt prompt)
-                            agent  (assoc :agent agent))]
-                [(-> store'
-                     (assoc-in [:namespaces ns-sym :elements]
-                               (into (into (subvec elems 0 start) seps)
-                                     (subvec elems end)))
-                     (update :deltas conj delta))
-                 delta]))))))))
+(defn set-comment
+  "Set (or clear, with blank `text`) the comment block rendered above form
+  `nm` in `ns-sym`. Returns [store' delta] or {:error msg}.
+
+  A comment BELONGS to the form it describes. Stored positionally as a `:sep`
+  it is content that lives nowhere in the delta log — which is precisely why
+  a milestone had to carry a byte-exact tree snapshot to keep it. Owned by a
+  form it is ordinary content: recorded in the delta, replayable from the log
+  alone, and mergeable without a position to reconcile.
+
+  The positional predecessor already conceded this: its delta anchored on the
+  form's id rather than an index, because positions shift under a merge. This
+  finishes the move — the form does not just sit after the comment, it owns
+  it.
+
+  Refuses text containing a code form, same as trivia: forms come in through
+  the form verbs, which verify. Stored WITHOUT a trailing newline; the
+  renderer supplies the separator, because how it is spaced is a rendering
+  decision and not data."
+  [store ns-sym nm text & {:keys [prompt agent]}]
+  (let [elems (get-in store [:namespaces ns-sym :elements])
+        idx   (first (keep-indexed
+                      (fn [i e] (when (and (= :form (:kind e)) (= nm (:name e))) i))
+                      elems))]
+    (cond
+      (nil? elems) {:error (str "no namespace " ns-sym)}
+      (nil? idx)   {:error (str "no form named " nm " in " ns-sym)}
+      (some n/sexpr-able? (n/children (p/parse-string-all (str text))))
+      {:error (str "comments only — that text contains a code form"
+                   " (use edit_add_form for forms)")}
+      :else
+      (let [norm (when-not (str/blank? (str text))
+                   (str/replace (str text) #"\n+\z" ""))
+            [did store'] (gen-id store "d")
+            delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                           :op :comment :ns ns-sym
+                           :form-id (:id (nth elems idx))
+                           :text norm :at (now-ms)}
+                    prompt (assoc :prompt prompt)
+                    agent  (assoc :agent agent))]
+        [(-> store'
+             (assoc-in [:namespaces ns-sym :elements]
+                       (update elems idx
+                               (fn [e] (if norm (assoc e :comment norm)
+                                           (dissoc e :comment)))))
+             (update :deltas conj delta))
+         delta]))))
 
 (defn sha256-of
   "SHA-256 of a byte array as lowercase hex — the blob address."
@@ -979,29 +980,21 @@
     [(update store' :deltas conj delta) delta]))
 
 (defn- place-form
-  "Splice `form-elem` into `elems` — before `anchor-idx` (nil = the tail) —
-  separated from its neighbours by one blank line, the top-level-form
-  convention. Trailing whitespace-only trivia is absorbed first so a tail
-  append neither doubles nor drops the gap; a trailing COMMENT is preserved.
-  SHARED by `append-form` (live write) and `replay-delta`'s `:add` (journal
-  replay) so a fresh append and a reopen/foreign-sync render byte-identically."
+  "Splice `form-elem` into `elems` — before `anchor-idx`, or at the tail when
+  it is nil.
+
+  There is nothing to splice AROUND any more. This used to absorb trailing
+  whitespace, preserve a trailing comment, and pick between one newline and
+  two, all so that a fresh append and a journal replay produced the same
+  bytes; the blank line between forms is now supplied by `render-ns` and
+  stored nowhere, so the position is the whole decision. Still SHARED by
+  `append-form` (live write) and `replay-delta`'s `:add` (journal replay),
+  because agreeing on position is the part that still matters."
   [elems form-elem anchor-idx]
   (if anchor-idx
-    (into (conj (subvec elems 0 anchor-idx)
-                form-elem
-                {:kind :sep :node (n/newlines 2)})
+    (into (conj (subvec elems 0 anchor-idx) form-elem)
           (subvec elems anchor-idx))
-    (let [core (loop [es elems]
-                 (if (and (seq es) (= :sep (:kind (peek es)))
-                          (str/blank? (n/string (:node (peek es)))))
-                   (recur (pop es))
-                   es))
-          lead (when (seq core)
-                 {:kind :sep
-                  :node (n/newlines
-                         (if (str/ends-with? (n/string (:node (peek core))) "\n") 1 2))})]
-      (-> (cond-> core lead (conj lead))
-          (conj form-elem {:kind :sep :node (n/newlines 1)})))))
+    (conj elems form-elem)))
 
 (defn record-ns-delete
   "Remove namespace `ns-sym` from the store — ONE `:ns-delete` delta. The
@@ -1034,11 +1027,21 @@
 (defn replay-delta
   "Apply a FOREIGN delta from the SAME journal (linear history — ids are
   authoritative, nothing remaps) onto a trailing cached store. Returns the
-  advanced store, or nil when this op needs a full reload (e.g. :ingest —
-  the elements table has the writer's exact trivia; rebuild from there).
+  advanced store, or nil when this op needs a full reload.
+
   Marker ops and field-carrying ops route through the registry
   (slopp.store.fields) — a NEW op registers there once and this path knows
-  it; only the element-content machinery lives here."
+  it; only the element-content machinery lives here.
+
+  `:ingest` and `:move` still fall through to a reload, but no longer because
+  the journal is missing something: `:ingest` now carries `:sources` AND
+  `:comments`, and `:move` carries `{:form-id :before}`, so both COULD be
+  replayed. A full reload is merely slower, never wrong, so this is an
+  optimization that has not been taken rather than a gap in the log.
+
+  A historic `:trivia` delta lands here too and takes the same reload. That
+  op is retired: it edited `:sep` elements the renderer no longer reads, so
+  replaying one would rebuild state nothing consults."
   [store d]
   (let [with-d (fn [st] (bump-next-id (update st :deltas conj d) d))]
     (cond
@@ -1050,23 +1053,18 @@
 
       :else
       (case (:op d)
-        :trivia
-        (with-d
-          (update-in store [:namespaces (:ns d) :elements]
-                     (fn [elems]
-                       (let [end   (or (when (:before d)
-                                         (first (keep-indexed
-                                                 (fn [i e] (when (= (:before d) (:id e)) i))
-                                                 elems)))
-                                       (count elems))
-                             start (loop [i end]
-                                     (if (and (pos? i) (= :sep (:kind (nth elems (dec i)))))
-                                       (recur (dec i))
-                                       i))
-                             seps  (mapv (fn [nd] {:kind :sep :node nd})
-                                         (n/children (p/parse-string-all (:text d))))]
-                         (into (into (subvec elems 0 start) seps)
-                               (subvec elems end))))))
+        :comment
+        (let [ns-sym (:ns d)
+              fid    (:form-id d)
+              txt    (:text d)]
+          (with-d
+            (update-in store [:namespaces ns-sym :elements]
+                       (fn [elems]
+                         (mapv (fn [e]
+                                 (if (= fid (:id e))
+                                   (if txt (assoc e :comment txt) (dissoc e :comment))
+                                   e))
+                               elems)))))
 
         (:replace :rename :normalize)
         (with-d
@@ -1117,10 +1115,7 @@
                          (if-let [idx (first (keep-indexed
                                               (fn [i e] (when (= fid (:id e)) i))
                                               elems))]
-                           (let [drop-next? (and (< (inc idx) (count elems))
-                                                 (= :sep (:kind (nth elems (inc idx)))))]
-                             (into (subvec elems 0 idx)
-                                   (subvec elems (+ idx (if drop-next? 2 1)))))
+                           (into (subvec elems 0 idx) (subvec elems (inc idx)))
                            elems)))))
 
         :ns-delete
@@ -1129,7 +1124,7 @@
         (when-not (seq (body-forms store (:ns d)))
           (with-d (update store :namespaces dissoc (:ns d))))
 
-        ;; :ingest / :move / anything unregistered → full reload
+        ;; :ingest / :move / :trivia / anything unregistered → full reload
         nil))))
 
 (defn append-form
@@ -1196,6 +1191,58 @@
              (update :deltas conj delta))
          delta]))))
 
+(defn fold-comments
+  "Resolve every run of trivia in `elements`: attach its CONTENT to the form
+  it precedes, as `:comment`, and drop the whitespace entirely.
+
+  The element model's normalization step, and the only place trivia is
+  decided. A comment is CONTENT owned by a form; the space between forms is
+  rendering, supplied by `render-ns` and stored nowhere. Both `ingest` (new
+  source) and the db load path (historic stores) run this, so a store migrates
+  itself the first time it is opened.
+
+  **Content is comments AND `#_` discards.** A discard is code the reader
+  throws away, and rewrite-clj reports it as non-sexpr-able — so it lands in
+  the same bucket as a blank line, and dropping that bucket would silently
+  delete code someone deliberately parked. It rides above its form in the
+  comment text instead. Zero cases in slopp's own store, which is why it is
+  pinned by a test rather than a measurement.
+
+  Works on the whole TRIVIA RUN between two forms, not on an unbroken block
+  of comments: a run shaped `;; A / blank / ;; B / form` is common, and a
+  fold that stops at the first blank line strands `;; A` with no owner — that
+  was 13 of slopp's own 67 comments. Internal blank lines are preserved
+  inside the comment text; the whitespace on either side of the run is not,
+  because the renderer supplies it.
+
+  A run with no form after it — trailing content at the end of a namespace —
+  has no owner. Its content is left in place as a `:sep` rather than
+  destroyed, which the renderer does not print; giving it a home is an open
+  decision, and losing it is not."
+  [elements]
+  (let [v      (vec elements)
+        n      (count v)
+        sep?   (fn [i] (= :sep (:kind (nth v i))))
+        keep?  (fn [i] (and (sep? i)
+                            (contains? #{:comment :uneval}
+                                       (n/tag (:node (nth v i))))))]
+    (loop [i 0, out []]
+      (if (>= i n)
+        out
+        (if-not (sep? i)
+          (recur (inc i) (conj out (nth v i)))
+          ;; the trivia run [i, j) — j is strictly greater than i, so this
+          ;; terminates however the branches fall
+          (let [j  (loop [k i] (if (and (< k n) (sep? k)) (recur (inc k)) k))
+                cs (filterv keep? (range i j))]
+            (if (or (empty? cs) (>= j n) (not= :form (:kind (nth v j))))
+              (recur j (into out (map #(nth v %)) cs))
+              (let [text (str/replace
+                          (apply str (map #(n/string (:node (nth v %)))
+                                          (range (first cs) (inc (peek cs)))))
+                          #"\n+\z" "")]
+                (recur (inc j) (conj out (assoc (nth v j) :comment text)))))))))))
+
 (defn ingest
   "Parse `source` into `ns-sym`'s ordered elements, assigning a fresh id to each
   form, and append an `:ingest` delta. Returns the new store."
@@ -1211,7 +1258,12 @@
                          :names (form-symbols node) :node node})))
           (recur store (rest nodes)
                  (conj elements {:kind :sep :node node})))
-        (let [[did store] (gen-id store "d")]
+        (let [[did store] (gen-id store "d")
+              elements     (fold-comments elements)
+              comments     (into {} (keep (fn [e]
+                                            (when (and (:id e) (:comment e))
+                                              [(:id e) (:comment e)])))
+                                 elements)]
           (-> store
               (assoc-in [:namespaces ns-sym :elements] elements)
               (update :deltas conj
@@ -1219,12 +1271,15 @@
                                :at (now-ms)
                                :form-ids (into [] (keep :id) elements)
                                ;; per-version content (C3/C4): history must be
-                               ;; reconstructible from the log alone
+                               ;; reconstructible from the log alone. That was
+                               ;; a claim this delta could not honour while
+                               ;; comments lived in unrecorded :sep elements.
                                :sources  (into {}
                                                (keep (fn [e]
                                                        (when (:id e)
                                                          [(:id e) (n/string (:node e))])))
                                                elements)}
+                        (seq comments) (assoc :comments comments)
                         agent (assoc :agent agent)))))))))
 
 (defn method-registrations
@@ -1329,3 +1384,60 @@
                  m))
              {}
              (deltas store)))))
+
+(defn record-js-dep
+  "Declare (or with `:remove`, retract) a VENDORED JavaScript library.
+
+  The third dependency world (D-web-cljs deferred it): not a Maven coord and
+  not resolvable, because there is no npm here — the bytes are vendored into
+  the store as an ordinary content-addressed blob and this records the
+  DECLARATION over them: version, delivery `:format` (`:iife`/`:umd`/`:esm`),
+  the `:global` it exports, the `:file` path holding it, and provenance
+  (`:source-url`, `:sha`, `:license`).
+
+  Bytes and declaration are separate on purpose. `record-file-put` already
+  content-addresses the file, so the `:sha` recorded here can be CHECKED
+  against it rather than being a number somebody typed — which is the whole
+  value of recording it.
+
+  Name-grained: two lines declaring different libraries union under merge.
+  One `:js-dep` delta; last write per name wins. Returns [store' delta]."
+  [store js-name spec & {:keys [prompt agent remove]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :js-dep :ns '*session* :at (now-ms)
+                       :name js-name}
+                remove (assoc :action :remove)
+                (not remove) (assoc :spec spec)
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
+(defn record-artifact
+  "Register (or with `:remove`, drop) a DERIVED file — downloaded or generated.
+
+  Records only what the file must BE (`:sha`, `:bytes`, `:content-type`) and
+  how to get it back (`:recipe`). It takes no content and has no way to
+  accept any: an artifact that COULD carry its bytes eventually would, and
+  the field would rot back into `:files`.
+
+  Recipes come in two shapes today:
+
+      {:kind :download :npm \"roughjs@4.6.6\" :npm-path \"bundled/rough.js\"
+       :integrity \"sha512-…\"}
+      {:kind :build :tool \"compile_client\"}
+
+  Both answer the same question — how do I make this file again — which is
+  what lets the bytes live on disk as a cache rather than in the journal
+  forever. One `:artifact-put` delta; last write per path wins.
+  Returns [store' delta]."
+  [store path entry & {:keys [prompt agent remove]}]
+  (let [[did store'] (gen-id store "d")
+        delta (cond-> {:id did :parent (:id (last (:deltas store)))
+                       :op :artifact-put :ns '*session* :at (now-ms)
+                       :path (str path)}
+                remove       (assoc :action :remove)
+                (not remove) (assoc :entry (dissoc entry :content :bytes-blob))
+                prompt (assoc :prompt prompt)
+                agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))

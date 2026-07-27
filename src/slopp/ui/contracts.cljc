@@ -39,10 +39,15 @@
    [:doc [:maybe :string]]])
 
 (def ns-outline
-  "`GET /api/ns/:ns` — one namespace's forms in store order."
+  "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.
+
+  `:tested-by` is always present and empty rather than absent when nothing
+  covers the namespace: an absent key and an untested namespace would render
+  identically, and the second is a finding worth showing."
   [:map
    [:ns :string]
-   [:forms [:sequential form-row]]])
+   [:forms [:sequential form-row]]
+   [:tested-by [:sequential :string]]])
 
 (def token
   "One syntax token: `[\"keyword\" \":web/path\"]`.
@@ -122,3 +127,64 @@
    [:ns :string]
    [:name :string]
    [:source :string]])
+
+(def placed-box
+  "One placed box on the module canvas: which module, and where it sits.
+
+  `:layer` is optional because foundation-band members do not have one —
+  they sit BENEATH the layering rather than inside it, which is the point
+  of banding them. Coordinates only; the view owns colour and stroke."
+  [:map
+   [:module :string]
+   [:x :int] [:y :int] [:w :int] [:h :int]
+   [:layer {:optional true} :int]])
+
+(def graph-edge
+  "One drawn dependency: `:from` depends on `:to`, with both endpoints already
+   resolved to points on the two boxes. The client draws a path between them;
+   it does not decide where an arrow attaches."
+  [:map
+   [:from :string] [:to :string]
+   [:x1 :int] [:y1 :int] [:x2 :int] [:y2 :int]])
+
+(def module-row
+  "One module in the Code nav: its production namespaces, how many test
+   namespaces fold into it, its declared purity tier, and whether it was
+   found to be foundation.
+
+   `:namespaces` holds production names only and `:tests` is a COUNT, not a
+   list — a `-test` namespace is not a peer of the code it covers, and
+   listing it at the same rung says otherwise. The count stays because zero
+   is a finding."
+  [:map
+   [:module :string]
+   [:namespaces [:sequential :string]]
+   [:tests :int]
+   [:tier :string]
+   [:foundation :boolean]])
+
+(def module-picture
+  "The drawable module canvas: layered nodes, the foundation band beneath
+   them, the edges worth drawing, and the extent that contains it all.
+
+   Composed from [[placed-box]] and [[graph-edge]] rather than restating
+   them, so the composition is a REAL reference edge."
+  [:map
+   [:nodes [:sequential placed-box]]
+   [:band [:sequential placed-box]]
+   [:edges [:sequential graph-edge]]
+   [:width :int]
+   [:height :int]])
+
+(def module-index
+  "`GET /api/modules` — the Code landing: one row per module plus the
+   drawable canvas.
+
+   `:cycles` rides alongside the picture rather than inside it because a
+   cycle is a FINDING about the architecture, not a drawing instruction. On
+   a tangled store it is the most useful thing on the screen, and a consumer
+   that only wants the verdict should not have to read geometry to find it."
+  [:map
+   [:modules [:sequential module-row]]
+   [:picture module-picture]
+   [:cycles [:sequential [:sequential :string]]]])

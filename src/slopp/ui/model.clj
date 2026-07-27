@@ -2,9 +2,10 @@
   "The reviewer UI's READ MODELS: JSON-shaped data assembled from the
   operation API's pure surfaces. No hiccup, no HTTP, no writes.
 
-  Three models, one per screen — `timeline` (the landing page), 
-  `change-view` (what happened between two milestones) and `form-view`
-  (one form's permalink).
+  Four models, one per screen — `timeline` (the landing page),
+  `change-view` (what happened between two milestones), `form-view`
+  (one form's permalink) and `module-index` (the Code landing: the
+  architecture as a drawable picture).
 
   **JSON-shaped is a rule, not a style.** Every value here survives a JSON
   round trip: keyword keys, vectors rather than lists or sets, and no
@@ -19,7 +20,9 @@
   core→shell dependency full_check's tier-layering check refuses."
   (:require [slopp.store :as store]
             [slopp.api.query :as query]
-            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]))
+            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
+            [slopp.api.modules :as api.modules]
+            [slopp.ui.graph :as graph]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -285,3 +288,77 @@
                                " is a floor, not a census — a call reached through a"
                                " binding or built at runtime is not here")}
                 (dissoc (json-card (orient/form-card session ns-sym nm)) :form)))))))
+
+(defn module-index
+  "The Code landing model: the architecture as rows plus a drawable picture.
+
+  Test namespaces are COUNTED, never listed. A `-test` namespace folds into
+  its subject's module, so listing it puts two things at the same rung that
+  are not peers — and on slopp's own store that means 103 of 186 rows are
+  tests. The names are reachable from the namespace they cover, which is
+  where 'what tests this?' actually gets asked.
+
+  The count is by REACH, not by folding. Folding alone reported `slopp.git`
+  as having no tests: its three test namespaces are top-level
+  (`slopp.git-projection-test`), so they fold into modules of their own and
+  none folds into `slopp.git`. A zero here is meant to be a FINDING, and one
+  wrong zero devalues every other zero on the screen — so a test namespace
+  counts for every module it requires into, as well as the one it folds into.
+
+  The picture is assembled HERE rather than in the client because the
+  layering comes from `store/module-layers`, and keeping the analysis on the
+  JVM is what makes it an ordinary in-image test. The client receives
+  coordinates and draws them."
+  [session]
+  (let [st         (:store @session)
+        nses       (sort (keys (:namespaces st)))
+        test?      #(str/ends-with? (str %) "-test")
+        prod       (remove test? nses)
+        by-module  (group-by modules/module-of prod)
+        home       (into {} (map (juxt identity modules/module-of)) prod)
+        ;; a test counts for every module it reaches into, plus its own
+        reach      (fn [t] (conj (set (keep home (store/ns-requires st t)))
+                                 (modules/module-of t)))
+        test-tally (frequencies (mapcat reach (filter test? nses)))
+        tiers      (:module-tiers st)
+        manifest   (api.modules/production-manifest st)
+        band       (graph/substrate manifest)
+        ;; layer the graph WITHOUT the foundation: leaving it in stretches
+        ;; every module above it a rung further from what it actually needs.
+        reduced    (into {} (for [[m ds] manifest :when (not (band m))]
+                              [m (vec (remove band ds))]))
+        {:keys [layers cycles]} (store/module-layers reduced)]
+    {:modules (mapv (fn [m]
+                      {:module     m
+                       :namespaces (mapv str (sort (get by-module m)))
+                       :tests      (get test-tally m 0)
+                       :tier       (name (get tiers m :external))
+                       :foundation (contains? band m)})
+                    (sort (keys by-module)))
+     :picture (graph/diagram {:manifest manifest :layers layers :band band})
+     :cycles  (mapv vec cycles)}))
+
+(defn tests-covering
+  "The test namespaces that require `nsx` directly — what to open when the
+  question is 'what tests this?'.
+
+  This is the other half of taking tests out of the nav. Removing 103 rows
+  from a listing is only an improvement if the names come back where they
+  answer something, and the namespace page is that place.
+
+  DIRECT requires only. A transitive closure on a real store reaches most of
+  the suite and so distinguishes nothing, which is the same reason
+  `covered-by` bounds its static reach. The trade is honest and worth
+  naming: a test that exercises this namespace through an intermediary is
+  not listed here. Form-granular coverage — with observed-versus-static
+  provenance — is `slopp.edit.refs/covered-by`'s job, and it answers a
+  narrower question than a namespace page asks."
+  [store nsx]
+  (let [sym   (symbol (str nsx))
+        test? #(str/ends-with? (str %) "-test")]
+    (->> (keys (:namespaces store))
+         (filter test?)
+         (filter #(some #{sym} (store/ns-requires store %)))
+         (map str)
+         sort
+         vec)))

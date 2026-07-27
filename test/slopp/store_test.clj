@@ -1,6 +1,20 @@
 (ns slopp.store-test
+  "Tests for the element model and the delta log — what a namespace IS, and
+  what the journal records about changing it.
+
+  The through-line is that the log must be a complete account. A delta that
+  does not carry what it changed leaves state recoverable only from the
+  materialized rows, and everything built on the log — foreign replay, CRDT
+  merge, time travel, the git projection — then quietly depends on something
+  it cannot see. That is the failure comments had for most of slopp's life:
+  stored positionally, recorded nowhere, and reachable only by snapshotting
+  bytes.
+
+  So these tests care less about return values than about whether a change
+  SURVIVES a round trip through the log alone. `replay-delta` is the honest
+  oracle for that, and a new op earns its place by replaying."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [rewrite-clj.parser :as p] [rewrite-clj.node :as n]))
+            [slopp.store :as store] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
 
 (def src "(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n")
 
@@ -127,16 +141,21 @@
         (is (= (:id r) (:id (store/form-named rc 'r.core 'map->R))))))))
 
 (deftest appended-forms-are-blank-line-separated
-  (let [base   (store/ingest (store/empty-store) 't.core
-                             "(ns t.core)\n\n(defn a [] 1)\n")
+  ;; The expected strings are unchanged from when the elements themselves
+  ;; carried the whitespace — the convention is the same, the supplier moved.
+  ;; This asserted through a LOCAL concatenating renderer, which was a fifth
+  ;; copy of the rule and went on agreeing with a model nothing else used.
+  (let [base      (store/ingest (store/empty-store) 't.core
+                                "(ns t.core)\n\n(defn a [] 1)\n")
         [s-b d-b] (store/append-form base 't.core (p/parse-string "(defn b [] 2)"))
-        [s-c _]   (store/append-form s-b 't.core (p/parse-string "(defn c [] 3)") :before 'b)
-        render (fn [st] (apply str (map (comp n/string :node)
-                                        (get-in st [:namespaces 't.core :elements]))))]
+        [s-c _]   (store/append-form s-b 't.core (p/parse-string "(defn c [] 3)")
+                                     :before 'b)
+        render    (fn [st] (render/render-ns st 't.core))]
     (testing "a tail-appended form gets a blank line before it (top-level convention)"
       (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn b [] 2)\n" (render s-b))))
     (testing "an anchored insert is blank-line separated on both sides"
-      (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn c [] 3)\n\n(defn b [] 2)\n" (render s-c))))
+      (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn c [] 3)\n\n(defn b [] 2)\n"
+             (render s-c))))
     (testing "journal replay of the :add renders identically to the live append"
       (is (= (render s-b) (render (store/replay-delta base d-b)))))))
 
@@ -342,3 +361,104 @@
                      {:id "d2" :op :move :form-id "f1"
                       :prompt store/auto-reorder-prompt}])]
       (is (= "the authored ask" (get (store/prompt-by-form st) "f1"))))))
+
+(deftest a-comment-belongs-to-the-form-it-describes
+  ;; Whitespace between forms is RENDERING; comments are CONTENT. Today both
+  ;; are `:sep` elements addressed by position, so a comment exists nowhere in
+  ;; the delta log — which is the entire reason commit points carry a
+  ;; byte-exact tree snapshot. Owned by a form, a comment is ordinary content:
+  ;; it replays, it merges, and nothing has to preserve bytes to keep it.
+  (let [st (store/ingest (store/empty-store) 'cm.core
+                         "(ns cm.core)\n\n(defn f [] 1)\n")
+        [st' d] (store/set-comment st 'cm.core 'f ";; why f is the way it is")]
+    (testing "it renders directly above its form"
+      (let [src (render/render-ns st' 'cm.core)]
+        (is (re-find #";; why f is the way it is\n\(defn f \[\] 1\)" src) (pr-str src))))
+    (testing "the DELTA carries it — this is what the journal was missing"
+      (is (= :comment (:op d)))
+      (is (= ";; why f is the way it is" (:text d)))
+      (is (some? (:form-id d)) "anchored on the form's id, not a position"))
+    (testing "a foreign replay reconstructs it from the log alone"
+      (let [replayed (store/replay-delta st d)]
+        (is (some? replayed) "the op must be replayable, not a full-reload fallback")
+        (is (= (render/render-ns st' 'cm.core)
+               (render/render-ns replayed 'cm.core)))))
+    (testing "clearing it removes the comment and leaves the form alone"
+      (let [[st'' _] (store/set-comment st' 'cm.core 'f "")]
+        (is (not (re-find #"why f is" (render/render-ns st'' 'cm.core))))
+        (is (re-find #"\(defn f \[\] 1\)" (render/render-ns st'' 'cm.core)))))
+    (testing "code is refused — forms come in through the form verbs, which verify"
+      (is (:error (store/set-comment st 'cm.core 'f ";; ok\n(def sneaky 1)"))))
+    (testing "an unknown form is an error, not a silent no-op"
+      (is (:error (store/set-comment st 'cm.core 'nope ";; x"))))))
+
+(deftest rendering-synthesizes-the-space-between-forms
+  ;; Whitespace between forms is a RENDERING decision, so the renderer makes
+  ;; it. Stored `:sep` elements become inert here, which is what lets them be
+  ;; deleted: nothing reads them, so nothing depends on what they held.
+  ;;
+  ;; This also normalizes. `place-form` gave a tail-appended form a SINGLE
+  ;; newline, so slopp's own output had most forms jammed together —
+  ;; slopp.api.session alone holds 33 single-newline separators against 11
+  ;; blank-line ones. One rule everywhere is worth the 345 bytes it adds
+  ;; across the whole store.
+  (let [st  (store/ingest (store/empty-store) 'rs.core
+                          "(ns rs.core)\n(defn a [] 1)\n\n\n\n(defn b [] 2)\n")
+        [st' _] (store/set-comment st 'rs.core 'b ";; b is special")]
+    (testing "one blank line between forms, whatever whitespace was stored"
+      (is (= "(ns rs.core)\n\n(defn a [] 1)\n\n;; b is special\n(defn b [] 2)\n"
+             (render/render-ns st' 'rs.core))))
+    (testing "a comment sits directly above its form, inside the gap"
+      (is (re-find #"\n\n;; b is special\n\(defn b" (render/render-ns st' 'rs.core))))
+    (testing "the file ends with exactly one newline"
+      (is (re-find #"\)\n\z" (render/render-ns st' 'rs.core))))
+    (testing "an empty namespace renders empty, not a stray newline"
+      (is (= "" (render/render-ns (store/empty-store) 'nope.core))))))
+
+(deftest writes-never-create-separator-elements
+  ;; Rendering supplies the space between forms, so nothing stores it. A
+  ;; `:sep` element the renderer already ignores is a row that costs bytes
+  ;; and answers no question — and it is HALF the element table. This pins
+  ;; every write path at once, because the model is only simplified if all
+  ;; of them agree: one holdout and the rows come back.
+  (let [s0   (store/ingest (store/empty-store) 'w.core
+                           "(ns w.core)\n\n(defn a [] 1)\n\n(defn b [] 2)\n")
+        seps (fn [st] (filter #(= :sep (:kind %))
+                              (get-in st [:namespaces 'w.core :elements])))]
+    (testing "ingest"
+      (is (empty? (seps s0))))
+    (testing "append — at the tail, and anchored before a form"
+      (let [[s1] (store/append-form s0 'w.core (p/parse-string "(defn c [] 3)"))
+            [s2] (store/append-form s1 'w.core (p/parse-string "(defn d [] 4)")
+                                    :before 'a)]
+        (is (empty? (seps s2)))
+        (is (= (str "(ns w.core)\n\n(defn d [] 4)\n\n(defn a [] 1)\n\n"
+                    "(defn b [] 2)\n\n(defn c [] 3)\n")
+               (render/render-ns s2 'w.core)))
+        (testing "move and delete — neither has a trailing separator to carry"
+          (let [[s3] (store/move-form s2 'w.core 'c 'a)
+                [s4] (store/remove-form s3 'w.core 'b)]
+            (is (empty? (seps s4)))
+            (is (= "(ns w.core)\n\n(defn d [] 4)\n\n(defn c [] 3)\n\n(defn a [] 1)\n"
+                   (render/render-ns s4 'w.core)))))))))
+
+(deftest a-discarded-form-is-not-silently-dropped
+  ;; `#_(...)` is CODE that the reader throws away, and rewrite-clj reports it
+  ;; as non-sexpr-able — so it arrives as trivia, the same bucket as a blank
+  ;; line. Once trivia stops being stored, anything not folded onto a form is
+  ;; gone, and silently deleting a reader-discarded form is the one outcome
+  ;; this design must not have. It is rare enough to be invisible and exactly
+  ;; the kind of thing someone left as a note to themselves.
+  ;;
+  ;; So it folds like a comment: preserved verbatim above the form it
+  ;; precedes, and it renders back out. Zero cases in slopp's own store, which
+  ;; is why it needs a test rather than a measurement.
+  (let [s  (store/ingest (store/empty-store) 'd.core
+                         "(ns d.core)\n\n#_(defn old [] 1)\n(defn fresh [] 2)\n")
+        el (first (filter #(= 'fresh (:name %))
+                          (get-in s [:namespaces 'd.core :elements])))]
+    (testing "the discard is owned by the form below it"
+      (is (= "#_(defn old [] 1)" (:comment el))))
+    (testing "and survives rendering"
+      (is (= "(ns d.core)\n\n#_(defn old [] 1)\n(defn fresh [] 2)\n"
+             (render/render-ns s 'd.core))))))

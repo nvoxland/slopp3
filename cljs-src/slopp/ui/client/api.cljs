@@ -74,3 +74,15 @@
                    (throw (ex-info "source response failed validation"
                                    {:errors (m/explain slopp.ui.contracts/form-source data)})))
                  data)))))
+
+(defn ^{:generated "slopp.ui.api/modules"} ^:export modules
+  "GET /api/modules — generated client wrapper (D-web-contracts)."
+  []
+  (-> (js/fetch "/api/modules" (clj->js {:method "GET"}))
+      (.then (fn [resp] (.json resp)))
+      (.then (fn [body]
+               (let [data (m/decode slopp.ui.contracts/module-index (js->clj body :keywordize-keys true) (mt/json-transformer))]
+                 (when-not (m/validate slopp.ui.contracts/module-index data)
+                   (throw (ex-info "modules response failed validation"
+                                   {:errors (m/explain slopp.ui.contracts/module-index data)})))
+                 data)))))

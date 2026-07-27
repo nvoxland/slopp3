@@ -1,4 +1,20 @@
 (ns slopp.ui.api
+  "The reviewer UI's JSON boundary — one function per endpoint.
+
+  This is what D-spa is organised around: an explicit, typed, independently
+  testable surface. Each endpoint declares its route, its auth, the reads it
+  needs and a `:web/response` contract on the name, so it is a pure function
+  of data — its test is `=` with no mock, no browser and no running server,
+  and the same schema var validates the response here and in the generated
+  client.
+
+  Two things are deliberately elsewhere. The reads are PERFORMED in
+  `slopp.ui.pages`, addressed by vocabulary rather than by var, so an answer
+  cannot differ between representations — which is why
+  `slopp.ui.server/served-namespaces` names both namespaces and why serving
+  only this one yields 500s. And the payloads are SHAPED in
+  `slopp.ui.model`; handlers here restate them key by key because that is
+  where symbols become strings, JSON having no symbol type."
   (:require [slopp.ui.contracts :as contracts]))
 
 (defn ^{:web/method :get :web/path "/api/namespaces" :web/auth :public
@@ -24,19 +40,25 @@
         :web/response contracts/ns-outline
         :web/reads {:outline [:browse/ns-outline [:path-params :ns]]}}
   ns-outline
-  "GET /api/ns/:ns — one namespace's forms in store order.
+  "GET /api/ns/:ns — one namespace's forms in store order, and what tests it.
 
   An unknown namespace is a 404 rather than an empty outline: `{:forms []}`
   would say the namespace exists and holds nothing, which is a different
   statement and a false one. The read already returns nil for the unknown
-  case, so the distinction costs a `when-let`."
+  case, so the distinction costs a `when-let`.
+
+  The body is restated key by key rather than passed straight through — this
+  is where symbols become strings, and JSON has no symbol type. The cost is
+  that a new key on the read must be named here too; the contract check is
+  what makes that a red test rather than a silently missing field."
   [req]
-  (if-let [{:keys [ns forms]} (:outline (:web/reads req))]
+  (if-let [{:keys [ns forms tested-by]} (:outline (:web/reads req))]
     {:status 200
      :body {:ns (str ns)
             :forms (mapv (fn [{:keys [name doc]}]
                            {:name (str name) :doc doc})
-                         forms)}}
+                         forms)
+            :tested-by (vec tested-by)}}
     {:status 404 :body {:error "no such namespace"}}))
 
 (defn ^{:web/method :get :web/path "/api/timeline" :web/auth :public
@@ -96,3 +118,16 @@
     (if-let [src (:source (:web/reads req))]
       {:status 200 :body {:ns (str ns) :name (str name) :source src}}
       {:status 404 :body {:error "no such form"}})))
+
+(defn ^{:web/method :get :web/path "/api/modules" :web/auth :public
+        :web/response contracts/module-index
+        :web/reads {:modules [:browse/modules []]}}
+  modules
+  "GET /api/modules — the architecture: one row per module, plus the canvas.
+
+  A projection, not new logic: `slopp.ui.model/module-index` already returns
+  JSON-shaped data, so there is nothing to reshape here. That is the payoff
+  of shaping once in the model — symbols become strings exactly one place,
+  and this endpoint cannot disagree with the model about what a module is."
+  [req]
+  {:status 200 :body (:modules (:web/reads req))})

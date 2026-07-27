@@ -14,25 +14,6 @@
                    (map (fn [[m ds]] [m (clojure.string/join " " (sort ds))]))
                    (:modules store))}))
 
-(defn production-manifest
-  "Module dependency edges from PRODUCTION namespaces only — the
-  architecture VIEW's graph. A `-test` namespace folds into its subject
-  module (module-of strips `-test`), so its fixture deps would manufacture
-  cycles that don't exist in production; excluding them tells the truth.
-  Every production module is a key (external ones → layer 0). The stored
-  manifest still carries the test edges — this derivation is for
-  layers/cycles, not for enforcement."
-  [store rows]
-  (let [prod? #(not (str/ends-with? (str %) "-test"))
-        base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
-                    (filter prod? (keys (:namespaces store))))]
-    (reduce (fn [m {:keys [from-ns to]}]
-              (if (prod? from-ns)
-                (let [a (modules/module-of from-ns) b (modules/module-of to)]
-                  (if (= a b) m (update m a (fnil conj #{}) b)))
-                m))
-            base rows)))
-
 (defn module-usage-rows
   "Every store-internal usage row ({:from-ns :from-var :to :to-export}) for
   the debt view and the drift (declared-but-unused) view — consumed from
@@ -45,6 +26,29 @@
           :from-var  (:from-var r)
           :to        (:to-ns r)
           :to-export (modules/export-level store (:to-ns r) (:to-name r))})))
+
+(defn ^{:export "slopp.ui"} production-manifest
+  "Module dependency edges from PRODUCTION namespaces only — the
+  architecture VIEW's graph. A `-test` namespace folds into its subject
+  module (module-of strips `-test`), so its fixture deps would manufacture
+  cycles that don't exist in production; excluding them tells the truth.
+  Every production module is a key (external ones → layer 0). The stored
+  manifest still carries the test edges — this derivation is for
+  layers/cycles, not for enforcement.
+
+  Exported to the `slopp.ui` subtree because that is the architecture view:
+  the Code screen draws this graph. Not public — no other caller has asked."
+  ([store] (production-manifest store (module-usage-rows store)))
+  ([store rows]
+   (let [prod? #(not (str/ends-with? (str %) "-test"))
+         base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
+                     (filter prod? (keys (:namespaces store))))]
+     (reduce (fn [m {:keys [from-ns to]}]
+               (if (prod? from-ns)
+                 (let [a (modules/module-of from-ns) b (modules/module-of to)]
+                   (if (= a b) m (update m a (fnil conj #{}) b)))
+                 m))
+             base rows))))
 
 (defn module-debt
   "Whole-store module violations under the store's CURRENT manifest —

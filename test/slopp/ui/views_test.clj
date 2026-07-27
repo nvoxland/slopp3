@@ -1,4 +1,15 @@
 (ns slopp.ui.views-test
+  "Tests for every screen, asserting on hiccup DATA.
+
+  These replaced assertions that regexed server-rendered HTML strings. The
+  properties are the same; reaching them is now cheaper and sharper, with no
+  server and no browser in the loop — which is the payoff the `:cljc` view
+  split was chosen for, and the reason to keep resisting anything that pulls
+  rendering into `:cljs`.
+
+  Two screens can only be tested here at all: LOADING and NOT-FOUND exist
+  only once the server stops rendering pages, so nothing else observes
+  them."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ui.views :as views] [clojure.string :as str]))
 
@@ -69,41 +80,6 @@
       (is (= "Code" (:label (first (filter :active? marked)))))
       (is (= (count views/sections) (count marked))))))
 
-(deftest ns-nav-carries-what-the-client-binds-to
-  ;; This pane has a SECOND consumer that no Clojure reference edge reaches:
-  ;; slopp.ui.client.nsview binds `#ns-filter`, `#ns-list` and `.ns-row` by
-  ;; selector. Rewriting the pane silently dropped all three — the markup
-  ;; still rendered, the page still looked right, and the filter did nothing.
-  ;; Selector coupling is invisible to the reference graph, so it gets pinned
-  ;; here or it does not get pinned.
-  (let [v (views/ns-nav [{:ns 'slopp.api} {:ns 'slopp.ui}] 'slopp.ui)
-        nodes (tree-seq coll? seq v)
-        attrs (fn [tag] (for [x nodes
-                              :when (and (vector? x) (= tag (first x))
-                                         (map? (second x)))]
-                          (second x)))]
-    (testing "the three selectors the client binds to are all present"
-      (is (some #(= "ns-filter" (:id %)) (attrs :input))
-          "the filter box is the whole reason this pane is not a link list")
-      (is (some #(= "ns-list" (:id %)) (attrs :ul)))
-      (is (= 2 (count (filter #(= "ns-row" (:class %)) (attrs :li))))
-          "one row per namespace, each tagged for the filter to hide"))
-    (testing "link text is the namespace and nothing else"
-      ;; a form count reads as part of the name at a glance, and the href is
-      ;; what the dangling-route gate checks
-      (is (= ["slopp.api" "slopp.ui"]
-             (vec (for [x nodes :when (and (vector? x) (= :a (first x)))]
-                    (last x)))))
-      (is (= ["/store/ns/slopp.api" "/store/ns/slopp.ui"]
-             (vec (map :href (attrs :a))))))
-    (testing "the current namespace is marked, and only it"
-      (is (= ["/store/ns/slopp.ui"]
-             (vec (keep #(when (= "active" (:class %)) (:href %)) (attrs :a))))))
-    (testing "with no current namespace nothing is marked"
-      (is (empty? (keep #(when (and (vector? %) (= :a (first %)))
-                           (:class (second %)))
-                        (tree-seq coll? seq (views/ns-nav [{:ns 'a}] nil))))))))
-
 (deftest the-outline-view-renders-from-the-wire-shape
   ;; This is the view the SPA swap and the server render SHARE, so it takes
   ;; the shape that crosses the wire — strings, `:doc` possibly nil — rather
@@ -123,7 +99,13 @@
       ;; not an empty <small>: a blank element is a visible gap that says a
       ;; doc exists and is empty, which is a different and false statement
       (is (some #(= [:small " — Says hi."] %) nodes))
-      (is (= 1 (count (filter #(and (vector? %) (= :small (first %))) nodes)))))))
+      ;; scoped to the form list: the property is about a form with no
+      ;; docstring, not about how many <small>s the whole page contains
+      (is (= 1 (count (filter #(and (vector? %) (= :small (first %)))
+                              (tree-seq coll? seq
+                                        (first (filter #(and (vector? %)
+                                                             (= :ul (first %)))
+                                                       nodes))))))))))
 
 (deftest the-client-router-owns-every-url-the-app-serves
   ;; With the server rendering gone, THIS is the routing table. A path it
@@ -283,17 +265,138 @@
         (is (re-find #"floor, not a census" t) "the honesty note rides along")
         (is (= ["/store/form/f9" "/store/form/f7"] (hrefs v))
             "every edge is an id — a name would break the moment it changes")))
-    (testing "ns-nav: the filter selects by NOT rendering"
-      (let [nss [{:ns "demo.core"} {:ns "other.thing"}]
+    (testing "module nav: the filter selects by NOT rendering"
+      (let [mods [{:module "demo" :namespaces ["demo.core"]
+                   :tests 1 :tier "pure" :foundation false}
+                  {:module "other" :namespaces ["other.thing"]
+                   :tests 0 :tier "pure" :foundation false}]
             rows (fn [needle]
-                   (vec (for [x (tree-seq coll? seq (views/ns-nav nss nil needle))
+                   (vec (for [x (tree-seq coll? seq (views/module-nav mods nil needle))
                               :when (and (vector? x) (= :a (first x)))]
                           (last x))))]
-        (is (= ["demo.core" "other.thing"] (rows nil)) "no needle shows everything")
-        (is (= ["demo.core"] (rows "demo")) "a needle drops the rest from the DOM")
+        (is (= [] (rows nil))
+            "no needle: modules are collapsed, so no namespace links yet")
+        (is (= ["demo.core"] (rows "demo"))
+            "a needle expands its module and drops the rest from the DOM")
         (is (= [] (rows "zzz")) "and a needle matching nothing renders no rows")
         (is (= "demo" (:value (second (first (filter #(and (vector? %)
                                                            (= :input (first %)))
                                                      (tree-seq coll? seq
-                                                               (views/ns-nav nss nil "demo")))))))
+                                                               (views/module-nav mods nil "demo")))))))
             "the box carries its value, or a re-render would erase what was typed")))))
+
+(deftest module-graph-renders-the-picture-as-addressable-svg
+  (let [picture {:width 400 :height 300
+                 :nodes [{:module "demo.a" :layer 0 :x 10 :y 200 :w 100 :h 50}
+                         {:module "demo.b" :layer 1 :x 10 :y 60 :w 100 :h 50}]
+                 :band  [{:module "demo.lib" :x 10 :y 260 :w 100 :h 30}]
+                 :edges [{:from "demo.b" :to "demo.a" :x1 60 :y1 110 :x2 60 :y2 200}]}
+        svg   (views/module-graph picture)
+        nodes (->> (tree-seq vector? seq svg)
+                   (filter #(and (vector? %) (map? (second %))
+                                 (get-in % [1 :data-module]))))]
+    (testing "the canvas is sized by the picture, not by the view"
+      (is (= :svg (first svg)))
+      (is (= "0 0 400 300" (get-in svg [1 :viewBox]))))
+    (testing "every box is an addressable element the client can bind to"
+      (is (= #{"demo.a" "demo.b" "demo.lib"}
+             (set (map #(get-in % [1 :data-module]) nodes)))))
+    (testing "foundation members are marked, so CSS can treat the band differently"
+      (let [cls (fn [m] (->> nodes
+                             (filter #(= m (get-in % [1 :data-module])))
+                             first (#(get-in % [1 :class]))))]
+        (is (re-find #"foundation" (str (cls "demo.lib"))))
+        (is (not (re-find #"foundation" (str (cls "demo.a")))))))
+    (testing "every module is legible — its name appears as text"
+      (let [texts (->> (tree-seq vector? seq svg)
+                       (filter #(and (vector? %) (= :text (first %))))
+                       (mapcat rest) (filter string?) set)]
+        (is (every? texts ["demo.a" "demo.b" "demo.lib"]))))
+    (testing "edges are drawn BEFORE nodes, so arrowheads do not sit on labels"
+      (let [kids   (rest (drop-while (complement map?) svg))
+            groups (filter vector? (tree-seq vector? seq svg))
+            idx-of (fn [pred] (count (take-while (complement pred) groups)))]
+        (is (seq kids))
+        (is (< (idx-of #(= :path (first %)))
+               (idx-of #(get-in % [1 :data-module]))))))))
+
+(deftest module-nav-lists-modules-and-expands-only-where-it-should
+  (let [modules [{:module "demo.a" :namespaces ["demo.a.core" "demo.a.util"]
+                  :tests 2 :tier "pure" :foundation false}
+                 {:module "demo.b" :namespaces ["demo.b.web"]
+                  :tests 0 :tier "external" :foundation true}]
+        ids     (fn [h] (->> (tree-seq vector? seq h)
+                             (filter #(and (vector? %) (map? (second %))))
+                             (keep #(get-in % [1 :id])) set))
+        rows    (fn [h cls] (->> (tree-seq vector? seq h)
+                                 (filter #(and (vector? %) (map? (second %))
+                                               (= cls (get-in % [1 :class]))))))
+        texts   (fn [h] (->> (tree-seq vector? seq h) (filter string?) set))
+        says?   (fn [h re] (boolean (some #(re-find re %) (texts h))))]
+    (testing "the hooks the client binds to survive the restructure"
+      (let [h (views/module-nav modules nil nil)]
+        (is (contains? (ids h) "ns-filter"))
+        (is (contains? (ids h) "ns-list"))))
+    (testing "collapsed by default: modules are rows, namespaces are not"
+      (let [h (views/module-nav modules nil nil)]
+        (is (= 2 (count (rows h "module-row"))))
+        (is (zero? (count (rows h "ns-row"))))))
+    (testing "test namespaces are counted, never listed"
+      (let [h (views/module-nav modules nil nil)]
+        (is (says? h #"2 tests"))
+        (is (not-any? #(re-find #"-test" %) (texts h)))))
+    (testing "the module holding the current namespace is expanded, and only it"
+      (let [h (views/module-nav modules "demo.a.util" nil)]
+        (is (= 2 (count (rows h "ns-row"))))
+        (is (contains? (texts h) "demo.a.core"))
+        (is (not (contains? (texts h) "demo.b.web")))))
+    (testing "a filter match expands its module — otherwise search finds nothing behind a collapsed row"
+      (let [h (views/module-nav modules nil "web")]
+        (is (contains? (texts h) "demo.b.web"))
+        (is (not (contains? (texts h) "demo.a.core")))))
+    (testing "a module with no tests is visible as a finding, not hidden"
+      (is (says? (views/module-nav modules nil nil) #"no tests")))))
+
+(deftest ns-outline-names-the-tests-that-cover-the-namespace
+  (letfn [(text  [v] (str/join " " (filter string? (tree-seq coll? seq v))))
+          (hrefs [v] (vec (for [x (tree-seq coll? seq v)
+                                :when (and (vector? x) (= :a (first x)))]
+                            (:href (second x)))))]
+    (testing "covering tests are named and linked — this is where the nav's demoted rows come back"
+      (let [v (views/ns-outline-main
+               {:ns "demo.a.core"
+                :forms [{:name "hello" :doc nil}]
+                :tested-by ["demo.a.core-test" "demo.far-test"]})]
+        (is (re-find #"demo\.a\.core-test" (text v)))
+        (is (re-find #"demo\.far-test" (text v)))
+        (is (some #{"/store/ns/demo.a.core-test"} (hrefs v))
+            "and each is a link you can follow, not just a name")))
+    (testing "a namespace nothing covers SAYS so rather than showing an empty gap"
+      (let [v (views/ns-outline-main
+               {:ns "demo.b.util" :forms [{:name "helper" :doc nil}] :tested-by []})]
+        (is (re-find #"(?i)no tests" (text v))
+            "silence would look identical to a page that just doesn't show coverage")))))
+
+(deftest module-graph-draws-sketch-paths-when-given-them-and-rects-when-not
+  (let [picture {:width 400 :height 300
+                 :nodes [{:module "demo.a" :layer 0 :x 10 :y 200 :w 100 :h 50}]
+                 :band  [] :edges []}
+        tags    (fn [v t] (->> (tree-seq vector? seq v)
+                               (filter #(and (vector? %) (= t (first %))))))]
+    (testing "with no sketch data it renders plain rects — this is the JVM path"
+      (let [v (views/module-graph picture)]
+        (is (= 1 (count (tags v :rect))))
+        (is (zero? (count (filter #(= "sketch" (get-in % [1 :class]))
+                                  (tags v :path)))))))
+    (testing "given sketch paths for a module, it draws those instead of the rect"
+      (let [v (views/module-graph
+               (assoc picture :sketch {"demo.a" [{:d "M 0 0 L 10 10"}
+                                                 {:d "M 1 1 L 11 11"}]}))]
+        (is (zero? (count (tags v :rect))) "the rect is replaced, not layered under")
+        (is (= ["M 0 0 L 10 10" "M 1 1 L 11 11"]
+               (->> (tags v :path)
+                    (filter #(= "sketch" (get-in % [1 :class])))
+                    (mapv #(get-in % [1 :d])))))))
+    (testing "a module with no sketch entry still gets its rect — partial data degrades"
+      (let [v (views/module-graph (assoc picture :sketch {"other" [{:d "M 0 0"}]}))]
+        (is (= 1 (count (tags v :rect))))))))

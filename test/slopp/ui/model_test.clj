@@ -1,4 +1,15 @@
 (ns slopp.ui.model-test
+  "Tests for the reviewer UI's read models — what the server hands the client.
+
+  Every test here builds a REAL store with `store/ingest` rather than a map
+  of the shape the model happens to want. The models derive from the
+  reference graph and the module rules, so a hand-shaped fixture would test
+  the assertion instead of the derivation.
+
+  One property is shared by all of them and checked by `json-shaped?`: these
+  values cross a wire. A qualified symbol survives `pr-str` and reads back as
+  a string, silently stopping being a reference — so symbols become text
+  exactly once, in the model, and this namespace is where that is enforced."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ui.model :as model]
             [slopp.store :as store]))
@@ -281,3 +292,72 @@
       (is (= "clojure" (:view (model/form-view sess fid nil)))))
     (testing "still JSON-shaped with the fidelity keys on board"
       (is (json-shaped? (model/form-view sess fid))))))
+
+(deftest module-index-groups-production-namespaces-and-counts-tests-without-listing-them
+  (let [st (-> (store/empty-store)
+               (store/ingest 'demo.a.core "(ns demo.a.core)\n\n(defn hello [x] (inc x))\n")
+               (store/ingest 'demo.a.core-test
+                             (str "(ns demo.a.core-test (:require [demo.a.core :as core]))\n\n"
+                                  "(defn t [] (core/hello 1))\n"))
+               (store/ingest 'demo.b.util
+                             (str "(ns demo.b.util (:require [demo.a.core :as core]))\n\n"
+                                  "(defn helper [] (core/hello 1))\n")))
+        idx (model/module-index (atom {:store st}))
+        by  (into {} (map (juxt :module identity)) (:modules idx))]
+    (testing "one row per module, sorted"
+      (is (= ["demo.a" "demo.b"] (mapv :module (:modules idx)))))
+    (testing "production namespaces are listed; test namespaces are counted only"
+      (is (= ["demo.a.core"] (:namespaces (by "demo.a"))))
+      (is (= 1 (:tests (by "demo.a"))))
+      (is (= 0 (:tests (by "demo.b"))))
+      (is (not-any? #(re-find #"-test$" %) (mapcat :namespaces (:modules idx)))
+          "a -test namespace never appears in the listing"))
+    (testing "the drawable picture is computed server-side — the client renders, it does not analyse"
+      (let [p (:picture idx)]
+        (is (= #{"demo.a" "demo.b"} (set (map :module (:nodes p)))))
+        (is (= [["demo.b" "demo.a"]] (mapv (juxt :from :to) (:edges p))))
+        (is (pos? (:width p)))
+        (is (pos? (:height p)))))
+    (testing "the whole model survives a JSON round trip"
+      (is (json-shaped? idx) (pr-str idx)))))
+
+(deftest a-top-level-test-namespace-still-counts-for-the-module-it-exercises
+  ;; The case that made the folding tally lie in the real store: slopp.git has
+  ;; three test namespaces, all top-level (slopp.git-projection-test), so each
+  ;; folds into a module of its OWN and none folds into slopp.git — which
+  ;; reported "no tests" for a module that is thoroughly tested.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.git.core "(ns demo.git.core)\n\n(defn sha [] \"abc\")\n")
+                (store/ingest 'demo.git-projection-test
+                              (str "(ns demo.git-projection-test "
+                                   "(:require [demo.git.core :as c]))\n\n"
+                                   "(defn t [] (c/sha))\n")))
+        idx (model/module-index (atom {:store st}))
+        by  (into {} (map (juxt :module identity)) (:modules idx))]
+    (testing "the module under test is credited even though nothing folds into it"
+      (is (= 1 (:tests (by "demo.git")))))
+    (testing "and it still does not LIST the test namespace"
+      (is (= ["demo.git.core"] (:namespaces (by "demo.git")))))
+    (testing "a test-only module contributes no row of its own"
+      (is (nil? (by "demo.git-projection"))))))
+
+(deftest tests-covering-names-the-test-namespaces-worth-opening
+  (let [st (-> (store/empty-store)
+               (store/ingest 'demo.a.core "(ns demo.a.core)\n\n(defn hello [] 1)\n")
+               (store/ingest 'demo.a.core-test
+                             (str "(ns demo.a.core-test (:require [demo.a.core :as c]))\n\n"
+                                  "(defn t [] (c/hello))\n"))
+               (store/ingest 'demo.far-test
+                             (str "(ns demo.far-test (:require [demo.a.core :as c]))\n\n"
+                                  "(defn t [] (c/hello))\n"))
+               (store/ingest 'demo.b.util
+                             (str "(ns demo.b.util (:require [demo.a.core :as c]))\n\n"
+                                  "(defn helper [] (c/hello))\n")))]
+    (testing "every test namespace that requires it, wherever it lives"
+      (is (= ["demo.a.core-test" "demo.far-test"]
+             (model/tests-covering st 'demo.a.core))
+          "a top-level test counts too — it folds into its own module but it still covers this"))
+    (testing "production callers are not tests and do not appear"
+      (is (not-any? #{"demo.b.util"} (model/tests-covering st 'demo.a.core))))
+    (testing "a namespace nothing tests says so with an empty list, not a lie"
+      (is (= [] (model/tests-covering st 'demo.b.util))))))

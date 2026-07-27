@@ -1,6 +1,6 @@
 (ns slopp.boot
-  "Run a slopp store's program directly from the db — no exported source. Reads
-  every namespace's byte-exact source from `<dir>/.slopp/store.db` (the
+  "Run a slopp store's program directly from the db — no exported source.
+  Renders every namespace's source from `<dir>/.slopp/store.db` (the
   `elements` table) and loads it into the CURRENT JVM in dependency order, then
   invokes the entry point (default `slopp.mcp/-main`). This is the in-process
   analogue of `slopp.image/load-ns!`, and the general counterpart to `build!`
@@ -42,18 +42,42 @@
         conn))))
 
 ^:reads (defn store-sources
-  "{ns-sym source} for every namespace in the store db — byte-exact (each
-  `elements.source` is a form's canonical CST string; concatenated by pos it IS
-  render-ns output). A schema-less db (brand-new dir) is an EMPTY store — the
-  served program's own open creates the schema."
-  [conn]
-  (if (empty? (jdbc/execute! conn ["SELECT name FROM sqlite_master
+          "{ns-sym source} for every namespace in the store db — the store's own
+  rendering, reproduced without any slopp code. Forms joined by ONE BLANK
+  LINE, a form's `comment` directly above it, one trailing newline. `sep` rows
+  are IGNORED, so a store mid-migration boots exactly what a migrated one
+  does.
+
+  This used to CONCATENATE every row in `pos` order, which was byte-exact for
+  as long as the rows carried the whitespace themselves. Once the renderer
+  started supplying it, concatenation became a second and wrong answer: forms
+  jammed together and every comment dropped.
+
+  So this is a fourth implementation of one rule, and it cannot call the other
+  three — the kernel's whole property is that it loads a store with no slopp
+  code available, which is why the module gate refuses it `slopp.store`.
+  `SELECT *` rather than named columns for the same reason it reads no schema
+  version: a store predating the `comment` column must still boot.
+
+  A schema-less db (brand-new dir) is an EMPTY store — the served program's
+  own open creates the schema."
+          [conn]
+          (if (empty? (jdbc/execute! conn ["SELECT name FROM sqlite_master
                                     WHERE type='table' AND name='elements'"]))
-    {}
-    (reduce (fn [m row]
-              (update m (symbol (:elements/ns row)) (fnil str "") (:elements/source row)))
             {}
-            (jdbc/execute! conn ["SELECT ns, source FROM elements ORDER BY ns, pos"]))))
+            (into {}
+                  (map (fn [[ns-sym rows]]
+                         [ns-sym (str (str/join
+                                       "\n\n"
+                                       (map (fn [r]
+                                              (if-let [c (:elements/comment r)]
+                                                (str c "\n" (:elements/source r))
+                                                (:elements/source r)))
+                                            rows))
+                                      "\n")]))
+                  (->> (jdbc/execute! conn ["SELECT * FROM elements ORDER BY ns, pos"])
+                       (filter #(= "form" (:elements/kind %)))
+                       (group-by #(symbol (:elements/ns %)))))))
 
 (defn- internal-requires
   "The in-store namespaces `source`'s ns form requires (external libs dropped)."

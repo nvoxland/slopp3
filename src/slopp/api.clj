@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2201,33 +2201,71 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
 
 (defn file-put!
   "Track a NON-CODE file on the store's files manifest — it rides every
-  projected tree, so slopp pushes never delete it from the remote. TEXT by
-  default; `:encoding \"base64\"` decodes `content` to BYTES and stores them
-  content-addressed (`:content-type` labels them). Returns {:path :bytes}
-  (+ :sha for binary)."
-  [session path content & {:keys [prompt agent encoding content-type]}]
-  (cond
-    (str/blank? (str path))
-    {:error "file_put needs a :path"}
+  projected tree, so slopp pushes never delete it.
 
-    (nil? content)
-    {:error "file_put needs :content"}
+  Content comes from `content` inline, or from `:source`, a path on disk.
+  Both are AUTHORED — tracked, versioned, and part of the projected tree.
+  They differ only in how the bytes are stored:
 
-    (and encoding (not= "base64" (str encoding)))
-    {:error (str "unknown :encoding " encoding " — omit it for text, or"
-                 " \"base64\" for binary")}
+  - `content` inline: text the agent wrote. Stored in the delta itself, so
+    it is diffable and time-travellable with `file_get :at`.
+  - `:source`: a file that already exists — an image, a font, something
+    imported. Stored CONTENT-ADDRESSED, so the journal carries a sha and
+    the bytes live once in `:blobs` rather than inline in every delta.
 
-    :else
-    (let [st' (session/commit-appended! session
-                        #(first (store/record-file-put % path content
-                                                       :prompt prompt :agent agent
-                                                       :encoding encoding
-                                                       :content-type content-type))
-                        [])
-          e   (get (:files st') (str path))]
-      (if (map? e)
-        {:path (str path) :bytes (:bytes e) :sha (:sha e)}
-        {:path (str path) :bytes (count (str content))}))))
+  Measured cause: 30.5 MB of this store's delta log is inline file content,
+  99.8% of it one regenerable bundle re-appended on every build. Sniffing
+  the content-type was worse than useless here — it called
+  `application/javascript` text and put a vendored library straight into a
+  delta. Provenance decides, not file type.
+
+  What does NOT belong on this manifest at all is a file that can be
+  REGENERATED — a compiled bundle, a downloaded library. Those are
+  `:artifacts`: bytes on disk, sha and recipe in the journal, written by
+  `compile_client` and `js_dep`. The distinction is recoverability, not
+  authorship: an artifact that is deleted is rebuilt, a file that is
+  deleted is lost.
+
+  `:encoding \"base64\"` still decodes `content` explicitly.
+  Returns {:path :bytes} (+ :sha when content-addressed)."
+  [session path content & {:keys [prompt agent encoding content-type source]}]
+  (let [from-src (when (and source (nil? content))
+                   (let [f (java.io.File. (str source))]
+                     (if-not (.exists f)
+                       {:error (str "no file at " (str source))}
+                       ;; ALWAYS content-addressed: a file read off disk is an
+                       ;; artifact, whether or not its bytes happen to be text
+                       {:content  (.encodeToString (java.util.Base64/getEncoder)
+                                                   (java.nio.file.Files/readAllBytes
+                                                    (.toPath f)))
+                        :encoding "base64"})))
+        content  (or content (:content from-src))
+        encoding (or encoding (:encoding from-src))]
+    (cond
+      (str/blank? (str path))
+      {:error "file_put needs a :path"}
+
+      (:error from-src)
+      {:error (:error from-src)}
+
+      (nil? content)
+      {:error "file_put needs :content, or :source naming a file to read it from"}
+
+      (and encoding (not= "base64" (str encoding)))
+      {:error (str "unknown :encoding " encoding " — omit it for text, or"
+                   " \"base64\" for binary")}
+
+      :else
+      (let [st' (session/commit-appended! session
+                                          #(first (store/record-file-put % path content
+                                                                         :prompt prompt :agent agent
+                                                                         :encoding encoding
+                                                                         :content-type content-type))
+                                          [])
+            e   (get (:files st') (str path))]
+        (if (map? e)
+          {:path (str path) :bytes (:bytes e) :sha (:sha e)}
+          {:path (str path) :bytes (count (str content))})))))
 
 (defn file-remove!
   "Drop `path` from the files manifest. Returns {:removed path} | {:error}."
@@ -2248,22 +2286,26 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                 (map (fn [[p t]] [p (count t)]))
                 (:files (:store @session)))})
 
-(defn edit-trivia!
-  "Replace the comment/blank-line run immediately before form `anchor`
-  (nil = the namespace tail) with `text` — the trivia counterpart of
-  edit_replace_form. Forms are untouched by construction, so there is no
-  image work and no verification; the `:trivia` delta anchors on the form-id
-  for foreign replay. Returns {:delta :before} | {:error} | {:conflict}."
-  [session ns-sym anchor text & {:keys [prompt agent]}]
+(defn set-comment!
+  "Set (or clear, with blank `text`) the comment rendered above form `nm`.
+
+  A different shape from the positional predecessor it replaces: trivia was
+  placed BEFORE a form and owned by nobody, a comment is owned BY the form.
+  That removes the positional question entirely — no anchor, no run to
+  replace, and a merge reconciles it as ordinary content on a form identity.
+
+  No image work and no verification: a comment changes what a namespace
+  RENDERS, never what it means. Returns {:delta :ns :name} | {:error} |
+  {:conflict}."
+  [session ns-sym nm text & {:keys [prompt agent]}]
   (let [base (:store @session)
-        r    (store/replace-trivia base ns-sym anchor text
-                                   :prompt prompt :agent agent)]
+        r    (store/set-comment base ns-sym nm text :prompt prompt :agent agent)]
     (if (:error r)
       r
       (let [[st' d] r]
         (if-not (session/try-commit! session base st' [ns-sym])
           {:conflict {:reason "store changed concurrently — retry"}}
-          {:delta (:id d) :before (some-> anchor str) :ns (str ns-sym)})))))
+          {:delta (:id d) :ns (str ns-sym) :name (str nm)})))))
 
 ^:reads (defn file-get
   "A manifest file's content — current, or as of a past delta via `:at`
@@ -3250,3 +3292,88 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                     " namespaces left occurrences of their old name"
                                     " behind — strings and -test siblings the symbol"
                                     " rewrite cannot reach. Judge each.")))))))))))
+
+(defn js-dep!
+  "Vendor and declare a JavaScript library `js-name` (a string like
+  \"roughjs\"), or retract it with `:remove`.
+
+  The third dependency world. Nothing is resolved — there is no npm client
+  here — so `:source` names the bytes on disk and this does the rest in one
+  act: writes them to the content-addressed cache, records a `:download`
+  recipe built from the npm coordinate, and declares the library.
+
+  It is one call rather than two (`file_put` then declare) because a library
+  is DERIVED, and the recipe is what makes it recoverable. That also deletes
+  a refusal: you can no longer declare a library whose bytes were never
+  vendored, because declaring IS vendoring. This mirrors importmap-rails'
+  `pin --download`.
+
+  `spec` wants `{:version :format :global :file}` plus provenance — `:npm`
+  (`\"roughjs@4.6.6\"`), `:npm-path` (which file inside the package),
+  `:integrity` (the registry's own hash) and `:license`. Anchor to the
+  REGISTRY, not to a CDN url: npm versions are immutable, so the coordinate
+  is re-fetchable and verifiable, where a delivery url only records how the
+  bytes arrived once.
+
+  `:format` is `:iife`/`:umd` (concatenated into the bundle via `deps.cljs`
+  `:foreign-libs`) or `:esm` (loaded by the page). A typo must fail here
+  rather than as a silent no-op at compile time.
+
+  Returns {:declared name :sha ...} | {:error}."
+  [session js-name spec & {:keys [agent prompt remove source]}]
+  (cond
+    (not (string? js-name))
+    {:error "js dependency name must be a string like \"roughjs\""}
+
+    remove
+    (do (session/commit-appended!
+         session
+         #(first (store/record-js-dep % js-name nil :agent agent :prompt prompt
+                                      :remove true))
+         [])
+        {:retracted js-name})
+
+    (not (contains? #{:iife :umd :esm} (:format spec)))
+    {:error (str "js dependency format must be :iife, :umd or :esm — got "
+                 (pr-str (:format spec))
+                 ". :iife/:umd concatenate into the bundle; :esm is loaded by"
+                 " the page and shimmed to a global.")}
+
+    (and (not= :esm (:format spec)) (not (seq (str (:global spec)))))
+    {:error (str ":iife/:umd libraries must name the :global they set"
+                 " (roughjs sets \"rough\") — that is what :global-exports"
+                 " maps a require onto.")}
+
+    (not (and source (.exists (java.io.File. (str source)))))
+    {:error (str "js_dep needs :source — a path to the library's bytes on disk."
+                 " Declaring IS vendoring: there is no npm client here, so the"
+                 " bytes have to come from somewhere you already fetched them.")}
+
+    (str/blank? (str (:file spec)))
+    {:error "js dependency needs a :file — where the library sits in the project tree"}
+
+    :else
+    (let [bs     (java.nio.file.Files/readAllBytes
+                  (.toPath (java.io.File. (str source))))
+          recipe (cond-> {:kind :download}
+                   (:npm spec)       (assoc :npm (:npm spec))
+                   (:npm-path spec)  (assoc :npm-path (:npm-path spec))
+                   (:integrity spec) (assoc :integrity (:integrity spec))
+                   (:source-url spec) (assoc :source-url (:source-url spec)))
+          entry  (artifacts/put! (:dir @session) bs recipe
+                                 :content-type "application/javascript")
+          spec'  (assoc spec :sha (:sha entry))]
+      (let [prior (get-in @session [:store :artifacts (str (:file spec)) :sha])]
+        (session/commit-appended!
+         session
+         (fn [s] (-> s
+                     (as-> s' (first (store/record-artifact s' (:file spec) entry
+                                                            :agent agent :prompt prompt)))
+                     (as-> s' (first (store/record-js-dep s' js-name spec'
+                                                          :agent agent :prompt prompt)))))
+         [])
+        ;; re-vendoring at a new version strands the old bytes exactly as a
+        ;; recompile does
+        (artifacts/prune-superseded! (:dir @session) (:store @session) prior))
+      {:declared js-name :version (:version spec) :format (:format spec)
+       :file (:file spec) :sha (:sha entry) :bytes (alength bs)})))

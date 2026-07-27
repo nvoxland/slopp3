@@ -1,4 +1,16 @@
 (ns slopp.ui.api-test
+  "Tests for the JSON boundary, run through the REAL dispatcher.
+
+  Two disciplines, both learned from failures. First, build the context from
+  `server/served-namespaces` rather than a hand-picked subset: endpoints and
+  their read performers live in different namespaces, so a context holding
+  only `slopp.ui.api` answers 500 and tests nothing — and a bundle served by
+  nothing once 404'd for two waves behind a 200 for the page.
+
+  Second, validate every response against the SAME contract var the typed
+  client is generated from. A handler that drifts from its declared shape is
+  a red here rather than a surprise in someone's browser tab, which is the
+  whole argument for declaring contracts at all."
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
@@ -40,14 +52,18 @@
       (let [r (GET "/api/ns/demo.core")]
         (is (= 200 (:status r)))
         (is (= {:ns "demo.core" :forms [{:name "demo.core" :doc nil}
-                                        {:name "hello" :doc "Says hi."}]}
-               (:body r)))
+                                        {:name "hello" :doc "Says hi."}]
+                :tested-by []}
+               (:body r))
+            "nothing tests this fixture, and that reports as an empty list rather
+             than a missing key — the page should be able to SAY untested")
         (is (m/validate contracts/ns-outline (:body r)))))
     (testing "a form with no docstring carries an explicit nil, not a missing key"
       ;; :maybe in the contract is the promise; this is the promise being kept
       (let [r (GET "/api/ns/demo.util")]
         (is (= {:ns "demo.util" :forms [{:name "demo.util" :doc nil}
-                                        {:name "undocumented" :doc nil}]}
+                                        {:name "undocumented" :doc nil}]
+                :tested-by []}
                (:body r)))
         (is (m/validate contracts/ns-outline (:body r)))))
     (testing "an unknown namespace is a 404, not an empty outline"
@@ -150,3 +166,53 @@
           (is (= 404 (:status (GET "/api/source/demo.core/nope"))))
           (is (= 404 (:status (GET "/api/change/d1..d2"))))))
       (finally (api/close! sess)))))
+
+(deftest the-modules-endpoint-serves-a-contract-shaped-architecture
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.a.core "(ns demo.a.core)\n\n(defn hello [] 1)\n")
+                (store/ingest 'demo.a.core-test
+                              (str "(ns demo.a.core-test (:require [demo.a.core :as c]))\n\n"
+                                   "(defn t [] (c/hello))\n"))
+                (store/ingest 'demo.b.util
+                              (str "(ns demo.b.util (:require [demo.a.core :as c]))\n\n"
+                                   "(defn helper [] (c/hello))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        res (web/handle! ctx {:request-method :get :uri "/api/modules"})]
+    (testing "the route is served and its response satisfies the declared contract"
+      ;; a violation fails HERE, at the boundary, rather than rendering wrong
+      (is (= 200 (:status res))))
+    (testing "it answers with the architecture, not a namespace dump"
+      (let [body (:body res)]
+        (is (= ["demo.a" "demo.b"] (mapv :module (:modules body))))
+        (is (= 1 (:tests (first (:modules body)))))
+        (is (= 2 (count (:nodes (:picture body)))))
+        (is (= [["demo.b" "demo.a"]]
+               (mapv (juxt :from :to) (:edges (:picture body)))))))))
+
+(deftest the-svg-export-is-a-standalone-file-not-a-fragment
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.a.core "(ns demo.a.core)\n\n(defn hello [] 1)\n")
+                (store/ingest 'demo.b.util
+                              (str "(ns demo.b.util (:require [demo.a.core :as c]))\n\n"
+                                   "(defn helper [] (c/hello))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r   (web/handle! ctx {:request-method :get :uri "/api/modules.svg"})
+        body (:body r)]
+    (testing "served as a file a browser and a design tool both recognise"
+      (is (= 200 (:status r)))
+      (is (:web/raw r) "markup must arrive untouched, not JSON-wrapped")
+      (is (= "image/svg+xml; charset=utf-8" (get (:headers r) "Content-Type"))))
+    (testing "it is a whole SVG document, not a fragment"
+      (is (string? body))
+      (is (re-find #"^<svg " body))
+      (is (re-find #"</svg>$" body)))
+    (testing "it carries its own styling — class names with no CSS open as black boxes"
+      (is (re-find #"<style>" body))
+      (is (re-find #"module-node" body))
+      (is (re-find #"prefers-color-scheme" body)
+          "including dark mode, so the file adapts wherever it lands"))
+    (testing "and it draws the actual store"
+      (is (re-find #"demo\.a" body))
+      (is (re-find #"demo\.b" body)))))

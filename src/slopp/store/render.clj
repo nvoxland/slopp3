@@ -11,11 +11,36 @@
   "Render `ns-sym`'s current source as a string from the store. Memoized on
   the (immutable) elements vector, through the blessed cache — so a test can
   reset it or bypass it entirely, and the memo is countable in
-  `cache/registry` rather than being an invisible atom."
+  `cache/registry` rather than being an invisible atom.
+
+  Forms are joined by ONE BLANK LINE and a form's `:comment` renders directly
+  above it. Both separators are supplied here and neither is stored: how code
+  is spaced is a rendering decision, and storing it is what made a
+  namespace's bytes impossible to reconstruct from the delta log.
+
+  Stored `:sep` elements are IGNORED. That is deliberate and is what lets
+  them be deleted — nothing reads them, so nothing depends on what they held.
+
+  It also normalizes. `place-form` gave a tail-appended form a single
+  newline, so most of slopp's own forms rendered jammed together;
+  `slopp.api.session` alone held 33 single-newline separators against 11
+  blank-line ones. One rule everywhere costs 345 bytes across the whole
+  store."
   [store ns-sym]
   (if-let [elements (store/elements store ns-sym)]
     (cache/cached ::render-ns elements
-                  (fn [] (apply str (map (comp n/string :node) elements))))
+                  (fn []
+                    (let [forms (filter #(= :form (:kind %)) elements)]
+                      (if (empty? forms)
+                        ""
+                        (str (str/join
+                              "\n\n"
+                              (map (fn [e]
+                                     (if-let [c (:comment e)]
+                                       (str c "\n" (n/string (:node e)))
+                                       (n/string (:node e))))
+                                   forms))
+                             "\n")))))
     ""))
 
 (defn ^:export ns-path
@@ -54,18 +79,37 @@
 (defn ^:export element-offsets
   "Start position [row col] (1-based) of each of `ns-sym`'s elements within the
   rendered source — the bridge from index positions (clj-kondo rows/cols against
-  `render-ns` output) back to the owning store element."
+  `render-ns` output) back to the owning store element.
+
+  It must simulate `render-ns` EXACTLY, including the separators the renderer
+  synthesizes and the comment it prints above a form. The two drifting apart
+  does not fail loudly: positions still resolve, just to the wrong element, so
+  a rename finds no call sites and reports a clean plan with nothing in it.
+
+  Separators are not rendered, so a `:sep` element occupies no space and
+  reports the cursor as it stands. The returned vector still lines up
+  index-for-index with `store/elements`, which is how callers get from a
+  position back to the form that owns it."
   [store ns-sym]
-  (loop [es (store/elements store ns-sym), row 1, col 1, acc []]
+  (loop [es (store/elements store ns-sym), row 1, col 1, acc [], seen-form? false]
     (if-let [e (first es)]
-      (let [s  (n/string (:node e))
-            nl (count (filter #(= \newline %) s))]
-        (recur (rest es)
-               (+ row nl)
-               (if (pos? nl)
-                 (inc (count (subs s (inc (str/last-index-of s "\n")))))
-                 (+ col (count s)))
-               (conj acc [row col])))
+      (if (not= :form (:kind e))
+        (recur (rest es) row col (conj acc [row col]) seen-form?)
+        ;; the blank line between forms, then the comment and its newline —
+        ;; both emitted by render-ns, neither stored
+        (let [[row col] (if seen-form? [(+ row 2) 1] [row col])
+              [row col] (if-let [c (:comment e)]
+                          [(+ row (count (filter #(= \newline %) c)) 1) 1]
+                          [row col])
+              s  (n/string (:node e))
+              nl (count (filter #(= \newline %) s))]
+          (recur (rest es)
+                 (+ row nl)
+                 (if (pos? nl)
+                   (inc (count (subs s (inc (str/last-index-of s "\n")))))
+                   (+ col (count s)))
+                 (conj acc [row col])
+                 true)))
       acc)))
 
 (defn ^:export owner-form

@@ -81,6 +81,10 @@
                       :doc "module → target platform :jvm/:cljc/:cljs (default :jvm, D-web-cljs)"}
 :client-deps {:init {} :meta-key "client-deps"
                       :doc "lib → coord for BUILD-ONLY deps (the cljs compiler): routed to the :cljs alias, never hot-loaded into the oracle or shipped in the jar (D-web-cljs)"}
+:js-deps {:init {} :meta-key "js-deps"
+             :doc "name → {:version :format :global :file :sha :source-url :license} for VENDORED JavaScript: the bytes live in :files/:blobs, this is the declaration the cljs compiler and the page shell read"}
+:artifacts {:init {} :meta-key "artifacts"
+               :doc "path → {:sha :bytes :content-type :recipe} for DERIVED files — downloaded or generated. NO bytes: the sha says what the file must be and the recipe says how to get it back, so the journal stays small and a cache miss is recoverable rather than fatal. Authored files go in :files"}
    :files        {:init {} :meta-key "files"
                   :doc "path → text, or {:sha :bytes :content-type} for binary (bytes live in :blobs)"}
    :config       {:init {} :meta-key "config"
@@ -182,6 +186,28 @@
                           (assoc-in st [:client-deps (:lib d)] (:coord d)))
                   :sample {:op :client-dep-add :lib 'sample/cljs :coord {:mvn/version "1.0.0"}}
                   :crossed (fn [st] (= {:mvn/version "1.0.0"} (get-in st [:client-deps 'sample/cljs])))}
+:js-dep {:field :js-deps :merge :replay
+            ;; name-grained like :module-edge, so two lines declaring different
+            ;; libraries union rather than one clobbering the other
+            :fold (fn [st d]
+                    (if (= :remove (:action d))
+                      (update st :js-deps dissoc (:name d))
+                      (assoc-in st [:js-deps (:name d)] (:spec d))))
+            :sample {:op :js-dep :name "sample-js"
+                     :spec {:version "1.0.0" :format :iife :global "sampleJs"
+                            :file "public/js/sample-js-1.0.0.js"}}
+            :crossed (fn [st] (= "1.0.0" (get-in st [:js-deps "sample-js" :version])))}
+:artifact-put {:field :artifacts :merge :replay
+                  ;; the delta carries the SHA and the RECIPE, never the bytes —
+                  ;; that is the whole point of the field existing
+                  :fold (fn [st d]
+                          (if (= :remove (:action d))
+                            (update st :artifacts dissoc (:path d))
+                            (assoc-in st [:artifacts (:path d)] (:entry d))))
+                  :sample {:op :artifact-put :path "public/sample.js"
+                           :entry {:sha "abc123" :bytes 12
+                                   :recipe {:kind :build :tool "compile_client"}}}
+                  :crossed (fn [st] (= "abc123" (get-in st [:artifacts "public/sample.js" :sha])))}
    :config-put   {:field :config :merge :replay
                   :fold (fn [st d]
                           (-> st

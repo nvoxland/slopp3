@@ -12,11 +12,19 @@
   is an unbootable store, and the wrong reload is a server answering from code
   that no longer exists.
 
+  One test reaches for a real database, and the reason is worth stating: the
+  module gate REFUSES to let this namespace require `slopp.store`, and it is
+  right to — the kernel's whole property is that it boots a store with no
+  slopp code loaded. So `store-sources` cannot be compared against `render-ns`
+  by calling it. It is pinned against the same literal instead, and the rule
+  it encodes is written out where both can be read together.
+
   `slopp.boot` also exists as a hand-maintained FILE, and both copies are
   live. `slopp.store.kernel` is what keeps them honest; this covers what they
   do."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.boot :as boot]))
+            [slopp.boot :as boot]
+            [next.jdbc :as jdbc]))
 
 (deftest dependency-order-is-deps-first
   (let [sources {'app.a "(ns app.a)\n(defn f [] 1)\n"
@@ -148,3 +156,48 @@
         (is (some? (var! "keeper"))
             "a failed reload must not take the working code with it"))
       (finally (remove-ns nsx)))))
+
+(deftest the-kernel-synthesizes-the-space-between-forms
+  ;; `store-sources` used to CONCATENATE element rows, which was byte-exact
+  ;; for exactly as long as the rows carried the whitespace. Once rendering
+  ;; started supplying it, concatenation became a second, wrong answer — forms
+  ;; jammed together and every comment dropped — and the kernel is where a
+  ;; wrong answer costs the most: a store whose boot source is malformed does
+  ;; not fail a test, it fails to start.
+  ;;
+  ;; The rule it must reproduce, which `slopp.store.render/render-ns` also
+  ;; implements and this namespace is forbidden to call:
+  ;;
+  ;;   forms joined by ONE BLANK LINE, a form's comment directly above it,
+  ;;   one trailing newline, `sep` rows ignored entirely.
+  ;;
+  ;; The sep rows in this fixture are the point: a store mid-migration still
+  ;; has them, and a kernel that reads them produces different source than the
+  ;; server it is booting.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-boot-render"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        _    (.mkdirs (java.io.File. (str dir "/.slopp")))
+        conn (jdbc/get-connection
+              (jdbc/get-datasource
+               {:dbtype "sqlite" :dbname (str dir "/.slopp/store.db")}))
+        row! (fn [pos kind form-id nm src cmt]
+               (jdbc/execute! conn ["INSERT INTO elements
+                                     (ns,pos,kind,form_id,name,source,comment)
+                                     VALUES ('bk.core',?,?,?,?,?,?)"
+                                    pos kind form-id nm src cmt]))]
+    (try
+      (jdbc/execute! conn ["CREATE TABLE elements (ns TEXT, pos INTEGER,
+                            kind TEXT, form_id TEXT, name TEXT, source TEXT,
+                            comment TEXT)"])
+      (row! 0 "form" "f1" "bk.core" "(ns bk.core)" nil)
+      (row! 1 "sep" nil nil "\n" nil)
+      (row! 2 "form" "f2" "f" "(defn f [] 1)" ";; why this exists")
+      (row! 3 "sep" nil nil "\n" nil)
+      (row! 4 "form" "f3" "g" "(defn g [] (f))" nil)
+      (testing "one blank line between forms, the comment above its own form"
+        (is (= {'bk.core (str "(ns bk.core)\n\n"
+                              ";; why this exists\n(defn f [] 1)\n\n"
+                              "(defn g [] (f))\n")}
+               (boot/store-sources conn))))
+      (finally (.close conn)))))

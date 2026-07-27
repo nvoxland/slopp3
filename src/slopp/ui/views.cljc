@@ -1,4 +1,17 @@
 (ns slopp.ui.views
+  "Every screen of the reviewer UI, as pure functions from data to hiccup.
+
+  One constraint shapes all of it: data in, hiccup out. Nothing here touches
+  the DOM, fetches, or reads a clock, which is what lets the namespace be
+  `:cljc` — so the same functions render to strings on the JVM and to
+  elements in the browser, and every screen is an ordinary in-image test
+  asserting on DATA rather than a browser session or a screenshot.
+
+  That constraint is also why the diagram is built here rather than handed
+  to a JavaScript charting library: `slopp.ui.graph` computes the geometry,
+  this turns it into SVG elements, and the result stays inspectable and
+  addressable. Appearance is class names; the stylesheet in `slopp.ui.pages`
+  owns every colour."
   (:require [clojure.string :as str] [slopp.ui.nsfilter :as nsfilter]))
 
 (defn find-region
@@ -80,36 +93,6 @@
           (for [{:keys [label href active?]} items]
             [:li [:a (cond-> {:href href} active? (assoc :class "active"))
                   label]]))))
-
-(defn ns-nav
-  "The Code section's left PANE — the filter box and the namespace list,
-  with `current` marked and only rows matching `needle` rendered.
-
-  Filtering by NOT RENDERING, rather than by setting `display:none` on rows
-  the server already sent. That is the one place the SPA is straightforwardly
-  simpler: the filter becomes a pure function of state, checkable in-image,
-  instead of a DOM walk that a re-render would undo.
-
-  It also has to be this way. Re-rendering the app on navigation would
-  discard both the typed text and any hidden-row state, so the needle lives
-  in application state and comes back in — which is why the input carries
-  `:value`.
-
-  `#ns-filter`, `#ns-list` and `.ns-row` are kept as hooks: they are what the
-  tests address, and dropping them once already broke the filter silently."
-  ([namespaces current] (ns-nav namespaces current nil))
-  ([namespaces current needle]
-   [:div
-    [:input {:id "ns-filter" :type "search" :autocomplete "off"
-             :value (or needle "")
-             :placeholder "filter namespaces…" :aria-label "filter namespaces"}]
-    (into [:ul {:id "ns-list"}]
-          (for [{:keys [ns]} namespaces
-                :when (nsfilter/matches? needle (str ns))]
-            [:li {:class "ns-row"}
-             [:a (cond-> {:href (str "/store/ns/" ns)}
-                   (= (str ns) (str current)) (assoc :class "active"))
-              (str ns)]]))]))
 
 (defn plural
   "`n` with `word`, pluralised by adding an s. Enough for the counts these
@@ -198,19 +181,23 @@
     (seq detail)   (conj (into [:aside {:data-region "nav/detail"}] detail))))
 
 (defn ns-outline-main
-  "The Code section's MAIN pane for one namespace: its name and its forms,
-  each linking its source.
+  "The Code section's MAIN pane for one namespace: its name, its forms —
+  each linking its source — and the tests that cover it.
 
-  Takes the WIRE shape — `{:ns \"…\" :forms [{:name \"…\" :doc nil-or-string}]}`,
-  exactly what `GET /api/ns/:ns` returns — rather than the store's shape.
-  That is the whole point of it being one function: the server renders it
-  into the page, and the client renders the SAME function into the same pane
-  after a fetch, so a click and a refresh cannot show different things.
+  Takes the WIRE shape — exactly what `GET /api/ns/:ns` returns — rather
+  than the store's shape. That is the whole point of it being one function:
+  the server renders it into the page, and the client renders the SAME
+  function into the same pane after a fetch, so a click and a refresh cannot
+  show different things. If it took the store's shape (symbols, store-side
+  keys) the server would render correctly and the client would render nils,
+  and only a browser would ever tell you.
 
-  If it took the store's shape (symbols, store-side keys) the server would
-  render correctly and the client would render nils, and only a browser
-  would ever tell you."
-  [{:keys [ns forms]}]
+  `:tested-by` is where the nav's demoted rows come back. Test namespaces
+  were taken out of the listing because they are not peers of the code they
+  cover; that is only an improvement if the names reappear where the
+  question is asked. An empty list says so OUT LOUD — silence reads the
+  same as a page that does not show coverage at all."
+  [{:keys [ns forms tested-by]}]
   [:div
    [:h1 (str ns)]
    (into [:ul]
@@ -218,7 +205,14 @@
            [:li [:a {:href (str "/store/source/" ns "/" name)} (str name)]
             ;; no empty <small> when there is no doc: a blank element is a
             ;; visible gap that says a docstring exists and is empty
-            (when doc [:small (str " — " doc)])]))])
+            (when doc [:small (str " — " doc)])]))
+   [:section {:class "tested-by"}
+    [:h2 "tested by"]
+    (if (seq tested-by)
+      (into [:ul]
+            (for [t tested-by]
+              [:li [:a {:href (str "/store/ns/" t)} (str t)]]))
+      [:p [:small "no tests require this namespace directly"]])]])
 
 (defn timeline-main
   "The Review section's main pane: what is in flight, then what has been
@@ -369,36 +363,154 @@
    [:h1 name]
    [:pre [:code source]]])
 
-(defn code-index-main
-  "The Code section's main pane before a namespace is chosen. Takes
-  `GET /api/namespaces`'s shape.
+(defn module-graph
+  "The architecture picture as SVG hiccup.
 
-  Deliberately thin: the namespace list is the LEFT PANE, because it is
-  navigation that persists as you move between namespaces. Repeating it in
-  the middle would make the same list appear twice on the same screen."
-  [namespaces]
-  [:div
-   [:h1 "code"]
-   [:p (str (plural (count namespaces) "namespace") ", "
-            (plural (reduce + 0 (map :forms namespaces)) "form")
-            " — pick one on the left.")]])
+  Takes `slopp.ui.model/module-index`'s `:picture` — boxes and endpoints
+  already placed — and turns it into elements. Nothing here computes
+  geometry and nothing here names a colour: positions came from
+  `slopp.ui.graph`, and appearance is class names the stylesheet owns.
+
+  Being hiccup rather than an opaque blob is the point. Every box is a real
+  element carrying `data-module`, so hover, selection and keyboard focus are
+  ordinary DOM concerns, and the whole diagram is an in-image test that
+  asserts on data instead of a screenshot.
+
+  Edges render BEFORE nodes so arrowheads sit behind labels rather than on
+  them. Each edge is a gentle vertical bezier: between fanned anchor points
+  a straight line reads as a spray, where a curve reads as a flow."
+  [{:keys [nodes band edges width height sketch]}]
+  (let [box (fn [{:keys [module x y w h]} kind]
+              [:g {:class (str "module-node " kind) :data-module module}
+               ;; hand-drawn strokes REPLACE the rect rather than layering over
+               ;; it — two outlines at slightly different offsets reads as a
+               ;; printing error, not as a sketch
+               (if-let [ps (seq (get sketch module))]
+                 (into [:g] (for [p ps]
+                              [:path {:class "sketch" :d (:d p)}]))
+                 [:rect {:x x :y y :width w :height h :rx 8}])
+               [:text {:x (+ x (quot w 2)) :y (+ y (quot h 2) 5)
+                       :text-anchor "middle"}
+                module]])
+        curve (fn [{:keys [x1 y1 x2 y2 bow] :or {bow 0}}]
+                ;; the control points carry the bow; the endpoints stay pinned
+                ;; to the two boxes, so a skip edge arcs AROUND what it passes
+                (let [dy (max 12 (quot (- y2 y1) 2))]
+                  (str "M " x1 " " y1
+                       " C " (+ x1 bow) " " (+ y1 dy) ", "
+                       (+ x2 bow) " " (- y2 dy) ", " x2 " " y2)))]
+    (into [:svg {:class "module-graph" :viewBox (str "0 0 " width " " height)
+                 :role "img" :aria-label "module dependency graph"}
+           [:defs
+            [:marker {:id "arrow" :viewBox "0 0 10 10" :refX 9 :refY 5
+                      :markerWidth 6 :markerHeight 6 :orient "auto-start-reverse"}
+             [:path {:d "M 0 0 L 10 5 L 0 10 z"}]]]]
+          (concat
+           (for [e edges]
+             [:path {:class "module-edge" :d (curve e)
+                     :marker-end "url(#arrow)"
+                     :data-from (:from e) :data-to (:to e)}])
+           (for [n nodes] (box n "layered"))
+           (for [b band] (box b "foundation"))))))
+
+(defn code-index-main
+  "The Code section's main pane: the architecture as a picture.
+
+  This pane used to be near-empty, on the reasoning that the namespace list
+  was already the left pane and repeating it would show one list twice. That
+  reasoning was right and the conclusion was wrong: what belongs here is not
+  a list but the SHAPE of the system, which a nav cannot show.
+
+  Cycles are called out ABOVE the diagram rather than left to be spotted in
+  it. On a tangled store 'these modules are mutually entangled' is the most
+  useful sentence on the screen, and geometry is a poor place to hide a
+  finding.
+
+  Takes `GET /api/modules`'s shape."
+  [{:keys [modules picture cycles]}]
+  (let [nses (reduce + 0 (map (comp count :namespaces) modules))
+        band (filter :foundation modules)]
+    [:div
+     [:h1 "code"]
+     [:p (str (plural (count modules) "module") ", "
+              (plural nses "namespace")
+              (when (seq band)
+                (str " — " (plural (count band) "of them") " foundation")))]
+     (when (seq cycles)
+       [:div {:class "finding cycles"}
+        [:h2 (str (plural (count cycles) "dependency cycle"))]
+        (into [:ul]
+              (for [c cycles]
+                [:li (clojure.string/join " → " (concat c [(first c)]))]))])
+     (module-graph picture)]))
+
+(defn module-nav
+  "The Code section's left PANE: modules, expanding to their namespaces.
+
+  This replaces a flat alphabetical list of every namespace — on slopp's own
+  store, 186 rows of which 103 were tests. Modules are the coarser rung the
+  code actually has, and the list is now 14 rows that open.
+
+  Two rules. A module EXPANDS when it holds `current` or when `needle`
+  matches one of its namespaces: a filter that finds nothing because the
+  match sits behind a collapsed row is worse than no filter. And test
+  namespaces are COUNTED, never listed — but a count of zero is rendered as
+  \"no tests\" rather than hidden, because a production module nothing
+  covers is precisely what a nav should volunteer.
+
+  `#ns-filter`, `#ns-list` and `.ns-row` are kept exactly as they were: they
+  are what the tests and the client address, and dropping them once already
+  broke the filter silently."
+  ([modules current] (module-nav modules current nil))
+  ([modules current needle]
+   (let [hit?     (fn [m] (some #(nsfilter/matches? needle %) (:namespaces m)))
+         open?    (fn [m] (or (some #(= (str current) %) (:namespaces m))
+                              (and (seq (str needle)) (hit? m))))
+         tests    (fn [{:keys [tests]}]
+                    (if (zero? tests) "no tests" (plural tests "test")))]
+     [:div
+      [:input {:id "ns-filter" :type "search" :autocomplete "off"
+               :value (or needle "")
+               :placeholder "filter namespaces…" :aria-label "filter namespaces"}]
+      (into [:ul {:id "ns-list"}]
+            (for [m modules
+                  :when (or (not (seq (str needle))) (hit? m))]
+              (into [:li {:class "module-row" :data-module (:module m)
+                          :data-open (str (boolean (open? m)))}
+                     [:div {:class "module-head"}
+                      [:span {:class "module-name"} (:module m)]
+                      [:span {:class "module-meta"}
+                       (str (plural (count (:namespaces m)) "ns") " · " (tests m))]
+                      (when (:foundation m)
+                        [:span {:class "module-tag"} "foundation"])]]
+                    (when (open? m)
+                      (for [n (:namespaces m)
+                            :when (nsfilter/matches? needle n)]
+                        [:div {:class "ns-row"}
+                         [:a (cond-> {:href (str "/store/ns/" n)}
+                               (= n (str current)) (assoc :class "active"))
+                          n]])))))])))
 
 (defn app-view
   "The WHOLE page as hiccup, from application state. Pure, `:cljc`, and the
   only thing the browser glue calls.
 
-  `state` is `{:path :screen :params :data :namespaces :error}`. Keeping the
+  `state` is `{:path :screen :params :data :modules :error}`. Keeping the
   entire render in one pure function is what makes an SPA testable at all:
   every screen — including LOADING and NOT-FOUND, the two that only exist
   once the server stops rendering — is an ordinary in-image assertion on
   hiccup data rather than something you can only see in a browser.
 
+  `:modules` is the Code section's navigation, cached across the screens
+  that share it. It replaced a flat `:namespaces` list: the nav's rung is
+  the MODULE now, and namespaces are what a module expands into.
+
   `:data` nil means the fetch is still in flight. That state has to render
   something, because the alternative is a blank pane that looks exactly like
   a screen with no content."
-  [{:keys [path screen params data namespaces error] filter-text :filter}]
+  [{:keys [path screen params data modules error] filter-text :filter}]
   (let [code?  (#{:code :ns :source} screen)
-        local  (when code? (ns-nav (or namespaces []) (:ns params) filter-text))
+        local  (when code? (module-nav (or modules []) (:ns params) filter-text))
         main   (cond
                  error          [:div [:h1 "error"] [:p (str error)]]
                  (nil? screen)  [:div [:h1 "not found"]

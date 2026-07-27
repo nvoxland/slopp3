@@ -1,7 +1,19 @@
 (ns slopp.ui.client.app
+  "The browser glue, and deliberately the thinnest namespace in the UI.
+
+  This is the one place the JVM oracle cannot reach: `:cljs` never loads
+  into the image, so its only verification is that it compiled. Everything
+  that can be someone else's job is — routing is `views/route-for`, the
+  whole render is `views/app-view`, filtering is `nsfilter/matches?`, and
+  each of those is `:cljc` and covered by ordinary in-image tests.
+
+  What is left here is what genuinely needs a browser: an atom, a Replicant
+  mount, history, and fetches through the GENERATED typed client. When this
+  namespace grows, the first question is which part of it belongs in
+  `:cljc` — because that is the part that stopped being tested."
   (:require [replicant.dom :as r]
             [slopp.ui.client.api :as api]
-            [slopp.ui.views :as views]))
+            [slopp.ui.views :as views] [slopp.ui.client.sketch :as sketch]))
 
 (defonce state
   ;; The whole application state: {:path :screen :params :data :namespaces
@@ -40,7 +52,7 @@
   (case screen
     :timeline (api/timeline)
     :change   (api/change {:range (:range params)})
-    :code     (api/namespaces)
+    :code     (api/modules)
     :ns       (api/ns-outline {:ns (:ns params)})
     :source   (api/source {:ns (:ns params) :name (:name params)})
     :form     (api/form {:id (:id params)})
@@ -54,10 +66,9 @@
   mode that shows one thing while the address bar claims another — a
   moment of \"loading…\" is honest, a stale screen is not.
 
-  The Code section also needs the namespace list for its left pane, which
-  is a second fetch and is cached in state: it is the same list on every
-  Code screen, and re-fetching it per navigation would make the left pane
-  flicker for no new information."
+  The Code section also needs its module nav, which is a second fetch and is
+  cached in state: it is the same nav on every Code screen, and re-fetching
+  it per navigation would make the left pane flicker for no new information."
   [path push?]
   (let [{:keys [screen params]} (or (views/route-for path)
                                     {:screen nil :params {}})]
@@ -65,9 +76,9 @@
     (swap! state assoc :path path :screen screen :params params
            :data nil :error nil)
     (render!)
-    (when (and (#{:code :ns :source} screen) (nil? (:namespaces @state)))
-      (-> (api/namespaces)
-          (.then (fn [nss] (swap! state assoc :namespaces nss) (render!)))
+    (when (and (#{:code :ns :source} screen) (nil? (:modules @state)))
+      (-> (api/modules)
+          (.then (fn [idx] (swap! state assoc :modules (:modules idx)) (render!)))
           (.catch (fn [_] nil))))
     (when-let [p (fetch-for screen params)]
       (-> p
@@ -76,7 +87,14 @@
                    ;; response must not overwrite a newer one the reader has
                    ;; already navigated to
                    (when (= path (:path @state))
-                     (swap! state assoc :data data)
+                     ;; sketch ONCE, on arrival: rough.js is deterministic per
+                     ;; seed, so re-deriving it each render would spend work to
+                     ;; produce byte-identical paths
+                     (let [data (if (and (= :code screen) (:picture data))
+                                  (update data :picture assoc :sketch
+                                          (sketch/paths-for (:picture data)))
+                                  data)]
+                       (swap! state assoc :data data))
                      (render!))))
           (.catch (fn [e]
                     (when (= path (:path @state))

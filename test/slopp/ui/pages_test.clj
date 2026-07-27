@@ -5,7 +5,7 @@
   store source."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.web :as web] [slopp.ui.server :as server] [slopp.ui.pages :as pages]))
+            [slopp.web :as web] [slopp.ui.server :as server] [slopp.ui.pages :as pages] [slopp.api.artifacts :as artifacts]))
 
 (deftest the-document-is-the-only-html-the-server-renders
   ;; Six server-rendered pages collapsed into one document. What the server
@@ -57,24 +57,39 @@
             uri)))))
 
 (deftest the-client-bundle-is-served-as-something-a-browser-will-RUN
-  ;; Two failures deep, this one. The bundle existed in the files manifest the
-  ;; whole time; nothing mounted it, so /assets/cljs/main.js 404'd on every
-  ;; page. Then, once served, it came back as application/json — 1.5MB of
-  ;; JavaScript a browser will not execute. A 200 is not the bar; the bar is
-  ;; that the script RUNS.
-  (let [st  (-> (store/empty-store)
-                (store/ingest 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
-                (as-> s (first (store/record-file-put s "public/cljs/main.js"
-                                                     "console.log('hi');"))))
-        ctx (web/context {:web/namespaces ['slopp.ui.pages]
-                          :web/perform-ctx {:session (atom {:store st})}})
-        r   (web/handle! ctx {:request-method :get :uri "/js/main.js"})]
+  ;; Two failures deep, this one. The bundle existed in the manifest the whole
+  ;; time; nothing mounted it, so /assets/cljs/main.js 404'd on every page.
+  ;; Then, once served, it came back as application/json — 1.5MB of JavaScript
+  ;; a browser will not execute. A 200 is not the bar; the bar is that the
+  ;; script RUNS.
+  ;;
+  ;; The bundle is an ARTIFACT now: bytes in the content-addressed cache, sha
+  ;; and recipe in the store. Every property below is unchanged by that.
+  (let [dir   (str (java.nio.file.Files/createTempDirectory
+                    "slopp-bundle"
+                    (make-array java.nio.file.attribute.FileAttribute 0)))
+        entry (artifacts/put! dir (.getBytes "console.log('hi');" "UTF-8")
+                              {:kind :build :tool "compile_client"}
+                              :content-type "application/javascript")
+        st    (-> (store/empty-store)
+                  (store/ingest 'demo.core "(ns demo.core)\n\n(defn f \"D.\" [x] x)\n")
+                  (as-> s (first (store/record-artifact s "public/cljs/main.js" entry))))
+        ctx   (web/context {:web/namespaces ['slopp.ui.pages]
+                            :web/perform-ctx {:session (atom {:store st :dir dir})}})
+        r     (web/handle! ctx {:request-method :get :uri "/js/main.js"})]
     (is (= 200 (:status r)))
     (is (= "console.log('hi');" (:body r))
         "verbatim — not JSON-encoded, which is what :web/raw buys")
     (is (re-find #"javascript" (str (get-in r [:headers "Content-Type"])))
         (str "a browser refuses to execute a non-JS type: "
-             (pr-str (get-in r [:headers "Content-Type"])))))
+             (pr-str (get-in r [:headers "Content-Type"]))))
+    (testing "a registered artifact whose cache was cleared serves empty, not a 500"
+      ;; a cleared cache is an ORDINARY state — the recipe is the way back and
+      ;; the store still knows it. Blowing up here would make deleting
+      ;; .slopp/artifacts look like corruption.
+      (.delete (artifacts/cache-file dir (:sha entry)))
+      (let [r (web/handle! ctx {:request-method :get :uri "/js/main.js"})]
+        (is (= 204 (:status r)) (pr-str r)))))
   (testing "a store that never compiled a client gets an empty body, not a 404"
     ;; a 404 here is indistinguishable from a broken route, and the page
     ;; cannot tell the difference either

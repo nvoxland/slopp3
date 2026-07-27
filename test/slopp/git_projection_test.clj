@@ -210,3 +210,38 @@
                                  "Slopp-Status: red")))
             (finally (git/close-ctx! ctx)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-second-milestone-stores-only-what-changed
+  ;; The reconstruction tests pass whether or not the saving happens — a full
+  ;; snapshot resolves correctly too. This is the one that fails if milestones
+  ;; go back to storing all 191 namespaces every time, which was 75% of this
+  ;; store's journal.
+  (let [sess (external/open! {:slopp.api/dir (temp-dir)})]
+    (try
+      (api/ingest! sess 'gp.core seed)
+      (doseq [n '[gp.other gp.third gp.fourth gp.fifth]]
+        (api/ingest! sess n (str "(ns " n ")\n\n;; untouched by the second milestone\n"
+                                 "(defn q [] 9)\n")))
+      (external/commit-point! sess "v1: both ship" :agent "alice")
+      (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
+                         :prompt "flip arg order" :agent "alice")
+      (external/commit-point! sess "v2: one changed" :agent "alice")
+      (let [ms  (->> (store/deltas (:store @sess)) (filter #(= :commit (:op %))))
+            t1  (:tree (first ms))
+            raw (:tree (last ms))
+            t2  (second raw)]
+        (testing "the FIRST milestone is a full snapshot — there is nothing to diff against"
+          (is (map? t1) "a plain {ns source} map, the shape every old marker holds")
+          (is (= #{'gp.core 'gp.other 'gp.third 'gp.fourth 'gp.fifth}
+                 (set (keys t1)))))
+        (testing "the second stores a TAGGED diff naming its base"
+          (is (= :slopp.store.db/tree-diff (first raw)) (pr-str raw))
+          (is (= (:id (first ms)) (:base t2)))
+          (is (= 1 (:depth t2))))
+        (testing "carrying ONLY the namespace that changed"
+          (is (= #{'gp.core} (set (keys (:changed t2))))
+              "gp.other is byte-identical and must not be re-stored")
+          (is (empty? (:removed t2))))
+        (testing "and the diff is dramatically smaller than the snapshot it replaces"
+          (is (< (count (pr-str raw)) (count (pr-str t1))))))
+      (finally (api/close! sess)))))

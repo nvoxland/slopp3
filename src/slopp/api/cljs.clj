@@ -1,7 +1,25 @@
 (ns slopp.api.cljs
+  "The client build: ClojureScript compiled ON THE JVM, and the typed client
+  generated from the endpoints' own contracts.
+
+  This is where `:cljs` code gets its only verification. Such a namespace
+  never loads into the oracle — it references `js/*` — so its write lands
+  `:unverified` and COMPILE-ERROR-AS-ORACLE stands in: the real compiler runs
+  here, and analyzer warnings and hard failures are anchored back to the
+  owning store form, name-addressed, no file:line. Keeping `.cljs` thin and
+  platform-neutral logic in `.cljc` is what keeps that trade honest.
+
+  Declared JavaScript (`js_dep`) reaches the compiler as **`deps.cljs` in the
+  materialized project**, not as a compiler option — `write-foreign-libs!`
+  says why at length, and the short version is that the alternative meant
+  changing a multimethod's arity, which a running image cannot absorb. Do not
+  simplify it back into `compile-client*`'s signature.
+
+  The compile backend is a multimethod on the store's configured compiler, so
+  cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit]))
+            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.api.artifacts :as artifacts]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -45,7 +63,7 @@
   and prints an EDN summary behind `result-marker` that parse-result reads. The
   cljs compiler reads whatever .cljs/.cljc it finds under `src/` and `cljs-src/`
   (its .clj siblings are invisible to it). :simple yields one self-contained JS."
-  [{:keys [output-to output-dir optimizations]
+  [{:keys [output-to output-dir optimizations foreign-libs]
     :or {output-to "out/main.js" output-dir "out" optimizations :simple}}]
   (str
    "(require '[cljs.build.api :as b] '[cljs.analyzer :as ana])\n"
@@ -58,7 +76,10 @@
    "                           (swap! ws conj {:type wt :line (:line env)\n"
    "                                           :ns (str (or (get-in env [:ns :name]) ana/*cljs-ns*))\n"
    "                                           :message (str \"WARNING: \" (try (ana/error-message wt extra) (catch Throwable _ (name wt))))})))]]\n"
-   "              (b/build (apply b/inputs dirs) {:output-to \"" output-to "\" :output-dir \"" output-dir "\" :optimizations " optimizations "})\n"
+   "              (b/build (apply b/inputs dirs) {:output-to \"" output-to "\" :output-dir \"" output-dir "\" :optimizations " optimizations (if (seq foreign-libs)
+     (str " :foreign-libs " (pr-str (vec foreign-libs)))
+     "")
+   "})\n"
    "              nil)\n"
    ;; the WHOLE cause chain plus the ex-data LOCATION. The outermost
    ;; message is usually "failed compiling file:…" and the reason is in a
@@ -341,74 +362,6 @@
                 (str/starts-with? (str path) (str v))))
          (get-in store [:config "capabilities" :values]))))
 
-(defn ^:export compile-client!
-  "Compile the store's CLIENT namespaces (:cljc + :cljs) to JavaScript with the
-  configured backend (build/client-compiler, default :clojurescript) and record
-  the output as a served blob — the client wave's compile-error-as-oracle
-  (D-web-cljs). Materializes the store (build!) into a throwaway dir whose
-  generated deps.edn carries the :cljs alias — build! injects slopp's OWN
-  toolchain there (the compiler + malli), so the agent never hand-adds slopp's
-  plumbing. Shells the compiler in a fresh JVM (no Node — real
-  org.clojure/clojurescript on the JVM), then anchors warnings to store forms
-  (name-addressed, no file:line) and stores the JS (file_put). Returns {:compiled
-  <ns-count> :warnings [...anchored...] :output <path> :bytes n} on success,
-  {:error ... :warnings ...} on a compile failure, or {:note ...} when there is
-  no client code. `:output` sets the served path (default \"public/cljs/main.js\")."
-  [session & {:keys [output] :or {output "public/cljs/main.js"}}]
-  (let [st       (:store @session)
-        compiler (build/client-compiler st)
-        client   (filterv #(#{:cljc :cljs} (store/platform-for st %))
-                          (keys (:namespaces st)))]
-    (if (empty? client)
-      {:note (str "no client namespaces to compile — declare one :cljc or :cljs"
-                  " via module_platform")}
-      (let [dir (str (java.nio.file.Files/createTempDirectory
-                      "slopp-cljs"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))]
-        (try
-          (let [b (external/build! session dir)]
-            (if (:error b)
-              b
-              (let [{:keys [warnings error]} (compile-client* compiler dir)
-                    anchored (anchor-warnings st (or warnings []))]
-                (if error
-                  ;; the runner sends {:msg :at}; a legacy/fallback string still
-                  ;; works, it simply anchors nothing
-                  (merge (if (map? error)
-                           (anchor-error st (str/join " / " (:msgs error)) (:at error))
-                           (anchor-error st (str error) nil))
-                         {:warnings anchored})
-                  (let [js (slurp (io/file dir "out" "main.js"))]
-                    (session/commit-appended!
-                     session
-                     (fn [s] (first (store/record-file-put s output js)))
-                     [])
-                    ;; A bundle nothing serves is the failure this just had: slopp's own sat
-                    ;; in the manifest for two waves while every page 404'd on it,
-                    ;; because serving it needs an http.static.* mount and nothing
-                    ;; said so. Serving it IS one line — the gap was
-                    ;; discoverability, so the tool that wrote the file names the
-                    ;; line, and goes quiet once a mount covers the path.
-                    (cond-> {:compiled  (count client)
-                             :namespaces (mapv str (sort client))
-                             :warnings  anchored
-                             :output    output
-                             :bytes     (count js)}
-                      (not (served-by-a-mount? (:store @session) output))
-                      (assoc :serve-with
-                             (let [dir (or (second (re-matches #"(.*)/[^/]+" output))
-                                           output)]
-                               (str "no http.static mount serves " output
-                                    " — config_file {path \"capabilities\" key"
-                                    " \"http.static./js\" value \"" dir "\"} mounts it"
-                                    " at /js/. (An endpoint that reads the file"
-                                    " serves it too; this checked mounts only.)")))))))))
-          (finally
-            (letfn [(rm! [f]
-                      (when (.isDirectory f) (run! rm! (.listFiles f)))
-                      (.delete f))]
-              (rm! (io/file dir)))))))))
-
 (defn ^:export generate-client!
   "Generate the typed client (D-web-contracts part 2): read every web endpoint's
    contract (client-wrapper-specs) and write a stored, edit-PROTECTED :cljs
@@ -455,3 +408,138 @@
                    :delta     (:id (last (:deltas (:store @session))))}
             (seq problems) (assoc :problems problems)
             recompiled     (merge recompiled)))))))
+
+(defn foreign-libs-for
+  "The `:foreign-libs` entries the ClojureScript compiler needs for a store's
+  declared JavaScript.
+
+  Only `:iife`/`:umd` are returned. Those are CONCATENATED into the bundle
+  and mapped to the global they set, which is what makes `(:require
+  [roughjs :as rough])` compile to `goog.global[\"rough\"]`. `:esm` is skipped
+  deliberately: an ES module is loaded by the page, and concatenating one
+  produces a bundle that fails at runtime with nothing to point at.
+
+  `:file` is relative to the materialized build dir, which is where `build!`
+  writes the files manifest — so the path recorded in the declaration is the
+  path the compiler resolves, with no second convention to keep in step."
+  [store]
+  (vec (for [[nm {:keys [format global file]}] (sort (:js-deps store))
+             :when (contains? #{:iife :umd} format)]
+         {:file file
+          :provides [nm]
+          :global-exports {(symbol nm) (symbol global)}})))
+
+(defn write-foreign-libs!
+  "Write the store's declared JavaScript into the materialized project at
+  `dir` as `src/deps.cljs`, and return what was written (nil if nothing).
+
+  `deps.cljs` is the ClojureScript compiler's OWN mechanism:
+  `cljs.closure/get-upstream-deps*` enumerates every `deps.cljs` at the root
+  of every classpath entry and merges their `:foreign-libs`. `src` is on the
+  generated project's classpath, so dropping the file there is all it takes
+  — no compiler options, no per-backend plumbing.
+
+  That is why it is done this way rather than by threading the value into
+  `compile-client*`: that is a MULTIMETHOD, and a re-loaded `defmethod` does
+  not replace its already-registered compiled fn in a running image, so an
+  arity change there strands every live session until the process restarts.
+  Measured twice, across a restart. This path needs no signature at all,
+  works for every backend including the deferred ones, and is exactly what a
+  published library would ship."
+  [store dir]
+  (let [fl (foreign-libs-for store)]
+    (when (seq fl)
+      (let [f (io/file dir "src" "deps.cljs")]
+        (io/make-parents f)
+        (spit f (pr-str {:foreign-libs fl}))
+        fl))))
+
+(defn ^:export compile-client!
+  "Compile the store's CLIENT namespaces (:cljc + :cljs) to JavaScript with the
+  configured backend (build/client-compiler, default :clojurescript) and record
+  the output as a served blob — the client wave's compile-error-as-oracle
+  (D-web-cljs). Materializes the store (build!) into a throwaway dir whose
+  generated deps.edn carries the :cljs alias — build! injects slopp's OWN
+  toolchain there (the compiler + malli), so the agent never hand-adds slopp's
+  plumbing. Shells the compiler in a fresh JVM (no Node — real
+  org.clojure/clojurescript on the JVM), then anchors warnings to store forms
+  (name-addressed, no file:line) and stores the JS (file_put). Returns {:compiled
+  <ns-count> :warnings [...anchored...] :output <path> :bytes n} on success,
+  {:error ... :warnings ...} on a compile failure, or {:note ...} when there is
+  no client code. `:output` sets the served path (default \"public/cljs/main.js\")."
+  [session & {:keys [output] :or {output "public/cljs/main.js"}}]
+  (let [st       (:store @session)
+        compiler (build/client-compiler st)
+        client   (filterv #(#{:cljc :cljs} (store/platform-for st %))
+                          (keys (:namespaces st)))]
+    (if (empty? client)
+      {:note (str "no client namespaces to compile — declare one :cljc or :cljs"
+                  " via module_platform")}
+      (let [dir (str (java.nio.file.Files/createTempDirectory
+                      "slopp-cljs"
+                      (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (try
+          (let [b (external/build! session dir)]
+            (if (:error b)
+              b
+              (let [{:keys [warnings error]} (do
+                                              ;; declared JavaScript reaches the
+                                              ;; compiler as a classpath resource,
+                                              ;; which every backend reads and no
+                                              ;; signature has to carry
+                                              (write-foreign-libs! st dir)
+                                              (compile-client* compiler dir))
+                    anchored (anchor-warnings st (or warnings []))]
+                (if error
+                  ;; the runner sends {:msg :at}; a legacy/fallback string still
+                  ;; works, it simply anchors nothing
+                  (merge (if (map? error)
+                           (anchor-error st (str/join " / " (:msgs error)) (:at error))
+                           (anchor-error st (str error) nil))
+                         {:warnings anchored})
+                  (let [js    (slurp (io/file dir "out" "main.js"))
+                        ;; an ARTIFACT, not a file: bytes to the content-addressed
+                        ;; cache, sha + recipe to the journal. Inline, this one
+                        ;; path was 30.47MB of delta log across fifteen compiles.
+                        entry (artifacts/put! (:dir @session)
+                                              (.getBytes ^String js "UTF-8")
+                                              {:kind :build :tool "compile_client"}
+                                              :content-type "application/javascript")]
+                    (let [prior (get-in @session [:store :artifacts output :sha])]
+                      (session/commit-appended!
+                       session
+                       (fn [s] (first (store/record-artifact s output entry)))
+                       [])
+                      ;; the bundle this one replaced is now unreferenced. Pruned
+                      ;; HERE because this is the only point that knows which sha
+                      ;; was superseded; a sweep of everything unreferenced would
+                      ;; be driven by whichever store happened to be in hand.
+                      (artifacts/prune-superseded! (:dir @session)
+                                                   (:store @session)
+                                                   prior))
+                    ;; A bundle nothing serves is the failure this just had: slopp's own sat
+                    ;; in the manifest for two waves while every page 404'd on it,
+                    ;; because serving it needs an http.static.* mount and nothing
+                    ;; said so. Serving it IS one line — the gap was
+                    ;; discoverability, so the tool that wrote the file names the
+                    ;; line, and goes quiet once a mount covers the path.
+                    (cond-> {:compiled  (count client)
+                             :namespaces (mapv str (sort client))
+                             :warnings  anchored
+                             :output    output
+                             :sha       (:sha entry)
+                             :bytes     (count js)}
+                      (not (served-by-a-mount? (:store @session) output))
+                      (assoc :serve-with
+                             (let [dir (or (second (re-matches #"(.*)/[^/]+" output))
+                                           output)]
+                               (str "no http.static mount serves " output
+                                    " — config_file {path \"capabilities\" key"
+                                    " \"http.static./js\" value \"" dir "\"} mounts it"
+                                    " at /js/. (An endpoint that reads the file"
+                                    " serves it too; this checked mounts only.)")))))))))
+          (finally
+            (letfn [(rm! [f]
+                      (when (.isDirectory f) (run! rm! (.listFiles f)))
+                      (.delete f))]
+              (rm! (io/file dir)))))))))

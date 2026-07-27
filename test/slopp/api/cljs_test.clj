@@ -1,7 +1,21 @@
 (ns slopp.api.cljs-test
+  "Tests for the ClojureScript path — the one place slopp's oracle cannot
+  reach.
+
+  Everything else here is verified by RUNNING it in the image. Client code
+  cannot be: there is no JS runtime in the loop, so the COMPILER stands in as
+  the oracle, and these tests exist to hold that substitute honest. They
+  check what a compile produces, that a failure anchors to a real form rather
+  than to a line number in generated output, where the bytes land, and that
+  the loop around it — recompile on write, a mount that actually serves the
+  result — behaves.
+
+  They are `^:external` and genuinely slow: each shells a fresh JVM and runs
+  a real compile. That cost is the point. A faked compiler would leave the
+  only unverifiable layer in slopp verified by something that cannot fail."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.api.cljs :as cljs]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.api.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str]))
 
 (deftest parse-result-extracts-the-marked-edn
   (testing "reads the EDN after the SLOPP-CLJS-RESULT marker, ignoring other output"
@@ -17,12 +31,19 @@
     (is (nil? (cljs/parse-result "")))))
 
 (deftest anchor-warnings-names-the-owning-form
-  (let [st (store/ingest (store/empty-store) 'app.widget
-                         (str "(ns app.widget)\n"
-                              "(defn greet [n] (undeclared-thing n))\n"))]
+  (let [st   (store/ingest (store/empty-store) 'app.widget
+                           (str "(ns app.widget)\n"
+                                "(defn greet [n] (undeclared-thing n))\n"))
+        ;; derived: rendering synthesizes the space between forms, so a
+        ;; literal line here encodes one renderer version and goes red on the
+        ;; next. The compiler reports against render output, so ask it.
+        line (->> (str/split-lines (render/render-ns st 'app.widget))
+                  (keep-indexed (fn [i l]
+                                  (when (str/includes? l "undeclared-thing") (inc i))))
+                  first)]
     (testing "a finding at a form's line anchors to that form + a snippet"
       (let [[a] (cljs/anchor-warnings
-                 st [{:type :undeclared-var :line 2 :ns "app.widget"
+                 st [{:type :undeclared-var :line line :ns "app.widget"
                       :message "Use of undeclared Var app.widget/undeclared-thing"}])]
         (is (= 'app.widget/greet (:form a)) (pr-str a))
         (is (= "(defn greet [n] (undeclared-thing n))" (:at a)))
@@ -46,7 +67,25 @@
           (is (= 1 (:compiled r)) (pr-str r))
           (is (nil? (:error r)) (pr-str r))
           (is (pos? (or (:bytes r) 0)) (pr-str r))
-          (is (string? (get-in @sess [:store :files "public/tc.js"])))))
+          ;; derived, so it lands in :artifacts — sha and recipe in the store, bytes
+          ;; on disk. The old assertion looked in :files, where a 2MB bundle used
+          ;; to sit inline in a delta on every compile.
+          (let [entry (get-in @sess [:store :artifacts "public/tc.js"])]
+            (is (string? (:sha entry)) (pr-str entry))
+            (is (= {:kind :build :tool "compile_client"} (:recipe entry)))
+            (is (nil? (get-in @sess [:store :files "public/tc.js"]))
+                "and NOT on the files manifest — one path, one manifest")
+            (is (.exists (artifacts/cache-file (:dir @sess) (:sha entry)))
+                "the bytes are on disk under their sha")))
+        (testing "recompiling RECLAIMS the bundle it supersedes"
+          (let [old (get-in @sess [:store :artifacts "public/tc.js" :sha])]
+            (api/add-form! sess 'tc.client "(defn shout [n] (str \"HI \" n))")
+            (cljs/compile-client! sess :output "public/tc.js")
+            (let [new-sha (get-in @sess [:store :artifacts "public/tc.js" :sha])]
+              (is (not= old new-sha) "the bundle really changed")
+              (is (not (.exists (artifacts/cache-file (:dir @sess) old)))
+                  "the superseded bytes are gone — else the cache grows by a bundle per compile")
+              (is (.exists (artifacts/cache-file (:dir @sess) new-sha)))))))
       (finally (api/close! sess)))))
 
 (deftest ^:external a-cljs-write-lands-unverified-not-refused
@@ -101,20 +140,24 @@
       (testing "auto-compile OFF (default): a client write does NOT recompile"
         (let [r (api/add-form! sess 'ac.client "(defn a [] (js/alert \"a\"))")]
           (is (nil? (:client-recompiling r)) (pr-str r))
-          (is (nil? (get-in @sess [:store :files "public/cljs/main.js"]))
+          (is (nil? (get-in @sess [:store :artifacts "public/cljs/main.js"]))
               "no bundle written yet")))
       (testing "auto-compile ON: a client write schedules an ASYNC recompile"
         (api/config-file! sess "client" :key "auto-compile" :value "true"
                           :prompt "dev loop")
         (let [r (api/add-form! sess 'ac.client "(defn b [] (js/alert \"b\"))")]
           (is (true? (:client-recompiling r)) (pr-str r))
-          ;; async: the background compile commits the served bundle shortly after
-          (let [blob (loop [n 0]
-                       (or (get-in @sess [:store :files "public/cljs/main.js"])
-                           (when (< n 120)
-                             (Thread/sleep 500)
-                             (recur (inc n)))))]
-            (is (string? blob) "fresh bundle served within timeout"))))
+          ;; async: the background compile registers the artifact shortly after.
+          ;; The bundle is DERIVED now, so it lands in :artifacts as a sha and a
+          ;; recipe — polling :files would wait out the full timeout forever.
+          (let [entry (loop [n 0]
+                        (or (get-in @sess [:store :artifacts "public/cljs/main.js"])
+                            (when (< n 120)
+                              (Thread/sleep 500)
+                              (recur (inc n)))))]
+            (is (string? (:sha entry)) "fresh bundle registered within timeout")
+            (is (.exists (artifacts/cache-file (:dir @sess) (:sha entry)))
+                "and its bytes are in the cache"))))
       (finally (api/close! sess)))))
 
 (deftest ^:external edit-rename-handles-a-cljs-form
@@ -369,3 +412,20 @@
       (let [r (cljs/anchor-error st "boom" {:file "cljs-src/nope/gone.cljs" :line 2})]
         (is (= "boom" (:error r)))
         (is (nil? (:form r)) "a file with no matching store namespace anchors nothing")))))
+
+(deftest foreign-libs-translate-only-the-formats-that-can-be-concatenated
+  (let [st {:js-deps {"roughjs" {:format :iife :global "rough"
+                                 :file "public/js/roughjs-4.6.6.js"}
+                      "excalidraw" {:format :esm :global "ExcalidrawLib"
+                                    :file "public/js/excalidraw.js"}}}
+        fl (cljs/foreign-libs-for st)]
+    (testing "an :iife library becomes a foreign lib mapped to its global"
+      (is (= [{:file "public/js/roughjs-4.6.6.js"
+               :provides ["roughjs"]
+               :global-exports {'roughjs 'rough}}]
+             fl)))
+    (testing ":esm is skipped — the page loads it, and concatenating an ES module
+              yields a bundle that fails at runtime with nothing to point at"
+      (is (not-any? #(= "public/js/excalidraw.js" (:file %)) fl)))
+    (testing "a store that vendors nothing produces nothing, not an empty declaration"
+      (is (empty? (cljs/foreign-libs-for {}))))))
