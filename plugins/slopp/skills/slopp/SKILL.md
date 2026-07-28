@@ -840,31 +840,49 @@ one with twenty and none, and nothing else tells you that. It carries
 `:measured` because verification only started timing itself recently, so a
 recorded total covers part of a long form's life and says which part.
 
-**When the answer is for a HUMAN, serve it: `ui_serve`.** It starts a
-browsable view of the store — a milestone timeline, a per-milestone change
-review (module → namespace → form, with each form's recorded ask, its line
-diff and its blast radius), form permalinks by ID with callers above and
-callees inlined below, and the namespace index — and returns `{:url :port}`.
-Hand over the url and the change screen's, not a wall of pasted source: your
-tools answer questions, a page lets someone LOOK. It runs on your live
-session, so warranty and observed examples are the ones you actually have.
-**It is already running** — the server starts one at boot and `session_brief`
-reports the url as `:ui`, so hand THAT over rather than calling anything.
-`ui_serve` is for changing the port or restarting it; `{stop: true}` shuts it
-down, and serving again evicts the previous server rather than moving the
-port.
+**When the answer is for a HUMAN, hand over a URL rather than a wall of
+pasted source** — your tools answer questions, a page lets someone LOOK.
+There is a browsable view of the store: a milestone timeline, a per-milestone
+change review (module → namespace → form, with each form's recorded ask, its
+line diff and its blast radius), form permalinks by ID with callers above and
+callees inlined below, and the namespace index.
+
+**Hand over `session_brief`'s `:ui-hub`, not its `:ui`.** Those are different
+things now and giving out the wrong one wastes someone's time:
+
+- `:ui` is THIS project's own listener, and it serves `/api/*` — JSON, and the
+  EDN contract at `/api/contracts`. It is already running (the server starts
+  it at boot), it runs on your live session so warranty and observed examples
+  are the ones you actually have, and it has no pages in it at all. A human
+  opening it sees JSON.
+- `:ui-hub` is the hub — a separate application, one per machine, that renders
+  every screen and fronts this project at `/p/<slug>/`. That is the address a
+  person wants.
+
+`ui_serve` controls your own listener (port, restart, `{stop: true}`); serving
+again evicts the previous server rather than moving the port. It does not
+start the hub, which is not slopp's to start.
 
 **On a machine running several slopp projects, hand over the HUB's url
-instead.** Each server serves its own UI — it must, because warranty and
-observed examples are only CURRENT in the session doing the work; another
-process reading the same store sees the last verified run, not the one you are
-changing — so each one binds a port derived from its store dir, and those are
-not addresses a human should have to collect.
-The hub is one process the user starts (`slopp --main slopp.ui.hub/-main
---port 7359`; it needs no store), every project registers with it every ten
-seconds, and it fronts them all at one url with a project picker. A project
-that stops answering is greyed out, not dropped. Configure with the
-`ui.hub-port` capability (`0` = don't register).
+instead.** Your server serves this project's `/api/*` and binds a port derived
+from its store dir — it must serve its own, because warranty and observed
+examples are only CURRENT in the session doing the work, and another process
+reading the same store sees the last verified run rather than the one you are
+changing. Those derived ports are not addresses a human should have to collect.
+
+The hub is a SEPARATE APPLICATION (the `slopp-ui` project) that a user starts
+once per machine. It needs no store and never opens one: it holds a registry
+fed by heartbeats, renders every page a human looks at, and proxies
+`/p/<slug>/api/*` to whichever project owns that slug. Every project
+registers itself every few seconds, and one that stops answering is greyed out
+rather than dropped. Configure with the `ui.hub-port` capability (`0` = don't
+register); the interval comes back on the registration response, so the two
+sides share no compiled-in number and can be different releases.
+
+That split is worth knowing about even if you never touch the hub, because it
+is the shape a slopp app takes when it consumes another one: the hub generates
+its typed client from each project's published `/api/contracts` and talks to
+a store it cannot open. See "Consuming someone else's API" above.
 
 **When you hit a dead end, revert cleanly and say WHY.** `undo` walks back
 your OWN writes by delta — `{deltas n}` for the last n, or `{to :last-commit}`

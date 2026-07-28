@@ -2836,3 +2836,57 @@ capability.
 Frictions found while building: `ideas/ui-split-frictions.md` — notably that a
 `def` computed from another form stays STALE after an in-image edit, which made
 a new tool parameter silently unusable in the session that added it.
+
+### D-ui-hub part 4 — as built (2026-07-28)
+
+The split is standing and verified across two processes and two stores.
+`slopp-ui` is its own git repo, its own `.slopp/store.db`, and depends on
+`io.github.nvoxland/slopp-web` + malli + replicant. It never opens a store.
+
+**The topology landed differently from the plan, and better.** The plan had
+each project serving its own document and the hub proxying it. What was built
+has **the hub serving every page** — picker, the application document per
+project, the stylesheet, the compiled bundle — and proxying only
+`/p/:slug/api/*path`. Three consequences:
+
+- **`X-Slopp-Base` is gone from the hub.** It existed so a project could emit
+  urls that resolved at its mount point; with the document rendered in the
+  process that OWNS the mount point, nothing downstream emits a url and the
+  question does not arise. The header remains a valid `slopp.web` capability
+  for a proxy that genuinely fronts someone else's pages.
+- **Asset urls are absolute.** One stylesheet and one bundle for every project
+  fronted, at `/css/style.css` and `/assets/cljs/main.js`, because the hub is
+  always at the root. Pinned by `hub-test/the-documents-asset-urls-are-absolute-and-stay-that-way`.
+- **`:web/spa` prefixes carry the slug** — `["/p/:slug/store" "/p/:slug/change"]`.
+  `spa-rows` concatenates onto the declared prefix and the router reads the
+  capture like any other, so a per-project fallback needed no new matching
+  rule. Scoped, not a root catch-all: `/p/slopp2/nonsense` still 404s.
+
+**The fixed point, live.** slopp2 publishes malli-EDN at `/api/contracts`;
+slopp-ui generated `client.contracts` + `client.api` from that URL; and what
+slopp2 actually sends for timeline / modules / namespaces / ns-outline
+validates against those generated schemas, fetched through the hub's proxy.
+The wire format is lossless in practice, not only in a unit test.
+
+**Two bugs the split found in slopp itself**, both fixed with tests, both the
+same genre — the documentation was the trap:
+
+- A static mount could not serve `compile_client`'s output. The bundle is an
+  ARTIFACT (sha + recipe; inlining it cost 30MB of delta log) and every mount
+  consumer went through `store/file-content`, which read `:files` only — so
+  the tool's own "add an `http.static.*` mount" advice was impossible to
+  follow. `file-content` now answers from the manifest first, then artifacts.
+- The capability registry's example was `http.static./assets = public/`, and
+  both the handler and the check append their own separator. `public//app.css`
+  matches nothing in a manifest — so the documented form worked against a
+  filesystem reader and silently served nothing against a store-backed one.
+
+**Still open, and it blocks the milestone:** a stale `done` verdict cannot be
+superseded when subsequent episodes touch only untested forms, and a green
+`full_check` does not clear it either (friction 14). `commit_point` falls back
+to `last-judged-done`, which can be arbitrarily old.
+
+**Layout is on the wrong side of the line** and Stage 4 moves it: `/api/modules`
+ships a fully laid-out `:picture` with pixel coordinates, so `slopp-ui.graph`
+ported cleanly and then nothing called it. The framework's API should say what
+the modules ARE; where the boxes go is the consumer's business.

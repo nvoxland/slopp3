@@ -48,30 +48,37 @@ it prints a sentence and MCP carries on, exactly as the git listener does.
 
 ### One hub, many projects
 
-Every MCP server serves its own UI, and it has to: covering-test counts and
-observed examples live in a session, so a process that opened someone else's
-store would show every form as covered by nothing. That means one listener per
-project, which is why its port is **derived from the store directory** rather
-than fixed — stable across restarts, and never the same as the project next to
-it. You are not expected to know that number.
+Every MCP server serves its own **API**, and it has to: covering-test counts
+and observed examples live in a session, so a process that opened someone
+else's store would show every form as covered by nothing. That means one
+listener per project, which is why its port is **derived from the store
+directory** rather than fixed — stable across restarts, and never the same as
+the project next to it. You are not expected to know that number.
 
-The address you remember belongs to the **hub**, one process per machine that
-you start yourself:
+The address you remember belongs to the **hub**, one process per machine. It
+is a separate application — built with slopp, not inside it — that never opens
+a store: it holds a registry fed by heartbeats, renders every page, and
+proxies `/p/<slug>/api/*` to whichever project owns that slug.
 
-```sh
-slopp --main slopp.ui.hub/-main --port 7359     # needs no store, runs anywhere
-```
+Every MCP server checks in with it a few times a minute, carrying its name,
+directory and url, and the hub answers with the interval to use next — so the
+two sides share no compiled-in number and can be different slopp releases.
+The hub lists projects at `/`, fronts each at `/p/<name>/…`, and greys out one
+that has stopped answering rather than dropping it. Registering and keeping
+alive are the same call, so you can start the hub after your editors, or
+restart it, and everything reappears within one interval.
 
-Every MCP server checks in with it every ten seconds, carrying its name,
-directory and url. The hub lists them at `/`, fronts each one at
-`/p/<name>/…`, and greys out a project that has stopped answering rather than
-dropping it from the list. Registering and keeping alive are the same call, so
-you can start the hub after your editors, or restart it, and everything
-reappears within one interval.
+Each project's pages grow a project dropdown when the hub is in front of them,
+so you switch without going back to the picker.
 
-Every project's own UI grows a project dropdown in its top nav when a hub is
-in front of it, so you switch without going back to the picker. Served
-directly there is no hub to ask and the dropdown simply isn't there.
+!!! note "Not yet packaged"
+
+    The hub moved out of slopp's own store into its own project, so there is
+    no `slopp --main …` command for it any more and no install path published
+    yet. Two processes, started by hand, is where this deliberately stands:
+    the interesting part was proving an app can consume a slopp project's
+    published API over HTTP without opening its store, and packaging is a
+    separate problem that can wait.
 
 Two capabilities configure it:
 
@@ -82,10 +89,14 @@ Two capabilities configure it:
 
 ### Serving a slopp app under a path prefix
 
-The hub fronts projects at `/p/<name>/`, which means a slopp app has to work
-somewhere other than the root — and that is a general capability, not a hub
-detail. Any slopp web app can now be served under a prefix behind a reverse
-proxy:
+An app served behind a reverse proxy lives somewhere other than the root, and
+a page cannot work out its own prefix from its own URL — `/p/acme/orders` and
+`/orders` are indistinguishable to the code receiving them. So the server that
+knows has to say.
+
+This began as a hub requirement and is now purely general, which is the better
+test of it: the hub renders its own pages, so nothing downstream of it emits a
+url and it uses none of this. What follows is for YOUR app behind YOUR proxy.
 
 - Send **`X-Slopp-Base: /your/prefix`** with the proxied request. It is read
   per request, not configured, because the same server may also be answering

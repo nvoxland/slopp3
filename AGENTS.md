@@ -90,10 +90,16 @@ the backlog for attention.
   Code lives in a store (SQLite-backed delta log), NOT in `.clj` files on
   disk; a VFS renders source on demand. Stance: `.context/architecture.md`.
 - **The working tree is FILELESS**: slopp's own code (system + tests) lives
-  in `.slopp/store.db`; only the boot kernel (`src/slopp/boot.clj`,
-  `src/slopp/rt.clj`) and `deps.edn` are files. ALL development goes through
-  slopp's MCP tools — there are no source files to hand-edit. There is no
-  `:test` alias, so `clojure -M:test` does not work here; see DEV.md.
+  in `.slopp/store.db`; only `deps.edn` and `build.clj` are files humans own.
+  ALL development goes through slopp's MCP tools — including the boot kernel,
+  which is IN the store despite `src/slopp/boot.clj` and `src/slopp/rt.clj`
+  existing on disk. **Those two are projections**: `build!` materializes them
+  from the store over `target/jar-src/`, so a hand-edit there is silently
+  discarded at build time and looks exactly like a stale jar. Edit
+  `slopp.boot` / `slopp.rt` through the tools like everything else — the only
+  thing special about them is that `--live` cannot reload them, so a change
+  needs a rebuild and a restart. There is no `:test` alias, so
+  `clojure -M:test` does not work here; see DEV.md.
 - **Decisions are settled in `.context/decisions.md`** — that file holds
   DECISIONS ONLY (D/C/O/H/G/S/R4 + the named `D-*` series). Don't
   re-litigate silently — revisit explicitly, and record the change.

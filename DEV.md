@@ -10,15 +10,24 @@ a store — read `plugins/slopp/skills/slopp/SKILL.md`, or the published
 lives in `.slopp/store.db`. There are no project `.clj` files to edit. Only
 these are real files:
 
-- `src/slopp/boot.clj` + `src/slopp/rt.clj` — the boot kernel. `boot` loads the
-  store into a JVM; `rt` is injected into every owned image. This is
-  slopp-the-tool, not project source, and it is the one layer `--live` cannot
-  hot-reload.
 - `deps.edn` — the kernel's own dependency coordinates. Project code declares
   its deps in the store manifest (`deps_add`); `build!` generates a project
   `deps.edn` from that.
 - `build.clj` — the uberjar recipe.
 - Docs, CI config, this file, and everything else humans own.
+
+**`src/slopp/boot.clj` and `src/slopp/rt.clj` are NOT in that list**, though
+they sit on disk and look like it. The boot kernel lives in the store with
+everything else; `build!` materializes it into `target/jar-src/src` and the
+uberjar is built from THERE, so those two files are projections. Edit them
+with the MCP tools. A hand-edit on disk is overwritten by the next `build!`
+and produces the exact signature of a stale jar — your fix runs nowhere and
+nothing says why. (`deps.edn` puts `src` on the classpath, so a plain REPL
+from a checkout does load the disk copy; that is the only thing it is for.)
+
+What IS special about the kernel is that `--live` cannot hot-reload it — it is
+the code doing the reloading. A change there needs `build` → `clojure -T:build
+uber` → restart the MCP server.
 
 All code changes go through slopp's MCP tools. There is no file-to-store
 reconciliation by construction, so a hand-edited `.clj` would simply be

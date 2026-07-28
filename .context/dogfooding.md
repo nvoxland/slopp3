@@ -1,5 +1,34 @@
 # Dogfooding & benchmarks
 
+## `../slopp-ui` is the STANDING dogfood (2026-07-28)
+
+Everything under `projects/` is a throwaway written to produce a report.
+`slopp-ui` is different in the way that matters: it is a real application we
+depend on, built through slopp, maintained indefinitely, and — the load-bearing
+part — **it cannot reach inside**. It has its own repo, its own store, its own
+MCP server, and it depends on the published `io.github.nvoxland/slopp-web`
+slim jar and nothing else. It talks to slopp projects over HTTP, generating a
+typed client from each one's published `/api/contracts`.
+
+That constraint is the whole instrument. The reviewer UI used to live in
+slopp's own store and reached straight into `slopp.api.query`,
+`slopp.edit.refs`, `slopp.store` — so building it exercised none of the path a
+real user walks, and every friction a real user would hit was invisible here.
+Within one session of the split it surfaced: a static mount that could not
+serve `compile_client`'s own output, a capability whose documented example was
+the broken form, a dependency manifest that had been silently inert for
+months, and a published slim jar that declares malli schemas without shipping
+malli. None of those were findable from inside.
+
+**Every friction it surfaces is a real user's friction.** They go in
+`ideas/ui-split-frictions.md`, not in that project's repo — they are findings
+about slopp, and slopp-ui is the instrument that found them. Its own cosmetic
+backlog stays over there (`../slopp-ui/ideas/`).
+
+The rule to keep: if slopp-ui ever needs something slopp only exposes
+internally, that is a finding about the slim jar's surface, never a licence to
+require past it.
+
 ## User testing (standing practice)
 
 Build real things **through slopp itself** — the agent is the target user, so
