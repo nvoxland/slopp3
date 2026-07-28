@@ -153,7 +153,31 @@ case inside a verb (`ns_rename` should also carry X; `module_purity` should also
 check Y). That is the instance. The class fix gives the citizen the machinery a
 form already has.
 
-Full derivation, 5-whys and measurements: `ideas/the-non-form-citizens.md`.
+**Sharpening on the Copies row (2026-07-28, the UI-split wave).** "A version
+stamp on the verdict" is necessary and NOT sufficient, and the wave proved it
+by paying five more times. A stamp says which copy answered; it does not say
+whether that copy was right. What the copies actually lack is **form-grain
+identity**: the store gives every form an id, a hash and provenance, and the
+image gives its loaded forms none, so *"is this form's live value the one the
+store says?"* is unanswerable. Every mechanism that needs the answer therefore
+substitutes a proxy — source-text change, reload-threw, deltas-since-boot — and
+a proxy is wrong in BOTH directions. The wave hit both: three silent divergences
+that every check called green (a `def` capturing another form's value; var
+metadata capturing a schema's value; a generated namespace written and never
+loaded) and one false alarm that cost a milestone a fresh JVM (a failed reload
+reported as "the host still runs their previous code" while the image was
+current).
+
+The cautionary half: this was named here, specified correctly in
+`root-cause-fix-plan.md` Tier 0 item B — *"a comparison, not a reload counter"* —
+and then marked ✅ on the strength of its wiring while the comparison never
+shipped. **A class fix marked closed is worse than one left open**, because the
+✅ is what stops anyone looking. Identity for the copy, not a label on the
+verdict.
+
+Full derivation, 5-whys and measurements: `ideas/done/the-non-form-citizens.md`;
+this wave's clustering in `ideas/ui-split-frictions.md` § "The wave's structural
+finding".
 
 ## Core 6 — verification stops at the boundary, and every crossing is hand-built
 
