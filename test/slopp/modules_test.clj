@@ -1114,3 +1114,37 @@
         (is (= 1 (- (verifies) before))
             "one transaction, ONE verification — not one per rename"))
       (finally (api/close! sess)))))
+
+(deftest ^:external deleting-a-namespace-retires-declarations-it-alone-owned
+  ;; A tier or platform describes a NAME, and `ns_rename` already carries them
+  ;; across for exactly that reason — orphaned, a declaration "lists a
+  ;; namespace that no longer exists". DELETE never did, so slopp's own store
+  ;; accumulated FIFTEEN of them (5 tiers, 10 platforms) across one wave of
+  ;; deletions, each listed by query_depends as though it governed something.
+  ;;
+  ;; The exception is what makes this a PREFIX question rather than a key
+  ;; lookup: a declaration on `dg.keep` governs `dg.keep.deep` too, so
+  ;; retiring it along with the empty husk would silently UNGATE live code.
+  ;; Only a declaration left covering nothing goes.
+  (let [sess (external/open!)]
+    (try
+      (testing "a declaration naming only the deleted namespace is retired with it"
+        (api/ingest! sess 'dg.gone "(ns dg.gone)\n")
+        (api/module-tier! sess "dg.gone" :pure :prompt "leaf, pure")
+        (api/module-platform! sess "dg.gone" :cljc :prompt "shared")
+        (is (= :pure (get-in @sess [:store :module-tiers "dg.gone"])))
+        (let [r (api/delete-ns! sess 'dg.gone :prompt "retire the scaffold")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (nil? (get-in @sess [:store :module-tiers "dg.gone"]))
+            "the tier went with the namespace it named")
+        (is (nil? (get-in @sess [:store :module-platforms "dg.gone"]))
+            "and so did the platform"))
+      (testing "a declaration still governing live code SURVIVES the husk's deletion"
+        (api/ingest! sess 'dg.keep "(ns dg.keep)\n")
+        (api/ingest! sess 'dg.keep.deep "(ns dg.keep.deep)\n(defn ^:unused-ok f [x] x)\n")
+        (api/module-tier! sess "dg.keep" :pure :prompt "the whole subtree is pure")
+        (let [r (api/delete-ns! sess 'dg.keep :prompt "the husk is empty; the subtree is not")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (= :pure (get-in @sess [:store :module-tiers "dg.keep"]))
+            "dg.keep.deep is still governed by it — retiring would ungate live code"))
+      (finally (api/close! sess)))))

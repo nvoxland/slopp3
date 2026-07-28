@@ -3267,13 +3267,39 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
         (if (seq requirers)
           {:error (str ns-sym " is still required by " (str/join ", " requirers)
                        " — ns_remove_require them first")}
-          (let [st' (session/commit-appended!
-                     session
-                     #(first (store/record-ns-delete % ns-sym :prompt prompt :agent agent))
-                     [ns-sym])]
+          (let [st'  (session/commit-appended!
+                      session
+                      #(first (store/record-ns-delete % ns-sym :prompt prompt :agent agent))
+                      [ns-sym])
+                did  (:id (last (store/deltas st')))
+                ;; A tier or platform describes a NAME — ns-rename! carries them
+                ;; across for exactly this reason. Left behind by a DELETE, one
+                ;; names a namespace that no longer exists and query_depends
+                ;; lists it as though it governed something. The exception is a
+                ;; declaration a deeper namespace still lives under: that one
+                ;; governs live code by prefix, and retiring it would ungate it.
+                path    (str ns-sym)
+                governs (some #(str/starts-with? (str %) (str path "."))
+                              (keys (:namespaces st')))
+                orphans (when-not governs
+                          (vec (for [[reg record] [[:module-tiers store/record-module-tier]
+                                                   [:module-platforms store/record-module-platform]]
+                                     :when (contains? (get st' reg) path)]
+                                 [reg record])))]
+            (when (seq orphans)
+              (session/commit-appended!
+               session
+               (fn [base]
+                 (reduce (fn [s [_ record]]
+                           (first (record s path nil :action :remove
+                                          :prompt (str "declaration retired with namespace " ns-sym)
+                                          :agent agent)))
+                         base orphans))
+               []))
             (repl/eval! (:image @session)
                         (format "(remove-ns '%s)" ns-sym))
-            {:deleted (str ns-sym) :delta (:id (last (store/deltas st')))}))))))
+            (cond-> {:deleted (str ns-sym) :delta did}
+              (seq orphans) (assoc :retired (mapv first orphans)))))))))
 
 (defn module-extract!
   "Pull `ns-syms` (each with its subtree and `-test` siblings) under

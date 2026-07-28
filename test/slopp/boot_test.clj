@@ -201,3 +201,27 @@
                               "(defn g [] (f))\n")}
                (boot/store-sources conn))))
       (finally (.close conn)))))
+
+(deftest ^:external manifest-deps-resolve-off-a-repl-thread
+  ;; MEASURED on slopp's own jar: `java -jar slopp.jar <dir>` logged "could
+  ;; not add 13 of 13 manifest deps", every one of them failing with "Can't
+  ;; change/establish root binding of *data-readers* with set" — and the
+  ;; store booted and ran anyway, off whatever the HOST uberjar happened to
+  ;; carry, at whatever version it carried. That is precisely the failure
+  ;; add-manifest-libs!'s own docstring exists to prevent: the manifest
+  ;; becomes decoration, and an app asking whether it depends only on what it
+  ;; DECLARES gets told yes when the answer is no.
+  ;;
+  ;; The cause is a THREAD binding, not a bad coord. `add-libs` refreshes the
+  ;; data-reader table with `set!`, which needs *data-readers* thread-bound;
+  ;; clojure.main establishes one, an AOT `java -jar` main does not. A fresh
+  ;; Thread has those bindings stripped the same way, so it reproduces the
+  ;; boot thread's world without spawning a JVM — and a coord already IN the
+  ;; manifest keeps the check off the network.
+  (let [p (promise)]
+    (.start (Thread. #(deliver p (try (#'boot/add-libs!*
+                                       '{rewrite-clj/rewrite-clj {:mvn/version "1.1.48"}})
+                                      :ok
+                                      (catch Throwable t (str (.getMessage t)))))))
+    (is (= :ok (deref p 120000 :timed-out))
+        "a manifest coord must resolve on a thread carrying no REPL bindings")))

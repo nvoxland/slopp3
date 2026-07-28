@@ -114,6 +114,33 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
+^{:unsafe "add-libs IS the dynamic-classpath escape hatch, and making a thread capable of it means installing a classloader and binding the vars the dialect denylists. The kernel is the one place that can do this."}
+(defn- add-libs!*
+  "Run Clojure 1.12 `add-libs` for `deps` on THIS thread, whatever thread it
+  is — the whole reason this is its own function.
+
+  Two things must be true of the thread, and outside a REPL neither is:
+
+  - a `DynamicClassLoader` as the context loader, or the resolved jars have
+    nowhere to land (the launcher's loader is static);
+  - a THREAD binding for `*data-readers*`, because add-libs refreshes the
+    reader table with `set!` and `set!` on an unbound-in-this-thread var
+    throws \"Can't change/establish root binding of *data-readers* with set\".
+
+  `clojure.main` establishes the second (its `with-bindings` covers
+  `*data-readers*`); an AOT `java -jar` main does not. MEASURED: without it
+  every one of slopp's own 13 manifest coords failed with exactly that
+  message and nothing landed on the classpath — while the store booted fine
+  off the host uberjar, so the manifest read as satisfied and was not."
+  [deps]
+  (let [t (Thread/currentThread)]
+    (when-not (instance? clojure.lang.DynamicClassLoader
+                         (.getContextClassLoader t))
+      (.setContextClassLoader
+       t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
+  (binding [*repl* true, *data-readers* *data-readers*]
+    ((requiring-resolve 'clojure.repl.deps/add-libs) deps)))
+
 ^{:unsafe "add-libs IS the dynamic-classpath escape hatch: it needs *repl* bound and a DynamicClassLoader installed under it, which is exactly what the dialect denylists. The kernel is the one place that can do this, because it is what makes `java -jar slopp.jar <dir>` work for a store with dependencies."}
 (defn- add-manifest-libs!
   "Resolve the store's Tier-1 dependency manifest (the `deps` meta row) onto
@@ -143,26 +170,15 @@
   (when-let [deps (some-> (jdbc/execute-one!
                            conn ["SELECT v FROM meta WHERE k = 'deps'"])
                           :meta/v edn/read-string not-empty)]
-    ;; add-libs needs a DynamicClassLoader as the thread's context loader
-    ;; (outside a REPL the launcher's loader is static) — install one over
-    ;; the current loader so the resolved jars have somewhere to land
-    (let [t (Thread/currentThread)]
-      (when-not (instance? clojure.lang.DynamicClassLoader
-                           (.getContextClassLoader t))
-        (.setContextClassLoader
-         t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
     (try
-      (binding [*repl* true]
-        ((requiring-resolve 'clojure.repl.deps/add-libs) deps))
+      (add-libs!* deps)
       (catch Throwable t
         (log! "slopp.boot: manifest deps did not resolve as one graph ("
               (.getMessage t) ") — retrying one at a time")
         (let [failed (reduce
                       (fn [acc [lib coord]]
                         (try
-                          (binding [*repl* true]
-                            ((requiring-resolve 'clojure.repl.deps/add-libs)
-                             {lib coord}))
+                          (add-libs!* {lib coord})
                           acc
                           (catch Throwable t2
                             (conj acc (str lib " (" (.getMessage t2) ")")))))
