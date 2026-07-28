@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2740,6 +2740,40 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                     ". compile_client is what proves it, and its warnings anchor"
                     " to the owning form.")}))))
 
+(defn- shadow-warning
+  "A warning when `ns-sym` names a namespace a CLASSPATH resource already owns
+   — slopp's own code, or a dependency's — and the store does not yet define it.
+
+   Why it warns and does not refuse: overriding a slopp namespace is a
+   supported capability. `slopp.image.testmain` is how a store supplies its own
+   trace runner, and `build!` materializes the store's version over slopp's. A
+   refusal would break a documented extension point to prevent a naming
+   mistake.
+
+   Why it warns at all: `slopp.boot` loads store namespaces BEFORE slopp's own,
+   so a shadowing namespace that does not define everything the real one does
+   breaks the server at its next boot — and the store is then unopenable by the
+   only tool that could remove it. That happened: a project defined
+   `slopp.ui.views` with two of its own views, and the next boot died on
+   `No such var: views/module-graph`.
+
+   The check is CLASSPATH ownership, not `find-ns`: a namespace an earlier
+   store hot-loaded into this process is interned here too, and treating that
+   as a collision false-flags a fresh store reusing a name."
+  [store ns-sym]
+  (when-not (contains? (:namespaces store) ns-sym)
+    (let [base (-> (str ns-sym) (str/replace "-" "_") (str/replace "." "/"))]
+      (when (some #(io/resource (str base %)) [".clj" ".cljc" ".cljs"])
+        {:kind :shadows-classpath-ns
+         :ns ns-sym
+         :message (str ns-sym " SHADOWS a namespace already on the classpath "
+                       "(slopp's own, or a dependency's). Your store's version "
+                       "loads FIRST, so anything the real one defines and yours "
+                       "does not will break at the next server boot — and a "
+                       "store that cannot boot cannot be edited. Deliberate "
+                       "overrides are fine (slopp.image.testmain is one); if "
+                       "this was not deliberate, pick a name your project owns.")}))))
+
 (defn create-ns!
   "F4: bring a brand-new namespace into being — two modes (mutually exclusive):
    - **scaffold** (`:requires`, clause strings like \"[clojure.string :as str]\"):
@@ -2763,20 +2797,24 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
     (let [perr (when platform
                  (:error (module-platform! session (str ns-sym) platform
                                            :prompt (or prompt "platform declared at namespace creation")
-                                           :agent agent)))]
+                                           :agent agent)))
+          ;; computed BEFORE the write, while the store still lacks the name
+          shadow (shadow-warning (:store @session) ns-sym)]
       (cond
         perr {:error perr}
 
-        source
-        (ingest! session ns-sym source :agent agent)
-
         :else
-        (ingest! session ns-sym
-                 (str "(ns " ns-sym
-                      (when (seq requires)
-                        (str "\n  (:require " (str/join "\n            " requires) ")"))
-                      ")\n")
-                 :agent agent)))))
+        (let [r (if source
+                  (ingest! session ns-sym source :agent agent)
+                  (ingest! session ns-sym
+                           (str "(ns " ns-sym
+                                (when (seq requires)
+                                  (str "\n  (:require " (str/join "\n            " requires) ")"))
+                                ")\n")
+                           :agent agent))]
+          (cond-> r
+            (and shadow (not (:error r)))
+            (update :warnings (fnil conj []) shadow)))))))
 
 ;; --- query.* (read) ---
 

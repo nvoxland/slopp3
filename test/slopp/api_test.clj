@@ -479,3 +479,39 @@
           (api/close! sess)
           (rm! (io/file dir))
           (rm! (io/file out)))))))
+
+(deftest ^:external creating-a-namespace-that-shadows-a-classpath-one-warns
+  ;; Found by bricking a real project. `slopp-ui` created `slopp.ui.views`
+  ;; holding two of its own views; a project's MCP server runs the FULL slopp
+  ;; jar and `slopp.boot` loads store namespaces FIRST, so at the next boot
+  ;; slopp's own `slopp.ui.pages` died on `No such var: views/module-graph`.
+  ;; The store was then unopenable by the only tool that could remove the
+  ;; namespace again.
+  ;;
+  ;; It WARNS rather than refuses, and that distinction is the whole design:
+  ;; overriding a slopp namespace is a supported capability, not an accident.
+  ;; `slopp.image.testmain` is exactly how a store supplies its own trace
+  ;; runner — `verification-test/external-tier-trace-absorbs-into-the-session`
+  ;; does it on purpose — so a guard that refused would have broken a
+  ;; documented extension point to prevent a naming mistake.
+  (let [sess (external/open!)]
+    (try
+      (testing "a name slopp itself owns is created, and SAYS it will shadow"
+        (let [r (api/create-ns! sess 'slopp.ui.views :source "(ns slopp.ui.views)\n")
+              w (first (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))]
+          (is (nil? (:error r)) "overriding is legitimate — it must still be possible")
+          (is (some? w) (pr-str r))
+          (is (re-find #"slopp\.ui\.views" (str (:message w)))
+              "name it: the agent chose the name and has to know which one bites")
+          (is (re-find #"(?i)shadow" (str (:message w))))))
+      (testing "a dependency's namespace warns for the same reason"
+        (let [r (api/create-ns! sess 'clojure.string :source "(ns clojure.string)\n")]
+          (is (some #(= :shadows-classpath-ns (:kind %)) (:warnings r)) (pr-str r))))
+      (testing "a name the project owns warns about nothing"
+        ;; the root slopp-ui settled on, and the reason it is safe: `slopp-ui`
+        ;; is a different SEGMENT from `slopp`, so it cannot collide
+        (let [r (api/create-ns! sess 'slopp-ui.views :source "(ns slopp-ui.views)\n")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (empty? (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))
+              (pr-str r))))
+      (finally (api/close! sess)))))
