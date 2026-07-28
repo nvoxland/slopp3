@@ -4,7 +4,7 @@
   recording the green/red result as provenance (D5/D6, C4)."
   (:require [slopp.store.render :as render]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.rt :as rt]))
+            [slopp.store :as store] [slopp.rt :as rt] [slopp.image.currency :as currency] [rewrite-clj.node :as n]))
 
 (defn load-ns!
   "Evaluate `ns-sym`'s current source (rendered from the store) into the image,
@@ -15,7 +15,13 @@
   A :cljs namespace is ClojureScript-only (references js/…, the DOM) and is
   NEVER loaded into the JVM oracle — load-ns! skips it and returns nil (a no-op,
   not an error), so every dependency-order loader excludes it for free
-  (D-web-cljs). :jvm and :cljc load as usual (the latter's :clj branch)."
+  (D-web-cljs). :jvm and :cljc load as usual (the latter's :clj branch).
+
+  Stamps every form it loaded (`slopp.image.currency`), the whole-namespace
+  counterpart to `hot-load-form!`'s per-form stamp — those two are the only
+  doors into the image, and a door that does not stamp reports its whole
+  namespace as never-loaded. Only on success: a namespace that failed to
+  compile is not in the image."
   [handle store ns-sym]
   (when (store/jvm-loadable? store ns-sym)
     (let [res (repl/load-checked! handle
@@ -24,6 +30,9 @@
       (repl/eval! handle
                   (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
                           ns-sym))
+      (when-not (:err res)
+        (doseq [e (store/elements store ns-sym)]
+          (currency/stamp! (:id e) (n/string (:node e)))))
       (:err res))))
 
 ^:reads (defn test-run

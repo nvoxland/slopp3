@@ -520,3 +520,39 @@
           (is (empty? (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))
               (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest a-whole-store-check-supersedes-a-stale-episode-verdict
+  ;; friction 14. `done` reports :test-status :none whenever the episode's
+  ;; changed forms have no covering tests — a rename, a docstring, a :cljs
+  ;; edit. commit_point then reaches back to the last done that DID judge,
+  ;; which can be arbitrarily old, and no amount of new work supersedes it:
+  ;; each new done judges nothing either, so the store gets greener while the
+  ;; milestone stays refused. full_check ALREADY records its verdict as a
+  ;; :verify delta scoped :full-check; nothing read it.
+  (let [red   (first (store/record-done (store/empty-store) "r"
+                                        :findings {:test-status :red :failures 2}))
+        write (store/record-verification red '[some.ns] {:status :green})
+        full  (store/record-verification write '[a.b]
+                                         {:status :green :scope :full-check
+                                          :namespaces 3 :lint-errors 0})]
+    (is (= :red (:test-status (api/last-judged-done red))))
+
+    (testing "a per-write :verify is not a whole-store judgement"
+      ;; record-verification lands on ordinary writes too, and those are
+      ;; form-scoped. Only :scope :full-check judged the whole store.
+      (is (= :red (:test-status (api/last-judged-done write)))))
+
+    (testing "a green full_check supersedes the stale episode verdict"
+      (is (= :green (:test-status (api/last-judged-done full))))
+      (is (= :full-check (:scope (api/last-judged-done full)))))
+
+    (testing "informational counts stay OUT of the verdict"
+      ;; commit_point derives its refusal reason from whichever keys are
+      ;; present and non-zero, so a namespace count would make a refusal say
+      ;; "namespaces" as though that were the thing that fired.
+      (is (nil? (:namespaces (api/last-judged-done full)))))
+
+    (testing "and a later done supersedes the full_check in turn"
+      (let [after (first (store/record-done full "r2"
+                                            :findings {:test-status :red :failures 1}))]
+        (is (= :red (:test-status (api/last-judged-done after))))))))

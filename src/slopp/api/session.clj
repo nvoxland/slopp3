@@ -12,7 +12,7 @@
   lands for that operation. Four gates were once hand-pasted at four write
   sites because the chokepoint was not used, and every later fix to them had
   to be applied four times."
-  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs]))
+  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs] [slopp.image.currency :as currency]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -241,13 +241,24 @@
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)
+;; the new image holds NOTHING yet — carrying the old image's stamps would
+    ;; claim it does, which is exactly the false green the registry exists to
+    ;; prevent. The load loop below re-stamps everything it succeeds on, so a
+    ;; namespace that fails to load stays absent rather than inheriting a
+    ;; stamp from the image that just died.
+    (currency/forget-all!)
     (let [{:keys [store image]} @session]
       (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
         (when-let [err (image/load-ns! image store ns-sym)]
           ;; outstanding red-first stubs die with the old image — re-stub, retry
           (when-not (and (stub-missing-test-vars! image store [ns-sym])
                          (nil? (image/load-ns! image store ns-sym)))
-            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {}))))))))
+            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {})))))
+      ;; the loop above stamped every namespace it loaded, so the record is now
+      ;; complete and a form without a stamp is real news. Arming only here —
+      ;; never on a stamp — is what stops a half-filled registry reporting the
+      ;; whole store as never-loaded.
+      (currency/arm!))))
 
 (defn hot-load-all!
   "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).

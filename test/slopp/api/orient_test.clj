@@ -108,34 +108,32 @@
   ;; cannot be running, live hosts stay quiet unless a reload failed, and a
   ;; branch line teaches that host code tracks the MAIN journal only.
   (testing "no record (a non-boot process) → nil, section absent"
-    (is (nil? (orient/host-brief nil 0 false))))
+    (is (nil? (orient/host-brief nil 0 false nil))))
   (testing "snapshot mode names the CODE deltas the host cannot be running"
-    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 3 false)]
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 3 false nil)]
       (is (= :snapshot (:mode h)))
       (is (re-find #"3 code delta" (:note h)))
       (is (re-find #"restart" (:note h)))))
   (testing "snapshot mode with nothing since boot is quiet — :mode carries it"
-    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 0 false)]
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 0 false nil)]
       (is (= :snapshot (:mode h)))
       (is (nil? (:note h)))))
   (testing "review V-F3: a snapshot host ON a branch gets BOTH stances"
-    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 2 true)]
+    (let [h (orient/host-brief {:mode :snapshot :booted-at 100} 2 true nil)]
       (is (re-find #"2 code delta" (:note h)))
       (is (re-find #"branch" (:note h)))))
   (testing "live on main with clean reloads is QUIET — no note, no noise"
     (let [h (orient/host-brief {:mode :live :booted-at 100 :last-reload-at 200
-                                :reloads 4 :failed []}
-                               0 false)]
+                                :reloads 4 :failed []} 0 false nil)]
       (is (= :live (:mode h)))
       (is (nil? (:note h)))
       (is (nil? (:failed h)))))
   (testing "live on a BRANCH teaches the main-journal blindness"
-    (let [h (orient/host-brief {:mode :live :booted-at 100} 0 true)]
+    (let [h (orient/host-brief {:mode :live :booted-at 100} 0 true nil)]
       (is (re-find #"branch" (:note h)))
       (is (re-find #"image" (:note h)))))
   (testing "failed reloads are NAMED — a silent hold-back is the old bug"
-    (let [h (orient/host-brief {:mode :live :booted-at 100 :failed '[a.core]}
-                               0 false)]
+    (let [h (orient/host-brief {:mode :live :booted-at 100 :failed '[a.core]} 0 false nil)]
       (is (= '[a.core] (:failed h)))
       (is (re-find #"(?i)failed" (:note h))))))
 
@@ -148,23 +146,22 @@
   ;; Quiet is load-bearing: a live host lags the store by up to one poll by
   ;; design, so a warning on every done would train the reader to ignore it.
   (testing "no record — the process did not boot from a store, so it cannot be stale"
-    (is (nil? (orient/host-warning nil 0))))
+    (is (nil? (orient/host-warning nil 0 nil))))
   (testing "live with clean reloads is SILENT — a poll-interval lag is not a finding"
     (is (nil? (orient/host-warning {:mode :live :booted-at 100 :last-reload-at 200
-                                    :reloads 9 :failed []}
-                                   3))))
+                                    :reloads 9 :failed []} 3 nil))))
   (testing "a FAILED reload rides the verdict, naming the namespace"
-    (let [w (orient/host-warning {:mode :live :booted-at 100 :failed '[a.core]} 0)]
+    (let [w (orient/host-warning {:mode :live :booted-at 100 :failed '[a.core]} 0 nil)]
       (is (= '[a.core] (:failed w)))
       (is (re-find #"(?i)failed" (:note w)))
       (is (re-find #"(?i)verdict" (:verdict-note w))
           "it must say what this means for the result it is attached to")))
   (testing "a snapshot host with post-boot code deltas is running old code, and says so"
-    (let [w (orient/host-warning {:mode :snapshot :booted-at 100} 3)]
+    (let [w (orient/host-warning {:mode :snapshot :booted-at 100} 3 nil)]
       (is (= :snapshot (:mode w)))
       (is (re-find #"3 code delta" (:note w)))))
   (testing "a snapshot host with nothing since boot is current — silent"
-    (is (nil? (orient/host-warning {:mode :snapshot :booted-at 100} 0)))))
+    (is (nil? (orient/host-warning {:mode :snapshot :booted-at 100} 0 nil)))))
 
 (deftest code-deltas-since-is-the-one-counter-for-host-currency
   ;; Markers (:verify :done :commit :turn-begin …) are bookkeeping — a host
@@ -279,8 +276,7 @@
   (testing "the first failure names the reason, not the log file"
     (let [b (orient/host-brief {:mode :live :booted-at 1 :failed '[app.views]
                                 :failed-why '{app.views {:why "Unable to resolve symbol: nsfilter"
-                                                         :attempts 1}}}
-                               0 false)]
+                                                         :attempts 1}}} 0 false nil)]
       (is (= '[app.views] (:failed b)))
       (is (str/includes? (:note b) "Unable to resolve symbol: nsfilter"))
       (is (not (str/includes? (:note b) "server log"))
@@ -288,11 +284,62 @@
   (testing "a failure that keeps failing escalates instead of repeating itself"
     (let [b (orient/host-brief {:mode :live :booted-at 1 :failed '[app.views]
                                 :failed-why '{app.views {:why "Unable to resolve symbol: nsfilter"
-                                                         :attempts 12}}}
-                               0 false)]
+                                                         :attempts 12}}} 0 false nil)]
       (is (str/includes? (:note b) "12"))
       (is (str/includes? (:note b) "restart"))
       (is (not (str/includes? (:note b) "next poll retries"))
           "a loop that has failed twelve times identically is not about to succeed")))
   (testing "a host with nothing wrong still says nothing"
-    (is (nil? (:note (orient/host-brief {:mode :live :booted-at 1} 0 false))))))
+    (is (nil? (:note (orient/host-brief {:mode :live :booted-at 1} 0 false nil))))))
+
+(deftest a-failed-reload-is-not-stale-code-if-the-image-compares-clean
+  ;; friction 20a. Five namespaces were reported as "the host still runs their
+  ;; previous code" while the process held every one of them at the store's
+  ;; current source. Every verdict from that host was marked suspect, and a
+  ;; milestone went through a fresh JVM to escape a problem that did not exist.
+  (let [info {:mode :live :booted-at 1 :failed '[app.views]
+              :failed-why '{app.views {:why "Syntax error" :attempts 4890}}}]
+
+    (testing "measured clean: say the WATCHER is stuck, and do not doubt the verdict"
+      (let [b (orient/host-brief info 0 false [])]
+        (is (:image-verified b))
+        (is (re-find #"watcher stuck" (:note b)))
+        (is (not (re-find #"still runs their previous code" (:note b)))))
+      (is (nil? (orient/host-warning info 0 []))
+          "a watcher that cannot reload is worth saying; it is not a reason to distrust tests"))
+
+    (testing "not measured: keep the cautious wording — not having looked is not a clean bill"
+      (let [b (orient/host-brief info 0 false nil)]
+        (is (re-find #"still runs their previous code" (:note b)))
+        (is (not (:image-verified b))))
+      (is (some? (orient/host-warning info 0 nil))))
+
+    (testing "measured drift with NO reload failure — the direction that was silent"
+      ;; nothing threw, so the counter saw nothing: a def holding a value
+      ;; captured from a form re-evaluated since, or a namespace written to the
+      ;; store and never loaded.
+      (let [drift [{:ns 'app.core :form 'tools :why :derived-stale :behind 'env-tools}]
+            clean {:mode :live :booted-at 1}
+            w     (orient/host-warning clean 0 drift)]
+        (is (some? w))
+        (is (= 1 (:drift-count w)))
+        (is (re-find #"1 form\(s\) the store has moved past" (:verdict-note w)))))))
+
+(deftest a-half-loaded-store-says-so-and-says-it-is-editable
+  ;; frictions 3b/3f/19. boot used to rethrow on the first namespace that did
+  ;; not compile, so one bad form took down every tool in every process — the
+  ;; edit verbs that could have repaired it included. Loading best-effort is
+  ;; only half the fix; the other half is that orientation NAMES what did not
+  ;; load, because an agent who is not told discovers it as an unrelated
+  ;; failure somewhere downstream.
+  (let [info {:mode :live :booted-at 1
+              :load-failures [{:ns 'app.views :why "Unable to resolve symbol: gone"}]}
+        b    (orient/host-brief info 0 false [])]
+    (is (re-find #"did NOT load at boot" (:note b)))
+    (is (re-find #"app\.views" (:note b))
+        "naming the namespace is the difference between a warning and a fix")
+    (is (re-find #"FIX them" (:note b))
+        "and it has to say the store is still editable, or the advice reads as 'reimport'"))
+
+  (testing "a fully loaded store stays silent about it"
+    (is (nil? (:note (orient/host-brief {:mode :live :booted-at 1} 0 false []))))))

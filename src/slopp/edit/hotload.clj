@@ -15,7 +15,7 @@
             [slopp.edit :as edit]
             [slopp.store.render :as render]
             [slopp.image.repl :as repl]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.image.currency :as currency]))
 
 (defn ^:export hot-load-form!
   "Hot-reload one form (from a store VALUE — commit only on success, S1) into
@@ -23,7 +23,13 @@
   path so stack traces cite the exact lines `query-source` shows (F6).
   Returns nil on success, or the compile/load error message. A `form-id`
   that no longer resolves in `store` (deleted since it was collected) loads
-  nothing and returns nil — a vanished form is not a compile error."
+  nothing and returns nil — a vanished form is not a compile error.
+
+  Stamps what it loaded (`slopp.image.currency`) so the image can later be
+  COMPARED against the store rather than guessed at from reload counters.
+  Only on success: a form that failed to compile is not in the image, and
+  recording it as loaded would manufacture the exact false green the registry
+  exists to prevent."
   [image store form-id]
   (let [ns-sym  (store/ns-of-form-id store form-id)
         elems   (when ns-sym (store/elements store ns-sym))
@@ -36,8 +42,10 @@
             padded  (if (>= row 2)
                       (str "(in-ns '" ns-sym ")\n"
                            (apply str (repeat (- row 2) "\n")) src)
-                      (str "(in-ns '" ns-sym ") " src))]
-        (:err (repl/load-checked! image padded (render/ns-path ns-sym)))))))
+                      (str "(in-ns '" ns-sym ") " src))
+            err     (:err (repl/load-checked! image padded (render/ns-path ns-sym)))]
+        (when-not err (currency/stamp! form-id src))
+        err))))
 
 (defn ^:export apply-replace!
   "Pipeline through hot-reload over `system` {:store store :image handle}:

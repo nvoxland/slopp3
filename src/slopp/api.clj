@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2180,8 +2180,9 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
      :selected     (session/test-nses-reaching st changed)}))
 
 (defn last-judged-done
-  "The `:findings` of the most recent `:done` delta that actually JUDGED
-  something (`:test-status` `:red` or `:green`), or nil.
+  "The most recent verdict that actually JUDGED something (`:test-status`
+  `:red` or `:green`), or nil — from a `:done` delta or from a whole-store
+  `full_check`, whichever came last.
 
   Exists because `done` is episode-scoped: calling it twice with no writes
   between yields `:none` the second time — nothing changed, so nothing was
@@ -2189,14 +2190,42 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   afterwards: the milestone runs its own done, gets `:none`, and publishes.
   The last real verdict stands until new work supersedes it.
 
+  **A green `full_check` is such a verdict (friction 14).** Reading only
+  `:done` deltas left a trap with no way out: an episode whose changed forms
+  have no covering tests — a rename, a docstring, a `:cljs` edit — judges
+  `:none`, so `commit_point` reaches back to a verdict that can be arbitrarily
+  old, and every subsequent done judges `:none` too. The store got greener
+  while the milestone stayed refused, and the whole-store check — broader,
+  slower, more authoritative — could not clear what the narrower one left
+  behind. Now it can, and a later `done` supersedes it in turn: most recent
+  judgement wins, whichever kind it is.
+
+  Only `:scope :full-check` counts. `record-verification` also lands on
+  ordinary writes, and those are form-scoped — a per-write green says nothing
+  about the store.
+
   Returns the whole findings map rather than the status alone so a standing
   red can still NAME what was wrong — a refusal that cannot say why is a
-  refusal an agent cannot act on."
+  refusal an agent cannot act on. The full_check verdict carries only what its
+  delta recorded, and deliberately not its namespace count or wall time:
+  `commit_point` builds its refusal reason from whichever keys are present and
+  non-zero, so an informational count would make a refusal say `namespaces`
+  as though that were the thing that fired."
   [store]
   (->> (store/deltas store)
-       (filter #(= :done (:op %)))
-       (map :findings)
-       (filter #(#{:red :green} (:test-status %)))
+       (keep (fn [d]
+               (cond
+                 (and (= :done (:op d))
+                      (#{:red :green} (:test-status (:findings d))))
+                 (:findings d)
+
+                 (and (= :verify (:op d))
+                      (= :full-check (:scope (:result d)))
+                      (#{:red :green} (:status (:result d))))
+                 (let [r (:result d)]
+                   (cond-> {:test-status (:status r) :scope :full-check}
+                     (pos? (:lint-errors r 0))
+                     (assoc :lint-errors (:lint-errors r)))))))
        last))
 
 (defn file-put!
@@ -2545,13 +2574,16 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
         ;; treat any failure as absence, never an error
         host     (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
                                       (catch Throwable _ nil))]
-                   (orient/host-brief
-                    info
-                    (count (filter #(and (> (:at % 0) (:booted-at info 0))
+                   (orient/host-brief info (count (filter #(and (> (:at % 0) (:booted-at info 0))
                                         (not (contains? fields/markers (:op %))))
-                                   (store/deltas st)))
-                    (boolean (when-let [b (:branch @session)]
-                               (not= "main" (str b))))))
+                                   (store/deltas st))) (boolean (when-let [b (:branch @session)]
+                               (not= "main" (str b))))
+                                     ;; MEASURED, not inferred: without this the
+                                     ;; brief repeats whatever the reload counter
+                                     ;; believes, which is how it once announced
+                                     ;; five stale namespaces to a process that
+                                     ;; held every one of them current.
+                                     (currency/drift st)))
         intent   (:last-intent @session)
         stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
                    "tell" "every" "should" "their" "them" "than" "then" "they"

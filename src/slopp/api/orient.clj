@@ -163,9 +163,10 @@
 (defn ^:export host-brief
   "The serving host's code-currency section for session_brief, as data —
   pure assembly over the kernel's boot-info record (`info`), the count of
-  CODE-affecting deltas landed after the host booted, and whether the
-  session is on a branch line. Nil `info` (a process that didn't boot from a
-  store) → nil, the section simply absent.
+  CODE-affecting deltas landed after the host booted, whether the session is
+  on a branch line, and the measured `drift` between the image and the store
+  (`slopp.api.currency/drift`, or nil when it was not computed). Nil `info`
+  (a process that didn't boot from a store) → nil, the section simply absent.
 
   The stances it teaches: a :snapshot host serves LAUNCH-time code, so
   post-boot deltas are inert until restart; a :live host tracks the MAIN
@@ -181,46 +182,84 @@
   twice over. And it promised \"the next poll retries\" identically for many
   minutes: a reload is deterministic over the same source, so repeated failure
   is not a transient to wait out. Past `stuck-reload-attempts` the note stops
-  reassuring and says what actually fixes it."
-  [info deltas-since-boot on-branch?]
+  reassuring and says what actually fixes it.
+
+  **And it no longer claims staleness it has not measured (friction 20a).** A
+  failed reload used to read \"the host still runs their previous code\", which
+  is an assertion about the image made without looking at the image — and it
+  was WRONG in the case that cost the most: five namespaces reported stale
+  while the process already held every one of them at the store's current
+  source. When `drift` is empty the failure is reported as a WATCHER problem,
+  which is what it is. Absent drift (nil) keeps the old cautious wording,
+  because not having looked is not the same as having looked and found
+  nothing."
+  [info deltas-since-boot on-branch? drift]
   (when info
-    (let [failed (seq (:failed info))
-          why    (:failed-why info)
-          reason (fn [ns-sym]
-                   (when-let [w (get-in why [ns-sym :why])]
-                     (str ns-sym ": " w)))
-          tries  (apply max 0 (keep #(get-in why [% :attempts]) failed))
-          stuck? (>= tries stuck-reload-attempts)
-          parts  (cond-> []
-                   failed
-                   (conj (str "live-reload FAILED for " (str/join ", " failed)
-                              " — the host still runs their previous code"
-                              (when-let [rs (seq (keep reason failed))]
-                                (str " (" (str/join "; " rs) ")"))
-                              (if stuck?
-                                (str "; this has failed " tries
-                                     " polls running and a reload is"
-                                     " deterministic over the same source, so"
-                                     " it will not fix itself — restart the"
-                                     " server")
-                                "; the next poll retries")))
+    (let [failed  (seq (:failed info))
+          why     (:failed-why info)
+          checked (some? drift)
+          clean?  (and checked (empty? drift))
+          reason  (fn [ns-sym]
+                    (when-let [w (get-in why [ns-sym :why])]
+                      (str ns-sym ": " w)))
+          tries   (apply max 0 (keep #(get-in why [% :attempts]) failed))
+          stuck?  (>= tries stuck-reload-attempts)
+          parts   (cond-> []
+                    failed
+                    (conj (str "live-reload FAILED for " (str/join ", " failed)
+                               (if clean?
+                                 (str " — but the image was COMPARED to the store"
+                                      " and holds every form at its current"
+                                      " source, so this is the watcher stuck,"
+                                      " not stale code")
+                                 " — the host still runs their previous code")
+                               (when-let [rs (seq (keep reason failed))]
+                                 (str " (" (str/join "; " rs) ")"))
+                               (if stuck?
+                                 (str "; this has failed " tries
+                                      " polls running and a reload is"
+                                      " deterministic over the same source, so"
+                                      " it will not fix itself — restart the"
+                                      " server")
+                                 "; the next poll retries")))
 
-                   (and (not failed) (= :snapshot (:mode info))
-                        (pos? (or deltas-since-boot 0)))
-                   (conj (str deltas-since-boot " code delta(s) landed after this"
-                              " server booted — snapshot mode serves launch-time"
-                              " code, so serving-machinery changes are inert until"
-                              " restart"))
+                    (and (not failed) (seq drift))
+                    (conj (str (count drift) " form(s) in this image differ from"
+                               " the store — no reload failed, so nothing said"
+                               " so: " (str/join ", "
+                                                 (map #(str (:ns %) "/" (:form %)
+                                                            " (" (name (:why %)) ")")
+                                                      (take 5 drift)))))
 
-                   on-branch?
-                   (conj (str "host code tracks the MAIN journal — this branch"
-                              " line's writes hot-reload the image only; verify"
-                              " branch serving behavior there or in a fresh JVM")))
-          note   (when (seq parts) (str/join " " parts))]
+                    (and (not failed) (= :snapshot (:mode info))
+                         (pos? (or deltas-since-boot 0)))
+                    (conj (str deltas-since-boot " code delta(s) landed after this"
+                               " server booted — snapshot mode serves launch-time"
+                               " code, so serving-machinery changes are inert until"
+                               " restart"))
+
+                    (seq (:load-failures info))
+                    (conj (str (count (:load-failures info))
+                               " namespace(s) did NOT load at boot and this"
+                               " process is running without them: "
+                               (str/join ", " (map :ns (:load-failures info)))
+                               ". The store stayed open on purpose so you can"
+                               " FIX them — a broken namespace you can edit"
+                               " beats a store you cannot reach. Restart once"
+                               " they compile"))
+
+                    on-branch?
+                    (conj (str "host code tracks the MAIN journal — this branch"
+                               " line's writes hot-reload the image only; verify"
+                               " branch serving behavior there or in a fresh JVM")))
+          note    (when (seq parts) (str/join " " parts))]
       (cond-> {:mode (:mode info) :booted-at (:booted-at info)}
         (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
         failed                 (assoc :failed (vec failed))
         (seq why)              (assoc :failed-why why)
+        (seq drift)            (assoc :drift (vec (take 20 drift))
+                                      :drift-count (count drift))
+        clean?                 (assoc :image-verified true)
         note                   (assoc :note note)))))
 
 (defn ^:export code-deltas-since
@@ -240,7 +279,7 @@
 
 (defn ^:export host-warning
   "The host code-currency record for a VERDICT — nil unless the process
-  producing that verdict is knowingly running code the store has moved past.
+  producing that verdict is running code the store has moved past.
 
   `host-brief` answers the same question for ORIENTATION, and this is the same
   producer aimed at the other reader: session_brief is read once at the start
@@ -249,28 +288,42 @@
   failed to reload said nothing on any of them, which is how one investigation
   spent four ruled-out hypotheses inside `rt` before finding a stale process.
 
-  Two states warrant it, and nothing else does:
-  - a **failed reload** (either mode) — the host TRIED to become current and
-    could not, so it is running a namespace the store has superseded;
+  What warrants doubting a verdict:
+  - **measured drift** — forms this image does not hold as the store describes
+    them, whether or not anything reported a failure. This is the direction
+    that used to be entirely silent: a `def` holding a value captured from a
+    form re-evaluated since, or a namespace written to the store and never
+    loaded, threw nothing and so warned nobody;
+  - a **failed reload that has NOT been checked against the image** (`drift`
+    nil) — the honest cautious default when nothing looked;
   - a **:snapshot host with code deltas since boot** — it serves launch-time
     code by design, so every one of those deltas is inert in it.
 
+  What does NOT: a failed reload on an image that COMPARES CLEAN. That was
+  friction 20a — five namespaces reported stale, the image holding every one
+  of them at the store's current source, and every verdict from that host
+  marked suspect until a milestone was routed through a fresh JVM to escape a
+  problem that was not there. A watcher that cannot reload is worth saying out
+  loud in the brief; it is not a reason to distrust the tests.
+
   A clean `:live` host is SILENT even with deltas outstanding: the watcher
   polls, so lagging by up to one interval is normal operation, and a warning
-  on every done is a warning nobody reads.
-
-  What it does NOT answer: whether every var in the process is byte-identical
-  to the store. It answers whether the host has knowingly failed to load
-  something. A reload that succeeded while a long-lived closure kept the old
-  fn is invisible here."
-  [info deltas-since-boot]
+  on every done is a warning nobody reads."
+  [info deltas-since-boot drift]
   (when info
-    (let [failed?  (seq (:failed info))
+    (let [checked? (some? drift)
+          drifted? (seq drift)
+          failed?  (and (seq (:failed info)) (not checked?))
           stale?   (and (= :snapshot (:mode info)) (pos? (or deltas-since-boot 0)))]
-      (when (or failed? stale?)
-        (assoc (host-brief info deltas-since-boot false)
+      (when (or drifted? failed? stale?)
+        (assoc (host-brief info deltas-since-boot false drift)
                :verdict-note
-               (str "this verdict was produced by a host running code the store"
-                    " has moved past — treat it as suspect until the host is"
-                    " current (restart the server, or check the reload failure"
-                    " in its log)"))))))
+               (if drifted?
+                 (str "this verdict was produced by a host holding "
+                      (count drift) " form(s) the store has moved past —"
+                      " treat it as suspect and restart the server; the"
+                      " :drift list names them")
+                 (str "this verdict was produced by a host running code the"
+                      " store has moved past — treat it as suspect until the"
+                      " host is current (restart the server, or check the"
+                      " reload failure in its log)")))))))

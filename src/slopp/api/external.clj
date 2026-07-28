@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -433,11 +433,18 @@ client-deps (merge (:client-deps st) (:client provided))
   failure reads as absence — a test JVM cannot be stale, because nothing
   hot-reloaded into it. One resolver for every verdict surface: done,
   full_check and test_run must not disagree about whether the host is
-  current."
+  current.
+
+  That guard is also what makes it safe to COMPARE rather than count. An
+  empty currency registry honestly means \"this image loaded nothing\", which
+  is true and useless in a plain test JVM; gating on the boot record means
+  drift is only ever computed where an empty registry would be news."
   [st]
   (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
                        (catch Throwable _ nil))]
-    (orient/host-warning info (orient/code-deltas-since st (:booted-at info 0)))))
+    (orient/host-warning info
+                         (orient/code-deltas-since st (:booted-at info 0))
+                         (currency/drift st))))
 
 (def ^:export external-slice-cap
   "How many impacted `^:external` tests `done` will run before deferring to

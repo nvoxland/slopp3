@@ -211,9 +211,28 @@
   unbootable (D-web-cljs). The store's
   dependency MANIFEST resolves onto the classpath first (add-manifest-libs!),
   so store code may require its Tier-1 libs. Returns the
-  {ns source} map that was loaded. A load failure is rethrown NAMING the
-  namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
-  is useless on the one code path with no oracle behind it.
+  {ns source} map that was loaded, carrying `:load-failures` in its METADATA
+  when some namespace did not load.
+
+  **Best-effort, deliberately (frictions 3b/3f/19).** This used to rethrow on
+  the first failure, and the blast radius was the whole system: `slopp.boot`
+  loads every store namespace, so ONE namespace that no longer compiles took
+  down every tool in every process — including the `edit_add_form` that would
+  have put the missing form back. Three times in one wave a store reached a
+  state its own tools could not open, and the only way back was `rm -rf
+  .slopp` and a re-import. That is a catastrophic answer to an ordinary
+  mistake: a delete whose form still had a caller.
+
+  So a failure now costs its OWN namespace and whatever genuinely depends on
+  it, not the session. The editing surface comes up, the failures are NAMED,
+  and the agent can fix the thing that broke. A broken namespace you can edit
+  is strictly better than a working store you cannot reach.
+
+  The names matter as much as the survival: a bare load-string error carries
+  NO_SOURCE_PATH and no ns, which is useless on the one code path with no
+  oracle behind it. Each failure records the namespace and the message, and
+  dependents that fail because of it are recorded the same way — so the list
+  reads as one cause and its consequences rather than as many faults.
 
   A dir with NO store loads nothing and returns {} — same shape as a store
   that exists and is empty. Serving an unadopted dir is legal and leaves it
@@ -223,17 +242,21 @@
     (with-open [conn c]
       (add-manifest-libs! conn)
       (let [sources   (store-sources conn)
-            platforms (store-platforms conn)]
+            platforms (store-platforms conn)
+            failed    (volatile! [])]
         (doseq [ns-sym (dependency-order sources)
                 :when  (jvm-loadable? platforms ns-sym)]
-          (try (load-string (get sources ns-sym))
-               (catch Throwable t
-                 (throw (ex-info (str "slopp.boot: failed to load namespace "
-                                      ns-sym " from the store at " dir
-                                      ": " (.getMessage t))
-                                 {:ns ns-sym :dir dir} t))))
-          (stamp-loaded! ns-sym))
-        sources))
+          (try
+            (load-string (get sources ns-sym))
+            (stamp-loaded! ns-sym)
+            (catch Throwable t
+              (vswap! failed conj {:ns ns-sym :why (str (.getMessage t))}))))
+        (when (seq @failed)
+          (log! "slopp.boot:" (count @failed)
+                "namespace(s) did NOT load —" (str/join ", " (map :ns @failed))
+                "— the store is open and editable anyway; fix them and restart."
+                "First:" (:why (first @failed))))
+        (with-meta sources {:load-failures @failed})))
     {}))
 
 ;; --- live mode: track the store, reload changed nses into this jvm ---
@@ -446,7 +469,13 @@
                 " populated one lives at " dir "/.slopp/store.db).")
           (log! "slopp.boot: no slopp store at " dir " — serving an"
                 " unadopted directory and leaving it untouched. Your first"
-                " write creates " dir "/.slopp/store.db."))))
+                " write creates " dir "/.slopp/store.db.")))
+      ;; a namespace that did not load is now SURVIVABLE (load-store! is
+      ;; best-effort), which makes saying so the whole job: an agent whose
+      ;; store came up half-loaded must learn it from orientation rather than
+      ;; from the first confusing failure downstream.
+      (when-let [f (seq (:load-failures (meta sources)))]
+        (swap! boot-info assoc :load-failures (vec f))))
     (when live?
       (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
         (.setDaemon true)
