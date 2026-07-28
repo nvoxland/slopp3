@@ -114,31 +114,66 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
-^:unsafe (defn- add-manifest-libs!
+^{:unsafe "add-libs IS the dynamic-classpath escape hatch: it needs *repl* bound and a DynamicClassLoader installed under it, which is exactly what the dialect denylists. The kernel is the one place that can do this, because it is what makes `java -jar slopp.jar <dir>` work for a store with dependencies."}
+(defn- add-manifest-libs!
   "Resolve the store's Tier-1 dependency manifest (the `deps` meta row) onto
   THIS JVM's classpath via Clojure 1.12 add-libs (`*repl*` bound — the
   programmatic context), so a store whose code requires external libs boots
   from the bare kernel: `java -jar slopp.jar <dir>` works for ANY app.
-  Idempotent for coords already present. Failures WARN and continue — the
-  namespace load that needed the jar will name the real problem."
+  Idempotent for coords already present.
+
+  ONE failing coord must not take the others down with it. `add-libs` resolves
+  the whole map as a single graph, so one unresolvable transitive pom — a
+  parent BOM that a local `~/.m2` holds as a `.pom` but Maven declines to use
+  offline, say — threw, and the catch dropped EVERY declared dependency.
+
+  What that looks like from inside is worse than a missing jar, because
+  nothing appears to be missing. The libs still resolve, from whatever the
+  HOST jar happens to carry, at whatever version it carries: a store that had
+  `deps_add`ed malli 0.16.4 was running 0.17.0, and its manifest was
+  decoration. An app checking that it depends only on what it DECLARES — the
+  whole question a store-free consumer of the slim jar exists to answer —
+  would have been told yes.
+
+  So: the whole map first, because one resolution is both faster and more
+  correct (a single graph, consistent versions), and coord-by-coord only on
+  failure — degrading to a partial classpath that NAMES what is missing
+  rather than a silent empty one."
   [conn]
   (when-let [deps (some-> (jdbc/execute-one!
                            conn ["SELECT v FROM meta WHERE k = 'deps'"])
                           :meta/v edn/read-string not-empty)]
+    ;; add-libs needs a DynamicClassLoader as the thread's context loader
+    ;; (outside a REPL the launcher's loader is static) — install one over
+    ;; the current loader so the resolved jars have somewhere to land
+    (let [t (Thread/currentThread)]
+      (when-not (instance? clojure.lang.DynamicClassLoader
+                           (.getContextClassLoader t))
+        (.setContextClassLoader
+         t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
     (try
-      ;; add-libs needs a DynamicClassLoader as the thread's context loader
-      ;; (outside a REPL the launcher's loader is static) — install one over
-      ;; the current loader so the resolved jars have somewhere to land
-      (let [t (Thread/currentThread)]
-        (when-not (instance? clojure.lang.DynamicClassLoader
-                             (.getContextClassLoader t))
-          (.setContextClassLoader
-           t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
       (binding [*repl* true]
         ((requiring-resolve 'clojure.repl.deps/add-libs) deps))
       (catch Throwable t
-        (log! "slopp.boot: could not add manifest deps ("
-              (.getMessage t) ") — continuing")))))
+        (log! "slopp.boot: manifest deps did not resolve as one graph ("
+              (.getMessage t) ") — retrying one at a time")
+        (let [failed (reduce
+                      (fn [acc [lib coord]]
+                        (try
+                          (binding [*repl* true]
+                            ((requiring-resolve 'clojure.repl.deps/add-libs)
+                             {lib coord}))
+                          acc
+                          (catch Throwable t2
+                            (conj acc (str lib " (" (.getMessage t2) ")")))))
+                      []
+                      deps)]
+          (if (seq failed)
+            (log! "slopp.boot: could not add " (count failed) " of "
+                  (count deps) " manifest deps: " (str/join "; " failed)
+                  " — continuing; a require that needs one will say so")
+            (log! "slopp.boot: manifest deps resolved individually ("
+                  (count deps) ")")))))))
 
 ^:reads (defn store-platforms
           "The store's `module-platforms` register — {path-string
