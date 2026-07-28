@@ -19,6 +19,38 @@
             [rewrite-clj.parser :as p]
             [rewrite-clj.node :as n] [slopp.store.fields :as fields] [slopp.store :as store] [clojure.string :as str]))
 
+(def ^:private store-dir-gitignore
+  "What lands in `.slopp/.gitignore`. The `*` is the whole mechanism: it
+   ignores every file in the directory INCLUDING itself, so `.slopp/` holds no
+   tracked file, and git — which tracks files, not directories — stops seeing
+   the directory at all."
+  (str "# slopp's store lives here. It is the source, but it is not git\n"
+       "# CONTENT: the store reaches git as the projected `slopp` branch at\n"
+       "# each commit_point, never as files on main.\n"
+       "#\n"
+       "# Self-ignoring on purpose, so a project that adopts slopp never has\n"
+       "# to mention it in its own .gitignore.\n"
+       "*\n"))
+
+(defn- ensure-gitignore!
+  "Write `.slopp/.gitignore` if it isn't there, so the store dir excludes
+   itself from git.
+
+   Lives here rather than at the callers because this is where the directory
+   is MADE — `import!`, the MCP launch, the CLI and every test reach the
+   filesystem through `open!`, and a rule maintained at four call sites is a
+   rule that is right at three of them.
+
+   Never overwrites: a file we did not write may have been customised, and
+   adoption is not licence to edit the working tree. Failure is swallowed —
+   a read-only or exotic filesystem is not a reason to refuse a store."
+  [dir]
+  (try
+    (let [f (io/file dir ".slopp" ".gitignore")]
+      (when-not (.exists f)
+        (spit f store-dir-gitignore)))
+    (catch java.io.IOException _ nil)))
+
 (defn ^:export open!
   "Open (creating if needed) the store db under `dir`; returns the connection.
 
@@ -34,6 +66,7 @@
    (let [f (io/file dir ".slopp" "store.db")]
      (when (or create? (.exists f))
        (io/make-parents f)
+(ensure-gitignore! dir)
        (let [conn (jdbc/get-connection
                    (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
          (jdbc/execute! conn ["PRAGMA journal_mode=WAL"])

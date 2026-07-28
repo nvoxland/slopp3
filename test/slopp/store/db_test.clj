@@ -277,3 +277,34 @@
           (is (= (render/render-ns back 'fc.core)
                  (render/render-ns (db/load-store conn) 'fc.core)))))
       (finally (.close conn)))))
+
+(deftest ^:external a-new-store-dir-ignores-itself
+  ;; The store is the source, but it is NOT git content — it reaches git as the
+  ;; projected `slopp` branch at each commit_point. Every project that adopts
+  ;; slopp therefore has to ignore `.slopp/`, and making each one edit its own
+  ;; root .gitignore is a step everyone forgets once and then debugs as "why is
+  ;; a 60MB sqlite file in my diff".
+  ;;
+  ;; A gitignore INSIDE the dir ignores everything including itself, so the
+  ;; directory becomes invisible to git without the project's own .gitignore
+  ;; ever mentioning slopp — the same promise `sync/import!` already makes:
+  ;; only `.slopp/` is created, the working dir stays the human's.
+  (let [dir (temp-dir)]
+    (testing "creating a store writes a gitignore inside the store dir"
+      (let [conn (db/open! dir)]
+        (try
+          (let [gi (io/file dir ".slopp" ".gitignore")]
+            (is (.exists gi))
+            (is (re-find #"(?m)^\*$" (slurp gi))
+                "an unqualified * ignores every file in the dir, the gitignore
+                 included — anything narrower leaves the dir visible to git"))
+          (finally (.close conn)))))
+
+    (testing "a gitignore already there is left alone"
+      ;; someone may have customised it; adoption must not clobber a file it
+      ;; did not write.
+      (let [gi (io/file dir ".slopp" ".gitignore")]
+        (spit gi "# mine\n")
+        (let [conn (db/open! dir)]
+          (try (is (= "# mine\n" (slurp gi)))
+               (finally (.close conn))))))))
