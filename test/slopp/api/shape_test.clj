@@ -115,7 +115,7 @@
   ;; positives out of 5. A rule about a bug class has to be judged on the
   ;; population that class actually has.
   (testing "the TRUE positive: reading a form's docstring by index"
-    ;; slopp.ui.pages/form-doc, as it stood — it showed (def greeting "hello")
+    ;; slopp.review.pages/form-doc, as it stood — it showed (def greeting "hello")
     ;; as documented "hello" on the reviewer page
     (is (seq (shape/ambiguous-index-reads
               '(defn form-doc [e]

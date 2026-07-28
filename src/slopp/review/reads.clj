@@ -1,0 +1,103 @@
+(ns slopp.review.reads
+  "Read-only store browser: server-rendered hiccup pages over the query
+  surfaces — the D-web-html dogfood. Plain links, full-page renders, zero
+  writes; rendering arbitrary store source through the escaper is a
+  standing security exercise.
+
+  Lives in slopp.review.**, slopp's OWN webapp, and never in slopp.web.** —
+  slopp.web is the framework every user's app is built on and ships in the
+  slim jar, so an app page placed there would ride into every user's
+  application. The dependency runs slopp.review → slopp.web, never back.
+
+  Pages hold hiccup and nothing else; the data they render is assembled by
+  slopp.review.model, which is where a static JSON sink would attach."
+  (:require [rewrite-clj.node :as n]
+            [slopp.store :as store]
+            [slopp.review.model :as model] [clojure.string :as str] [slopp.web.contract :as contract]))
+
+(defn ^{:web/read :browse/namespaces} namespaces-read
+  "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."
+  [{:keys [session]} _]
+  (let [st (:store @session)]
+    (mapv (fn [nsx] {:ns nsx :forms (count (filter :name (store/forms st nsx)))})
+          (sort (keys (:namespaces st))))))
+
+(defn ^{:web/read :browse/form-source} form-source-read
+  "Read performer: one form's source text, or nil when the form is unknown."
+  [{:keys [session]} {:keys [ns name]}]
+  (let [st (:store @session)]
+    (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
+      (n/string (:node e)))))
+
+(defn ^{:web/read :ui/timeline} timeline-read
+  "Read performer: the reviewer landing model — milestones plus the
+  working set."
+  [{:keys [session]} _]
+  (model/timeline session))
+
+(defn ^{:web/read :ui/change} change-read
+  "Read performer: the review of one `from..to` range, or nil when the
+  range is malformed or names deltas that do not exist — the page needs
+  those to be the same answer, since both are a 404."
+  [{:keys [session]} range-str]
+  (let [[from to] (str/split (str range-str) #"\.\." 2)]
+    (when (and (seq from) (seq to))
+      (model/change-view session from to))))
+
+(defn ^{:web/read :ui/form} form-view-read
+  "Read performer: one form's page model by ID at the requested rendering
+  FIDELITY. Addressed by BOTH halves of the URL — the id from the path,
+  `?view=` from the query — so it is declared over the whole request
+  rather than one segment.
+
+  nil when no form has that id, or when the fidelity does not exist. Both
+  are a 404, and neither is a reason to render the other thing."
+  [{:keys [session]} {:keys [path-params query-params]}]
+  (model/form-view session (str (:id path-params)) (:view query-params)))
+
+(defn ^{:web/read :browse/modules} modules-read
+  "Read performer: the architecture as module rows plus a drawable canvas.
+
+  Named `:browse/modules` to sit beside `:browse/namespaces` — reads are
+  addressed by VOCABULARY rather than by var, so any second representation
+  of the architecture shares this one answer instead of re-deriving it."
+  [{:keys [session]} _]
+  (model/module-index session))
+
+(defn ^{:web/read :ui/contract} contract-read
+  "The shape of this app's own API, for a consumer that generates a typed
+  client against it.
+
+  The namespace list arrives through `perform-ctx` rather than being reached
+  for here: only the SERVER knows what it serves, and a performer that imported
+  that list would invert the dependency (slopp.review.server already requires this
+  namespace). It is data on the way in, like every other dep."
+  [ctx _]
+  (contract/contract-document (:served-namespaces ctx)))
+
+(defn- form-doc
+  "A form's docstring, or nil — through `store/form-docstring`, which is the
+  only thing that knows when index 2 is a docstring and when it is a `def`'s
+  VALUE.
+
+  It read index 2 directly and took any string it found, so
+  `(def greeting \"hello\")` rendered \"hello\" as the form's documentation.
+  Wrong-index reads do not throw; they return something plausible, which is
+  why this class keeps surviving review."
+  [e]
+  (store/form-docstring (:node e)))
+
+(defn ^{:web/read :browse/ns-outline} ns-outline-read
+  "Read performer: one namespace's `{:name :doc}` form rows in store order
+  plus the test namespaces covering it, or nil for an unknown namespace."
+  [{:keys [session]} nsx]
+  (let [st  (:store @session)
+        sym (symbol (str nsx))]
+    (when (contains? (:namespaces st) sym)
+      {:ns sym
+       :forms (into []
+                    (keep (fn [e]
+                            (when (:name e)
+                              {:name (:name e) :doc (form-doc e)})))
+                    (store/forms st sym))
+       :tested-by (model/tests-covering st sym)})))

@@ -1,4 +1,4 @@
-(ns slopp.ui.model-test
+(ns slopp.review.model-test
   "Tests for the reviewer UI's read models — what the server hands the client.
 
   Every test here builds a REAL store with `store/ingest` rather than a map
@@ -11,7 +11,7 @@
   a string, silently stopping being a reference — so symbols become text
   exactly once, in the model, and this namespace is where that is enforced."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ui.model :as model]
+            [slopp.review.model :as model]
             [slopp.store :as store]))
 
 (defn- json-shaped?
@@ -312,12 +312,24 @@
       (is (= 0 (:tests (by "demo.b"))))
       (is (not-any? #(re-find #"-test$" %) (mapcat :namespaces (:modules idx)))
           "a -test namespace never appears in the listing"))
-    (testing "the drawable picture is computed server-side — the client renders, it does not analyse"
-      (let [p (:picture idx)]
-        (is (= #{"demo.a" "demo.b"} (set (map :module (:nodes p)))))
-        (is (= [["demo.b" "demo.a"]] (mapv (juxt :from :to) (:edges p))))
-        (is (pos? (:width p)))
-        (is (pos? (:height p)))))
+    (testing "FACTS cross the wire, not pixels. This used to ship a laid-out
+              picture — nodes with :x :y :w :h, edges with :x1 :y1 :x2 :y2, a
+              :width and a :height — and the split found the cost: the UI
+              project ported a layout namespace, tests and all, and then
+              nothing called it, because there was nothing left for it to do.
+              A second consumer wanting a different diagram could not have one.
+
+              The line is analysis vs DRAWING, not 'no geometry'. Layering is
+              a topological fact only the store can compute, so it crosses;
+              turning layers into coordinates does not."
+      (is (not (contains? idx :picture)))
+      (is (= [["demo.a"] ["demo.b"]] (:layers idx))
+          "dependencies first, one layer per rung")
+      (testing "each row carries its own deps — without them a consumer cannot
+                draw an edge at all, which is precisely why the picture had to
+                be assembled here"
+        (is (= [] (:deps (by "demo.a"))))
+        (is (= ["demo.a"] (:deps (by "demo.b"))))))
     (testing "the whole model survives a JSON round trip"
       (is (json-shaped? idx) (pr-str idx)))))
 

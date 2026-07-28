@@ -481,10 +481,10 @@
           (rm! (io/file out)))))))
 
 (deftest ^:external creating-a-namespace-that-shadows-a-classpath-one-warns
-  ;; Found by bricking a real project. `slopp-ui` created `slopp.ui.views`
+  ;; Found by bricking a real project. `slopp-ui` created `slopp.review.views`
   ;; holding two of its own views; a project's MCP server runs the FULL slopp
   ;; jar and `slopp.boot` loads store namespaces FIRST, so at the next boot
-  ;; slopp's own `slopp.ui.pages` died on `No such var: views/module-graph`.
+  ;; slopp's own `slopp.review.pages` died on `No such var: views/module-graph`.
   ;; The store was then unopenable by the only tool that could remove the
   ;; namespace again.
   ;;
@@ -497,11 +497,16 @@
   (let [sess (external/open!)]
     (try
       (testing "a name slopp itself owns is created, and SAYS it will shadow"
-        (let [r (api/create-ns! sess 'slopp.ui.views :source "(ns slopp.ui.views)\n")
+        ;; `slopp.web.html` rather than the `slopp.review.views` of the incident:
+        ;; that namespace does not exist here any more — the reviewer UI moved
+        ;; out — and a fixture naming a namespace slopp no longer owns asserts
+        ;; nothing while still passing today, because the CHECK is classpath
+        ;; ownership. Pick one that is load-bearing and going nowhere.
+        (let [r (api/create-ns! sess 'slopp.web.html :source "(ns slopp.web.html)\n")
               w (first (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))]
           (is (nil? (:error r)) "overriding is legitimate — it must still be possible")
           (is (some? w) (pr-str r))
-          (is (re-find #"slopp\.ui\.views" (str (:message w)))
+          (is (re-find #"slopp\.web\.html" (str (:message w)))
               "name it: the agent chose the name and has to know which one bites")
           (is (re-find #"(?i)shadow" (str (:message w))))))
       (testing "a dependency's namespace warns for the same reason"

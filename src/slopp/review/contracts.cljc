@@ -1,4 +1,4 @@
-(ns slopp.ui.contracts
+(ns slopp.review.contracts
   "Wire contracts for the reviewer UI's JSON API — the shapes `/api/*`
   promises and the generated client validates against.
 
@@ -65,7 +65,7 @@
   "`GET /api/form/:id` — one form's permalink model.
 
   OPEN (malli maps are, by default) and deliberately so: this names the keys
-  the client renders and lets `slopp.ui.model/form-view` carry the rest of
+  the client renders and lets `slopp.review.model/form-view` carry the rest of
   its card. A closed schema over a model this rich would be a contract that
   refuses valid data every time the model grew a field — the failure mode
   where the contract becomes the thing you route around."
@@ -128,95 +128,52 @@
    [:name :string]
    [:source :string]])
 
-(def placed-box
-  "One placed box on the module canvas: which module, and where it sits.
-
-  `:layer` is optional because foundation-band members do not have one —
-  they sit BENEATH the layering rather than inside it, which is the point
-  of banding them. Coordinates only; the view owns colour and stroke."
-  [:map
-   [:module :string]
-   [:x :int] [:y :int] [:w :int] [:h :int]
-   [:layer {:optional true} :int]])
-
-(def graph-edge
-  "One drawn dependency: `:from` depends on `:to`, with both endpoints already
-   resolved to points on the two boxes. The client draws a path between them;
-   it does not decide where an arrow attaches."
-  [:map
-   [:from :string] [:to :string]
-   [:x1 :int] [:y1 :int] [:x2 :int] [:y2 :int]])
-
 (def module-row
   "One module in the Code nav: its production namespaces, how many test
-   namespaces fold into it, its declared purity tier, and whether it was
-   found to be foundation.
+   namespaces fold into it, its declared purity tier, whether it was found to
+   be foundation, and what it depends on.
 
    `:namespaces` holds production names only and `:tests` is a COUNT, not a
    list — a `-test` namespace is not a peer of the code it covers, and
    listing it at the same rung says otherwise. The count stays because zero
-   is a finding."
+   is a finding.
+
+   `:deps` is what makes a consumer able to DRAW this — an edge needs two
+   ends, and a row that names only itself leaves the producer as the only
+   thing that could ever assemble a diagram. Foundation-free, matching the
+   layering: an edge into the substrate is not drawn, and `:foundation`
+   already says which modules those are."
   [:map
    [:module :string]
    [:namespaces [:sequential :string]]
    [:tests :int]
    [:tier :string]
-   [:foundation :boolean]])
-
-(def module-picture
-  "The drawable module canvas: layered nodes, the foundation band beneath
-   them, the edges worth drawing, and the extent that contains it all.
-
-   Composed from [[placed-box]] and [[graph-edge]] rather than restating
-   them, so the composition is a REAL reference edge."
-  [:map
-   [:nodes [:sequential placed-box]]
-   [:band [:sequential placed-box]]
-   [:edges [:sequential graph-edge]]
-   [:width :int]
-   [:height :int]])
+   [:foundation :boolean]
+   [:deps [:sequential :string]]])
 
 (def module-index
-  "`GET /api/modules` — the Code landing: one row per module plus the
-   drawable canvas.
+  "`GET /api/modules` — the Code landing: one row per module, the layering,
+   and the cycles.
 
-   `:cycles` rides alongside the picture rather than inside it because a
-   cycle is a FINDING about the architecture, not a drawing instruction. On
-   a tangled store it is the most useful thing on the screen, and a consumer
-   that only wants the verdict should not have to read geometry to find it."
+   No canvas. This carried a fully placed `module-picture` — boxes with
+   coordinates, routed edges, an extent — until the reviewer UI became a
+   separate project and demonstrated the cost: it ported a layout namespace
+   and found nothing for it to do, because the layout had already happened
+   here. An API that ships a drawing admits exactly one consumer.
+
+   `:layers` is the compromise, and it is not one: a topological layering is
+   ANALYSIS, it comes from the store's own module graph, and no consumer can
+   recompute it. Placing boxes on those rungs is drawing, and every consumer
+   should get to disagree about it.
+
+   `:cycles` rides alongside rather than inside, because a cycle is a FINDING
+   about the architecture, not a drawing instruction. On a tangled store it is
+   the most useful thing on the screen, and a consumer that only wants the
+   verdict should not have to read geometry to find it."
   [:map
    [:modules [:sequential module-row]]
-   [:picture module-picture]
+   [:layers [:sequential [:sequential :string]]]
    [:cycles [:sequential [:sequential :string]]]])
-
-(def project-row
-  "One project on the hub's wire: where it is, what it calls itself, and
-  whether it is answering right now.
-
-  `:available` rather than `:available?` to match [[module-row]]'s
-  `:foundation` — a JSON key is read by more than the ClojureScript client,
-  and a `?` in it is a Clojure habit rather than a wire fact.
-
-  `:status` is `:maybe` and free text on purpose. It is whatever the project
-  said about itself in its last beat, and the hub renders it without
-  interpreting it — which is what lets a project report something new
-  (working, idle, mid-restart) without the hub shipping a new release."
-  [:map
-   [:slug :string]
-   [:name :string]
-   [:dir :string]
-   [:url :string]
-   [:available :boolean]
-   [:last-seen :int]
-   [:version [:maybe :string]]
-   [:status [:maybe :string]]])
-
-(def project-list
-  "`GET /api/projects` — every project that has checked in with this hub,
-  stale ones included and flagged, sorted.
-
-  Composed from [[project-row]] so the composition is a real reference edge."
-  [:sequential project-row])
 
 (def project-beat
   "`POST /api/register` — one project's check-in.

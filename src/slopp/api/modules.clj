@@ -1,7 +1,28 @@
 (ns slopp.api.modules
+  "The MODULE system's read side: what the architecture IS, derived rather
+  than declared.
+
+  A module is the first two segments of a namespace, which makes membership a
+  fact about the name and not a registry anyone can forget to update. What
+  lives here is everything that reads that structure back — the production
+  manifest (edges with test namespaces removed, since a test reaching into a
+  module is not the module depending on it), the substrate (which modules
+  everything rests on), the browsable surface, and the reports the module
+  gates cite when they refuse.
+
+  The WRITE side is `slopp.edit.modules`: declaring an edge, a tier, a
+  platform. This namespace never changes the manifest, it answers questions
+  about it.
+
+  It answers in FACTS. `substrate` arrived here from the reviewer UI's graph
+  namespace when the UI became a separate project and the split made the line
+  visible: naming the foundation is analysis, and only something holding the
+  store can do it; placing those modules on a canvas is drawing, and belongs
+  to whoever is rendering. Anything here that starts describing pixels has
+  crossed back."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [clojure.set :as set]))
 
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
@@ -27,7 +48,7 @@
           :to        (:to-ns r)
           :to-export (modules/export-level store (:to-ns r) (:to-name r))})))
 
-(defn ^{:export "slopp.ui"} production-manifest
+(defn ^{:export "slopp.review"} production-manifest
   "Module dependency edges from PRODUCTION namespaces only — the
   architecture VIEW's graph. A `-test` namespace folds into its subject
   module (module-of strips `-test`), so its fixture deps would manufacture
@@ -36,7 +57,7 @@
   manifest still carries the test edges — this derivation is for
   layers/cycles, not for enforcement.
 
-  Exported to the `slopp.ui` subtree because that is the architecture view:
+  Exported to the `slopp.review` subtree because that is the architecture view:
   the Code screen draws this graph. Not public — no other caller has asked."
   ([store] (production-manifest store (module-usage-rows store)))
   ([store rows]
@@ -218,3 +239,36 @@
                    :when to-export
                    :when (not (modules/export-level store to name))]
                (symbol (str to) (str name))))))
+
+(defn ^:export substrate
+  "The modules to draw as a FOUNDATION BAND rather than as nodes with edges.
+
+  The band exists to stop drawing edges that carry no information: \"everything
+  rests on the store\" reads better as position than as eight arrows. Two ways
+  in, both computed, so this generalises to a store nothing like slopp's own:
+
+  - a SINK (nothing in the graph it depends on) that at least TWO modules use.
+    One dependent is not enough — that single edge is informative, and banding
+    it would move the module away from its only consumer.
+  - a HUB whose own dependencies are all banded sinks and whose fan-in reaches
+    a quarter of the graph (minimum 3). That is what catches a `store`-shaped
+    module: everyone calls it, it calls almost nothing.
+
+  Promotion is ONE level deep on purpose. Cascading walks up the graph and
+  swallows real components — on slopp's own manifest an unbounded rule reaches
+  `git` and `image`, which are foundation by no reading.
+
+  A graph with no sinks (everything mutually entangled) yields the empty set
+  and every edge gets drawn. That degradation is correct: there is no
+  foundation to name, and saying so is the honest picture."
+  [manifest]
+  (let [nodes     (set (keys manifest))
+        deps-of   (fn [m] (filter nodes (get manifest m)))
+        sinks     (into #{} (filter #(empty? (deps-of %))) nodes)
+        fan-in    (frequencies (mapcat deps-of nodes))
+        banded    (into #{} (filter #(and (sinks %) (<= 2 (get fan-in % 0)))) nodes)
+        threshold (max 3 (quot (+ (count nodes) 3) 4))
+        hub?      (fn [m] (and (not (sinks m))
+                               (<= threshold (get fan-in m 0))
+                               (every? banded (deps-of m))))]
+    (set/union banded (into #{} (filter hub?) nodes))))

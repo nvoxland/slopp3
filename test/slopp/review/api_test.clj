@@ -1,10 +1,10 @@
-(ns slopp.ui.api-test
+(ns slopp.review.api-test
   "Tests for the JSON boundary, run through the REAL dispatcher.
 
   Two disciplines, both learned from failures. First, build the context from
   `server/served-namespaces` rather than a hand-picked subset: endpoints and
   their read performers live in different namespaces, so a context holding
-  only `slopp.ui.api` answers 500 and tests nothing — and a bundle served by
+  only `slopp.review.api` answers 500 and tests nothing — and a bundle served by
   nothing once 404'd for two waves behind a 200 for the page.
 
   Second, validate every response against the SAME contract var the typed
@@ -14,9 +14,9 @@
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.ui.api]
-            [slopp.ui.contracts :as contracts]
-            [slopp.web :as web] [slopp.ui.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
+            [slopp.review.api]
+            [slopp.review.contracts :as contracts]
+            [slopp.web :as web] [slopp.review.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -29,8 +29,8 @@
                               "(ns demo.core)\n\n(defn hello \"Says hi.\" [x] x)\n")
                 (store/ingest 'demo.util "(ns demo.util)\n\n(defn undocumented [x] x)\n"))
                 ;; the served list, not a hand-picked subset: the reads these
-        ;; endpoints declare are performed by slopp.ui.pages, so a context
-        ;; holding only slopp.ui.api answers 500 and tests nothing real
+        ;; endpoints declare are performed by slopp.review.pages, so a context
+        ;; holding only slopp.review.api answers 500 and tests nothing real
         ctx (web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
         GET (fn [uri] (web/handle! ctx {:request-method :get :uri uri}))]
@@ -80,19 +80,28 @@
   ;; a LIST that someone had to remember to add to. So the list is one var,
   ;; and this test is the reason it is one var.
   (testing "the served list names both halves of a request"
-    (is (= #{'slopp.ui.pages 'slopp.ui.api}
+    (is (= #{'slopp.review.reads 'slopp.review.api}
            (set server/served-namespaces))))
-  (testing "serving that list actually routes both /api and the pages"
+  (testing "serving that list actually routes the API — and a project serves
+            NOTHING ELSE, which is the shape the split settled on"
     ;; the endpoints and the READ performers live in different namespaces, so
     ;; a list missing either half fails here rather than in a browser — and
     ;; missing the performer half is a 500, not a 404
     (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n")
           ctx (web/context {:web/namespaces server/served-namespaces
-                            :web/perform-ctx {:session (atom {:store st})}})]
-      (is (= 200 (:status (web/handle! ctx {:request-method :get
-                                            :uri "/api/namespaces"}))))
-      (is (= 200 (:status (web/handle! ctx {:request-method :get
-                                            :uri "/store"})))))))
+                            :web/perform-ctx {:session (atom {:store st})}})
+          get* (fn [uri] (:status (web/handle! ctx {:request-method :get
+                                                    :uri uri})))]
+      (is (= 200 (get* "/api/namespaces")))
+      (is (= 200 (get* "/api/contracts")))
+      ;; the pages moved out. Asserting their ABSENCE is the half worth
+      ;; keeping: a page reappearing here would mean slopp had quietly grown a
+      ;; second renderer alongside the hub's, which is the drift the :cljc
+      ;; views were split out to prevent in the first place.
+      (is (= 404 (get* "/")))
+      (is (= 404 (get* "/store")))
+      (is (= 404 (get* "/css/style.css")))
+      (is (= 404 (get* "/js/main.js"))))))
 
 (deftest ^:external every-screen-has-an-endpoint-that-matches-its-contract
   ;; After the SPA rewrite there is no server-rendered page to fall back on:
@@ -185,37 +194,17 @@
     (testing "it answers with the architecture, not a namespace dump"
       (let [body (:body res)]
         (is (= ["demo.a" "demo.b"] (mapv :module (:modules body))))
-        (is (= 1 (:tests (first (:modules body)))))
-        (is (= 2 (count (:nodes (:picture body)))))
-        (is (= [["demo.b" "demo.a"]]
-               (mapv (juxt :from :to) (:edges (:picture body)))))))))
-
-(deftest the-svg-export-is-a-standalone-file-not-a-fragment
-  (let [st  (-> (store/empty-store)
-                (store/ingest 'demo.a.core "(ns demo.a.core)\n\n(defn hello [] 1)\n")
-                (store/ingest 'demo.b.util
-                              (str "(ns demo.b.util (:require [demo.a.core :as c]))\n\n"
-                                   "(defn helper [] (c/hello))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
-                          :web/perform-ctx {:session (atom {:store st})}})
-        r   (web/handle! ctx {:request-method :get :uri "/api/modules.svg"})
-        body (:body r)]
-    (testing "served as a file a browser and a design tool both recognise"
-      (is (= 200 (:status r)))
-      (is (:web/raw r) "markup must arrive untouched, not JSON-wrapped")
-      (is (= "image/svg+xml; charset=utf-8" (get (:headers r) "Content-Type"))))
-    (testing "it is a whole SVG document, not a fragment"
-      (is (string? body))
-      (is (re-find #"^<svg " body))
-      (is (re-find #"</svg>$" body)))
-    (testing "it carries its own styling — class names with no CSS open as black boxes"
-      (is (re-find #"<style>" body))
-      (is (re-find #"module-node" body))
-      (is (re-find #"prefers-color-scheme" body)
-          "including dark mode, so the file adapts wherever it lands"))
-    (testing "and it draws the actual store"
-      (is (re-find #"demo\.a" body))
-      (is (re-find #"demo\.b" body)))))
+        (is (= 1 (:tests (first (:modules body)))))))
+    (testing "and with FACTS rather than a drawing: the layering, which only
+              the store can compute, and each row's dependencies, which are
+              what let a consumer draw an edge at all. The 200 above is the
+              real assertion here — the response is validated against the
+              declared contract at the boundary, so a picture sneaking back in
+              would fail there rather than render wrong somewhere."
+      (let [body (:body res)]
+        (is (not (contains? body :picture)))
+        (is (= [["demo.a"] ["demo.b"]] (:layers body)))
+        (is (= [[] ["demo.a"]] (mapv :deps (:modules body))))))))
 
 (deftest the-contract-endpoint-publishes-what-the-client-is-generated-from
   ;; The seam that lets the reviewer UI live in its OWN store: it consumes this
@@ -256,7 +245,7 @@
 
 (deftest ^:external a-consumer-generates-an-equivalent-client-from-the-published-contract
   ;; The fixed point the whole split rests on. A store that has never seen
-  ;; slopp.ui.contracts generates, from HTTP alone, a client equivalent to the
+  ;; slopp.review.contracts generates, from HTTP alone, a client equivalent to the
   ;; one local generation produces from the store. If this holds, the reviewer
   ;; UI can live in its own project; if it does not, the wire format is lossy
   ;; and nothing downstream is worth building.

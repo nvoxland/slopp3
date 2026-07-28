@@ -421,3 +421,56 @@
       (is (= '[pe.deep.core/plain]
              (modules/unlanded-exports
               st [{:to 'pe.deep.core :name 'plain :to-export "pe.other"}]))))))
+
+(deftest substrate-bands-sinks-that-many-modules-depend-on
+  (testing "a sink two or more modules depend on is foundation"
+    (is (= #{"lib"}
+           (modules/substrate {"a" ["lib"] "b" ["lib"] "lib" []}))))
+  (testing "a sink only ONE module depends on stays an ordinary node"
+    (is (= #{}
+           (modules/substrate {"a" ["lib"] "lib" []}))))
+  (testing "a depended-on module that itself reaches a non-substrate module is not foundation"
+    (is (= #{"lib"}
+           (modules/substrate {"a" ["mid" "lib"] "b" ["mid"] "mid" ["lib" "a"] "lib" []})))))
+
+(def slopp-production
+  "slopp's own production module manifest as of 2026-07-26 — 14 modules,
+   33 edges, 9 layers, no cycles. Small enough to check the answer by hand."
+  {"slopp.api"   ["slopp.boot" "slopp.edit" "slopp.image" "slopp.index" "slopp.store" "slopp.web"]
+   "slopp.bench" ["slopp.api" "slopp.mcp" "slopp.store"]
+   "slopp.boot"  []
+   "slopp.cache" []
+   "slopp.edit"  ["slopp.cache" "slopp.image" "slopp.index" "slopp.store"]
+   "slopp.git"   ["slopp.store"]
+   "slopp.image" ["slopp.rt" "slopp.store"]
+   "slopp.index" ["slopp.cache" "slopp.image"]
+   "slopp.mcp"   ["slopp.api" "slopp.git" "slopp.store" "slopp.sync" "slopp.review" "slopp.web"]
+   "slopp.rt"    []
+   "slopp.store" ["slopp.cache"]
+   "slopp.sync"  ["slopp.api" "slopp.boot" "slopp.git" "slopp.store"]
+   "slopp.review"    ["slopp.api" "slopp.edit" "slopp.store" "slopp.web"]
+   "slopp.web"   []})
+
+(deftest substrate-on-a-real-manifest-names-the-foundation-and-nothing-else
+  (let [band  (modules/substrate slopp-production)
+        edges (for [[m ds] slopp-production d ds] [m d])]
+    (testing "the foundation is the three widely-used sinks plus the store hub"
+      (is (= #{"slopp.boot" "slopp.cache" "slopp.web" "slopp.store"} band)))
+    (testing "store is banded despite an outgoing edge — everyone calls it, it calls almost nothing"
+      (is (contains? band "slopp.store")))
+    (testing "rt is a sink but NOT foundation: its one edge from image is the informative kind"
+      (is (not (contains? band "slopp.rt")))
+      (is (some (fn [[m d]] (and (= "slopp.image" m) (= "slopp.rt" d))) edges)
+          "and that edge therefore survives into the drawn picture"))
+    (testing "promotion stops at one level — these are components, not foundation"
+      (is (empty? (filter band ["slopp.git" "slopp.image" "slopp.api" "slopp.edit"]))))
+    (testing "banding is what makes the picture readable: 16 of 33 edges stop being drawn"
+      (is (= 33 (count edges)))
+      (is (= 17 (count (remove (fn [[_ d]] (band d)) edges)))))))
+
+(deftest a-fully-entangled-graph-has-no-foundation-to-name
+  (testing "no sinks means no band, and every edge gets drawn — the honest picture"
+    (is (= #{} (modules/substrate {"a" ["b"] "b" ["c"] "c" ["a"]}))))
+  (testing "a single god-module everything calls is still found"
+    (is (= #{"god"}
+           (modules/substrate {"a" ["god"] "b" ["god"] "c" ["god"] "god" []})))))

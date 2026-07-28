@@ -1,4 +1,4 @@
-(ns slopp.ui.model
+(ns slopp.review.model
   "The reviewer UI's READ MODELS: JSON-shaped data assembled from the
   operation API's pure surfaces. No hiccup, no HTTP, no writes.
 
@@ -21,8 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.api.query :as query]
             [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
-            [slopp.api.modules :as api.modules]
-            [slopp.ui.graph :as graph]))
+            [slopp.api.modules :as api.modules]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -290,7 +289,7 @@
                 (dissoc (json-card (orient/form-card session ns-sym nm)) :form)))))))
 
 (defn module-index
-  "The Code landing model: the architecture as rows plus a drawable picture.
+  "The Code landing model: the architecture as FACTS a consumer can draw.
 
   Test namespaces are COUNTED, never listed. A `-test` namespace folds into
   its subject's module, so listing it puts two things at the same rung that
@@ -305,10 +304,23 @@
   wrong zero devalues every other zero on the screen — so a test namespace
   counts for every module it requires into, as well as the one it folds into.
 
-  The picture is assembled HERE rather than in the client because the
-  layering comes from `store/module-layers`, and keeping the analysis on the
-  JVM is what makes it an ordinary in-image test. The client receives
-  coordinates and draws them."
+  **No picture.** This used to assemble one — placed boxes, routed edges, a
+  canvas extent — on the reasoning that the layering comes from the store and
+  the client should not analyse. The first half is right and the conclusion
+  was wrong: LAYERING is analysis, PLACEMENT is drawing, and shipping
+  coordinates meant the only consumer that could ever exist was one that
+  wanted this exact diagram. It showed up the moment the UI became its own
+  project — a layout namespace ported across, tests and all, with nothing
+  left for it to do.
+
+  So what crosses is `:layers` (a topological fact, and only the store can
+  compute it) and each row's `:deps` (without which a consumer cannot draw an
+  edge at all — their absence is precisely why the picture had to be built
+  here). Where the boxes go is the consumer's business.
+
+  `:deps` is the FOUNDATION-FREE manifest, matching `:layers`: an edge into
+  the substrate is not drawn, and a consumer should not have to re-derive
+  which those are when `:foundation` already says so."
   [session]
   (let [st         (:store @session)
         nses       (sort (keys (:namespaces st)))
@@ -322,7 +334,7 @@
         test-tally (frequencies (mapcat reach (filter test? nses)))
         tiers      (:module-tiers st)
         manifest   (api.modules/production-manifest st)
-        band       (graph/substrate manifest)
+        band       (api.modules/substrate manifest)
         ;; layer the graph WITHOUT the foundation: leaving it in stretches
         ;; every module above it a rung further from what it actually needs.
         reduced    (into {} (for [[m ds] manifest :when (not (band m))]
@@ -333,9 +345,10 @@
                        :namespaces (mapv str (sort (get by-module m)))
                        :tests      (get test-tally m 0)
                        :tier       (name (get tiers m :external))
-                       :foundation (contains? band m)})
+                       :foundation (contains? band m)
+                       :deps       (vec (sort (get reduced m)))})
                     (sort (keys by-module)))
-     :picture (graph/diagram {:manifest manifest :layers layers :band band})
+     :layers  (mapv vec layers)
      :cycles  (mapv vec cycles)}))
 
 (defn tests-covering

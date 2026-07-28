@@ -1,4 +1,4 @@
-(ns slopp.ui.api
+(ns slopp.review.api
   "The reviewer UI's JSON boundary — one function per endpoint.
 
   This is what D-spa is organised around: an explicit, typed, independently
@@ -9,13 +9,17 @@
   client.
 
   Two things are deliberately elsewhere. The reads are PERFORMED in
-  `slopp.ui.pages`, addressed by vocabulary rather than by var, so an answer
-  cannot differ between representations — which is why
-  `slopp.ui.server/served-namespaces` names both namespaces and why serving
+  `slopp.review.reads`, addressed by vocabulary rather than by var — which is why
+  `slopp.review.server/served-namespaces` names both namespaces and why serving
   only this one yields 500s. And the payloads are SHAPED in
-  `slopp.ui.model`; handlers here restate them key by key because that is
-  where symbols become strings, JSON having no symbol type."
-  (:require [slopp.ui.contracts :as contracts]))
+  `slopp.review.model`; handlers here restate them key by key because that is
+  where symbols become strings, JSON having no symbol type.
+
+  This is now the WHOLE of what a slopp project serves. The reviewer UI moved
+  to its own project and consumes these endpoints over HTTP like any other
+  client, so an explicit typed independently testable surface stopped being
+  an organising principle and became the only thing there is."
+  (:require [slopp.review.contracts :as contracts]))
 
 (defn ^{:web/method :get :web/path "/api/namespaces" :web/auth :public
         :web/response contracts/namespace-list
@@ -67,7 +71,7 @@
   timeline
   "GET /api/timeline — milestones newest first, plus the working set.
 
-  A projection, not new logic: `slopp.ui.model/timeline` already returns a
+  A projection, not new logic: `slopp.review.model/timeline` already returns a
   JSON-shaped value, which is why the SPA rewrite is mostly moving rendering
   rather than inventing data."
   [req]
@@ -123,12 +127,19 @@
         :web/response contracts/module-index
         :web/reads {:modules [:browse/modules []]}}
   modules
-  "GET /api/modules — the architecture: one row per module, plus the canvas.
+  "GET /api/modules — the architecture: one row per module, the layering, and
+  the cycles.
 
-  A projection, not new logic: `slopp.ui.model/module-index` already returns
+  A projection, not new logic: `slopp.review.model/module-index` already returns
   JSON-shaped data, so there is nothing to reshape here. That is the payoff
   of shaping once in the model — symbols become strings exactly one place,
-  and this endpoint cannot disagree with the model about what a module is."
+  and this endpoint cannot disagree with the model about what a module is.
+
+  No canvas. It used to send one, and the reviewer UI becoming a separate
+  project showed the cost: a consumer that receives coordinates cannot draw
+  anything else. What crosses now is what only the store can work out —
+  the layering, and each module's dependencies — and placement belongs to
+  whoever is rendering."
   [req]
   {:status 200 :body (:modules (:web/reads req))})
 

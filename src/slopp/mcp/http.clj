@@ -13,7 +13,7 @@
   (:require [slopp.api :as api]
             [slopp.mcp :as mcp]
             [slopp.api.external :as external]
-            [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static] [slopp.ui.server :as ui-server]))
+            [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static] [slopp.review.server :as ui-server]))
 
 (defn ^:export start-server!
   "Start the transport on `port` over a fresh session (`opts` as api/open!):

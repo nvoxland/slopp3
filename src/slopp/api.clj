@@ -2754,7 +2754,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
    so a shadowing namespace that does not define everything the real one does
    breaks the server at its next boot — and the store is then unopenable by the
    only tool that could remove it. That happened: a project defined
-   `slopp.ui.views` with two of its own views, and the next boot died on
+   `slopp.review.views` with two of its own views, and the next boot died on
    `No such var: views/module-graph`.
 
    The check is CLASSPATH ownership, not `find-ns`: a namespace an earlier
