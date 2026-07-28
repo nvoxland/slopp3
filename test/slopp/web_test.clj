@@ -116,6 +116,25 @@
           (is (= "body{}" (String. ^bytes (:body r) "UTF-8")))))
       (testing "an unknown file is a 404"
         (is (= 404 (:status (GET "/assets/nope.js")))))
+      (testing "a path prefix written with a TRAILING SLASH mounts the same
+                tree. The handler adds its own separator, so `public/` asked
+                the reader for `public//app.css` — and a store-backed reader,
+                which looks a path up in a manifest rather than on a
+                filesystem that would normalise it, answered nothing."
+        (let [srv2 (web/serve! {:web/namespaces []
+                                :web/routes (static/mount-routes {"/assets" "public/"} reader)
+                                :web/adapter :http-kit :web/port 0})
+              get2 (fn [path]
+                     (.statusCode
+                      (.send http
+                             (-> (java.net.http.HttpRequest/newBuilder)
+                                 (.uri (java.net.URI/create
+                                        (str "http://127.0.0.1:" (:port srv2) path)))
+                                 (.build))
+                             (java.net.http.HttpResponse$BodyHandlers/ofByteArray))))]
+          (try
+            (is (= 200 (get2 "/assets/app.css")))
+            (finally (web/stop! srv2)))))
       (finally (web/stop! srv)))))
 
 (deftest ^:external built-app-reader-resolves-fs-then-resources

@@ -174,10 +174,13 @@
   [store]
   (let [refs   (ui-route-refs store)
         routes (endpoints store)
+        ;; a trailing slash on the value is trimmed, because the join below adds its
+        ;; own: `public/` would build `public//app.css`, which no manifest holds,
+        ;; and every asset link in the app would read as dangling
         mounts (into {}
                      (keep (fn [[k v]]
                              (when-let [[_ m] (re-matches #"http\.static\.(.+)" (str k))]
-                               [m (str v)])))
+                               [m (str/replace (str v) #"/+$" "")])))
                      (get-in store [:config "capabilities" :values]))
         static-file? (fn [path]
                        (some (fn [[url-prefix file-prefix]]

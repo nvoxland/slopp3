@@ -27,7 +27,13 @@
   path is indistinguishable from a missing one — 404, never a leak."
   [mounts reader]
   (vec
-   (for [[url-prefix path-prefix] mounts]
+   (for [[url-prefix raw-prefix] mounts
+         ;; the handler adds its own separator, so a prefix written `public/`
+         ;; would ask the reader for `public//app.css`. A filesystem reader
+         ;; normalises that away and a store-backed one does not — it looks the
+         ;; string up in a manifest — so the same config would work in a built
+         ;; app and serve nothing under --live.
+         :let [path-prefix (str/replace (str raw-prefix) #"/+$" "")]]
      {:method :get
       :path (str url-prefix "/*path")
       :auth :public

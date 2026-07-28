@@ -114,7 +114,7 @@
   (* 20 60 1000))
 
 (defn ^{:export "slopp.verification"} reap!
-  "Kill `proc` and everything it spawned. Returns nil.
+  "Kill `proc` and everything it spawned. Returns nil once they are GONE.
 
   `.destroy` reaches the CHILD only. A test-runner JVM's whole job is to spawn
   a fresh image JVM per test, so killing it without its subtree leaves exactly
@@ -127,6 +127,19 @@
   dead handle reports none. Then kill the PARENT, so it stops spawning more
   while the sweep runs. Then the subtree, politely and then forcibly.
 
+  **And then WAIT for them.** Signal delivery is asynchronous:
+  `destroyForcibly` returns before the kernel has reaped anything, so this
+  used to promise a quiet machine and return while the subtree was still
+  running. Harmless when the caller was about to block anyway, and not
+  harmless at all when the reason for reaping is that the machine is already
+  overloaded — precisely when the window is widest. It showed up as a
+  full-suite run failing `killing-a-runner-kills-the-processes-it-spawned`
+  under four shards, and passing every time in isolation.
+
+  Bounded, because a wait that can hang is a worse failure than an orphan:
+  five seconds for the parent, five for the subtree as a whole. What is still
+  alive after that was unkillable, and blocking longer would not change it.
+
   It is safe on a process that has already exited: the snapshot is empty and
   every destroy is a no-op."
   [^Process proc]
@@ -137,6 +150,16 @@
     (doseq [^java.lang.ProcessHandle h kids] (.destroy h))
     (doseq [^java.lang.ProcessHandle h kids]
       (when (.isAlive h) (.destroyForcibly h)))
+    ;; onExit futures rather than a poll: the JDK already has the notification,
+    ;; and one deadline covers the whole subtree instead of N sequential ones
+    (let [deadline (+ (System/currentTimeMillis) 5000)]
+      (doseq [^java.lang.ProcessHandle h kids]
+        (let [left (- deadline (System/currentTimeMillis))]
+          (when (pos? left)
+            (try
+              (.get (.onExit h) left java.util.concurrent.TimeUnit/MILLISECONDS)
+              (catch java.util.concurrent.TimeoutException _ nil)
+              (catch java.lang.IllegalStateException _ nil))))))  ; not a child of ours
     nil))
 
 (defn ^{:export "slopp.verification"} run-cmd!

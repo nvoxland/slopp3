@@ -142,7 +142,33 @@
       (is (= #{["/nowhere" :exact] ["/assets/missing.css" :exact] ["/gone/" :prefix]}
              (set (map (juxt :path :kind) dangling)))))
     (testing "dynamic refs are named, not counted clean"
-      (is (= '[shop.ui/todos-page] (mapv :form unresolved))))))
+      (is (= '[shop.ui/todos-page] (mapv :form unresolved))))
+    (testing "a mount written with a TRAILING SLASH resolves the same way.
+              The capability's own doc line showed `http.static./assets =
+              public/`, and that form built `public//app.css`, which no
+              manifest holds — so following the documentation made every
+              asset link in the app read as dangling."
+      (let [s2 (first (store/record-config-put s "capabilities" :manifest
+                                               "http.static./assets" "public/"))]
+        (is (= #{["/nowhere" :exact] ["/assets/missing.css" :exact] ["/gone/" :prefix]}
+               (set (map (juxt :path :kind)
+                         (:dangling (web/dangling-route-refs s2))))))))
+    (testing "an ARTIFACT under a mount is served too. compile_client writes the
+              bundle as an artifact — bytes to the content-addressed cache,
+              sha to the journal, because inlining it cost 30MB of delta log —
+              and then tells you to add an http.static mount. A mount that
+              could not see it made that advice impossible to follow: the
+              bundle every page loads read as a dangling link."
+      (let [src2 (str "(ns shop.doc)\n\n"
+                      "(defn ^{:web/method :get :web/path \"/\" :web/auth :public} page \"P.\" [req]\n"
+                      "  [:html [:script {:src \"/assets/cljs/main.js\"}]])\n")
+            s2 (store/ingest s 'shop.doc src2)
+            s2 (first (store/record-artifact
+                       s2 "public/cljs/main.js"
+                       {:sha "abc123" :bytes 10 :content-type "application/javascript"
+                        :recipe {:kind :build :tool "compile_client"}}))]
+        (is (not-any? #(= "/assets/cljs/main.js" (:path %))
+                      (:dangling (web/dangling-route-refs s2))))))))
 
 (deftest query-routes-carries-rendered-by
   (let [src (str "(ns shop.ui)\n\n"

@@ -726,17 +726,32 @@
         (:deltas store)))
 
 (defn file-content
-  "Manifest file `path` resolved through the polymorphic entry — the ONE
-  accessor, so no consumer branches on the shape. Text → {:content
-  <string>}; binary → {:content <bytes> :content-type …} with the bytes
-  from the `:blobs` cache (`:content` nil when the blob isn't cached
-  in-memory — a foreign-synced entry; the session layer's db fallback owns
-  that). nil when the path isn't on the manifest."
+  "The content the store holds at `path` — the ONE accessor, so no consumer
+  branches on the shape. Text → {:content <string>}; binary → {:content
+  <bytes> :content-type …} with the bytes from the `:blobs` cache
+  (`:content` nil when the blob isn't cached in-memory — a foreign-synced
+  entry; the session layer's db fallback owns that). nil when nothing is
+  there.
+
+  ARTIFACTS answer too, after the manifest. `:files` and `:artifacts` are
+  two journalling strategies for one question — a tracked file carries its
+  bytes in the delta log, a derived one carries a sha and a recipe because
+  inlining `compile_client`'s output cost 30MB of log across fifteen
+  compiles — and that difference is nobody's business at the point of asking
+  what is served at a path. Splitting it was: `compile_client` writes the
+  bundle as an artifact and then names the `http.static.*` mount that would
+  serve it, and the mount looked in `:files` and found nothing, so the advice
+  could not be followed by anyone who took it.
+
+  The manifest wins on a collision, because a file is something a human put
+  there on purpose and an artifact is something a tool regenerated."
   [store path]
-  (when-let [e (get (:files store) (str path))]
+  (if-let [e (get (:files store) (str path))]
     (if (map? e)
       (assoc e :content (get (:blobs store) (:sha e)))
-      {:content e})))
+      {:content e})
+    (when-let [a (get (:artifacts store) (str path))]
+      (assoc a :content (get (:blobs store) (:sha a))))))
 
 (defn file-at
   "Manifest file `path`'s content as of delta `at-id` (inclusive), or nil

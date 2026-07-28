@@ -37,7 +37,7 @@
    {:key "ui.hub-port" :type [:int {:min 0 :max 65535}] :default 7359
     :doc "The UI hub this project registers with (slopp --main slopp.ui.hub/-main --port N). The one number both halves read: the project beats to it, the hub CLI binds it. 0 = register with no hub."}
    {:key "http.static.*" :type [:string] :default nil
-    :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public/)."}
+    :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public serves public/cljs/main.js at /assets/cljs/main.js). A trailing slash on either is trimmed."}
    {:key "auth.providers" :type [:set-of [:enum "static" "bearer" "proxy-header" "oidc"]] :default #{}
     :doc "Enabled identity providers, comma-separated."}
    {:key "auth.default-policy" :type [:enum "deny" "authenticated" "public"] :default :deny

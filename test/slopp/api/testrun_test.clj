@@ -116,7 +116,11 @@
         (testrun/reap! proc)
         (testing "the parent is dead"
           (is (not (.isAlive proc))))
-        (testing "and so is everything it spawned"
+        (testing "and so is everything it spawned, BY THE TIME reap! RETURNS —
+                  no sleep here on purpose. Signal delivery is asynchronous, so
+                  this assertion used to be a race that a loaded machine lost:
+                  green in isolation, red under four shards. Waiting here would
+                  have hidden the bug instead of naming it; reap! waits now."
           (is (every? #(not (.isAlive %)) kids)
               (str "orphans survived: "
                    (pr-str (mapv #(.pid %) (filter #(.isAlive %) kids)))))))
