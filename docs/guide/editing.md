@@ -26,6 +26,13 @@ brief.
 
 Never rename by editing call sites, and never hand-edit an `ns` form.
 
+**Check callers before you delete.** `query_depends {on "some.ns/name"}` is one
+call and it answers exactly the question. Deleting a form that something still
+calls is *accepted* rather than refused -- the write lands, and then the image
+cannot reload, so the store stops loading until you `undo`. The message you get
+back reads like a rejection and is not one, which is the part that catches
+people out.
+
 ## edit_subform
 
 The workhorse for changes inside a large form:

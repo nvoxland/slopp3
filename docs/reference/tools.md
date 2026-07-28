@@ -208,7 +208,7 @@ Three things worth knowing:
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |
 | `edit_replace_form {ns name source}` | Replace a whole form. |
 | `edit_subform {ns form source}` | A change inside a big form, by `match`, `text: true`, or `where: {key value}`. |
-| `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). |
+| `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). Check `query_depends {on "ns/name"}` first — a delete with a live caller is accepted, and the store then stops loading until you `undo`. |
 | `edit_move {ns name before}` | Reorder within a namespace. |
 | `edit_comment {ns name text}` | Set (or clear) the comment block rendered above a form. The comment is owned by the form, so it travels with it. |
 | `edit_revert {ns name to?}` | Revert one form to an earlier version. |

@@ -2881,12 +2881,49 @@ same genre — the documentation was the trap:
   matches nothing in a manifest — so the documented form worked against a
   filesystem reader and silently served nothing against a store-backed one.
 
-**Still open, and it blocks the milestone:** a stale `done` verdict cannot be
-superseded when subsequent episodes touch only untested forms, and a green
-`full_check` does not clear it either (friction 14). `commit_point` falls back
-to `last-judged-done`, which can be arbitrarily old.
+Two items were open at part 4 and are settled in part 5: a stale `done` verdict
+that could not be superseded (friction 14), and layout sitting on the wrong
+side of the line.
 
-**Layout is on the wrong side of the line** and Stage 4 moves it: `/api/modules`
-ships a fully laid-out `:picture` with pixel coordinates, so `slopp-ui.graph`
-ported cleanly and then nothing called it. The framework's API should say what
-the modules ARE; where the boxes go is the consumer's business.
+### D-ui-hub part 5 — the framework sheds presentation (2026-07-28)
+
+Stage 4 landed at milestone `d17437`. The framework store now serves data and
+nothing else.
+
+**Layout is the consumer's business — decided and done.** `/api/modules` used
+to ship a fully laid-out `:picture` (nodes with `:x :y :w :h`, edges with
+`x1/y1/x2/y2`, a canvas `:width`/`:height`). That is presentation in a data
+contract, and the proof was that `slopp-ui.graph` ported cleanly and then
+nothing called it — the consumer could not draw its own diagram if it wanted
+one. The endpoint now ships `:modules` (rows carrying `:deps`), `:layers` and
+`:cycles`; `slopp.ui.graph` is deleted and its one genuine analysis,
+`substrate`, moved to `slopp.api.modules`. `slopp-ui.graph/picture-of` takes
+the response whole and lays it out client-side.
+
+That change was also the first real exercise of the regenerate loop, which is
+the check the versioning story defers to: change the producer's schema → touch
+the endpoint so its var metadata is re-evaluated → regenerate the consumer's
+client → restart its image → validate live. It held (10 nodes, 4 foundation,
+17 edges through the hub's proxy).
+
+**`slopp.ui` is renamed `slopp.review`.** A module called `slopp.ui` that
+serves no UI is a lie. Eleven namespaces moved by `rename_sweep`; `ui.pages`
+became `review.reads`, because what it holds is read performers and it had not
+served a page since the route forms left.
+
+**The contract endpoint stays per-app — settled, not deferred again.** Part 3
+left open whether `slopp.web` should declare `/api/contracts` itself, with
+apps opting in via `:web/namespaces`, rather than each publisher writing its
+own endpoint + performer + perform-ctx key (~15 lines). The plan said decide
+it when a second publisher made the cost measurable. **There is no second
+publisher.** slopp-ui consumes a contract and publishes none — its own client
+is generated in-store by plain `generate_client {}`, because its SPA and its
+endpoints share a store. So the measurement is a sample of one, and building a
+framework-reserved perform-ctx convention on that is the guess the deferral
+existed to avoid. Revisit when an app publishes for a real consumer.
+
+**What the framework kept:** the seven read performers, `review.model`,
+`review.api`, `review.server`, `review.heartbeat` — and `slopp.mcp → slopp.review`
+stays, because the MCP still binds its own listener and beats to the hub.
+`review.heartbeat` now takes its interval from the registration response
+rather than a shared constant, so the two sides can be different releases.
