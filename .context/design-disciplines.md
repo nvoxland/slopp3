@@ -470,6 +470,41 @@ that did not need to exist.
 typed. If you cannot find the named thing in the source you just wrote, the
 message is speaking the checker's vocabulary.
 
+### Sharpening (2026-07-28): "this image" is the checker's vocabulary too
+
+The instances above are all about NAMING. There is a harder version, found by
+auditing the currency work in the same session that landed it: a measurement
+reported under a name that belongs to a DIFFERENT SUBJECT than the one it
+measured.
+
+`slopp.image.currency/stamp!` executes in the server process, but it records
+what the server pushed INTO the child oracle. So `currency/drift` measures the
+ORACLE. `host-brief` — the `session_brief` section describing THIS server —
+published that value as `:drift` / `:image-verified`, and answered a failed
+live-reload with "the image was COMPARED to the store and holds every form at
+its current source, so this is the watcher stuck, not stale code".
+
+Every word of that is true about the oracle and unfounded about the host. And
+it fails exactly where it matters: a failed host reload is the one condition
+under which the two processes are known to diverge, so the reassurance is
+weakest precisely when it is offered. Note this was itself the FIX for a false
+alarm (friction 20a) — the first correction over-swung from "asserts staleness
+nobody measured" to "asserts currency nobody measured", which is the same error
+with the sign flipped.
+
+`host-warning` takes the same value and is CORRECT, because a verdict is
+produced by the oracle. Same number, same call, two readers, one of them wrong.
+
+**Discipline.** A measurement's name must carry its SUBJECT, not just its
+quantity — `:oracle-drift`, not `:drift`. When one process reports about
+another, the reporting process's identity is the thing most likely to be
+silently assumed, because it is the one nobody had to look up.
+
+**Tell:** a field named for a quantity (`:drift`, `:verified`, `:loaded`) in a
+map named for a subject (`:host`, `:session`, `:branch`). Ask which process,
+image, or store the number was taken IN, then ask which one the map is ABOUT.
+If answering takes more than a moment, the reader will not answer it at all.
+
 ## Wrong directions (measured dead ends — don't re-walk)
 
 - **The warm image pool / any scheme that RESCHEDULES boot work.** Built end to
