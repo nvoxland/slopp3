@@ -186,13 +186,27 @@
 
   **And it no longer claims staleness it has not measured (friction 20a).** A
   failed reload used to read \"the host still runs their previous code\", which
-  is an assertion about the image made without looking at the image — and it
-  was WRONG in the case that cost the most: five namespaces reported stale
-  while the process already held every one of them at the store's current
-  source. When `drift` is empty the failure is reported as a WATCHER problem,
-  which is what it is. Absent drift (nil) keeps the old cautious wording,
-  because not having looked is not the same as having looked and found
-  nothing."
+  is an assertion about this process made without looking at it — and it was
+  WRONG in the case that cost the most: five namespaces reported stale while
+  the process already held every one of them at the store's current source.
+
+  **Nor does it claim the opposite.** The first correction over-swung: a clean
+  `drift` was read as proof the failure was only a stuck watcher. But `drift`
+  measures the child ORACLE — `currency/stamp!` runs here, yet records what
+  was pushed INTO that separate JVM — while the reload that failed is THIS
+  process's. A failed host reload is exactly when the two diverge, so the
+  oracle comparing clean is no evidence at all about the host.
+
+  So a failed reload now says the honest third thing: the watcher failed, and
+  whether this process still holds the old code HAS NOT BEEN MEASURED. The
+  oracle's verdict is still reported, under `:oracle-verified` /
+  `:oracle-drift`, where it cannot be mistaken for this process's. Measuring
+  the host needs stamping in `slopp.boot`, which owns the host's own loads —
+  until that lands, this section says \"unmeasured\" and means it.
+
+  (`host-warning` is a different reader and is correct using oracle drift: a
+  VERDICT is produced by the oracle, so the oracle's currency is precisely
+  what should qualify it.)"
   [info deltas-since-boot on-branch? drift]
   (when info
     (let [failed  (seq (:failed info))
@@ -207,12 +221,13 @@
           parts   (cond-> []
                     failed
                     (conj (str "live-reload FAILED for " (str/join ", " failed)
-                               (if clean?
-                                 (str " — but the image was COMPARED to the store"
-                                      " and holds every form at its current"
-                                      " source, so this is the watcher stuck,"
-                                      " not stale code")
-                                 " — the host still runs their previous code")
+                               (str " — whether THIS process still holds the previous"
+                                    " code has not been measured"
+                                    (when clean?
+                                      (str "; the verification image compares"
+                                           " clean, but that is a different"
+                                           " process and is no evidence about"
+                                           " this one")))
                                (when-let [rs (seq (keep reason failed))]
                                  (str " (" (str/join "; " rs) ")"))
                                (if stuck?
@@ -224,12 +239,13 @@
                                  "; the next poll retries")))
 
                     (and (not failed) (seq drift))
-                    (conj (str (count drift) " form(s) in this image differ from"
-                               " the store — no reload failed, so nothing said"
-                               " so: " (str/join ", "
-                                                 (map #(str (:ns %) "/" (:form %)
-                                                            " (" (name (:why %)) ")")
-                                                      (take 5 drift)))))
+                    (conj (str (count drift) " form(s) in the VERIFICATION image"
+                               " differ from the store — no reload failed there,"
+                               " so nothing said so: "
+                               (str/join ", "
+                                         (map #(str (:ns %) "/" (:form %)
+                                                    " (" (name (:why %)) ")")
+                                              (take 5 drift)))))
 
                     (and (not failed) (= :snapshot (:mode info))
                          (pos? (or deltas-since-boot 0)))
@@ -257,9 +273,9 @@
         (:last-reload-at info) (assoc :last-reload-at (:last-reload-at info))
         failed                 (assoc :failed (vec failed))
         (seq why)              (assoc :failed-why why)
-        (seq drift)            (assoc :drift (vec (take 20 drift))
-                                      :drift-count (count drift))
-        clean?                 (assoc :image-verified true)
+        (seq drift)            (assoc :oracle-drift (vec (take 20 drift))
+                                      :oracle-drift-count (count drift))
+        clean?                 (assoc :oracle-verified true)
         note                   (assoc :note note)))))
 
 (defn ^:export code-deltas-since

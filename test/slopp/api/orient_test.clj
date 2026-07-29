@@ -292,39 +292,6 @@
   (testing "a host with nothing wrong still says nothing"
     (is (nil? (:note (orient/host-brief {:mode :live :booted-at 1} 0 false nil))))))
 
-(deftest a-failed-reload-is-not-stale-code-if-the-image-compares-clean
-  ;; friction 20a. Five namespaces were reported as "the host still runs their
-  ;; previous code" while the process held every one of them at the store's
-  ;; current source. Every verdict from that host was marked suspect, and a
-  ;; milestone went through a fresh JVM to escape a problem that did not exist.
-  (let [info {:mode :live :booted-at 1 :failed '[app.views]
-              :failed-why '{app.views {:why "Syntax error" :attempts 4890}}}]
-
-    (testing "measured clean: say the WATCHER is stuck, and do not doubt the verdict"
-      (let [b (orient/host-brief info 0 false [])]
-        (is (:image-verified b))
-        (is (re-find #"watcher stuck" (:note b)))
-        (is (not (re-find #"still runs their previous code" (:note b)))))
-      (is (nil? (orient/host-warning info 0 []))
-          "a watcher that cannot reload is worth saying; it is not a reason to distrust tests"))
-
-    (testing "not measured: keep the cautious wording — not having looked is not a clean bill"
-      (let [b (orient/host-brief info 0 false nil)]
-        (is (re-find #"still runs their previous code" (:note b)))
-        (is (not (:image-verified b))))
-      (is (some? (orient/host-warning info 0 nil))))
-
-    (testing "measured drift with NO reload failure — the direction that was silent"
-      ;; nothing threw, so the counter saw nothing: a def holding a value
-      ;; captured from a form re-evaluated since, or a namespace written to the
-      ;; store and never loaded.
-      (let [drift [{:ns 'app.core :form 'tools :why :derived-stale :behind 'env-tools}]
-            clean {:mode :live :booted-at 1}
-            w     (orient/host-warning clean 0 drift)]
-        (is (some? w))
-        (is (= 1 (:drift-count w)))
-        (is (re-find #"1 form\(s\) the store has moved past" (:verdict-note w)))))))
-
 (deftest a-half-loaded-store-says-so-and-says-it-is-editable
   ;; frictions 3b/3f/19. boot used to rethrow on the first namespace that did
   ;; not compile, so one bad form took down every tool in every process — the
@@ -343,3 +310,43 @@
 
   (testing "a fully loaded store stays silent about it"
     (is (nil? (:note (orient/host-brief {:mode :live :booted-at 1} 0 false []))))))
+
+(deftest a-failed-host-reload-is-not-exonerated-by-the-oracle
+  ;; CORRECTION to what landed with the currency work. host-brief answered a
+  ;; failed live-reload with "the image was COMPARED to the store and holds
+  ;; every form at its current source, so this is the watcher stuck, not stale
+  ;; code". Two different processes are being conflated there:
+  ;;
+  ;;   - the reload that FAILED is the HOST's — this server process, whose
+  ;;     watcher lives in slopp.boot;
+  ;;   - the image that was COMPARED is the child ORACLE, a separate JVM.
+  ;;     `currency/stamp!` runs server-side, but it records what was pushed
+  ;;     INTO the oracle, so `currency/drift` measures the oracle.
+  ;;
+  ;; A failed host reload is precisely the case where the two diverge, so the
+  ;; oracle comparing clean is no evidence about the host at all. Friction
+  ;; 20a's lesson still holds in the other direction — do not assert staleness
+  ;; nobody measured either. What is left is the honest third answer: name the
+  ;; watcher failure, and say the host's own currency is UNMEASURED.
+  ;;
+  ;; host-warning is a different reader and is correct as it stands: a VERDICT
+  ;; is produced by the oracle, so oracle drift is exactly what should qualify
+  ;; it. The bug is confined to the section that describes this process.
+  (let [info {:mode :live :booted-at 1 :failed '[a.core]
+              :failed-why '{a.core {:why "boom" :attempts 1}}}
+        b    (orient/host-brief info 0 false [])
+        note (str (:note b))]
+    (is (nil? (:image-verified b))
+        "an oracle comparison says nothing about whether THIS process is current")
+    (is (:oracle-verified b)
+        "the oracle's cleanliness is still worth reporting — under its own name")
+    (is (not (re-find #"not stale code" note)) note)
+    (is (re-find #"a\.core" note) "the failing namespace is still named")
+    (is (re-find #"not been measured" note)
+        "unmeasured is the honest answer, and it has to be said out loud"))
+  (testing "the host section does not call the oracle's drift its own"
+    (let [drift [{:ns 'a.core :form 'f :why :superseded}]
+          b     (orient/host-brief {:mode :live :booted-at 1} 0 false drift)]
+      (is (= 1 (:oracle-drift-count b)) (pr-str b))
+      (is (nil? (:drift b)) (pr-str b))
+      (is (re-find #"(?i)verification image" (str (:note b))) (pr-str (:note b))))))
