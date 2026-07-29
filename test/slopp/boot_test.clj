@@ -312,3 +312,73 @@
       (let [r2 (#'boot/ensure-repos!)]
         (is (= :kept (:action r2)) (pr-str r2))
         (is (= (:repos r) (:repos r2)))))))
+
+(deftest the-host-jar-declares-what-it-already-provides
+  ;; A `java -jar slopp.jar` process has NO basis, so `add-libs` sees an empty
+  ;; `:libs` and believes nothing is present. It then "adds" coords the host
+  ;; uberjar already carries — and loses, because it appends to a classloader
+  ;; that delegates to its PARENT first and the uberjar is the parent. The
+  ;; manifest read as satisfied at a version that was never in force.
+  ;;
+  ;; Seeding the basis with what the jar bundles fixes that at the source:
+  ;; `add-libs` filters a lib already in `:libs` by SYMBOL, ignoring version,
+  ;; so a bundled lib is skipped outright instead of falsely added.
+  (testing "seeds only into a basis that has no libs of its own"
+    (is (= '{metosin/malli {:mvn/version "0.17.0"}}
+           (#'boot/basis-libs-to-seed nil '{metosin/malli {:mvn/version "0.17.0"}}))
+        "nothing there yet — seed it")
+    (is (nil? (#'boot/basis-libs-to-seed
+               '{org.clojure/clojure {:mvn/version "1.12.5"}}
+               '{metosin/malli {:mvn/version "0.17.0"}}))
+        "a CLI-started process already has a real basis; never override it"))
+  (testing "nothing to seed is not an error"
+    (is (nil? (#'boot/basis-libs-to-seed nil nil))
+        "not running from an uberjar — no claim to make")
+    (is (nil? (#'boot/basis-libs-to-seed nil {})))))
+
+(deftest a-declared-version-the-host-overrides-is-named-not-hidden
+  ;; Seeding the basis stops the FALSE claim, but it does not make the
+  ;; declaration govern: a lib the uberjar bundles runs at the uberjar's
+  ;; version in this process no matter what the store declares, because a jar
+  ;; already loaded by the parent loader cannot be displaced. What changes is
+  ;; that the disagreement becomes SAYABLE.
+  ;;
+  ;; It is a real divergence, not a nicety: the oracle image is a separate
+  ;; `clojure -Sdeps` JVM that resolves the manifest properly, so the version
+  ;; the tests run against and the version the server runs can differ.
+  (testing "a bundled lib at another version is reported"
+    (is (= '{metosin/malli {:declared {:mvn/version "0.16.4"}
+                            :in-force {:mvn/version "0.17.0"}}}
+           (#'boot/host-lib-divergence
+            '{metosin/malli {:mvn/version "0.16.4"}}
+            '{metosin/malli {:mvn/version "0.17.0"}}))))
+  (testing "agreement is silence"
+    (is (empty? (#'boot/host-lib-divergence
+                 '{metosin/malli {:mvn/version "0.17.0"}}
+                 '{metosin/malli {:mvn/version "0.17.0"}}))
+        "same version — nothing to say"))
+  (testing "a lib the host does not bundle is not its business"
+    (is (empty? (#'boot/host-lib-divergence
+                 '{org.clojure/data.json {:mvn/version "2.5.0"}}
+                 '{metosin/malli {:mvn/version "0.17.0"}}))
+        "resolves normally; the host has no copy to win with")
+    (is (empty? (#'boot/host-lib-divergence
+                 '{metosin/malli {:mvn/version "0.16.4"}} nil))
+        "not running from an uberjar — nothing is overridden")))
+
+(deftest ^:external seeding-the-basis-survives-contact-with-a-real-runtime
+  ;; The pure half decides WHAT to seed; this covers the plumbing that carries
+  ;; it — `requiring-resolve` into `clojure.java.basis.impl` and the arity of
+  ;; `update-basis!`, neither of which any pure test touches and both of which
+  ;; are exactly what broke the first time the kernel reached for the basis.
+  ;;
+  ;; It asserts a REPORT rather than a state, because the answer legitimately
+  ;; differs by how the process was started: this test runs in the oracle
+  ;; image, which the Clojure CLI started with a real basis, so the honest
+  ;; outcome here is :kept. A jar-started host is where :seeded happens.
+  (let [r (#'boot/ensure-bundled-libs!)]
+    (is (#{:seeded :kept} (:action r)) (pr-str r))
+    (is (nat-int? (:libs r)) (pr-str r))
+    (testing "a second call never seeds over the first"
+      (is (= :kept (:action (#'boot/ensure-bundled-libs!)))
+          "once the basis names its libs, it is the basis"))))

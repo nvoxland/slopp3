@@ -121,6 +121,82 @@
   {"central" {:url "https://repo1.maven.org/maven2/"}
    "clojars" {:url "https://repo.clojars.org/"}})
 
+(def bundled-libs-path
+  "Resource naming what the host uberjar already provides, lib→coord.
+
+  Written by `build.clj` from the very basis that produced the jar, so it
+  cannot drift from what shipped — the alternative, restating slopp's deps by
+  hand, is a claim that goes stale the first time `deps.edn` changes."
+  "META-INF/slopp/bundled-libs.edn")
+
+(defn bundled-libs
+  "lib→coord for everything the host uberjar carries, or nil when this process
+  is not running from one (a `clojure -M` run, a checkout, the oracle image)."
+  []
+  (when-let [r (io/resource bundled-libs-path)]
+    (not-empty (edn/read-string (slurp r)))))
+
+(defn- basis-libs-to-seed
+  "PURE. What belongs in the basis's `:libs` given `current` and what the jar
+  bundles — the bundled set when there is no basis to speak of, else nil.
+
+  A FALLBACK, never an override, for the same reason `ensure-repos!` is one: a
+  process the Clojure CLI started already has a real basis describing a real
+  classpath, and replacing it with the jar's inventory would describe a
+  classpath that process does not have."
+  [current bundled]
+  (when (and (empty? current) (seq bundled))
+    bundled))
+
+(defn host-lib-divergence
+  "PURE. Where `manifest` and what the host jar `bundled` disagree about a
+  version: lib→`{:declared coord :in-force coord}`, empty when they agree.
+
+  Seeding the basis stops `add-libs` from CLAIMING it added a bundled lib, but
+  it cannot make the declaration govern — a jar the parent classloader already
+  holds cannot be displaced, so in this process the host's copy runs whatever
+  the store declares. The point of naming it is that the disagreement is real
+  and asymmetric: the oracle image is a separate `clojure -Sdeps` JVM that
+  resolves the manifest properly, so the version the TESTS run against and the
+  version the SERVER runs can differ, and every surface said neither.
+
+  Compared on version identity rather than the whole coord, because a resolved
+  coord carries `:deps/manifest`/`:parents` a declared one never has, and a
+  declared one carries `:exclusions` that are not a version disagreement."
+  [manifest bundled]
+  (let [ident #(select-keys % [:mvn/version :git/sha :git/tag :local/root])]
+    (into (sorted-map)
+          (keep (fn [[lib coord]]
+                  (when-let [have (get bundled lib)]
+                    (when (not= (ident coord) (ident have))
+                      [lib {:declared coord :in-force (ident have)}]))))
+          manifest)))
+
+^{:unsafe "reaching clojure.java.basis.impl needs requiring-resolve, which the dialect denylists. The kernel is the one place that may: it is what knows this process is a jar and what that jar contains."}
+(defn ensure-bundled-libs!
+  "Tell the dependency resolver what this process ALREADY HAS, returning
+  `{:libs n :action :seeded|:kept}`.
+
+  `add-libs` drops any coord whose lib is already in the basis's `:libs` — by
+  SYMBOL, ignoring version — and passes the rest to resolution as `:existing`.
+  A `java -jar` process has no basis, so that set is empty and both halves
+  misfire: a lib the uberjar bundles is 'added' and then loses to the parent
+  classloader, and every add drags in a transitive graph resolved as though
+  the JVM were bare — MEASURED: adding one small library re-added
+  `org.clojure/clojure` itself, plus ten others already present.
+
+  Seeding what the jar bundles fixes both at the source. A bundled lib is
+  skipped outright rather than falsely added, and what genuinely is new
+  resolves against a true picture of the classpath."
+  []
+  (let [bundled (bundled-libs)
+        current (:libs ((requiring-resolve 'clojure.java.basis/current-basis)))]
+    (if-let [seed (basis-libs-to-seed current bundled)]
+      (do ((requiring-resolve 'clojure.java.basis.impl/update-basis!)
+           update :libs merge seed)
+          {:libs (count seed) :action :seeded})
+      {:libs (count current) :action :kept})))
+
 ^{:unsafe "reaching clojure.java.basis.impl needs requiring-resolve, which the dialect denylists. The kernel is the one place that may: it is what has to make `java -jar slopp.jar <dir>` resolve a manifest at all."}
 (defn ensure-repos!
   "Make sure the dependency resolver has somewhere to LOOK, returning
@@ -172,6 +248,7 @@
       (.setContextClassLoader
        t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
   (ensure-repos!)
+  (ensure-bundled-libs!)
   (binding [*repl* true, *data-readers* *data-readers*]
     ((requiring-resolve 'clojure.repl.deps/add-libs) deps)))
 

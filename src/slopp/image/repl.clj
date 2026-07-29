@@ -155,11 +155,19 @@
   "The form the IMAGE evaluates to hot-add `deps-map` — a value, so what it
   does is checkable without spawning a JVM.
 
-  It seeds repositories first. The image is its own `java -cp … clojure.main`
-  process and so has no BASIS, exactly like a `java -jar` host; `add-libs`
-  builds its Maven procurer from the basis, and with none it has nowhere to
-  look — Maven then refuses even artifacts already in `~/.m2` that it cannot
+  It seeds repositories first, and only when there are none. `add-libs` builds
+  its Maven procurer from the basis, and with none it has nowhere to look —
+  Maven then refuses even artifacts already in `~/.m2` that it cannot
   attribute to a configured repository.
+
+  CORRECTED: this used to say the image has no basis, just like a `java -jar`
+  host. It does have one. The default image is `clojure -Sdeps … -M`, which
+  the CLI starts with a real basis — measured through a live oracle: both
+  standard repos, and every resolved lib of the store's manifest. So the seed
+  is a no-op on the path that actually runs. What earns it a place is the
+  other one: `start!` accepts a custom `:cmd`, and an image launched as a bare
+  `java -cp … clojure.main` has no basis at all. Guarded, it costs nothing and
+  covers that case; the reason first given for it was simply not true.
 
   This bites a USER's store harder than slopp's own, where the host uberjar
   happens to carry every declared lib and the failures were therefore

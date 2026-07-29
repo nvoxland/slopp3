@@ -267,16 +267,21 @@
       (finally (repl/drain-parked!)))))
 
 (deftest the-image-is-told-where-to-look-before-it-resolves
-  ;; The image is a separate JVM started as `java -cp … clojure.main`, which
-  ;; means it has no BASIS either — measured: `clojure.java.basis/current-basis`
-  ;; is nil there. `add-libs` builds its Maven procurer from the basis, so with
-  ;; none it has no repositories, and Maven then refuses even artifacts already
-  ;; in `~/.m2` that it cannot attribute to a configured repo.
+  ;; `add-libs` builds its Maven procurer from the BASIS, so a process without
+  ;; one has no repositories, and Maven then refuses even artifacts already in
+  ;; `~/.m2` that it cannot attribute to a configured repo.
   ;;
-  ;; This matters MORE here than for slopp's own store, where the host uberjar
-  ;; happens to carry every declared lib. A user's store gets none of its libs
-  ;; from slopp's jar: for them, an image that cannot resolve is an image that
-  ;; cannot run their tests.
+  ;; CORRECTED: this comment claimed the image is `java -cp … clojure.main` and
+  ;; that `current-basis` was measured nil there. Re-measured against a live
+  ;; oracle, it is not — `default-cmd` launches `clojure -Sdeps … -M`, and the
+  ;; CLI supplies a real basis with both standard repos and every resolved lib
+  ;; of the manifest. The seeding is still right, as a GUARD: `start!` takes a
+  ;; custom `:cmd`, and an image launched as a bare `java -cp` has no basis.
+  ;; What was wrong was the reason, which is worse than a missing one — it
+  ;; describes a process nobody runs, so nobody would think to check it.
+  ;;
+  ;; The ordering below is the real claim and it holds either way: seeding has
+  ;; to precede the resolution it exists to serve.
   ;;
   ;; The policy lives in `slopp.boot/ensure-repos!` and is CALLED rather than
   ;; restated, so the two processes cannot drift about where to look.

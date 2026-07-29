@@ -483,7 +483,7 @@
                   :properties {:lib {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_list"
-    :description "The dependency manifest: {lib coord}."
+    :description "The dependency manifest: {:deps {lib coord}}, plus :host-override for any declaration slopp's own process bundles at a different version and so cannot honor."
     :inputSchema {:type "object" :properties {}}}
    {:name "store_health"
     :description "What this store CARRIES, in bytes: the journal per op (heaviest first), the materialized state, the blob table, and the on-disk artifact cache. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."

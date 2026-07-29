@@ -318,7 +318,7 @@
                                            :agent (:agent a))))
    "deps_list"
    (fn [session _a _sym]
-     (text! (api/deps-list session)))
+     (text! (api/deps-manifest session)))
    "store_health"
    (fn [session _a _sym]
      (text! (external/store-health session)))

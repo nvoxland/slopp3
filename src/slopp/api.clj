@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency] [slopp.image.currency :as registry]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -1402,6 +1402,29 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   [session]
   (:deps (:store @session)))
 
+(defn deps-manifest
+  "The dependency manifest as an AGENT should read it: `{:deps {lib coord}}`,
+  plus `:host-override` naming any declaration slopp's own server process
+  cannot honor because it bundles that library itself.
+
+  Separate from `deps-list` on purpose. `deps-list` is the accessor — the
+  store's data, which other code and tests build on, and the host's classpath
+  is not part of it. This is the SURFACE, and the surface carries an
+  obligation the accessor does not: `deps_list` is the one answer an inherited
+  store ever gives about its dependencies, so a declaration that is inert in
+  the running server has to be visible here or nowhere."
+  [session]
+  (let [deps (deps-list session)
+        over (boot/host-lib-divergence deps (boot/bundled-libs))]
+    (cond-> {:deps deps}
+      (seq over)
+      (assoc :host-override over
+             :host-override-note
+             (str "slopp's own server process bundles these at the :in-force"
+                  " version and cannot displace them. Your declarations still"
+                  " govern the oracle image, the test suite and anything"
+                  " build! produces")))))
+
 (defn- record-pure!
   "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
   [session syms pure? {:keys [agent prompt]}]
@@ -1506,6 +1529,13 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   and native fail to load. An image that can run what a fresh JVM cannot LOAD is
   the cold-load failure class, and the cheapest place to not have it is here.
 
+  `:host-override` names a library slopp's OWN process bundles at a different
+  version. It is not a warning about this store — the declaration governs the
+  oracle, the test suite and every built artifact — but the server process
+  cannot honor it, because a jar its parent classloader already holds cannot be
+  displaced. Saying so is the whole point: the alternative is two processes
+  quietly running different code with every surface reporting agreement.
+
   With `:client true` the dep is BUILD-ONLY (the ClojureScript compiler): it
   records to the separate `:client-deps` manifest, is NOT analyzed and NOT
   hot-loaded, and routes to the `:cljs` alias in the generated deps.edn — so it
@@ -1533,35 +1563,46 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                                     [])
           (let [base (cond-> {:added lib :coord coord}
                        surf (assoc :namespaces (vec (:namespaces surf))
-                                   :vars (count (:vars surf))))]
-            (let [res (if (seq (:exclusions coord))
-                        (do (session/fresh-image! session)
-                            (assoc base :restarted true
-                                   :note (str "restarted rather than hot-added: add-libs ignores"
-                                              " :exclusions but a fresh JVM honors them, so the"
-                                              " image would have run a classpath no build or"
-                                              " external shard could reproduce")))
-                        (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
-                          (do (session/fresh-image! session) ; hot add failed → faithful restart
-                              (assoc base :restarted true :note (:err hot)))
-                          (assoc base :hot true)))
-                  ;; friction 2: only now is the jar on the image's classpath,
-                  ;; so only now can its published tiers be read
-                  adopted (adopt-published-tiers! session {:agent agent})
-;; friction 15a: it RESOLVED — but did it win? Anything the host
-                  ;; jar already provides sits earlier on the classpath.
-                  shadowed (shadowed-dep-namespaces! session (:namespaces surf))]
-              (cond-> res
-                (seq adopted) (assoc :adopted-pure adopted)
-                (seq shadowed)
-                (assoc :shadowed shadowed
-                       :shadowed-note
-                       (str "these namespaces are provided by something EARLIER"
-                            " on the classpath, so the version you declared is"
-                            " NOT the one in force — the first url listed is."
-                            " add-libs appends to a classloader that delegates"
-                            " to its parent first, and the host jar is that"
-                            " parent"))))))))))
+                                   :vars (count (:vars surf))))
+                res  (if (seq (:exclusions coord))
+                       (do (session/fresh-image! session)
+                           (assoc base :restarted true
+                                  :note (str "restarted rather than hot-added: add-libs ignores"
+                                             " :exclusions but a fresh JVM honors them, so the"
+                                             " image would have run a classpath no build or"
+                                             " external shard could reproduce")))
+                       (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
+                         (do (session/fresh-image! session) ; hot add failed → faithful restart
+                             (assoc base :restarted true :note (:err hot)))
+                         (assoc base :hot true)))
+                ;; friction 2: only now is the jar on the image's classpath,
+                ;; so only now can its published tiers be read
+                adopted (adopt-published-tiers! session {:agent agent})
+                ;; friction 15a: it RESOLVED — but did it win? Anything the host
+                ;; jar already provides sits earlier on the classpath.
+                shadowed (shadowed-dep-namespaces! session (:namespaces surf))
+                overridden (boot/host-lib-divergence {lib coord} (boot/bundled-libs))]
+            (cond-> res
+              (seq adopted) (assoc :adopted-pure adopted)
+              (seq overridden)
+              (assoc :host-override overridden
+                     :host-override-note
+                     (str "slopp's own server process bundles this library at"
+                          " the :in-force version and cannot displace it — a jar"
+                          " the parent classloader already holds stays. Your"
+                          " declaration still governs the oracle image, the test"
+                          " suite and anything build! produces, so the two can"
+                          " run different code; pin to the bundled version if"
+                          " that matters here"))
+              (seq shadowed)
+              (assoc :shadowed shadowed
+                     :shadowed-note
+                     (str "these namespaces are provided by something EARLIER"
+                          " on the classpath, so the version you declared is"
+                          " NOT the one in force — the first url listed is."
+                          " add-libs appends to a classloader that delegates"
+                          " to its parent first, and the host jar is that"
+                          " parent")))))))))
 
 (defn deps-pure!
   "Assert a dependency is PURE — narrowing M3's effectful-by-default boundary so

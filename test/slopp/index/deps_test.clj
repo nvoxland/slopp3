@@ -327,3 +327,30 @@
   (testing "a project plugs in another backend via the client/compiler config"
     (is (= :cherry (build/client-compiler
                     {:config {"client" {:values {"compiler" "cherry"}}}})))))
+
+(deftest ^:external the-manifest-surface-answers-for-the-host-too
+  ;; `deps_list` is the canonical "what does this store depend on" answer, and
+  ;; for an inherited store it is the ONLY one anybody reads — the `deps_add`
+  ;; report was seen once, by whoever typed it. So a declaration slopp's own
+  ;; process overrides has to be visible here too, or the manifest reads as
+  ;; wholly in force when part of it is inert.
+  ;;
+  ;; `api/deps-list` keeps returning the bare manifest: it is the accessor
+  ;; other code and tests build on, and the host's classpath is not the
+  ;; store's data. The WRAPPING is what the agent-facing surface returns.
+  (let [dir (temp-dir)
+        sess (external/open! {:slopp.api/dir dir})]
+    (try
+      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+                     :agent "a")
+      (let [m (api/deps-manifest sess)]
+        (is (= {:mvn/version "2.5.0"} (get (:deps m) 'org.clojure/data.json))
+            "the declarations are still all there, under :deps")
+        (is (= (api/deps-list sess) (:deps m))
+            "and they are exactly what the accessor returns")
+        (testing "silence when nothing is overridden"
+          ;; this suite runs from a checkout, not a jar, so nothing is bundled
+          ;; — the key must be ABSENT rather than present-and-empty, or every
+          ;; caller has to distinguish two spellings of nothing
+          (is (not (contains? m :host-override)) (pr-str m))))
+      (finally (api/close! sess)))))
