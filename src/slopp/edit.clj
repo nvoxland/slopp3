@@ -475,6 +475,47 @@
                " (deftest ^:external " (second s) " …) — external tests run in"
                " the external suite (test_run {:external true})"))))))
 
+(defn live-callers-error
+  "Refuse deleting `ns-sym/nm` while something still CALLS it — nil when
+  nothing does.
+
+  The delete was accepted and the damage arrived later, somewhere else: the
+  form goes, the reload of its namespace fails to compile, and the store then
+  boots NOWHERE. Three times in one wave that left a store its own tools could
+  not open. `delete-form!`'s docstring claimed the failure would show up as
+  tests going red, \"the honest signal if it was still referenced\" — but the
+  reload fails before any test runs, so the verification reported zero tests
+  and nothing wrong.
+
+  Only `:static` references count: those are the ones that must resolve at
+  compile time and so are the ones that break the load. A quoted symbol
+  (`:carrier`) or a `^{:covers}` marker names the form without needing it to
+  exist. A form calling ITSELF is not a caller — recursion would otherwise
+  make every recursive function undeletable.
+
+  Same-namespace callers count, and they are the common case: the delete that
+  bricked the store was used by three performers in its OWN namespace, and a
+  cross-namespace-only check would have waved it through."
+  [store ns-sym nm]
+  (let [qsym    (symbol (str ns-sym) (str nm))
+        callers (->> (refs/refs-to store qsym)
+                     (filter #(= :static (:via %)))
+                     (remove #(and (= ns-sym (:from-ns %)) (= nm (:from-var %))))
+                     (map #(symbol (str (:from-ns %)) (str (:from-var %))))
+                     distinct sort vec)]
+    (when (seq callers)
+      {:error (str qsym " is still called by "
+                   (str/join ", " (take 8 callers))
+                   (when (> (count callers) 8)
+                     (str " (+" (- (count callers) 8) " more)"))
+                   " — delete or update them first."
+                   " query_depends {on \"" qsym "\"} lists every caller."
+                   " Deleting it now would be accepted and the RELOAD would"
+                   " fail, leaving the store unable to boot. To remove a"
+                   " caller and its callee together, use edit_group with the"
+                   " caller's delete step FIRST — a group applies its steps in"
+                   " order and verifies once at the end.")})))
+
 (defn ambiguous-form-error
   "nil when exactly one element of `ns-sym` bears on `nm`; otherwise the
   refusal every destructive write shares — the sibling of

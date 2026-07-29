@@ -200,7 +200,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
-    :description "Delete a top-level form (ns-unmap, verified)."
+    :description "Delete a top-level form (verified write; ns-unmap in the image, and a defmethod is unregistered from its multi). REFUSES while anything still CALLS it, naming the callers — the same stance ns_delete takes for a namespace something still requires, and for the same reason: the delete would commit, the namespace would fail to RELOAD, and the store would boot nowhere. Only compile-time (:static) references block; a quoted symbol or a ^{:covers} marker does not, and a recursive fn is not its own caller. To remove a caller and its callee TOGETHER, use edit_group with the caller's delete step FIRST — a group applies steps in order against one store value and verifies once at the end. Say WHY in prompt."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :prompt {:type "string"}

@@ -604,8 +604,23 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
 
 (defn delete-form!
   "Delete the form named `nm` from `ns-sym`: `:delete` delta, `ns-unmap` in the
-  image, verification (tests that exercised it will go red — the honest signal
-  if it was still referenced), provenance.
+  image, verification, provenance.
+
+  **Refuses while anything still CALLS it** (`edit/live-callers-error`), the
+  same stance `delete-ns!` has always taken for a namespace something still
+  requires. This docstring used to promise the opposite — that a still-
+  referenced delete was fine because \"tests that exercised it will go red, the
+  honest signal\". There is no such signal: the namespace fails to RELOAD before
+  any test runs, so verification reported zero tests and nothing wrong while
+  the store stopped booting entirely (frictions 3f/19).
+
+  The escape hatch is `edit_group`, which is deliberately NOT guarded this way:
+  its steps apply in order to one store value and verify once at the end, so a
+  caller and its callee can go together, and a mid-sequence state with a
+  dangling reference is legitimate. That also keeps `undo!` /
+  `revert-episode!` / the rename sweeps working — they ride through the group
+  path and replay machine-ordered deltas, where insisting on a
+  never-dangling intermediate state would refuse correct work.
 
   Refuses when `nm` addresses TWO elements (a legacy `(declare nm)` beside its
   definition): resolving by position deletes whichever happens to come first,
@@ -623,6 +638,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   (or
    (edit/ns-form-delete-error ns-sym nm)
    (edit/ambiguous-form-error (:store @session) ns-sym nm)
+   (edit/live-callers-error (:store @session) ns-sym nm)
    (let [victim  (store/form-named (:store @session) ns-sym nm)
          vsexpr  (when victim (try (n/sexpr (:node victim)) (catch Exception _ nil)))
          unregister
