@@ -26,12 +26,20 @@ brief.
 
 Never rename by editing call sites, and never hand-edit an `ns` form.
 
-**Check callers before you delete.** `query_depends {on "some.ns/name"}` is one
-call and it answers exactly the question. Deleting a form that something still
-calls is *accepted* rather than refused -- the write lands, and then the image
-cannot reload, so the store stops loading until you `undo`. The message you get
-back reads like a rejection and is not one, which is the part that catches
-people out.
+**A delete that would break a caller is refused.** `edit_delete_form` consults
+the reference graph first and names every caller, the same way `ns_delete`
+refuses to retire a namespace something still requires. Only references that
+must resolve at compile time count, so a quoted symbol or a `^{:covers}` marker
+does not block you, and a recursive function is not its own caller.
+
+To remove a caller and its callee together, put both in one `edit_group` with
+the caller's delete step first. A group applies its steps in order against a
+single store value and verifies once at the end, so an intermediate state with
+a dangling reference is fine -- that is the deliberate escape hatch.
+
+`query_depends {on "some.ns/name"}` answers the same question *before* you
+write, which is what you want when you are planning a removal rather than
+learning its size from a refusal.
 
 ## edit_subform
 
