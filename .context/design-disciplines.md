@@ -540,3 +540,43 @@ If answering takes more than a moment, the reader will not answer it at all.
 That is the same test that banned macros and `eval`, generalized. A construct
 that only saves typing is not worth an invisible edge; a surface that cannot
 say "I didn't check" is not worth its trust.
+
+## Core 8 — the unit you EDIT is not the unit you must EVALUATE
+
+**Root.** Derived 2026-07-29 by 5-whys over frictions 1 and 17, after noticing
+that "fixing" 1 closed 17 without touching it.
+
+slopp's thesis is that the top-level form is the unit of editing, storage,
+hot-reload, verification and provenance. Four of those five are right. The
+fifth — evaluation — was inherited from the list rather than chosen, and it is
+the one Clojure does not agree with.
+
+Loading is order-dependent and leaves effects that outlive the form: a value
+snapshotted into a `def`, an evaluated metadata map, a registration in a
+multimethod table. Re-evaluating ONE form replays none of them. So per-form
+hot-load equals loading only when a form's entire contribution to the image is
+its own var binding and nothing else read it at load time — true for a `defn`,
+false for everything that captures.
+
+| Instance | What survived the "reload" |
+|---|---|
+| friction 1 | a `def` holding a value computed from the edited form |
+| friction 17 | `^{:web/response schema}` metadata, evaluated at load |
+| #131 (twice) | a defmethod's entry in the multi's method table |
+| `defonce` | the whole form — it is never re-evaluated by contract |
+
+**The tell that it was structural:** the correct behaviour already existed in
+the same codebase. `--live` reloads whole NAMESPACES and never had any of
+these; the oracle reloads FORMS and had all of them. Two loaders, two different
+meanings of "reload", and nobody had written down that they disagreed.
+
+**Discipline.** When a unit is load-bearing for one concern, do not assume it
+is the right unit for the others — say which concern each grain serves. Where
+they differ, let the SEMANTICS of the operation pick the grain, not the
+ergonomics of the interface. Here: edit a form, repair a namespace.
+
+**Tell:** the same bug fixed twice by category. `edit-replace!` and
+`delete-form!` each grew a hand-written `unregister` branch for defmethod
+before anyone asked what defmethod had in common with a derived `def`. A second
+special case for a third instance of one class is the moment to stop and name
+the class — the first one is a fix, the second is evidence.

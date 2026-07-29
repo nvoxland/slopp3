@@ -2927,3 +2927,63 @@ existed to avoid. Revisit when an app publishes for a real consumer.
 stays, because the MCP still binds its own listener and beats to the hub.
 `review.heartbeat` now takes its interval from the registration response
 rather than a shared constant, so the two sides can be different releases.
+
+## D-evaluation-unit (2026-07-29) — the form is the editing unit, the namespace is the repair unit
+
+**Decision.** A per-form hot-load stays the fast path for every write. When a
+write leaves something holding a value CAPTURED from the edited form, the
+namespaces holding those forms are reloaded through `image/load-ns!` — the same
+loader every other path uses — before verification runs.
+
+**Why this was a class, not a run of incidents.** Per-form hot-load was treated
+as equivalent to loading the form. That equivalence holds only when a form's
+whole contribution to the image is its own var binding and nothing else read it
+at load time. Clojure's load semantics are order-dependent: evaluating a form
+can snapshot another var into a value, evaluate metadata, or mutate a registry.
+Re-evaluating one form replays none of that.
+
+The tell was that slopp already had the correct behaviour in one place and the
+broken one in another. `--live` reloads whole NAMESPACES and never had this
+bug; the oracle reloads FORMS and had all of these:
+
+| instance | what stayed stale |
+|---|---|
+| friction 1 | `(def tools (concat … env-tools …))` after editing `env-tools` |
+| friction 17 | `^{:web/response schema}` metadata after editing the schema |
+| #131 (twice) | a defmethod's registration in the multi's method table |
+| `defonce` | nothing re-evaluates it, by its own contract |
+
+Two of those had already been patched INDIVIDUALLY — `edit-replace!` and
+`delete-form!` each carry a hand-written `unregister` special case for
+defmethod. Two hand-patches of one class is the signal that the class is the
+thing to fix.
+
+**Why not the alternatives.** Always reloading the namespace is simplest and
+provably matches the semantics we already trust, but taxes every write with a
+full namespace load and re-runs top-level effects each time. Cascading
+form-by-form re-evaluation is the most precise, but needs a `defonce`
+exclusion, a cycle policy, and a rule for side-effecting defs — new machinery
+to get right, where namespace reload is machinery already trusted. Detect-and
+-report alone leaves the class open.
+
+Measured on this store: 35 of 2202 forms capture at load at all (28 computed
+`def`s, 7 metadata-carrying), so the repair path is rare and an ordinary `defn`
+write pays nothing.
+
+**Scope, honestly.** The repair rides `edit-replace!`, so `edit_subform`,
+`ns_add_require`, `ns_remove_require` and `edit_revert` inherit it.
+`edit_add_form` needs none — nothing captured a brand-new form — and
+`edit_delete_form` now refuses while anything still references the form.
+**`edit_group` does NOT repair**: its steps go through `apply-group-step` with
+their own hot actions, and `undo` / `episode_revert` / the rename sweeps ride
+that path, where a mid-sequence reload could fight machine-ordered replay.
+That is a known gap, not an oversight.
+
+**What this does NOT retire.** The defmethod `unregister` special cases stay. A
+namespace reload re-runs a `defmethod` form, but nothing REMOVES a method whose
+dispatch value changed or was deleted — removal is a different problem from
+refreshing a captured value, and reloading cannot do it.
+
+**Reported, because a namespace reload is a real cost:** `:image-reloaded`
+names what was reloaded, `:image-reload-failed` carries a reload that errored,
+and `:stale-in-image` survives only for what the repair could not reach.
