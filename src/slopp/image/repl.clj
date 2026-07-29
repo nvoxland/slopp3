@@ -5,7 +5,7 @@
   backstop. Phase-1 uses plain restart; the warm-spare optimization is deferred."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [nrepl.core :as nrepl])
+            [nrepl.core :as nrepl] [slopp.boot :as boot])
   (:import [java.io BufferedReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -151,6 +151,32 @@
    (doall (nrepl/message (:client image) {:op "eval" :code code
                                           :session (:session image)}))))
 
+(defn- add-libs-code
+  "The form the IMAGE evaluates to hot-add `deps-map` — a value, so what it
+  does is checkable without spawning a JVM.
+
+  It seeds repositories first. The image is its own `java -cp … clojure.main`
+  process and so has no BASIS, exactly like a `java -jar` host; `add-libs`
+  builds its Maven procurer from the basis, and with none it has nowhere to
+  look — Maven then refuses even artifacts already in `~/.m2` that it cannot
+  attribute to a configured repository.
+
+  This bites a USER's store harder than slopp's own, where the host uberjar
+  happens to carry every declared lib and the failures were therefore
+  invisible. Nothing of a user's manifest comes from slopp's jar.
+
+  `slopp.boot/ensure-repos!` is CALLED, not restated, so the host and the
+  image cannot come to disagree about where artifacts live."
+  [deps-map]
+  (str "(do (require 'clojure.repl.deps 'clojure.java.basis"
+       " 'clojure.java.basis.impl)"
+       " (when-not (seq (:mvn/repos (clojure.java.basis/current-basis)))"
+       " (clojure.java.basis.impl/update-basis! merge {:mvn/repos "
+       (pr-str boot/default-repos) "}))"
+       " (intern 'user 'slopp-image-dirty true)"
+       " (clojure.repl.deps/add-libs '" (pr-str deps-map) ")"
+       " (ns-unmap 'user 'slopp-image-dirty))"))
+
 (defn ^:export add-libs!
   "Hot-add dependency coords (`deps-map`, lib→coord) to the RUNNING image via
   Clojure 1.12 `clojure.repl.deps/add-libs` — no restart. Idempotent for
@@ -176,10 +202,7 @@
   (when (seq deps-map)
     (let [r (eval-checked!
              handle
-             (str "(do (require 'clojure.repl.deps)"
-                  " (intern 'user 'slopp-image-dirty true)"
-                  " (clojure.repl.deps/add-libs '" (pr-str deps-map) ")"
-                  " (ns-unmap 'user 'slopp-image-dirty))"))]
+             (add-libs-code deps-map))]
       (when (:err r) r))))
 
 (defn- benign-load-noise?

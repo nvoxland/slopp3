@@ -219,7 +219,7 @@
   ;; boot thread's world without spawning a JVM — and a coord already IN the
   ;; manifest keeps the check off the network.
   (let [p (promise)]
-    (.start (Thread. #(deliver p (try (#'boot/add-libs!*
+    (.start (Thread. #(deliver p (try (#'boot/add-libs-here!
                                        '{rewrite-clj/rewrite-clj {:mvn/version "1.1.48"}})
                                       :ok
                                       (catch Throwable t (str (.getMessage t)))))))
@@ -283,3 +283,32 @@
         (is (= [] (boot/host-drift))
             "a comparison reports the present; it cannot get stuck like a failure record"))
       (finally (reset! boot/host-loaded saved)))))
+
+(deftest ^:external manifest-resolution-gets-a-repository-set
+  ;; `add-libs` builds its Maven procurer from the current BASIS's namespaced
+  ;; keys, and a `java -jar` process has no basis at all — so :mvn/repos is
+  ;; empty, and Maven will neither download an artifact nor TRUST one ~/.m2
+  ;; already holds: a cached POM records the repository it came from
+  ;; (`jackson-base-2.17.0.pom>central=`), and one it cannot attribute to a
+  ;; CONFIGURED repo is reported as "Could not find artifact".
+  ;;
+  ;; MEASURED: cheshire 5.13.0 failed with "Could not find artifact
+  ;; com.fasterxml.jackson:jackson-base:pom:2.17.0" and resolved :ok
+  ;; immediately after seeding repos into the basis — same JVM, same ~/.m2,
+  ;; nothing else changed. `clojure -Sdeps … -Spath` had always resolved it,
+  ;; which is what kept this looking environmental.
+  ;;
+  ;; The result is reported rather than read back out of the basis, because
+  ;; reaching the basis needs `requiring-resolve` and the dialect denylists it
+  ;; outside the kernel — the kernel is what may touch this, so the kernel is
+  ;; what answers for it.
+  (let [r (#'boot/ensure-repos!)]
+    (is (seq (:repos r)) "the resolver has somewhere to look")
+    (is (#{:seeded :kept} (:action r)) (pr-str r))
+    (testing "a second call KEEPS what is already configured"
+      ;; a CLI-started process, or one pointed at a private mirror, has already
+      ;; been told where to look; overriding that would break the very case the
+      ;; default is only guessing at
+      (let [r2 (#'boot/ensure-repos!)]
+        (is (= :kept (:action r2)) (pr-str r2))
+        (is (= (:repos r) (:repos r2)))))))

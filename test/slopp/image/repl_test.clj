@@ -1,6 +1,18 @@
 (ns slopp.image.repl-test
+  "The oracle image as a PROCESS: that it starts, answers, dies with its
+  parent, never leaks a child JVM on a failed boot, resets to baseline or
+  refuses honestly, and parks under a key that names its classpath.
+
+  Almost everything here is about a boundary an in-image test cannot see. A
+  subprocess that outlives its parent, a classpath that cannot be named, a
+  hot-add that resolves against the wrong basis — none of these are visible
+  from inside one JVM, so the tests either drive a real process or check the
+  CODE that will be sent across, as a value, before it is."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.image.repl :as repl] [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.string]
+            [slopp.boot :as boot]
+            [slopp.image.repl :as repl]))
 
 (deftest ^:external owned-repl-eval-and-restart
   (let [h (repl/start!)]
@@ -253,3 +265,38 @@
             (repl/stop! got))))
       (is (nil? (repl/unpark! {})) "an empty pool hands over nothing")
       (finally (repl/drain-parked!)))))
+
+(deftest the-image-is-told-where-to-look-before-it-resolves
+  ;; The image is a separate JVM started as `java -cp … clojure.main`, which
+  ;; means it has no BASIS either — measured: `clojure.java.basis/current-basis`
+  ;; is nil there. `add-libs` builds its Maven procurer from the basis, so with
+  ;; none it has no repositories, and Maven then refuses even artifacts already
+  ;; in `~/.m2` that it cannot attribute to a configured repo.
+  ;;
+  ;; This matters MORE here than for slopp's own store, where the host uberjar
+  ;; happens to carry every declared lib. A user's store gets none of its libs
+  ;; from slopp's jar: for them, an image that cannot resolve is an image that
+  ;; cannot run their tests.
+  ;;
+  ;; The policy lives in `slopp.boot/ensure-repos!` and is CALLED rather than
+  ;; restated, so the two processes cannot drift about where to look.
+  (let [code (#'repl/add-libs-code '{some/lib {:mvn/version "1.0.0"}})]
+    (is (string? code))
+    (testing "repos are seeded before the resolution, not after it"
+      (let [seed (clojure.string/index-of code "update-basis!")
+            add  (clojure.string/index-of code "add-libs '")]
+        (is (some? seed) code)
+        (is (some? add) code)
+        (is (< seed add) "seeding after resolving would be too late"))
+      (testing "and the repository VALUE comes from the kernel, not a second copy"
+        (is (clojure.string/includes?
+             code (str (first (keys boot/default-repos))))
+            code)))
+    (testing "the coord still travels, quoted"
+      ;; pr-str may render {some/lib …} in namespaced-map form, #:some{lib …},
+      ;; which reads back identically — so assert the coord and the quote, not
+      ;; one spelling of the map
+      (is (clojure.string/includes? code "1.0.0") code)
+      (is (clojure.string/includes? code "add-libs '") code))
+    (testing "the dirty mark still brackets the add"
+      (is (clojure.string/includes? code "slopp-image-dirty") code))))

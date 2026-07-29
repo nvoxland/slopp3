@@ -25,7 +25,7 @@ slopp.git-projection: slopp.api slopp.git slopp.store
 slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
-slopp.image: slopp.rt slopp.store
+slopp.image: slopp.boot slopp.rt slopp.store
 slopp.index: slopp.api slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.index slopp.store

@@ -114,8 +114,41 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
+(def default-repos
+  "Where to look for artifacts when the runtime cannot say — the same two the
+  Clojure CLI's root deps.edn configures, so this RESTORES the default rather
+  than inventing one."
+  {"central" {:url "https://repo1.maven.org/maven2/"}
+   "clojars" {:url "https://repo.clojars.org/"}})
+
+^{:unsafe "reaching clojure.java.basis.impl needs requiring-resolve, which the dialect denylists. The kernel is the one place that may: it is what has to make `java -jar slopp.jar <dir>` resolve a manifest at all."}
+(defn ensure-repos!
+  "Make sure the dependency resolver has somewhere to LOOK, returning
+  `{:repos … :action :seeded|:kept}`.
+
+  `add-libs` builds its Maven procurer from the current BASIS's namespaced
+  keys, and a `java -jar` process has no basis — so `:mvn/repos` is empty.
+  Maven then neither downloads an artifact nor TRUSTS one `~/.m2` already
+  holds: a cached POM records the repository it came from
+  (`jackson-base-2.17.0.pom>central=`), and one it cannot attribute to a
+  configured repo is reported as `Could not find artifact`. That is why this
+  looked like a cold cache for so long, and why `clojure -Sdeps … -Spath`
+  always resolved the same coord from the same `~/.m2`: the CLI supplies a
+  basis, and nothing here did.
+
+  A FALLBACK, never an override. A process started by the CLI, or one pointed
+  at a private mirror, has already been told where to look, and replacing that
+  would break exactly the case this default is guessing at."
+  []
+  (let [current ((requiring-resolve 'clojure.java.basis/current-basis))]
+    (if (seq (:mvn/repos current))
+      {:repos (:mvn/repos current) :action :kept}
+      (do ((requiring-resolve 'clojure.java.basis.impl/update-basis!)
+           merge {:mvn/repos default-repos})
+          {:repos default-repos :action :seeded}))))
+
 ^{:unsafe "add-libs IS the dynamic-classpath escape hatch, and making a thread capable of it means installing a classloader and binding the vars the dialect denylists. The kernel is the one place that can do this."}
-(defn- add-libs!*
+(defn- add-libs-here!
   "Run Clojure 1.12 `add-libs` for `deps` on THIS thread, whatever thread it
   is — the whole reason this is its own function.
 
@@ -138,6 +171,7 @@
                          (.getContextClassLoader t))
       (.setContextClassLoader
        t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
+  (ensure-repos!)
   (binding [*repl* true, *data-readers* *data-readers*]
     ((requiring-resolve 'clojure.repl.deps/add-libs) deps)))
 
@@ -171,14 +205,14 @@
                            conn ["SELECT v FROM meta WHERE k = 'deps'"])
                           :meta/v edn/read-string not-empty)]
     (try
-      (add-libs!* deps)
+      (add-libs-here! deps)
       (catch Throwable t
         (log! "slopp.boot: manifest deps did not resolve as one graph ("
               (.getMessage t) ") — retrying one at a time")
         (let [failed (reduce
                       (fn [acc [lib coord]]
                         (try
-                          (add-libs!* {lib coord})
+                          (add-libs-here! {lib coord})
                           acc
                           (catch Throwable t2
                             (conj acc (str lib " (" (.getMessage t2) ")")))))
