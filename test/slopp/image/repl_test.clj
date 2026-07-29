@@ -39,8 +39,13 @@
     (is (re-find #"metosin/malli" sdeps))
     (is (re-find #"nrepl/nrepl" sdeps)))
   (testing "inherent deps win a colliding manifest entry (slopp controls versions)"
-    (let [sdeps (nth (#'slopp.image.repl/default-cmd '{metosin/malli {:mvn/version "0.0.0"}}) 2)]
-      (is (re-find #"0\.17\.0" sdeps))
+    ;; The expected version is READ from `inherent-deps`, not restated here.
+    ;; Pinning the literal made this test the thing you had to remember on an
+    ;; upgrade — it failed on the malli bump for no reason anyone cared about,
+    ;; while the rule it exists to protect had not changed at all.
+    (let [ours  (get-in repl/inherent-deps '[metosin/malli :mvn/version])
+          sdeps (nth (#'slopp.image.repl/default-cmd '{metosin/malli {:mvn/version "0.0.0"}}) 2)]
+      (is (clojure.string/includes? sdeps ours) sdeps)
       (is (not (re-find #"0\.0\.0" sdeps))))))
 
 (deftest ^:external image-dies-with-its-parent

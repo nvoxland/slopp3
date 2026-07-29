@@ -32,7 +32,7 @@
   — the server/boot JVM runs on the kernel deps (root deps.edn); slopp code that
   uses these must run in the image (feature-detected, like `slopp.rt`)."
   '{nrepl/nrepl   {:mvn/version "1.3.1"}
-    metosin/malli {:mvn/version "0.17.0"}})
+    metosin/malli {:mvn/version "0.20.1"}})
 
 (def ^:private watchdog-src
   "Source for the parent-death watchdog thread, evaluated INSIDE the child.
