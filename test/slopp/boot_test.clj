@@ -225,3 +225,61 @@
                                       (catch Throwable t (str (.getMessage t)))))))
     (is (= :ok (deref p 120000 :timed-out))
         "a manifest coord must resolve on a thread carrying no REPL bindings")))
+
+(deftest host-staleness-is-a-comparison-not-a-counter
+  ;; The host half of the currency work. What this process HOLDS is recorded
+  ;; at each successful load; what the store SAYS is `store-sources`. Both
+  ;; sides are kernel-rendered, and that is the whole point — this namespace's
+  ;; own docstring records that `store-sources` cannot be compared against
+  ;; `render-ns`, because the kernel has to render with no slopp code loaded.
+  ;; Comparing across the two renderings would report every namespace stale
+  ;; the first time they differed by a space, which is the proxy-instead-of-
+  ;; measurement failure the whole currency thread exists to end.
+  ;;
+  ;; `now` arrives already filtered to what a JVM may load: a :cljs namespace
+  ;; is never loaded here by design, so counting it as stale would be a
+  ;; permanent false positive.
+  (let [a-src  "(ns a.core)\n(def x 1)\n"
+        b-src  "(ns b.core)\n"
+        now    {'a.core a-src 'b.core b-src}
+        loaded {'a.core (hash a-src) 'b.core (hash b-src)}]
+    (is (= [] (boot/host-stale-of loaded now))
+        "a process holding exactly what the store says is current")
+    (testing "a namespace whose source moved on is named"
+      (is (= '[a.core]
+             (boot/host-stale-of (assoc loaded 'a.core (hash "(ns a.core)\n")) now))))
+    (testing "a namespace this process never loaded is stale, not absent"
+      (is (= '[b.core] (boot/host-stale-of (dissoc loaded 'b.core) now))))
+    (testing "a namespace the store no longer has is not this measure's business"
+      (is (= [] (boot/host-stale-of (assoc loaded 'gone.ns 123) now))))
+    (testing "several are reported in a stable order, not just the first"
+      (is (= '[a.core b.core] (boot/host-stale-of {} now))))))
+
+(deftest host-currency-separates-not-measured-from-measured-clean
+  ;; nil and [] are different claims and only one is a promise. The watcher's
+  ;; `:failed` map could say "stale" forever (friction 20a: a rename left it
+  ;; retrying a namespace that no longer existed), because a failure record is
+  ;; a memory of an event rather than a statement about the present. A
+  ;; comparison cannot outlive its condition: re-measure and it clears.
+  ;;
+  ;; The atom is process-global, so this saves and restores it — a test that
+  ;; left it mutated would corrupt the very record it is checking.
+  (let [saved @boot/host-loaded]
+    (try
+      (reset! boot/host-loaded {:armed? false :nses {} :stale nil})
+      (is (nil? (boot/host-drift))
+          "nobody looked, which is not the same as looked and found nothing")
+      (#'boot/record-loaded! 'a.core "(ns a.core)\n")
+      (is (nil? (boot/host-drift))
+          "recording a load is not measuring — arming is the comparison's job")
+      (#'boot/measure-host! '{a.core "(ns a.core)\n"})
+      (is (= [] (boot/host-drift)) "measured, and this process is current")
+      (testing "the store moving on shows up at the next measure"
+        (#'boot/measure-host! '{a.core "(ns a.core)\n(def x 1)\n"})
+        (is (= '[a.core] (boot/host-drift))))
+      (testing "and a successful reload CLEARS it"
+        (#'boot/record-loaded! 'a.core "(ns a.core)\n(def x 1)\n")
+        (#'boot/measure-host! '{a.core "(ns a.core)\n(def x 1)\n"})
+        (is (= [] (boot/host-drift))
+            "a comparison reports the present; it cannot get stuck like a failure record"))
+      (finally (reset! boot/host-loaded saved)))))

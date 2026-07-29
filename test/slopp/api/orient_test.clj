@@ -350,3 +350,60 @@
       (is (= 1 (:oracle-drift-count b)) (pr-str b))
       (is (nil? (:drift b)) (pr-str b))
       (is (re-find #"(?i)verification image" (str (:note b))) (pr-str (:note b))))))
+
+(deftest a-failed-reload-is-a-stuck-watcher-when-THIS-process-compares-clean
+  ;; The claim removed earlier today, now earned. It was wrong because the
+  ;; comparison behind it was against the child ORACLE. Measured against this
+  ;; process — `slopp.boot/host-drift`, which every door into this JVM writes
+  ;; — "the watcher is stuck, not stale code" is exactly right, and it is what
+  ;; friction 20a needed: a rename left the watcher retrying a namespace the
+  ;; store no longer had, failing forever and reporting staleness that a
+  ;; comparison would have cleared on the next poll.
+  ;;
+  ;; The two subjects now read side by side: :host-drift / :host-verified and
+  ;; :oracle-drift / :oracle-verified. Same quantity, named for who it is about.
+  (let [info {:mode :live :booted-at 1 :failed '[a.core]
+              :failed-why '{a.core {:why "boom" :attempts 9}}
+              :host-drift []}
+        b    (orient/host-brief info 0 false nil)
+        note (str (:note b))]
+    (is (:host-verified b) "measured, and this process holds current source")
+    (is (re-find #"watcher" note) note)
+    (is (not (re-find #"not been measured" note)) note))
+  (testing "measured behind names the namespaces rather than blaming the watcher"
+    (let [b    (orient/host-brief {:mode :live :booted-at 1 :host-drift '[a.core b.core]}
+                                  0 false nil)
+          note (str (:note b))]
+      (is (= '[a.core b.core] (:host-drift b)) (pr-str b))
+      (is (nil? (:host-verified b)))
+      (is (re-find #"a\.core" note) note)))
+  (testing "absent still means nobody measured, and it still says so"
+    (let [b (orient/host-brief {:mode :live :booted-at 1 :failed '[a.core]} 0 false nil)]
+      (is (nil? (:host-verified b)))
+      (is (re-find #"not been measured" (str (:note b))) (pr-str (:note b))))))
+
+(deftest a-verdict-is-doubted-when-the-HOST-is-measured-behind
+  ;; host-warning was right to use ORACLE drift — the tests run there. But the
+  ;; host runs the code that ORCHESTRATES the run (slopp.api: what to verify,
+  ;; what the trace says, how the result is judged), so a host measured behind
+  ;; is also a reason to doubt a verdict, by a different route.
+  ;;
+  ;; And the failed-reload branch can stop guessing. It used to fire whenever a
+  ;; reload had failed and the ORACLE had not been compared — the oracle
+  ;; standing in for a question about the host. With the host measuring itself,
+  ;; a failed reload on a host that compares clean is a watcher problem and
+  ;; nothing more.
+  (testing "measured behind qualifies the verdict and names the namespaces"
+    (let [w (orient/host-warning {:mode :live :booted-at 1 :host-drift '[a.core]}
+                                 0 nil)]
+      (is (some? w))
+      (is (re-find #"a\.core" (str (:verdict-note w) (:note w))) (pr-str w))))
+  (testing "a failed reload whose HOST compares clean does not qualify anything"
+    (is (nil? (orient/host-warning {:mode :live :booted-at 1 :failed '[a.core]
+                                    :failed-why '{a.core {:why "boom" :attempts 2}}
+                                    :host-drift []}
+                                   0 nil))
+        "the watcher is stuck; the code that produced this verdict is current"))
+  (testing "a failed reload with NO host measurement still warns — cautious by default"
+    (is (some? (orient/host-warning {:mode :live :booted-at 1 :failed '[a.core]}
+                                    0 nil)))))

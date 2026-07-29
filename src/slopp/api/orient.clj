@@ -197,12 +197,24 @@
   process's. A failed host reload is exactly when the two diverge, so the
   oracle comparing clean is no evidence at all about the host.
 
-  So a failed reload now says the honest third thing: the watcher failed, and
-  whether this process still holds the old code HAS NOT BEEN MEASURED. The
-  oracle's verdict is still reported, under `:oracle-verified` /
-  `:oracle-drift`, where it cannot be mistaken for this process's. Measuring
-  the host needs stamping in `slopp.boot`, which owns the host's own loads —
-  until that lands, this section says \"unmeasured\" and means it.
+  **So the host now measures ITSELF.** `slopp.boot/host-drift` compares what
+  this process actually loaded — recorded by every door into this JVM,
+  `load-store!` and the live watcher — against the store's current sources,
+  kernel rendering on both sides. It arrives on `info` as `:host-drift`, and a
+  failed reload finally has three honest answers instead of one guess:
+
+  - `[]` — measured current, so the failure is the WATCHER being stuck, which
+    is the claim friction 20a needed and could not earn;
+  - a list — measured behind, and it NAMES the namespaces;
+  - absent — nobody looked, and it says so rather than picking a side.
+
+  The two subjects read side by side and cannot be confused: `:host-drift` /
+  `:host-verified` for this process, `:oracle-drift` / `:oracle-verified` for
+  the image that runs the tests. Same quantity, each named for who it is about.
+
+  A comparison also cannot get STUCK the way a failure record can: 20a's
+  watcher retried a renamed-away namespace forever, but a namespace the store
+  no longer has is simply absent from the comparison.
 
   (`host-warning` is a different reader and is correct using oracle drift: a
   VERDICT is produced by the oracle, so the oracle's currency is precisely
@@ -213,6 +225,9 @@
           why     (:failed-why info)
           checked (some? drift)
           clean?  (and checked (empty? drift))
+          hdrift  (:host-drift info)
+          hcheck  (some? hdrift)
+          hclean  (and hcheck (empty? hdrift))
           reason  (fn [ns-sym]
                     (when-let [w (get-in why [ns-sym :why])]
                       (str ns-sym ": " w)))
@@ -221,13 +236,20 @@
           parts   (cond-> []
                     failed
                     (conj (str "live-reload FAILED for " (str/join ", " failed)
-                               (str " — whether THIS process still holds the previous"
-                                    " code has not been measured"
-                                    (when clean?
-                                      (str "; the verification image compares"
-                                           " clean, but that is a different"
-                                           " process and is no evidence about"
-                                           " this one")))
+                               (cond
+                                 hclean
+                                 (str " — but THIS process was COMPARED to the"
+                                      " store and holds every namespace at its"
+                                      " current source, so this is the watcher"
+                                      " stuck, not stale code")
+
+                                 hcheck
+                                 (str " — and this process IS behind on "
+                                      (str/join ", " hdrift))
+
+                                 :else
+                                 (str " — whether THIS process still holds the"
+                                      " previous code has not been measured"))
                                (when-let [rs (seq (keep reason failed))]
                                  (str " (" (str/join "; " rs) ")"))
                                (if stuck?
@@ -237,6 +259,12 @@
                                       " it will not fix itself — restart the"
                                       " server")
                                  "; the next poll retries")))
+
+                    (and (not failed) (seq hdrift))
+                    (conj (str (count hdrift) " namespace(s) in THIS process are"
+                               " behind the store and no reload failed, so"
+                               " nothing said so: " (str/join ", " (take 5 hdrift))
+                               " — restart the server"))
 
                     (and (not failed) (seq drift))
                     (conj (str (count drift) " form(s) in the VERIFICATION image"
@@ -276,6 +304,8 @@
         (seq drift)            (assoc :oracle-drift (vec (take 20 drift))
                                       :oracle-drift-count (count drift))
         clean?                 (assoc :oracle-verified true)
+        (seq hdrift)           (assoc :host-drift (vec hdrift))
+        hclean                 (assoc :host-verified true)
         note                   (assoc :note note)))))
 
 (defn ^:export code-deltas-since
@@ -327,19 +357,31 @@
   on every done is a warning nobody reads."
   [info deltas-since-boot drift]
   (when info
-    (let [checked? (some? drift)
-          drifted? (seq drift)
-          failed?  (and (seq (:failed info)) (not checked?))
+    (let [drifted? (seq drift)
+          hdrift   (:host-drift info)
+          behind?  (seq hdrift)
+          ;; it is the HOST's reload that failed, so only a HOST measurement
+          ;; can retire the doubt — the oracle used to stand in for it
+          failed?  (and (seq (:failed info)) (nil? hdrift))
           stale?   (and (= :snapshot (:mode info)) (pos? (or deltas-since-boot 0)))]
-      (when (or drifted? failed? stale?)
+      (when (or drifted? behind? failed? stale?)
         (assoc (host-brief info deltas-since-boot false drift)
                :verdict-note
-               (if drifted?
-                 (str "this verdict was produced by a host holding "
-                      (count drift) " form(s) the store has moved past —"
-                      " treat it as suspect and restart the server; the"
-                      " :drift list names them")
-                 (str "this verdict was produced by a host running code the"
-                      " store has moved past — treat it as suspect until the"
-                      " host is current (restart the server, or check the"
-                      " reload failure in its log)")))))))
+               (cond
+                 behind?
+                 (str "this verdict was produced by a host that is behind the"
+                      " store on " (str/join ", " (take 5 hdrift))
+                      " — it runs the code that ORCHESTRATES verification, so"
+                      " treat the verdict as suspect and restart the server")
+
+                 drifted?
+                 (str "this verdict was produced against a verification image"
+                      " holding " (count drift) " form(s) the store has moved"
+                      " past — treat it as suspect and restart the server; the"
+                      " :oracle-drift list names them")
+
+                 :else
+                 (str "this verdict was produced by a host whose live-reload"
+                      " failed, and whether it still runs the store's current"
+                      " code has NOT been measured — treat it as suspect until"
+                      " the host is current (restart the server)")))))))

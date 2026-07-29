@@ -219,6 +219,70 @@
                   last)]
     (not= :cljs (get platforms best))))
 
+(defonce ^{:doc "What THIS process has loaded, and how it compares to the store.
+
+  `:nses` is {ns-sym source-hash}, written by every door that loads store code
+  into this JVM — `load-store!` at boot and `watch-live!`'s reload. `:stale` is
+  the last measured answer, recomputed whenever the store's sources are in
+  hand; `:armed?` separates \"not measured yet\" from \"measured, nothing stale\",
+  because nil and [] are different claims and only one of them is a promise.
+
+  Why a measurement and not the watcher's `:failed` map: those disagree, and
+  friction 20a is the case where the map was wrong. A rename left the watcher
+  retrying a namespace that no longer EXISTS — failing forever, reporting the
+  host stale, costing a milestone a fresh JVM — while the process held every
+  live namespace at current source. A comparison against the store's current
+  sources answers that correctly and for free: a deleted namespace is simply
+  not in `now`, so it cannot be stale."}
+  host-loaded
+  (atom {:armed? false :nses {} :stale nil}))
+
+(defn host-stale-of
+  "Namespaces THIS process does not hold at the store's current source.
+
+  `loaded` is {ns-sym source-hash}, recorded at each successful load;
+  `now` is the current {ns-sym source} from `store-sources`, already filtered
+  to what a JVM may load (a :cljs namespace is never loaded here by design, so
+  counting it would be a permanent false positive).
+
+  Both sides are KERNEL-rendered, and that is load-bearing rather than
+  incidental: `store-sources` and `slopp.store.render/render-ns` are
+  independent renderings — the kernel has to render with no slopp code loaded
+  — so a comparison across them would report every namespace stale the first
+  time they differed by a space. Compare like with like or do not compare.
+
+  A namespace the store has since DELETED is absent from `now` and so is not
+  reported: this measure answers \"is this process behind the store\", and a
+  namespace the store dropped is a different question."
+  [loaded now]
+  (vec (sort (for [[ns-sym src] now
+                   :when (not= (get loaded ns-sym) (hash src))]
+               ns-sym))))
+
+(defn- record-loaded!
+  "Note that this process now holds `ns-sym` at `src`."
+  [ns-sym src]
+  (swap! host-loaded assoc-in [:nses ns-sym] (hash src)))
+
+(defn- measure-host!
+  "Recompute host staleness against `now` ({ns-sym source}, JVM-loadable only)
+  and ARM the record — after this, nil no longer means \"nobody looked\"."
+  [now]
+  (swap! host-loaded
+         (fn [s] (assoc s :armed? true :stale (host-stale-of (:nses s) now)))))
+
+(defn host-drift
+  "Namespaces THIS process does not hold at the store's current source, or NIL
+  when that has never been measured.
+
+  Never [] on a guess: an empty vector is the positive claim that this host is
+  current, and only a comparison earns it. The distinction is the entire point
+  — `host-brief` says \"not measured\" for nil and can finally stop hedging for
+  []."
+  []
+  (let [s @host-loaded]
+    (when (:armed? s) (:stale s))))
+
 ^:unsafe (defn load-store!
   "Load every JVM-LOADABLE namespace of the store at `dir` into the CURRENT JVM,
   dependency order: load-string each rendered source + a *loaded-libs* stamp.
@@ -265,8 +329,10 @@
           (try
             (load-string (get sources ns-sym))
             (stamp-loaded! ns-sym)
+            (record-loaded! ns-sym (get sources ns-sym))
             (catch Throwable t
               (vswap! failed conj {:ns ns-sym :why (str (.getMessage t))}))))
+        (measure-host! (into {} (filter #(jvm-loadable? platforms (key %))) sources))
         (when (seq @failed)
           (log! "slopp.boot:" (count @failed)
                 "namespace(s) did NOT load —" (str/join ", " (map :ns @failed))
@@ -293,9 +359,24 @@
 
 (defn current-boot-info
   "The boot-info record, or nil — the fn face session_brief reaches through
-  a late-ref carrier (an atom cannot be a carrier target)."
+  a late-ref carrier (an atom cannot be a carrier target).
+
+  Carries the MEASURED host currency (`host-drift`) beside the recorded boot
+  facts, so every reader gets the comparison without having to ask for it. Two
+  different KINDS of thing travel in this map on purpose, and the difference is
+  the point: `:failed` is what once happened, `:host-drift` is what is true
+  now. A reader holding only the first was the whole of friction 20a — a
+  watcher retrying a renamed-away namespace, failing forever, reporting stale
+  code in a process that held every live namespace at current source.
+
+  `:host-drift` is ABSENT when nothing has measured, `[]` when a comparison
+  found this process current, and a list when it is behind. Three claims, not
+  two, because \"I did not look\" must not read as \"I looked and it was fine\"."
   []
-  @boot-info)
+  (when-let [info @boot-info]
+    (let [stale (host-drift)]
+      (cond-> info
+        (some? stale) (assoc :host-drift stale)))))
 
 ^:unsafe (defn- departed-vars
   "The names in `interned` that `new-source` no longer defines — what a live
@@ -395,6 +476,7 @@
                         failed  (reduce (fn [failed ns-sym]
                                           (try (reload-ns! ns-sym (get now ns-sym))
                                                (stamp-loaded! ns-sym)
+                                               (record-loaded! ns-sym (get now ns-sym))
                                                failed
                                                (catch Throwable t
                                                  (log! "live-reload failed for " ns-sym
@@ -404,6 +486,8 @@
                         loaded  (remove failed changed)]
                     (when (seq loaded)
                       (log! "live-reloaded: " (str/join " " loaded)))
+                    (measure-host!
+                     (into {} (filter #(jvm-loadable? platforms (key %))) now))
                     ;; keep the currency record honest: a failed ns stays
                     ;; listed until a later poll reloads it (it also holds
                     ;; the version baseline back, below)
