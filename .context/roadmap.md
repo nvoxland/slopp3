@@ -652,3 +652,28 @@ it compiles into the client); and the DRY inline-duplication ADVISORY
 (structurally-equal inline schemas on 2+ endpoints → "extract to a named `.cljc`
 schema"). Part 3 (dogfood on real endpoints) comes after part 2 — the user
 explicitly said NOT to jump to the dogfood.
+
+## A thin launcher, so slopp's own deps stop being privileged (deferred 2026-07-29)
+
+**Not a bug — a trade we took deliberately, recorded here so it stays a choice.**
+slopp ships as one uberjar bundling ~47 libraries. A store that declares a
+different version of any of them gets it in the oracle image, the test suite and
+`build!` output, but NOT in the server process: a jar the parent classloader
+already holds cannot be displaced at runtime. As of `d17960` the host declares
+what it bundles (`META-INF/slopp/bundled-libs.edn` → `ensure-bundled-libs!`) and
+both `deps_add` and `deps_list` report `:host-override`, so the disagreement is
+visible rather than silent — see `.context/decisions.md`.
+
+**The fix, when it is worth it:** ship a thin launcher that resolves slopp's own
+deps via tools.deps at startup instead of bundling them. Everything then lands in
+one loader, normal resolution applies, and slopp's libraries stop being
+un-overridable. Rejected alternatives: shading/relocating slopp's copies (store
+code names those libs directly), and a child-first loader (breaks class identity
+across the boundary).
+
+**What makes it a real cost, not a refactor:** the release is currently one
+uberjar with a pinned sha256, which `plugins/slopp/bin/slopp` fetches and caches
+— the whole upgrade story is bumping VERSION+SHA256. A launcher means startup
+resolution, a network or `~/.m2` dependency on first run, and a different CI
+proof. Do it when someone actually needs to override a bundled lib, or when the
+kernel's dep list gets big enough that shipping it stops making sense.

@@ -765,6 +765,50 @@ and the write-time require-gate stays structural. Litmus for every future gate
 that reaches for a library: **can it run image-side? If not, it costs a kernel
 dep.** Full finding: `ideas/inherent-deps-and-the-self-host-classpath.md`.
 
+### The host DECLARES what it bundles; a manifest cannot displace it (2026-07-29)
+
+**Decision:** the server/boot JVM states what it carries instead of pretending
+the manifest can override it. `build.clj` writes the basis that produced the
+uberjar to `META-INF/slopp/bundled-libs.edn`, `slopp.boot/ensure-bundled-libs!`
+seeds it into the runtime basis at startup, and `deps_add` reports
+`:host-override {lib {:declared :in-force}}` when the store declares a different
+version of something the host already has.
+
+**Why:** `java -jar` gives a process no basis, so `add-libs` believed the JVM was
+bare. Two consequences, both measured in a real jar process:
+
+- a coord the uberjar already carried was "added" and then LOST to the parent
+  classloader (`add-libs` appends to a child that delegates parent-first), so the
+  manifest read as satisfied at a version that was never in force — malli
+  declared 0.16.4, running 0.17.0;
+- every add resolved its transitive graph from nothing: adding one small library
+  re-added `org.clojure/clojure` itself plus ten others already present.
+
+Seeding fixes both at the source, because `add-libs` drops any lib already in the
+basis's `:libs` by SYMBOL, ignoring version, and passes the rest to resolution as
+`:existing`. After: the bundled coord is skipped outright, and data.json's add
+went from 11 libs to 1.
+
+**What it deliberately does NOT fix.** The declaration still cannot govern the
+host — a jar the parent classloader holds cannot be displaced at runtime. It does
+govern the oracle image, the test suite and `build!` output, and the image is a
+separate `clojure -Sdeps` JVM (the split this decision's parent calls
+load-bearing), so **the server and the tests can run different versions of the
+same library**. That is now sayable rather than silent, which is the whole change.
+The three ways to actually close it all cost more than the problem does: shading
+slopp's copies (store code names those libs directly), a child-first loader
+(breaks class identity across the boundary), or a thin launcher resolving slopp's
+own deps at startup — the real fix, and a change to the install story, since the
+release is today one uberjar with a pinned sha. D-surface-honesty forbids the
+silent version, not the bundled one.
+
+**Correction it forced:** `add-libs-code` and its test both claimed the image has
+no basis and cited a measurement for it. Re-measured against a live oracle, it
+has one — the CLI supplies it. The repo-seeding they justify is still right as a
+GUARD (`start!` accepts a custom `:cmd`, and a bare `java -cp` image has no
+basis), but a reason that describes a process nobody runs is worse than none,
+because nobody thinks to check it.
+
 ## Attribute inventory — a DERIVED index, not folded state (2026-07-17, user-guided)
 
 **Decision:** the domain-keyword/attribute inventory (`slopp.api.attrs/keyword-inventory`,

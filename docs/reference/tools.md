@@ -272,7 +272,7 @@ that every register view has to carry.
 
 | Tool | What it does |
 |---|---|
-| `deps_add {lib version}` | Add a library. Hot to the live classpath, no restart. |
+| `deps_add {lib version}` | Add a library. Hot to the live classpath, no restart. Reports `:host-override` when slopp's own process bundles it at another version, and `:shadowed` when more than one classpath entry provides a namespace. |
 | `deps_remove {lib}` | Drop a library. |
 | `deps_list` | The dependency manifest. |
 | `deps_pure {target}` | Assert a dependency target is pure, so callers are not `!`-flagged. |

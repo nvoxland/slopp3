@@ -17,6 +17,18 @@ later image launch. `build` generates a complete `deps.edn` from it.
 
 **Never hand-edit `deps.edn`.** It is generated. Change the manifest.
 
+**A library slopp itself bundles keeps slopp's version in the server process.**
+`deps_add` reports that as `:host-override`, naming both what you declared and
+what is actually in force. Your declaration still governs the oracle image, the
+test suite, and anything `build` produces -- so the server and your tests can run
+different versions of the same library. Usually that is harmless; pin to the
+reported version when it is not. slopp cannot displace a jar its own classloader
+already holds, so it says so rather than reporting a version it did not get.
+
+A related report, `:shadowed`, names a namespace that more than one entry on the
+classpath provides, with the winning url first. That one is usually two of your
+own dependencies vendoring the same code.
+
 Once declared, `(:require ...)` the library normally. Its *body* stays opaque
 to analysis, so calls into it count as effectful by default. Three ways to say
 otherwise:

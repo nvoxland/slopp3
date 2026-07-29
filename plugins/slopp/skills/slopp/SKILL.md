@@ -410,6 +410,17 @@ full map.
 
 - `deps_add` a library, then require it normally (hot classpath add, no
   restart). `deps.edn` is GENERATED — never hand-edit it.
+- **A library slopp itself bundles runs at slopp's version in the SERVER
+  process**, and `deps_add` says so as `:host-override {lib {:declared
+  :in-force}}`. Your declaration still governs the oracle image, the test
+  suite and anything `build` produces — so the server and your tests can run
+  different versions of the same library. Usually harmless; pin to the
+  `:in-force` version when it is not. A jar the server's parent classloader
+  already holds cannot be displaced at runtime, so slopp reports the
+  disagreement rather than claiming the declaration won. Separately,
+  `:shadowed` names a namespace more than one classpath entry provides (the
+  first url listed is the one in force) — usually two deps vendoring the same
+  code.
 - Calls into an opaque dep count as EFFECTFUL: name the caller `!`, or
   `deps_pure` the var/namespace/lib, or tag the form `^:reads` (reads take no
   bang).

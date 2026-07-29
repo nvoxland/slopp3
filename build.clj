@@ -105,6 +105,19 @@
     (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir})
     ;; the tracked manifest is build INPUT — b/uber generates the real one
     (b/delete {:path (str class-dir "/META-INF/MANIFEST.MF")})
+    ;; Declare what this jar BUNDLES, from the basis that is producing it.
+    ;; `java -jar` gives the runtime no basis, so `add-libs` believes the JVM
+    ;; is bare: it "adds" coords the uberjar already carries (and loses to the
+    ;; parent classloader), and resolves every transitive graph from nothing.
+    ;; slopp.boot/ensure-bundled-libs! seeds this back in at startup. Generated
+    ;; rather than hand-listed so it cannot drift from what actually shipped;
+    ;; :paths are dropped because they name THIS machine's ~/.m2, which is not
+    ;; where the code is once it is inside the jar.
+    (let [f (io/file class-dir "META-INF" "slopp" "bundled-libs.edn")]
+      (io/make-parents f)
+      (spit f (pr-str (into (sorted-map)
+                            (map (fn [[lib coord]] [lib (dissoc coord :paths)]))
+                            (:libs basis)))))
     (when (and smain (not= main "clojure.main"))
       (gen-launcher! main smain)
       ;; the launcher dir must be ON the compile basis classpath (src-dirs
