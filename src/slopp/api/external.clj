@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency] [slopp.image.currency :as registry]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -1033,12 +1033,22 @@ client-deps (merge (:client-deps st) (:client provided))
                                   (catch Throwable _))))
                    period period)
         (swap! session assoc :reaper t))
+      ;; a recycled image was swept back to baseline and a fresh one holds
+      ;; nothing — either way the stamps this registry already carries
+      ;; describe an image that no longer exists
+      (registry/forget-all!)
       (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
         (when-let [err (image/load-ns! image store ns-sym)]
           ;; a store carrying red-first specs still opens — stub and retry
           (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
                          (nil? (image/load-ns! image store ns-sym)))
             (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
+      ;; ARM only now, with everything stamped: from here an unstamped form
+      ;; means never-loaded rather than not-yet-looked-at. Without this the
+      ;; registry stayed unarmed for a whole session and every currency
+      ;; surface honestly reported "not measured" — correct, and useless,
+      ;; because only a restart (through fresh-image!) ever armed it.
+      (registry/arm!)
       ;; module adoption: a populated store from a pre-module db (:modules
       ;; nil) gets its manifest derived from reality, once — fresh stores
       ;; are born with {} and enforcement already on

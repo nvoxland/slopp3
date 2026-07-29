@@ -552,3 +552,48 @@
           (is (str/includes? (src) "(swap! r dec)") (src))
           (is (not (str/includes? (src) "(swap! r inc)")) (src))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-write-names-the-derived-def-it-left-stale
+  ;; friction 1. Hot-reload re-evaluates the EDITED form, which is right for a
+  ;; `defn` — callers resolve through the var, so they pick the new one up. It
+  ;; is wrong for a `def` whose VALUE was computed from the edited form: that
+  ;; value was captured at load time and nothing recomputes it.
+  ;;
+  ;; Measured shape: editing `slopp.mcp.tools/env-tools` left
+  ;; `(def tools (concat … env-tools …))` holding the old vector, so the MCP
+  ;; server advertised the old arg list AND `accepted-arg-keys` refused the new
+  ;; one. The failure reads as "unknown argument" — a typo in the caller — not
+  ;; as staleness, which is why it cost a whole debugging arc.
+  ;;
+  ;; The analysis already exists: `slopp.api.currency` calls this class
+  ;; `:derived-stale` and finds it precisely because a re-evaluated form moves
+  ;; to the FRONT of the load order, leaving anything that captured its value
+  ;; behind. What was missing is the WRITE saying so, at the moment it happens.
+  ;;
+  ;; Named `:stale-in-image` rather than `:drift`, because a write result
+  ;; already carries a `:drift` and it means something else entirely (contract
+  ;; drift — a lost docstring or type hint).
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'ds.core
+                   (str "(ns ds.core)\n"
+                        "(def base 1)\n"
+                        "(def derived (inc base))\n"
+                        "(defn ^:unused-ok read-it [] derived)\n"))
+      (is (= [2] (api/query-eval sess "(ds.core/read-it)")))
+      (let [r (api/edit-replace! sess 'ds.core 'base "(def base 10)"
+                                 :prompt "bump the base")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= '[ds.core/derived] (:stale-in-image r)) (pr-str r)))
+      (testing "the report is not decoration — the image really is behind"
+        (is (= [2] (api/query-eval sess "(ds.core/read-it)"))
+            "derived still holds (inc 1); only re-evaluating it moves it"))
+      (testing "re-evaluating the derived def clears it, and nothing else is stale"
+        ;; `read-it` is a defn and resolves `derived` through the var, so it was
+        ;; never stale — reporting it would be noise on every write
+        (let [r (api/edit-replace! sess 'ds.core 'derived "(def derived (inc base))"
+                                   :prompt "recompute from the new base")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:stale-in-image r)) (pr-str r)))
+        (is (= [11] (api/query-eval sess "(ds.core/read-it)"))))
+      (finally (api/close! sess)))))

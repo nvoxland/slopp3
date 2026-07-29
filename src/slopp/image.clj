@@ -18,10 +18,19 @@
   (D-web-cljs). :jvm and :cljc load as usual (the latter's :clj branch).
 
   Stamps every form it loaded (`slopp.image.currency`), the whole-namespace
-  counterpart to `hot-load-form!`'s per-form stamp — those two are the only
-  doors into the image, and a door that does not stamp reports its whole
-  namespace as never-loaded. Only on success: a namespace that failed to
-  compile is not in the image."
+  counterpart to `hot-load-form!`'s per-form stamp. Only on success: a
+  namespace that failed to compile is not in the image.
+
+  There are THREE doors, not two. This one, `hot-load-form!`, and `api/ingest!`
+  — which renders and calls `repl/load-checked!` itself rather than coming
+  through here. This docstring used to say \"those two are the only doors\",
+  which is how ingest went unstamped: an enumeration that reads as complete
+  stops anyone counting. Every ingested namespace therefore reported as
+  `:never-loaded` for the life of the session, and nothing derived from one
+  could be judged stale at all.
+
+  A door that does not stamp reports its whole namespace as never-loaded, so
+  if you add a fourth, stamp there too."
   [handle store ns-sym]
   (when (store/jvm-loadable? store ns-sym)
     (let [res (repl/load-checked! handle

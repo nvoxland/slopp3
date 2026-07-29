@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency] [slopp.image.currency :as registry]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -212,7 +212,15 @@
                 (when load?
                   (repl/eval! (:image @session)
                               (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                                      ns-sym)))
+                                      ns-sym))
+                  ;; ingest loads through `load-checked!` directly rather than
+                  ;; `image/load-ns!`, so it is a THIRD door and has to stamp
+                  ;; what it put there. Missing this, every ingested namespace
+                  ;; read as :never-loaded forever — and nothing derived from
+                  ;; it could ever be judged stale, because staleness is only
+                  ;; meaningful for a form the image is known to hold.
+                  (doseq [e (store/elements candidate ns-sym)]
+                    (registry/stamp! (:id e) (n/string (:node e)))))
                 (let [edited  (into #{}
                                     (keep (fn [e]
                                             (when (:name e)
@@ -480,7 +488,14 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                                         :edited edited)
                              session/cljs-deferred-summary)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))
-recompiled (session/maybe-recompile-client! session ns-sym)]
+recompiled (session/maybe-recompile-client! session ns-sym)
+;; friction 1: the hot-load re-evaluated THIS form, which is right for a
+                ;; defn (callers resolve through the var) and wrong for a def that
+                ;; captured its value. Name those now — silently, the staleness
+                ;; surfaces much later as a wrong answer rather than an error.
+                stale    (when load?
+                           (currency/stale-after (:store @session)
+                                                 (:form-id (:delta r))))]
             (session/commit-appended! session
                               #(store/record-verification % ns-sym summary) [])
             (session/with-ms
@@ -493,6 +508,10 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                 ;; what this write changed BEYOND what was asked — a lost type
                 ;; hint, docstring or arity. Reported, never refused.
                 (seq (:drift r)) (assoc :drift (:drift r))
+                ;; friction 1: forms this write left holding a value computed
+                ;; from the OLD source. Not :drift — that key is taken, and it
+                ;; means something else on this very map.
+                (seq stale) (assoc :stale-in-image stale)
                 ;; say WHY the image was replaced — a silent rebuild is a
                 ;; surprising cost, and the reason is the teaching
                 handle-shift (assoc :image-rebuilt
