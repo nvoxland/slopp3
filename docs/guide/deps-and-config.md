@@ -6,7 +6,7 @@ The image slopp owns is otherwise bare -- Clojure and nREPL. A store declares
 its own libraries in a dependency manifest:
 
 ```clj
-deps_add    {lib "metosin/malli" version "0.16.4" prompt "boundary schemas"}
+deps_add    {lib "metosin/malli" version "0.20.1" prompt "boundary schemas"}
 deps_remove {lib "metosin/malli" prompt "no longer used"}
 deps_list   {}
 ```

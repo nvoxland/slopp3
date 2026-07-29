@@ -21,11 +21,18 @@
         ;;   http-kit -> slopp.web.server.httpkit
         ;;   hiccup   -> slopp.web.html
         ;;   garden   -> slopp.web.css
-        ;;   malli    -> slopp.client.nsschema (:cljc, so it DOES load here)
+        ;;   malli    -> slopp.review.api-test, slopp.review.heartbeat-test
+        ;; That last one is the odd one out: the loader loads TEST namespaces
+        ;; too (store-sources filters by kind, not by name), so a lib only the
+        ;; tests require still has to be here — the server loads them and never
+        ;; runs them. It was justified by slopp.client.nsschema until the UI
+        ;; split deleted that namespace; these two are what actually need it
+        ;; now (measured: they are the only namespaces in the store that alias
+        ;; malli at all).
         http-kit/http-kit       {:mvn/version "2.8.0"}
         hiccup/hiccup           {:mvn/version "2.0.0"}
         garden/garden           {:mvn/version "1.3.10"}
-        metosin/malli           {:mvn/version "0.17.0"}}
+        metosin/malli           {:mvn/version "0.20.1"}}
 
  ;; No :test alias: the working tree is FILELESS (the store is the source).
  ;; The suite runs via test_run {external true} — build! to a temp dir whose
