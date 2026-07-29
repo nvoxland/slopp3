@@ -130,34 +130,37 @@
     (drift-of store stamps)))
 
 (defn ^:export stale-after
-  "The forms this image now holds at a value computed BEFORE `form-id` was
-  re-evaluated — the write-time slice of `drift-of`'s `:derived-stale` class,
-  as a vector of qualified symbols. Nil when currency was never armed.
+  "The forms this image holds at a value computed BEFORE `form-id` was last
+  evaluated — the write-time slice of `drift-of`'s `:derived-stale` class, as a
+  vector of qualified symbols. Nil when currency was never armed.
 
   `drift-of` answers the whole-store question and pays a full walk for it,
-  which is the wrong price on every write. After a write the question is much
-  narrower and needs no walk: the edited form was just stamped, so it is by
-  construction the most recently evaluated thing in the image. Anything that
-  CAPTURED a value from it is therefore behind it, and the only candidates are
-  the forms that reference it.
-
-  So the seq comparison `drift-of` performs is not repeated here — it would be
-  comparing a number against the maximum and could only come out one way.
+  which is the wrong price on every write. Here the candidates are only the
+  forms that REFERENCE `form-id`, so no walk is needed — but the seq
+  comparison still is. An earlier version skipped it, reasoning that the
+  edited form has just been stamped and is therefore the newest thing in the
+  image, so every capturing form must be behind it. That was true only while
+  nothing ever repaired the staleness: once a write RELOADS the namespace
+  holding a captured value, that form is stamped AFTER the edited one, and a
+  comparison-free check would go on reporting it forever.
 
   A form is a candidate only if it was stamped (never-loaded is a different
-  and louder problem, already reported elsewhere) and only if it CAPTURES at
-  load: a `defn` reaching the same var resolves it at call time and is not
-  stale, which is what keeps this from firing on almost every write."
+  and louder problem, reported elsewhere) and only if it CAPTURES at load: a
+  `defn` reaching the same var resolves it at call time and is not stale,
+  which is what keeps this quiet on nearly every write."
   [store form-id]
-  (when (and form-id (currency/snapshot))
-    (let [stamps (currency/snapshot)]
-      (vec
-       (sort
-        (distinct
-         (for [r (refs/refs store)
-               :when (= form-id (:to-form r))
-               :let  [gid (:from-form r)
-                      g   (when (and gid (not= gid form-id) (get stamps gid))
-                            (store/form-by-id store gid))]
-               :when (and g (:name g) (captures-at-load? (:node g)))]
-           (symbol (str (store/ns-of-form-id store gid)) (str (:name g))))))))))
+  (when-let [stamps (and form-id (currency/snapshot))]
+    (let [target (get-in stamps [form-id :seq])]
+      (when target
+        (vec
+         (sort
+          (distinct
+           (for [r (refs/refs store)
+                 :when (= form-id (:to-form r))
+                 :let  [gid (:from-form r)
+                        gs  (get-in stamps [gid :seq])
+                        g   (when (and gid (not= gid form-id) gs (< gs target))
+                              (store/form-by-id store gid))]
+                 :when (and g (:name g) (captures-at-load? (:node g)))]
+             (symbol (str (store/ns-of-form-id store gid))
+                     (str (:name g)))))))))))

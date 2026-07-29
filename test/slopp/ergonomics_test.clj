@@ -553,26 +553,22 @@
           (is (not (str/includes? (src) "(swap! r inc)")) (src))))
       (finally (api/close! sess)))))
 
-(deftest ^:external a-write-names-the-derived-def-it-left-stale
-  ;; friction 1. Hot-reload re-evaluates the EDITED form, which is right for a
-  ;; `defn` — callers resolve through the var, so they pick the new one up. It
-  ;; is wrong for a `def` whose VALUE was computed from the edited form: that
-  ;; value was captured at load time and nothing recomputes it.
+(deftest ^:external a-write-repairs-what-it-would-have-left-stale
+  ;; friction 1, and the class behind it. Hot-reload re-evaluates the EDITED
+  ;; form, which is right for a `defn` — callers resolve through the var — and
+  ;; wrong for a `def` whose VALUE was computed from it: that value was
+  ;; captured at load time and nothing recomputes it.
   ;;
-  ;; Measured shape: editing `slopp.mcp.tools/env-tools` left
-  ;; `(def tools (concat … env-tools …))` holding the old vector, so the MCP
-  ;; server advertised the old arg list AND `accepted-arg-keys` refused the new
-  ;; one. The failure reads as "unknown argument" — a typo in the caller — not
-  ;; as staleness, which is why it cost a whole debugging arc.
+  ;; The ROOT is that per-form hot-load was treated as equivalent to loading.
+  ;; It is equivalent only when a form's whole contribution to the image is its
+  ;; own var binding and nothing else read it at load time. slopp already had
+  ;; the correct behaviour elsewhere: `--live` reloads whole NAMESPACES and
+  ;; never had this bug.
   ;;
-  ;; The analysis already exists: `slopp.api.currency` calls this class
-  ;; `:derived-stale` and finds it precisely because a re-evaluated form moves
-  ;; to the FRONT of the load order, leaving anything that captured its value
-  ;; behind. What was missing is the WRITE saying so, at the moment it happens.
-  ;;
-  ;; Named `:stale-in-image` rather than `:drift`, because a write result
-  ;; already carries a `:drift` and it means something else entirely (contract
-  ;; drift — a lost docstring or type hint).
+  ;; So a write hot-loads the form (the fast path, unchanged for nearly every
+  ;; write) and then, only when something captured a value from it, reloads
+  ;; those namespaces through the same `load-ns!` every other loader uses. The
+  ;; detector became the trigger.
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ds.core
@@ -584,16 +580,68 @@
       (let [r (api/edit-replace! sess 'ds.core 'base "(def base 10)"
                                  :prompt "bump the base")]
         (is (nil? (:error r)) (pr-str r))
-        (is (= '[ds.core/derived] (:stale-in-image r)) (pr-str r)))
-      (testing "the report is not decoration — the image really is behind"
-        (is (= [2] (api/query-eval sess "(ds.core/read-it)"))
-            "derived still holds (inc 1); only re-evaluating it moves it"))
-      (testing "re-evaluating the derived def clears it, and nothing else is stale"
-        ;; `read-it` is a defn and resolves `derived` through the var, so it was
-        ;; never stale — reporting it would be noise on every write
-        (let [r (api/edit-replace! sess 'ds.core 'derived "(def derived (inc base))"
-                                   :prompt "recompute from the new base")]
+        (is (= '[ds.core] (:image-reloaded r))
+            (str "the namespace holding the captured value was reloaded: "
+                 (pr-str r)))
+        (is (nil? (:stale-in-image r))
+            (str "and nothing was left stale to report: " (pr-str r))))
+      (testing "the repair is real — the image agrees with the store"
+        (is (= [11] (api/query-eval sess "(ds.core/read-it)"))
+            "derived was recomputed from the new base, not merely reported"))
+      (testing "an ordinary defn write reloads nothing — this is not a tax on every write"
+        (let [r (api/edit-replace! sess 'ds.core 'read-it
+                                   "(defn ^:unused-ok read-it [] (+ 0 derived))"
+                                   :prompt "same answer, different spelling")]
           (is (nil? (:error r)) (pr-str r))
-          (is (nil? (:stale-in-image r)) (pr-str r)))
-        (is (= [11] (api/query-eval sess "(ds.core/read-it)"))))
+          (is (nil? (:image-reloaded r)) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external editing-a-schema-repairs-the-endpoint-that-captured-it
+  ;; friction 17 is friction 1 wearing different clothes, and the root-cause
+  ;; fix closed it without knowing about it — which is the evidence they were
+  ;; one problem. An endpoint declares its shape as var METADATA,
+  ;; `^{:web/response timeline}`, and var metadata is evaluated when the form
+  ;; loads. Editing the schema used to leave the endpoint publishing the old
+  ;; one, so `/api/contracts` served a schema the store no longer had and a
+  ;; client generated from it was wrong in a way that only appeared later, as a
+  ;; validation failure.
+  ;;
+  ;; What is asserted here is the CONTRACT, not the report: the metadata the
+  ;; image actually holds. A test that only checked the write's warning would
+  ;; pass while the published contract stayed wrong.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'sc.api
+                   (str "(ns sc.api)\n"
+                        "(def timeline [:map [:n :int]])\n"
+                        "(defn ^{:web/response timeline} ^:unused-ok handler [_] {:n 1})\n"))
+      (let [r (api/edit-replace! sess 'sc.api 'timeline
+                                 "(def timeline [:map [:n :int] [:extra :string]])"
+                                 :prompt "add a field to the response")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= '[sc.api] (:image-reloaded r)) (pr-str r)))
+      (is (= [[:map [:n :int] [:extra :string]]]
+             (api/query-eval sess "(:web/response (meta #'sc.api/handler))"))
+          "the endpoint publishes the schema the store now has")
+      (testing "and ACROSS namespaces, which is the real topology"
+        ;; slopp's own shape: schemas in `<app>.contracts`, endpoints in
+        ;; `<app>.api` — same module, different namespaces. A
+        ;; same-namespace-only repair would pass the case above and miss this.
+        (api/ingest! sess 'sc.core.contracts
+                     (str "(ns sc.core.contracts)\n"
+                          "(def ^:export beat [:map [:ms :int]])\n"))
+        (api/ingest! sess 'sc.core.api
+                     (str "(ns sc.core.api"
+                          " (:require [sc.core.contracts :as c]))\n"
+                          "(defn ^{:web/response c/beat} ^:unused-ok heartbeat [_]"
+                          " {:ms 1})\n"))
+        (let [r (api/edit-replace! sess 'sc.core.contracts 'beat
+                                   "(def ^:export beat [:map [:ms :int] [:at :int]])"
+                                   :prompt "the beat carries a timestamp now")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[sc.core.api] (:image-reloaded r))
+              (str "the OTHER namespace is what had to be reloaded: " (pr-str r))))
+        (is (= [[:map [:ms :int] [:at :int]]]
+               (api/query-eval sess
+                               "(:web/response (meta #'sc.core.api/heartbeat))"))))
       (finally (api/close! sess)))))

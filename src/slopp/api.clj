@@ -455,6 +455,42 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                        (format "(ns-unmap '%s '%s)" ns-sym nm)))
                 _        (when unregister
                            (repl/eval! (:image @session) unregister))
+;; ROOT of frictions 1 and 17. A per-form hot-load is equivalent to
+                ;; LOADING the form only when the form's whole contribution to
+                ;; the image is its own var binding. Anything that CAPTURED a
+                ;; value from it — a derived def, an evaluated metadata schema —
+                ;; still holds the old one, and re-evaluating one form replays
+                ;; none of that. `--live` never had this bug because it reloads
+                ;; whole NAMESPACES; the oracle did because it reloads forms.
+                ;;
+                ;; So: keep the fast path, and when something captured, repair
+                ;; through the same `load-ns!` every other loader uses. This is
+                ;; measured to be rare — 35 of 2202 forms in this store capture
+                ;; at load at all — so an ordinary defn write pays nothing.
+                ;; Before verification deliberately: tests must run against a
+                ;; repaired image, not a half-stale one.
+                captured (when load?
+                           (currency/stale-after (:store @session)
+                                                 (:form-id (:delta r))))
+                reloaded (when (seq captured)
+                           (vec (sort (distinct (map (comp symbol namespace)
+                                                     captured)))))
+                reload-errs
+                (when (seq reloaded)
+                  (not-empty
+                   (into {}
+                         (keep (fn [nsx]
+                                 (when-let [e (image/load-ns! (:image @session)
+                                                              (:store @session)
+                                                              nsx)]
+                                   [nsx e])))
+                         reloaded)))
+                ;; what the repair could NOT reach — normally nothing, and
+                ;; reported rather than assumed away when it happens
+                stale    (when (seq reloaded)
+                           (not-empty (currency/stale-after
+                                       (:store @session)
+                                       (:form-id (:delta r)))))
                 ;; no trace evidence → fall back to the tests that REACH this
                 ;; namespace, not to tests named after it (there are none)
                 ;; a ^:live-handle constructor changed shape: the map already in
@@ -488,14 +524,7 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                                         :edited edited)
                              session/cljs-deferred-summary)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))
-recompiled (session/maybe-recompile-client! session ns-sym)
-;; friction 1: the hot-load re-evaluated THIS form, which is right for a
-                ;; defn (callers resolve through the var) and wrong for a def that
-                ;; captured its value. Name those now — silently, the staleness
-                ;; surfaces much later as a wrong answer rather than an error.
-                stale    (when load?
-                           (currency/stale-after (:store @session)
-                                                 (:form-id (:delta r))))]
+recompiled (session/maybe-recompile-client! session ns-sym)]
             (session/commit-appended! session
                               #(store/record-verification % ns-sym summary) [])
             (session/with-ms
@@ -511,7 +540,11 @@ recompiled (session/maybe-recompile-client! session ns-sym)
                 ;; friction 1: forms this write left holding a value computed
                 ;; from the OLD source. Not :drift — that key is taken, and it
                 ;; means something else on this very map.
-                (seq stale) (assoc :stale-in-image stale)
+                ;; the repair, reported: a namespace reload is a real cost and a
+                ;; silent one reads as an unexplained slow write
+                (seq reloaded) (assoc :image-reloaded reloaded)
+                reload-errs    (assoc :image-reload-failed reload-errs)
+                (seq stale)    (assoc :stale-in-image (vec stale))
                 ;; say WHY the image was replaced — a silent rebuild is a
                 ;; surprising cost, and the reason is the teaching
                 handle-shift (assoc :image-rebuilt
