@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.api.query :as query]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.api.query :as query] [clojure.java.io] [clojure.edn]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -1148,3 +1148,111 @@
         (is (= :pure (get-in @sess [:store :module-tiers "dg.keep"]))
             "dg.keep.deep is still governed by it — retiring would ungate live code"))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-build-carries-its-purity-tiers-as-a-resource
+  ;; friction 2. A purity tier is a DECLARATION in the producer's store, not
+  ;; anything in the code — so a published jar carries the code and leaves the
+  ;; tiers behind. Measured: `slopp.ui.hub` moved into the slopp-ui project
+  ;; unchanged and immediately drew four effect warnings it never drew at home,
+  ;; because `slopp.web.html` is declared :pure at home and undeclared (hence
+  ;; :external) in the consumer.
+  ;;
+  ;; The damage is not the warning, it is the SUGGESTION: rename `picker` to
+  ;; `picker!`. Following it would permanently mislabel four correct pure
+  ;; functions in the consumer's public API to compensate for a declaration
+  ;; that never shipped.
+  ;;
+  ;; So a build emits the tiers as a classpath resource, next to the sources it
+  ;; already writes, where `deps_add` can find them.
+  (let [sess (external/open!)
+        dir  (str (System/getProperty "java.io.tmpdir")
+                  "/slopp-tiers-" (System/nanoTime))]
+    (try
+      (api/ingest! sess 'pl.core
+                   "(ns pl.core)\n(defn ^:unused-ok render [x] (str x))\n")
+      (api/ingest! sess 'pl.io
+                   "(ns pl.io)\n(defn ^:unused-ok touch! [f] (slurp f))\n")
+      (api/module-tier! sess "pl.core" :pure :prompt "rendering is pure")
+      (api/module-tier! sess "pl.io" :external :prompt "it reads files")
+      (let [r (external/build! sess dir)]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [f (clojure.java.io/file dir "src" "META-INF" "slopp" "tiers.edn")]
+        (is (.exists f) (str "no tier resource at " f))
+        (is (= {"pl.core" :pure "pl.io" :external}
+               (clojure.edn/read-string (slurp f)))
+            "every declared tier travels, not just the pure ones"))
+      (finally
+        (api/close! sess)
+        (doseq [f (reverse (file-seq (clojure.java.io/file dir)))] (.delete f))))))
+
+(deftest ^:external deps-add-adopts-a-published-librarys-purity-tiers
+  ;; friction 2's other half. Emitting the tiers is useless unless the consumer
+  ;; FINDS them, so this drives the actual user flow across two stores: build a
+  ;; library, then depend on it from somewhere else and check the consumer's
+  ;; effect analysis learned something.
+  ;;
+  ;; Adopting the producer's declaration is better founded than the alternative
+  ;; the consumer has today. `deps_pure` makes the consumer assert purity about
+  ;; code it did not write and cannot check; the producer's tier was VERIFIED
+  ;; against the forms when it was declared.
+  (let [dir      (str (System/getProperty "java.io.tmpdir")
+                      "/slopp-pub-" (System/nanoTime))
+        producer (external/open!)]
+    (try
+      (api/ingest! producer 'plib.core
+                   "(ns plib.core)\n(defn ^:unused-ok render [x] (str x))\n")
+      (api/module-tier! producer "plib.core" :pure :prompt "rendering is pure")
+      (is (nil? (:error (external/build! producer dir))))
+      (finally (api/close! producer)))
+    (let [consumer (external/open!)]
+      (try
+        (let [r (api/deps-add! consumer 'pub/lib {:local/root dir}
+                               :prompt "depend on the published library")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[plib.core] (:adopted-pure r))
+              (str "the producer's :pure declaration travelled: " (pr-str r))))
+        (is (contains? (:dep-pure (:store @consumer)) 'plib.core)
+            "so a caller of plib.core/render is not flagged effectful")
+        (finally
+          (api/close! consumer)
+          (doseq [f (reverse (file-seq (clojure.java.io/file dir)))]
+            (.delete f)))))))
+
+(deftest ^:external deps-add-says-when-a-declared-namespace-is-shadowed
+  ;; friction 15a: resolving is not GOVERNING. `add-libs` appends to a
+  ;; DynamicClassLoader that delegates to its parent first, and anything the
+  ;; host jar already carries lives in that parent — so the declared version
+  ;; loses. Measured on slopp's own store: the manifest declares
+  ;; metosin/malli 0.16.4 and `malli/core.cljc` resolves out of slopp.jar,
+  ;; before AND after a successful add of 0.16.4.
+  ;;
+  ;; Fixing that is a packaging change. Saying it is not, and a silently wrong
+  ;; version is exactly the shape D-surface-honesty exists to forbid: the
+  ;; manifest reads as satisfied and is not.
+  ;;
+  ;; A shadow is reproduced here rather than assumed: publish one library to
+  ;; two roots and depend on both, so `plib2.core` genuinely resolves from two
+  ;; places at once.
+  (let [d1 (str (System/getProperty "java.io.tmpdir") "/slopp-sh1-" (System/nanoTime))
+        d2 (str (System/getProperty "java.io.tmpdir") "/slopp-sh2-" (System/nanoTime))
+        producer (external/open!)]
+    (try
+      (api/ingest! producer 'plib2.core
+                   "(ns plib2.core)\n(defn ^:unused-ok v [] :one)\n")
+      (is (nil? (:error (external/build! producer d1))))
+      (is (nil? (:error (external/build! producer d2))))
+      (finally (api/close! producer)))
+    (let [consumer (external/open!)]
+      (try
+        (let [r1 (api/deps-add! consumer 'sh/one {:local/root d1} :prompt "first copy")]
+          (is (nil? (:error r1)) (pr-str r1))
+          (is (nil? (:shadowed r1)) "nothing shadows it yet"))
+        (let [r2 (api/deps-add! consumer 'sh/two {:local/root d2} :prompt "second copy")]
+          (is (nil? (:error r2)) (pr-str r2))
+          (is (contains? (:shadowed r2) 'plib2.core)
+              (str "the second copy cannot govern — say so: " (pr-str r2))))
+        (finally
+          (api/close! consumer)
+          (doseq [f (concat (reverse (file-seq (clojure.java.io/file d1)))
+                            (reverse (file-seq (clojure.java.io/file d2))))]
+            (.delete f)))))))

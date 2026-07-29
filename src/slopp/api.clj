@@ -1382,6 +1382,116 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
             (history/milestone-rows st))
       (mapv join (history/milestone-rows st :titles-only true)))))
 
+(defn deps-remove!
+  "Drop external dependency `lib` from the manifest. A jar can't be unloaded,
+  so this always restarts the image. Returns {:removed lib :restarted true}
+  or {:error}."
+  [session lib & {:keys [agent prompt]}]
+  (if-not (contains? (:deps (:store @session)) lib)
+    {:error (str lib " is not a declared dependency")}
+    (do
+      (session/commit-appended! session
+                        #(first (store/record-deps-remove % lib
+                                                          :agent agent :prompt prompt))
+                        [])
+      (session/fresh-image! session)
+      {:removed lib :restarted true})))
+
+(defn deps-list
+  "The store's external dependency manifest: {lib coord}."
+  [session]
+  (:deps (:store @session)))
+
+(defn- record-pure!
+  "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
+  [session syms pure? {:keys [agent prompt]}]
+  (session/commit-appended! session
+                    (fn [base]
+                      (reduce (fn [s x]
+                                (first (store/record-deps-pure s x pure?
+                                                               :agent agent :prompt prompt)))
+                              base syms))
+                    []))
+
+(defn- adopt-published-tiers!
+  "Adopt the purity tiers the libraries on the image's classpath PUBLISHED,
+  returning the namespaces newly marked pure (a vector, possibly empty).
+
+  A tier is a declaration in the producer's store and nothing in the code, so
+  before this a consumer saw every namespace of a published library as
+  undeclared — hence `:external` — and its own correct functions were flagged
+  effectful for calling them. Worse than the warning was its SUGGESTION:
+  rename `picker` to `picker!`, which would have mislabelled four correct pure
+  functions to compensate for a declaration that never shipped.
+
+  Only `:pure` is adopted. `:external` is already the default, and `:internal`
+  is a statement about in-process state that means nothing across a jar
+  boundary — the consumer cannot reset a dependency's caches.
+
+  Adopting the producer's word is better founded than the alternative the
+  consumer has otherwise: `deps_pure` asks them to assert purity about code
+  they did not write and cannot check, while the producer's tier was VERIFIED
+  against the forms when it was declared. Reported as `:adopted-pure` either
+  way — a silent change to what the effect gate flags is the kind of thing
+  someone should be able to see happen.
+
+  Read through the IMAGE, which is where the new jar actually landed: the
+  server never added it to its own classpath."
+  [session {:keys [agent]}]
+  (let [code  (str "(mapv slurp (enumeration-seq (.getResources"
+                   " (clojure.lang.RT/baseLoader) \""
+                   modules/tiers-resource-path "\")))")
+        res   (try (first (repl/eval! (:image @session) code))
+                   (catch Throwable _ nil))
+        tiers (reduce (fn [acc s]
+                        (if (string? s)
+                          (merge acc (try (edn/read-string s)
+                                          (catch Throwable _ nil)))
+                          acc))
+                      {}
+                      (when (coll? res) res))
+        known (:dep-pure (:store @session))
+        fresh (vec (sort (distinct (for [[path tier] tiers
+                                         :when (= :pure tier)
+                                         :let  [nsx (symbol (str path))]
+                                         :when (not (contains? known nsx))]
+                                     nsx))))]
+    (when (seq fresh)
+      (record-pure! session fresh true
+                    {:agent  agent
+                     :prompt (str "adopted from a dependency's published purity"
+                                  " tiers (" modules/tiers-resource-path ")")}))
+    fresh))
+
+(defn- shadowed-dep-namespaces!
+  "Of `nses`, those provided by MORE than one place on the image's classpath —
+  `{ns [url …]}`, or nil. The declared coord did not win those.
+
+  `add-libs` appends to a `DynamicClassLoader`, which delegates to its PARENT
+  first, and everything the host jar carries lives in that parent. So a
+  dependency can resolve perfectly and still not govern: measured on slopp's
+  own store, the manifest declares metosin/malli 0.16.4 while
+  `malli/core.cljc` resolves out of slopp.jar both before AND after a
+  successful add of exactly that coord.
+
+  Fixing that is a packaging change — shading, a slim launcher, or a
+  child-first loader — and none of those belong in `deps_add`. Saying it does:
+  a manifest that reads as satisfied while a different version is in force is
+  precisely what D-surface-honesty forbids, and it is invisible from every
+  surface a consumer has. The FIRST url is the one in force."
+  [session nses]
+  (when (seq nses)
+    (let [code (str "(into {} (for [n '" (pr-str (vec nses))
+                    " :let [b (clojure.string/replace"
+                    " (clojure.string/replace (str n) \".\" \"/\") \"-\" \"_\")"
+                    " us (mapcat #(enumeration-seq"
+                    " (.getResources (clojure.lang.RT/baseLoader) (str b %)))"
+                    " [\".clj\" \".cljc\"])]"
+                    " :when (> (count us) 1)] [n (mapv str us)]))")
+          res  (try (first (repl/eval! (:image @session) code))
+                    (catch Throwable _ nil))]
+      (when (and (map? res) (seq res)) res))))
+
 (defn deps-add!
   "Declare external dependency `lib` (a symbol like `org.clojure/data.json`)
   at `coord` (a deps.edn coordinate map, e.g. `{:mvn/version \"2.5.0\"}`).
@@ -1424,48 +1534,34 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
           (let [base (cond-> {:added lib :coord coord}
                        surf (assoc :namespaces (vec (:namespaces surf))
                                    :vars (count (:vars surf))))]
-            (if (seq (:exclusions coord))
-              (do (session/fresh-image! session)
-                  (assoc base :restarted true
-                         :note (str "restarted rather than hot-added: add-libs ignores"
-                                    " :exclusions but a fresh JVM honors them, so the"
-                                    " image would have run a classpath no build or"
-                                    " external shard could reproduce")))
-              (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
-                (do (session/fresh-image! session)    ; hot add failed → faithful restart
-                    (assoc base :restarted true :note (:err hot)))
-                (assoc base :hot true)))))))))
-
-(defn deps-remove!
-  "Drop external dependency `lib` from the manifest. A jar can't be unloaded,
-  so this always restarts the image. Returns {:removed lib :restarted true}
-  or {:error}."
-  [session lib & {:keys [agent prompt]}]
-  (if-not (contains? (:deps (:store @session)) lib)
-    {:error (str lib " is not a declared dependency")}
-    (do
-      (session/commit-appended! session
-                        #(first (store/record-deps-remove % lib
-                                                          :agent agent :prompt prompt))
-                        [])
-      (session/fresh-image! session)
-      {:removed lib :restarted true})))
-
-(defn deps-list
-  "The store's external dependency manifest: {lib coord}."
-  [session]
-  (:deps (:store @session)))
-
-(defn- record-pure!
-  "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
-  [session syms pure? {:keys [agent prompt]}]
-  (session/commit-appended! session
-                    (fn [base]
-                      (reduce (fn [s x]
-                                (first (store/record-deps-pure s x pure?
-                                                               :agent agent :prompt prompt)))
-                              base syms))
-                    []))
+            (let [res (if (seq (:exclusions coord))
+                        (do (session/fresh-image! session)
+                            (assoc base :restarted true
+                                   :note (str "restarted rather than hot-added: add-libs ignores"
+                                              " :exclusions but a fresh JVM honors them, so the"
+                                              " image would have run a classpath no build or"
+                                              " external shard could reproduce")))
+                        (if-let [hot (repl/add-libs! (:image @session) {lib coord})]
+                          (do (session/fresh-image! session) ; hot add failed → faithful restart
+                              (assoc base :restarted true :note (:err hot)))
+                          (assoc base :hot true)))
+                  ;; friction 2: only now is the jar on the image's classpath,
+                  ;; so only now can its published tiers be read
+                  adopted (adopt-published-tiers! session {:agent agent})
+;; friction 15a: it RESOLVED — but did it win? Anything the host
+                  ;; jar already provides sits earlier on the classpath.
+                  shadowed (shadowed-dep-namespaces! session (:namespaces surf))]
+              (cond-> res
+                (seq adopted) (assoc :adopted-pure adopted)
+                (seq shadowed)
+                (assoc :shadowed shadowed
+                       :shadowed-note
+                       (str "these namespaces are provided by something EARLIER"
+                            " on the classpath, so the version you declared is"
+                            " NOT the one in force — the first url listed is."
+                            " add-libs appends to a classloader that delegates"
+                            " to its parent first, and the host jar is that"
+                            " parent"))))))))))
 
 (defn deps-pure!
   "Assert a dependency is PURE — narrowing M3's effectful-by-default boundary so

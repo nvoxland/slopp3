@@ -24,6 +24,28 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [clojure.set :as set]))
 
+(def tiers-resource-path
+  "Where a build writes its purity tiers and where `deps_add` looks for them.
+
+  A classpath resource, under the source root, so it rides into a published
+  jar with the code it describes — which is the whole point: the tier is a
+  declaration in the PRODUCER's store, and until now only the code travelled.
+  Named once because two sides have to agree on it."
+  "META-INF/slopp/tiers.edn")
+
+(defn tiers-resource
+  "The purity register projected for PUBLICATION — `{path tier}`, sorted, or
+  nil when nothing is declared.
+
+  Every declared tier travels, not only the `:pure` ones. A consumer that
+  knows a namespace is `:external` knows something real; the alternative is
+  inferring it from absence, which is exactly the mistake this fixes — an
+  undeclared namespace reads as `:external` whether it was decided or never
+  considered, and those are different facts."
+  [store]
+  (when (seq (:module-tiers store))
+    (into (sorted-map) (:module-tiers store))))
+
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
   edge fold becomes a `modules` file in git commits and builds (read-only

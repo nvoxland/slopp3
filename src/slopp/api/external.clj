@@ -189,6 +189,16 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; printed success. The head delta id makes the staleness check exact
           ;; instead of an mtime guess.
           (spit (io/file target ".slopp-head") (str (:id (last (store/deltas st)))))
+          ;; friction 2: the purity tiers, as a classpath RESOURCE under the
+          ;; source root, so they ride into a published jar with the code they
+          ;; describe. A tier is a declaration in this store, not anything in
+          ;; the code, so without this a consumer sees every namespace of a
+          ;; published library as undeclared — hence :external — and its own
+          ;; correct functions get !-flagged for calling them.
+          (when-let [tiers (modules/tiers-resource st)]
+            (let [tf (io/file target "src" modules/tiers-resource-path)]
+              (io/make-parents tf)
+              (spit tf (pr-str tiers))))
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
