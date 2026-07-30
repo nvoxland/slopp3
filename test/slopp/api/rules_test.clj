@@ -213,7 +213,21 @@
         (let [f (get-in (external/done! sess :label "widened") [:findings :shell-widening])]
           (is (some #(= 'sw.core (:ns %)) f) (pr-str f))
           (is (re-find #"(?i)shell" (str (:why (first f)))) (pr-str f))))
-      (testing "it does NOT re-fire on the next done — one prompt, not nagging"
+      (testing "an immediate second done is a NO-OP — nothing happened, so there is
+                no new episode to judge and no second boundary to record. It
+                answers with the standing verdict and says so."
+        ;; this block used to call done! here and assert the advisory was gone.
+        ;; That was asserting the behaviour of a DUPLICATE done, which no longer
+        ;; happens: done short-circuits when every delta since the last one is
+        ;; bookkeeping. The property worth protecting — the prompt does not
+        ;; decay into standing noise — is about the next REAL done, asserted
+        ;; below.
+        (let [again (external/done! sess :label "later")]
+          (is (some? (:note again)) (pr-str again))
+          (is (re-find #"(?i)nothing has happened" (:note again)) (pr-str again))))
+      (testing "and it does NOT re-fire on the next done that judges something —
+                one prompt, not nagging"
+        (api/add-form! sess 'sw.core "(defn later-work [x] x)" :prompt "more work")
         (let [f (get-in (external/done! sess :label "later") [:findings :shell-widening])]
           (is (nil? f) (pr-str f))))
       (testing "and it is advisory: a question does not turn the done red"

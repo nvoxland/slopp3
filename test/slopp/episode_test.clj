@@ -960,3 +960,53 @@
           (is (re-find #"/w/the-other-store" r)
               (str "the refusal must name the store it is about: " r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-done-with-nothing-to-judge-does-not-append-a-second-one
+  ;; Measured on slopp's own store: the last eight deltas were
+  ;; [:verify :verify :done :done :done :commit :done :done] — five done
+  ;; markers, no content between any of them. They come from three places that
+  ;; each reasonably call done (the agent, the Stop hook, and commit_point,
+  ;; which runs done! itself because the milestone has no gates of its own), and
+  ;; none of them can see that the others just did.
+  ;;
+  ;; Each of those recorded `:test-status :none`, which is the representation
+  ;; that means "this judged nothing" — so the log carries entries asserting
+  ;; nothing, and `session_brief`'s :last-done can surface one while a real
+  ;; verdict sits behind it.
+  ;;
+  ;; The condition is NOT "the previous delta is a done": turn-begin/turn-end
+  ;; and :verify markers interleave, so that test misses the common case. It is
+  ;; "no CONTENT delta since the last done" — nothing has been written, so there
+  ;; is nothing to judge and nothing to record.
+  (let [sess (external/open!)
+        n-deltas #(count (store/deltas (:store @sess)))]
+    (try
+      (api/ingest! sess 'nd.core "(ns nd.core)\n(defn f [x] x)\n")
+      (let [first-done (external/done! sess :label "real work")
+            after-first (n-deltas)]
+        (testing "a done that judged something records itself, as always"
+          (is (some? (:done first-done)) (pr-str first-done))
+          (is (#{:green :red} (get-in first-done [:findings :test-status]))
+              (pr-str (:findings first-done))))
+        (testing "calling it again appends NOTHING — no write happened, so there
+                  is no unit of work to bound"
+          (let [again (external/done! sess :label "nothing since")]
+            (is (= after-first (n-deltas))
+                (str "a second done appended " (- (n-deltas) after-first)
+                     " delta(s)"))
+            (testing "and it answers with the verdict that still stands, rather
+                      than a fresh :none that supersedes nothing"
+              (is (= (:done first-done) (:done again)) (pr-str again))
+              (is (= (get-in first-done [:findings :test-status])
+                     (get-in again [:findings :test-status]))
+                  (pr-str again))
+              (is (some? (:note again))
+                  "it must SAY it did nothing, or a caller reads a stale verdict as fresh"))))
+        (testing "and a write re-arms it — the short-circuit must not wedge done
+                  shut for the rest of the session"
+          (api/add-form! sess 'nd.core "(defn g [x] (inc x))" :prompt "more work")
+          (let [third (external/done! sess :label "real work again")]
+            (is (< after-first (n-deltas)))
+            (is (not= (:done first-done) (:done third)) (pr-str third))
+            (is (nil? (:note third)) (pr-str third)))))
+      (finally (api/close! sess)))))

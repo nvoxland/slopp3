@@ -476,6 +476,67 @@ client-deps (merge (:client-deps st) (:client provided))
   A var so a test can bind it rather than build 151 fixture tests to cross it."
   150)
 
+(def ^:private bookkeeping-ops
+  "Delta ops that record NOTHING about the code — the only ops that may appear
+  between two done-points without making the second one meaningful.
+
+  An ALLOW-LIST, and the direction is the point. Naming what counts as nothing
+  means every op not yet thought of is treated as a change: a new op slopp adds
+  later makes `done` record a boundary it maybe did not need, which is the
+  harmless failure. A deny-list fails the other way — the unlisted op reads as
+  nothing, and done silently skips judging real work.
+
+  Learned one edit before this one. The first cut used `query/content-ops`,
+  which names the eight FORM-level ops and so classified `:module-tier`,
+  `:config-put`, `:deps-add` and twenty others as nothing. Three tests caught
+  it, each declaring a tier or a capability and then expecting done to have an
+  opinion about it.
+
+  `:merge` and `:revert` are deliberately absent: both change what the store
+  says, and a done after either has something to judge."
+  #{:done :verify :turn-begin :turn-end :commit})
+
+(defn- unchanged-since-done
+  "The STANDING done result when nothing has happened since it, else nil.
+
+  Three callers each reasonably ask for a done-point and none can see that the
+  others just did: the agent, the plugin's Stop hook, and `commit-point!`, which
+  runs `done!` itself because the milestone has no gates of its own. Measured on
+  slopp's own store, that left five `:done` deltas in the last eight, every one
+  recording `:test-status :none` — the representation that means \"this judged
+  nothing\". A log of markers asserting nothing is worse than quiet: it is what
+  `session_brief`'s `:last-done` reads, so a `:none` can surface while a real
+  verdict sits behind it.
+
+  Making the no-op the CALLEE's job is what lets all three keep calling. The
+  alternative — each caller checking whether a done is still current — is three
+  places reasoning about verdict freshness, which is the second-bar shape
+  `commit-point!`'s own docstring warns about.
+
+  The condition is NOT \"the previous delta is a done\": `:turn-begin`,
+  `:turn-end` and `:verify` markers interleave, so that test misses the ordinary
+  case. It is that every delta since the last done is [[bookkeeping-ops]] — an
+  allow-list, for the reason recorded there. `:normalize` is emitted by done
+  itself but lands BEFORE the boundary marker, so a done that rewrote something
+  is correctly not seen as unchanged."
+  [st]
+  (let [back  (reverse (store/deltas st))
+        tail  (take-while #(not= :done (:op %)) back)
+        prior (first (drop-while #(not= :done (:op %)) back))]
+    (when (and prior
+               (every? #(contains? bookkeeping-ops (:op %)) tail))
+      {:done     (:id prior)
+       :normalized 0
+       :rewrites []
+       :lint     []
+       :findings (:findings prior)
+       :note     (str "nothing has happened since the done-point "
+                      (:id prior)
+                      (when-let [l (:label prior)] (str " (" l ")"))
+                      " — its verdict still stands and no second boundary was"
+                      " recorded. A done that judged nothing must not supersede"
+                      " one that judged something.")})))
+
 (defn ^:export done!
   "The DONE-POINT: call when you believe your changes are complete. Marks
   the episode boundary and runs the automatic done-processing — normalize
@@ -492,6 +553,14 @@ client-deps (merge (:client-deps st) (:client provided))
   [session & {:keys [label agent external?] :or {external? true}}]
   (let [t0       (System/currentTimeMillis)
         st       (:store @session)
+        ;; nothing written since the last done → no unit of work to bound, so
+        ;; no boundary is recorded and its verdict still stands. See
+        ;; [[unchanged-since-done]]: three callers each reasonably ask for a
+        ;; done and none can see that the others just did. Everything below is
+        ;; already a no-op in this case (`changed` is empty, so normalize,
+        ;; declare/require hygiene, the suite and the external slice all skip),
+        ;; which is why the guard only has to stop the RECORDING.
+        standing (unchanged-since-done st)
         changed  (->> (query/episode-span st agent)
                       (filter #(and (contains? query/content-ops (:op %))
                                     (= agent (:agent %))))
@@ -705,18 +774,22 @@ client-deps (merge (:client-deps st) (:client provided))
     ;; rather than by any single call being slow — a product the log could
     ;; not compute while no delta carried a duration.
     true (assoc :ms (- (System/currentTimeMillis) t0))))
-        cid (let [v (volatile! nil)]
-              (session/commit-appended! session
-                                (fn [base]
-                                  (let [[st2 c] (store/record-done base label
-                                                                   :agent agent
-                                                                   :findings findings)]
-                                    (vreset! v c)
-                                    st2))
-                                [])
-              (swap! session assoc :done @v)
-              @v)]
-    (cond-> {:done cid
+        cid (if standing
+              (:done standing)
+              (let [v (volatile! nil)]
+                (session/commit-appended! session
+                                  (fn [base]
+                                    (let [[st2 c] (store/record-done base label
+                                                                     :agent agent
+                                                                     :findings findings)]
+                                      (vreset! v c)
+                                      st2))
+                                  [])
+                (swap! session assoc :done @v)
+                @v))]
+    ;; the STANDING verdict, verbatim, when nothing was written — carrying its
+    ;; :note, so a caller cannot read an inherited verdict as a fresh one
+    (if standing standing (cond-> {:done cid
              :normalized (count rewrites)
              :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
              :lint       lint-new
@@ -726,7 +799,7 @@ client-deps (merge (:client-deps st) (:client provided))
                                   :forms (vec (sort (distinct (keep :form carried))))})
       summary             (assoc :test summary)
       (seq pruned-reqs)   (assoc :pruned-requires pruned-reqs)
-      (:status iso)       (assoc :external iso))))
+      (:status iso)       (assoc :external iso)))))
 
 (defn- record-full-check!
   "Stamp the whole-store verdict with its wall cost and land it in the journal
