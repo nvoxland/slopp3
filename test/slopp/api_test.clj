@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.api.artifacts :as artifacts] [slopp.boot :as boot])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.api.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -558,25 +558,27 @@
         (is (= :red (:test-status (api/last-judged-done after))))))))
 
 (deftest slopp-supplies-the-framework-to-stores-that-USE-it
-  ;; D-framework-injection. A store stops declaring io.github.nvoxland/slopp-web
-  ;; and slopp supplies it at the version slopp actually IS, the way it already
-  ;; supplies nREPL and malli (repl/inherent-deps) and the cljs compiler
-  ;; (client-build-deps, right above). That removes the state slopp-ui was in
-  ;; for a day: pinned 0.1.3 while the fix made FOR it sat in the host at 0.1.4.
+  ;; D-framework-injection. A store does not declare io.github.nvoxland/slopp-web
+  ;; and slopp supplies it, the way it already supplies nREPL and malli
+  ;; (repl/inherent-deps) and the cljs compiler (client-build-deps, right above).
+  ;; That removes the state slopp-ui was in for a day: pinned 0.1.3 while the fix
+  ;; made FOR it sat in the host at 0.1.4.
   ;;
-  ;; The condition is narrower than "every store", and the narrowing is
-  ;; load-bearing in two directions:
+  ;; Part 2: what is supplied is FILES, not a coord. slopp-web is never
+  ;; published, so a coord names something only the machine that ran
+  ;; slim-install can resolve — portable in appearance and not in fact.
+  ;;
+  ;; The two CONDITIONS are unchanged by that, and each is load-bearing in a
+  ;; different direction:
   ;;
   ;;   USES but does not DEFINE. slopp's own store CONTAINS slopp.web.*, so
-  ;;   injecting the coord there would put a second copy on the classpath behind
-  ;;   the materialized one and make correctness depend on classpath order —
-  ;;   precisely the ambiguity this decision exists to end.
+  ;;   vendoring into it would put a second copy on the classpath ahead of the
+  ;;   materialized one — `src` is the FIRST classpath entry, so the copy would
+  ;;   win, and slopp would be testing its own shipped framework instead of the
+  ;;   code being edited.
   ;;
-  ;;   USES, not merely exists. Injecting into every store would give every
-  ;;   dep-free fixture store a non-empty dep map, and image recycling is keyed
-  ;;   on deps (`repl/unpark!`) — so it would silently stop recycling for
-  ;;   exactly the stores it currently helps, which are slopp's own test
-  ;;   fixtures. A correctness change must not quietly become a suite slowdown.
+  ;;   USES, not merely exists. A store with no web code needs nothing, and
+  ;;   writing files into every image would cost every fixture boot.
   (let [uses (-> (store/empty-store)
                  (store/ingest 'app.web
                                (str "(ns app.web (:require [slopp.web :as web]))\n"
@@ -587,31 +589,30 @@
                     (store/ingest 'slopp.web "(ns slopp.web)\n(defn handle! [r] r)\n")
                     (store/ingest 'app.web
                                   (str "(ns app.web (:require [slopp.web :as web]))\n"
-                                       "(defn g \"G.\" [r] (web/handle! r))\n")))]
-    (testing "a store that USES the framework is given it, at the host's version"
-      (is (= {'io.github.nvoxland/slopp-web {:mvn/version "0.1.4"}}
-             (external/framework-injection uses "0.1.4"))))
-    (testing "a store with no web code gets NOTHING — image recycling is keyed on
-              deps, so handing every fixture store a coord would stop the reuse
-              this currently buys"
-      (is (nil? (external/framework-injection plain "0.1.4"))))
-    (testing "and a store that DEFINES slopp.web gets nothing — that is slopp's
-              own, where a second copy on the classpath is the bug"
-      (is (nil? (external/framework-injection defines "0.1.4"))))
-    (testing "no version (a checkout, a clojure -M run) injects nothing rather
-              than guessing a coord that would not resolve"
-      (is (nil? (external/framework-injection uses nil))))))
+                                       "(defn g \"G.\" [r] (web/handle! r))\n")))
+        files {"slopp/web.clj" "(ns slopp.web)"}]
+    (testing "a store that USES the framework is given the FILES, not a coord"
+      (is (= files (external/framework-injection uses files))))
+    (testing "a store with no web code gets nothing"
+      (is (nil? (external/framework-injection plain files))))
+    (testing "and a store that DEFINES slopp.web gets nothing — vendoring there
+              would shadow the very code being edited, since src wins"
+      (is (nil? (external/framework-injection defines files))))
+    (testing "a host that cannot supply the framework (a checkout, a clojure -M
+              run) vendors nothing rather than half of it"
+      (is (nil? (external/framework-injection uses nil)))
+      (is (nil? (external/framework-injection uses {}))))))
 
 (deftest ^:external build-supplies-the-framework-a-store-no-longer-declares
-  ;; The other half of D-framework-injection. Once a store stops declaring
+  ;; The build half of D-framework-injection. Once a store stops declaring
   ;; io.github.nvoxland/slopp-web, the BUILT app still has to get it — otherwise
   ;; removing the declaration produces an app with no framework at all, which is
-  ;; why the two halves are staged in this order.
+  ;; why the halves are staged in this order.
   ;;
-  ;; Same shape as build-injects-slopp-client-toolchain-without-manifest-deps
-  ;; above: an EMPTY user manifest, and the generated deps.edn carries what
-  ;; slopp provisions for itself, versioned centrally, with no :deps-add delta
-  ;; in the user's history.
+  ;; Part 2: it arrives as FILES, not a coord. slopp-web is never published to a
+  ;; remote, so a coord in the generated deps.edn would name something only the
+  ;; machine that ran slim-install can resolve — a build that ships broken to
+  ;; anywhere else, and one that looks fine here.
   (let [sess (external/open!)
         dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-framework"
@@ -621,19 +622,24 @@
                       :source (str "(ns fw.app (:require [slopp.web :as web]))\n\n"
                                    "(defn ^:export handler \"H.\" [req] (web/handle! req))\n"))
       (is (nil? (:error (external/build! sess dir))))
-      (let [d   (edn/read-string (slurp (io/file dir "deps.edn")))
-            got (get-in d ['io.github.nvoxland/slopp-web :mvn/version])
-            got (or got (get-in d [:deps 'io.github.nvoxland/slopp-web :mvn/version]))]
-        (testing "the built app declares the framework it was never asked to declare"
-          ;; nil when this suite runs from a checkout rather than a jar —
-          ;; boot/framework-version has nothing to report and injecting a guessed
-          ;; coord would be worse than injecting none. Assert the CONTRACT that
-          ;; holds either way: present iff the host can say what it is.
-          (if (boot/framework-version)
-            (is (= (boot/framework-version) got) (pr-str (:deps d)))
-            (is (nil? got)
-                (str "no host framework version, so nothing may be injected: "
-                     (pr-str (:deps d)))))))
+      (let [facade (io/file dir "src" "slopp" "web.clj")
+            d      (edn/read-string (slurp (io/file dir "deps.edn")))]
+        ;; nil when this suite runs from a checkout rather than a jar — there is
+        ;; no framework to vendor and half of one would be worse than none.
+        ;; Assert the CONTRACT that holds either way.
+        (if (boot/framework-files)
+          (testing "the framework is IN the tree, so the app needs no repository"
+            (is (.exists facade) (str "expected " facade))
+            (is (str/includes? (slurp facade) "(ns slopp.web")
+                "the vendored file must be the real source, not a stub")
+            (is (.exists (io/file dir "src" "slopp" "web" "router.clj"))
+                "the whole framework travels, not just the facade"))
+          (testing "nothing to vendor, so nothing is written"
+            (is (not (.exists facade)))))
+        (testing "and it is never a COORD — that would resolve only where
+                  slim-install has run"
+          (is (nil? (get-in d [:deps 'io.github.nvoxland/slopp-web]))
+              (pr-str (:deps d)))))
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))

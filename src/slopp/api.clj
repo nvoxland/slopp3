@@ -1403,17 +1403,16 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   (:deps (:store @session)))
 
 (defn- host-framework-version
-  "The `slopp-web` release THIS slopp's `slopp/web/**` corresponds to, or nil
-  when the process cannot say — a `clojure -M` run, a checkout, the oracle image.
+  "The `slopp-web` release THIS slopp corresponds to, or nil when the process
+  cannot say — a `clojure -M` run, a checkout, the oracle image.
 
-  Read from a resource the uberjar carries rather than computed, for the same
-  reason `bundled-libs.edn` is: `build.clj` writes it from the tracked
-  `META-INF/MANIFEST.MF`, which is the single place the number is authored, so
-  the jar cannot claim a version it was not built as. nil is a legitimate answer
-  and must stay silent — a checkout has no published identity to be behind."
+  Delegates to `boot/framework-version` rather than reading the resource again.
+  It had its own copy of that read for a day, which is one resource path and one
+  nil-handling rule in two places — and the two would have diverged the first
+  time either moved. The kernel owns it because the image layer needs it too and
+  sits below this one."
   []
-  (when-let [r (io/resource "META-INF/slopp/framework-version.edn")]
-    (not-empty (str/trim (slurp r)))))
+  (boot/framework-version))
 
 (defn framework-drift
   "PURE. Does `manifest` pin `slopp-web` at a version other than `host-version`

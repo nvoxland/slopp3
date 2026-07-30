@@ -44,54 +44,79 @@
         {:name nm :email em}))))
 
 (defn ^:export framework-injection
-  "The `slopp-web` coord slopp supplies to `store`, or nil — `{lib coord}` for
-  merging into an image's `-Sdeps` or a generated `deps.edn`.
+  "The framework FILES slopp vendors into `store` — `{\"slopp/web.clj\" src …}` —
+  or nil when it should supply nothing.
 
-  D-framework-injection. The framework is slopp's own, so slopp versions it,
-  exactly as [[client-build-deps]] does the ClojureScript compiler and
-  `repl/inherent-deps` does nREPL and malli. A store that declares it instead
-  can be pinned to a release the slopp serving it is not — which is not
+  D-framework-injection. The framework is slopp's own, so slopp provides it,
+  exactly as [[client-build-deps]] provides the ClojureScript compiler and
+  `repl/inherent-deps` provides nREPL and malli. A store that declared it
+  instead could be pinned to a release the slopp serving it is not — not
   hypothetical: `slopp-ui` sat on 0.1.3 for a day while the fix made FOR it
   shipped in the host at 0.1.4, green the whole time, because the declaration is
   what loads.
 
-  Two conditions, and each is load-bearing in a different direction.
+  **Files, not a coord (part 2).** `slopp-web` is never published to a remote —
+  it is not something to depend on outside what slopp includes in slopp builds.
+  So a coord in a generated `deps.edn` names something only the machine that ran
+  `slim-install` can resolve: portable in appearance, not in fact. Copying the
+  source in is what makes a built app self-contained, and `boot/framework-version`
+  stamps which one it carries.
+
+  Two conditions, each load-bearing in a different direction.
 
   **USES but does not DEFINE.** slopp's own store CONTAINS `slopp.web.*`, and
-  injecting the coord there would put a second copy on the classpath behind the
-  materialized one — correctness by classpath order, which is the ambiguity this
-  removes rather than a way to implement it.
+  `src` is the FIRST classpath entry — so vendoring there would shadow the code
+  being edited with the last-shipped copy, and slopp would be testing its own
+  release instead of its working tree.
 
-  **USES, not merely exists.** Image recycling is keyed on the dep map
-  (`repl/unpark!`), and the stores it currently helps are the dep-free ones —
-  slopp's own fixtures. Handing every store a coord would silently trade a
-  correctness fix for a slower suite. A store with no web code needs nothing.
+  **USES, not merely exists.** A store with no web code needs nothing, and
+  writing files into every image would cost every fixture boot for nothing.
 
-  nil `version` (a checkout, a `clojure -M` run — `boot/framework-version` says
-  so) injects nothing rather than guessing a coord that would not resolve."
-  [store version]
+  Empty or nil `files` (a checkout, a `clojure -M` run — `boot/framework-files`
+  says so) vendors nothing rather than half a framework."
+  [store files]
   (let [nses (keys (:namespaces store))
         web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
-    (when (and version
+    (when (and (seq files)
                (not-any? web? nses)
                (some (fn [n] (some web? (store/ns-require-libs store n))) nses))
-      {'io.github.nvoxland/slopp-web {:mvn/version version}})))
+      files)))
 
-(defn ^:export image-deps
-  "The dep map an owned image for `store` should carry: the store's manifest
-  plus anything slopp supplies itself.
+(defn ^:export vendor-framework!
+  "Write the framework `store` needs into `dir`/src, so it is on the classpath
+  of anything running there. Returns the paths written, or nil when the store
+  needs none.
 
-  ONE function, because the value is used TWICE per boot and the two uses must
-  agree — `repl/unpark!` keys recycling on it, and `repl/start!` puts it on the
-  classpath. Computing it separately at each call site is how a recycled image
-  comes to carry a different classpath from the one it was matched against.
+  The oracle image runs with its own temp dir as cwd and `src` as the FIRST
+  (relative) classpath entry — measured, and the directory does not otherwise
+  exist. So vendoring is a file write: no `-Sdeps` entry, no `:local/root`, no
+  repository. `build!` writes into the materialized tree the same way, which is
+  why this takes a dir rather than an image.
 
-  Today that is the framework ([[framework-injection]]); nREPL and malli ride a
-  different seam (`repl/inherent-deps`, merged inside `default-cmd`) because
-  they are unconditional and need no store to decide."
-  [store]
-  (merge (:deps store)
-         (framework-injection store (boot/framework-version))))
+  The VERSION STAMP travels with the files, as a resource beside them. Of the
+  three things a maven coord had over copied source, provenance is the one that
+  survives vendoring and it only survives if something carries it: a tree that
+  cannot say which framework it holds is one nobody can diagnose later. It also
+  means `boot/framework-version` answers inside a BUILT app, not just inside
+  slopp.
+
+  Deliberately NOT the uberjar on the image classpath, which would be simpler
+  and would destroy the property this rests on: a store's image receives the
+  FRAMEWORK and nothing else, so reaching for `slopp.api` from an app fails to
+  compile there. That boundary is what makes a slopp-built app a real consumer
+  rather than an insider."
+  [store dir]
+  (when-let [files (framework-injection store (boot/framework-files))]
+    (let [written (vec (sort (for [[path src] files]
+                               (let [f (io/file dir "src" path)]
+                                 (io/make-parents f)
+                                 (spit f src)
+                                 path))))]
+      (when-let [v (boot/framework-version)]
+        (let [f (io/file dir "src" boot/framework-version-path)]
+          (io/make-parents f)
+          (spit f v)))
+      written)))
 
 (defn ^:export client-build-deps
   "slopp's OWN toolchain deps for a BUILD of `store`, injected at build time —
@@ -166,12 +191,7 @@
         bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
         provided (client-build-deps st)
-        ;; slopp's own framework, at the version this slopp IS — the build half of
-        ;; D-framework-injection. Same channel as the client toolchain above and
-        ;; for the same reason: the agent declares APPLICATION deps, slopp
-        ;; provisions its own.
-        deps     (merge (:deps st) (:runtime provided)
-                        (framework-injection st (boot/framework-version)))
+        deps     (merge (:deps st) (:runtime provided))
 client-deps (merge (:client-deps st) (:client provided))
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
@@ -254,6 +274,14 @@ client-deps (merge (:client-deps st) (:client provided))
             (let [tf (io/file target "src" modules/tiers-resource-path)]
               (io/make-parents tf)
               (spit tf (pr-str tiers))))
+          ;; THE FRAMEWORK, copied in rather than named (D-framework-injection
+          ;; part 2). slopp-web is never published to a remote, so a coord in
+          ;; the deps.edn below would name something only the machine that ran
+          ;; slim-install can resolve — a build that ships broken to anywhere
+          ;; else. Vendored, the tree is self-contained and needs no repository
+          ;; at all. Same call the oracle image makes, so the app is built
+          ;; against the framework it was developed against.
+          (vendor-framework! st target)
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
@@ -1159,12 +1187,20 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; D5 staleness backstop, where a genuinely new process IS the point;
           ;; recycling there would undermine the diagnostic that catches a
           ;; stale image.
-          ;; ONE value for both — see image-deps. The manifest alone was passed
-          ;; here twice; now that slopp supplies the framework itself, the
-          ;; recycling key and the classpath must not be able to disagree.
-          idm   (image-deps store)
-          image (or (repl/unpark! idm)
-                    (repl/start! {:slopp.image.repl/deps idm}))]
+          ;; A store needing the framework never RECYCLES: a parked image has its
+          ;; own dir and no vendored files, so reusing one would hand it a
+          ;; subtly incomplete classpath, surfacing as a missing namespace at
+          ;; first use, far from here. Recycling exists for dep-free fixture
+          ;; stores, which by definition need no framework — nothing that
+          ;; benefits today loses anything.
+          vdir  (when (framework-injection store (boot/framework-files))
+                  (str (java.nio.file.Files/createTempDirectory
+                        "slopp-image"
+                        (make-array java.nio.file.attribute.FileAttribute 0))))
+          _     (when vdir (vendor-framework! store vdir))
+          image (or (when-not vdir (repl/unpark! (:deps store)))
+                    (repl/start! (cond-> {:slopp.image.repl/deps (:deps store)}
+                                   vdir (assoc :slopp.image.repl/dir vdir))))]
       (swap! session assoc :image image)
       (session/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)

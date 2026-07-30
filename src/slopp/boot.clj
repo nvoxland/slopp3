@@ -156,6 +156,29 @@
   (when-let [r (io/resource framework-version-path)]
     (not-empty (str/trim (slurp r)))))
 
+(defn framework-files
+  "The framework slopp vendors into stores it serves: `{\"slopp/web.clj\" src …}`,
+  or nil when this process cannot supply it (a checkout, a `clojure -M` run).
+
+  D-framework-injection part 2. `slopp-web` is NEVER published to a remote, so a
+  maven coord in a store's deps or a built app's `deps.edn` names something only
+  the machine that ran `slim-install` can resolve — portable in appearance and
+  not in fact. Copying the source in is what makes a built app self-contained.
+
+  The LIST comes from a generated resource rather than a glob, because a jar
+  cannot enumerate its own resources by prefix, and rather than a hand-written
+  vector, because that goes stale the first time a namespace joins slopp.web.
+  Missing content for a listed file is skipped rather than thrown on: a partial
+  vendor is a compile error at the far end, which is louder and more localised
+  than a boot failure here."
+  []
+  (when-let [r (io/resource "META-INF/slopp/framework-files.edn")]
+    (not-empty
+     (into {} (keep (fn [p]
+                      (when-let [res (io/resource p)]
+                        [p (slurp res)])))
+           (edn/read-string (slurp r))))))
+
 (defn bundled-libs
   "lib→coord for everything the host uberjar carries, or nil when this process
   is not running from one (a `clojure -M` run, a checkout, the oracle image)."
