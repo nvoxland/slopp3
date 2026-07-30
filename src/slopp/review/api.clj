@@ -27,14 +27,16 @@
   namespaces
   "GET /api/namespaces — every namespace with its form count, sorted.
 
-  Reuses the `:browse/namespaces` read the HTML page already declares. Reads
-  are addressed by VOCABULARY rather than by var, so the performer is shared
-  store-wide and this endpoint cannot drift from what `/store` renders — one
-  answer, two representations.
+  Goes through the `:browse/namespaces` read rather than reading the store
+  here. Reads are addressed by VOCABULARY rather than by var, so a performer
+  is shared store-wide and any endpoint answering the same question answers it
+  the same way — which mattered more when an HTML page in this store declared
+  the same read, and is still what keeps the read reusable now that the pages
+  belong to the hub (D-ui-hub part 4).
 
-  `:ns` is stringified here because the wire is JSON and JSON has no symbols.
-  Doing it at the boundary rather than in the read keeps the read useful to
-  the HTML side, which wants the symbol."
+  `:ns` is stringified HERE because the wire is JSON and JSON has no symbols.
+  Doing it at the boundary rather than in the read leaves the read's own value
+  a symbol, which is what an in-image caller wants."
   [req]
   {:status 200
    :body (mapv (fn [{:keys [ns forms]}] {:ns (str ns) :forms forms})

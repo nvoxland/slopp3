@@ -1,4 +1,24 @@
 (ns slopp.api.web
+  "What the store can SAY about its own web surface, derived from the forms.
+
+  `slopp.web` is the framework an app runs on and knows nothing about stores.
+  This is the other direction: reading a store's `:web/*` metadata as data, so
+  the route table, the read/effect vocabularies and the rendered link inventory
+  are answerable without starting a server. The web write gates and
+  `query_routes` are both this, which is deliberate — a rule that refuses at the
+  write and a report that lists the surface must agree, and they only can if
+  they are one derivation.
+
+  Pure functions of the store value, which is what makes them true on every
+  branch and after every merge rather than at whatever moment a server last
+  booted.
+
+  **The recurring difficulty is that a rendered path is not a call.** A link is a
+  string; nothing resolves it, so a typo and a legitimate handoff are the same
+  token. Everything here that classifies one — `:exact`/`:prefix`/`:unresolved`,
+  and the `:web/external-path` vs `:web/client-path` split — is an attempt to
+  keep those apart, and each distinction was added because collapsing it made a
+  report state something false. Prefer adding a category over widening one."
   (:require [slopp.api.capabilities :as capabilities]
             [slopp.edit.modules :as modules] [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n]))
 
@@ -121,18 +141,34 @@
   attrs classified :exact / :prefix / :unresolved, each row carrying the
   qualified :form. A pure function of the forms (the keyword-inventory
   property) — correct on every branch, after every merge, at any revision.
-  Test namespaces are fixtures; a form marked ^{:web/external-path \"why\"}
-  declares its targets served elsewhere and is skipped whole."
+  Test namespaces are fixtures.
+
+  TWO markers skip a form whole, and the difference between them is the whole
+  point of having two:
+
+  - `^{:web/external-path \"why\"}` — the target is served by something OUTSIDE
+    this store (nginx, another service). A genuine crossing, honest about it.
+  - `^{:web/client-path \"why\"}` — the target is THIS app's own path, and the
+    literal is a key the CLIENT router parses. Nothing serves it as written:
+    the render adds the mount point first, and a `:web/spa` fallback answers it.
+
+  One marker used to serve both, and the crossings inventory then reported an
+  SPA's own screens as leaving for \"somebody else's server\" — seven forms of
+  false statement in the one report someone reads to find out what is NOT
+  checked here. Widening the old marker's meaning would have kept the lie;
+  teaching the check to SEE the prefixing is not possible in general, because
+  the base arrives through an ordinary function call."
   [store]
   (vec
    (for [nsx (sort (keys (:namespaces store)))
          :when (not (render/test-ns? nsx))
          e (store/forms store nsx)
          :when (:name e)
-         :let [sx (try (n/sexpr (:node e)) (catch Exception _ nil))]
+         :let [sx (try (n/sexpr (:node e)) (catch Exception _ nil))
+               mt (when (seq? sx) (meta (second sx)))]
          :when (and sx
-                    (not (and (seq? sx)
-                              (:web/external-path (meta (second sx))))))
+                    (not (:web/external-path mt))
+                    (not (:web/client-path mt)))
          ref (link-refs sx)]
      (assoc ref :form (symbol (str nsx) (str (:name e)))))))
 

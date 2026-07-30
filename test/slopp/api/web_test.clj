@@ -475,3 +475,34 @@
         (let [f (get-in (external/done! sess :label "again") [:findings :spa-consequences])]
           (is (nil? f) (pr-str f))))
       (finally (api/close! sess)))))
+
+(deftest a-client-router-path-is-not-somebody-elses-server
+  ;; Friction 13, measured on slopp-ui: seven view forms render `/store/ns/foo`
+  ;; and `/change/d1..d2`, which no SERVER route matches, so the dangling-route
+  ;; check flagged them. The only escape was ^{:web/external-path}, and it
+  ;; discharged the check while filing a FALSE statement — the crossings
+  ;; inventory then reported those forms as leaving for "somebody else's server".
+  ;;
+  ;; They are this app's own paths. The literal is a key the CLIENT router
+  ;; parses, and `prefix-links` re-addresses it under the mount point before it
+  ;; reaches the DOM, so what serves it is this store's own `:web/spa` fallback.
+  ;;
+  ;; The crossings report is exactly where someone goes to ask what is NOT
+  ;; checked here, so a wrong reason there is worse than a missing one. Hence a
+  ;; marker of its own rather than widening the old one: same discharge,
+  ;; truthful category. Teaching the dangling check to SEE the prefixing was the
+  ;; alternative and it cannot be done in general — the base arrives through an
+  ;; ordinary function call the checker would have to trace.
+  (let [src (str "(ns spa.ui)\n\n"
+                 "(defn ^{:web/client-path \"the client router parses it; prefix-links adds the mount point\"}\n"
+                 "  ns-link \"N.\" [nsx]\n"
+                 "  [:a {:href (str \"/store/ns/\" nsx)} \"ns\"])\n\n"
+                 "(defn plain \"P.\" [] [:a {:href \"/served-by-nobody\"} \"x\"])\n")
+        s    (store/ingest (store/empty-store) 'spa.ui src)
+        refs (web/ui-route-refs s)]
+    (testing "the marker discharges the form's refs, exactly as external-path does
+              — otherwise it is not an escape and nobody can use it"
+      (is (not-any? #(= 'spa.ui/ns-link (:form %)) refs) (pr-str refs)))
+    (testing "and an unmarked form in the same namespace is still reported, so
+              the marker discharges one form rather than switching the check off"
+      (is (some #(= 'spa.ui/plain (:form %)) refs) (pr-str refs)))))

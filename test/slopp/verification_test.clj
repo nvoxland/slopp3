@@ -1,7 +1,21 @@
 (ns slopp.verification-test
+  "Cover for the thing every other test's credibility rests on: that a
+  verification result means what it says.
+
+  The subject here is not whether code is correct — that is what the rest of
+  the suite is for. It is whether a GREEN is earned. Verification runs in two
+  tiers across process boundaries (an in-image tracer, an external JVM per
+  shard), and both can fail in the one way nothing else catches: reporting
+  success for work that never happened. A runner that prints a clean summary
+  then dies nonzero; a runner handed a namespace the image cannot hold, whose
+  exception arrives as text where a map was expected. Both produced greens.
+
+  So what belongs here is the adversarial question, per tier: make the runner
+  lie, and assert that the lie does not survive. A check that cannot fail is
+  worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.image :as image]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -727,3 +741,77 @@
                           (make-array java.nio.file.attribute.FileAttribute 0)))]
       (is (thrown-with-msg? Exception #"(?i)no source|not a materialized"
                             (external/built-store empty-dir))))))
+
+(deftest ^:external an-in-image-run-that-did-not-happen-is-not-green
+  ;; Sibling of a-green-summary-with-a-dead-jvm-is-not-green, one tier down and
+  ;; the same discipline: a run that did not happen must not be reported as a
+  ;; run that found nothing.
+  ;;
+  ;; The in-image runner returns {:summary … :trace …}, and it returns something
+  ;; ELSE when the eval threw — the exception arrives as printed text. That
+  ;; destructured to nil and the nil was handed on, where a cond-> dressed it as
+  ;; a map with no counts in it. Measured on a real store (slopp-ui, four :cljs
+  ;; namespaces): `test_run {all true}` answered in 43ms with no :test and no
+  ;; :pass, for 32 tests that never ran — and `full_check`, the gate you run
+  ;; before a commit you want to stand behind, reported its in-image tier green
+  ;; the same way.
+  ;;
+  ;; The specific cause is fixed where it belongs — slopp.image/traced-test-run
+  ;; no longer hands the tracer a namespace the image cannot hold. This is the
+  ;; CLASS: whatever the next reason turns out to be, an absent summary has to
+  ;; surface as an error rather than as a quiet green.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'nh.core-test
+                   (str "(ns nh.core-test (:require [clojure.test :refer [deftest is]]))\n\n"
+                        "(deftest a-t (is (= 1 1)))\n"))
+      (testing "the sane case still reports what it ran"
+        (let [r (api/test-run! sess 'nh.core-test)]
+          (is (= 1 (:test r)) (pr-str r))
+          (is (= 1 (:pass r)) (pr-str r))))
+      (testing "a runner that returns no summary is an ERROR — the one shape
+                that must never come back is counts-of-zero, because every
+                caller reads that as a clean run"
+        (with-redefs-fn {#'image/traced-test-run
+                         (fn [& _] "Execution error: No namespace: nh.nope found")}
+          #(let [r (api/test-run! sess 'nh.core-test)]
+             (is (map? r) (pr-str r))
+             (is (pos? (:error r 0))
+                 (str "an absent summary must count as an error, or a run that"
+                      " did not happen is indistinguishable from a clean one: "
+                      (pr-str r)))
+             (is (seq (:failures r)) (pr-str r))
+             (is (re-find #"nh\.nope" (pr-str (:failures r)))
+                 (str "and it must carry what the runner actually said, or the"
+                      " next cause is undiagnosable: " (pr-str r))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external an-eval-that-threw-is-not-an-eval-that-returned-nothing
+  ;; The root of the whole family. `repl/eval!` keeps `:value` from the nREPL
+  ;; messages — and an eval that THREW produces no `:value` at all: the
+  ;; exception arrives as `:err` / `:ex`, which were dropped on the floor. So a
+  ;; throw returned `[]`, byte-identical to an eval that legitimately returned
+  ;; nothing, and every caller that did `(first …)` got nil.
+  ;;
+  ;; That silence is what let a :cljs namespace hollow out the whole in-image
+  ;; tier (`ns-interns` threw, the throw evaporated, callers saw a summary-less
+  ;; result) and it is why the first diagnosis of it read `:actual ""` — there
+  ;; was nothing left to diagnose from.
+  ;;
+  ;; Core 1 at the transport: "it threw" and "it returned nothing" must not
+  ;; share a representation.
+  (let [sess (external/open!)]
+    (try
+      (let [img (:image @sess)]
+        (testing "a normal eval is unchanged — this must stay the common path"
+          (is (= [3] (repl/eval! img "(+ 1 2)"))))
+        (testing "an eval returning nil still says nil, not an error"
+          (is (= [nil] (repl/eval! img "nil"))))
+        (testing "an eval that THREW comes back naming the throw"
+          (let [r (repl/eval! img "(ns-interns 'no.such.namespace.here)")]
+            (is (seq r)
+                "an empty result is the bug: it cannot be told from a nil return")
+            (is (re-find #"no\.such\.namespace\.here" (pr-str r))
+                (str "and it must carry what was thrown, or the next cause is"
+                     " undiagnosable: " (pr-str r))))))
+      (finally (api/close! sess)))))

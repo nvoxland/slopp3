@@ -69,7 +69,7 @@
     :escape "tighten :web/auth, or accept it — a deliberately public write surface (signup, webhook) is legitimate and this asks per changed form"
     :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until http.enabled)"}
    {:rule :web-dangling-route-refs :grain :done
-    :escape "fix the path, add the endpoint or static asset, or ^{:web/external-path \"why\"} on the RENDERING form when something outside this store serves it"
+    :escape "fix the path, add the endpoint or static asset, or mark the RENDERING form — ^{:web/external-path \"why\"} when something OUTSIDE this store serves it, ^{:web/client-path \"why\"} when the literal is THIS app's own client-router key that the render prefixes before it reaches the DOM (an SPA screen). Pick by which is true: the crossings inventory reports them as different exits, and external-path on an app path files a false statement in the one report that says what is unchecked"
     :teach "a rendered link/form targets a path no declared route or static mount serves — the UI nil-pun: it ships and 404s. Dynamic paths ride along as :info findings: reported, never status-flipping (inert until http.enabled)"}
    {:rule :schema-drift :grain :done
     :escape "fix the schema or the impl so they agree"

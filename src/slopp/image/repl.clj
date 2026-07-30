@@ -102,16 +102,38 @@
   when readable and left as the raw printed string otherwise (so evals that
   return unreadable objects — namespaces, functions — don't blow up).
 
+  **An eval that THREW does not come back empty.** It used to: this kept only
+  `:value`, and a throw produces no `:value` at all — the exception arrives as
+  `:err` / `:ex`, which were dropped. So `[]` meant either \"returned nothing\"
+  or \"blew up\", and every caller doing `(first …)` got nil for both. That
+  silence is what let one `:cljs` namespace hollow out the entire in-image test
+  tier: `ns-interns` threw, the throw evaporated here, and the runner's caller
+  saw a result with no summary in it and reported green. When there is no value
+  and there IS an error, the error text comes back as the single value, so the
+  next cause is diagnosable instead of invisible.
+
+  A genuine nothing — no value, no error — still returns `[]`. Core 1 at the
+  transport: \"it threw\" and \"it returned nothing\" must not share a
+  representation.
+
   `image` is an OPAQUE handle from `start!`: the caller never builds one, it
   passes back what it was given. Destructuring it here would advertise
   internals as a contract a caller is expected to know; reading them in the
   body says the truth. It also keeps the handle's key shape out of arglists,
   which is what made renaming `:client` brick a whole session."
   [image code]
-  (->> (nrepl/message (:client image) {:op "eval" :code code
-                                       :session (:session image)})
-       (keep :value)
-       (mapv (fn [v] (try (read-string v) (catch Exception _ v))))))
+  ;; realized ONCE — the seq is consumed twice below, and nrepl/message is lazy
+  (let [msgs (doall (nrepl/message (:client image) {:op "eval" :code code
+                                                    :session (:session image)}))
+        vals (mapv (fn [v] (try (read-string v) (catch Exception _ v)))
+                   (keep :value msgs))]
+    (if (seq vals)
+      vals
+      (let [ex  (some :ex msgs)
+            err (str/trim (apply str (keep :err msgs)))]
+        (if (or ex (seq err))
+          [(str/trim (str ex (when (and ex (seq err)) ": ") err))]
+          vals)))))
 
 ^:unsafe (defn- eval-outcome
   "Classify a completed nREPL eval's messages: `{:values [...]}` (plus

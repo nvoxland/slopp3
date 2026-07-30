@@ -525,3 +525,46 @@
         (is (not (str/includes? (form 'things-response) "[:map [:name :string]]"))
             "each def carries ITS OWN schema — a renderer that paired names with
              values by position would pass every presence check above")))))
+
+(deftest ^:external a-cljs-namespace-does-not-silence-the-whole-project-run
+  ;; Found reviewing slopp-ui, which has four :cljs namespaces: `test_run
+  ;; {all true}` answered `{:external-pending {…} :ms 43}` — no :test, no
+  ;; :pass, 43ms for 32 tests. Nothing ran, and nothing said so.
+  ;;
+  ;; `slopp.rt/traced-run` maps `ns-interns` over every namespace it is handed,
+  ;; and the whole-project path hands it EVERY namespace in the store. A :cljs
+  ;; namespace does not exist in the JVM image, so `ns-interns` throws "No
+  ;; namespace: … found" — lazily, inside the run. The throw crosses the eval
+  ;; boundary as text, `{:keys [summary trace]}` destructures to nil, and the
+  ;; caller's cond-> builds a map with no counts in it.
+  ;;
+  ;; Which is the worst shape available: `full_check` — the gate you run before
+  ;; a commit you want to stand behind — reports its in-image tier green having
+  ;; run nothing, and the warranty trace never fills, so `review_scan` calls
+  ;; well-tested forms :untested. Every store with client code, not just this
+  ;; one.
+  (let [sess (external/open!)]
+    (try
+      (api/create-ns! sess 'wp.core :source "(ns wp.core)\n(defn f [x] (* 2 x))\n")
+      (api/create-ns! sess 'wp.core-test
+                      :source (str "(ns wp.core-test\n"
+                                   "  (:require [clojure.test :refer [deftest is]]\n"
+                                   "            [wp.core :as c]))\n"
+                                   "(deftest doubles-it (is (= 4 (c/f 2))))\n"))
+      (testing "the whole-project run reports what it ran, with no cljs present"
+        (let [r (api/test-run! sess nil)]
+          (is (= 1 (:test r)) (pr-str r))
+          (is (= 1 (:pass r)) (pr-str r))))
+      (api/create-ns! sess 'wp.client :source "(ns wp.client)\n"
+                      :platform :cljs :prompt "browser code")
+      (testing "and a :cljs namespace in the store does not change that — it
+                cannot run in the image, which is a reason to leave it out of
+                the run, never a reason for the run to vanish"
+        (let [r (api/test-run! sess nil)]
+          (is (= 1 (:test r)) (pr-str r))
+          (is (= 1 (:pass r)) (pr-str r))
+          (is (zero? (+ (:fail r 0) (:error r 0))) (pr-str r))))
+      (testing "and the trace still lands, which is what review_scan reads"
+        (is (contains? (get (:test-map @sess) 'wp.core-test/doubles-it) 'wp.core/f)
+            (pr-str (:test-map @sess))))
+      (finally (api/close! sess)))))

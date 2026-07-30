@@ -104,7 +104,21 @@
     :blind      "the DECLARATION is the whole check: it stops
                  web-dangling-route-refs asking, and nothing confirms the
                  foreign server serves that path or still does. This is the
-                 crossing that is honest about being one"}])
+                 crossing that is honest about being one"}
+
+   {:kind       :spa/client-path
+    :leaves     "a link written as a CLIENT-ROUTER key, not a server path"
+    :to         "this app's own router, after the render prefixes it"
+    :markers    #{:web/client-path}
+    :checked-by nil
+    :blind      "nothing joins the three parts up. The literal is a client
+                 route, the mount point arrives from the render, and a
+                 :web/spa fallback answers the result — so a typo'd literal,
+                 a prefix that stopped being applied, and a client route
+                 nobody registered all look the same from here. Distinct from
+                 :http/foreign-route deliberately: this target IS ours, and
+                 filing it as somebody else's server put a false statement in
+                 the one report that exists to say what is unchecked"}])
 
 (def internal-markers
   "Markers slopp owns that are deliberately NOT crossings, and why each stays
@@ -152,7 +166,7 @@
     (vec (sort (remove owned
                        [:web/path :web/method :web/auth :web/reads :web/effects
                         :web/read :web/effect :web/effectful :web/request
-                        :web/response :web/client :web/spa :web/external-path
+                        :web/response :web/client :web/spa :web/external-path :web/client-path
                         :malli/schema :rule/applies-to :rule/severity])))))
 
 (defn ^:export store-crossings

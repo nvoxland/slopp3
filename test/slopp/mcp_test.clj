@@ -1366,7 +1366,7 @@
         (is (some #(= "ui_serve" (:name %)) tools/tools))
         (is (not (contains? tools/read-only-tools "ui_serve"))
             "a readOnlyHint would let plan mode auto-permit binding a port"))
-      (testing "it answers with the bound port and a url that lands on a page"
+      (testing "it answers with the bound port and a url that serves this session's API"
         (call! sess "ns_create" {:ns "us.only" :source "(ns us.only)\n(defn f \"F.\" [x] x)\n"})
         (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
           (is (pos? (:port r)) (pr-str r))
@@ -1524,12 +1524,15 @@
             ;; clients never show anyone — so without this, autostart is a
             ;; feature that cannot be found
             (is (= (:url r) (:ui-url @sess)))
-            (is (= (:url r) (:ui (api/session-brief sess))))
-            ;; and when there IS a hub, its url too — the skill tells an
-            ;; agent to hand THAT over on a multi-project machine, and
-            ;; session_brief is the only place an agent would see it
-            (swap! sess assoc :ui-hub "http://127.0.0.1:7359/")
-            (is (= "http://127.0.0.1:7359/" (:ui-hub (api/session-brief sess)))))
+            (is (= (:url r) (:ui (api/session-brief sess)))))
+          (testing "starting the UI does NOT make the brief claim a hub — no
+                    hub is running here, and this assertion used to be
+                    `(swap! sess assoc :ui-hub …)` followed by reading it back,
+                    which proved only that assoc works. The claim it was
+                    standing in for was false: `:ui-hub` was set from the
+                    CONFIGURED port whether or not anything answered"
+            (let [b (api/session-brief sess)]
+              (is (nil? (:ui-hub b)) (pr-str (select-keys b [:ui :ui-hub])))))
           (ui-server/stop!)))
       (finally
         (ui-server/stop!)
@@ -1718,3 +1721,37 @@
     (testing "and the registry is not empty, which would pass vacuously"
       (is (< 20 (count tools/wire-keys)))
       (is (contains? tools/wire-keys :error)))))
+
+(deftest ^:external the-project-listeners-description-promises-only-what-it-serves
+  ;; ui_serve's description outlived the surface it described. It said "a
+  ;; browsable HTML view of THIS store for a human: the namespace index, form
+  ;; source, and … the milestone timeline and per-milestone change review",
+  ;; and told the caller to hand that url to a human — for a listener that
+  ;; answers 404 {"error":"no route"} at `/`. The pages moved to the hub with
+  ;; D-ui-hub part 4 and the description did not follow.
+  ;;
+  ;; Sibling of slopp-prose-never-names-a-tool-that-does-not-exist, and the
+  ;; same class: a gate sees var references, never a promise made in prose.
+  ;; Anchored to the FACT rather than to a wording, so the day a page endpoint
+  ;; comes back this guard stops firing instead of having to be argued with.
+  (doseq [n ui-server/served-namespaces] (require n))
+  (let [paths   (->> ui-server/served-namespaces
+                     (mapcat (comp vals ns-publics))
+                     (keep (comp :web/path meta))
+                     sort vec)
+        non-api (remove #(str/starts-with? % "/api") paths)
+        desc    (:description (first (filter #(= "ui_serve" (:name %)) tools/tools)))]
+    (testing "the FACT this rests on: the listener serves /api and nothing else"
+      (is (seq paths) "served-namespaces declared no endpoints at all")
+      (is (empty? non-api)
+          (str "a non-/api route means the listener DOES serve a page again,"
+               " and then this guard should be DELETED rather than satisfied: "
+               (pr-str non-api))))
+    (testing "so the description may not promise a human a page"
+      (is (some? desc) "ui_serve is not in the registry")
+      (is (empty? (re-seq #"(?i)HTML view|browsable|namespace index|form source|milestone timeline|change review"
+                          desc))
+          (str "ui_serve's description promises pages this listener does not"
+               " serve: " (pr-str desc)))
+      (is (re-find #"(?i)hub" desc)
+          "and it must name the hub, which is where those pages actually are"))))

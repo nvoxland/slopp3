@@ -354,3 +354,48 @@
           ;; caller has to distinguish two spellings of nothing
           (is (not (contains? m :host-override)) (pr-str m))))
       (finally (api/close! sess)))))
+
+(deftest a-framework-pin-that-differs-from-the-host-is-NAMED
+  ;; The bug this closes actually happened, to the one project built to catch
+  ;; exactly this: `slopp-ui` pinned `io.github.nvoxland/slopp-web 0.1.3`, the
+  ;; trailing-slash fix in `mount-routes` shipped in slopp's store and was never
+  ;; republished, and the app whose bug prompted the fix went on running the
+  ;; broken copy. Green everywhere, for a day.
+  ;;
+  ;; Why nothing could have caught it: there was no fact to compare against.
+  ;; `slim-install` took `:version` as an ad-hoc argument (defaulting to
+  ;; "0.1.0", so running it bare would DOWNGRADE ~/.m2), and nothing recorded
+  ;; which slopp-web release a given slopp's `slopp/web/**` corresponds to.
+  ;;
+  ;; And `:host-override` structurally cannot cover it, in both directions:
+  ;; `bundled-libs.edn` is generated from slopp's dependency BASIS and slopp-web
+  ;; is not a dependency of slopp — it is slopp's own source, materialized into
+  ;; the jar — and its message ("the host bundles this and cannot displace it")
+  ;; is the wrong story anyway. Measured: the DECLARATION wins. The pinned jar is
+  ;; what loads, in the oracle image AND in a `java -jar` host process.
+  ;;
+  ;; So: report on DIFFERENCE, not on ordering. Whichever is newer, the pin is
+  ;; what runs, and "a fix in the host has not reached you" is the thing worth
+  ;; saying.
+  (testing "a pin equal to the host's own framework version says nothing"
+    (is (nil? (api/framework-drift {'io.github.nvoxland/slopp-web
+                                    {:mvn/version "0.1.4"}}
+                                   "0.1.4"))))
+  (testing "a pin that differs is named, with both versions and which one RUNS"
+    (let [d (api/framework-drift {'io.github.nvoxland/slopp-web
+                                  {:mvn/version "0.1.3"}}
+                                 "0.1.4")]
+      (is (some? d))
+      (is (= "0.1.3" (:declared d)) (pr-str d))
+      (is (= "0.1.4" (:host d)) (pr-str d))
+      (is (re-find #"(?i)declar" (:note d))
+          (str "the note must say the declaration is what loads, or the reader"
+               " draws the opposite conclusion: " (pr-str d)))))
+  (testing "a store that does not depend on the framework at all says nothing"
+    (is (nil? (api/framework-drift {'metosin/malli {:mvn/version "0.20.1"}}
+                                   "0.1.4"))))
+  (testing "and neither does a host that cannot say what it carries — running
+            from a checkout rather than a jar is not a finding"
+    (is (nil? (api/framework-drift {'io.github.nvoxland/slopp-web
+                                    {:mvn/version "0.1.3"}}
+                                   nil)))))

@@ -1,4 +1,24 @@
 (ns slopp.api.review
+  "Whole-codebase TRIAGE: which forms should a reviewer read first, and why.
+
+  It exists because the obvious reading order is the wrong one. A reviewer
+  arriving at a store has no file to open and no diff to follow, and reading
+  namespaces alphabetically spends the most attention on whatever sorts first.
+  So this derives risk per form from signals the store already holds — observed
+  coverage, caller count, size, lint, docs, effectfulness — and ranks by it.
+
+  **The hard part is not the ranking, it is what a flag is allowed to CLAIM.**
+  Every signal here is an inference from evidence that can be absent for
+  innocent reasons, and a flag that overstates its evidence produces a list
+  whose top rows cannot be acted on — which is worse than no list, because
+  people stop reading it. Hence the exclusions each carry their reason: a plain
+  `(def x <data>)` can never acquire trace evidence, a `^{:covers}` marker names
+  a dispatch path nothing can see, and `:cljs` is reported as `:off-platform`
+  rather than `:untested` because no test could ever cover it. When adding a
+  signal, the question to answer first is what its absence could innocently mean.
+
+  Read-only over the store value plus the session's trace map; the done-point's
+  own findings live in `slopp.api.done`."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.edit.modules :as edit.modules]
@@ -63,6 +83,26 @@
         covered-declared (set (for [r (refs/refs st)
                                     :when (= :covers (:marker r))]
                                 (symbol (str (:to-ns r)) (str (:to-name r)))))
+        ;; DECLARED LIVENESS: something outside the store references this —
+        ;; `^:entry-point`, `^:unused-ok`, and the D-web declarations (a
+        ;; `:web/path` endpoint the dispatcher calls, a `:web/read` /
+        ;; `:web/effect` performer the interpreter resolves by name). The graph
+        ;; already models every one as a `:via :declared` edge from `:external`.
+        ;;
+        ;; This used to be five hand-written metadata checks a few lines below,
+        ;; re-deriving from `(meta (second s))` exactly what `usages` had just
+        ;; discarded by filtering `:declared` out — and each was added only when
+        ;; its absence bit somebody. Excluding declared edges from the CALLER
+        ;; COUNT is right (the framework is not an in-store call site and would
+        ;; inflate blast radius); deriving LIVENESS from that same count is what
+        ;; was wrong. Two questions, one number.
+        ;;
+        ;; `:covers` is excluded because coverage is not liveness — the same
+        ;; distinction `unused-report` makes.
+        declared-alive (set (for [r (refs/refs st)
+                                 :when (and (= :declared (:via r))
+                                            (not= :covers (:marker r)))]
+                             (symbol (str (:to-ns r)) (str (:to-name r)))))
         lint-by-form (frequencies
                       (for [[nsx src] rendered
                             f (index/lint src (store/kondo-lang st nsx))
@@ -94,11 +134,29 @@
                               (seq? s)
                               (contains? '#{defn def} (first s))
                               (not (:private (meta (second s))))
-                              (not (:unused-ok (meta (second s))))
-                              (not (:entry-point (meta (second s))))
-                              ;; generated wrappers are available surface, not dead
+                              ;; ONE question, asked of the graph: does anything
+                              ;; outside the store declare that it references
+                              ;; this? Covers ^:entry-point, ^:unused-ok and the
+                              ;; three D-web declarations at once, and covers the
+                              ;; NEXT one for free — `edit.refs/declared-refs` is
+                              ;; where that vocabulary lives, so a marker added
+                              ;; there arrives here without a second edit.
+                              (not (contains? declared-alive q))
+                              ;; the two that are genuinely not graph facts:
+                              ;; ^:generated is machinery awaiting front-end
+                              ;; calls, and -main is a naming convention
                               (not (:generated (meta (second s))))
                               (not= '-main nm))
+                         ;; OUTSIDE THE ORACLE, not behind on tests. A :cljs
+                         ;; namespace never loads into the JVM image, so no test
+                         ;; can trace it and none can statically reach it from a
+                         ;; test ns — "add a test" is advice nobody can take, and
+                         ;; on a real store it dominated the ranking (15 of
+                         ;; slopp-ui's 17 :untested rows). The reasoning was
+                         ;; already here, keyed to the wrong fact: ^:generated was
+                         ;; excluded BECAUSE it is :cljs. Ask the platform.
+                         off-platform (and (not test?)
+                                           (= :cljs (store/platform-for st nsx)))
                          untested (and (not test?)
                                        ;; a plain (def x <data>) has no invocation to
                                        ;; trace, so it can never acquire evidence —
@@ -111,11 +169,16 @@
                                        ;; it names the exact dispatch path neither the
                                        ;; trace nor static reach can see.
                                        (not (contains? covered-declared q))
-                                       ;; a ^:generated wrapper is :cljs — never traced,
-                                       ;; never reached from a test ns; not a finding
+                                       ;; the oracle cannot reach it at all — reported as
+                                       ;; :off-platform below, which says so
+                                       (not off-platform)
+                                       ;; a ^:generated wrapper is machine-written surface
+                                       ;; nobody hand-tests; the :cljc contracts ns is
+                                       ;; generated too, so this is not just the :cljs case
                                        (not (:generated (meta (second s)))))
                          flags    (cond-> []
                                     untested       (conj :untested)
+                                    off-platform   (conj :off-platform)
                                     unused         (conj :unused)
                                     (>= callers 8) (conj :high-blast)
                                     (>= loc 50)    (conj :large)
@@ -123,6 +186,11 @@
                                     doc?           (conj :undocumented)
                                     bang?          (conj :effectful))
                          risk     (+ (if untested 4 0)
+                                     ;; 1, not untested's 4: a standing fact about
+                                     ;; the platform is worth SEEING and is not a
+                                     ;; gap anyone can close, so it must never
+                                     ;; outrank code that could be tested and isn't
+                                     (if off-platform 1 0)
                                      (if unused 2 0)
                                      (cond (>= callers 8) 2 (>= callers 3) 1 :else 0)
                                      (cond (>= loc 50) 2 (>= loc 30) 1 :else 0)

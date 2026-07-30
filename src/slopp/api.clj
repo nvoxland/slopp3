@@ -1402,20 +1402,80 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   [session]
   (:deps (:store @session)))
 
+(defn- host-framework-version
+  "The `slopp-web` release THIS slopp's `slopp/web/**` corresponds to, or nil
+  when the process cannot say — a `clojure -M` run, a checkout, the oracle image.
+
+  Read from a resource the uberjar carries rather than computed, for the same
+  reason `bundled-libs.edn` is: `build.clj` writes it from the tracked
+  `META-INF/MANIFEST.MF`, which is the single place the number is authored, so
+  the jar cannot claim a version it was not built as. nil is a legitimate answer
+  and must stay silent — a checkout has no published identity to be behind."
+  []
+  (when-let [r (io/resource "META-INF/slopp/framework-version.edn")]
+    (not-empty (str/trim (slurp r)))))
+
+(defn framework-drift
+  "PURE. Does `manifest` pin `slopp-web` at a version other than `host-version`
+  — the release this slopp's own `slopp/web/**` corresponds to? nil when they
+  agree, when the store does not depend on the framework, or when the host
+  cannot say what it carries (a `clojure -M` run, a checkout, the oracle image).
+
+  **Difference, not ordering, and the direction matters.** For an ordinary
+  library the host's ambient copy wins and the declaration is inert — that is
+  what `boot/host-lib-divergence` reports. `slopp-web` is the opposite, measured
+  rather than assumed: the pinned jar is what LOADS, in the oracle image and in a
+  `java -jar` host process alike, because the coord is resolved onto the
+  classpath ahead of the uberjar's own copy. So the finding is not \"your
+  declaration is being ignored\" but \"your declaration is being honoured, and it
+  is not this slopp\".
+
+  `:host-override` cannot cover this and never could: `bundled-libs.edn` is
+  generated from slopp's dependency BASIS, and slopp-web is not a dependency of
+  slopp — it is slopp's own source materialized into the jar. The one library
+  where declared-vs-provided divergence is most likely was the one that
+  mechanism was blind to.
+
+  It cost a real day: `slopp-ui` pinned 0.1.3, the trailing-slash fix in
+  `mount-routes` shipped in slopp's store and was never republished, and the app
+  whose bug prompted the fix went on running the broken copy with every check
+  green."
+  [manifest host-version]
+  (let [declared (:mvn/version (get manifest 'io.github.nvoxland/slopp-web))]
+    (when (and declared host-version (not= declared host-version))
+      {:declared declared
+       :host     host-version
+       :note     (str "this store pins slopp-web " declared " and the slopp"
+                      " serving it is built from " host-version ". The"
+                      " DECLARATION governs — " declared " is what loads, here"
+                      " and in every test — so a slopp.web change in "
+                      host-version " has not reached this project. Republish"
+                      " (clojure -T:build slim-install :version) and deps_add"
+                      " the new version, then restart: a hot deps_add cannot"
+                      " displace an already-loaded namespace")})))
+
 (defn deps-manifest
   "The dependency manifest as an AGENT should read it: `{:deps {lib coord}}`,
   plus `:host-override` naming any declaration slopp's own server process
-  cannot honor because it bundles that library itself.
+  cannot honor because it bundles that library itself, plus `:framework-drift`
+  when the store pins `slopp-web` at a version other than the one this slopp is
+  built from.
+
+  The two are OPPOSITE findings and both are needed. `:host-override` says a
+  declaration is INERT — the host's ambient copy wins. `:framework-drift` says a
+  declaration is IN FORCE and is not this slopp, which is the one that cost a day
+  (see [[framework-drift]]).
 
   Separate from `deps-list` on purpose. `deps-list` is the accessor — the
   store's data, which other code and tests build on, and the host's classpath
   is not part of it. This is the SURFACE, and the surface carries an
   obligation the accessor does not: `deps_list` is the one answer an inherited
   store ever gives about its dependencies, so a declaration that is inert in
-  the running server has to be visible here or nowhere."
+  the running server — or in force but stale — has to be visible here or nowhere."
   [session]
   (let [deps (deps-list session)
-        over (boot/host-lib-divergence deps (boot/bundled-libs))]
+        over (boot/host-lib-divergence deps (boot/bundled-libs))
+        fw   (framework-drift deps (host-framework-version))]
     (cond-> {:deps deps}
       (seq over)
       (assoc :host-override over
@@ -1423,7 +1483,8 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
              (str "slopp's own server process bundles these at the :in-force"
                   " version and cannot displace them. Your declarations still"
                   " govern the oracle image, the test suite and anything"
-                  " build! produces")))))
+                  " build! produces"))
+      fw (assoc :framework-drift fw))))
 
 (defn- record-pure!
   "Mark each of `syms` pure/un-pure in ONE appended commit (N :deps-pure deltas)."
@@ -2833,7 +2894,43 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
     ;; the HUB's url when this project registered with one — that is the
     ;; address to hand a human on a machine running several projects, and
     ;; the per-project one above is a derived port nobody should type
+    ;; the project's own page ON the hub, and ONLY while a hub is answering:
+    ;; the slug in it is minted by the hub and returned on every beat, so
+    ;; holding one is the proof we are registered rather than a guess. This
+    ;; used to be the configured hub root, set when the beat STARTED and never
+    ;; revisited — so a machine with no hub had orientation hand a human a
+    ;; connection refused. A hub is optional; absence is an ordinary state and
+    ;; has to be sayable.
     (:ui-hub @session) (assoc :ui-hub (:ui-hub @session))
+    ;; a hub that REFUSED our beat is a third state, and it must not read as
+    ;; the second. The hub validates each check-in against its own copy of the
+    ;; beat contract — a hand-maintained twin of ours, because neither store
+    ;; can read the other — so this 400 IS the notification that the two
+    ;; copies diverged. Called "no hub is answering" it sends someone to check
+    ;; whether a hub is running, the one thing that is not wrong.
+    (and (not (:ui-hub @session)) (:ui-hub-refused @session))
+    (assoc :ui-hub-note
+           (str "the hub at " (:ui-hub-configured @session) " REFUSED this"
+                " project's check-in with "
+                (:hub/refused (:ui-hub-refused @session))
+                " — it is running and it rejected what we sent, so this is"
+                " ours to fix, not a missing hub. Its explanation: "
+                (pr-str (:hub/explain (:ui-hub-refused @session)))
+                ". The beat contract crosses the split by COPY"
+                " (review.contracts/project-beat here, its twin over there),"
+                " so a refusal is where drift between them surfaces"))
+
+    ;; NOT the refused case — cond-> tests every clause in order, so without
+    ;; this guard both fire and the generic note overwrites the specific one
+    (and (not (:ui-hub @session))
+         (not (:ui-hub-refused @session))
+         (:ui-hub-configured @session))
+    (assoc :ui-hub-note
+           (str "no hub is answering at " (:ui-hub-configured @session)
+                " — this project keeps beating, so it appears within one"
+                " interval of a hub starting. Start one (the slopp-ui"
+                " project) or set the ui.hub-port capability to 0. Until"
+                " then :ui is all there is, and it serves JSON"))
       relevant   (assoc :relevant relevant))))
 
 ^:reads (defn report

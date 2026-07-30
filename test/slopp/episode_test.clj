@@ -912,3 +912,51 @@
       (testing "an anchor with nothing to point at says so instead of throwing"
         (is (map? (query/query-changes sess :from :last-done))))
       (finally (api/close! sess)))))
+
+(deftest ^:external the-turn-refusal-names-the-cause-a-second-store-hits
+  ;; Friction 4, and I walked into it while reviewing: a session whose cwd is
+  ;; store A, driving store B through a cross-wired `.mcp.json`, has every write
+  ;; to B refused. The plugin's prompt hook writes the user's verbatim ask as a
+  ;; pending intent into the store at the session's CWD, so B never gets one and
+  ;; its turn never opens itself.
+  ;;
+  ;; The refusal said only "no open turn — call turn_begin {…} first", which
+  ;; reads as "the turn didn't take" and sends you looking at turns. The cause is
+  ;; that no hook ever wrote an intent HERE, and slopp knows that. Naming it
+  ;; turns a dead end into a one-step recovery for a topology slopp genuinely
+  ;; allows — the server takes a dir argument, so cross-wiring stays possible
+  ;; even though one-agent-per-store is the model.
+  (let [sess (external/open!)]
+    (try
+      (swap! sess assoc :require-turns? true)
+      (api/ingest! sess 'tc.core "(ns tc.core)\n(defn f [x] x)\n")
+      (let [call (fn [tool args]
+                   (get-in (slopp.mcp/handle! sess
+                                              {:id 1 :method "tools/call"
+                                               :params {:name tool :arguments args}})
+                           [:result :content 0 :text]))
+            r    (call "edit_add_form" {:ns "tc.core" :source "(defn g [x] x)"})]
+        (testing "it still says the actionable thing first"
+          (is (re-find #"turn_begin" r) r))
+        (testing "and it names the cause: no ask ever arrived for this store"
+          (is (re-find #"(?i)hook|pending|cwd|working director" r)
+              (str "without this the message reads as 'the turn did not take',"
+                   " which is a different and wrong diagnosis: " r))))
+      (testing "and when the session knows its dir, the refusal NAMES it — with
+                two stores in one session, not knowing which one refused is the
+                whole confusion"
+        ;; the dir is set here rather than derived: a real server sets it at
+        ;; open!, and what is under test is whether the MESSAGE uses it. (This
+        ;; fixture's session has no dir, which is also why the first version of
+        ;; this assertion passed vacuously — `(re-pattern "")` matches
+        ;; everything.)
+        (swap! sess assoc :dir "/w/the-other-store")
+        (let [r (get-in (slopp.mcp/handle! sess
+                                           {:id 1 :method "tools/call"
+                                            :params {:name "edit_add_form"
+                                                     :arguments {:ns "tc.core"
+                                                                 :source "(defn h [x] x)"}}})
+                        [:result :content 0 :text])]
+          (is (re-find #"/w/the-other-store" r)
+              (str "the refusal must name the store it is about: " r))))
+      (finally (api/close! sess)))))

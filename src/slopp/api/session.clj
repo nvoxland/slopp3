@@ -679,6 +679,31 @@
           {:image [] :external []}
           (store/forms store ns-sym)))
 
+(defn- ran-nothing
+  "The summary for an in-image run that did not HAPPEN, carrying what the runner
+  said instead.
+
+  `image/traced-test-run` answers `{:summary … :trace …}`, and answers something
+  else when the eval threw — the exception arrives as printed text. Destructuring
+  that gave nil, and nil flowed on to callers whose `cond->` dressed it as a map
+  with no counts in it. Counts-of-zero is the one shape that must never come
+  back, because every caller reads it as a clean run: `full_check` reported its
+  in-image tier green having run nothing at all.
+
+  So `:error 1` — every status check in the codebase sums `:fail` and `:error`,
+  which makes this red everywhere without a new convention — and the runner's
+  own words ride along, bounded, because the next cause will be a different one
+  and undiagnosable without them."
+  [result]
+  (let [said (str result)]
+    {:test 0 :pass 0 :fail 0 :error 1 :type :summary
+     :failures [{:test     'slopp.image/traced-test-run
+                 :type     :error
+                 :message  (str "the in-image runner returned no summary — the"
+                                " run did not happen, so this is not a green")
+                 :expected "{:summary {...} :trace {...}}"
+                 :actual   (subs said 0 (min 400 (count said)))}]}))
+
 (defn traced-run!
   "Run `test-ns`'s tests (all, or `only` names) with form-tracing; absorb the
   observed test→form map into the session (persisted — Q3); return the summary.
@@ -687,19 +712,26 @@
   and only behave in the external tier): any in scope are filtered OUT of the
   run and reported as `:external-pending` on the summary — never executed
   in-image (which would false-green/false-red them). The done-point / merge
-  gate runs them for real in the external tier."
+  gate runs them for real in the external tier.
+
+  A result carrying no `:summary` becomes [[ran-nothing]] rather than nil: the
+  runner threw, and a run that did not happen has to read as red, not as a run
+  that found nothing."
   [session test-ns only & [skip-integration?]]
   (let [{:keys [image store]} @session
         nses     (if (coll? test-ns) test-ns [test-ns])
-        external (into #{} (mapcat #(:external (test-var-tiers store %))) nses)]
+        external (into #{} (mapcat #(:external (test-var-tiers store %))) nses)
+        run!     (fn [only']
+                   (let [res (image/traced-test-run
+                              image store test-ns :only only'
+                              :skip-integration? skip-integration?)
+                         {:keys [summary trace]} (when (map? res) res)]
+                     (swap! session update :test-map merge trace)
+                     (persist-trace! session)
+                     (or summary (ran-nothing res))))]
     (if (empty? external)
       ;; no ^:external tests in scope — original path, untouched
-      (let [{:keys [summary trace]} (image/traced-test-run
-                                     image store test-ns :only only
-                                     :skip-integration? skip-integration?)]
-        (swap! session update :test-map merge trace)
-        (persist-trace! session)
-        summary)
+      (run! only)
       ;; some are external — run only the in-image tier, defer the rest
       (let [pending (if only (filterv external only) (vec external))
             only'   (if only
@@ -708,12 +740,7 @@
             summary (if (empty? only')
                       ;; every impacted test is external — nothing to run here
                       {:test 0 :pass 0 :fail 0 :error 0 :type :summary}
-                      (let [{:keys [summary trace]} (image/traced-test-run
-                                                     image store test-ns :only only'
-                                                     :skip-integration? skip-integration?)]
-                        (swap! session update :test-map merge trace)
-                        (persist-trace! session)
-                        summary))]
+                      (run! only'))]
         (cond-> summary
           (seq pending)
           (assoc :external-pending

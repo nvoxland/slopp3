@@ -98,3 +98,128 @@
     (is (= beat/default-beat-ms (beat/interval-from {:beat-ms "soon"})))
     (is (= beat/default-beat-ms (beat/interval-from {:beat-ms 0})))
     (is (= beat/default-beat-ms (beat/interval-from {:beat-ms -5})))))
+
+(deftest a-project-can-name-its-own-page-only-once-a-hub-has-answered
+  ;; Orientation advertised `:ui-hub` from the moment the beat STARTED, so a
+  ;; machine with no hub running was handed a url that refuses the connection
+  ;; — "I did not check" printed as "checked and fine". The fix is not a probe:
+  ;; the hub already answers every beat with the slug it minted, and that
+  ;; answer is both a liveness fact and the deep link. `post!` was reading it
+  ;; and throwing everything but `:beat-ms` away.
+  (testing "an answered beat yields the project's own page on the hub"
+    (is (= "http://127.0.0.1:7359/p/slopp2"
+           (beat/hub-address "http://127.0.0.1:7359/" {:slug "slopp2" :beat-ms 10}))))
+  (testing "no answer, or an answer with no slug, yields NOTHING — a hub that
+            is not running is the ordinary case, and the honest report of it is
+            absence, not the configured address"
+    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" nil)))
+    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:beat-ms 10})))
+    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:slug ""}))
+        "a blank slug is not an address")
+    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:slug "   "})))))
+
+(deftest ^:external the-beat-hands-every-answer-back-so-the-address-tracks-the-hub
+  ;; `hub-address` is only useful if something feeds it the CURRENT answer. The
+  ;; beat is the one thing that knows: it is the only code that ever talks to
+  ;; the hub, and it does so forever. So the loop reports each answer outward
+  ;; and whoever cares recomputes — rather than the beat holding an opinion
+  ;; about sessions, or a session probing a hub it has no business calling.
+  ;;
+  ;; Every beat, not just the first: a hub that goes away must make the address
+  ;; go away too, or this is the same stale-claim bug one layer along.
+  (let [answers (atom [])
+        srv (web/serve!
+             {:web/namespaces []
+              :web/routes
+              [{:method :post :path "/api/register" :auth :public
+                :handler (fn [_] {:status 200 :body {:slug "toy" :beat-ms 30}})}
+               {:method :post :path "/api/deregister" :auth :public
+                :handler (fn [_] {:status 200 :body {:dropped true}})}]
+              :web/host "127.0.0.1" :web/port 0})
+        url (str "http://127.0.0.1:" (:port srv) "/")
+        me  {:name "toy" :dir "/w/toy" :url "http://127.0.0.1:1/"}
+        wait (fn [pred]
+               (loop [n 0]
+                 (cond (pred) true
+                       (> n 100) false
+                       :else (do (Thread/sleep 20) (recur (inc n))))))]
+    (try
+      (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+        (try
+          (testing "the answer arrives, repeatedly, and carries the slug"
+            (is (wait (fn [] (<= 2 (count @answers)))))
+            (is (every? #(= "toy" (:slug %)) @answers) (pr-str @answers)))
+          (testing "which is exactly what hub-address needs"
+            (is (= (str url "p/toy") (beat/hub-address url (last @answers)))))
+          (finally (beat/stop! hb))))
+      (testing "a hub that stops answering reports nil, so the address it
+                supported stops being claimed"
+        (web/stop! srv)
+        (reset! answers [])
+        (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+          (try
+            (is (wait (fn [] (seq @answers))))
+            (is (every? nil? @answers) (pr-str @answers))
+            (is (nil? (beat/hub-address url (last @answers))))
+            (finally (beat/stop! hb)))))
+      (finally (web/stop! srv)))))
+
+(deftest ^:external a-hub-that-REFUSES-the-beat-is-not-a-hub-that-is-absent
+  ;; `post!` returned nil for a refused connection AND for a 4xx, so "no hub is
+  ;; running" and "the hub rejected what I sent" were the same answer. A hub
+  ;; that is not running is the ordinary case and costs nothing; a hub that
+  ;; REFUSES us is a bug we own, and it presents identically — as a project that
+  ;; never appears in the picker.
+  ;;
+  ;; This became reachable the moment the hub started validating the beat
+  ;; (`slopp-ui.hub/register!`), which it does because the beat is the one
+  ;; contract crossing the split by COPY: `contracts/project-beat` here is a
+  ;; hand-maintained twin of the hub's, and neither store can read the other. So
+  ;; the whole drift-detection story is "the hub 400s and we say so" — and if we
+  ;; swallow the 400, there is no story at all.
+  (let [refuse (fn [status body]
+                 (web/serve!
+                  {:web/namespaces []
+                   :web/routes [{:method :post :path "/api/register" :auth :public
+                                 :handler (fn [_] {:status status :body body})}]
+                   :web/host "127.0.0.1" :web/port 0}))
+        answers (atom [])
+        wait (fn [pred]
+               (loop [n 0]
+                 (cond (pred) true
+                       (> n 100) false
+                       :else (do (Thread/sleep 20) (recur (inc n))))))
+        me {:name "toy" :dir "/w/toy" :url "http://127.0.0.1:1/"}]
+    (testing "a REFUSED beat is reported as a refusal, carrying what the hub said"
+      (let [srv (refuse 400 {:error "this beat does not satisfy the contract"
+                             :explain {:dir ["missing required key"]}})
+            url (str "http://127.0.0.1:" (:port srv) "/")]
+        (try
+          (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+            (try
+              (is (wait (fn [] (seq @answers))))
+              (let [a (last @answers)]
+                (is (some? a)
+                    "nil is what made a refusal look like an absent hub")
+                (is (beat/refused? a) (pr-str a))
+                (is (re-find #"missing required key" (pr-str a))
+                    (str "the hub's explain must survive the trip, or drift is"
+                         " undiagnosable from this side: " (pr-str a))))
+              (finally (beat/stop! hb))))
+          (finally (web/stop! srv)))))
+    (testing "and a refusal yields NO address — we are not registered, so there
+              is no page to hand anyone"
+      (is (nil? (beat/hub-address "http://127.0.0.1:7359/" (last @answers)))))
+    (testing "nor does it change the beat interval: a hub refusing us must not
+              also become a hub we hammer"
+      (is (= beat/default-beat-ms (beat/interval-from (last @answers)))))
+    (testing "an ABSENT hub is still a quiet nil — nobody has to run one"
+      (reset! answers [])
+      (let [dead (let [s (java.net.ServerSocket. 0) p (.getLocalPort s)]
+                   (.close s) p)
+            hb   (beat/start! (str "http://127.0.0.1:" dead "/")
+                              (constantly me) #(swap! answers conj %))]
+        (try
+          (is (wait (fn [] (seq @answers))))
+          (is (nil? (last @answers)) (pr-str @answers))
+          (finally (beat/stop! hb)))))))

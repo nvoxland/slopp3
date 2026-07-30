@@ -52,6 +52,22 @@
    :version (caps/effective store "app.version")
    :status  "idle"})
 
+(defn ^:export refused?
+  "Did the hub REFUSE this beat, as opposed to not being there?
+
+  Three outcomes cross this seam and only two used to be distinguishable. A hub
+  that is not running is the ORDINARY case — nobody has to start one — and
+  answers nil. A hub that answers normally hands back `{:slug … :beat-ms …}`. A
+  hub that rejects what we SENT is a bug we own, and it used to answer nil too,
+  which made it present as a project that mysteriously never appears in the
+  picker.
+
+  It became reachable when the hub started validating the beat: the beat is the
+  one contract crossing the split by COPY rather than generation, so a 400 from
+  the hub IS the drift signal, and swallowing it leaves no signal at all."
+  [answer]
+  (boolean (:hub/refused answer)))
+
 (defn interval-from
   "The beat interval `response` asks for, or [[default-beat-ms]].
 
@@ -70,17 +86,29 @@
     (if (and (int? ms) (pos? ms)) ms default-beat-ms)))
 
 (defn- post!
-  "POST `body` as JSON to `url`; the hub's parsed answer, or nil when it did
-  not answer.
+  "POST `body` as JSON to `url`; the hub's parsed answer, a refusal, or nil when
+  it did not answer.
 
   It used to return a boolean, which threw away the only thing the hub says
   back. Registration and keepalive are the same call, so this response is the
   ONE place the hub gets to tell a project anything — today that is the
   assigned slug and the beat interval.
 
-  A hub that is not running is the ORDINARY case, not an error — nobody has
-  to start one — so a refused connection is a quiet nil, and so is a 4xx or a
-  body that will not parse."
+  A hub that is not running is the ORDINARY case, not an error — nobody has to
+  start one — so a refused connection is a quiet nil.
+
+  **A 4xx is NOT that, and used to be treated as if it were.** Lumping them
+  together made \"the hub rejected what I sent\" indistinguishable from \"there
+  is no hub\", and only one of those is somebody's bug. It matters because the
+  hub validates the beat against its own copy of the contract, and that copy is
+  a hand-maintained twin of ours: a 400 here is the drift alarm, and it was
+  wired to a silent bulb. So a status the hub answered with comes back as
+  `{:hub/refused status :hub/explain …}` — [[refused?]] tests for it, and it
+  carries neither `:slug` nor `:beat-ms`, so the address clears and the interval
+  falls back without either needing to know about refusals.
+
+  A body that will not parse still degrades to nil rather than throwing; the
+  status is what makes a refusal a refusal."
   [url body]
   (try
     (let [client (java.net.http.HttpClient/newHttpClient)
@@ -91,14 +119,19 @@
                              (json/generate-string body)))
                      (.build))
           resp   (.send client req
-                        (java.net.http.HttpResponse$BodyHandlers/ofString))]
-      (when (< (.statusCode resp) 400)
-        (json/parse-string (.body resp) true)))
+                        (java.net.http.HttpResponse$BodyHandlers/ofString))
+          status (.statusCode resp)
+          parsed (try (json/parse-string (.body resp) true)
+                      (catch Exception _ nil))]
+      (if (< status 400)
+        parsed
+        {:hub/refused status
+         :hub/explain (or parsed (not-empty (str/trim (str (.body resp)))))}))
     (catch Exception _ nil)))
 
 (defn ^:export start!
   "Begin beating `(payload-fn)` to the hub at `hub-url`, and return a handle
-  for [[stop!]].
+  for [[stop!]]. `on-answer` is called with the hub's reply after every beat.
 
   The FIRST beat goes out immediately: a project that only appeared one
   interval after its server started would read as broken for ten seconds
@@ -120,22 +153,32 @@
   `payload-fn` is called per beat rather than once, so a project that renames
   itself, moves, or later reports what it is doing needs no restart.
 
+  `on-answer` is called with the reply EVERY beat, nil included — this loop is
+  the only code that ever talks to the hub, so it is the only place that knows
+  whether one is there. Whoever cares recomputes from the answer (see
+  [[hub-address]]) instead of the beat holding an opinion about sessions, and
+  nil arriving is what makes a claim about a departed hub expire rather than
+  stand. It must never take the beat down: a callback that throws is the
+  caller's problem, not a reason to stop registering.
+
   A DAEMON thread, like every other background loop here: the JVM must never
   be held open by a heartbeat."
-  [hub-url payload-fn]
-  (let [running (atom true)
-        thread  (doto (Thread. ^Runnable
-                       (fn []
-                         (while @running
-                           (let [answer (try (post! (str hub-url "api/register")
-                                                    (payload-fn))
-                                             (catch Throwable _ nil))]
-                             (try (Thread/sleep (interval-from answer))
-                                  (catch InterruptedException _ nil)))))
-                       "slopp-ui-heartbeat")
-                  (.setDaemon true)
-                  (.start))]
-    {:thread thread :running running :hub-url hub-url :payload-fn payload-fn}))
+  ([hub-url payload-fn] (start! hub-url payload-fn (fn [_])))
+  ([hub-url payload-fn on-answer]
+   (let [running (atom true)
+         thread  (doto (Thread. ^Runnable
+                        (fn []
+                          (while @running
+                            (let [answer (try (post! (str hub-url "api/register")
+                                                     (payload-fn))
+                                              (catch Throwable _ nil))]
+                              (try (on-answer answer) (catch Throwable _ nil))
+                              (try (Thread/sleep (interval-from answer))
+                                   (catch InterruptedException _ nil)))))
+                        "slopp-ui-heartbeat")
+                   (.setDaemon true)
+                   (.start))]
+     {:thread thread :running running :hub-url hub-url :payload-fn payload-fn})))
 
 (defn ^:export stop!
   "Stop the beat and tell the hub we are going, returning nil.
@@ -152,3 +195,22 @@
       (post! (str (:hub-url hb) "api/deregister") {:dir (:dir ((:payload-fn hb)))})
       (catch Throwable _ nil)))
   nil)
+
+(defn ^:export hub-address
+  "The address to hand a HUMAN for this project — `hub-url` plus the slug the
+  hub minted for us — or nil when no hub has answered.
+
+  Registration and keepalive being the same call is what makes this possible:
+  every beat's reply carries `:slug`, so a project that is registered right now
+  knows its own public page, and one that is not cannot fabricate it. The
+  answer is therefore a liveness fact and a deep link at once, which is why
+  this takes the reply rather than probing.
+
+  nil is the ANSWER, not a failure. A hub that is not running is the ordinary
+  case — nobody has to start one — and reporting the configured url regardless
+  is how orientation came to advertise a port with nothing behind it: a
+  connection refused where a page was promised."
+  [hub-url answer]
+  (let [slug (str/trim (str (:slug answer)))]
+    (when (seq slug)
+      (str hub-url "p/" slug))))

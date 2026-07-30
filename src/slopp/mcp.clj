@@ -659,9 +659,25 @@
           ;; the turn opens itself (zero-ceremony turns)
           (do (swap! session dissoc :pending-intent)
               (api/turn-begin! session :agent ag :intent intent))
+          ;; NAME THE CAUSE. "no open turn" alone reads as "the turn did not
+          ;; take", which sends you to look at turns; the usual real cause is
+          ;; that no ask ever arrived FOR THIS STORE. The plugin's prompt hook
+          ;; writes the pending intent into the store at the session's CWD, so a
+          ;; session driving a SECOND store (a cross-wired .mcp.json — allowed,
+          ;; since the server takes a dir) never gets one here and the turn
+          ;; cannot open itself. Both facts are in hand: the dir, and that no
+          ;; pending intent has arrived. Friction 4.
           (throw (ex-info (str "no open turn — call turn_begin {intent: "
-                               "<the user's verbatim ask>} first")
-                          {}))))))
+                               "<the user's verbatim ask>} first"
+                               (when-let [d (not-empty (str (:dir @session)))]
+                                 (str " (store: " d ")"))
+                               ". No pending intent has arrived for this store,"
+                               " so nothing opened a turn automatically: the"
+                               " prompt hook records the ask in the store at the"
+                               " session's WORKING DIRECTORY, so a session"
+                               " driving a second store has to open turns here"
+                               " by hand.")
+                          {:dir (:dir @session) :agent ag}))))))
   (let [a   (assoc arguments :agent (or (:agent arguments)
                                         (:agent-id @session)))
         sym (fn [k]
@@ -1197,6 +1213,19 @@
   starting later. Registering and keeping alive are the same call, deliberately
   (D-ui-hub).
 
+  Two session keys, and the split between them is the point.
+  `:ui-hub-configured` is where we BEAT — known immediately, true whether or
+  not anyone is listening. `:ui-hub` is this project's own page on the hub, and
+  it exists only while a hub is answering, because the slug in it comes back on
+  the reply and cannot be fabricated. Every beat rewrites it, so a hub that
+  goes away takes the claim with it.
+
+  One key used to carry both meanings: `:ui-hub` was set here, once, from the
+  configured port. Orientation then advertised an address nobody was serving —
+  and the skill tells an agent to hand that address to a human, so the cost
+  landed on the human every time. The reply had the answer all along; nothing
+  was reading it.
+
   The banner names the HUB's address, not this project's derived port, because
   the hub url is the one a human is meant to remember and the derived one is an
   implementation detail they should never have to type."
@@ -1205,8 +1234,21 @@
     (let [port (caps/effective (:store @session) "ui.hub-port")]
       (when (and dir port (pos? (long port)))
         (let [hub    (hb/hub-url port)
-              handle (hb/start! hub #(hb/payload (:store @session) dir url))]
-          (swap! session assoc :ui-heartbeat handle :ui-hub hub)
+              handle (hb/start! hub
+                                #(hb/payload (:store @session) dir url)
+                                #(let [at (hb/hub-address hub %)]
+                                   (cond
+                                     at (swap! session assoc :ui-hub at
+                                               :ui-hub-refused nil)
+                                     ;; a hub that answered and said NO is the
+                                     ;; drift alarm — keep it, or the brief
+                                     ;; reports absence about a running hub
+                                     (hb/refused? %)
+                                     (swap! session assoc :ui-hub-refused %
+                                            :ui-hub nil)
+                                     :else (swap! session assoc :ui-hub nil
+                                                  :ui-hub-refused nil))))]
+          (swap! session assoc :ui-heartbeat handle :ui-hub-configured hub)
           (.println System/err ^String (str "slopp UI hub: " hub
                                             " (open this to switch projects)"))
           hub)))

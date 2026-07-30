@@ -78,6 +78,18 @@
   may be a collection — whole-project verification in ONE eval (F-3c1).
   Returns {:summary {...} :trace {test-sym #{form-sym ...}}}.
 
+  **Non-JVM namespaces are dropped here, and this is load-bearing.** The image
+  holds no `:cljs` namespace, and BOTH halves of the tracer walk `ns-interns`
+  over what they are handed — `slopp.rt/traced-run` over the test namespaces,
+  `slopp.rt/instrument!` over the targets. `ns-interns` THROWS on a namespace
+  that does not exist, lazily, inside the run: the throw crosses the eval
+  boundary as text, the caller destructures a nil `:summary`, and its `cond->`
+  builds a map with no counts in it. One empty `:cljs` namespace was therefore
+  enough to silence the entire in-image tier of `test_run {all true}` and
+  `full_check` — reported green, having run nothing, in every store with client
+  code. Filtered HERE because this is the layer holding the store, which is the
+  only thing that knows a namespace's platform.
+
   Ships the closure's defmethod registrations along (#129,
   `store/method-registrations`) so a dispatched call records the METHOD's own
   form key, not just the multi's — the store is the only thing that knows
@@ -87,16 +99,24 @@
   — this call is where `slopp.rt/traced-run` actually executes, so it is the
   only place that evidence can come from."
   [handle store test-ns & {:keys [only skip-integration?]}]
-  (let [targets (if (coll? test-ns)                 ; F-3c1: union of closures
-                  (into #{} (mapcat #(store/ns-closure store %)) test-ns)
-                  (store/ns-closure store test-ns))
-        methods (vec (mapcat #(store/method-registrations store %) targets))
-        result  (first (repl/eval! handle
-                                   (format "(slopp.rt/traced-run '%s '%s '%s %s '%s)"
-                                           (if (coll? test-ns) (vec test-ns) test-ns)
-                                           (vec (sort targets))
-                                           (pr-str (some-> only vec))
-                                           (boolean skip-integration?)
-                                           (pr-str methods))))]
-    (drain-child-rt! handle)
-    result))
+  (let [in-image? #(and (contains? (:namespaces store) %)
+                        (not= :cljs (store/platform-for store %)))
+        nses      (filterv in-image? (if (coll? test-ns) test-ns [test-ns]))
+        targets   (into #{} (comp (mapcat #(store/ns-closure store %))
+                                 (filter in-image?))
+                        nses)
+        methods   (vec (mapcat #(store/method-registrations store %) targets))]
+    (if (empty? nses)
+      ;; nothing in scope the image can hold. Zero tests is the honest answer
+      ;; and evaling would be the dishonest one: `traced-run` would be handed
+      ;; nil and throw the very exception this filter exists to prevent.
+      {:summary {:test 0 :pass 0 :fail 0 :error 0 :type :summary} :trace {}}
+      (let [result (first (repl/eval! handle
+                                      (format "(slopp.rt/traced-run '%s '%s '%s %s '%s)"
+                                              nses
+                                              (vec (sort targets))
+                                              (pr-str (some-> only vec))
+                                              (boolean skip-integration?)
+                                              (pr-str methods))))]
+        (drain-child-rt! handle)
+        result))))
