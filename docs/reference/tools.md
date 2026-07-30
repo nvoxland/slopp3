@@ -14,37 +14,29 @@ a running server, and is always current for the version you are on.
 | `query_slice {ns name}` | The focused read: one form's full source plus interface cards for everything it reaches. `match` + `window` narrows a giant form. |
 | `query_brief {ns name}` | One form's dossier: source, effect flags, cross-namespace callers, covering tests, and the recorded why. |
 | `query_detail {id}` | The full version of a response that was trimmed by the size gate. |
-| `ui_serve {port? stop?}` | Serve a browsable view of the store for a HUMAN -- milestone timeline, per-milestone change review, form permalinks, namespace index. Returns `{:url :port}`. See [the store browser](#the-store-browser). |
+| `ui_serve {port? stop?}` | Control this project's own API listener (`/api/*`, plus the API's shape as EDN at `/api/contracts`). Returns `{:url :port}`. It has no pages -- those belong to [the hub](#one-hub-many-projects). |
 | `help` | The workflow cheat-sheet. |
 
-### The store browser
+### This project's listener, and where the pages are
 
-`ui_serve` starts a small web application -- built on slopp's own [web
-framework](../guide/web/index.md), the way any other slopp app is -- and hands
-back a url. It answers the questions a tool result is a poor shape for:
-
-- **`/`** -- milestones newest first, each linking its own change screen, plus
-  what has been written since the newest one.
-- **`/change/<from>..<to>`** -- that milestone reviewed form by form, grouped
-  module then namespace, each form leading with its recorded ask, then a line
-  diff, then how many forms call it.
-- **`/store/form/<id>`** -- one form's permalink. Form ids are stable across
-  edits and names are not, so the id is the address. Laid out for arriving cold
-  from a link: breadcrumb, callers above grouped by how each edge was found,
-  the source, then callees below with their signature and docstring *inlined*
-  rather than linked.
-- **`/store`**, **`/store/ns/<ns>`** -- the namespace index and outlines.
+`ui_serve` controls a small web application -- built on slopp's own [web
+framework](../guide/web/index.md), the way any other slopp app is -- that
+serves **this project's API and nothing else**: `/api/*` as JSON, and the shape
+of that API as EDN at `/api/contracts`. Ask it for `/` and you get a 404.
 
 It runs on the session that is already open, so covering-test counts are the
 ones that session actually measured. Serving again replaces the running server
 rather than moving to another port, and a port something else holds is reported
 as a sentence.
 
-**The server starts it for you.** Because it serves the live session, the UI
-dies with that session — so the MCP server brings one up at boot and
-`session_brief` reports the url as `:ui`. `ui_serve` is for changing the port,
-restarting it, or `stop: true`. A UI that cannot bind never blocks the server:
-it prints a sentence and MCP carries on, exactly as the git listener does.
+**The server starts it for you.** Because it serves the live session, it dies
+with that session — so the MCP server brings one up at boot and `session_brief`
+reports the url as `:ui`. `ui_serve` is for changing the port, restarting it,
+or `stop: true`. A listener that cannot bind never blocks the server: it prints
+a sentence and MCP carries on, exactly as the git listener does.
+
+**`:ui` is not the address you give a human** — they would see JSON. That is
+`:ui-hub`, below.
 
 ### One hub, many projects
 
@@ -55,10 +47,25 @@ listener per project, which is why its port is **derived from the store
 directory** rather than fixed — stable across restarts, and never the same as
 the project next to it. You are not expected to know that number.
 
-The address you remember belongs to the **hub**, one process per machine. It
-is a separate application — built with slopp, not inside it — that never opens
-a store: it holds a registry fed by heartbeats, renders every page, and
-proxies `/p/<slug>/api/*` to whichever project owns that slug.
+The address you remember belongs to the **hub**, one process per machine, and
+`session_brief` reports it as `:ui-hub`. It is a separate application — built
+with slopp, not inside it — that never opens a store: it holds a registry fed
+by heartbeats, renders every page, and proxies `/p/<slug>/api/*` to whichever
+project owns that slug. Every screen lives there:
+
+- **`/`** -- the picker: every project that has checked in, linked.
+- **`/p/<slug>`** -- that project's timeline, milestones newest first, each
+  linking its own change screen, plus what has been written since the newest.
+- **`/p/<slug>/change/<from>..<to>`** -- that milestone reviewed form by form,
+  grouped module then namespace, each form leading with its recorded ask, then
+  a line diff, then how many forms call it.
+- **`/p/<slug>/store/form/<id>`** -- one form's permalink. Form ids are stable
+  across edits and names are not, so the id is the address. Laid out for
+  arriving cold from a link: breadcrumb, callers above grouped by how each edge
+  was found, the source, then callees below with their signature and docstring
+  *inlined* rather than linked.
+- **`/p/<slug>/store`**, **`/p/<slug>/store/ns/<ns>`** -- the namespace index
+  and outlines.
 
 Every MCP server checks in with it a few times a minute, carrying its name,
 directory and url, and the hub answers with the interval to use next — so the
@@ -68,8 +75,8 @@ that has stopped answering rather than dropping it. Registering and keeping
 alive are the same call, so you can start the hub after your editors, or
 restart it, and everything reappears within one interval.
 
-Each project's pages grow a project dropdown when the hub is in front of them,
-so you switch without going back to the picker.
+Because the hub renders the pages, every one of them carries a project
+dropdown, so you switch without going back to the picker.
 
 !!! note "Not yet packaged"
 

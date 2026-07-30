@@ -30,11 +30,22 @@ conclusions, so the review reasons about findings, not source dumps.
 ## Where to start (don't read everything)
 
 1. **Whole-codebase triage → `review_scan`.** Risk-ranks every form by signal:
-   `:untested` (unreachable from any test in the call graph), `:unused` (dead
-   public surface), `:high-blast` (many callers), `:large`, `:lint`,
+   `:untested` (unreachable from any test in the call graph), `:off-platform`
+   (`:cljs` — the JVM oracle cannot load it, so nothing could cover it), `:unused`
+   (dead public surface), `:high-blast` (many callers), `:large`, `:lint`,
    `:undocumented` (public), `:effectful` (`!`). Clean forms drop out; `:top` rows
    carry `:form/:risk/:flags/:callers/:covered`. `{ns "x.y"}` scopes it. Start at
    the top of the risk ranking, not the top of a file.
+
+   **Sanity-check `:untested` before you report it.** `:covered` counts OBSERVED
+   calls, so two honest cases look identical to a genuine gap: a form exercised
+   only across a process boundary (an endpoint hit over a socket, a namespace
+   mounted by quoted symbol) and one whose tests simply have not run in this
+   session. `query_brief {ns name}` settles it — `:covered-by` is trace evidence,
+   `:reached-by … :via #{:static}` is a test that reaches it in the call graph.
+   Static reach with no trace is weak evidence, not zero. And run the tests: a
+   `full_check` populates the trace, whereas an untouched session may be reading
+   a stale snapshot.
 2. **Reviewing a CHANGE → `report {since}`** composes milestones + changes + the
    asks + verification + alignment in one read; **`query_changes {from to}`** gives
    the net per-form diff (`:was`/`:now` + red/green arc) between two points
@@ -54,6 +65,14 @@ conclusions, so the review reasons about findings, not source dumps.
   card or `review_scan`) means no test exercises it. `draft_test {ns name code}`
   drafts one from observed calls. Zero coverage on a `:high-blast` form is the
   first thing to flag.
+
+  **Say which KIND of uncovered it is**, because the remedy differs and only one
+  of them is the author's to fix: a gap a test would close; `:off-platform`
+  (`:cljs`, where the compiler is the only possible check — an architectural
+  cost, so the finding is "should this logic be `:cljc` instead?"); or covered
+  only over a socket, where the coverage is real and the trace cannot see it.
+  Reporting all three as "untested" produces a list whose top rows nobody can
+  act on, and a triage list people stop reading is worse than none.
 - **Architecture → `query_depends {modules true}`.** `:cycles` (should be empty
   — the gate refuses new ones; an ADOPTED cycle from an import surfaces here.
   Both `:layers` and `:cycles` read production edges only, so a `-test`
@@ -112,10 +131,13 @@ rows the gates can't see:
 - Don't re-verify by cloning/worktree/raw store.db — the store IS the source of
   truth and it's already verified; `query_commits {:alignment}` proves handoff
   state in one read.
-- **Point the human at the change screen.** `ui_serve` returns `{:url :port}`;
-  `<url>change/<from>..<to>` (the milestone ids from `query_commits`) is that
-  milestone reviewed form by form — recorded ask, line diff, blast radius,
-  each form linking its permalink with callers above and callees inlined. Give
-  the url alongside your findings rather than pasting sources: your report says
-  what you concluded, the page lets them check it. It rides your live session,
-  so warranty counts are the real ones.
+- **Point the human at the change screen — on the HUB, not on your own port.**
+  `session_brief`'s `:ui-hub` is the address that renders pages;
+  `<ui-hub>/p/<slug>/change/<from>..<to>` (the milestone ids from
+  `query_commits`) is that milestone reviewed form by form — recorded ask, line
+  diff, blast radius, each form linking its permalink with callers above and
+  callees inlined. `:ui` is your project's own listener and serves `/api/*`
+  JSON only, so handing that one out costs someone a 404. Give the url
+  alongside your findings rather than pasting sources: your report says what
+  you concluded, the page lets them check it. The hub proxies your live
+  session's API, so warranty counts are the real ones.

@@ -2972,6 +2972,51 @@ stays, because the MCP still binds its own listener and beats to the hub.
 `review.heartbeat` now takes its interval from the registration response
 rather than a shared constant, so the two sides can be different releases.
 
+### D-ui-hub part 6 — an address is only claimable while something answers (2026-07-29)
+
+Found by reviewing the split rather than by using it, which is worth noting:
+three surfaces described the pre-split world and every check was green.
+
+**`ui_serve` and `:ui` are an API, and the prose said otherwise.** The tool
+description promised "a browsable HTML view of THIS store for a human: the
+namespace index, form source, … the milestone timeline and per-milestone change
+review" and told the caller to hand that url over, for a listener answering
+`404 {"error":"no route"}` at `/`. `slopp-review/SKILL.md` sent reviewers to
+`<ui_serve url>change/<from>..<to>`; `docs/reference/tools.md` carried a whole
+"store browser" section. The main `slopp` skill had been updated correctly, so
+the sweep AGENTS.md rule 4 asks for had been done once and stopped one surface
+short — three times.
+
+**The guard is anchored to a FACT, not a wording.**
+`mcp-test/the-project-listeners-description-promises-only-what-it-serves` first
+asserts that every route in `review.server/served-namespaces` is under `/api`,
+and only then that the description promises no pages. A page endpoint coming
+back retires the guard instead of having to argue with it. Sibling of
+`slopp-prose-never-names-a-tool-that-does-not-exist`, and the same class: gates
+see var references, never a promise made in prose.
+
+**Decided: `:ui-hub` is the project's own PAGE, and it exists only while a hub
+is answering.** It was the configured hub root, set when the heartbeat started
+and never revisited — so a machine with no hub had orientation hand a human a
+connection refused, in the field the skill tells agents to hand over. No probe
+was needed: registration and keepalive being one call means every reply carries
+the slug the hub minted, so holding one IS proof of registration and the deep
+link at once. `post!` was reading that reply and discarding everything but
+`:beat-ms`; `register!`'s own docstring claimed the project "learns its own
+public address" while the project threw it away.
+
+So the beat reports every answer outward (`start!`'s third arity), nil
+included, and `:ui-hub` is rewritten per beat — a departed hub takes the claim
+with it. Where we BEAT is now a separate key, `:ui-hub-configured`, and when it
+is set with nothing answering the brief says so in `:ui-hub-note` rather than
+going quiet or lying. Core 1 applied to orientation: a hub is optional, so
+absence is an ordinary state that has to be sayable.
+
+**The test that hid it asserted `assoc` works.** It did
+`(swap! sess assoc :ui-hub "…7359/")` and read the value back, which passes
+whatever `start-ui!` does. Fixed to assert what the session actually holds —
+and since no hub runs in that test, what it holds is nothing.
+
 ## D-evaluation-unit (2026-07-29) — the form is the editing unit, the namespace is the repair unit
 
 **Decision.** A per-form hot-load stays the fast path for every write. When a

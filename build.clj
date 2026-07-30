@@ -118,6 +118,17 @@
       (spit f (pr-str (into (sorted-map)
                             (map (fn [[lib coord]] [lib (dissoc coord :paths)]))
                             (:libs basis)))))
+    ;; Which slopp-web release this jar's slopp/web/** IS. Deliberately NOT in
+    ;; bundled-libs.edn: that file feeds host-lib-divergence, whose finding is
+    ;; "your declaration is inert, the host's copy wins" — the opposite of the
+    ;; truth here. A store's slopp-web pin is what actually LOADS, so the
+    ;; finding is "your declaration is honoured and it is not this slopp"
+    ;; (slopp.api/framework-drift). Authored once, in the tracked manifest, so
+    ;; the jar cannot claim a version it was not built as.
+    (when-let [v (get mf "X-Slopp-Web-Version")]
+      (let [f (io/file class-dir "META-INF" "slopp" "framework-version.edn")]
+        (io/make-parents f)
+        (spit f v)))
     (when (and smain (not= main "clojure.main"))
       (gen-launcher! main smain)
       ;; the launcher dir must be ON the compile basis classpath (src-dirs
@@ -164,9 +175,27 @@
 (defn slim
   "Build target/slopp-web-<version>.jar from the materialized store source
   (`:src`, default target/jar-src/src — run the `build` MCP tool first).
-  No AOT; the jar is source + pom."
-  [{:keys [version src] :or {version "0.1.0" src "target/jar-src/src"}}]
-  (let [class-dir "target/slim-classes"
+  No AOT; the jar is source + pom.
+
+  `:version` defaults to `X-Slopp-Web-Version` from the tracked manifest, which
+  is where the number is authored — the uberjar records the same value, so a
+  store's pin can be compared against the slopp serving it
+  (`slopp.api/framework-drift`). It used to default to a literal \"0.1.0\", so
+  running this bare would DOWNGRADE ~/.m2 and nothing recorded which release a
+  given slopp corresponded to. Refuses rather than guessing if neither is
+  available: a mis-versioned publish is how a fix silently fails to reach the
+  app it was made for."
+  [{:keys [version src] :or {src "target/jar-src/src"}}]
+  (let [root      (or (.getParent (io/file (str src))) ".")
+        version   (or version
+                      (get (or (parse-manifest root) {}) "X-Slopp-Web-Version")
+                      (throw (ex-info (str "no :version and no X-Slopp-Web-Version"
+                                           " in " root "/META-INF/MANIFEST.MF —"
+                                           " set it with config_file so the"
+                                           " number is authored in ONE place,"
+                                           " or pass :version explicitly")
+                                      {:src src})))
+        class-dir "target/slim-classes"
         jar      (str "target/slopp-web-" version ".jar")
         basis    (b/create-basis {:project {:deps slim-deps}})]
     (b/delete {:path class-dir})
@@ -184,9 +213,17 @@
 
 (defn slim-install
   "slim + install into the local ~/.m2 — a store can then
-  deps_add io.github.nvoxland/slopp-web {:mvn/version <version>}."
-  [{:keys [version] :or {version "0.1.0"} :as opts}]
-  (let [{:keys [jar class-dir basis]} (slim (assoc opts :version version))]
+  deps_add io.github.nvoxland/slopp-web {:mvn/version <version>}.
+
+  `:version` defaults to the tracked manifest's `X-Slopp-Web-Version`, via
+  `slim`; the version actually built is what gets installed, so the two cannot
+  disagree. **Bump the manifest key when you publish**, or the next uberjar will
+  tell every consuming store it carries a release that does not include this
+  one's changes — which is the failure this whole path exists to prevent."
+  [opts]
+  (let [{:keys [jar class-dir basis version]} (slim opts)]
     (b/install {:basis basis :lib slim-lib :version version
                 :jar-file jar :class-dir class-dir})
-    (println "installed" (str slim-lib) version "into ~/.m2")))
+    (println "installed" (str slim-lib) version "into ~/.m2")
+    (println "  reminder: bump X-Slopp-Web-Version in META-INF/MANIFEST.MF and"
+             "rebuild the uberjar, or framework-drift will misreport")))

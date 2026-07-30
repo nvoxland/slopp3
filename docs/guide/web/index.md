@@ -35,5 +35,7 @@ The shape of it:
   `build` for a jar or a native binary that carries its own assets.
 
 The design centre is a third-party application, not slopp's own endpoints.
-slopp's MCP transport and store browser happen to be built on the same
-machinery, which is the dogfood, not the target.
+slopp's MCP transport and its per-project API are built on the same machinery,
+and so is the reviewer UI — which is a third-party application already: its own
+repo, its own store, and no way into slopp's. That is the dogfood, not the
+target.

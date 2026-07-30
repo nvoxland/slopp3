@@ -61,6 +61,60 @@ feature); a tool argument that is dropped rather than refused when unknown (the
 `dry-run` flag that evaporated and ran the real operation — "the most dangerous
 friction of the project").
 
+**Sharpening (2026-07-29): nothing asserts that a check RAN.** Every gate here
+reports what it FOUND; none reports its own population, so a check whose scope
+collapsed to zero is indistinguishable from a check that passed. Four instances,
+three of them among the worst defects recorded:
+
+- `full_check`'s in-image tier ran ZERO tests in any store holding a `:cljs`
+  namespace, and reported green — the tracer walks `ns-interns` over what it is
+  handed, that throws on a namespace the image cannot hold, and the exception
+  came back as text where a summary was expected
+  (`ideas/ui-split-frictions.md` item 24).
+- `slopp-prose-never-names-a-tool-that-does-not-exist` scanned an empty store
+  for its entire life, passing on a population of zero.
+- `done`'s `:test-status :none` conflating "nothing was testable" with "no news"
+  (item 14).
+- A test that `assoc`s the value it then reads back, so it passes whatever the
+  production code does (item 23).
+
+The representation half of this — never letting "could not check" and "checked,
+fine" share a slot — was the original discipline and is necessary. It is not
+sufficient: it presumes the check ran at all. **So: a verdict should carry its
+population.** A test run says how many tests were in scope and how many ran; a
+scan says how many forms it examined; a guard with a detector proves the detector
+still fires (the `:fires-on` discipline, generalised beyond rules).
+`session/ran-nothing` does this for one runner by construction — an absent
+summary becomes `:error 1` carrying what the runner actually said, so a run that
+did not happen cannot read as a run that found nothing.
+
+**The exclusion-list tell, and it is mechanical.** When a check concludes from
+absence, the innocent causes accumulate as a hand-written list of negations —
+and that list is usually a fact some graph already carries. `review-scan`'s
+`unused` predicate hand-derived five markers from form metadata one line after
+filtering the reference graph's own `:via :declared` edges, which are exactly
+those five (`:entry-point :unused-ok :web-endpoint :web-read :web-effect`,
+measured). The cause was one number serving two questions — "how many in-store
+forms call this" (where excluding declared refs is correct) and "is anything
+expected to reference this at all" (where it is not). **So: when you add a member
+to an exclusion list, check whether the thing you are excluding is already data
+in something you just filtered.** Full analysis and the fix:
+`ideas/one-derivation-two-questions.md`. Prior art for how bad this gets:
+`marker-registry`'s docstring counts seven places that kept their own hardcoded
+marker list before it existed.
+
+**And the generator sat at the TRANSPORT, one layer below everything above.**
+`repl/eval!` kept only `:value` from the nREPL response; an eval that threw
+produces no `:value` (the exception arrives as `:err`/`:ex`), so a throw returned
+`[]` — identical to an eval that returned nothing. Every caller doing `(first …)`
+got nil for both. The `ns-interns` exception that hollowed out the in-image tier
+did not vanish somewhere subtle; it vanished HERE, and so would the next one.
+The lesson for this core: when an honesty fix reports **"I have nothing to tell
+you"** — `:actual ""` was the literal output of the first fix — that is not the
+end of the diagnosis, it is a pointer one layer down. Silence has a source, and
+it is usually a place where an error channel was dropped in favour of a value
+channel.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.edit.refs`) is the crown jewel —

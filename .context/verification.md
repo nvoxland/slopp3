@@ -13,6 +13,39 @@ The oracle must never return a false verdict. Everything here serves that.
      (in-image); `slopp.image.testmain` wraps cognitect's runner with it (external,
      item 7). The runners genuinely differ; the wrapping must never be copied,
      because a second tracer is a second truth.
+   - **Both halves of the tracer walk `ns-interns`, so neither may be handed a
+     namespace the image cannot hold** (`traced-run` over the test namespaces,
+     `instrument!` over the targets). `ns-interns` THROWS on a namespace that
+     does not exist — lazily, inside the run — and the throw was DROPPED at the
+     eval boundary (see `eval!` below), so the caller destructured a nil
+     `:summary` with nothing to diagnose from.
+     **`slopp.image/traced-test-run` filters first**, dropping `:cljs`
+     namespaces and any not in the store; that layer holds the store, which is
+     the only thing that knows a namespace's platform. It matters more than it
+     looks: before the filter, ONE empty `:cljs` namespace made the whole
+     in-image tier of `test_run {all true}` and `full_check` run zero tests and
+     report green, in every store with client code. And because the warranty
+     trace fills from that run, `review_scan` then called well-tested forms
+     `:untested`. Belt and braces: `session/ran-nothing` turns any
+     summary-less result into `:error 1` carrying what the runner said, so the
+     next cause — whatever it is — cannot read as a clean run
+     (`verification-test/an-in-image-run-that-did-not-happen-is-not-green`,
+     the in-image sibling of the dead-JVM check).
+   - **`repl/eval!` surfaces a throw, and that is why any of the above is
+     diagnosable.** It kept only `:value`, and an eval that threw produces none —
+     the exception arrives as `:err`/`:ex`. So a throw returned `[]`, identical
+     to an eval that returned nothing, and `(first …)` gave nil for both. That is
+     where the `ns-interns` exception actually went, and where the next one would
+     have gone. It now returns the error text as its single value when there is
+     no value and there IS an error; a genuine nothing still returns `[]`.
+     **Anything reading `eval!` must expect a diagnostic string where it used to
+     get nil.** Pinned by `an-eval-that-threw-is-not-an-eval-that-returned-nothing`
+     over all three cases. This also cleared a sharded-only red in
+     `api.schema-test/done-surfaces-schema-drift` (red in two 4-shard
+     `full_check`s, green serially over the same 900 tests) — most likely the
+     added `doall` removing a laziness-over-IO sensitivity under load, but that
+     is inference from one green run, not measurement. Suspect it first if that
+     test flickers.
    - `traced-run` drops `^:external` tests **unconditionally, by design**.
      That is not an oversight to "fix": the external tier is where they run,
      and it traces them there. **Two different reasons, and they were conflated

@@ -123,6 +123,14 @@ Three ways to run the result:
   `io.github.nvoxland/slopp-web` artifact rather than the whole of slopp.
 - **A native binary** from the emitted recipe.
 
+!!! warning "The pin is what runs, and nothing checks it"
+    A store that declares `io.github.nvoxland/slopp-web` runs **that** version,
+    including under `java -jar slopp.jar` — the slopp process carries
+    `slopp/web/**` in its own jar, and the declared coord still wins. So a fix
+    to `slopp.web` in a newer slopp does not reach your app until the slim
+    artifact is republished and you `deps_add` the new version. No surface
+    reports that your pin is behind.
+
 !!! warning "One known gap"
     `HEAD` requests do not route. Mapping HEAD onto GET is a small change and
     has not been made yet.

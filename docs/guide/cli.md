@@ -19,7 +19,7 @@ serves only its own `/api/*`. That split is deliberate: the hub is the worked
 example of an app that consumes a slopp project's published API over HTTP
 without ever opening its store. **It is not yet packaged for installation**,
 so there is no command here to give you; see
-[the store browser](../reference/tools.md#one-hub-many-projects).
+[one hub, many projects](../reference/tools.md#one-hub-many-projects).
 
 Without the plugin, `java -jar slopp.jar ...` takes the same arguments.
 

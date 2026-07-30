@@ -813,6 +813,17 @@ that. Neither store reads the other.
   happily generate an empty client from. Test that one over a real socket: an
   in-image test builds `perform-ctx` itself and passes either way.
 
+**If your store declares `io.github.nvoxland/slopp-web`, your DECLARATION is
+the version you run — not the slopp hosting you.** The slopp process carries
+`slopp/web/**` inside its own jar, and the declared coord still wins: tests,
+`query_eval` and your server all load the pinned release. So a `slopp.web` fix
+in a newer slopp does not reach you until that release is republished and you
+`deps_add` it (then `restart` — a hot `deps_add` cannot displace an
+already-loaded namespace). Nothing warns you when the pin is behind, so treat
+"is my `slopp-web` current?" as a question you have to ask. Measure rather than
+assume: `query_eval` `(.getResource (clojure.lang.RT/baseLoader)
+"slopp/web/static.clj")` names the jar actually in force.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
@@ -859,16 +870,24 @@ line diff and its blast radius), form permalinks by ID with callers above and
 callees inlined below, and the namespace index.
 
 **Hand over `session_brief`'s `:ui-hub`, not its `:ui`.** Those are different
-things now and giving out the wrong one wastes someone's time:
+things and giving out the wrong one wastes someone's time:
 
 - `:ui` is THIS project's own listener, and it serves `/api/*` — JSON, and the
   EDN contract at `/api/contracts`. It is already running (the server starts
   it at boot), it runs on your live session so warranty and observed examples
   are the ones you actually have, and it has no pages in it at all. A human
   opening it sees JSON.
-- `:ui-hub` is the hub — a separate application, one per machine, that renders
-  every screen and fronts this project at `/p/<slug>/`. That is the address a
-  person wants.
+- `:ui-hub` is this project's own page on the hub — a separate application, one
+  per machine, that renders every screen and fronts each project at
+  `/p/<slug>/`. That is the address a person wants, and the screens hang off
+  it: `<ui-hub>/change/<from>..<to>`, `<ui-hub>/store`,
+  `<ui-hub>/store/form/<id>`.
+
+**`:ui-hub` is present only while a hub is ANSWERING**, because the slug in it
+comes back on each heartbeat and cannot be fabricated. If no hub is running you
+get `:ui-hub-note` instead, naming the address that is silent — a hub is
+optional, so its absence is an ordinary state rather than an error. Don't paper
+over the note by handing out the bare hub root: nothing is serving it.
 
 `ui_serve` controls your own listener (port, restart, `{stop: true}`); serving
 again evicts the previous server rather than moving the port. It does not
