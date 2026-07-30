@@ -3076,3 +3076,82 @@ refreshing a captured value, and reloading cannot do it.
 **Reported, because a namespace reload is a real cost:** `:image-reloaded`
 names what was reloaded, `:image-reload-failed` carries a reload that errored,
 and `:stale-in-image` survives only for what the repair could not reach.
+
+## D-framework-injection (2026-07-30, user decision) — slopp supplies its own framework; the app does not declare it
+
+**Decision.** `io.github.nvoxland/slopp-web` stops being something a store
+`deps_add`s and becomes something slopp INJECTS, at the version the slopp doing
+the work actually is. The published maven artifact stays — it is how a
+non-slopp-built app consumes the framework — but a slopp-managed store no longer
+names it.
+
+**The problem it removes, which is measured rather than hypothetical.**
+`slopp-ui` pinned `slopp-web 0.1.3`. The trailing-slash fix in
+`slopp.web.static/mount-routes` — made BECAUSE of slopp-ui — shipped in slopp's
+store, reached the uberjar, and never reached slopp-ui, because the declaration
+is what loads. Green everywhere for a day. `framework-drift` (D-ui-hub part 6's
+tail) reports that now; this removes the ability to be in that state at all.
+
+**Why injection and not shading/vendoring**, which was the first suggestion.
+Shading relocates namespaces to dodge a version CONFLICT, and there is no
+conflict here — there is one `slopp.web`, and the question is which copy wins.
+Vendoring the files into the built app would work and costs three things a coord
+keeps: reproducibility (`0.1.4` means one thing forever), provenance (what
+framework is this app running, answerable without inspecting bytes), and the
+third-party path — `slopp.web.contract/contract-document` exists specifically so
+publishing a contract is "something any slopp-web app can do, not a privilege of
+the tool", and an app built without slopp needs a maven coord.
+
+**The precedent this follows, rather than invents.** slopp already injects its
+own toolchain in exactly this shape, and both docstrings state the same
+rationale:
+
+- `image.repl/inherent-deps` (nREPL, malli) — "versioned centrally HERE so an
+  upgrade reaches existing installs with no per-store migration", merged into
+  every image's `-Sdeps` AFTER the manifest so slopp controls the version.
+- `api.external/client-build-deps` (malli, the ClojureScript compiler) — "slopp
+  versions these centrally so an upgrade reaches every store with no migration;
+  the agent adds only APPLICATION deps".
+
+`slopp-web` is the one piece of slopp's toolchain that is NOT on that list. It
+is the anomaly, not the pattern, and it is the only one that has drifted.
+
+**Two injection points, because there are two classpaths and only one of them
+was ever the problem.**
+
+- **The oracle image** (`inherent-deps` → `default-cmd`'s `-Sdeps`). THIS is the
+  half that bit: slopp-ui's tests and `query_eval` ran 0.1.3 while the host jar
+  had the fix. A store's oracle is a `clojure -M` process built from its
+  manifest and does NOT include the uberjar.
+- **The built app** (`client-build-deps`' sibling → the generated `deps.edn`).
+  Without this the app would build with no framework at all once the manifest
+  stops naming it.
+
+**The version comes from `X-Slopp-Web-Version`** on the tracked
+`META-INF/MANIFEST.MF`, which `uber` writes into the jar as
+`META-INF/slopp/framework-version.edn`. That fact was added the day before for
+`framework-drift` to report against; it becomes this design's source of truth,
+and `framework-drift` retires once no store declares the coord.
+
+**The subtlety, and the thing most likely to be broken later: injection must be
+CONDITIONAL on the store not defining `slopp.web.*` itself.** slopp's own store
+contains those namespaces; injecting the maven coord there would put a second
+copy on the classpath behind the materialized one and make correctness depend on
+classpath order — the exact ambiguity this decision exists to end. `nil` from
+the version resource (a checkout, a `clojure -M` run) must also inject nothing.
+
+**A property to preserve deliberately.** A store's oracle image gets the
+manifest plus injected deps — never the uberjar. That is what physically
+enforces slopp-ui's rule that the only slopp namespaces it may use are
+`slopp.web.*`: reaching for `slopp.api` fails to compile in the image. Injection
+keeps that (the image still receives only the framework). It would be lost by
+"simplifying" this later into putting the uberjar on the image classpath, which
+would silently make all of slopp reachable from every app.
+
+**Staged, because the two halves live in different repos and are owned by
+different sessions.** slopp adds the injection first and keeps honoring an
+explicit manifest declaration; a store that still declares `slopp-web` is
+unaffected, since `inherent-deps` merges last and wins on version. Only then
+does slopp-ui drop the coord from its manifest. Nothing breaks in between, and
+the order cannot be reversed — dropping the declaration first would leave that
+store with no framework at all.
