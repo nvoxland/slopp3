@@ -129,6 +129,33 @@
   hand, is a claim that goes stale the first time `deps.edn` changes."
   "META-INF/slopp/bundled-libs.edn")
 
+(def framework-version-path
+  "Resource naming which `slopp-web` release this jar's `slopp/web/**` IS.
+
+  Written by `build.clj` from the tracked `META-INF/MANIFEST.MF`'s
+  `X-Slopp-Web-Version`, so the number is authored in ONE place and the jar
+  cannot claim a version it was not built as.
+
+  Deliberately NOT in `bundled-libs.edn`, which feeds `host-lib-divergence` —
+  that reports \"your declaration is inert, the host's copy wins\", the opposite
+  of the truth for slopp-web (D-framework-injection)."
+  "META-INF/slopp/framework-version.edn")
+
+(defn framework-version
+  "The `slopp-web` release THIS slopp corresponds to, or nil when the process
+  cannot say — a `clojure -M` run, a checkout, the oracle image.
+
+  In the KERNEL because both consumers need it and they cannot share anything
+  higher: `slopp.image.repl` injects it into every owned image's `-Sdeps`, and
+  `slopp.api` reports it. `slopp.image` sits below `slopp.api`, so a shared
+  helper up there would be a backwards dependency.
+
+  nil is a legitimate answer and every caller must stay silent on it — a
+  checkout has no published identity to inject or to be behind."
+  []
+  (when-let [r (io/resource framework-version-path)]
+    (not-empty (str/trim (slurp r)))))
+
 (defn bundled-libs
   "lib→coord for everything the host uberjar carries, or nil when this process
   is not running from one (a `clojure -M` run, a checkout, the oracle image)."

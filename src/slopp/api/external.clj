@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency] [slopp.image.currency :as registry]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -42,6 +42,56 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
+
+(defn ^:export framework-injection
+  "The `slopp-web` coord slopp supplies to `store`, or nil — `{lib coord}` for
+  merging into an image's `-Sdeps` or a generated `deps.edn`.
+
+  D-framework-injection. The framework is slopp's own, so slopp versions it,
+  exactly as [[client-build-deps]] does the ClojureScript compiler and
+  `repl/inherent-deps` does nREPL and malli. A store that declares it instead
+  can be pinned to a release the slopp serving it is not — which is not
+  hypothetical: `slopp-ui` sat on 0.1.3 for a day while the fix made FOR it
+  shipped in the host at 0.1.4, green the whole time, because the declaration is
+  what loads.
+
+  Two conditions, and each is load-bearing in a different direction.
+
+  **USES but does not DEFINE.** slopp's own store CONTAINS `slopp.web.*`, and
+  injecting the coord there would put a second copy on the classpath behind the
+  materialized one — correctness by classpath order, which is the ambiguity this
+  removes rather than a way to implement it.
+
+  **USES, not merely exists.** Image recycling is keyed on the dep map
+  (`repl/unpark!`), and the stores it currently helps are the dep-free ones —
+  slopp's own fixtures. Handing every store a coord would silently trade a
+  correctness fix for a slower suite. A store with no web code needs nothing.
+
+  nil `version` (a checkout, a `clojure -M` run — `boot/framework-version` says
+  so) injects nothing rather than guessing a coord that would not resolve."
+  [store version]
+  (let [nses (keys (:namespaces store))
+        web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
+    (when (and version
+               (not-any? web? nses)
+               (some (fn [n] (some web? (store/ns-require-libs store n))) nses))
+      {'io.github.nvoxland/slopp-web {:mvn/version version}})))
+
+(defn ^:export image-deps
+  "The dep map an owned image for `store` should carry: the store's manifest
+  plus anything slopp supplies itself.
+
+  ONE function, because the value is used TWICE per boot and the two uses must
+  agree — `repl/unpark!` keys recycling on it, and `repl/start!` puts it on the
+  classpath. Computing it separately at each call site is how a recycled image
+  comes to carry a different classpath from the one it was matched against.
+
+  Today that is the framework ([[framework-injection]]); nREPL and malli ride a
+  different seam (`repl/inherent-deps`, merged inside `default-cmd`) because
+  they are unconditional and need no store to decide."
+  [store]
+  (merge (:deps store)
+         (framework-injection store (boot/framework-version))))
 
 (defn ^:export client-build-deps
   "slopp's OWN toolchain deps for a BUILD of `store`, injected at build time —
@@ -116,7 +166,12 @@
         bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
         provided (client-build-deps st)
-        deps     (merge (:deps st) (:runtime provided))
+        ;; slopp's own framework, at the version this slopp IS — the build half of
+        ;; D-framework-injection. Same channel as the client toolchain above and
+        ;; for the same reason: the agent declares APPLICATION deps, slopp
+        ;; provisions its own.
+        deps     (merge (:deps st) (:runtime provided)
+                        (framework-injection st (boot/framework-version)))
 client-deps (merge (:client-deps st) (:client provided))
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
@@ -1104,8 +1159,12 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; D5 staleness backstop, where a genuinely new process IS the point;
           ;; recycling there would undermine the diagnostic that catches a
           ;; stale image.
-          image (or (repl/unpark! (:deps store))
-                    (repl/start! {:slopp.image.repl/deps (:deps store)}))]
+          ;; ONE value for both — see image-deps. The manifest alone was passed
+          ;; here twice; now that slopp supplies the framework itself, the
+          ;; recycling key and the classpath must not be able to disagree.
+          idm   (image-deps store)
+          image (or (repl/unpark! idm)
+                    (repl/start! {:slopp.image.repl/deps idm}))]
       (swap! session assoc :image image)
       (session/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)

@@ -264,19 +264,33 @@
              (update :deltas conj delta))
          delta]))))
 
-(defn ns-requires
-  "Store namespaces required by `ns-sym`'s ns form — the require graph's edge
-  set, public because verification needs it: finding which TEST namespaces
-  reach a change is a graph question, and no naming convention answers it."
+(defn ns-require-libs
+  "EVERY lib `ns-sym`'s ns form requires — store namespaces AND external ones.
+
+  [[ns-requires]] is this narrowed to the store, which is what the require
+  GRAPH wants (an edge to a lib nobody here defines is not an edge). The
+  unnarrowed set answers a different question: what does this namespace need
+  from OUTSIDE, which is how slopp decides whether a store uses a framework it
+  should be supplied with (`api.external/framework-injection`)."
   [store ns-sym]
   (when-let [e (form-named store ns-sym ns-sym)]
     (let [s (n/sexpr (:node e))]
       (for [clause s
             :when (and (seq? clause) (= :require (first clause)))
-            spec (rest clause)
-            :let [lib (if (vector? spec) (first spec) spec)]
-            :when (contains? (:namespaces store) lib)]
-        lib))))
+            spec (rest clause)]
+        (if (vector? spec) (first spec) spec)))))
+
+(defn ns-requires
+  "Store namespaces required by `ns-sym`'s ns form — the require graph's edge
+  set, public because verification needs it: finding which TEST namespaces
+  reach a change is a graph question, and no naming convention answers it.
+
+  [[ns-require-libs]] narrowed to the store: a require naming a lib nobody here
+  defines is not an edge in THIS graph. ONE walk of the ns form, two filters —
+  the narrowing is the only difference and it should stay the only difference."
+  [store ns-sym]
+  (filter #(contains? (:namespaces store) %)
+          (ns-require-libs store ns-sym)))
 
 (defn ns-closure
   "`ns-sym` plus every store namespace it transitively requires — the scope a
