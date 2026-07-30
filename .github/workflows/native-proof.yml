@@ -62,9 +62,12 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.0
         with:
           cli: latest
-      - name: Install the slim slopp-web jar into the local repo
-        run: clojure -T:build slim-install :src '"src"' :version '"0.1.2"'
-      - name: Build a web app through slopp on the slim jar
+      # No slim-install step, and its absence is the proof. slopp-web is never
+      # published to a remote (D-framework-injection part 2), so this runner has
+      # no way to resolve it — slopp VENDORS the framework into the built tree.
+      # A green run here means a slopp-built web app is self-contained on a
+      # machine that has never seen the artifact.
+      - name: Build a web app through slopp, with no framework artifact anywhere
         env:
           SLOPP_CLOJURE: clojure
         run: |
@@ -91,7 +94,6 @@ jobs:
           '''
           reqs = [
               {"name": "turn_begin", "arguments": {"agent": "ci", "intent": "native web proof"}},
-              {"name": "deps_add", "arguments": {"agent": "ci", "lib": "io.github.nvoxland/slopp-web", "version": "0.1.2"}},
               {"name": "config_file", "arguments": {"agent": "ci", "path": "capabilities", "key": "http.enabled", "value": "true", "prompt": "ci"}},
               {"name": "config_file", "arguments": {"agent": "ci", "path": "capabilities", "key": "http.static./assets", "value": "public", "prompt": "ci"}},
               {"name": "file_put", "arguments": {"agent": "ci", "path": "public/logo.png", "encoding": "base64", "content-type": "image/png",

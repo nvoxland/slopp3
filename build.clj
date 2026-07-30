@@ -118,17 +118,36 @@
       (spit f (pr-str (into (sorted-map)
                             (map (fn [[lib coord]] [lib (dissoc coord :paths)]))
                             (:libs basis)))))
-    ;; Which slopp-web release this jar's slopp/web/** IS. Deliberately NOT in
-    ;; bundled-libs.edn: that file feeds host-lib-divergence, whose finding is
-    ;; "your declaration is inert, the host's copy wins" — the opposite of the
-    ;; truth here. A store's slopp-web pin is what actually LOADS, so the
-    ;; finding is "your declaration is honoured and it is not this slopp"
-    ;; (slopp.api/framework-drift). Authored once, in the tracked manifest, so
-    ;; the jar cannot claim a version it was not built as.
+    ;; THE FRAMEWORK slopp vendors into the stores it serves
+    ;; (D-framework-injection part 2). Two facts, both generated so neither can
+    ;; drift from what shipped:
+    ;;
+    ;;   framework-version.edn — which slopp-web this jar's slopp/web/** IS,
+    ;;     authored once in the tracked manifest. NOT a maven version any more;
+    ;;     slopp-web is never published, so this is a STAMP saying what a built
+    ;;     tree carries.
+    ;;   framework-files.edn   — the file list, because a jar cannot glob its
+    ;;     own resources and the vendoring has to enumerate them at runtime.
+    ;;     Derived from the tree being jarred rather than hand-listed: a
+    ;;     hand-list is a claim that goes stale the first time a namespace is
+    ;;     added to slopp.web.
     (when-let [v (get mf "X-Slopp-Web-Version")]
       (let [f (io/file class-dir "META-INF" "slopp" "framework-version.edn")]
         (io/make-parents f)
         (spit f v)))
+    (let [root  (io/file (str src))
+          web   (io/file root "slopp" "web")
+          files (cond-> (vec (sort (for [f (file-seq web)
+                                         :when (and (.isFile f)
+                                                    (.endsWith (.getName f) ".clj"))]
+                                     (str "slopp/web/"
+                                          (subs (.getPath f)
+                                                (inc (count (.getPath web))))))))
+                  (.exists (io/file root "slopp" "web.clj"))
+                  (conj "slopp/web.clj"))
+          f     (io/file class-dir "META-INF" "slopp" "framework-files.edn")]
+      (io/make-parents f)
+      (spit f (pr-str (vec (sort files)))))
     (when (and smain (not= main "clojure.main"))
       (gen-launcher! main smain)
       ;; the launcher dir must be ON the compile basis classpath (src-dirs
@@ -156,74 +175,3 @@
                  [java.nio.file.StandardCopyOption/ATOMIC_MOVE
                   java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
     (println "built" jar-file "Main-Class:" main)))
-
-;; ---------------------------------------------------------------------------
-;; The slim slopp-web runtime jar (D-web wave-5 tail): ONLY slopp/web/** —
-;; what a USER app deps_add's to serve declared endpoints. Deps mirror the
-;; kernel's versions. `slim-install` puts it in the local ~/.m2 so a store's
-;; deps_add resolves it without a remote (CI's native proof uses exactly that).
-
-(def slim-lib 'io.github.nvoxland/slopp-web)
-
-(def ^:private slim-deps
-  {'org.clojure/clojure {:mvn/version "1.12.5"}
-   'cheshire/cheshire   {:mvn/version "5.13.0"}
-   'http-kit/http-kit   {:mvn/version "2.8.0"}
-   'hiccup/hiccup       {:mvn/version "2.0.0"}
-   'garden/garden       {:mvn/version "1.3.10"}})
-
-(defn slim
-  "Build target/slopp-web-<version>.jar from the materialized store source
-  (`:src`, default target/jar-src/src — run the `build` MCP tool first).
-  No AOT; the jar is source + pom.
-
-  `:version` defaults to `X-Slopp-Web-Version` from the tracked manifest, which
-  is where the number is authored — the uberjar records the same value, so a
-  store's pin can be compared against the slopp serving it
-  (`slopp.api/framework-drift`). It used to default to a literal \"0.1.0\", so
-  running this bare would DOWNGRADE ~/.m2 and nothing recorded which release a
-  given slopp corresponded to. Refuses rather than guessing if neither is
-  available: a mis-versioned publish is how a fix silently fails to reach the
-  app it was made for."
-  [{:keys [version src] :or {src "target/jar-src/src"}}]
-  (let [root      (or (.getParent (io/file (str src))) ".")
-        version   (or version
-                      (get (or (parse-manifest root) {}) "X-Slopp-Web-Version")
-                      (throw (ex-info (str "no :version and no X-Slopp-Web-Version"
-                                           " in " root "/META-INF/MANIFEST.MF —"
-                                           " set it with config_file so the"
-                                           " number is authored in ONE place,"
-                                           " or pass :version explicitly")
-                                      {:src src})))
-        class-dir "target/slim-classes"
-        jar      (str "target/slopp-web-" version ".jar")
-        basis    (b/create-basis {:project {:deps slim-deps}})]
-    (b/delete {:path class-dir})
-    ;; two globs: slopp/web/** matches the DIRECTORY's contents, not the
-    ;; sibling root-facade file slopp/web.clj — both must ship
-    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
-                 :include "slopp/web.clj"})
-    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
-                 :include "slopp/web/**"})
-    (b/write-pom {:class-dir class-dir :lib slim-lib :version version
-                  :basis basis})
-    (b/jar {:class-dir class-dir :jar-file jar})
-    (println "built" jar)
-    {:jar jar :class-dir class-dir :version version :basis basis}))
-
-(defn slim-install
-  "slim + install into the local ~/.m2 — a store can then
-  deps_add io.github.nvoxland/slopp-web {:mvn/version <version>}.
-
-  `:version` defaults to the tracked manifest's `X-Slopp-Web-Version`, via
-  `slim`; the version actually built is what gets installed, so the two cannot
-  disagree. **Bump the manifest key when you publish**, or the next uberjar will
-  tell every consuming store it carries a release that does not include this
-  one's changes — which is the failure this whole path exists to prevent."
-  [opts]
-  (let [{:keys [jar class-dir basis version]} (slim opts)]
-    (b/install {:basis basis :lib slim-lib :version version
-                :jar-file jar :class-dir class-dir})
-    (println "installed" (str slim-lib) version "into ~/.m2")
-    (println "  reminder: bump X-Slopp-Web-Version in META-INF/MANIFEST.MF and"
-             "rebuild the uberjar, or framework-drift will misreport")))

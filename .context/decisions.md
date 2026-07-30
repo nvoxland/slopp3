@@ -3155,3 +3155,49 @@ unaffected, since `inherent-deps` merges last and wins on version. Only then
 does slopp-ui drop the coord from its manifest. Nothing breaks in between, and
 the order cannot be reversed — dropping the declaration first would leave that
 store with no framework at all.
+
+### D-framework-injection part 2 (2026-07-30, user decision) — slopp-web is never published, so the coord has to go
+
+**Decided:** `io.github.nvoxland/slopp-web` will NEVER be published to a real
+remote. It is not something anyone should depend on outside what slopp
+automatically includes in slopp builds.
+
+That invalidates the reasoning in part 1, and the invalidation is worth keeping
+rather than editing away. Part 1 rejected vendoring to preserve three properties
+a maven coord has over copied files. Under this constraint:
+
+- **Third-party consumption** — explicitly ruled out. This was the load-bearing
+  argument and it is now the opposite of the goal.
+- **Reproducibility** — illusory. A coord resolvable only from one machine's
+  `~/.m2` is WORSE than vendored files, because it looks portable and is not.
+- **Provenance** — the only one that survives, and vendoring can carry it just as
+  well by stamping the version into the built tree.
+
+**The defect this leaves in what part 1 shipped**, stated plainly because it is
+live: a built app's generated `deps.edn` names a coord nothing can resolve
+(latent — nobody has deployed one), and a fresh machine cannot boot a slopp-ui
+oracle image until someone runs `slim-install` in slopp2 (real today). Evidence
+that it was only ever local: every version 0.1.0–0.1.4 carries a
+`_remote.repositories` with an empty repo id and the directory metadata is
+`maven-metadata-local.xml`.
+
+**So the framework should be VENDORED, not coordinated.** Two halves, matching
+the two classpaths part 1 identified:
+
+- **The built app** — `build!` writes `slopp/web/**` into the materialized tree
+  from its own jar resources, and the generated `deps.edn` declares only the leaf
+  libs (clojure, hiccup, cheshire, garden, http-kit). Self-contained and portable
+  with no repository at all.
+- **The oracle image** — the files extracted once to a cache directory, attached
+  as a `:local/root`. NOT the uberjar itself: that would put all of slopp on the
+  image classpath and destroy the property part 1 exists to protect — that a
+  store's image receives only the framework, so reaching for `slopp.api` fails to
+  compile.
+
+`framework-injection`'s CONDITIONS survive unchanged (uses-but-does-not-define,
+uses-not-merely-exists); only the payload changes from a coord to files. So does
+`X-Slopp-Web-Version`, which stops being a maven version and becomes the stamp
+that says which framework a built tree carries.
+
+Open: whether `slim` / `slim-install` are deleted outright or kept as a local
+convenience. Nothing depends on them once vendoring lands.
