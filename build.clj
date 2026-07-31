@@ -35,6 +35,54 @@
                       (when k [k v]))))
             (str/split-lines (slurp f))))))
 
+(defn- ns-requires-of
+  "Every namespace symbol `file`'s ns form requires, read as data."
+  [file]
+  (let [form (try (read-string (slurp file)) (catch Exception _ nil))]
+    (when (and (seq? form) (= 'ns (first form)))
+      (for [clause form
+            :when (and (seq? clause) (= :require (first clause)))
+            spec (rest clause)]
+        (if (vector? spec) (first spec) spec)))))
+
+(defn- lib-providing
+  "The basis lib whose resolved jars contain `ns-path` (e.g. \"garden/core.clj\"),
+  or nil. Asks the ARTIFACTS rather than mapping namespace prefixes to lib
+  names by convention — `hiccup2.core` ships in `hiccup/hiccup`, and no rule
+  over the symbol would get that right."
+  [libs ns-path]
+  (some (fn [[lib coord]]
+          (when (some (fn [p]
+                        (and (.endsWith (str p) ".jar")
+                             (.exists (io/file (str p)))
+                             (with-open [jf (java.util.jar.JarFile. (io/file (str p)))]
+                               (boolean (.getEntry jf ns-path)))))
+                      (:paths coord))
+            lib))
+        libs))
+
+(defn- framework-deps
+  "What the vendored framework needs from OUTSIDE, as {lib coord}.
+
+  Vendoring `slopp/web/**` copies source and discards the pom that used to pull
+  garden/hiccup/cheshire/http-kit in transitively. This re-derives that set from
+  the files themselves so it cannot go stale: read their requires, drop
+  `clojure.*` and `slopp.*`, and ask the basis which lib ships each remaining
+  namespace. Versions are the basis's own, so what a consumer is handed is what
+  this jar was built against."
+  [root files basis]
+  (let [libs (:libs basis)]
+    (into (sorted-map)
+          (keep (fn [nsym]
+                  (let [s (str nsym)]
+                    (when-not (or (str/starts-with? s "clojure.")
+                                  (str/starts-with? s "slopp."))
+                      (let [path (-> s (str/replace "-" "_") (str/replace "." "/"))]
+                        (when-let [lib (or (lib-providing libs (str path ".clj"))
+                                           (lib-providing libs (str path ".cljc")))]
+                          [lib (dissoc (get libs lib) :paths :dependents :parents)]))))))
+          (mapcat #(ns-requires-of (io/file root %)) files))))
+
 (defn- gen-launcher!
   "Write the delegating launcher ns for `main-class` under target/launcher."
   [main-class slopp-main]
@@ -131,6 +179,17 @@
     ;;     Derived from the tree being jarred rather than hand-listed: a
     ;;     hand-list is a claim that goes stale the first time a namespace is
     ;;     added to slopp.web.
+    ;;   framework-deps.edn    — what those files REQUIRE from outside. Vendoring
+    ;;     the source discards the pom, and the pom was what pulled garden,
+    ;;     hiccup, cheshire and http-kit onto the classpath. Found the hard way:
+    ;;     the vendored framework landed correctly and then failed INSIDE
+    ;;     slopp.web.css, which requires garden.core.
+    ;;
+    ;;     DERIVED, for the same reason the file list is: read each vendored
+    ;;     file's requires, drop clojure.*/slopp.*, and ask the BASIS which lib
+    ;;     ships each remaining namespace by looking inside the jars it resolved.
+    ;;     A hand-written vector would go stale the first time slopp.web gains a
+    ;;     require — and silently, since the coord that used to mask it is gone.
     (when-let [v (get mf "X-Slopp-Web-Version")]
       (let [f (io/file class-dir "META-INF" "slopp" "framework-version.edn")]
         (io/make-parents f)
@@ -147,7 +206,9 @@
                   (conj "slopp/web.clj"))
           f     (io/file class-dir "META-INF" "slopp" "framework-files.edn")]
       (io/make-parents f)
-      (spit f (pr-str (vec (sort files)))))
+      (spit f (pr-str (vec (sort files))))
+      (spit (io/file class-dir "META-INF" "slopp" "framework-deps.edn")
+            (pr-str (framework-deps root files basis))))
     (when (and smain (not= main "clojure.main"))
       (gen-launcher! main smain)
       ;; the launcher dir must be ON the compile basis classpath (src-dirs
