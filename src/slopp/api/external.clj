@@ -1123,11 +1123,9 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; session boots reuses it, which is what makes a restart work. A
           ;; private dir here is exactly why restart booted without the
           ;; framework at all.
-          vdir  (session/framework-dir! session)
-          idm   (session/image-deps store)
-          image (or (when-not vdir (repl/unpark! idm))
-                    (repl/start! (cond-> {:slopp.image.repl/deps idm}
-                                   vdir (assoc :slopp.image.repl/dir vdir))))]
+          vdir  (session/framework-dir! session store)
+          image (or (when-not vdir (repl/unpark! (session/image-deps store)))
+                    (session/start-image! session store))]
       (swap! session assoc :image image)
       (session/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)

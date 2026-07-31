@@ -96,7 +96,8 @@
           (spit f v)))
       written)))
 
-(defn ^:export image-deps
+(defn ^{:breaking-ok "never legitimately module-external: ^:export was copied from the forms this replaced, and every caller is inside slopp.api.*. Created and un-exported inside one unreleased wave, so there is no downstream to tell."}
+  image-deps
   "The dep map an image for `store` should carry: the store's own manifest plus
   what the vendored framework requires.
 
@@ -112,65 +113,94 @@
     (merge (boot/framework-deps) (:deps store))
     (:deps store)))
 
-(defn ^:export framework-dir!
-  "The dir to launch `session`'s next image in — one per session, created and
-  filled on demand — or nil when this store needs no framework.
+(defn ^{:breaking-ok "never legitimately module-external: ^:export was copied from the forms this replaced, and every caller is inside slopp.api.*. Created and un-exported inside one unreleased wave, so there is no downstream to tell."}
+  framework-dir!
+  "The dir to launch an image for `store` in — one per session, created and
+  filled on demand — or nil when that store needs no framework.
 
-  ONE dir per session rather than one per image, because every image that
-  session boots needs the same files and re-vendoring per boot is work with no
-  answer to give. Cached under `:framework-dir`; the vendor call is idempotent
-  file writes, so a store that GAINS web code mid-session gets it on its next
-  image rather than never.
-
-  This exists because vendoring was wired into session creation alone. Every
-  image after the first — restart, `deps_add`/`deps_remove`, branch switch,
-  `ns_rename`, the D5 staleness heal — booted without the framework, and a store
-  still declaring the coord masked it by resolving from `~/.m2`. The declaration
-  was silently load-bearing for every image but the first, which is exactly what
-  removing it exposed."
-  [session]
-  (when (framework-injection (:store @session) (boot/framework-files))
+  The DECISION is per-store (branch lines each have their own); the DIR is per
+  session, because the framework is slopp's own and every image it launches
+  needs the same bytes. Cached under `:framework-dir`; the vendor call is
+  idempotent file writes, so a store that GAINS web code mid-session gets it on
+  its next image rather than never."
+  [session store]
+  (when (framework-injection store (boot/framework-files))
     (let [dir (or (:framework-dir @session)
                   (let [d (str (java.nio.file.Files/createTempDirectory
                                 "slopp-framework"
                                 (make-array java.nio.file.attribute.FileAttribute 0)))]
                     (swap! session assoc :framework-dir d)
                     d))]
-      (vendor-framework! (:store @session) dir)
+      (vendor-framework! store dir)
       dir)))
 
 (defn start-spare!
-  "Kick off a background-warming spare image (D5 warm spare) if enabled. The
-  spare is launched BARE (deps unknown until a line adopts it); its manifest
-  is reconciled at adoption via `image-with-deps!`."
+  "Kick off a background-warming spare image (D5 warm spare) if enabled.
+
+  Launched with no DEPS — the manifest can change between warming and adoption,
+  so `image-with-deps!` reconciles it there — but IN the session's framework
+  dir, because that half cannot be reconciled later: a JVM cannot pick up a
+  relative classpath directory after launch. The dir is resolved here, on the
+  calling thread, rather than inside the future: it writes to the session."
   [session]
   (when (:warm-spare? @session)
-    (swap! session assoc :spare (future (repl/start!)))))
+    (let [dir (framework-dir! session (:store @session))]
+      (swap! session assoc :spare
+             (future (repl/start! (cond-> {}
+                                    dir (assoc :slopp.image.repl/dir dir))))))))
+
+(defn ^{:breaking-ok "never legitimately module-external: ^:export was copied from the forms this replaced, and every caller is inside slopp.api.*. Created and un-exported inside one unreleased wave, so there is no downstream to tell."}
+  start-image!
+  "THE door: every owned image is launched here, for `store`.
+
+  It exists because there was no such door, and that cost three rounds. Four
+  paths launch images — session open (`external/boot-image!`), `fresh-image!`
+  (restart, deps changes, ns_rename, the D5 staleness heal), `branch/boot-line-image!`
+  for a line, and the warm spare — and each was a sibling of `repl/start!`
+  rather than a caller of one preparation. So \"every image gets X\" was a
+  convention, re-implemented per path. Framework vendoring was added to one of
+  the four; the branch-line path had it missing for a week and nobody noticed,
+  because nothing exercises branches and web code together.
+
+  `slopp.api.session`'s own docstring already names this class for WRITES —
+  four gates hand-pasted at four write sites because the chokepoint was not
+  used, and every later fix applied four times. `rebased-write!` is that
+  chokepoint. This is its counterpart for images, and the lesson was available
+  the whole time.
+
+  Anything that must be true of EVERY image belongs in this function. If a new
+  requirement shows up and you find yourself adding it to a caller, that is the
+  bug repeating."
+  [session store]
+  (let [dir (framework-dir! session store)]
+    (repl/start! (cond-> {:slopp.image.repl/deps (image-deps store)}
+                   dir (assoc :slopp.image.repl/dir dir)))))
 
 (defn image-with-deps!
-  "A ready owned image carrying `deps` (lib→coord) on its classpath and, when
-  `dir` is given, launched IN that dir: adopt the bare `spare` and hot-`add-libs`
-  the manifest into it, falling back to a fresh launch if the spare can't
-  reconcile; or launch fresh when there is no spare. The caller owns spare
-  bookkeeping (nil-ing + rewarming).
+  "A ready owned image for `store`: adopt the bare `spare` and hot-`add-libs`
+  what the store needs into it, or launch fresh through [[start-image!]]. The
+  caller owns spare bookkeeping (nil-ing + rewarming).
 
-  **A spare is never adopted when `dir` is given.** The spare was launched in
-  its own dir with nothing vendored, and a JVM cannot pick up a relative
-  classpath directory after launch — so adopting it would hand back an image
-  missing the framework, which surfaces as a missing namespace at first use, far
-  from here. `add-libs!` cannot fix that: the framework is files, not a coord.
-  The spare is stopped rather than leaked."
-  ([spare deps] (image-with-deps! spare deps nil))
-  ([spare deps dir]
-   (let [start! #(repl/start! (cond-> {:slopp.image.repl/deps deps}
-                                dir (assoc :slopp.image.repl/dir dir)))]
-     (if (and spare (nil? dir))
-       (let [img @spare]
-         (if (and (seq deps) (:err (repl/add-libs! img deps)))
-           (do (repl/stop! img) (start!))
-           img))
-       (do (when spare (repl/stop! @spare))
-           (start!))))))
+  Adoption is safe again because [[start-spare!]] launches the spare in the
+  session's framework dir. It briefly was not: a spare launched in its own dir
+  has nothing vendored, and a JVM cannot pick up a relative classpath directory
+  after launch, so adopting one handed back an image missing the framework. The
+  first fix REFUSED adoption for framework-needing stores, which was correct and
+  cost them the warm spare. Giving the spare the dir up front is the same
+  guarantee without the loss — and it follows from having one door: whatever
+  `start-image!` prepares, the spare can be prepared with too.
+
+  `add-libs!` still reconciles the MANIFEST at adoption, because it can change
+  between warming and adoption. What it cannot do is add the framework, which is
+  files."
+  [session store spare]
+  (if spare
+    (let [img  @spare
+          deps (image-deps store)]
+      (if (and (seq deps) (:err (repl/add-libs! img deps)))
+        (do (repl/stop! img) (start-image! session store))
+        img))
+    (start-image! session store)))
 
 ^:reads
 (defn session-identity
@@ -372,7 +402,7 @@
         ;; branch switch, ns_rename and the D5 staleness heal — all of which
         ;; used to hand back an image with no framework at all, masked for as
         ;; long as the store still declared the coord.
-        fresh (image-with-deps! spare (image-deps store) (framework-dir! session))]  ; adopt+reconcile or fresh
+        fresh (image-with-deps! session store spare)]  ; adopt+reconcile or fresh
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)

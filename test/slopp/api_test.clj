@@ -706,3 +706,88 @@
             (is (vendored?))
             (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
           (finally (api/close! sess)))))))
+
+(deftest ^:external a-built-web-app-RUNS-outside-slopp-entirely
+  ;; SHAPE was never the question. Every build! test here asserted the tree
+  ;; materializes — files present, deps.edn contains X — and all of them passed
+  ;; while a built app died on its first require, because vendoring copies
+  ;; source and the pom that carried garden/hiccup/cheshire/http-kit was
+  ;; discarded with the coord.
+  ;;
+  ;; The consumer found it, by running the tree. That is the wrong dependency:
+  ;; slopp-ui is ONE app, the next one will not report this well, and slopp's
+  ;; correctness should not rest on a consumer happening to look. So slopp owns
+  ;; a minimal web app of its own and RUNS it.
+  ;;
+  ;; A fresh JVM with no slopp on the classpath — `clojure -M` in the tree — is
+  ;; the point: an image would prove nothing, since the image is the OTHER path
+  ;; and vendors separately. This is what a user's deployment sees.
+  ;;
+  ;; The framework is FAKED, and the fake requires something external, because
+  ;; this suite runs from a checkout where boot/framework-files is nil. A first
+  ;; cut branched on that and skipped the run — leaving a behaviour test that
+  ;; asserted shape in the only environment it ever executes in, which is the
+  ;; defect it exists to catch. The stand-in has the property under test:
+  ;; requires of its own that the built deps.edn must declare.
+  (with-redefs [boot/framework-files
+                (constantly
+                 {"slopp/web/css.clj"
+                  (str "(ns slopp.web.css (:require [garden.core :as garden]))\n"
+                       "(defn css-response \"C.\" [rules]\n"
+                       "  {:status 200 :body (garden/css rules)})\n")})
+                boot/framework-deps
+                (constantly '{garden/garden {:mvn/version "1.3.10"}})]
+    (let [sess (external/open!)
+          dir  (str (Files/createTempDirectory "slopp-runs"
+                                               (make-array FileAttribute 0)))]
+      (try
+        ;; into the store VALUE: this session's image was booted on an empty
+        ;; store and so vendored nothing, and create-ns! hot-loads — it would
+        ;; fail on the require and the ns would never land. build! reads the
+        ;; store, which is what is under test here.
+        (swap! sess update :store store/ingest 'runs.app
+               (str "(ns runs.app\n"
+                    "  (:require [slopp.web.css :as css]))\n\n"
+                    "(defn ^:export stylesheet \"S.\" []\n"
+                    "  (css/css-response [[:body {:color \"red\"}]]))\n"))
+        (is (nil? (:error (external/build! sess dir))))
+        (testing "the framework source is IN the tree"
+          (is (.exists (io/file dir "src" "slopp" "web" "css.clj"))))
+        (testing "and what the framework itself requires is declared, or the
+                  tree carries source it cannot load"
+          (is (contains? (:deps (edn/read-string (slurp (io/file dir "deps.edn"))))
+                         'garden/garden)))
+        (testing "so it LOADS in a fresh JVM that has never heard of slopp —
+                  the assertion shape assertions cannot make"
+          (let [r (clojure.java.shell/sh
+                   "clojure" "-M" "-e" "(require 'runs.app) (println :LOADED-OK)"
+                   :dir dir)]
+            (is (zero? (:exit r))
+                (str "a built app must run outside slopp.\nexit " (:exit r)
+                     "\nout: " (:out r) "\nerr: " (:err r)))
+            (is (str/includes? (:out r) ":LOADED-OK")
+                (str "out: " (:out r) "\nerr: " (:err r)))))
+        (testing "and it FIRES — without the framework's deps the same tree
+                  fails, which is the bug slopp-ui hit. A green run here proves
+                  nothing unless the red one is reachable, and every defect this
+                  wave was hidden by a check that could not fail"
+          (let [dir2 (str (Files/createTempDirectory
+                           "slopp-runs-nodeps" (make-array FileAttribute 0)))]
+            (try
+              (with-redefs [boot/framework-deps (constantly nil)]
+                (external/build! sess dir2))
+              (let [r (clojure.java.shell/sh
+                       "clojure" "-M" "-e" "(require 'runs.app)" :dir dir2)]
+                (is (not (zero? (:exit r)))
+                    "vendored source with no deps declared must NOT load")
+                (is (str/includes? (:err r) "garden")
+                    (str "and it must fail on the framework's own require: "
+                         (:err r))))
+              (finally
+                (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f)))
+                          (.delete f))]
+                  (rm! (io/file dir2)))))))
+        (finally
+          (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+            (rm! (io/file dir)))
+          (api/close! sess))))))

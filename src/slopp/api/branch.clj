@@ -1,4 +1,21 @@
 (ns slopp.api.branch
+  "BRANCHES as slopp has them: one store, many lines, each with its own image.
+
+  A branch here is not a checkout. The store is a delta log, so a line is a
+  view of that log and switching is a matter of which deltas are in scope —
+  there is no working tree to swap. What a line DOES need is an image of its
+  own, because code is loaded state: two lines with different definitions of
+  the same var cannot share one JVM.
+
+  That is where the cost sits, and where the bugs are. A line image is a fourth
+  image launcher alongside session open, `fresh-image!` and the warm spare, and
+  it is the one nobody exercises casually — so anything that must be true of
+  every image is least likely to be true here. It reaches
+  `session/start-image!` for exactly that reason; a launch assembled locally
+  would be correct on the day it was written and quietly wrong afterwards.
+
+  Lines are reaped on idle (the session's timer), because an abandoned branch
+  should not hold a JVM open indefinitely."
   (:require [clojure.java.io :as io]
             [slopp.api.session :as session]
             [slopp.store.db :as db]
@@ -153,7 +170,11 @@
   Returns {:image handle} or {:error msg}."
   [session store]
   (let [spare (:spare @session)
-        img   (session/image-with-deps! spare (:deps store))]
+        ;; through the one door, and this path is why the door exists: it was the
+        ;; fourth image launcher and the one nobody wired the framework into,
+        ;; because nothing exercises branches and web code together. It would
+        ;; have failed exactly as restart did.
+        img   (session/image-with-deps! session store spare)]
     (when spare
       (swap! session assoc :spare nil)
       (session/start-spare! session))
