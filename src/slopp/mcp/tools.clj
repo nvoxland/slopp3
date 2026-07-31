@@ -483,7 +483,7 @@
                   :properties {:lib {:type "string"}}
                   :required ["lib"]}}
    {:name "deps_list"
-    :description "The dependency manifest: {:deps {lib coord}}, plus two OPPOSITE findings. :host-override — a declaration slopp's own process bundles at a different version and so cannot honor (inert; the host's copy wins). :framework-drift — this store pins io.github.nvoxland/slopp-web at a version other than the slopp serving it, where the pin is what actually LOADS, so a slopp.web fix in the host has NOT reached you until you republish and re-pin."
+    :description "The dependency manifest: {:deps {lib coord}}, plus :host-override for any declaration slopp's own process bundles at a different version and so cannot honor (inert; the host's copy wins). Note what is NOT here: slopp's web framework. slopp vendors it into every store that uses it, at the version slopp is, so it is never declared and never drifts."
     :inputSchema {:type "object" :properties {}}}
    {:name "store_health"
     :description "What this store CARRIES, in bytes: the journal per op (heaviest first), the materialized state, the blob table, and the on-disk artifact cache. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."

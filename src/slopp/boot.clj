@@ -148,8 +148,7 @@
   A STAMP, not a maven version: slopp-web is never published, so this says which
   framework a jar carries and which one a built tree was given, and nothing
   resolves against it. `api.session/vendor-framework!` writes it beside the
-  vendored files; `slopp.api` reports it as `:framework-drift` while any store
-  still declares the retired coord.
+  vendored files, which is what lets a built tree say what it holds.
 
   In the KERNEL because both consumers need it and nothing lower is shared:
   `slopp.image` sits below `slopp.api`, so a helper up there would be a
