@@ -181,26 +181,37 @@
   what the store needs into it, or launch fresh through [[start-image!]]. The
   caller owns spare bookkeeping (nil-ing + rewarming).
 
-  Adoption is safe again because [[start-spare!]] launches the spare in the
-  session's framework dir. It briefly was not: a spare launched in its own dir
-  has nothing vendored, and a JVM cannot pick up a relative classpath directory
-  after launch, so adopting one handed back an image missing the framework. The
-  first fix REFUSED adoption for framework-needing stores, which was correct and
-  cost them the warm spare. Giving the spare the dir up front is the same
-  guarantee without the loss — and it follows from having one door: whatever
-  `start-image!` prepares, the spare can be prepared with too.
+  Adoption is safe because [[start-spare!]] launches the spare in the session's
+  framework dir. It briefly was not: a spare launched in its own dir has nothing
+  vendored, and a JVM cannot pick up a relative classpath directory after
+  launch, so adopting one handed back an image missing the framework. The first
+  fix REFUSED adoption whenever a framework was needed — correct, and it cost
+  the warm spare on every restart. Giving the spare the dir up front is the same
+  guarantee without the loss, and it follows from having one door: whatever
+  `start-image!` prepares, the spare is prepared with too.
 
-  `add-libs!` still reconciles the MANIFEST at adoption, because it can change
-  between warming and adoption. What it cannot do is add the framework, which is
-  files."
+  **The spare's dir must MATCH what this store now needs**, which is not the
+  same as it having one. A spare is launched from the store as it was THEN; a
+  store that gained web code since is a store whose spare was warmed without a
+  framework, and adopting it would hand back the exact broken image this whole
+  round has been about. `add-libs!` cannot repair that — it reconciles the
+  MANIFEST, which can change between warming and adoption, and the framework is
+  files, which cannot. Found by writing the adoption test rather than by hitting
+  it, which is the order worth preferring."
   [session store spare]
-  (if spare
-    (let [img  @spare
-          deps (image-deps store)]
-      (if (and (seq deps) (:err (repl/add-libs! img deps)))
-        (do (repl/stop! img) (start-image! session store))
-        img))
-    (start-image! session store)))
+  (let [deps (image-deps store)
+        dir  (framework-dir! session store)]
+    ;; `nil? dir` FIRST: a spare always has a dir of its own, so a bare
+    ;; equality check refuses adoption for every store needing no framework —
+    ;; which is most of them, and is a warm-spare regression rather than a
+    ;; safety property. The dir only has to MATCH when one is required.
+    (if (and spare (or (nil? dir) (= dir (:dir @spare))))
+      (let [img @spare]
+        (if (and (seq deps) (:err (repl/add-libs! img deps)))
+          (do (repl/stop! img) (start-image! session store))
+          img))
+      (do (when spare (repl/stop! @spare))
+          (start-image! session store)))))
 
 ^:reads
 (defn session-identity

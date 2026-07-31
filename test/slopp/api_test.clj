@@ -791,3 +791,58 @@
           (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
             (rm! (io/file dir)))
           (api/close! sess))))))
+
+(deftest ^:external the-warm-spare-is-ADOPTED-and-carries-the-framework
+  ;; slopp-ui measured this and slopp should assert it — the same principle as
+  ;; the build-and-run test. Their instrument, kept because it is better than
+  ;; anything timing-based: compare the image JVM's ABSOLUTE start time against a
+  ;; mark taken before the restart was requested.
+  ;;
+  ;;   negative → the JVM existed before I asked → a warmed spare was adopted
+  ;;   positive → it booted during the restart → no spare
+  ;;
+  ;; Immune to round-trip latency, which is what makes uptime-based timing
+  ;; useless here. Their before/after on the two jars: +2696 (fresh boot) then
+  ;; -6288 / -11256 / -8643 (adopted), three for three.
+  ;;
+  ;; Adoption alone is worth nothing — an adopted image MISSING the framework
+  ;; trades a restart bug for a subtler one, so this asserts both. That pairing
+  ;; is the actual claim the one-door change makes.
+  (with-redefs [boot/framework-files
+                (constantly {"slopp/web.clj"
+                             "(ns slopp.web)\n(defn handle! \"H.\" [r] r)\n"})
+                boot/framework-deps (constantly nil)]
+    (let [sess (external/open! {:slopp.api/warm-spare? true})]
+      (try
+        (swap! sess update :store store/ingest 'sp.app
+               (str "(ns sp.app (:require [slopp.web :as web]))\n"
+                    "(defn h \"H.\" [r] (web/handle! r))\n"))
+        ;; First restart warms a spare from a store that NOW needs the framework.
+        ;; The spare standing at open was warmed from an empty store and must be
+        ;; discarded rather than adopted — that mismatch is its own hazard, and
+        ;; asserting adoption on this restart would be asserting the bug.
+        (api/restart! sess)
+        ;; WAIT for the spare's JVM to exist before marking t0. start-spare!
+        ;; returns a future, so the boot happens in the BACKGROUND — and their
+        ;; samples were 6-11s apart by human pacing, which hid this. In a tight
+        ;; loop the mark lands before the spare has launched, and a correctly
+        ;; ADOPTED image then reads as +29ms: the right answer to the wrong
+        ;; question. Deref blocks until the handle is real.
+        (some-> (:spare @sess) deref)
+        (let [t0 (System/currentTimeMillis)]
+          (api/restart! sess)
+          (let [started (first (repl/eval!
+                                (:image @sess)
+                                (str "(.getStartTime (java.lang.management."
+                                     "ManagementFactory/getRuntimeMXBean))")))]
+            (testing "the spare was ADOPTED — its JVM predates the request"
+              (is (number? started) (pr-str started))
+              (is (< started t0)
+                  (str "image JVM started " (- started t0) "ms relative to the"
+                       " restart request; negative means adopted, positive"
+                       " means it booted during the restart and the spare was"
+                       " lost")))))
+        (testing "and the adopted image CARRIES the framework — adoption without
+                  it is the worse bug, not the fix"
+          (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'sp.app))))
+        (finally (api/close! sess))))))
