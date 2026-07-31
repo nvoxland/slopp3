@@ -15,7 +15,7 @@
   only unverifiable layer in slopp verified by something that cannot fail."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.api.cljs :as cljs]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.api.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.api.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str] [slopp.web.client :as client]))
 
 (deftest parse-result-extracts-the-marked-edn
   (testing "reads the EDN after the SLOPP-CLJS-RESULT marker, ignoring other output"
@@ -568,3 +568,30 @@
         (is (contains? (get (:test-map @sess) 'wp.core-test/doubles-it) 'wp.core/f)
             (pr-str (:test-map @sess))))
       (finally (api/close! sess)))))
+
+(deftest a-published-contract-is-READ-and-never-evaluated
+  ;; The docstring's central claim is a SECURITY one: this is data off a network
+  ;; boundary, so it goes through `clojure.edn/read-string`, which evaluates
+  ;; nothing. Nothing checked it. A fake transport can serve a payload that
+  ;; would prove the difference — `#=(…)` is read-eval, which `read-string`
+  ;; honours and the EDN reader refuses — and that is a far better test than any
+  ;; real server, because no real server would ever send it.
+  (let [at (fn [body] (client/fake-requester
+                       "http://pub.test/"
+                       {[:get "/contract"] (fn [_] {:status 200 :body body})}))]
+    (testing "an ordinary contract round-trips as data"
+      (is (= [:map [:id :int]]
+             (cljs/fetch-contract "http://pub.test/contract"
+                                  (at "[:map [:id :int]]")))))
+    (testing "a payload carrying read-eval does NOT evaluate — it refuses. If
+              this ever passes by returning a value, the reader was swapped for
+              one that runs whatever a contract server sends"
+      (is (thrown? Exception
+                   (cljs/fetch-contract "http://pub.test/contract"
+                                        (at "#=(java.lang.System/getProperty \"user.name\")")))))
+    (testing "a non-200 fails instead of being parsed as though it were a
+              contract — an error page is not a schema"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"404"
+           (cljs/fetch-contract "http://pub.test/contract"
+                                (client/fake-requester "http://pub.test/" {})))))))

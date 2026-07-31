@@ -399,6 +399,8 @@
 (deftest schema-required-gate
   (let [ext-noschema  "(ns app.core)\n\n(defn handle \"H.\" [{:keys [x]}] x)\n"
         ext-schema    "(ns app.core)\n\n(defn ^{:malli/schema [:=> [:cat [:map [:x :int]]] :int]} handle \"H.\" [{:keys [x]}] x)\n"
+        ext-throws-none "(ns app.core)\n\n(defn ^{:malli/schema [:=> {:throws []} [:cat [:map [:x :int]]] :int]} handle \"H.\" [{:keys [x]}] x)\n"
+        ext-throws-some "(ns app.core)\n\n(defn ^{:malli/schema [:=> {:throws [[:map [:app/error :keyword]]]} [:cat [:map [:x :int]]] :int]} handle \"H.\" [{:keys [x]}] (throw (ex-info \"no\" {:app/error :nope})))\n"
         no-map-arg    "(ns app.core)\n\n(defn handle \"H.\" [x] x)\n"
         private-fn    "(ns app.core)\n\n(defn- handle \"H.\" [{:keys [x]}] x)\n"
         deep-noexport "(ns app.core.impl)\n\n(defn handle \"H.\" [{:keys [x]}] x)\n"
@@ -412,8 +414,21 @@
     (testing "ON: a module-external map-arg fn lacking a :=> schema is refused, with teaching"
       (let [s (on ext-noschema 'app.core)]
         (is (re-find #":malli/schema" (str (modules/schema-refusal s 'app.core 'handle))))))
-    (testing "ON: the same fn WITH a :=> schema passes"
+    (testing "ON: a :=> schema that says nothing about THROWS is still refused —
+              a caller cannot tell a function that signals failure by returning
+              from one that throws something nobody named, and those need
+              different code at every call site"
       (let [s (on ext-schema 'app.core)]
+        (is (re-find #":throws" (str (modules/schema-refusal s 'app.core 'handle))))))
+    (testing "ON: an EMPTY :throws passes — declaring that it signals nothing is
+              itself a declaration, and requiring it even when empty is the
+              whole point: undeclared and declared-nothing must not look alike"
+      (let [s (on ext-throws-none 'app.core)]
+        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+    (testing "ON: a declared ex-data shape passes too. This is the CHECKED half
+              — the ex-info a caller is expected to handle. An NPE from three
+              calls down is unchecked, and nobody's declaration"
+      (let [s (on ext-throws-some 'app.core)]
         (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a non-map first arg is not a boundary-contract case"
       (let [s (on no-map-arg 'app.core)]
@@ -443,10 +458,18 @@
           (is (re-find #":malli/schema" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'sg.core 'accept))
               "the refused form never landed")))
-      (testing "ON: the same boundary fn WITH a :=> schema lands"
+      (testing "ON: a :=> schema WITHOUT :throws is still refused — a caller cannot
+             tell whether it signals failure by throwing or by returning"
         (let [r (api/add-form! sess 'sg.core
                                "(defn ^{:malli/schema [:=> [:cat [:map [:y :int]]] :int]} accept \"A.\" [{:keys [y]}] y)"
-                               :prompt "boundary fn, with schema")]
+                               :prompt "boundary fn, schema but no throws")]
+          (is (re-find #":throws" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'sg.core 'accept))
+              "the refused form never landed")))
+      (testing "ON: the same boundary fn WITH :=> and an explicit :throws lands"
+        (let [r (api/add-form! sess 'sg.core
+                               "(defn ^{:malli/schema [:=> {:throws []} [:cat [:map [:y :int]]] :int]} accept \"A.\" [{:keys [y]}] y)"
+                               :prompt "boundary fn, schema and explicit empty throws")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (api/close! sess)))))
 

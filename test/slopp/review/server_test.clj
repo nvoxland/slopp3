@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.review.server :as server]
             [slopp.store :as store]
-            [slopp.web :as web] [clojure.edn :as edn]))
+            [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client]))
 
 (deftest ^:external ui-serve-serves-the-callers-own-session
   ;; The point of a second listener. slopp.mcp.http/start-server! opens a
@@ -29,7 +29,10 @@
           ;; client fetches. Same evidence: a namespace that exists ONLY in
           ;; this session appears, so this session is what is being served.
           (is (re-find #"demo\.only\.here"
-                       (slurp (str "http://127.0.0.1:" (:port r) "/api/namespaces"))))))
+                       (:http/body
+                        (client/request
+                         {:http/url (str "http://127.0.0.1:" (:port r)
+                                         "/api/namespaces")}))))))
       (finally (server/stop!)))))
 
 (deftest ^:external ui-serve-evicts-itself-and-names-a-taken-port
@@ -44,9 +47,16 @@
           (is (not= (:port a) (:port b)) "a second ephemeral bind is a different port")
           (is (= (:port b) (:port (server/running)))
               "the tracked server is the live one")
-          (is (thrown? java.io.IOException
-                       (slurp (str "http://127.0.0.1:" (:port a) "/store")))
-              "the evicted server is actually stopped, not merely forgotten")))
+          (is (= :unreachable
+                     (:http/error
+                      (try (client/request
+                            {:http/url (str "http://127.0.0.1:" (:port a) "/store")})
+                           nil
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))))
+              "the evicted server is actually stopped, not merely forgotten —
+               and asserting the port's :http/error rather than a bare
+               IOException is the point: a stopped server and a server that
+               said no are different facts, and only one of them is this")))
       (finally (server/stop!))))
   (testing "a port someone else holds is reported as a sentence, not a stack trace"
     (let [held (web/serve! {:web/namespaces [] :web/port 0})]
@@ -98,7 +108,9 @@
     (try
       (let [r   (server/serve! sess 0)
             doc (edn/read-string
-                 (slurp (str "http://127.0.0.1:" (:port r) "/api/contracts")))
+                 (:http/body
+                  (client/request
+                   {:http/url (str "http://127.0.0.1:" (:port r) "/api/contracts")})))
             paths (set (map :path (:endpoints doc)))]
         (is (= 1 (:slopp/contract-version doc)))
         (is (contains? paths "/api/timeline")

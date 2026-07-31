@@ -1,4 +1,18 @@
 (ns slopp.web.auth
+  "Identity POLICY: turn a request into `{:web/sub :web/groups :web/provider}`
+  or nil, for each provider slopp ships — static users, bearer tokens, a
+  trusted proxy header, and the resource-server half of OIDC.
+
+  Everything here decides; nothing here fetches. That is the property worth
+  protecting, and it is why the tier is `:internal`: `verify-jwt` is handed
+  `:jwks` as data, `now` and `getenv` arrive as injected seams with real
+  defaults, and the tests pass static keys rather than reaching an identity
+  provider. `slopp.web.jwks` holds the one form that used to break it.
+
+  `slopp.web.dispatch` is the caller — identity resolves BEFORE routing, so a
+  policy decision is never made against a handler that already ran. Anonymous
+  is nil rather than an error; default-deny at the policy layer is what turns
+  that into a 401."
   (:require [clojure.string :as str] [clojure.edn :as edn] [cheshire.core :as json]))
 
 (defn- pbkdf2
@@ -280,25 +294,3 @@
                       (f config req opts)))
                   (:auth/providers config))
             (augment-groups (:auth/groups config)))))
-
-(defn ^:export ^:unused-ok fetch-jwks!
-  "Fetch the issuer's signing keys: GET
-  <issuer>/.well-known/openid-configuration → its jwks_uri → the JWK set's
-  :keys. The SERVER wiring calls this once at startup when :oidc is
-  enabled and passes the result as the config's `:jwks`; tests inject
-  static keys instead. Throws on network/parse failure — a misconfigured
-  issuer should fail loudly at startup, not 401 mysteriously forever.
-  ^:unused-ok: the slim jar's consumer surface — slopp's own store
-  configures no OIDC, so no in-store caller exists by design."
-  [issuer]
-  (let [http (java.net.http.HttpClient/newHttpClient)
-        GET  (fn [url]
-               (json/parse-string
-                (.body (.send http
-                              (-> (java.net.http.HttpRequest/newBuilder)
-                                  (.uri (java.net.URI/create (str url)))
-                                  (.build))
-                              (java.net.http.HttpResponse$BodyHandlers/ofString)))
-                true))
-        disco (GET (str issuer "/.well-known/openid-configuration"))]
-    (vec (:keys (GET (:jwks_uri disco))))))

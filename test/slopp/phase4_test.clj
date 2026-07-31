@@ -6,19 +6,17 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.mcp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]))
+            [slopp.mcp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.web.client :as client])
+)
 
 (defn- rpc! [port body]
-  (let [client (HttpClient/newHttpClient)
-        req (-> (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" port "/mcp")))
-                (.POST (HttpRequest$BodyPublishers/ofString (json/generate-string body)))
-                (.build))
-        resp (.send client req (HttpResponse$BodyHandlers/ofString))]
-    {:status (.statusCode resp)
-     :body   (when (seq (.body resp)) (json/parse-string (.body resp) true))}))
+  (let [resp (client/request {:http/method  :post
+                              :http/url     (str "http://127.0.0.1:" port "/mcp")
+                              :http/headers {"Content-Type" "application/json"}
+                              :http/body    (json/generate-string body)})]
+    {:status (:http/status resp)
+     :body   (when (seq (:http/body resp))
+               (json/parse-string (:http/body resp) true))}))
 
 (defn- tool! [port agent-name tool args]
   (get-in (rpc! port {:jsonrpc "2.0" :id 1 :method "tools/call"

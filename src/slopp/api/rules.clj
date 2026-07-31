@@ -110,18 +110,59 @@
              changed)))
 
 (defn bare-throw-check
-  "Done-advisory: a changed MODULE-EXTERNAL fn that throws a freshly-constructed
-   non-`ex-info` exception. At a boundary, prefer returning data or
-   `(ex-info …)` (carrying `ex-data`) — a bare throw lands where a slice-limited
-   caller can't see or `=`-test it."
+  "Done-advisory: a changed fn that throws a freshly-constructed non-`ex-info`
+   exception. Prefer returning data or `(ex-info …)`, which carries `ex-data` a
+   caller can dispatch on and `=`-test.
+
+   RATCHETED 2026-07-31, from module-external-only to EVERY fn and from
+   advisory to error. The widening was free: a store-wide search found zero
+   production bare throws and exactly one in a test, because the advisory had
+   already done its work. Ratcheting a rule while you are already clean is the
+   cheapest it will ever be, and the argument for the scope is simpler than the
+   one it replaces — `ex-info` always, rather than `ex-info` at boundaries and
+   a judgement call everywhere else.
+
+   The reason it is worth having at all is not tidiness. A bare exception can
+   only be caught by TYPE, so a caller who wants to handle one failure ends up
+   catching a whole class and swallowing every unrelated bug in the same block.
+   That is not hypothetical: `review.heartbeat/post!` wrapped its entire body
+   in `(catch Exception _ nil)` and reported the project as ABSENT whenever any
+   bug fired, and it was only that wide because the transport underneath threw
+   a bare `IOException`. Give the throw `ex-data` and the catch can be narrow.
+
+   `^{:bare-throw-ok \"why\"}` on the NAME discharges it, and it polices itself:
+   a marker on a form with no bare throw is reported stale. Real cases exist —
+   satisfying a Java API contract, an `InterruptedException`, or a test that
+   throws a non-`ex-info` precisely to prove it gets masked. The marker had to
+   exist BEFORE the severity moved, because the old escape was the prose \"or
+   accept the throw\", which means nothing once a finding reds the done."
   [_session st* changed]
   (vec (keep (fn [fid]
                (when-let [e (store/form-by-id st* fid)]
                  (let [ns-sym (store/ns-of-form-id st* fid)
-                       form   (try (n/sexpr (:node e)) (catch Exception _ nil))]
-                   (when (and (edit.modules/module-external? ns-sym form)
-                              (bare-throws? (:node e)))
-                     {:form (symbol (str ns-sym) (str (or (:name e) (:id e))))}))))
+                       form   (try (n/sexpr (:node e)) (catch Exception _ nil))
+                       bare?  (bare-throws? (:node e))
+                       ok?    (boolean (and (seq? form) (symbol? (second form))
+                                            (:bare-throw-ok (meta (second form)))))
+                       q      (symbol (str ns-sym) (str (or (:name e) (:id e))))]
+                   (cond
+                     (and bare? (not ok?))
+                     {:form q
+                      :teach (str q " throws a freshly-constructed non-ex-info"
+                                  " exception. A bare exception can only be"
+                                  " caught by TYPE, so a caller handling one"
+                                  " failure has to catch a whole class and"
+                                  " swallows every unrelated bug with it. Use"
+                                  " (ex-info msg {…}) so the catch can be"
+                                  " narrow, or mark it"
+                                  " ^{:bare-throw-ok \"why\"} if this exact type"
+                                  " is required by something outside your"
+                                  " control.")}
+
+                     (and ok? (not bare?))
+                     {:form q :stale-marker true
+                      :teach (str q " carries ^{:bare-throw-ok …} but throws no"
+                                  " bare exception — remove the flag")}))))
              changed)))
 
 (defn shell-widening-check
@@ -713,6 +754,112 @@
                         " pane at a URL that looks valid. The prefix ROOT is not"
                         " covered by the fallback and still needs its own route")}))))
 
+(defn- in-scope
+  "`findings` filtered to those an advisory declaring `applies-to` should
+  report — the enforcement half of standing structural ask #5.
+
+  A finding names the form it is about (`:form`, qualified) or the namespace
+  (`:ns`), so the runner can answer \"is this a test namespace?\" once instead
+  of each check re-deriving it. Before this, three advisories gave three
+  different answers to the same question and none of them said so: one was
+  about tests ONLY, one exempted them, one fired in them by accident.
+
+  A finding naming NEITHER a form nor a namespace is kept whatever the
+  declaration says — it is about the store as a whole, and silently dropping
+  it would be the worse error."
+  [applies-to findings]
+  (if (= :both applies-to)
+    findings
+    (let [test-ns? (fn [f]
+                     (when-let [s (or (some-> (:form f) namespace)
+                                      (some-> (:ns f) str))]
+                       (str/ends-with? s "-test")))]
+      (vec (filter (fn [f]
+                     (case (test-ns? f)
+                       nil  true                       ; store-wide: always kept
+                       true (= :tests applies-to)
+                       false (= :production applies-to)))
+                   findings)))))
+
+(defn direct-http-check
+  "Done-advisory: changed forms that reach the network THEMSELVES instead of
+   going through the HTTP client port.
+
+   The rule is the reaches/is distinction made enforceable. A form that builds
+   a `java.net.http.HttpClient`, or `slurp`s an `http(s)://` literal, IS the
+   reaching — and raw reaching belongs in a declared ADAPTER, not scattered
+   through callers. Everything else goes through `slopp.web.client/request`,
+   which arrives as a parameter and therefore has a fake, a contract suite, and
+   two adapters that must agree.
+
+   `^{:adapter \"http — why\"}` on the NAME discharges it, and the value's first
+   word is the PORT it adapts. That scoping matters: this check ignores an
+   `^{:adapter \"postgres — …\"}` entirely rather than calling it stale, so each
+   port's rule polices only its own markers and a second port can be added
+   without teaching this one about it.
+
+   It polices itself, like `^:legacy-ok`: an `http` adapter marker on a form
+   that makes no direct call is reported stale, so the dial cannot decay into
+   decoration.
+
+   **Tests are NOT exempt, and that is deliberate.** The obvious exemption is
+   also the wrong one, because using the port from a test does not make the
+   test fake — `request` over a real socket IS a real call, and a test is faked
+   only when it passes a fake. So an exemption would buy nothing and would
+   carve out precisely the place where this boilerplate breeds: seven copies of
+   build-a-client-send-a-request had already accumulated in this store's own
+   tests when the port was written.
+
+   SCOPED TO HTTP on purpose. A gate may only demand a port that EXISTS, and
+   slopp ships one for HTTP and none for the filesystem or subprocesses —
+   turning this on for every external class would refuse every file read in the
+   store. The rule widens as ports get built, which is the right pressure and
+   the right order."
+  [_session st* changed]
+  (vec (keep
+        (fn [fid]
+          (when-let [e (store/form-by-id st* fid)]
+            (let [s     (try (n/sexpr (:node e)) (catch Exception _ nil))
+                  nodes (tree-seq coll? seq s)
+                  syms  (filter symbol? nodes)
+                  strs  (filter string? nodes)
+                  ;; a SYMBOL, never a string: `index.derive/external-classes`
+                  ;; holds "java.net.http.HttpClient" as data and must not fire
+                  client? (boolean
+                           (some (fn [sym]
+                                   (when-let [n (namespace sym)]
+                                     (or (= n "HttpClient")
+                                         (str/ends-with? n ".HttpClient"))))
+                                 syms))
+                  slurped? (boolean
+                            (and (some #(= 'slurp %) syms)
+                                 (some #(re-find #"^https?://" %) strs)))
+                  direct? (or client? slurped?)
+                  marker  (when (and (seq? s) (symbol? (second s)))
+                            (:adapter (meta (second s))))
+                  mine?   (str/starts-with?
+                           (str/lower-case (str/trim (str marker))) "http")
+                  q       (symbol (str (store/ns-of-form-id st* fid))
+                                  (str (or (:name e) (:id e))))]
+              (cond
+                (and direct? (not (and marker mine?)))
+                {:form q :direct (if client? :http-client :slurp-url)
+                 :teach (str q " reaches the network itself — "
+                             (if client?
+                               "it builds a java.net.http.HttpClient"
+                               "it slurps an http(s):// url")
+                             ". Call slopp.web.client/request instead, taking it"
+                             " as a parameter so callers can pass"
+                             " client/fake-requester; you inherit its contract"
+                             " suite and its fake. If this form IS an adapter,"
+                             " mark it ^{:adapter \"http — why\"}.")}
+
+                (and marker mine? (not direct?))
+                {:form q :stale-marker true
+                 :teach (str q " carries an ^{:adapter \"http …\"} marker but"
+                             " makes no direct call — remove the flag")}))))
+        changed)))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -803,9 +950,15 @@
                         " to read red from — a source-only fixture has neither;"
                         " covered by rules-test/"
                         "done-asks-about-assertions-that-were-never-watched-fail")}
-   {:key :bare-throw       :severity :advisory :applies-to :production :check #'bare-throw-check
-    ;; a boundary-contract rule: a test helper throwing a bare Exception is
-    ;; nobody's API
+   {:key :bare-throw       :severity :error :applies-to :both :check #'bare-throw-check
+    ;; RATCHETED 2026-07-31. It was :advisory/:production on the argument that
+    ;; this is a boundary-contract rule and a test helper is nobody's API. That
+    ;; argument was too narrow: a bare throw's cost is that it can only be
+    ;; caught by TYPE, which forces a broad catch that swallows unrelated bugs
+    ;; — and a test that swallows its own bugs is worse than production doing
+    ;; it, not better. Widening cost nothing: the store had zero production
+    ;; bare throws left and exactly one in a test, which now carries
+    ;; ^{:bare-throw-ok …}. Ratchet while you are already clean.
     :fires-on "(ns rf.core)\n(defn boom [] (throw (Exception. \"x\")))\n"}
    ;; teaching that LIES: a string naming a var the store no longer has. Gates
    ;; can't see a var inside a string, so renames/moves leave the prose behind
@@ -823,6 +976,15 @@
                         " retired — a source-only fixture cannot carry one;"
                         " covered by rules-test/"
                         "retired-vocabulary-catches-the-second-copy-not-the-marker")}
+   ;; Raw network contact outside a declared adapter. `:both` is the whole
+   ;; point — the obvious exemption for tests is the WRONG one, because calling
+   ;; the port from a test still makes a real call, so exempting them would buy
+   ;; nothing and would carve out exactly the place where seven copies of
+   ;; build-a-client-send-a-request had already bred.
+   {:key :direct-http :severity :error :applies-to :both :check #'direct-http-check
+    :fires-on (str "(ns rf.core)\n"
+                   "(defn fetch [u]\n"
+                   "  (.send (java.net.http.HttpClient/newHttpClient) u nil))\n")}
    ;; the one entry that is a QUESTION, not a verdict — and therefore the one
    ;; that is legitimately :advisory. The system cannot know whether an effect
    ;; belonged in the namespace that was just widened; only the agent who did
@@ -863,33 +1025,6 @@
                    "(defn ^{:web/method :post :web/path \"/b\" :web/request [:map [:x :int]]"
                    " :web/response :map} b [r] r)\n")}
    ])
-
-(defn- in-scope
-  "`findings` filtered to those an advisory declaring `applies-to` should
-  report — the enforcement half of standing structural ask #5.
-
-  A finding names the form it is about (`:form`, qualified) or the namespace
-  (`:ns`), so the runner can answer \"is this a test namespace?\" once instead
-  of each check re-deriving it. Before this, three advisories gave three
-  different answers to the same question and none of them said so: one was
-  about tests ONLY, one exempted them, one fired in them by accident.
-
-  A finding naming NEITHER a form nor a namespace is kept whatever the
-  declaration says — it is about the store as a whole, and silently dropping
-  it would be the worse error."
-  [applies-to findings]
-  (if (= :both applies-to)
-    findings
-    (let [test-ns? (fn [f]
-                     (when-let [s (or (some-> (:form f) namespace)
-                                      (some-> (:ns f) str))]
-                       (str/ends-with? s "-test")))]
-      (vec (filter (fn [f]
-                     (case (test-ns? f)
-                       nil  true                       ; store-wide: always kept
-                       true (= :tests applies-to)
-                       false (= :production applies-to)))
-                   findings)))))
 
 (defn run-done-advisories!
   "Run every registered done-advisory `:check` over the episode's changes —

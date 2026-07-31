@@ -35,13 +35,30 @@
 
 (defn schema-candidates
   "CHANGED qsyms that are safe to generatively check: they carry a :=>
-   :malli/schema AND are analyzer-pure. Returns [{:form qsym :schema <edn>} …].
-   Schemas are opt-in, so this checks every schema it can SAFELY call — export
-   status is the require-gate's concern, not the check's."
+   :malli/schema, are analyzer-pure, and DECLARE NO THROWS. Returns
+   [{:form qsym :schema <edn>} …]. Schemas are opt-in, so this checks every
+   schema it can SAFELY call — export status is the require-gate's concern, not
+   the check's.
+
+   The throws filter closes a real conflict rather than papering over one. A
+   `:=>` asserts a TOTAL function, and `mg/check` treats any exception as
+   drift; a function that declares `{:throws [[:map …]]}` has said in advance
+   that it signals failure by throwing, so calling it with generated inputs and
+   reporting the throw as drift is the checker misreading a declaration it now
+   has access to. `slopp.web.client/request` had to give up its schema entirely
+   for exactly this reason before `:throws` existed.
+
+   An EMPTY `:throws` is still checked, and that asymmetry is the point: `[]`
+   declares that this function signals nothing by throwing, so a throw during
+   the check contradicts a claim the author made and IS drift."
   [store qsyms]
   (vec (for [q     qsyms
-             :let  [sch (schema-of store q)]
-             :when (and sch (analyzer-pure? store q))]
+             :let  [sch    (schema-of store q)
+                    props  (when (and (vector? sch) (= :=> (first sch)))
+                             (second sch))
+                    signals-failure? (and (map? props)
+                                          (seq (:throws props)))]
+             :when (and sch (not signals-failure?) (analyzer-pure? store q))]
          {:form q :schema sch})))
 
 (defn check-string

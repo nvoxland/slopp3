@@ -130,8 +130,8 @@
                 " answers the same question for the whole store; generated and"
                 " empty namespaces are exempt (there is no author to ask)")}
    {:rule :bare-throw :grain :done
-    :escape "return data / (ex-info …) at the boundary, or accept the throw"
-    :teach "a module-external fn throws a freshly-constructed non-ex-info exception"}
+    :escape "return data / (ex-info …), or ^{:bare-throw-ok \"why\"} on the name when the exact exception type is required by something outside your control — a Java API contract, an InterruptedException, a test proving a non-ex-info gets masked (it polices itself: a marker on a form with no bare throw is reported stale)"
+    :teach "ANY fn throws a freshly-constructed non-ex-info exception. The cost is not tidiness: a bare exception can only be caught by TYPE, so a caller handling one failure catches a whole class and swallows every unrelated bug with it — which is exactly how review.heartbeat/post! came to report a project ABSENT whenever any bug fired. Give the throw ex-data and the catch can be narrow"}
 {:rule :key-not-returned :grain :done
     :escape "fix the assertion to read a key the callee returns, or drop it — a read of a key the callee never returns is always nil"
     :teach "(:k local) where local is bound to a call whose statically-known return shape has no :k — a vacuous assertion that stays green no matter what the code does (assertions-that-cannot-fail)"}
@@ -141,6 +141,9 @@
    {:rule :retired-vocabulary :grain :done
     :escape "route through the normalizer, or ^:legacy-ok on the name if this form IS the normalizer (it polices itself — a marker that mixes nothing is reported stale)"
     :teach "a form ENUMERATES a retired vocabulary (two retired members, or one beside its replacement) — a second copy that missed the rename; declare yours with config_file {path vocabulary key <old> value <new>}"}
+   {:rule :direct-http :grain :done
+    :escape "call slopp.web.client/request, taking it as a PARAMETER so callers can pass client/fake-requester — or ^{:adapter \"http — why\"} on the name if this form IS the adapter (it polices itself; the value's first word names the port, so a \"postgres\" adapter is ignored rather than called stale)"
+    :teach "a form reaches the network itself — a java.net.http.HttpClient, or a slurp of an http(s):// literal. Raw reaching belongs in a declared ADAPTER; everything else goes through the port and inherits its fake and its contract suite. TESTS ARE NOT EXEMPT: calling the port from a test still makes a REAL call, so an exemption would buy nothing and would carve out the one place this boilerplate breeds. Scoped to HTTP because a gate may only demand a port that EXISTS — slopp ships one for HTTP and none for files or subprocesses"}
    {:rule :generated-ns :grain :form
     :escape "regenerate via generate_client after changing the ENDPOINT (its :web/request/:web/response), strip the ^:generated marker to take manual ownership, or dial it down (config_file {path \"rules\" key \"generated-ns\" value \"advisory\"})"
     :teach "a ^:generated form is generate_client's output and must not be hand-edited — regeneration rewrites the whole client namespace, so a hand edit is lost on the next generate (D-web-contracts part 2)"}

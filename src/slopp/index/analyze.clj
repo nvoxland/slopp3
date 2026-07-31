@@ -15,7 +15,7 @@
 
 ^:reads (defn ^:export analysis-pass
   "ONE kondo run over `source` for its `:analysis` ONLY, with the cache
-  explicitly OFF — memoized on source, which is the honest key.
+  explicitly OFF — memoized on `[source config-hash]`.
 
   Deliberately NOT the same pass as `kondo-pass`. The two want different
   worlds: `:findings` depend on cross-namespace facts (which is why they
@@ -29,14 +29,29 @@
   reads that — every arity reader (`query-outline`, `deps/surface`,
   `build/arg-style`) takes it from var-DEFINITIONS, which are same-source and
   unaffected. The cost is a second kondo run for sources that also get
-  linted; the benefit is that the core layers."
+  linted; the benefit is that the core layers.
+
+  The key carries the CONFIG, not just the source. It said source alone was
+  'the honest key' — true only while the config never moved. Adding
+  `:java-class-usages` moved it, and every already-memoized analysis kept
+  answering without the new key: not an error, just a quietly older answer,
+  in the one process where hot-reload makes config changes routine. A
+  fingerprint in the key is what makes the memo honest about what it memoized.
+
+  `:java-class-usages` is requested HERE rather than in `derive/kondo-config`,
+  which the lint pass shares: interop anchors are an analysis concern and the
+  linter has no use for them. Without it `(ServerSocket. p)` produces nothing
+  at all — no var usage, no call-graph edge — and a namespace that binds a
+  port reads as `:pure`. See `derive/external-interop-vars`."
   [source]
-  (cache/cached ::analysis source
-                (fn []
-                  (:analysis
-                   (with-in-str source
-                     (kondo/run! {:lint ["-"]
-                                  :config (assoc derive/kondo-config :cache false)}))))))
+  (let [config (-> derive/kondo-config
+                   (assoc :cache false)
+                   (assoc-in [:output :analysis] {:java-class-usages true}))]
+    (cache/cached ::analysis [source (hash config)]
+                  (fn []
+                    (:analysis
+                     (with-in-str source
+                       (kondo/run! {:lint ["-"] :config config})))))))
 
 ^:reads (defn ^:export analyze
   "clj-kondo's `:analysis` ({:var-definitions :var-usages

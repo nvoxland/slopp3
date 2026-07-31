@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.review.server :as ui-server]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.review.server :as ui-server] [slopp.web.client :as client]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1371,7 +1371,8 @@
         (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
           (is (pos? (:port r)) (pr-str r))
           (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r)))
-          (is (re-find #"us\.only" (slurp (str (:url r) "api/namespaces")))
+          (is (re-find #"us\.only" (:http/body (client/request
+                                    {:http/url (str (:url r) "api/namespaces")})))
               "the served session is THIS one — a fresh session would not have
                us.only. Asserted against the API rather than the document,
                because the document is now an empty mount point and carries
@@ -1755,3 +1756,50 @@
                " serve: " (pr-str desc)))
       (is (re-find #"(?i)hub" desc)
           "and it must name the hub, which is where those pages actually are"))))
+
+(deftest the-terse-path-drops-nothing-the-registry-routed
+  ;; The sibling of no-tool-keeps-its-own-result-key-allowlist, one layer
+  ;; later and with the same defect. call-tool! selects from wire-keys, and
+  ;; then summarize REBUILDS the terse map from a literal key list — so a key
+  ;; can pass the registry and die anyway, which is the fifteenth chance to
+  ;; disagree that the sibling's comment warns about.
+  ;;
+  ;; Found by using it: edit_move_forms rewrites every caller in the store,
+  ;; and reports {:ok true :group …} whether it rewrote twelve call sites or
+  ;; none. :callers is computed, is in wire-keys, and never arrives. So "it
+  ;; found nothing to rename" and "it never looked" are the same output, and
+  ;; the only way to tell was to go read the implementation.
+  ;;
+  ;; The rule this pins is the registry's own argument: what a LAYER chooses
+  ;; to return is the layer's decision, and the wire's job is to shape it, not
+  ;; to re-decide it. An empty vector is a finding ("looked, none"); an absent
+  ;; key reads as unexamined.
+  ;; Looked up at RUNTIME, not compiled as `mcp/terse-elided`. A symbol
+  ;; reference is resolved when this namespace loads, and on a COLD load that
+  ;; happens before slopp.mcp has interned the var — which is what the merge
+  ;; gate refused, twice. ns-publics asks when the test RUNS, by which point
+  ;; everything is loaded. (`resolve` would be the obvious spelling and is
+  ;; denylisted by the dialect gate.)
+  (let [elided (deref (get (ns-publics 'slopp.mcp) 'terse-elided))
+        routed (apply disj tools/wire-keys :error elided) ; these force the verbose path
+        shaped {:test {:test 1 :pass 1 :fail 0 :error 0 :type :summary}
+                :delta {:id "d1"} :deltas [{:id "d2"}] :affected [1 2]}
+        ;; a COLLECTION sentinel: summarize seqs several of these, and a
+        ;; keyword would throw rather than report the key missing
+        result (into shaped
+                     (map (fn [k] [k [::present]]))
+                     (apply disj routed (keys shaped)))
+        terse  (#'mcp/summarize result false)]
+    (testing "the TERSE path ran — :ok is set only there, so this is not vacuous"
+      (is (true? (:ok terse)))
+      (is (< 20 (count routed)))
+      (is (>= 2 (count elided))
+          (str "terse-elided grew to " (pr-str elided)
+               " — each addition is a key an agent silently stops seeing")))
+    (testing "every key the registry routed survives the shaping"
+      (is (empty? (remove #(contains? terse %) routed))
+          (str "dropped: " (pr-str (vec (sort (remove #(contains? terse %) routed)))))))
+    (testing "shaping still happens — the big payloads compress, not vanish"
+      (is (= "d1" (:delta terse)))
+      (is (= 1 (:deltas terse)))
+      (is (= 2 (:affected terse))))))

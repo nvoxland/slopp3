@@ -12,7 +12,7 @@
   shape they agree on."
   (:require [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.api.capabilities :as caps]))
+            [slopp.api.capabilities :as caps] [slopp.web.client :as client]))
 
 (def default-beat-ms
   "How often to check in when the hub has not said otherwise.
@@ -86,8 +86,8 @@
     (if (and (int? ms) (pos? ms)) ms default-beat-ms)))
 
 (defn- post!
-  "POST `body` as JSON to `url`; the hub's parsed answer, a refusal, or nil when
-  it did not answer.
+  "POST `body` as JSON through `requester` to `url`; the hub's parsed answer, a
+  refusal, or nil when it did not answer.
 
   It used to return a boolean, which threw away the only thing the hub says
   back. Registration and keepalive are the same call, so this response is the
@@ -108,30 +108,50 @@
   falls back without either needing to know about refusals.
 
   A body that will not parse still degrades to nil rather than throwing; the
-  status is what makes a refusal a refusal."
-  [url body]
-  (try
-    (let [client (java.net.http.HttpClient/newHttpClient)
-          req    (-> (java.net.http.HttpRequest/newBuilder (java.net.URI. url))
-                     (.header "Content-Type" "application/json")
-                     (.timeout (java.time.Duration/ofSeconds 2))
-                     (.POST (java.net.http.HttpRequest$BodyPublishers/ofString
-                             (json/generate-string body)))
-                     (.build))
-          resp   (.send client req
-                        (java.net.http.HttpResponse$BodyHandlers/ofString))
-          status (.statusCode resp)
-          parsed (try (json/parse-string (.body resp) true)
-                      (catch Exception _ nil))]
-      (if (< status 400)
-        parsed
-        {:hub/refused status
-         :hub/explain (or parsed (not-empty (str/trim (str (.body resp)))))}))
-    (catch Exception _ nil)))
+  status is what makes a refusal a refusal.
+
+  The transport arrives as a PARAMETER — `slopp.web.client/request` in
+  production, a fake in tests. That is what makes the loop above checkable
+  without a socket, and it is safe to fake precisely because both adapters pass
+  `requester-contract`. Note how little is left here once the transport goes:
+  this function is now entirely POLICY, and the policy is the part that was
+  ever worth testing."
+  [requester url body]
+  (let [payload (json/generate-string body)
+        ;; The try covers the REQUEST and nothing else, and catches the ONE
+        ;; ex-info the port throws for an unreachable far side. It used to wrap
+        ;; this whole body in `(catch Exception _ nil)` — so an unencodable
+        ;; payload, an NPE, any bug at all came back as nil, and nil is what
+        ;; the loop reads as "no hub is running". A project would report itself
+        ;; absent forever while the fault sat in its own payload.
+        ;;
+        ;; That breadth was only possible because the transport threw a bare
+        ;; IOException: catching "no server" meant catching everything. The
+        ;; narrow catch is what the port's :http/error bought.
+        resp    (try
+                  (requester {:http/method     :post
+                              :http/url        url
+                              :http/headers    {"Content-Type" "application/json"}
+                              :http/body       payload
+                              :http/timeout-ms 2000})
+                  (catch clojure.lang.ExceptionInfo e
+                    (when-not (= :unreachable (:http/error (ex-data e)))
+                      (throw e))))]
+    (when resp
+      (let [status (:http/status resp)
+            parsed (try (json/parse-string (:http/body resp) true)
+                        (catch Exception _ nil))]
+        (if (< status 400)
+          parsed
+          {:hub/refused status
+           :hub/explain (or parsed
+                            (not-empty (str/trim (str (:http/body resp)))))})))))
 
 (defn ^:export start!
   "Begin beating `(payload-fn)` to the hub at `hub-url`, and return a handle
   for [[stop!]]. `on-answer` is called with the hub's reply after every beat.
+  `requester` is the transport — [[slopp.web.client/request]] by default, a
+  fake in tests.
 
   The FIRST beat goes out immediately: a project that only appeared one
   interval after its server started would read as broken for ten seconds
@@ -162,23 +182,42 @@
   caller's problem, not a reason to stop registering.
 
   A DAEMON thread, like every other background loop here: the JVM must never
-  be held open by a heartbeat."
+  be held open by a heartbeat.
+
+  The `requester` arity is what makes every paragraph above CHECKABLE. All of
+  it — beat now, take the interval from the wire, relay every answer, survive a
+  throwing callback — is loop behaviour that has nothing to do with sockets,
+  and it used to need a fresh JVM and a real server to observe. The transport
+  is covered once, by `requester-contract`, against both adapters; the loop is
+  covered here at memory speed."
   ([hub-url payload-fn] (start! hub-url payload-fn (fn [_])))
-  ([hub-url payload-fn on-answer]
+  ([hub-url payload-fn on-answer] (start! hub-url payload-fn on-answer client/request))
+  ([hub-url payload-fn on-answer requester]
    (let [running (atom true)
          thread  (doto (Thread. ^Runnable
                         (fn []
                           (while @running
-                            (let [answer (try (post! (str hub-url "api/register")
+                            (let [answer (try (post! requester
+                                                     (str hub-url "api/register")
                                                      (payload-fn))
-                                              (catch Throwable _ nil))]
+                                              ;; The beat must never die — but
+                                              ;; surviving is not the same as
+                                              ;; reporting that nothing
+                                              ;; happened. nil MEANS "no hub";
+                                              ;; a bug of ours gets its own
+                                              ;; answer, or the loop lies about
+                                              ;; the world to cover for itself.
+                                              (catch Throwable t
+                                                {:hub/error (or (ex-message t)
+                                                                (str t))}))]
                               (try (on-answer answer) (catch Throwable _ nil))
                               (try (Thread/sleep (interval-from answer))
                                    (catch InterruptedException _ nil)))))
                         "slopp-ui-heartbeat")
                    (.setDaemon true)
                    (.start))]
-     {:thread thread :running running :hub-url hub-url :payload-fn payload-fn})))
+     {:thread thread :running running :hub-url hub-url :payload-fn payload-fn
+      :requester requester})))
 
 (defn ^:export stop!
   "Stop the beat and tell the hub we are going, returning nil.
@@ -192,7 +231,9 @@
     (reset! (:running hb) false)
     (.interrupt ^Thread (:thread hb))
     (try
-      (post! (str (:hub-url hb) "api/deregister") {:dir (:dir ((:payload-fn hb)))})
+      (post! (:requester hb)
+             (str (:hub-url hb) "api/deregister")
+             {:dir (:dir ((:payload-fn hb)))})
       (catch Throwable _ nil)))
   nil)
 

@@ -1,9 +1,25 @@
 (ns slopp.web.server-test
+  "The JDK server adapter's own behaviour — the parts that are the ADAPTER's
+  rather than the pipeline's: what it does with a request map off a real
+  exchange, and what it does with a body too big to accept.
+
+  `slopp.web-test` covers the facade across both adapters; this covers what
+  only the jdk one can get wrong.
+
+  Like those, its tests carry their own client under `^{:adapter \"http — …\"}`
+  rather than going through `slopp.web.client`. The reason is in
+  `slopp.web-test`'s docstring: the client's contract suite runs against this
+  server, so the server's tests must not run against that client."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.web.server.jdk :as jdk]
             [cheshire.core :as json]))
 
-(deftest ^:external jdk-adapter-serves-the-pipeline
+(deftest ^:external ^{:adapter "http — independent client on purpose; see
+              web-test/serve-round-trips-the-facade. This namespace tests the
+              SERVER adapter, and slopp.web.client's own contract uses that
+              server as its far side — routing this through the client would
+              close the loop and let a symmetric bug pass both."}
+  jdk-adapter-serves-the-pipeline
   (let [ctx {:web/routes [{:handler (fn [req] {:status 200
                                                :body {:got (:web/reads req)}})
                            :method :get :path "/u/:id" :auth :public
@@ -38,7 +54,11 @@
           (is (= 401 (.statusCode resp)))))
       (finally (jdk/stop! srv)))))
 
-(deftest ^:external jdk-adapter-caps-the-request-body
+(deftest ^:external ^{:adapter "http — independent client on purpose; see
+              web-test/serve-round-trips-the-facade. An oversized body has to be
+              sent by something that will not itself refuse to send it, which is
+              a second reason not to route this through the port."}
+  jdk-adapter-caps-the-request-body
   ;; review W8: an over-cap POST body must get 413, not buffer unbounded.
   (let [ctx {:web/routes [{:handler (fn [_] {:status 201 :body {:ok true}})
                            :method :post :path "/u" :auth :public}]

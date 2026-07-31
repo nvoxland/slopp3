@@ -1,4 +1,16 @@
 (ns slopp.web.dispatch-test
+  "The request pipeline with no socket under it — `handle!` takes a request map
+  and returns a response map, so everything between those two is checkable
+  in-image: routing, auth policy, schema validation, effect interpretation, and
+  what happens when a handler blows up.
+
+  That is the whole reason `dispatch` is separate from `web.server.*`. The
+  adapters own bytes and ports and need the external tier; the decisions live
+  here and cost milliseconds.
+
+  Where a test needs a handler to FAIL, it fails the way real third-party code
+  does — including one that throws a bare exception leaking a filesystem path,
+  because masking that is the thing being asserted."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.web.dispatch :as dispatch]))
 
@@ -101,7 +113,12 @@
         (is (= 500 (:status r)) (pr-str r))
         (is (empty? @performed))))))
 
-(deftest error-responses-do-not-leak-internal-detail
+(deftest ^{:bare-throw-ok "the bare throw IS the subject. This asserts that a handler
+              which leaks a filesystem path through a non-ex-info exception has
+              that detail MASKED before it reaches a client — so the fixture has
+              to throw exactly the kind of exception the rule elsewhere
+              forbids. Replacing it with ex-info would test the opposite case."}
+  error-responses-do-not-leak-internal-detail
   ;; review W3: the catch returned raw ex-message + the whole ex-data (minus
   ;; :web/status). A 500 disclosed lib exception messages (paths); a handler
   ;; ex-info disclosed whatever it carried. Unexpected errors get a generic

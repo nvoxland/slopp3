@@ -261,25 +261,71 @@
    OFF by default so nothing retro-breaks), a MODULE-EXTERNAL `defn` any of whose
    arities takes a destructured MAP first arg but which carries no :=> :malli/schema
    is refused: the one boundary a narrow-context caller can't infer the shape of.
-   Structural only (rewrite-clj node inspection, no malli server-side), and the
-   schema it demands is exactly the :=> shape the done-point oracle-check
-   generatively verifies. Shares `module-external?` + `fn-arglists` with the other
-   boundary gates. Returns a teaching string, or nil when clean / opted-out."
+   Structural only (rewrite-clj node inspection, no malli server-side).
+   Shares `module-external?` + `fn-arglists` with the other boundary gates.
+   Returns a teaching string, or nil when clean / opted-out.
+
+   The schema must also declare `:throws`, in the `:=>` PROPERTIES:
+
+       ^{:malli/schema [:=> {:throws []} [:cat ArgSchema] RetSchema]}
+
+   `:throws` is a VECTOR of malli schemas for the `ex-data` this function throws
+   to SIGNAL failure. Empty declares that it signals none.
+
+   Requiring it even when empty is the point. A caller reading a signature
+   cannot otherwise tell \"this returns nil on failure\" from \"this throws and I
+   have not been told what\" — undeclared and declared-nothing look identical,
+   which is the conflation D-surface-honesty exists to prevent, one level down
+   from where that rule usually bites.
+
+   **It is the CHECKED half, and the split is the familiar one.** `:throws`
+   declares what this function throws ON PURPOSE to signal a failure its caller
+   is expected to handle — the `ex-info` it constructs and the `ex-data` that
+   rides it. An NPE, a bad arity, an assertion three calls down are the
+   UNCHECKED half: real, but nobody's declaration, and handled the way unchecked
+   exceptions always are. `[]` therefore says exactly what Java's absent
+   `throws` clause says and no more; nobody reads a `void` signature as a
+   promise that nothing can be thrown.
+
+   That split is what makes the declaration worth requiring even when empty. A
+   caller cannot otherwise tell a function that signals failure by RETURNING
+   from one that signals it by throwing something nobody has been told about,
+   and those need different code at every call site.
+
+   Malli itself has no `throws` concept — `:=>`, `:fn` and `:function` are the
+   whole vocabulary. But schema PROPERTIES are open and round-trip verbatim
+   through `m/form`, so this rides inside the schema that was already required,
+   with no fork and no wrapper. slopp owns the meaning; malli carries it."
   [candidate ns-sym form-name]
   (when (= "true" (get-in candidate [:config "gates" :values "require-boundary-schemas"]))
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
       (let [form     (try (n/sexpr (:node e)) (catch Exception _ nil))
             map-arg? (boolean (some #(map? (first %)) (fn-arglists form)))
             sch      (:malli/schema (meta (second form)))
-            has-sch? (and (vector? sch) (= :=> (first sch)))]
-        (when (and (module-external? ns-sym form) map-arg? (not has-sch?))
-          (str ns-sym "/" form-name " is a module-external fn taking a"
-               " destructured map but declares no :=> :malli/schema — the"
-               " boundary contract a narrow-context caller can't infer. Add"
-               " ^{:malli/schema [:=> [:cat ArgSchema] RetSchema]} to the name"
-               " (the done-point oracle-check then verifies it generatively),"
-               " or opt out with config_file: path `gates` key"
-               " `require-boundary-schemas` unset true"))))))
+            has-sch? (and (vector? sch) (= :=> (first sch)))
+            props    (when has-sch? (second sch))
+            throws?  (and (map? props) (vector? (:throws props)))]
+        (when (and (module-external? ns-sym form) map-arg?)
+          (cond
+            (not has-sch?)
+            (str ns-sym "/" form-name " is a module-external fn taking a"
+                 " destructured map but declares no :=> :malli/schema — the"
+                 " boundary contract a narrow-context caller can't infer. Add"
+                 " ^{:malli/schema [:=> {:throws []} [:cat ArgSchema] RetSchema]}"
+                 " to the name, or opt out with config_file: path `gates` key"
+                 " `require-boundary-schemas` unset true")
+
+            (not throws?)
+            (str ns-sym "/" form-name " declares a :=> schema but no `:throws`"
+                 " in its properties — so a caller cannot tell whether it"
+                 " signals failure by throwing or by returning. Say it"
+                 " explicitly: [:=> {:throws []} [:cat ArgSchema] RetSchema]"
+                 " declares that it signals none, and"
+                 " {:throws [[:map [:my/error :keyword]]]} declares the ex-data"
+                 " it throws. A VECTOR, not :none — `[]` says this function"
+                 " signals nothing by throwing, which is all that can honestly"
+                 " be claimed; an NPE from three calls down is nobody's"
+                 " declaration.")))))))
 
 (defn ^:export rule-severity
   "The effective severity of rule `rule-key` for this store: a per-store OVERRIDE

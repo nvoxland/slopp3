@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.api.artifacts :as artifacts]))
+            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.api.artifacts :as artifacts] [slopp.web.client :as client]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -461,18 +461,22 @@
    boundary, and the EDN reader evaluates nothing. A malli schema is made of
    vectors, keywords and predicate symbols, all of which survive it — which is
    why the contract is EDN rather than JSON, where `:string` and \"string\"
-   would arrive indistinguishable."
-  [url]
-  (let [client  (java.net.http.HttpClient/newHttpClient)
-        request (-> (java.net.http.HttpRequest/newBuilder (java.net.URI/create (str url)))
-                    (.header "Accept" "application/edn")
-                    (.GET)
-                    (.build))
-        resp    (.send client request (java.net.http.HttpResponse$BodyHandlers/ofString))]
-    (when-not (= 200 (.statusCode resp))
-      (throw (ex-info (str "contract fetch failed: HTTP " (.statusCode resp) " from " url)
-                      {:url (str url) :status (.statusCode resp)})))
-    (edn/read-string (.body resp))))
+   would arrive indistinguishable.
+
+   `requester` is the transport — [[slopp.web.client/request]] by default. The
+   part worth testing is the paragraph above: that what comes back is READ and
+   not evaluated, and that a non-200 fails rather than being parsed as if it
+   were a contract. Neither needs a socket."
+  ([url] (fetch-contract url client/request))
+  ([url requester]
+   (let [{:http/keys [status body]}
+         (requester {:http/method  :get
+                     :http/url     (str url)
+                     :http/headers {"Accept" "application/edn"}})]
+     (when-not (= 200 status)
+       (throw (ex-info (str "contract fetch failed: HTTP " status " from " url)
+                       {:url (str url) :status status})))
+     (edn/read-string body))))
 
 (defn ^:export generate-client-from!
   "Generate a typed client for an API this app CONSUMES, from the contract

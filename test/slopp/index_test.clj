@@ -295,3 +295,61 @@
         (reset! index/kondo-cache-dir nil)
         (is (nil? (index/reset-kondo-cache!))))
       (finally (reset! index/kondo-cache-dir prev)))))
+
+(deftest externality-ORIGINATES-in-one-var-and-only-reaches-the-other
+  ;; The adapter/reaches distinction (ideas/isolating-the-external-world.md §2):
+  ;; a namespace is :external when it REACHES the world; it is an ADAPTER when
+  ;; it IS the reaching. Only the second has a fake, so only the second can be
+  ;; asked for one — a gate built on the fixpoint would fire on slopp.api,
+  ;; which cannot be pushed down and so cannot discharge it.
+  ;;
+  ;; externally-effectful-vars answers the FIRST question and cannot answer the
+  ;; second: its fixpoint holds the adapter and every caller alike. The SEED of
+  ;; that same fixpoint — the vars calling an anchor directly, before any
+  ;; propagation round — is the second answer, and it is already computed and
+  ;; discarded.
+  (let [an (analyze/analyze
+            (str "(ns c)\n"
+                 "(defn touches [p] (slurp p))\n"
+                 "(defn reaches [p] (touches p))\n"))]
+    (testing "the fixpoint holds BOTH — which is why it cannot answer the question"
+      (is (= '#{c/touches c/reaches}
+             (derive/externally-effectful-vars an nil nil))))
+    (testing "the origin set holds only the var that reaches the world itself"
+      (is (= '#{c/touches} (derive/external-origin-vars an nil nil))))))
+
+(deftest interop-with-the-world-is-an-effect-even-with-no-var-to-see
+  ;; The hole this closes: a namespace that binds a port and blocks on accept
+  ;; was :pure by EVERY derivation slopp has, because interop produces no var
+  ;; usage and so no call-graph edge. tier-refusal would have accepted
+  ;; module_purity :pure on it, and the D6 !-naming rule does not catch it
+  ;; either — that fires when a non-bang fn REACHES an effect, and nothing
+  ;; here reached one as far as the analysis was concerned.
+  ;;
+  ;; The anchor set is ENUMERATED, not a package prefix, and that is measured
+  ;; rather than cautious: across slopp's own production namespaces the java
+  ;; class vocabulary is 128 java.lang.Exception, 41 Throwable, 31 String —
+  ;; catch clauses and type hints. java.net. holds URI and URLDecoder (pure)
+  ;; next to ServerSocket; java.io. holds ByteArrayOutputStream next to File.
+  ;; A prefix match would move the whole codebase out of :pure.
+  (let [ext (str "(ns sock (:import [java.net ServerSocket]))\n"
+                 "(defn bind [p] (let [s (ServerSocket. (int p))] (.accept s)))\n")
+        pure (str "(ns val)\n"
+                  "(defn stringify [x] (String/valueOf x))\n")
+        imp  (str "(ns imp (:import [java.net ServerSocket]))\n"
+                  "(defn f [x] x)\n")]
+    (testing "a socket opened through interop is external, and its own origin"
+      (let [a (analyze/analyze ext)]
+        (is (contains? (derive/external-origin-vars a nil nil) 'sock/bind))
+        (is (contains? (derive/externally-effectful-vars a nil nil) 'sock/bind))
+        (testing "and effectful, so :pure refuses it — the tier hole"
+          (is (contains? (derive/effectful-vars a nil nil) 'sock/bind)))))
+    (testing "interop with a class that touches nothing stays pure"
+      (let [a (analyze/analyze pure)]
+        (is (empty? (derive/external-origin-vars a nil nil)))
+        (is (empty? (derive/effectful-vars a nil nil)))))
+    (testing "IMPORTING a class is not USING it — kondo reports the :import
+              itself as a class usage, and it belongs to no var"
+      (let [a (analyze/analyze imp)]
+        (is (empty? (derive/external-origin-vars a nil nil)))
+        (is (empty? (derive/effectful-vars a nil nil)))))))

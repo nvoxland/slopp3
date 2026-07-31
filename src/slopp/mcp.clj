@@ -165,6 +165,28 @@
 (defn- red? [t]
   (and t (pos? (+ (:fail t 0) (:error t 0)))))
 
+(def terse-elided
+  "The only routed keys the TERSE path drops, and the reason each is not a
+  finding.
+
+  `wire-keys`' own docstring draws this line: routing is the registry's job,
+  SHAPING is this layer's, and a size concern 'belongs where the shaping
+  happens'. These two are the shaping, and they are unlike every other key in
+  one specific way — they ride EVERY result regardless of what the operation
+  did, so they answer nothing about whether it examined anything.
+
+  - `:ms` — cost telemetry. Real, and never an answer to a question the agent
+    asked. `:verbose true` still carries it.
+  - `:warnings` — its PRESENCE is the signal. Unlike `:callers []` ('looked,
+    none'), an empty warning list is not a finding, and a non-empty one never
+    reaches here at all: it routes to the verbose path above.
+
+  Deliberately two. This set existing at all is a re-decision of what an agent
+  sees, which is the defect the registry exists to prevent — so it stays small
+  enough to read, and `mcp-test/the-terse-path-drops-nothing-the-registry-routed`
+  fails if it grows."
+  #{:ms :warnings})
+
 (defn- summarize
   "B1: a green-and-quiet edit result compresses to a terse shape (the Go
   baseline showed slopp's verbose green responses were the token loser).
@@ -174,11 +196,25 @@
   FLAG; a zero-test verification says :coverage :none (Q8); the :type
   :summary tag is internal and never rides the wire.
 
-  This path REBUILDS :test from a fixed key list, so anything the layers
-  below compute must be added here too or it silently never reaches the
-  agent. That has now happened three times — :dry-run's payload, :drift,
-  and :external-pending — each looking like a missing feature rather than
-  a dropped one. Adding a key below? Add it here in the same edit."
+  The terse path SHAPES what a layer returned; it does not re-decide it.
+  Everything in `tools/wire-keys` passes through, and only the bulky keys
+  are compressed (a delta to its id, a delta list and an affected set to
+  their counts, a verification to the rebuilt `:test`). That direction is
+  the registry's own argument, applied one layer later: an allowlist here
+  is a SECOND independent guess at what an agent should see, and it lost
+  the same way the fourteen per-tool lists did.
+
+  Measured when this was fixed: of the 39 routed keys, 21 arrived and 21
+  were dropped — among them `:callers` (so `edit_move_forms` reported the
+  same result whether it rewrote twelve call sites or none),
+  `:export-not-landed` (a postcondition that did NOT hold), and
+  `:unknown-shape` (the call sites a rewrite could not reach, which are the
+  caller's to check by hand). Each looked like a missing feature rather
+  than a dropped one.
+
+  So: an empty collection from a layer is a FINDING — it looked and found
+  none — and it rides the wire as one. A key the layer omits is the layer
+  saying nothing. Deciding which is which is not this function's job."
   [r verbose?]
   (let [strip (fn [d] (if (map? d) (dissoc d :source :sources :node) d))
         r     (cond-> r
@@ -188,24 +224,15 @@
             (and (red? (:test r)) (seq (:failures (:test r)))))
       (update r :test #(if (map? %) (dissoc % :type) %))
       (let [t (:test r)]
-        (cond-> {:ok true}
+        (cond-> (assoc (apply dissoc (select-keys r tools/wire-keys) terse-elided) :ok true)
           (:delta r)    (assoc :delta (get-in r [:delta :id]))
-          (:group r)    (assoc :group (:group r))
           (:deltas r)   (assoc :deltas (count (:deltas r)))
-          (:renamed r)  (assoc :renamed (:renamed r))
-          (:mentions r) (assoc :mentions (:mentions r))
-          (:renamed-namespaces r) (assoc :renamed-namespaces (:renamed-namespaces r))
+          (:untested r) (assoc :untested true)
           ;; a PREVIEW's payload is the whole point of asking for one —
           ;; dropping it here made dry-run look like a silent no-op
-          (:dry-run r)    (assoc :dry-run true
-                                 :in-code (:in-code r)
-                                 :in-strings (:in-strings r))
-          (:note r)       (assoc :note (:note r))
-          (:forms r)    (assoc :forms (:forms r))
-          (:untested r) (assoc :untested true)
-          ;; drift must survive the terse path — it exists precisely to be
-          ;; seen on a write the agent would otherwise call done with
-          (seq (:drift r)) (assoc :drift (:drift r))
+          (:dry-run r)  (assoc :dry-run true)
+          (:affected r) (assoc :affected (let [a (:affected r)]
+                                           (if (= :all a) :all (count a))))
           t             (assoc :test (cond-> {:ran (:test t 0) :pass (:pass t 0)
                                               ;; a run that executed NOTHING is unverified, not green — green must
                                               ;; mean tests ran and passed, or an agent learns to distrust
@@ -243,15 +270,7 @@
                                        ;; bare :partial an agent cannot act on becomes noise it
                                        ;; learns to skip
                                        (seq (:external-pending t))
-                                       (assoc :external-pending (:external-pending t))))
-          (:affected r) (assoc :affected (let [a (:affected r)]
-                                           (if (= :all a) :all (count a))))
-          (:hint r) (assoc :hint (:hint r))
-          (:red-first r) (assoc :red-first (:red-first r))
-          (:carried-errors r) (assoc :carried-errors (:carried-errors r))
-          (:changed-nses r) (assoc :changed-nses (:changed-nses r))
-          (:image-healed r) (assoc :image-healed true)
-          (:existing-warnings r) (assoc :existing-warnings (:existing-warnings r)))))))
+                                       (assoc :external-pending (:external-pending t)))))))))
 
 (defn parse-call-args
   "Tool arguments for the one-shot --call CLI: nil/blank → {}; \"@path\"

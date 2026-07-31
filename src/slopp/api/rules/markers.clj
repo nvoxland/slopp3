@@ -60,6 +60,22 @@
     :asks "whose map is it?"                                 :self-polices? true}
    {:marker :legacy-ok    :kind :escape :discharges nil       :on :name
     :asks "what makes this worth keeping as-is?"             :self-polices? false}
+   ;; the reaches/is distinction, declared: this form IS the reaching, so raw
+   ;; external contact is sanctioned HERE and refused everywhere else. Its
+   ;; VALUE names the port first ("http — why"), which is what lets a second
+   ;; port's rule be added without teaching the first one about it — each
+   ;; polices only the markers whose port it owns, and ignores the rest rather
+   ;; than calling them stale.
+   {:marker :adapter     :kind :escape :discharges :direct-http :on :name
+    :asks "which port does this adapt, and where is its fake?" :self-polices? true}
+   ;; the escape that had to exist BEFORE bare-throw could be ratcheted from
+   ;; advisory to error. Its old escape was the prose "or accept the throw",
+   ;; which means nothing once a finding reds the done — and there are real
+   ;; bare throws: satisfying a Java API contract, an InterruptedException, a
+   ;; test that throws a non-ex-info precisely to prove it gets masked.
+   {:marker :bare-throw-ok :kind :escape :discharges :bare-throw :on :name
+    :asks "who requires this exact exception type, and why won't ex-info do?"
+    :self-polices? true}
    {:marker :side-effect  :kind :declaration :discharges nil  :on :name
     :asks "what does requiring it register?"                 :self-polices? false}
    {:marker :entry-point  :kind :declaration :discharges :unused-public :on :name

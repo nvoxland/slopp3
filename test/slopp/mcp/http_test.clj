@@ -1,22 +1,33 @@
 (ns slopp.mcp.http-test
+  "The MCP protocol over HTTP, end to end: a real server on a real port,
+  answering real JSON-RPC.
+
+  It is the wire counterpart to `slopp.mcp-test`, which exercises the same
+  tools in-process. What only this can catch is anything the TRANSPORT does to
+  a call — a body that never arrives, a response that does not survive
+  serialization, a session that is not the one the caller meant.
+
+  Its two helpers go through `slopp.web.client`, like every other HTTP caller
+  in the store. That costs nothing in fidelity: the port's real adapter is what
+  makes the call, so these are the same real requests they always were."
   (:require [clojure.test :refer [deftest is testing]]
             [cheshire.core :as json]
-            [slopp.mcp.http :as http])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]))
+            [slopp.mcp.http :as http] [slopp.web-test :as web-test] [slopp.web.client :as client])
+)
 
 (defn- post! [port path body]
-  (let [client (HttpClient/newHttpClient)
-        req (-> (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" port path)))
-                (.POST (HttpRequest$BodyPublishers/ofString (json/generate-string body)))
-                (.build))]
-    (json/parse-string (.body (.send client req (HttpResponse$BodyHandlers/ofString))) true)))
+  (json/parse-string
+   (:http/body (client/request {:http/method  :post
+                                :http/url     (str "http://127.0.0.1:" port path)
+                                :http/headers {"Content-Type" "application/json"}
+                                :http/body    (json/generate-string body)}))
+   true))
 
 (defn- get! [port path]
-  (let [client (HttpClient/newHttpClient)
-        req (.build (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" port path))))]
-    (json/parse-string (.body (.send client req (HttpResponse$BodyHandlers/ofString))) true)))
+  (json/parse-string
+   (:http/body (client/request {:http/method :get
+                                :http/url    (str "http://127.0.0.1:" port path)}))
+   true))
 
 (deftest ^:external http-transport-round-trip
   (let [port 7399
@@ -41,3 +52,16 @@
           (is (= 4 (count (:calls m))))
           (is (every? #(and (:tool %) (pos? (:in %)) (pos? (:out %))) (:calls m)))))
       (finally (http/stop-server! srv)))))
+
+(deftest the-store-backed-reader-meets-the-reader-contract
+  ;; The RUN lives inside slopp.mcp.* so the contract can reach a
+  ;; package-private adapter without it being exported for a test's benefit.
+  ;; The contract itself belongs to the port's owner (slopp.web.static), which
+  ;; is the only home that does not make it one implementation's test.
+  ;;
+  ;; In-image and cheap: a store's :files is a plain map, so this adapter needs
+  ;; no database, no session and no socket.
+  (web-test/reader-contract "store"
+                            (fn [files]
+                              (http/store-reader (constantly {:files files})
+                                                 (constantly nil)))))

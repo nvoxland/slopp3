@@ -1,4 +1,17 @@
 (ns slopp.web-test
+  "The web facade from the OUTSIDE: `serve!` on a real port, answered by a real
+  client, across both server adapters.
+
+  It is also the home of `reader-contract` — the suite both adapters of the
+  static-file reader port must pass — which is why a test namespace here is
+  required by others rather than being a leaf.
+
+  Everything that binds a socket in here uses its OWN client, declared
+  `^{:adapter \"http — …\"}` per test rather than exempted by rule. That is the
+  one deliberate exception to \"all HTTP goes through `slopp.web.client`\":
+  `requester-contract` uses `serve!` as ITS far side, so routing the server's
+  own tests through the client would close the loop and let a symmetric bug —
+  client omits a header, server ignores it — pass both suites."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.web :as web] [slopp.web.static :as static] [slopp.web.router :as router]))
 
@@ -27,7 +40,14 @@
       (is (web/authorized? [:group "admin"] {:web/groups #{"admin"}}))
       (is (not (web/authorized? [:group "admin"] nil))))))
 
-(deftest ^:external serve-round-trips-the-facade
+(deftest ^:external
+  ^{:adapter "http — a deliberately INDEPENDENT client. requester-contract's
+              real run uses serve! as ITS far side, so routing the server's own
+              tests through slopp.web.client would make the two mutually
+              circular and let a symmetric bug (client omits a header, server
+              ignores it) pass both. The server tests are the one place that
+              must not go through the port."}
+  serve-round-trips-the-facade
   (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
                          :web/port 0})
         http (java.net.http.HttpClient/newHttpClient)
@@ -42,7 +62,11 @@
         (is (= 401 (.statusCode resp))))
       (finally (web/stop! srv)))))
 
-(deftest ^:external httpkit-adapter-round-trips-the-facade
+(deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
+              serve-round-trips-the-facade, and doubly so here: this test exists
+              to prove a SECOND server adapter behaves like the first, which a
+              shared client cannot witness."}
+  httpkit-adapter-round-trips-the-facade
   (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
                          :web/adapter :http-kit
                          :web/port 0})
@@ -58,7 +82,10 @@
         (is (= 401 (.statusCode resp))))
       (finally (web/stop! srv)))))
 
-(deftest ^:external auth-round-trips-over-the-wire
+(deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
+              serve-round-trips-the-facade. This one sends AUTH headers, which
+              is precisely the shape a symmetric client/server bug would hide."}
+  auth-round-trips-over-the-wire
   (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
                          :web/adapter :http-kit
                          :web/port 0
@@ -82,7 +109,11 @@
           (is (= 403 (GET "/w/mine/someone-else" "tok-ada")))))
       (finally (web/stop! srv)))))
 
-(deftest ^:external static-mounts-serve-raw-bytes
+(deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
+              serve-round-trips-the-facade. Raw BYTES are the case where a
+              shared client's own decoding would be indistinguishable from the
+              server's encoding."}
+  static-mounts-serve-raw-bytes
   (let [png (byte-array [(byte -119) 80 78 71 9 8 7])
         reader (fn [path]
                  (get {"public/logo.png" {:content png :content-type "image/png"}
@@ -264,3 +295,40 @@
     ;; the guard must not fire on the ordinary case, including a route with
     ;; no declared reads at all
     (is (map? (web/context {:web/namespaces ['slopp.web-test]})))))
+
+(defn reader-contract
+  "Every property a `mount-routes` reader must satisfy, run against whatever
+  `make-reader` builds — `{path → content}` in, a reader out.
+
+  The suite may name NOTHING but the port. That is not style: an assertion
+  reaching into one adapter would stop running against the other, so the
+  constraint is what keeps this from silently becoming one implementation's
+  test."
+  [label make-reader]
+  (let [rdr (make-reader {"public/app.css" "body{}"})]
+    (testing (str label ": a path the source holds answers with content")
+      (is (some? (:content (rdr "public/app.css")))))
+    (testing (str label ": a path nothing holds is nil — MISSING, not a throw")
+      (is (nil? (rdr "public/nope.css"))))
+    (testing (str label ": a traversal segment is nil, however it is refused")
+      ;; the filesystem reader refuses it explicitly; the store-backed one
+      ;; simply has no such manifest key. Same answer, different reason —
+      ;; which is exactly what a contract is allowed to be indifferent to.
+      (is (nil? (rdr "public/../public/app.css"))))
+    (testing (str label ": a PREFIX of a real path is not a partial hit")
+      (is (nil? (rdr "public/app"))))))
+
+(deftest ^:external the-filesystem-reader-meets-the-reader-contract
+  ;; The other side of reader-contract. ^:external because this adapter's whole
+  ;; job is the filesystem — the store-backed run of the SAME suite is in-image
+  ;; and costs nothing, which is the two-tier split doing what it is for.
+  (reader-contract "filesystem"
+                   (fn [files]
+                     (let [dir (str (java.nio.file.Files/createTempDirectory
+                                     "slopp-contract"
+                                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+                       (doseq [[path content] files]
+                         (let [f (java.io.File. dir (str path))]
+                           (.mkdirs (.getParentFile f))
+                           (spit f content)))
+                       (static/file-or-resource-reader dir)))))

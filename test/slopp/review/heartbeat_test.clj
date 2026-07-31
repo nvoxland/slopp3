@@ -6,7 +6,7 @@
             [malli.core :as m]
             [slopp.store :as store]
             [slopp.review.heartbeat :as beat]
-            [slopp.review.contracts :as contracts] [slopp.web :as web]))
+            [slopp.review.contracts :as contracts] [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
 
 (deftest a-beat-says-who-and-where-and-nothing-it-does-not-know
   (let [named (assoc-in (store/empty-store) [:config "capabilities" :values]
@@ -215,11 +215,151 @@
       (is (= beat/default-beat-ms (beat/interval-from (last @answers)))))
     (testing "an ABSENT hub is still a quiet nil — nobody has to run one"
       (reset! answers [])
-      (let [dead (let [s (java.net.ServerSocket. 0) p (.getLocalPort s)]
-                   (.close s) p)
+      (let [;; NOT an ephemeral port opened-and-closed: that races. A sibling
+            ;; `web/serve!` with {:web/port 0} in the same shard JVM can be
+            ;; handed the port we just freed, and the beat then gets a real
+            ;; 404 (`{:error "no route"}` — our own server answering) instead
+            ;; of a refused connection, which is the OPPOSITE of what this
+            ;; asserts. Port 1 is privileged, so nothing in the suite can bind
+            ;; it, while CONNECTING needs no privilege and simply refuses —
+            ;; the same idiom the `me` fixture above already relies on.
+            dead 1
             hb   (beat/start! (str "http://127.0.0.1:" dead "/")
                               (constantly me) #(swap! answers conj %))]
         (try
           (is (wait (fn [] (seq @answers))))
           (is (nil? (last @answers)) (pr-str @answers))
           (finally (beat/stop! hb)))))))
+
+(deftest the-beat-loop-is-checkable-without-a-network
+  ;; Everything this asserts was already asserted — in three `^:external` tests
+  ;; that each stand up a real server in a fresh JVM. The behaviour under test
+  ;; was never the SOCKET; it was the loop: beat immediately, take the interval
+  ;; from the wire, hand every answer outward, say goodbye on the way out.
+  ;;
+  ;; Injecting the transport is what separates those. The socket is covered
+  ;; once, by `client-test/requester-contract`, against BOTH adapters — so the
+  ;; fake here is a claim about the world rather than about itself, and the
+  ;; loop can be checked at memory speed.
+  ;;
+  ;; The last case is the one no test ever made: `start!` has documented since
+  ;; it was written that a callback which THROWS must not take the beat down,
+  ;; and nothing checked it. It is cheap to check only because the transport
+  ;; moved out.
+  (let [seen    (atom [])
+        answers (atom [])
+        routes  {[:post "/api/register"]
+                 (fn [req]
+                   (swap! seen conj [:register (str (:body req))])
+                   {:status 200 :body (json/generate-string {:slug "toy" :beat-ms 20})})
+                 [:post "/api/deregister"]
+                 (fn [_] (swap! seen conj [:deregister]) {:status 200 :body "{}"})}
+        hub     "http://hub.test/"
+        me      {:name "toy" :dir "/w/toy" :url "http://127.0.0.1:1/"}
+        beats   (fn [] (count (filter (fn [e] (= :register (first e))) @seen)))
+        wait    (fn [pred]
+                  (loop [n 0]
+                    (cond (pred) true
+                          (> n 200) false
+                          :else (do (Thread/sleep 5) (recur (inc n))))))]
+    (testing "the first beat is immediate and the second arrives at the interval
+              the hub asked for — 20ms, where the compiled-in default is ten
+              seconds, so a second beat at all is proof it came from the wire"
+      (let [hb (beat/start! hub (constantly me) #(swap! answers conj %)
+                            (client/fake-requester hub routes))]
+        (try
+          (is (wait (fn [] (<= 2 (beats)))))
+          (is (str/includes? (second (first @seen)) "toy")
+              "the payload has to actually reach the hub")
+          (is (every? (fn [a] (= "toy" (:slug a))) @answers) (pr-str @answers))
+          (finally (beat/stop! hb))))
+      (testing "and an orderly stop says goodbye rather than leaving a row to
+                age out on its own"
+        (is (wait (fn [] (some (fn [e] (= [:deregister] e)) @seen))))))
+    (testing "a hub that REFUSES is not a hub that is absent — the distinction
+              the whole port exists to keep, checked here without a socket"
+      (let [refusing (client/fake-requester
+                      hub {[:post "/api/register"]
+                           (fn [_] {:status 400
+                                    :body (json/generate-string
+                                           {:explain {:dir ["missing required key"]}})})})
+            got (atom [])
+            hb  (beat/start! hub (constantly me) #(swap! got conj %) refusing)]
+        (try
+          (is (wait (fn [] (seq @got))))
+          (let [a (last @got)]
+            (is (some? a) "nil is what made a refusal look like an absent hub")
+            (is (beat/refused? a) (pr-str a))
+            (is (str/includes? (pr-str a) "missing required key")
+                "the hub's explanation must survive, or drift is undiagnosable"))
+          (is (nil? (beat/hub-address hub (last @got)))
+              "a refused beat registered nothing, so there is no page to offer")
+          (finally (beat/stop! hb)))))
+    (testing "an ABSENT hub is a quiet nil — nobody has to run one"
+      (let [got (atom [])
+            hb  (beat/start! hub (constantly me) #(swap! got conj %)
+                             (client/fake-requester "http://elsewhere.test/" {}))]
+        (try
+          (is (wait (fn [] (seq @got))))
+          (is (nil? (last @got)) (pr-str @got))
+          (finally (beat/stop! hb)))))
+    (testing "a callback that THROWS must not take the beat down — documented
+              since the loop was written, and never once checked"
+      (reset! seen [])
+      (let [hb (beat/start! hub (constantly me)
+                            (fn [_] (throw (ex-info "callers break" {})))
+                            (client/fake-requester hub routes))]
+        (try
+          (is (wait (fn [] (<= 2 (beats))))
+              "the loop kept registering despite the callback throwing every time")
+          (finally (beat/stop! hb)))))))
+
+(deftest a-bug-we-own-is-not-a-hub-that-is-absent
+  ;; The third collapse in the same function, and the one nothing caught.
+  ;;
+  ;; `post!` fixed refused-vs-absent and then wrapped its ENTIRE body — the
+  ;; request, the JSON encode, the parse, the comparison — in
+  ;; `(catch Exception _ nil)`. So a payload that cannot be serialised, an NPE,
+  ;; or any bug at all came back as nil, and nil is what the loop reads as
+  ;; "no hub is running". A project would report itself absent forever while
+  ;; the actual fault sat in its own payload.
+  ;;
+  ;; That breadth was only possible BECAUSE the transport threw a bare
+  ;; IOException: catching "no server" meant catching everything. Now that the
+  ;; port throws an ex-info carrying :http/error, the catch can be narrow, and
+  ;; three different facts get three different answers — nil for absent,
+  ;; :hub/refused for rejected, :hub/error for a bug we own.
+  (let [got   (atom [])
+        hub   "http://hub.test/"
+        routes {[:post "/api/register"]
+                (fn [_] {:status 200
+                         :body (json/generate-string {:slug "toy" :beat-ms 20})})
+                [:post "/api/deregister"] (fn [_] {:status 200 :body "{}"})}
+        wait  (fn [pred]
+                (loop [n 0]
+                  (cond (pred) true
+                        (> n 200) false
+                        :else (do (Thread/sleep 5) (recur (inc n))))))
+        ;; a function value is not JSON, so generate-string throws before the
+        ;; request is ever made — a bug entirely on our side of the wire
+        hb    (beat/start! hub (constantly {:name (fn [] :not-serialisable)})
+                           #(swap! got conj %)
+                           (client/fake-requester hub routes))]
+    (try
+      (is (wait (fn [] (seq @got))))
+      (let [a (last @got)]
+        (is (some? a)
+            "nil here is the bug: it is indistinguishable from an absent hub")
+        (is (:hub/error a) (pr-str a))
+        (is (not (beat/refused? a)) "a bug of ours is not the hub refusing us")
+        (is (nil? (beat/hub-address hub a))
+            "and it registered nothing, so there is no page to offer")
+        (is (= beat/default-beat-ms (beat/interval-from a))
+            "nor does it change the interval"))
+      (testing "and the loop SURVIVES it — a broken payload must not stop the
+                beat, or one bad field takes the project off the picker for
+                good. Asserted on the THREAD rather than on a second beat:
+                an errored answer falls back to the ten-second default
+                interval, so counting beats here would measure the clock"
+        (is (.isAlive ^Thread (:thread hb))))
+      (finally (beat/stop! hb)))))

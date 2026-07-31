@@ -15,6 +15,30 @@
             [slopp.api.external :as external]
             [slopp.web :as web] [slopp.store :as store] [slopp.store.db :as db] [slopp.web.static :as static] [slopp.review.server :as ui-server]))
 
+(defn store-reader
+  "The LIVE-store reader for `static/mount-routes`: resolve `path` through the
+  store's manifest (text) or its content-addressed artifacts (bytes), falling
+  back to `get-blob` for a sha the in-memory cache does not hold.
+
+  `get-store` is a THUNK, not a store value, and that is the point of the
+  seam: it is re-read per request, so under `--live` an edited asset serves
+  without a rebuild. A store value captured once would freeze the tree at
+  server start.
+
+  The counterpart adapter is `static/file-or-resource-reader`, and the two
+  answer the same port. They have diverged before — a mount prefix written
+  `public/` asks for `public//app.css`, which a filesystem normalises away and
+  a manifest lookup does not — so both are held to one suite,
+  `slopp.web-test/reader-contract`. This existed as an anonymous fn inside
+  `start-server!` and was therefore reachable only by booting a session and
+  binding a port, which is why it had never been tested at all."
+  [get-store get-blob]
+  (fn [path]
+    (let [{:keys [content content-type sha]} (store/file-content (get-store) path)]
+      (when (or content sha)
+        {:content (or content (get-blob sha))
+         :content-type content-type}))))
+
 (defn ^:export start-server!
   "Start the transport on `port` over a fresh session (`opts` as api/open!):
   the declared endpoints of THIS namespace (/call, /mcp, /metrics) plus any
@@ -33,15 +57,8 @@
                                 [mount (str v)])))
                       (get-in (:store @session)
                               [:config "capabilities" :values]))
-        reader  (fn [path]
-                  (let [st (:store @session)
-                        {:keys [content content-type] :as e}
-                        (store/file-content st path)]
-                    (when e
-                      {:content (or content
-                                    (some-> (:db @session)
-                                            (db/get-blob (:sha e))))
-                       :content-type content-type})))
+        reader  (store-reader #(:store @session)
+                              #(some-> (:db @session) (db/get-blob %)))
         srv     (web/serve! {:web/namespaces (into ['slopp.mcp.http] ui-server/served-namespaces)
                              :web/routes (static/mount-routes mounts reader)
                              :web/host "127.0.0.1"
