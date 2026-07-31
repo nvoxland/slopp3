@@ -90,16 +90,17 @@
                                       (image/load-ns! (:image @session) st' ns-sym)
 
                                       (seq (get by-ns ns-sym))
-                                      (:err (session/hot-load-all! session st'
-                                                           (get by-ns ns-sym)))
+                                      (session/load-error-message
+                                       (session/hot-load-all! session st'
+                                                              (get by-ns ns-sym)))
 
                                       :else nil))
                                   (store/ns-dependency-order st'))
                             ;; live ids whose ns lookup still missed keep
                             ;; the whole-batch path
                             (when-let [rest-ids (seq (get by-ns nil))]
-                              (:err (session/hot-load-all! session st'
-                                                   rest-ids))))))]
+                              (session/load-error-message
+                               (session/hot-load-all! session st' rest-ids))))))]
         (if load-err
           (do (session/fresh-image! session)
               (edit/compile-error st' load-err "merge failed to compile: "))

@@ -4,6 +4,43 @@
             [slopp.edit :as edit]
             [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external] [rewrite-clj.parser :as p]))
 
+(deftest ^:external heal-replays-a-new-namespace-this-call-did-not-touch
+  ;; The MERGE shape, and the gap the sibling test below does not cover.
+  ;; merge-into-session! hot-loads each namespace in its OWN hot-load-all!
+  ;; call, so a namespace the merge created EARLIER is not among this call's
+  ;; form-ids. The heal boots from the COMMITTED store — which predates the
+  ;; whole merge, nothing having been committed yet — so every namespace the
+  ;; merge already loaded is gone, and replaying only THIS call's nses leaves
+  ;; the new one missing. The dependent's :require then dies with
+  ;; FileNotFound: an error the heal MANUFACTURED. It names a classpath
+  ;; problem that never existed and buries the real first failure, which is
+  ;; how a merge refusal reads as a merge-ordering bug for hours.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'hp2.core "(ns hp2.core)\n\n(defn top \"T.\" [x] x)\n")
+      (let [st   (:store @sess)
+            st1  (store/ingest st 'hp2.newdep
+                               "(ns hp2.newdep)\n\n(defn helper \"H.\" [x] (inc x))\n")
+            [st2 _] (store/replace-node
+                     st1 'hp2.core 'hp2.core
+                     (:node (edit/parse-form
+                             "(ns hp2.core (:require [hp2.newdep :as newdep]))")))
+            [st3 _] (store/replace-node
+                     st2 'hp2.core 'top
+                     (:node (edit/parse-form
+                             "(defn top \"T.\" [x] (newdep/helper x))")))
+            ;; ONLY hp2.core's ids. hp2.newdep is in the candidate but belongs
+            ;; to a different call — the one thing that differs from the
+            ;; sibling test, and the whole bug.
+            ids  [(:id (store/form-named st3 'hp2.core 'hp2.core))
+                  (:id (store/form-named st3 'hp2.core 'top))]
+            r    (#'session/hot-load-all! sess st3 ids)]
+        (is (not (re-find #"Could not locate" (str (:err r))))
+            (str "the heal manufactured a classpath error: " (pr-str r)))
+        (is (:healed r) (pr-str r))
+        (is (= [3] (api/query-eval sess "(hp2.core/top 2)"))))
+      (finally (api/close! sess)))))
+
 (deftest ^:external heal-path-replays-candidate-namespaces
   ;; the extract_ns live failure: hot-load-all!'s heal boots a FRESH image
   ;; from the COMMITTED store, so a candidate that CREATES a namespace lost
@@ -316,3 +353,19 @@
                         :test-map '{shop.api-test/unrelated #{shop.api/todos}}})]
         (is (= '[shop.api-test/unrelated]
                (session/affected-tests sess 'shop.api 'todos)))))))
+
+(deftest a-heal-that-changed-the-error-reports-both
+  ;; D-surface-honesty: when the heal's retry fails DIFFERENTLY from the
+  ;; first attempt, the post-heal error is an artifact of the recovery and
+  ;; the pre-heal one is the fault. Reporting only :err is how a merge
+  ;; refusal pointed at a classpath that was never the problem.
+  (testing "no heal, or an unchanged error — the message is just the error"
+    (is (nil? (session/load-error-message nil)))
+    (is (nil? (session/load-error-message {:healed true})))
+    (is (= "boom" (session/load-error-message {:err "boom"}))))
+  (testing "a heal that changed the error carries the pre-heal one too"
+    (let [msg (session/load-error-message {:err "post" :first-err "pre"})]
+      (is (re-find #"post" msg))
+      (is (re-find #"pre" msg))
+      (is (re-find #"(?i)before" msg)
+          "says which of the two came first"))))

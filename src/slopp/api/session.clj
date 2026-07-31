@@ -436,6 +436,22 @@
       ;; whole store as never-loaded.
       (currency/arm!))))
 
+(defn load-error-message
+  "The message to report for a `hot-load-all!` result — nil when it loaded.
+
+  When the heal's retry failed DIFFERENTLY from the first attempt, the
+  post-heal error is an artifact of the RECOVERY and the pre-heal one is the
+  fault. Reporting only `:err` is how a merge refusal pointed at a classpath
+  that was never the problem, hiding the compile error underneath it for
+  hours. Both, labelled, or the surface is lying about which is which."
+  [r]
+  (when-let [e (:err r)]
+    (if-let [f (:first-err r)]
+      (str e "\n\nNOTE: the image was refreshed mid-load and the retry failed"
+           " differently. The error BEFORE the refresh — the one to fix — was:\n"
+           f)
+      e)))
+
 (defn hot-load-all!
   "Checked-load `form-ids` from a CANDIDATE store value into the image (S1).
   nil on success; {:healed true} when a STALE IMAGE had to be refreshed to
@@ -452,9 +468,21 @@
   [session candidate form-ids]
   (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
         stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
-        replay! #(doseq [ns-sym (filter (set nses)
-                                        (store/ns-dependency-order candidate))]
-                   (image/load-ns! (:image @session) candidate ns-sym))]
+        replay! #(let [committed (set (keys (:namespaces (:store @session))))
+                       ;; every namespace the CANDIDATE has that the COMMITTED
+                       ;; store lacks, not just this call's. fresh-image! boots
+                       ;; from the committed store, so those cannot survive it —
+                       ;; and a MERGE creates them in EARLIER hot-load-all!
+                       ;; calls whose form-ids are not ours. Replaying only
+                       ;; `nses` left them missing and the dependent's :require
+                       ;; died with FileNotFound: an error the heal itself
+                       ;; MANUFACTURED, naming a classpath problem that never
+                       ;; existed while burying the real first failure.
+                       want      (into (set nses)
+                                       (remove committed)
+                                       (keys (:namespaces candidate)))]
+                   (doseq [ns-sym (filter want (store/ns-dependency-order candidate))]
+                     (image/load-ns! (:image @session) candidate ns-sym)))]
     (letfn [(load-all []
               (loop [ids (seq form-ids)]
                 (when ids
