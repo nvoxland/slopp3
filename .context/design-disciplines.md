@@ -359,6 +359,24 @@ second copy.
 
 - **Make incompleteness explicit.** `:unverified` / `:partial` / `:coverage
   :none` / `:via`. → **D-surface-honesty**.
+- **An error produced AFTER a retry must say which attempt it came from.** A
+  recovery path re-runs the failing operation, so it can fail a second and
+  DIFFERENT way — and that error describes the recovery, not the fault.
+  Surfacing it alone makes the recovery the story and hides the bug behind it.
+  Measured 2026-07-31: `hot-load-all!`'s heal reboots the image from the
+  COMMITTED store, so a merge's already-loaded namespaces vanished and the
+  retry died with `Could not locate …clj on classpath` — a classpath problem
+  that never existed. Callers read only `:err`, `:first-err` held the real
+  compile failure, and four merges were refused over an ordering bug that was
+  not there. → **D-surface-honesty**. This is Core 1's shape one step on: not
+  "could not check" wearing the face of "checked", but a MANUFACTURED
+  diagnosis wearing the face of a real one, which is worse — an agent will act
+  on it.
+- **A recovery that rebuilds state from a checkpoint must restore everything
+  the checkpoint cannot know about.** `fresh-image!` boots from the committed
+  store; anything living only in the candidate has to be replayed explicitly,
+  and "the current call's namespaces" is the wrong scope the moment a caller
+  loads across several calls with nothing committed between them.
 - **Ship every finding; grade the ones that shouldn't flip status.** A rule with
   a hidden finding class has unmeasurable precision. → **D-rule-grounding**.
 - **A rule's predicate must be a ROLE (declared or grammatical), never a

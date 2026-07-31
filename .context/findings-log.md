@@ -1080,3 +1080,69 @@ short-cut. Another few turns and class 1 is worth acting on.
 refusals were mostly MY errors of composition, not slopp's contract being
 unclear. A refusal rate is not automatically a defect rate, and the samples are
 what make that distinguishable.
+
+## 2026-07-31 — a mid-merge heal silently rewound the image, then lied about why
+
+**Observed:** merging a branch that introduced a new namespace (`slopp.web.client`)
+was refused four times with
+
+```
+Could not locate slopp/web/client__init.class, slopp/web/client.clj … on classpath
+```
+
+raised while `slopp.mcp-test` — a namespace that requires it — loaded. It read
+exactly like a merge-ordering bug: dependents loading before a namespace the
+merge had just created.
+
+**It was not.** Every ordering hypothesis was measured and refuted:
+
+- a minimal repro (branch adds `zz.newthing`, an existing ns requires it, merge)
+  **passed** — new namespaces merge fine;
+- `ns-dependency-order` on the merged store put `slopp.web.client` at index 85
+  and `slopp.mcp-test` at 180, and simulating the merge's action walk put the
+  `:load-ns` at position 8 against the dependent's `:hot-load` at 18;
+- the topological sort never stalled (191/191 ordered), so its
+  cycle-fallback-to-alphabetical never fired;
+- `platform-for` was `:jvm`, so `load-ns!`'s `:cljs` skip was not involved;
+- `slopp.api.branch`, `slopp.store`, `slopp.image` and `slopp.store.merge`
+  rendered BYTE-IDENTICAL on both lines, and the jar carried the interleaved
+  pass — no vintage confound.
+
+**The actual cause, in `session/hot-load-all!`:** its heal calls `fresh-image!`,
+which boots from the **committed** store. Mid-merge, nothing is committed yet,
+so the fresh image is the pre-merge world — every namespace the merge had
+already loaded is gone. `replay!` then restored only the namespaces owning
+THIS call's `form-ids`, and `merge-into-session!` calls `hot-load-all!` once
+per namespace. So a namespace created EARLIER in the merge was never replayed,
+and the dependent's `:require` hit a classpath that legitimately did not have it.
+
+The docstring claimed this case was handled — *"a candidate that CREATES a
+namespace (extract_ns) dies with FileNotFound when a survivor requires it"* —
+and the covering test (`heal-path-replays-candidate-namespaces`) passes the new
+namespace's ids IN THE SAME CALL. The fix was real and the test was honest;
+both were **one call wide**, and a merge is many calls wide.
+
+**Fix:** `replay!` now restores every namespace the CANDIDATE has that the
+COMMITTED store lacks — precisely the set `fresh-image!` cannot know about —
+in addition to this call's. Pinned by
+`heal-replays-a-new-namespace-this-call-did-not-touch`, whose only difference
+from its sibling is that it does NOT pass the new namespace's ids.
+
+### The second defect, and the expensive one
+
+`hot-load-all!` returns `{:err <post-heal> :first-err <pre-heal>}`, and every
+caller read only `:err`. So the reported error was **an artifact of the
+recovery** — a classpath problem that never existed — while the real compile
+failure sat in a key nobody looked at. That is a D-surface-honesty violation of
+the exact shape Core 1 exists to prevent: not "could not check" wearing the
+face of "checked", but a MANUFACTURED diagnosis wearing the face of a real one.
+
+It cost hours and four refused merges chasing an ordering bug that was never
+there. `session/load-error-message` now composes both, labelled, and the two
+merge call sites go through it.
+
+**The generalisation worth keeping:** a recovery path that re-runs the failing
+operation can produce a SECOND, different error, and that one is about the
+recovery, not the fault. Any error surfaced from after a retry has to say which
+attempt it came from — otherwise the recovery becomes the story and the bug
+hides behind it.

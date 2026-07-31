@@ -102,6 +102,83 @@ decision stays pure and `=`-testable.
   `:pure` means referentially transparent. (Interop non-determinism like
   `System/currentTimeMillis` is invisible to the analyzer — still your judgment.)
 
+### 1.1 The external world goes behind a PORT, and the fake is verified
+
+Passing `now` in rather than reading the clock is the small form of a bigger
+rule. The general one: **the thing that actually touches the world is a
+parameter with a real default**, so callers get production behaviour for free
+and tests substitute without machinery.
+
+```clojure
+(defn ^:export fetch-prices!
+  ([sku] (fetch-prices! sku client/request))     ; production, no ceremony
+  ([sku requester] …))                           ; tests pass a fake
+```
+
+Two things make this more than a style preference:
+
+**1. Only the thing that IS the reaching gets a fake.** A namespace is
+`:external` when it REACHES the world; it is an **adapter** when it IS the
+reaching. Fake the adapter; everything that merely reaches through it becomes
+testable by injection and needs no fake of its own. This is why the count of
+fakes you need is far smaller than the count of `:external` namespaces — one
+HTTP port serves every caller that speaks HTTP, whatever each does with a 404.
+
+Keep POLICY out of the port. "A 404 is an error", "retry twice", "parse this as
+EDN" differ per caller; the port reports what happened and each caller decides.
+A port that holds one caller's policy is a port the next caller has to unpick.
+
+**2. A fake is worth trusting only if the real adapter passes the SAME suite.**
+Write one contract suite against the port and run it twice — in-image against
+the fake, `^:external` against the real one:
+
+```clojure
+(defn requester-contract [label make] …)          ; the suite, written once
+(deftest fake-meets-the-contract         (requester-contract "fake" …))
+(deftest ^:external real-meets-the-contract (requester-contract "real" …))
+```
+
+This is the clearest reason slopp has two tiers: the same assertions cost
+milliseconds in one and a fresh JVM in the other, and both are worth paying.
+A fake that only ever ran against its own tests proves itself **self-consistent**,
+which reads identically to **faithful** and is not the same claim.
+
+Two rules keep it honest, and both are load-bearing:
+
+- **Say what the suite does NOT pin.** Every fake models something less than
+  reality. Name the gap in the docstring — "this does not model the server's
+  body parsing; a test depending on that needs a real server" — or a green run
+  gets read as more coverage than it is.
+- **The port's owner owns the contract suite**, and each RUN lives with the
+  adapter it exercises. A contract written per-consumer encodes that consumer's
+  misunderstanding and drifts immediately.
+
+**slopp ships `slopp.web.client` as the worked example** — `request` over a
+socket, `fake-requester` in memory, both passing `requester-contract`. Use it
+instead of building an `HttpClient`; you get the fake and the contract for free.
+Its request map is `{:http/method :http/url :http/headers :http/body}` and it
+answers `{:http/status :http/headers :http/body}`, with the one rule the whole
+design turns on: **an answered request RETURNS whatever its status; an
+unanswered one THROWS.** A far side that refused and a far side that was never
+there are different facts, and code that cannot tell them apart cannot tell a
+bug it owns from a machine nobody started.
+
+**And slopp ENFORCES this one.** The `direct-http` rule makes a form that
+builds a `java.net.http.HttpClient`, or `slurp`s an `http(s)://` literal, a
+done-time ERROR — it flips the done red, and `commit_point` gates on that.
+`^{:adapter "http — why"}` on the name discharges it for a form that IS the
+adapter, and it polices itself: an adapter marker on a form that makes no
+direct call is reported stale.
+
+Two things about its scope are deliberate:
+
+- **Tests are not exempt.** The obvious exemption is the wrong one — calling
+  the port from a test still makes a REAL call, so exempting tests would buy
+  no fidelity and would carve out the one place this boilerplate breeds.
+- **It covers HTTP only.** A gate may only demand a port that EXISTS, and
+  slopp ships one for HTTP and none for the filesystem or subprocesses. The
+  rule widens as ports get built, which is the right order.
+
 ## 2. Program to data, not to types
 
 Prefer plain maps / vectors / sets and namespaced keywords over bespoke types.

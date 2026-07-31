@@ -213,7 +213,24 @@ The oracle must never return a false verdict. Everything here serves that.
    red→green ⇒ `:staleness-detected`; red→red ⇒ `:fresh-confirmed`.
    Compile-gate failures heal likewise: refresh + one load retry
    (`:image-healed true` on the write result). `test_run {:fresh true}`
-   forces a faithful single run. Every write path passes its `:edited` qsym
+   forces a faithful single run.
+   **The heal boots from the COMMITTED store, so it can only be as complete
+   as its replay.** `fresh-image!` cannot know about namespaces that exist
+   only in the CANDIDATE, so `hot-load-all!`'s `replay!` restores every
+   namespace the candidate has and the committed store lacks — not merely
+   the ones owning this call's `form-ids`. That distinction is the whole
+   bug fixed 2026-07-31: `merge-into-session!` calls `hot-load-all!` once
+   per namespace, so a heal partway through a merge discarded every
+   namespace the merge had already loaded and the next dependent's
+   `:require` died with FileNotFound. If you add a caller that loads across
+   several calls with nothing committed between them, the replay set is
+   what keeps it honest.
+   **Report `load-error-message`, never bare `:err`.** A heal re-runs the
+   failing load, so it can fail a SECOND, different way; that error is about
+   the recovery, not the fault. `:first-err` carries the pre-heal error and
+   `load-error-message` labels both. Reading only `:err` is how a merge
+   refusal advertised a classpath problem that never existed
+   (`findings-log.md`, same date). Every write path passes its `:edited` qsym
    set into `run-verification!` — keep that plumbing when adding write ops,
    or reds regress to conservative restarts.
    **Integration tier (P4-deps M5):** a `^:integration`-tagged deftest (tag
