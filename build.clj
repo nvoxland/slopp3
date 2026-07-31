@@ -80,7 +80,14 @@
                       (let [path (-> s (str/replace "-" "_") (str/replace "." "/"))]
                         (when-let [lib (or (lib-providing libs (str path ".clj"))
                                            (lib-providing libs (str path ".cljc")))]
-                          [lib (dissoc (get libs lib) :paths :dependents :parents)]))))))
+                          ;; :mvn/version ONLY. A resolved coord carries
+                          ;; :deps/manifest and friends, which are the
+                          ;; resolver's bookkeeping — harmless to tools.deps
+                          ;; (proven: a built app resolves and serves), but this
+                          ;; lands in a generated deps.edn that people READ and
+                          ;; hand-edit, where `:deps/manifest :mvn` in a
+                          ;; declared position only invites "what is that for?".
+                          [lib (select-keys (get libs lib) [:mvn/version])]))))))
           (mapcat #(ns-requires-of (io/file root %)) files))))
 
 (defn- gen-launcher!

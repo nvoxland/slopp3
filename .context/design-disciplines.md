@@ -88,6 +88,25 @@ still fires (the `:fires-on` discipline, generalised beyond rules).
 summary becomes `:error 1` carrying what the runner actually said, so a run that
 did not happen cannot read as a run that found nothing.
 
+**A FIXTURE'S FAKE narrows the population, and nothing reports the narrowing.**
+Three defects in one wave were each hidden by something that could not fail, and
+the third was the test written to catch the first two: a restart test whose fake
+framework had no third-party requires passed green against a bug that was
+precisely "the vendored framework cannot resolve its own requires". The real
+framework requires garden, hiccup, cheshire and http-kit; the stand-in required
+nothing. Stated by the slopp-ui agent, who found it:
+
+> A fake that is simpler than every real member of the population it stands for
+> is a check that has quietly narrowed its own population, and nothing reports
+> that narrowing.
+
+That is the same shape as a scan over an empty store or a `:none` verdict, but
+harder to see, because the fixture LOOKS like the thing. The question to ask of
+any stand-in: **what property do the real members have that this one does not?**
+If the answer is "the one under test", the check is decorative. Cheap tell: a
+fake with no dependencies, no failure modes, and no edge cases is standing for a
+population where all three are the interesting part.
+
 **The exclusion-list tell, and it is mechanical.** When a check concludes from
 absence, the innocent causes accumulate as a hand-written list of negations —
 and that list is usually a fact some graph already carries. `review-scan`'s
