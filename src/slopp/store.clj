@@ -271,7 +271,7 @@
   GRAPH wants (an edge to a lib nobody here defines is not an edge). The
   unnarrowed set answers a different question: what does this namespace need
   from OUTSIDE, which is how slopp decides whether a store uses a framework it
-  should be supplied with (`api.external/framework-injection`)."
+  should be supplied with (`api.session/framework-injection`)."
   [store ns-sym]
   (when-let [e (form-named store ns-sym ns-sym)]
     (let [s (n/sexpr (:node e))]

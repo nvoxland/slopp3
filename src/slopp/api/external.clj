@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.api.deps :as api.deps] [slopp.api.done :as done] [slopp.api.history :as history] [slopp.api.modules :as modules] [slopp.api.query :as query] [slopp.api.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.store.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.api.capabilities :as capabilities] [slopp.api.orient :as orient] [slopp.api.crossings :as crossings] [slopp.api.artifacts :as artifacts] [slopp.api.currency :as currency] [slopp.image.currency :as registry]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -42,81 +42,6 @@
           em  (res "user.email")]
       (when (and nm em)
         {:name nm :email em}))))
-
-(defn ^:export framework-injection
-  "The framework FILES slopp vendors into `store` — `{\"slopp/web.clj\" src …}` —
-  or nil when it should supply nothing.
-
-  D-framework-injection. The framework is slopp's own, so slopp provides it,
-  exactly as [[client-build-deps]] provides the ClojureScript compiler and
-  `repl/inherent-deps` provides nREPL and malli. A store that declared it
-  instead could be pinned to a release the slopp serving it is not — not
-  hypothetical: `slopp-ui` sat on 0.1.3 for a day while the fix made FOR it
-  shipped in the host at 0.1.4, green the whole time, because the declaration is
-  what loads.
-
-  **Files, not a coord (part 2).** `slopp-web` is never published to a remote —
-  it is not something to depend on outside what slopp includes in slopp builds.
-  So a coord in a generated `deps.edn` names something only the machine that ran
-  `slim-install` can resolve: portable in appearance, not in fact. Copying the
-  source in is what makes a built app self-contained, and `boot/framework-version`
-  stamps which one it carries.
-
-  Two conditions, each load-bearing in a different direction.
-
-  **USES but does not DEFINE.** slopp's own store CONTAINS `slopp.web.*`, and
-  `src` is the FIRST classpath entry — so vendoring there would shadow the code
-  being edited with the last-shipped copy, and slopp would be testing its own
-  release instead of its working tree.
-
-  **USES, not merely exists.** A store with no web code needs nothing, and
-  writing files into every image would cost every fixture boot for nothing.
-
-  Empty or nil `files` (a checkout, a `clojure -M` run — `boot/framework-files`
-  says so) vendors nothing rather than half a framework."
-  [store files]
-  (let [nses (keys (:namespaces store))
-        web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
-    (when (and (seq files)
-               (not-any? web? nses)
-               (some (fn [n] (some web? (store/ns-require-libs store n))) nses))
-      files)))
-
-(defn ^:export vendor-framework!
-  "Write the framework `store` needs into `dir`/src, so it is on the classpath
-  of anything running there. Returns the paths written, or nil when the store
-  needs none.
-
-  The oracle image runs with its own temp dir as cwd and `src` as the FIRST
-  (relative) classpath entry — measured, and the directory does not otherwise
-  exist. So vendoring is a file write: no `-Sdeps` entry, no `:local/root`, no
-  repository. `build!` writes into the materialized tree the same way, which is
-  why this takes a dir rather than an image.
-
-  The VERSION STAMP travels with the files, as a resource beside them. Of the
-  three things a maven coord had over copied source, provenance is the one that
-  survives vendoring and it only survives if something carries it: a tree that
-  cannot say which framework it holds is one nobody can diagnose later. It also
-  means `boot/framework-version` answers inside a BUILT app, not just inside
-  slopp.
-
-  Deliberately NOT the uberjar on the image classpath, which would be simpler
-  and would destroy the property this rests on: a store's image receives the
-  FRAMEWORK and nothing else, so reaching for `slopp.api` from an app fails to
-  compile there. That boundary is what makes a slopp-built app a real consumer
-  rather than an insider."
-  [store dir]
-  (when-let [files (framework-injection store (boot/framework-files))]
-    (let [written (vec (sort (for [[path src] files]
-                               (let [f (io/file dir "src" path)]
-                                 (io/make-parents f)
-                                 (spit f src)
-                                 path))))]
-      (when-let [v (boot/framework-version)]
-        (let [f (io/file dir "src" boot/framework-version-path)]
-          (io/make-parents f)
-          (spit f v)))
-      written)))
 
 (defn ^:export client-build-deps
   "slopp's OWN toolchain deps for a BUILD of `store`, injected at build time —
@@ -281,7 +206,7 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; else. Vendored, the tree is self-contained and needs no repository
           ;; at all. Same call the oracle image makes, so the app is built
           ;; against the framework it was developed against.
-          (vendor-framework! st target)
+          (session/vendor-framework! st target)
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
@@ -1168,36 +1093,32 @@ client-deps (merge (:client-deps st) (:client provided))
   oracle use instead of killing the server at startup. Returns the session."
   [session store conn agent-id ttl]
   (try
-    (let [;; A recycled image when one is parked AND this store adds nothing to
-          ;; the classpath — `add-libs!` cannot be undone, so an image that
+    (let [;; A recycled image carrying EXACTLY this store's classpath, or nil
+          ;; and a real boot. `add-libs!` cannot be undone, so an image that
           ;; carried deps is no longer the baseline it was parked against.
-          ;; Nil falls through to a real boot, exactly as before.
+          ;; Keying by deps is what makes reuse apply to a real project: the
+          ;; first cut refused any store with dependencies, so it only ever
+          ;; helped dep-free stores — slopp's own fixtures and nothing a user
+          ;; has.
           ;;
           ;; DELIBERATELY only here, at session creation. `fresh-image!` is the
           ;; D5 staleness backstop, where a genuinely new process IS the point;
           ;; recycling there would undermine the diagnostic that catches a
           ;; stale image, which is the opposite of what this is for.
-          ;; A recycled image carrying EXACTLY this store's classpath, or nil and a
-          ;; real boot. Keying by deps is what makes this apply to a real
-          ;; project: the first cut refused any store with dependencies, so
-          ;; reuse only ever helped dep-free stores — slopp's own fixtures and
-          ;; nothing a user has.
           ;;
-          ;; DELIBERATELY only here, at session creation. `fresh-image!` is the
-          ;; D5 staleness backstop, where a genuinely new process IS the point;
-          ;; recycling there would undermine the diagnostic that catches a
-          ;; stale image.
-          ;; A store needing the framework never RECYCLES: a parked image has its
-          ;; own dir and no vendored files, so reusing one would hand it a
-          ;; subtly incomplete classpath, surfacing as a missing namespace at
+          ;; And a store needing the FRAMEWORK never recycles either: a parked
+          ;; image has its own dir with nothing vendored, and a JVM cannot pick
+          ;; up a relative classpath dir after launch — so reuse would hand back
+          ;; an image missing the framework, surfacing as a missing namespace at
           ;; first use, far from here. Recycling exists for dep-free fixture
-          ;; stores, which by definition need no framework — nothing that
+          ;; stores, which by definition need no framework, so nothing that
           ;; benefits today loses anything.
-          vdir  (when (framework-injection store (boot/framework-files))
-                  (str (java.nio.file.Files/createTempDirectory
-                        "slopp-image"
-                        (make-array java.nio.file.attribute.FileAttribute 0))))
-          _     (when vdir (vendor-framework! store vdir))
+          ;;
+          ;; The dir is the SESSION's, not a private one: every image this
+          ;; session boots reuses it, which is what makes a restart work. A
+          ;; private dir here is exactly why restart booted without the
+          ;; framework at all.
+          vdir  (session/framework-dir! session)
           image (or (when-not vdir (repl/unpark! (:deps store)))
                     (repl/start! (cond-> {:slopp.image.repl/deps (:deps store)}
                                    vdir (assoc :slopp.image.repl/dir vdir))))]

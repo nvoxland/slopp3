@@ -12,13 +12,110 @@
   lands for that operation. Four gates were once hand-pasted at four write
   sites because the chokepoint was not used, and every later fix to them had
   to be applied four times."
-  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs] [slopp.image.currency :as currency]))
+  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.api.web :as api.web] [slopp.edit.refs :as refs] [slopp.image.currency :as currency] [slopp.boot :as boot] [clojure.java.io :as io]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
   simulate a concurrent competitor deterministically. Never set in production.
   Exported to the contention specs that bind it; package-private otherwise."
   nil)
+
+(defn ^:export framework-injection
+  "The framework FILES slopp vendors into `store` — `{\"slopp/web.clj\" src …}` —
+  or nil when it should supply nothing.
+
+  D-framework-injection. The framework is slopp's own, so slopp provides it,
+  exactly as `external/client-build-deps` provides the ClojureScript compiler
+  and `repl/inherent-deps` provides nREPL and malli. A store that declared it
+  instead could be pinned to a release the slopp serving it is not — not
+  hypothetical: `slopp-ui` sat on 0.1.3 for a day while the fix made FOR it
+  shipped in the host at 0.1.4, because the declaration is what loads.
+
+  **Files, not a coord (part 2).** `slopp-web` is never published to a remote,
+  so a coord names something only the machine that ran `slim-install` can
+  resolve: portable in appearance, not in fact.
+
+  Two conditions, each load-bearing in a different direction.
+
+  **USES but does not DEFINE.** slopp's own store CONTAINS `slopp.web.*`, and
+  `src` is the FIRST classpath entry — so vendoring there would shadow the code
+  being edited with the last-shipped copy, and slopp would test its release
+  instead of its working tree.
+
+  **USES, not merely exists.** A store with no web code needs nothing, and
+  writing files into every image would cost every fixture boot for nothing.
+
+  Empty or nil `files` (a checkout, a `clojure -M` run) vendors nothing rather
+  than half a framework."
+  [store files]
+  (let [nses (keys (:namespaces store))
+        web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
+    (when (and (seq files)
+               (not-any? web? nses)
+               (some (fn [n] (some web? (store/ns-require-libs store n))) nses))
+      files)))
+
+(defn ^:export vendor-framework!
+  "Write the framework `store` needs into `dir`/src. Returns the paths written,
+  or nil when the store needs none.
+
+  An image runs with its own dir as cwd and `src` as the FIRST (relative)
+  classpath entry. So vendoring is a file write: no `-Sdeps` entry, no
+  `:local/root`, no repository. `external/build!` writes into the materialized
+  tree the same way, which is why this takes a dir rather than an image.
+
+  **It must happen BEFORE the process starts.** A JVM caches a relative
+  classpath directory that did not exist at launch, so writing into a RUNNING
+  image's dir does nothing — measured while testing this. Every caller creates
+  and fills the dir first, then launches.
+
+  The VERSION STAMP travels with the files. Of the three things a maven coord
+  had over copied source, provenance is the one that survives vendoring, and it
+  only survives if something carries it.
+
+  Deliberately NOT the uberjar on the image classpath, which would be simpler
+  and would destroy the property this rests on: a store's image receives the
+  FRAMEWORK and nothing else, so reaching for `slopp.api` from an app fails to
+  compile there."
+  [store dir]
+  (when-let [files (framework-injection store (boot/framework-files))]
+    (let [written (vec (sort (for [[path src] files]
+                               (let [f (io/file dir "src" path)]
+                                 (io/make-parents f)
+                                 (spit f src)
+                                 path))))]
+      (when-let [v (boot/framework-version)]
+        (let [f (io/file dir "src" boot/framework-version-path)]
+          (io/make-parents f)
+          (spit f v)))
+      written)))
+
+(defn ^:export framework-dir!
+  "The dir to launch `session`'s next image in — one per session, created and
+  filled on demand — or nil when this store needs no framework.
+
+  ONE dir per session rather than one per image, because every image that
+  session boots needs the same files and re-vendoring per boot is work with no
+  answer to give. Cached under `:framework-dir`; the vendor call is idempotent
+  file writes, so a store that GAINS web code mid-session gets it on its next
+  image rather than never.
+
+  This exists because vendoring was wired into session creation alone. Every
+  image after the first — restart, `deps_add`/`deps_remove`, branch switch,
+  `ns_rename`, the D5 staleness heal — booted without the framework, and a store
+  still declaring the coord masked it by resolving from `~/.m2`. The declaration
+  was silently load-bearing for every image but the first, which is exactly what
+  removing it exposed."
+  [session]
+  (when (framework-injection (:store @session) (boot/framework-files))
+    (let [dir (or (:framework-dir @session)
+                  (let [d (str (java.nio.file.Files/createTempDirectory
+                                "slopp-framework"
+                                (make-array java.nio.file.attribute.FileAttribute 0)))]
+                    (swap! session assoc :framework-dir d)
+                    d))]
+      (vendor-framework! (:store @session) dir)
+      dir)))
 
 (defn start-spare!
   "Kick off a background-warming spare image (D5 warm spare) if enabled. The
@@ -29,18 +126,29 @@
     (swap! session assoc :spare (future (repl/start!)))))
 
 (defn image-with-deps!
-  "A ready owned image carrying `deps` (lib→coord) on its classpath: adopt the
-  bare `spare` and hot-`add-libs` the manifest into it, falling back to a fresh
-  launch if the spare can't reconcile; or launch fresh with `:slopp.image.repl/deps`
-  when there is no spare. The caller owns spare bookkeeping (nil-ing +
-  rewarming)."
-  [spare deps]
-  (if spare
-    (let [img @spare]
-      (if (and (seq deps) (:err (repl/add-libs! img deps)))
-        (do (repl/stop! img) (repl/start! {:slopp.image.repl/deps deps}))
-        img))
-    (repl/start! {:slopp.image.repl/deps deps})))
+  "A ready owned image carrying `deps` (lib→coord) on its classpath and, when
+  `dir` is given, launched IN that dir: adopt the bare `spare` and hot-`add-libs`
+  the manifest into it, falling back to a fresh launch if the spare can't
+  reconcile; or launch fresh when there is no spare. The caller owns spare
+  bookkeeping (nil-ing + rewarming).
+
+  **A spare is never adopted when `dir` is given.** The spare was launched in
+  its own dir with nothing vendored, and a JVM cannot pick up a relative
+  classpath directory after launch — so adopting it would hand back an image
+  missing the framework, which surfaces as a missing namespace at first use, far
+  from here. `add-libs!` cannot fix that: the framework is files, not a coord.
+  The spare is stopped rather than leaked."
+  ([spare deps] (image-with-deps! spare deps nil))
+  ([spare deps dir]
+   (let [start! #(repl/start! (cond-> {:slopp.image.repl/deps deps}
+                                dir (assoc :slopp.image.repl/dir dir)))]
+     (if (and spare (nil? dir))
+       (let [img @spare]
+         (if (and (seq deps) (:err (repl/add-libs! img deps)))
+           (do (repl/stop! img) (start!))
+           img))
+       (do (when spare (repl/stop! @spare))
+           (start!))))))
 
 ^:reads
 (defn session-identity
@@ -237,7 +345,12 @@
   on the critical path; the next spare starts warming immediately."
   [session]
   (let [{:keys [image spare store]} @session
-        fresh (image-with-deps! spare (:deps store))]  ; adopt+reconcile or fresh
+        ;; THE fix: every image this session boots gets the framework, not just
+        ;; the first. fresh-image! is on the path of restart, deps_add/remove,
+        ;; branch switch, ns_rename and the D5 staleness heal — all of which
+        ;; used to hand back an image with no framework at all, masked for as
+        ;; long as the store still declared the coord.
+        fresh (image-with-deps! spare (:deps store) (framework-dir! session))]  ; adopt+reconcile or fresh
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)

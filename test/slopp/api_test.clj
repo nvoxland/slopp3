@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.api.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str])
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.api.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.api.session :as session])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -592,16 +592,16 @@
                                        "(defn g \"G.\" [r] (web/handle! r))\n")))
         files {"slopp/web.clj" "(ns slopp.web)"}]
     (testing "a store that USES the framework is given the FILES, not a coord"
-      (is (= files (external/framework-injection uses files))))
+      (is (= files (session/framework-injection uses files))))
     (testing "a store with no web code gets nothing"
-      (is (nil? (external/framework-injection plain files))))
+      (is (nil? (session/framework-injection plain files))))
     (testing "and a store that DEFINES slopp.web gets nothing — vendoring there
               would shadow the very code being edited, since src wins"
-      (is (nil? (external/framework-injection defines files))))
+      (is (nil? (session/framework-injection defines files))))
     (testing "a host that cannot supply the framework (a checkout, a clojure -M
               run) vendors nothing rather than half of it"
-      (is (nil? (external/framework-injection uses nil)))
-      (is (nil? (external/framework-injection uses {}))))))
+      (is (nil? (session/framework-injection uses nil)))
+      (is (nil? (session/framework-injection uses {}))))))
 
 (deftest ^:external build-supplies-the-framework-a-store-no-longer-declares
   ;; The build half of D-framework-injection. Once a store stops declaring
@@ -644,3 +644,56 @@
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
         (api/close! sess)))))
+
+(deftest ^:external a-framework-using-store-survives-a-RESTART
+  ;; The test that would have caught it, and the reason the migration looked
+  ;; safe without it. Vendoring was wired into session creation only, so every
+  ;; image AFTER the first booted without the framework — and `fresh-image!` is
+  ;; on the path of restart, deps_add/deps_remove, branch switch, ns_rename and
+  ;; the D5 staleness heal. Reported from slopp-ui: the session-creation image
+  ;; dir had src/slopp/web/css.clj, and the image the restart booted had an
+  ;; EMPTY src/.
+  ;;
+  ;; It stayed invisible because a store that still declares the coord gets the
+  ;; framework from ~/.m2 regardless. The declaration was silently load-bearing
+  ;; for every image after the first, which is exactly what removing it exposed.
+  ;;
+  ;; A FAKE framework, so this runs from a checkout where boot/framework-files
+  ;; is nil (no jar, no resource). What broke was the plumbing.
+  ;;
+  ;; The web code goes into the session's STORE VALUE rather than through
+  ;; `ingest!`, and that is forced rather than lazy: a store cannot ingest code
+  ;; requiring a framework its current image cannot load, and priming the
+  ;; running image's dir does not help — a JVM caches a relative classpath
+  ;; directory that did not exist at launch. Which is also why vendoring must
+  ;; happen BEFORE the process starts, not after.
+  ;;
+  ;; Measured on the image's DIR, never inferred from a load succeeding: the
+  ;; first cut of this test asserted `load-ns!` returned nil and passed GREEN
+  ;; against code with no vendoring in it at all.
+  (with-redefs [boot/framework-files
+                (constantly {"slopp/web.clj"
+                             "(ns slopp.web)\n(defn handle! \"H.\" [r] r)\n"})]
+    (let [sess (external/open!)
+          vendored? (fn [] (.exists (io/file (:dir (:image @sess))
+                                             "src" "slopp" "web.clj")))]
+      (try
+        (swap! sess update :store store/ingest 'fw.app
+               (str "(ns fw.app (:require [slopp.web :as web]))\n"
+                    "(defn h \"H.\" [r] (web/handle! r))\n"))
+        (testing "the store really does use the framework — otherwise everything
+                  below asserts about a store that needs nothing"
+          (is (contains? (:namespaces (:store @sess)) 'fw.app))
+          (is (some? (session/framework-injection
+                      (:store @sess) (boot/framework-files)))))
+        (testing "a RESTART gives the new image the framework. This is the whole
+                  bug: fresh-image! is on the path of restart, deps changes,
+                  branch switch and the staleness heal, and it vendored nothing"
+          (api/restart! sess)
+          (is (vendored?) "the restarted image booted without the framework")
+          (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
+        (testing "and again — one image is a fluke, two is the property"
+          (api/restart! sess)
+          (is (vendored?))
+          (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
+        (finally (api/close! sess))))))

@@ -145,13 +145,18 @@
   "The `slopp-web` release THIS slopp corresponds to, or nil when the process
   cannot say — a `clojure -M` run, a checkout, the oracle image.
 
-  In the KERNEL because both consumers need it and they cannot share anything
-  higher: `slopp.image.repl` injects it into every owned image's `-Sdeps`, and
-  `slopp.api` reports it. `slopp.image` sits below `slopp.api`, so a shared
-  helper up there would be a backwards dependency.
+  A STAMP, not a maven version: slopp-web is never published, so this says which
+  framework a jar carries and which one a built tree was given, and nothing
+  resolves against it. `api.session/vendor-framework!` writes it beside the
+  vendored files; `slopp.api` reports it as `:framework-drift` while any store
+  still declares the retired coord.
+
+  In the KERNEL because both consumers need it and nothing lower is shared:
+  `slopp.image` sits below `slopp.api`, so a helper up there would be a
+  backwards dependency.
 
   nil is a legitimate answer and every caller must stay silent on it — a
-  checkout has no published identity to inject or to be behind."
+  checkout has no published identity to vendor or to be behind."
   []
   (when-let [r (io/resource framework-version-path)]
     (not-empty (str/trim (slurp r)))))
