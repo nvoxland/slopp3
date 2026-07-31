@@ -116,7 +116,12 @@
         bin-name (or bin-name (capabilities/effective st "app.name"))
         de       (io/file target "deps.edn")
         provided (client-build-deps st)
-        deps     (merge (:deps st) (:runtime provided))
+        ;; `session/image-deps` adds what the VENDORED framework requires — the
+        ;; build path has the identical hole the image did, and for the identical
+        ;; reason: the tree gets slopp/web/** and the pom that used to supply
+        ;; garden/hiccup/cheshire/http-kit is gone. A built app would fail inside
+        ;; slopp.web.css exactly as an image did.
+        deps     (merge (session/image-deps st) (:runtime provided))
 client-deps (merge (:client-deps st) (:client provided))
         has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
@@ -1119,8 +1124,9 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; private dir here is exactly why restart booted without the
           ;; framework at all.
           vdir  (session/framework-dir! session)
-          image (or (when-not vdir (repl/unpark! (:deps store)))
-                    (repl/start! (cond-> {:slopp.image.repl/deps (:deps store)}
+          idm   (session/image-deps store)
+          image (or (when-not vdir (repl/unpark! idm))
+                    (repl/start! (cond-> {:slopp.image.repl/deps idm}
                                    vdir (assoc :slopp.image.repl/dir vdir))))]
       (swap! session assoc :image image)
       (session/start-spare! session)

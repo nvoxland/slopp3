@@ -69,9 +69,15 @@
   image's dir does nothing — measured while testing this. Every caller creates
   and fills the dir first, then launches.
 
-  The VERSION STAMP travels with the files. Of the three things a maven coord
-  had over copied source, provenance is the one that survives vendoring, and it
-  only survives if something carries it.
+  The VERSION STAMP travels with the files, which handles provenance.
+
+  **The files are only half of what a coord carried.** The other half is the
+  DEPS — vendored source still has requires, and the pom was what pulled garden,
+  hiccup, cheshire and http-kit in. That is [[image-deps]]'s job, and it has to
+  be done by every consumer of this fn or the framework lands intact and fails
+  inside itself. An earlier docstring here claimed provenance was the only
+  property needing replacement; it was wrong, and a store went unloadable
+  proving it.
 
   Deliberately NOT the uberjar on the image classpath, which would be simpler
   and would destroy the property this rests on: a store's image receives the
@@ -89,6 +95,22 @@
           (io/make-parents f)
           (spit f v)))
       written)))
+
+(defn ^:export image-deps
+  "The dep map an image for `store` should carry: the store's own manifest plus
+  what the vendored framework requires.
+
+  Vendoring hands over SOURCE, and source has requires. `slopp.web.css` needs
+  garden, `slopp.web.html` needs hiccup, the servers need cheshire and http-kit
+  — all of which used to arrive transitively through the coord's pom, and all of
+  which vanished with it. The files landed and then failed inside themselves.
+
+  Merged UNDER the store's manifest, not over it: an app pinning its own hiccup
+  keeps it. slopp supplies what the framework needs, never what the app chose."
+  [store]
+  (if (framework-injection store (boot/framework-files))
+    (merge (boot/framework-deps) (:deps store))
+    (:deps store)))
 
 (defn ^:export framework-dir!
   "The dir to launch `session`'s next image in — one per session, created and
@@ -350,7 +372,7 @@
         ;; branch switch, ns_rename and the D5 staleness heal — all of which
         ;; used to hand back an image with no framework at all, masked for as
         ;; long as the store still declared the coord.
-        fresh (image-with-deps! spare (:deps store) (framework-dir! session))]  ; adopt+reconcile or fresh
+        fresh (image-with-deps! spare (image-deps store) (framework-dir! session))]  ; adopt+reconcile or fresh
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)

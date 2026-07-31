@@ -639,61 +639,70 @@
         (testing "and it is never a COORD — that would resolve only where
                   slim-install has run"
           (is (nil? (get-in d [:deps 'io.github.nvoxland/slopp-web]))
-              (pr-str (:deps d)))))
+              (pr-str (:deps d))))
+        (testing "but what the framework itself REQUIRES is declared, or the app
+                  ships source it cannot load — the build path has the same hole
+                  the image had, found by slopp-ui removing the coord"
+          (when (boot/framework-files)
+            (doseq [[lib _] (boot/framework-deps)]
+              (is (contains? (:deps d) lib)
+                  (str lib " missing from the built deps: " (pr-str (:deps d))))))))
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
         (api/close! sess)))))
 
 (deftest ^:external a-framework-using-store-survives-a-RESTART
-  ;; The test that would have caught it, and the reason the migration looked
-  ;; safe without it. Vendoring was wired into session creation only, so every
-  ;; image AFTER the first booted without the framework — and `fresh-image!` is
-  ;; on the path of restart, deps_add/deps_remove, branch switch, ns_rename and
-  ;; the D5 staleness heal. Reported from slopp-ui: the session-creation image
-  ;; dir had src/slopp/web/css.clj, and the image the restart booted had an
-  ;; EMPTY src/.
+  ;; Two bugs, one test, and the second was invisible to the first version of it.
   ;;
-  ;; It stayed invisible because a store that still declares the coord gets the
-  ;; framework from ~/.m2 regardless. The declaration was silently load-bearing
-  ;; for every image after the first, which is exactly what removing it exposed.
+  ;; (1) Vendoring was wired into session creation alone, so every image AFTER
+  ;; the first booted with an empty src/ — and `fresh-image!` is on the path of
+  ;; restart, deps_add/deps_remove, branch switch, ns_rename and the D5
+  ;; staleness heal.
   ;;
-  ;; A FAKE framework, so this runs from a checkout where boot/framework-files
-  ;; is nil (no jar, no resource). What broke was the plumbing.
+  ;; (2) Vendoring copies SOURCE and discards the pom. The framework's own
+  ;; requires — garden, hiccup, cheshire, http-kit — came from that pom, so the
+  ;; files landed correctly and then failed INSIDE them. Reported from slopp-ui:
+  ;; "Could not locate garden/core.clj", raised at slopp.web.css.
   ;;
-  ;; The web code goes into the session's STORE VALUE rather than through
-  ;; `ingest!`, and that is forced rather than lazy: a store cannot ingest code
-  ;; requiring a framework its current image cannot load, and priming the
-  ;; running image's dir does not help — a JVM caches a relative classpath
-  ;; directory that did not exist at launch. Which is also why vendoring must
-  ;; happen BEFORE the process starts, not after.
+  ;; Both stayed invisible because a store still declaring the coord got source
+  ;; AND deps from ~/.m2 regardless.
   ;;
-  ;; Measured on the image's DIR, never inferred from a load succeeding: the
-  ;; first cut of this test asserted `load-ns!` returned nil and passed GREEN
-  ;; against code with no vendoring in it at all.
-  (with-redefs [boot/framework-files
-                (constantly {"slopp/web.clj"
-                             "(ns slopp.web)\n(defn handle! \"H.\" [r] r)\n"})]
-    (let [sess (external/open!)
-          vendored? (fn [] (.exists (io/file (:dir (:image @sess))
-                                             "src" "slopp" "web.clj")))]
-      (try
-        (swap! sess update :store store/ingest 'fw.app
-               (str "(ns fw.app (:require [slopp.web :as web]))\n"
-                    "(defn h \"H.\" [r] (web/handle! r))\n"))
-        (testing "the store really does use the framework — otherwise everything
-                  below asserts about a store that needs nothing"
-          (is (contains? (:namespaces (:store @sess)) 'fw.app))
-          (is (some? (session/framework-injection
-                      (:store @sess) (boot/framework-files)))))
-        (testing "a RESTART gives the new image the framework. This is the whole
-                  bug: fresh-image! is on the path of restart, deps changes,
-                  branch switch and the staleness heal, and it vendored nothing"
-          (api/restart! sess)
-          (is (vendored?) "the restarted image booted without the framework")
-          (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
-        (testing "and again — one image is a fluke, two is the property"
-          (api/restart! sess)
-          (is (vendored?))
-          (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
-        (finally (api/close! sess))))))
+  ;; So the fake framework REQUIRES something external, and the assertion is
+  ;; that the store LOADS. slopp-ui's correction, and it is the whole point: the
+  ;; "resolves from the image dir, no ~/.m2" property was fully satisfied at the
+  ;; moment their store was unloadable. Where a file comes from is not whether
+  ;; the framework works. An earlier cut of this test used a dependency-free
+  ;; fake and passed green against exactly bug (2).
+  (let [fake-web (str "(ns slopp.web (:require [garden.core :as garden]))\n"
+                      "(defn handle! \"H.\" [r] (garden/css [:a {:x 1}]) r)\n")]
+    (with-redefs [boot/framework-files (constantly {"slopp/web.clj" fake-web})
+                  boot/framework-deps  (constantly '{garden/garden {:mvn/version "1.3.10"}})]
+      (let [sess (external/open!)
+            vendored? (fn [] (.exists (io/file (:dir (:image @sess))
+                                               "src" "slopp" "web.clj")))]
+        (try
+          ;; into the store VALUE: a store cannot ingest code requiring a
+          ;; framework its current image cannot load, and priming a RUNNING
+          ;; image's dir does nothing — a JVM caches a relative classpath dir
+          ;; that did not exist at launch. Which is also why vendoring has to
+          ;; precede process start.
+          (swap! sess update :store store/ingest 'fw.app
+                 (str "(ns fw.app (:require [slopp.web :as web]))\n"
+                      "(defn h \"H.\" [r] (web/handle! r))\n"))
+          (testing "the store really does use the framework"
+            (is (some? (session/framework-injection
+                        (:store @sess) (boot/framework-files)))))
+          (testing "a RESTART gives the new image the framework AND what the
+                    framework itself requires — the store LOADS, which is the
+                    property; the file being present is not"
+            (api/restart! sess)
+            (is (vendored?) "the restarted image booted without the framework")
+            (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))
+                "loading is the real property — a vendored file that cannot
+                 resolve its own requires is a dead store"))
+          (testing "and again — one image is a fluke, two is the property"
+            (api/restart! sess)
+            (is (vendored?))
+            (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
+          (finally (api/close! sess)))))))
