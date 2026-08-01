@@ -2950,7 +2950,9 @@ the endpoint so its var metadata is re-evaluated → regenerate the consumer's
 client → restart its image → validate live. It held (10 nodes, 4 foundation,
 17 edges through the hub's proxy).
 
-**`slopp.ui` is renamed `slopp.review`.** A module called `slopp.ui` that
+**`slopp.ui` is renamed `slopp.review`.** (Superseded 2026-08-01: renamed
+again to `slopp.ui-api` — see D-ui-api-distinct below. `review` collided with
+`slopp.api.review`, which is review_scan.) A module called `slopp.ui` that
 serves no UI is a lie. Eleven namespaces moved by `rename_sweep`; `ui.pages`
 became `review.reads`, because what it holds is read performers and it had not
 served a page since the route forms left.
@@ -3253,3 +3255,61 @@ a second store grows tooling endpoints it does not want counted as its app.
 `slopp.web-test/reader-contract` — was only ever HOUSED in the transport. It
 moved to `api.web/store-reader` with its contract run, because it is the
 pattern the dev server will need for `http.static.*` mounts.
+
+### D-ui-api-distinct (2026-08-01, user decision) — the API that feeds slopp-ui is `slopp.ui-api`
+
+Two naming corrections, both resolving collisions this repo made itself.
+
+**"The dev server" was two things.** `DEV.md` used it for the MCP server —
+slopp's own development surface. Since the framework-managed app server
+landed it also meant the thing that serves a USER'S app, which mcp is what
+STARTS. One of them serves your code and the other serves you, and the
+sentence "you will get a dev server you did not ask for" pointed at the wrong
+one.
+
+Resolved by user decision: **slopp's own surface is called "mcp"**, which is
+what it is called everywhere else anyway. "The dev server" keeps the meaning
+web developers already expect — the thing serving an app under development —
+so `slopp.api.devserver` and the `dev.server` capability stay as they are.
+
+**`review` was two things.** `slopp.api.review` is `review_scan`, risk triage
+over the store. `slopp.review.*` was the HTTP API slopp-ui consumes: a
+different concern, a different module, its own layer.
+
+That collision was manufactured by an earlier fix. The module was
+`slopp.ui`, renamed to `slopp.review` (D-ui-hub part 5) on the correct
+objection that a module named for a UI it no longer contains is a claim a
+reader trusts. True — but the replacement landed on a word `slopp.api.review`
+already owned.
+
+**`slopp.ui-api` is what that rename was reaching for**: not the UI, the API
+*for* it. Six namespaces plus their tests:
+
+    slopp.review.api        → slopp.ui-api.endpoints
+    slopp.review.reads      → slopp.ui-api.reads
+    slopp.review.model      → slopp.ui-api.model
+    slopp.review.contracts  → slopp.ui-api.contracts
+    slopp.review.server     → slopp.ui-api.server
+    slopp.review.heartbeat  → slopp.ui-api.heartbeat
+
+`.api` became `.endpoints` because `slopp.ui-api.api` stutters, and endpoints
+is what the namespace holds — one fn per route. `slopp.api.review` is
+untouched; that one is genuinely review.
+
+**What `ns_rename` does not carry, recorded because the next rename will hit
+it too.** The tool rewrites declarations, requires, qualified refs and even
+quoted symbols (`served-namespaces` came through correctly). It reports
+everything else as `:left-behind`, and three kinds needed hands:
+
+- **A module-scoped export.** `api.modules/production-manifest` carried
+  `^{:export "slopp.review"}` — a string naming a module. After the rename
+  that granted visibility to a module that did not exist. Nothing failed; the
+  export simply stopped meaning anything.
+- **A manifest FIXTURE.** `api.modules-test/slopp-production` asserts slopp's
+  real module graph as strings.
+- **Prose.** `rename_sweep` handles this in one verified group, and it must be
+  previewed: six of its twenty-four hits were HISTORICAL — incident records
+  naming namespaces that really were called `slopp.review.views` /
+  `slopp.review.pages`, and references to the hub, which is slopp-ui's project
+  and never had a name in this store. Sweeping those forward invents history.
+  They were repaired immediately after.
