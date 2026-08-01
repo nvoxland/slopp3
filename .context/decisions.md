@@ -3313,3 +3313,52 @@ everything else as `:left-behind`, and three kinds needed hands:
   `slopp.review.pages`, and references to the hub, which is slopp-ui's project
   and never had a name in this store. Sweeping those forward invents history.
   They were repaired immediately after.
+
+### D-web-context (2026-08-01) — the app declares its perform-ctx with a marker, and a gate enforces it
+
+The managed app server WRITES the `serve!` call, so it has to know how to
+build `:web/perform-ctx` — the map a handler receives as `:web/deps` and every
+performer receives as its first argument. That map is app-specific by
+definition (a registry, a pool, a connection), so the app must say.
+
+**A marker (`^{:web/context true}` on a zero-arg fn), not a capability naming
+a qualified symbol.** The reason is the gate, and it is the whole reason:
+with the declaration in the store, both halves are visible statically — the
+handlers that read `:web/deps`, and whether anything claims to build it — so
+"this store reads deps and declares no builder" refuses at the WRITE. A
+capability is a string in config, checkable for resolvability at boot at the
+earliest, which is after the browser has already seen the 500. It also splits
+the declaration from the thing declared.
+
+**A SINGLETON**, unlike performers, which are keyed by kind because there are
+many. Two declarations is a refusal rather than a pick: choosing silently is
+how an app runs on deps it did not mean, surfacing as a missing key three
+layers away.
+
+**It cannot be a performer**, and the idea is circular rather than merely
+wrong — performers already RECEIVE the perform-ctx, so the context is strictly
+upstream of that vocabulary. Recorded because it is the obvious suggestion.
+
+The gate is `web-undeclared-context`, refuse-grade, the sibling of
+`web-undeclared-effect`: an effect kind needs a marked performer, the context
+needs a marked builder. Two scoping choices, both deliberate:
+
+- **`:web/path` endpoints only**, not every form naming the keyword. slopp's
+  own `slopp.web.dispatch/handle!` assigns `:web/deps` onto the request; a
+  keyword-anywhere gate would refuse writes to the framework's own dispatcher.
+- **Armed by `http.enabled`, not by `dev.server`.** Whether a handler's deps
+  have a declared source is a property of the APP, not of who runs it, and
+  `dev.server` is a dev-lifecycle knob. The consequence is intended: an app
+  that runs its own `serve!` and builds its own context is asked to mark the
+  builder it already has and call it, because two definitions of one store's
+  context agree right up until one gains a key.
+
+**What is NOT decided: what a refresh means for state the builder allocates.**
+Today there is no continuity at all — `refresh!` boots a fresh image at every
+done point, so the builder runs again and its atoms are new. That is
+documented rather than fixed. If hot-loading a refresh into the RUNNING image
+is built, the contract has to be settled BEFORE it ships, since apps get
+written against whichever is true when they are written, and changing it later
+breaks them in the direction of state that unexpectedly persists — harder to
+notice than state that vanishes. See
+`ideas/how-slopp-learns-the-apps-perform-ctx.md`.

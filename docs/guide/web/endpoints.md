@@ -141,6 +141,7 @@ like any other [rule](../verification.md#rules).
 | `web-endpoint-schema` | A missing `:web/response`, or `:web/request` on a body method. |
 | `web-route-collision` | A second owner for one method plus path. |
 | `web-undeclared-effect` | A `:web/effects` kind no marked performer provides. |
+| `web-undeclared-context` | A handler reading `:web/deps` with no `^{:web/context true}` builder in the store -- see [Running the app](running.md). |
 | `web-unsafe-get` | A `:get`/`:head` endpoint that declares effects or reaches a mutation. |
 | `web-unknown-group` | A `[:group "x"]` policy naming a group the capabilities config does not define. |
 | `web-react-attrs` | `:className`, `:onClick` and friends in hiccup -- see [HTML and CSS](html.md). |

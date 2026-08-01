@@ -19,9 +19,16 @@ project's HTTP surface.
 
 Handlers that take `:web/deps` are fine, provided you say how to build them:
 mark one zero-arg function `^{:web/context true}` and slopp calls it, passing
-the result as `:web/perform-ctx`. Exactly one per store. Note that the context
-does **not** survive a refresh -- every `done` boots a fresh app image, so
-anything the builder allocates is new each time. Keep live state elsewhere.
+the result as `:web/perform-ctx`. Exactly one per store, and slopp holds you to
+it -- writing an endpoint that reads `:web/deps` into a store that declares no
+builder is refused at the write, because nil dependencies either return a 500
+or, worse, answer 200 with an empty body.
+
+Note that the context does **not** survive a refresh -- every `done` boots a
+fresh app image, so anything the builder allocates is new each time. Keep live
+state elsewhere. A builder returning `{:registry (atom {})}` allocates a new
+atom on every call; only a top-level `defonce` that the builder *references*
+has any chance of outliving a reload.
 
 Everything the launch needs is derived from the store -- which namespaces to
 scan, the host, the port -- so there is no hand-kept list that can disagree

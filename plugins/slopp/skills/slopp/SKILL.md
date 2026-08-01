@@ -500,17 +500,28 @@ are derived from the store, so they cannot disagree with the gates.
 - **something else already serves this project's HTTP surface** — a managed
   server would then be a second, staler copy of what you are looking at.
 
-**Handlers taking `:web/deps` DO work — declare the builder.** Mark one
-zero-arg fn `^{:web/context true}` and slopp calls it and passes the result as
-`:web/perform-ctx`; handlers receive it as `:web/deps`, performers as their
-first argument. Exactly one per store (it is a singleton, unlike performers,
-which are keyed by kind). It cannot be a performer — performers already
-RECEIVE the context, so it is upstream of that vocabulary.
+**Handlers taking `:web/deps` DO work — declare the builder, and slopp
+insists.** Mark one zero-arg fn `^{:web/context true}`; slopp calls it and
+passes the result as `:web/perform-ctx`, handlers receive it as `:web/deps`,
+performers as their first argument. Exactly one per store (a singleton, unlike
+performers, which are keyed by kind). It cannot be a performer — performers
+already RECEIVE the context, so it is upstream of that vocabulary. Writing an
+endpoint that reads `:web/deps` into a store that declares no builder is
+REFUSED (`web-undeclared-context`): nil deps either 500 or, worse, answer 200
+with an empty body, and `generate_client` consumes the empty one as a success.
+An app that runs its OWN `serve!` should mark the builder it already has and
+call it — two definitions of one store's context agree right up until one
+gains a key.
 
 **But the context does NOT survive a refresh.** Each `done` boots a fresh app
 image, so the builder runs again and anything it allocated — an atom, a pool,
 a cache — is new. An app accumulating state there will find it silently empty
-after any done point. Keep live state outside the context, or opt out.
+after any done point. Keep live state outside the context, or opt out. Note
+what that means for the obvious workaround: a builder returning `{:registry
+(atom {})}` allocates per CALL, so only a top-level `(defonce registry (atom
+{}))` the builder REFERENCES could survive anything. That is deliberately the
+shape `ambient-state` flags — advisory, with "a legit top-level cache" as its
+named escape, and this is one of them.
 
 Where it does apply, three things worth knowing:
 
