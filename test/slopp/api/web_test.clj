@@ -506,3 +506,47 @@
     (testing "and an unmarked form in the same namespace is still reported, so
               the marker discharges one form rather than switching the check off"
       (is (some #(= 'spa.ui/plain (:form %)) refs) (pr-str refs)))))
+
+(deftest serving-namespaces-derive-from-the-store-not-a-hand-kept-list
+  ;; `:web/namespaces` is the one REQUIRED opt on serve!, and `web/context`'s
+  ;; own docstring warns that "a :web/namespaces list missing half the app
+  ;; assembles happily and answers". A hand-kept list of what to serve IS
+  ;; that defect, held by every app. The store already knows: endpoint rows
+  ;; carry :ns, and the performer vocabularies carry qualified syms.
+  (let [api   (str "(ns shop.api)\n\n"
+                   "(defn ^{:web/method :get :web/path \"/api/users/:id\"\n"
+                   "        :web/auth :authenticated\n"
+                   "        :web/reads {:user [:user/by-id [:path-params :id]]}\n"
+                   "        :malli/schema [:=> [:cat :map] :map]\n"
+                   "        :web/response :map} get-user \"U.\" [req] req)\n")
+        ;; the performer lives in ANOTHER namespace — this is the one a hand
+        ;; list forgets, and omitting it is not a quiet degradation: context
+        ;; throws :web/missing-performers because the route above promises a
+        ;; read nothing listed can serve.
+        data  (str "(ns shop.data)\n\n"
+                   "(defn ^{:web/read :user/by-id} user-by-id \"R.\" [ctx id] id)\n"
+                   "(defn ^{:web/effect :user/insert} insert! \"I.\" [ctx row] row)\n")
+        ui    (str "(ns shop.ui)\n\n"
+                   "(defn ^{:web/method :get :web/path \"/users\"\n"
+                   "        :web/response :hiccup} users-page \"P.\" [req] [:div])\n")
+        plain (str "(ns shop.util)\n\n(defn helper \"H.\" [x] x)\n")
+        fixt  (str "(ns shop.api-test)\n\n"
+                   "(defn ^{:web/method :get :web/path \"/fixture\"} fx \"F.\" [req] req)\n")
+        s     (-> (store/empty-store)
+                  (store/ingest 'shop.api api)
+                  (store/ingest 'shop.data data)
+                  (store/ingest 'shop.ui ui)
+                  (store/ingest 'shop.util plain)
+                  (store/ingest 'shop.api-test fixt))]
+    (testing "every namespace carrying route or performer surface, and no other"
+      (is (= ['shop.api 'shop.data 'shop.ui] (web/serving-namespaces s))))
+    (testing "sorted, so a build's emitted main is byte-stable across runs"
+      (is (= (sort (web/serving-namespaces s)) (web/serving-namespaces s))))
+    (testing "a namespace with no web surface is not served"
+      (is (not (some #{'shop.util} (web/serving-namespaces s)))))
+    (testing "a -test namespace's endpoint-shaped form is a fixture, not surface"
+      ;; the same rule routes-report already applies; serving it would mount
+      ;; a test's fake endpoint on the real app
+      (is (not (some #{'shop.api-test} (web/serving-namespaces s)))))
+    (testing "a store with no web surface serves nothing, rather than erroring"
+      (is (= [] (web/serving-namespaces (store/empty-store)))))))

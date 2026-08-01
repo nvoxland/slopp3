@@ -1,4 +1,20 @@
 (ns slopp.api.capabilities
+  "The capability REGISTRY and the readers for it — what a store may declare
+  about itself, and what those declarations currently say.
+
+  Capabilities are the store's own configuration surface (`http.enabled`,
+  `http.port`, the `auth.*` and `http.static.*` families): typed, defaulted,
+  documented in one table, and written only through a gate that validates
+  against it. `config_file` refuses an unregistered key, which is what keeps
+  this a vocabulary rather than a bag.
+
+  **This namespace is the only place that knows where values live.**
+  `effective` parses per the registry type and falls back to the default so a
+  registered key never nil-puns; `stored?` answers the question `effective`
+  deliberately erases, whether a value was actually SET. Both are exported
+  for the same reason: a consumer reaching into
+  `[:config \"capabilities\" :values]` itself would be a second place that
+  knows the shape, and would skip the parsing and the defaults on the way."
   (:require [clojure.string :as str]))
 
 (def registry
@@ -142,6 +158,24 @@
       (nil? entry) nil
       (and v (nil? (check-value entry v))) (parse entry v)
       :else (:default entry))))
+
+(defn ^:export stored?
+  "Whether capability `k` was explicitly SET in this store, as opposed to
+  carrying its registry default.
+
+  `effective` deliberately erases that distinction so a registered key never
+  nil-puns. Some callers need it back: the dev server binds an explicitly
+  pinned `http.port` but DERIVES one when nobody pinned it, because a fixed
+  default collides between two projects on one machine (the reasoning
+  `review.server/derived-port` records). \"8080\" typed by hand and 8080
+  arriving from the registry have to be told apart to do that.
+
+  Exported for the same reason `effective` is: the config path is this
+  namespace's business, and a consumer reaching into
+  `[:config \"capabilities\" :values]` to answer this would be the second
+  place that knows where values live."
+  [store k]
+  (some? (get-in store [:config "capabilities" :values (str k)])))
 
 (defn config-refusal
   "The `capabilities` config write gate: a teaching error for an unknown

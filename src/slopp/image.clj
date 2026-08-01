@@ -6,31 +6,29 @@
             [slopp.image.repl :as repl]
             [slopp.store :as store] [slopp.rt :as rt] [slopp.image.currency :as currency] [rewrite-clj.node :as n]))
 
-(defn load-ns!
-  "Evaluate `ns-sym`'s current source (rendered from the store) into the image,
-  then mark it in `*loaded-libs*` — store namespaces have no classpath presence
-  (C1 no-disk), so without the mark a later `(:require ns-sym)` from another
-  store namespace would hit the classpath and fail.
+(defn load-ns-into!
+  "Evaluate `ns-sym`'s current source (rendered from the store) into `handle`
+  and mark it in `*loaded-libs*`. Returns the compile error, or nil.
 
-  A :cljs namespace is ClojureScript-only (references js/…, the DOM) and is
-  NEVER loaded into the JVM oracle — load-ns! skips it and returns nil (a no-op,
-  not an error), so every dependency-order loader excludes it for free
-  (D-web-cljs). :jvm and :cljc load as usual (the latter's :clj branch).
+  The LOADING half of `load-ns!`, without the currency stamp — for an image
+  that is not the oracle.
 
-  Stamps every form it loaded (`slopp.image.currency`), the whole-namespace
-  counterpart to `hot-load-form!`'s per-form stamp. Only on success: a
-  namespace that failed to compile is not in the image.
+  `slopp.image.currency` is a single process-global registry answering \"does
+  the image hold this form's current source\", and the image it means is THE
+  oracle. `api.devserver` boots a second image on purpose (the oracle is
+  cycled by ordinary editing, so it cannot host a running app), and stamping
+  that image's loads would file them as the oracle's: every currency surface
+  would then report forms as current in a process that never saw them.
 
-  There are THREE doors, not two. This one, `hot-load-form!`, and `api/ingest!`
-  — which renders and calls `repl/load-checked!` itself rather than coming
-  through here. This docstring used to say \"those two are the only doors\",
-  which is how ingest went unstamped: an enumeration that reads as complete
-  stops anyone counting. Every ingested namespace therefore reported as
-  `:never-loaded` for the life of the session, and nothing derived from one
-  could be judged stale at all.
+  So the stamp is not incidental to loading, and neither is skipping it. If
+  the registry ever becomes per-image, these two collapse back into one
+  function and this docstring should go with them.
 
-  A door that does not stamp reports its whole namespace as never-loaded, so
-  if you add a fourth, stamp there too."
+  Marks `*loaded-libs*` for the same reason `load-ns!` does: store
+  namespaces have no classpath presence, so without it a later `:require`
+  from another store namespace hits the classpath and fails.
+
+  Skips a `:cljs` namespace (never loadable into a JVM) and returns nil."
   [handle store ns-sym]
   (when (store/jvm-loadable? store ns-sym)
     (let [res (repl/load-checked! handle
@@ -39,10 +37,41 @@
       (repl/eval! handle
                   (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
                           ns-sym))
-      (when-not (:err res)
+      (:err res))))
+
+(defn load-ns!
+  "Evaluate `ns-sym`'s current source into THE ORACLE and stamp it.
+
+  `load-ns-into!` does the loading; this adds the `slopp.image.currency`
+  stamp, which is the only difference and is oracle-specific — the registry
+  is one process-global record of what the oracle holds. Use `load-ns-into!`
+  for any other image.
+
+  Stamps every form it loaded, the whole-namespace counterpart to
+  `hot-load-form!`'s per-form stamp. Only on success: a namespace that failed
+  to compile is not in the image. The `jvm-loadable?` guard is kept HERE as
+  well as inside `load-ns-into!` — without it a skipped `:cljs` namespace
+  would come back nil, read as success, and stamp forms the image never saw.
+
+  There are THREE doors, not two. This one, `hot-load-form!`, and
+  `api/ingest!` — which renders and calls `repl/load-checked!` itself rather
+  than coming through here. This docstring used to say \"those two are the
+  only doors\", which is how ingest went unstamped: an enumeration that reads
+  as complete stops anyone counting. Every ingested namespace therefore
+  reported as `:never-loaded` for the life of the session, and nothing
+  derived from one could be judged stale at all.
+
+  A door into the ORACLE that does not stamp reports its whole namespace as
+  never-loaded, so if you add a fourth, stamp there too. A door into another
+  image must NOT stamp — that is `load-ns-into!`, and the distinction is the
+  image, not the caller's convenience."
+  [handle store ns-sym]
+  (when (store/jvm-loadable? store ns-sym)
+    (let [err (load-ns-into! handle store ns-sym)]
+      (when-not err
         (doseq [e (store/elements store ns-sym)]
           (currency/stamp! (:id e) (n/string (:node e)))))
-      (:err res))))
+      err)))
 
 ^:reads (defn test-run
   "Run `ns-sym`'s clojure.test tests in the live image; returns the summary map

@@ -296,3 +296,39 @@
            :let  [sx (try (n/sexpr (:node e)) (catch Exception _ nil))]
            :when sx]
        [(symbol (str nsx) (str (:name e))) (request-literals sx)]))))
+
+(defn serving-namespaces
+  "Every namespace that must be scanned to serve this store's web surface —
+  the derived answer to `serve!`'s `:web/namespaces`, sorted.
+
+  The union of two things the store already knows: the namespaces owning
+  endpoint rows (`endpoints`), and the namespaces of the performer vars
+  behind the effect/read vocabularies (`performers`). `-test` namespaces are
+  excluded on both sides, the same rule `routes-report` applies — a test's
+  endpoint-shaped form is a fixture, and serving it would mount a fake
+  endpoint on the real app.
+
+  Why derived rather than declared: `:web/namespaces` is the one REQUIRED
+  opt on `serve!`, and `web/context`'s own docstring warns that \"a
+  `:web/namespaces` list missing half the app assembles happily and
+  answers\". A hand-kept list of what to serve IS that defect, held by every
+  app that serves. The forgettable entry is a PERFORMER-only namespace: a
+  route promising `:web/reads {:user [:user/by-id …]}` whose performer lives
+  next door assembles into a context that throws `:web/missing-performers`,
+  and the list is the only place that could have been wrong.
+
+  Store-side on purpose. `slopp.web` requires nothing but `slopp.web.*` and
+  must stay that way — it is what gets vendored into an app. So this is
+  computed HERE and handed to the framework as data: directly by the dev
+  server, and baked into the main `build!` emits."
+  [store]
+  (->> (concat (map :ns (endpoints store))
+               (->> [:web/effect :web/read]
+                    (mapcat #(vals (performers store %)))
+                    (keep namespace)
+                    (map symbol)))
+       (remove nil?)
+       (remove #(str/ends-with? (str %) "-test"))
+       distinct
+       sort
+       vec))
