@@ -774,17 +774,28 @@
      r)))
 
 ^:unsafe (defn refresh-app!
-  "Re-serve this project's app on the CURRENT store, or nil when slopp does
-  not run this store's server. NEVER throws.
+  "Re-serve this project's app on the CURRENT store, or stop a managed server
+  the store has opted out of. nil when there is nothing to do. NEVER throws.
 
   Called at each `done` point, which is the grain the whole feature is built
   around: mid-episode the store is intentionally incomplete, and a browser
   reloading into a half-written red state teaches the author to ignore it.
 
+  **Opting out is an ACTION, not the absence of one.** The first cut gated on
+  `managed?` and returned, which stops RE-SERVING and never stops SERVING —
+  so after `dev.server false` the old image kept answering and
+  `session_brief` kept advertising its url, while the config said no managed
+  server existed. Found by slopp-ui, who checked the surface against the
+  config rather than against the page.
+
   **The same gate as `start-app!`, and that is not redundancy.** A gate on
-  the startup path only would let the SECOND done point start what the first
+  the startup path only would let the second done point start what the first
   one declined to — the feature would arrive by accident, in a test run,
   minutes after everything looked fine.
+
+  A store that was never managed and has nothing running reports NOTHING, not
+  even a failure. Most stores are not web projects, and a line at every done
+  point saying so is how a report stops being read.
 
   `locking` because two done points close together would otherwise both boot,
   both stop the same predecessor, and race for the port. They queue instead,
@@ -792,11 +803,18 @@
   at its own speed."
   [session]
   (let [dir (:dir @session)]
-    (when (and dir (devserver/managed? (:store @session)))
+    (if (and dir (devserver/managed? (:store @session)))
       (locking session
         (try (devserver/refresh! session (:store @session) dir)
              (catch Throwable t
-               {:serving? false :reason (or (.getMessage t) (str t))}))))))
+               {:serving? false :reason (or (.getMessage t) (str t))})))
+      (when-let [running (:app-server @session)]
+        (locking session
+          (try (devserver/stop! running) (catch Throwable _))
+          (swap! session dissoc :app-server))
+        {:serving? false
+         :reason (str "dev.server is false for this store — the managed app"
+                      " server was stopped")}))))
 
 (defn- call-tool! [session {:keys [name arguments]}]
   ;; async-image boot: the store loaded synchronously (this dispatch is live),

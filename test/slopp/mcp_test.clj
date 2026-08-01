@@ -1834,3 +1834,39 @@
       ;; the same predicate at both call sites: a gate that guards the start
       ;; and not the refresh is a gate that opens on the second done
       (is (nil? (mcp/refresh-app! plain))))))
+
+(deftest opting-out-stops-a-server-that-is-already-running
+  ;; Measured by slopp-ui, 2026-08-01: after `config_file dev.server false`
+  ;; (verified `:effective false`), `session_brief` still reported
+  ;; `:app http://127.0.0.1:51614/` and the url still answered. The config
+  ;; said the managed server did not exist and the surface advertised it
+  ;; anyway.
+  ;;
+  ;; The cause is that the gate guarded the wrong verb: `refresh-app!`
+  ;; checked `managed?` and returned, which stops RE-SERVING and never stops
+  ;; SERVING. Opting out of a running thing has to be an action, not the
+  ;; absence of one.
+  (let [put  (fn [st k v] (first (store/record-config-put st "capabilities"
+                                                          :manifest k v)))
+        off  (-> (store/empty-store)
+                 (put "http.enabled" "true")
+                 (put "dev.server" "false"))
+        ;; no :image on the handle — devserver/stop! tolerates a handle with
+        ;; no process, which is what keeps this test in-image instead of
+        ;; costing a JVM to assert bookkeeping
+        sess (atom {:store off :dir "/tmp/slopp-no-such-dir"
+                    :app-server {:serving? true :url "http://127.0.0.1:51614/"}})
+        r    (mcp/refresh-app! sess)]
+    (testing "the running server is stopped and the session stops carrying it"
+      ;; session_brief reads :app off this key, so a stale one IS the wrong
+      ;; url being advertised
+      (is (nil? (:app-server @sess))))
+    (testing "and it SAYS so, because a silent stop reads as 'this project
+              never had a managed server'"
+      (is (false? (:serving? r)))
+      (is (re-find #"dev\.server" (str (:reason r))) (pr-str r)))
+    (testing "a store that was never managed and has nothing running stays
+              silent — most stores are not web projects, and a line at every
+              done point saying so is how a report stops being read"
+      (is (nil? (mcp/refresh-app! (atom {:store (store/empty-store)
+                                         :dir "/tmp/slopp-no-such-dir"})))))))
