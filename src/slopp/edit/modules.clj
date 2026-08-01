@@ -1001,7 +1001,32 @@
 
   Scoped to `:web/path` ENDPOINTS, not to every form naming the keyword: the
   framework's own dispatcher assigns `:web/deps` onto the request, and gating
-  that would refuse writes to slopp's `slopp.web.dispatch/handle!`."
+  that would refuse writes to slopp's `slopp.web.dispatch/handle!`.
+
+  **The teaching is three clauses and stops** — what, the consequence, and the
+  fix as a LITERAL FORM. A cold read (slopp-ui, hitting this unprepared and
+  deliberately not opening the SKILL first) reported the literal form as the
+  decisive part: the marker spelling, the arity, `defn`-not-`def` and the
+  return shape all come off it at once, so no step sends the reader looking.
+  Two clauses were CUT on that evidence and should not come back:
+
+  - **\"it cannot be a performer\"** — the right sentence in the wrong room. It
+    answers a DESIGN question to a reader in fix-it mode who has already been
+    handed the form, and it is the only clause that requires knowing what a
+    performer is. It lives in `slopp.api.web/context-builder`'s docstring and
+    the SKILL, where someone deciding meets it.
+  - **the lifecycle framed around done points and the managed server** — this
+    gate fires on any `http.enabled` store, including one with `dev.server`
+    false where no managed server boots at all. Told to that reader it
+    asserts a behaviour that does not happen to them: a general truth
+    delivered in this store's voice, which is Core 9 one notch down. What is
+    left says the same thing unconditionally — anything the builder allocates
+    is new each time it RUNS.
+
+  The lifecycle clause STAYS, though, and the test is why: it changes what
+  someone writes rather than what they understand. The obvious builder is
+  whatever the app's own `serve!` already constructs, moved — which is exactly
+  the shape that silently empties."
   [candidate ns-sym form-name]
   (when (web-enabled? candidate)
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
@@ -1015,12 +1040,8 @@
                  " no context builder — so the map would arrive nil, which either"
                  " 500s or, worse, answers 200 with an empty body. Declare exactly"
                  " ONE zero-arg builder: (defn ^{:web/context true} app-context []"
-                 " {…}). It cannot be a performer — performers already RECEIVE the"
-                 " context as their first argument, so it is upstream of that"
-                 " vocabulary. Lifecycle: the builder runs once per app image and"
-                 " the managed server boots a FRESH image at every done point, so"
-                 " anything it allocates is new each time — keep live state"
-                 " outside it.")))))))
+                 " {…}). Anything it allocates is new each time it runs, so keep"
+                 " live state outside it.")))))))
 
 (def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a

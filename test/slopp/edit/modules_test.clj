@@ -136,9 +136,27 @@
     (testing "an endpoint reading :web/deps with no builder refuses, naming the marker"
       (let [teach (str (modules/web-undeclared-context (land on (endpoint "(:web/deps req)"))
                                                        'shop.more 'h))]
-        (is (re-find #":web/context" teach))
-        (is (re-find #"performer" teach)
-            "the circular third option, answered where someone would propose it")))
+        (testing "the fix is a LITERAL FORM, not a description of one — cold-read
+                  evidence says that is what made it actionable without the skill:
+                  the marker spelling, the arity, defn-not-def and the return
+                  shape all come off it at once"
+          (is (re-find #"\(defn \^\{:web/context true\}" teach) teach)
+          (is (re-find #"ONE" teach) "and that a second is not allowed"))
+        (testing "it does NOT argue that the context cannot be a performer"
+          ;; the right sentence in the wrong room. It answers a DESIGN question
+          ;; to a reader in fix-it mode who has already been handed the form,
+          ;; and it is the one clause that needs knowing what a performer IS.
+          ;; It lives in api.web/context-builder's docstring and the SKILL,
+          ;; where someone DECIDING meets it.
+          (is (not (re-find #"performer" teach)) teach))
+        (testing "and the lifecycle line is true for the store being refused"
+          ;; this gate fires on any http.enabled store, including one with
+          ;; dev.server false where no managed server boots at all. A clause
+          ;; phrased around done points asserts, to that reader, a behaviour
+          ;; that does not happen to them — a general truth in this store's
+          ;; voice, which is the shape that keeps costing us.
+          (is (not (re-find #"done point|managed server" teach)) teach)
+          (is (re-find #"new each time" teach) teach))))
     (testing ":web/keys destructuring is the same read"
       (let [s (land on (str "(defn ^{:web/method :get :web/path \"/x\" :web/auth :public} h \"H.\"\n"
                             "  [{:web/keys [deps]}] deps)"))]
