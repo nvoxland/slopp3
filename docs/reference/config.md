@@ -64,7 +64,7 @@ query_capabilities {}
 | `http.host` | `127.0.0.1` | Bind address. Widen deliberately. |
 | `http.port` | `8080` | What a deployed build binds. The dev server derives its own from the store directory unless you set this, so two projects on one machine cannot collide. |
 | `http.max-body-bytes` | `1048576` | Largest accepted request body. |
-| `dev.server` | `true` | Whether slopp runs this project's app server while you work — a dedicated image, re-served at each `done`. Set `false` when something else already serves this project's HTTP surface. |
+| `dev.server` | `true` | Whether slopp runs this project's app server while you work — a dedicated image, re-served at each `done`. Set `false` if your handlers take `:web/deps`, if you have `http.static.*` mounts, if your app is a server for something other than itself, or if something else already serves this project's HTTP surface. See [running](../guide/web/running.md). |
 | `auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
 | `auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
 | `auth.session.ttl-seconds` | `86400` | Browser session lifetime. |

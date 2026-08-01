@@ -481,14 +481,30 @@ with the rest of the contract) and lives in an `:external` namespace (the
 escape, not the default); its dependencies arrive as `:web/deps` on the
 request, never as ambient state.
 
-**You do not run it — slopp does.** A web project under development always
-has a live server up: slopp boots a DEDICATED image for your app, loads the
-web surface into it, and re-serves at every `done` point. `session_brief`
-carries the url as `:app`. Write no `serve!` call, no namespace list, no
-port — all three are derived from the store, which is what keeps them from
-disagreeing with the gates.
+**For many web projects you do not run it — slopp does.** slopp boots a
+DEDICATED image for your app, loads the web surface into it, and re-serves at
+every `done` point; `session_brief` carries the url as `:app`. Where that
+applies you write no `serve!` call, no namespace list and no port — all three
+are derived from the store, so they cannot disagree with the gates.
 
-Three consequences worth knowing:
+**It does not apply to every app, and the exceptions are not exotic. Set
+`dev.server false` if ANY of these is true:**
+
+- **your handlers take `:web/deps`** — the managed server does not yet build
+  a `:web/perform-ctx`, so an injected dependency arrives nil. That either
+  500s (loud) or returns an empty-but-successful body (silent, and worse);
+- **you have `http.static.*` mounts** — they are not served, so an SPA gets
+  its API and a page with no JS, which looks like it works;
+- **your app is a SERVER FOR SOMETHING OTHER THAN ITSELF** — a hub, a proxy,
+  anything fronting other projects. It opens no store of its own and can
+  never be a managed server's subject; its `serve!` call is the app;
+- **something else already serves this project's HTTP surface** — a managed
+  server would then be a second, staler copy of what you are looking at.
+
+The first two are things this skill recommends elsewhere, which is exactly
+why they are named here rather than left to be discovered at a 500.
+
+Where it does apply, three things worth knowing:
 
 - **`done` is the grain, not the write.** Mid-episode your store is
   intentionally incomplete, so a browser reloading on every write would show
@@ -496,13 +512,13 @@ Three consequences worth knowing:
   app is part of finding out you were not finished.
 - **A store that will not load leaves the previous version serving**, and
   says why. "Always up" and "up to date" only conflict when a boot fails.
-- **The app image carries YOUR deps, not slopp's.** That is a feature: code
-  that works because slopp happens to have a library on its classpath fails
-  the moment you look at the page, instead of when someone deploys.
+- **The app image carries YOUR deps, not slopp's.** Code that works because
+  slopp happens to have a library on its classpath fails the moment you look
+  at the page instead of when someone deploys — but that signal depends on
+  the page working, so it is worth nothing until the exceptions above are.
 
-`dev.server false` opts out — set it when something else already serves this
-project's HTTP surface. `http.port` pins the address; unset, it is derived
-from the store dir so two projects on one machine never collide.
+`http.port` pins the address; unset, it is derived from the store dir so two
+projects on one machine never collide.
 
 **The runtime underneath: `slopp.web`.** `(web/serve! {:web/namespaces
 ['my.api] :web/port 8080})` scans the namespaces' var metadata (the same

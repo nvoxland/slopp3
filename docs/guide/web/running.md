@@ -3,12 +3,21 @@
 `slopp.web` is the runtime half. It reads the same var metadata the write gates
 enforced, so there is no second description of the surface to keep in sync.
 
-## While you work, slopp serves it for you
+## While you work, slopp can serve it for you
 
-You do not start a dev server, and you do not write a `serve!` call to get
-one. A project with `http.enabled` always has a live version up: slopp boots
-a dedicated image for the app, loads the web surface into it, and re-serves
-at every `done` point. `session_brief` reports the url as `:app`.
+For many projects you do not start a server and do not write a `serve!` call
+to get one: slopp boots a dedicated image for the app, loads the web surface
+into it, and re-serves at every `done` point. `session_brief` reports the url
+as `:app`.
+
+It does not fit every app yet, and the exceptions are ordinary. Set
+`dev.server` to `false` if your handlers take `:web/deps` (the managed server
+does not build a `:web/perform-ctx` yet, so injected dependencies arrive
+nil), if you have `http.static.*` mounts (they are not served, so a
+single-page app gets its API and a page with no JavaScript), if your app is a
+server for something other than itself -- a hub or a proxy, which can never be
+a managed server's subject -- or if something else already serves this
+project's HTTP surface.
 
 Everything the launch needs is derived from the store -- which namespaces to
 scan, the host, the port -- so there is no hand-kept list that can disagree
@@ -28,9 +37,7 @@ Three things follow from the design that are worth knowing up front:
   you look at the page, rather than when someone deploys.
 
 The address is derived from the store directory, so two projects on one
-machine never collide. Set `http.port` to pin it. Set `dev.server` to `false`
-to opt out entirely -- the right answer when something else already serves
-this project's HTTP surface.
+machine never collide. Set `http.port` to pin it.
 
 ## Serving it yourself
 
