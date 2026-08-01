@@ -135,6 +135,10 @@
                    about where effects run, not about anything crossing"
    :web/client    "a MODIFIER on the generated-client crossing (opt this
                    endpoint out), not an exit of its own"
+   :web/context   "names WHICH fn builds the perform-ctx — a declaration about
+                   in-process assembly. The map it returns reaches handlers as
+                   :web/deps and performers as their first argument, all inside
+                   the image; nothing leaves through this key"
    :rule/applies-to "the rule registry describing itself to itself"
    :rule/severity   "the rule registry describing itself to itself"})
 
@@ -146,6 +150,16 @@
   unclassified if it appears in a STORE; this asks the same question of the
   VOCABULARY, so a marker slopp defines and no store has used yet still has to
   be decided about.
+
+  **The vocabulary below is HAND-KEPT, and that is the hole this guard cannot
+  cover.** `:web/context` shipped in neither registry and this returned empty
+  the whole time, because a marker nobody added to the list is invisible to a
+  list. It was caught by the first APP to declare a builder, whose `full_check`
+  then carried a permanent unclassified entry — the cost landing on adopters
+  rather than on the author. So the real backstop is `store-crossings` in a
+  store that USES the marker, one step later than intended and paid for by
+  someone else. When you add a `:web/*` marker, add it here in the same write;
+  nothing will remind you.
 
   **Scope: NAMESPACED keys only, and the split from `slopp.api.rules.markers`
   is deliberate rather than an oversight.** The two registries ask different
@@ -166,7 +180,8 @@
     (vec (sort (remove owned
                        [:web/path :web/method :web/auth :web/reads :web/effects
                         :web/read :web/effect :web/effectful :web/request
-                        :web/response :web/client :web/spa :web/external-path :web/client-path
+                        :web/response :web/client :web/context
+                        :web/spa :web/external-path :web/client-path
                         :malli/schema :rule/applies-to :rule/severity])))))
 
 (defn ^:export store-crossings

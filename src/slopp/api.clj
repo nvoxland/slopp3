@@ -2843,6 +2843,14 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       ;; most clients never show anyone — so an agent asked "what is going
       ;; on" is where a human finds out the app has an address at all.
       (:url (:app-server @session)) (assoc :app (:url (:app-server @session)))
+      ;; and what the image cost to come up. It rides HERE rather than only on
+      ;; the banner because the comment two lines up is the whole reason: an
+      ;; agent asked "what is going on" is where a human finds out. The first
+      ;; app to want this number had to watch for the child process and diff
+      ;; its bind against its start time — hand-measuring a figure slopp had
+      ;; already computed, because the only place it was written was stderr.
+      (:boot-ms (:app-server @session))
+      (assoc :app-boot-ms (:boot-ms (:app-server @session)))
       ;; and a managed app server that FAILED is not the same as one nobody
       ;; asked for. Silence on both is how "the dev server is broken" reads
       ;; as "this project has no dev server", which sends the reader nowhere.

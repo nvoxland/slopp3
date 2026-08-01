@@ -79,7 +79,20 @@
              about it would leave it looking like an unchecked exit")))
     (testing "and the classification is total — every marker slopp owns has a home"
       (is (empty? (crossings/unclassified-markers))
-          "a marker in neither list is an exit nobody decided about"))))
+          "a marker in neither list is an exit nobody decided about"))
+    (testing "including a marker slopp's OWN store never uses"
+      ;; `:web/context` shipped classified nowhere. slopp declares no builder,
+      ;; so nothing here exercised it, and the vocabulary list above is
+      ;; hand-kept — the guard-on-the-guard cannot see a marker nobody added
+      ;; to it. It was found by the first APP to declare one, whose full_check
+      ;; then carried a permanent unclassified entry it could do nothing
+      ;; about. A standing unexplained line is how a report stops being read,
+      ;; so the cost lands on every store that adopts the feature.
+      (let [st (store/ingest (store/empty-store) 'app.sys
+                             "(ns app.sys)\n(defn ^{:web/context true} deps \"D.\" [] {})")]
+        (is (= [] (:unclassified (crossings/store-crossings st)))
+            "a builder DECLARATION is not an exit — it names which fn builds
+             the context, and the map it returns never leaves the image")))))
 
 (deftest the-inventory-is-a-note-not-a-verdict
   ;; It has to reach a surface someone reads, and `full_check` is the one that
