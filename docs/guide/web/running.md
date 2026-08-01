@@ -3,7 +3,38 @@
 `slopp.web` is the runtime half. It reads the same var metadata the write gates
 enforced, so there is no second description of the surface to keep in sync.
 
-## Serving
+## While you work, slopp serves it for you
+
+You do not start a dev server, and you do not write a `serve!` call to get
+one. A project with `http.enabled` always has a live version up: slopp boots
+a dedicated image for the app, loads the web surface into it, and re-serves
+at every `done` point. `session_brief` reports the url as `:app`.
+
+Everything the launch needs is derived from the store -- which namespaces to
+scan, the host, the port -- so there is no hand-kept list that can disagree
+with the surface the gates enforced.
+
+Three things follow from the design that are worth knowing up front:
+
+- **The grain is `done`, not the write.** Mid-episode a store is
+  intentionally incomplete, and a browser reloading after every form would
+  show you a broken app most of the time. A red `done` still refreshes:
+  looking at the app is part of finding out you were not finished.
+- **A store that will not load leaves the previous version serving**, and
+  reports why. "Always up" and "up to date" only conflict when a boot fails,
+  and this is the answer to that conflict.
+- **The app image carries your dependencies, not slopp's.** Code that only
+  works because slopp happened to have a library on its classpath fails when
+  you look at the page, rather than when someone deploys.
+
+The address is derived from the store directory, so two projects on one
+machine never collide. Set `http.port` to pin it. Set `dev.server` to `false`
+to opt out entirely -- the right answer when something else already serves
+this project's HTTP surface.
+
+## Serving it yourself
+
+This is what a deployed build calls, and what the dev server calls for you.
 
 ```clj
 (web/serve! {:web/namespaces ['shop.api 'shop.ui]

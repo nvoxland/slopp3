@@ -481,12 +481,36 @@ with the rest of the contract) and lives in an `:external` namespace (the
 escape, not the default); its dependencies arrive as `:web/deps` on the
 request, never as ambient state.
 
-**Run it: the `slopp.web` runtime.** `(web/serve! {:web/namespaces ['my.api]
-:web/port 8080})` scans the namespaces' var metadata (the same contract the
-gates enforced), serves on http-kit (`:web/adapter :jdk` = zero-dep
-fallback). Tests never need it: `(web/handle! (web/context {:web/namespaces
-['my.api]}) request-map)` runs the ENTIRE pipeline — route, policy,
-declared reads, handler, effect interpretation — portlessly. In-handler
+**You do not run it — slopp does.** A web project under development always
+has a live server up: slopp boots a DEDICATED image for your app, loads the
+web surface into it, and re-serves at every `done` point. `session_brief`
+carries the url as `:app`. Write no `serve!` call, no namespace list, no
+port — all three are derived from the store, which is what keeps them from
+disagreeing with the gates.
+
+Three consequences worth knowing:
+
+- **`done` is the grain, not the write.** Mid-episode your store is
+  intentionally incomplete, so a browser reloading on every write would show
+  you a broken app repeatedly. A RED `done` still refreshes — looking at the
+  app is part of finding out you were not finished.
+- **A store that will not load leaves the previous version serving**, and
+  says why. "Always up" and "up to date" only conflict when a boot fails.
+- **The app image carries YOUR deps, not slopp's.** That is a feature: code
+  that works because slopp happens to have a library on its classpath fails
+  the moment you look at the page, instead of when someone deploys.
+
+`dev.server false` opts out — set it when something else already serves this
+project's HTTP surface. `http.port` pins the address; unset, it is derived
+from the store dir so two projects on one machine never collide.
+
+**The runtime underneath: `slopp.web`.** `(web/serve! {:web/namespaces
+['my.api] :web/port 8080})` scans the namespaces' var metadata (the same
+contract the gates enforced) and serves on http-kit (`:web/adapter :jdk` =
+zero-dep fallback) — that is what a deployed build calls, and what the dev
+server calls for you. Tests never need it: `(web/handle! (web/context
+{:web/namespaces ['my.api]}) request-map)` runs the ENTIRE pipeline — route,
+policy, declared reads, handler, effect interpretation — portlessly. In-handler
 guards: `(web/enforce (= owner sub))` throws a 403-mapped ex-info (no bang —
 your handler stays analyzer-pure); `(web/authorized? policy identity)`
 answers booleans. Test namespaces' endpoint-shaped forms are FIXTURES —
