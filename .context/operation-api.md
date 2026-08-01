@@ -503,6 +503,15 @@ registry says where.
 The namespace splits DECIDING from RUNNING, and the split is why most of it
 has ordinary in-image tests instead of a JVM apiece:
 
+- `managed? store` — whether slopp should RUN this store's server, which is
+  not the same question as whether the store serves HTTP. `http.enabled` is
+  read by production and by the web rules; `dev.server` (registry default
+  `true`) is the dev lifecycle's own opt-out. They came apart on the first
+  store anyone tried: **slopp's own is `http.enabled` on a port the MCP
+  process already holds**, because its web surface IS the transport and the
+  reviewer UI — so slopp's store sets `dev.server false`. Kept OUT of
+  `serve-plan` deliberately: a dev-only opt-out does not belong in the answer
+  production reads.
 - `serve-plan store dir` → `{:enabled? :mode :namespaces :host :port :adapter}`
   or `{:enabled? false :reason …}`. `:namespaces` comes from
   `api.web/serving-namespaces` — derived, never declared. `:port` prefers a
@@ -515,8 +524,19 @@ has ordinary in-image tests instead of a JVM apiece:
   (generated forms land in evaluated position, and a namespace symbol there
   reads as a class name), and it returns the BOUND PORT — an integer, so a
   throw, which `repl/eval!` returns as a string, cannot read as success.
-- `start!`/`stop!` — the lifecycle. A failure is a sentence, never a throw,
-  and the image is stopped on every failing path.
+- `start!`/`stop!`/`refresh!` — the lifecycle, over a `boot!` (image + load,
+  no socket) / `serve-in!` (bind) pair. A failure is a sentence, never a
+  throw, and the image is stopped on every failing path.
+
+`refresh!` is the DONE-grain swap, and the asymmetry in it is the design:
+the new version is verified on LOADING, before the old one is stopped. A
+boot that fails at done grain almost always fails because the code does not
+compile, and that is decided before a socket is involved — so a red store
+leaves the previous version answering and the session's `:app-server`
+untouched. "Always up" and "up to date" only conflict when a boot fails, and
+that is the answer. Mid-episode incompleteness is exactly why the grain is
+`done` and not the write: reloading a browser into a half-written red state
+trains the author to ignore it.
 
 **The app gets its OWN image.** `session/fresh-image!` sits on the path of
 `edit-replace!`, `rename!`, `move-forms!`, `deps-add!` and
