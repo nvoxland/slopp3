@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.devserver :as devserver]))
+            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -91,3 +91,133 @@
       (is (not (some #{'slopp.web} order))))
     (testing "a store with no web surface loads nothing"
       (is (= [] (devserver/load-order (store/empty-store)))))))
+
+(deftest the-serve-call-is-built-from-the-plan-not-written-by-the-app
+  ;; The whole directive is that an app holds no `serve!` call. So the call
+  ;; has to be constructed, and constructing it is pure — which keeps the
+  ;; only interesting decisions (what crosses, what comes back) answerable
+  ;; without a JVM.
+  (let [plan {:enabled? true :mode :dev
+              :namespaces ['shop.api 'shop.data]
+              :host "127.0.0.1" :port 51234 :adapter :jdk}
+        code (devserver/serve-code plan)
+        form (edn/read-string code)
+        read (nth form 2)                       ; (:port (slopp.web/serve! …))
+        call (second read)]                     ; (slopp.web/serve! …)
+    (testing "a string, because it crosses an nREPL wire as text"
+      (is (string? code)))
+    (testing "every field of the plan reaches serve!, and nothing else does"
+      (is (= '(do (require (quote slopp.web))
+                  (:port (slopp.web/serve! (quote {:web/namespaces [shop.api shop.data]
+                                                   :web/host "127.0.0.1"
+                                                   :web/port 51234
+                                                   :web/adapter :jdk}))))
+             form)))
+    (testing "the opts are QUOTED — generating a form means every value lands
+              in evaluated position, and a namespace symbol there is read as
+              a CLASS name"
+      ;; not hypothetical: unquoted, `demo.app` came back from a real app
+      ;; image as `Syntax error (ClassNotFoundException) … demo.app`, from
+      ;; inside a serve call that looked correct. Quoting the whole map
+      ;; rather than the vector keeps it true of fields not invented yet.
+      (is (= 'quote (first (second call)))))
+    (testing "the require is unconditional, so the two framework suppliers are
+              ONE call — the store holds slopp.web (slopp's own store) or the
+              vendored dir does (an ordinary app), and the app never says which"
+      ;; a namespace already loaded through load-ns-into! is marked in
+      ;; *loaded-libs*, so this is a no-op there rather than a second load
+      (is (= '(require (quote slopp.web)) (nth form 1))))
+    (testing "and it evaluates to the BOUND port — an INTEGER, so success
+              cannot be confused with failure, which repl/eval! hands back as
+              a string"
+      ;; Core 1 at the transport: "it bound port 51234" and "it threw" must
+      ;; not share a representation. An eval that returns nil for both is how
+      ;; a dead app server reads as a live one.
+      (is (= :port (first read))))))
+
+(def fake-web-src
+  "A stand-in `slopp.web` for the app-image test, as store source.
+
+  It is FAKED for the same reason `api-test/a-built-web-app-RUNS-outside-slopp-entirely`
+  fakes it: this suite runs from a checkout where `boot/framework-files` is
+  nil, so vendoring supplies nothing, and a test that branched on that would
+  assert shape in the only environment it ever executes in.
+
+  The stand-in carries the properties under test — it binds a real socket on
+  the address the plan derived, answers over HTTP, reports the BOUND port,
+  and reaches the app's own code through `resolve` (so a page can only be
+  served if the store's namespaces really loaded into that image). Routing
+  is `slopp.web`'s job and is tested in `slopp.web-test`; nothing here
+  stands in for it. Zero deps on purpose: the child image carries only the
+  store's own manifest, which for this fixture is empty."
+  (str "(ns slopp.web\n"
+       "  (:import [com.sun.net.httpserver HttpServer HttpHandler]\n"
+       "           [java.net InetSocketAddress]))\n"
+       "\n"
+       "(defn serve! \"Bind and answer.\" [opts]\n"
+       "  (let [srv (HttpServer/create\n"
+       "             (InetSocketAddress. ^String (:web/host opts)\n"
+       "                                 (int (:web/port opts))) 0)]\n"
+       "    (.createContext srv \"/\"\n"
+       "      (reify HttpHandler\n"
+       "        (handle [_ x]\n"
+       "          (let [b (.getBytes\n"
+       "                   (str \"ns=\" (pr-str (:web/namespaces opts))\n"
+       "                        \" app=\" (when-let [v (resolve 'demo.app/greeting)] (v))))]\n"
+       "            (.sendResponseHeaders x 200 (long (alength b)))\n"
+       "            (with-open [o (.getResponseBody x)] (.write o b))))))\n"
+       "    (.start srv)\n"
+       "    {:port (.getPort (.getAddress srv))}))\n"))
+
+(deftest ^:external the-app-server-comes-up-and-answers-without-the-app-asking
+  ;; The directive this whole namespace exists for: "when we have a web slopp
+  ;; project under development, there should always be a live/up-to-date
+  ;; version of the server up and going." The store below holds no `serve!`
+  ;; call, no namespace list and no port — everything the launch needs is
+  ;; derived from what is already there.
+  ;;
+  ;; Driven through `client/request` rather than a raw slurp. `:direct-http`
+  ;; asks for exactly that, and unlike `slopp.web-test`'s round-trips this
+  ;; test has no reason to want an INDEPENDENT client: slopp.web.client is
+  ;; not what is under test here, so using it is not circular.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-app"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        s    (-> (store/empty-store)
+                 (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'demo.app
+                               (str "(ns demo.app)\n\n"
+                                    "(defn greeting \"G.\" [] \"hello from the store\")\n\n"
+                                    "(defn ^{:web/method :get :web/path \"/hi\"\n"
+                                    "        :malli/schema [:=> [:cat :map] :map]\n"
+                                    "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.enabled" "true"))))
+        sess (atom {})
+        r    (devserver/start! sess s dir)]
+    (try
+      (testing "it is up, and the app said nothing to make that happen"
+        (is (:serving? r) (str "start! did not serve: " (:reason r))))
+      (testing "at the address the plan derived — one answer, not two"
+        ;; two derivations of "where does this serve" can disagree, and the
+        ;; failure is a url that is reported and a port that is bound
+        (is (= (:port (devserver/serve-plan s dir)) (:port r)))
+        (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r))))
+      (let [body (:http/body (client/request {:http/url (:url r)
+                                              :http/timeout-ms 5000}))]
+        (testing "the DERIVED namespace list is what crossed into the image"
+          (is (str/includes? body "demo.app")))
+        (testing "and the store's own code is LOADED there — the page is
+                  served by the app, not by something that merely booted"
+          ;; this is what makes it an app server rather than a socket: the
+          ;; handler reaches demo.app/greeting, which exists only in the
+          ;; store and has no classpath to fall back on
+          (is (str/includes? body "hello from the store"))))
+      (finally (devserver/stop! r)))
+    (testing "and stop! takes the whole thing down, because the image IS the
+              server — there is no half-stopped state to leak a port"
+      (is (= :unreachable
+             (:http/error
+              (ex-data (try (client/request {:http/url (:url r)
+                                             :http/timeout-ms 5000})
+                            (catch clojure.lang.ExceptionInfo e e)))))))))
