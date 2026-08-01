@@ -728,7 +728,34 @@ result which noun was used. The existing bullet *"verification checks REALITY,
 not intent"* is this discipline at write-gate scope; the class is wider —
 error reports, test fixtures and catch clauses have all done it.
 
-**Tell:** the check lives at that layer because the DATA was in hand there, not
-because the layer understands the question. A second tell is a stand-in that
-cannot express the interesting failure at all: a dependency-free fake has no
-way to have a bad transitive dep, so its green was never evidence.
+**The tell to actually use — it is a SEARCH, not a recognition** (slopp-ui,
+2026-07-31): *what did I avoid doing to make this check cheap, and what can go
+wrong only there?* The proxy and the real thing sit on opposite sides of a
+boundary the check does not cross, and **that boundary is where the cheapness
+came from**. Name the saving and you have named the boundary; the failures the
+proxy cannot express are the ones living on its far side.
+
+| check | boundary the cheapness bought |
+|---|---|
+| module cycles over the declared manifest | test code vs production code |
+| `:err` alone, after a retry | before vs after the heal |
+| `framework-files` glob vs the jar's actual contents | packaging |
+| the JVM oracle vs `:cljs` | platform |
+| a dependency-free fake framework | the dependency graph |
+| `catch IOException` vs an unreachable host | the process / the network |
+
+This is answerable **while writing the check**, which is what makes it worth
+more than the two recognitions below: it also predicts where the next instance
+is — *any check you were pleased to have made fast.*
+
+A boundary NAMED in the result is the discipline working, not a violation:
+`review_scan` reports `:cljs` forms as off-platform and says the compiler is
+their only check, so nobody reads that green as coverage. The bug is the
+unstated crossing, not the crossing.
+
+**Two after-the-fact tells,** for reviewing something already written: the
+check lives at that layer because the DATA was in hand there, not because the
+layer understands the question; and the stand-in cannot express the interesting
+failure at all — a dependency-free fake has no way to have a bad transitive
+dep, so its green was never evidence. Both need a reader to already suspect
+something, which is why neither caught any of the six above.
