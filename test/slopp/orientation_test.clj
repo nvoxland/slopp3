@@ -549,7 +549,7 @@
 (deftest ^:external a-hub-that-refused-us-says-so-rather-than-reading-as-absent
   ;; The drift alarm has to end up somewhere an agent looks, and session_brief is
   ;; that place. The hub validates each beat against its own copy of the beat
-  ;; contract — a hand-maintained twin of `review.contracts/project-beat`, since
+  ;; contract — a hand-maintained twin of `ui-api.contracts/project-beat`, since
   ;; neither store can read the other — so a 400 IS the notification that the two
   ;; copies have diverged. Reported as "no hub is answering" it would send
   ;; somebody to check whether a hub is running, which is the one thing that is

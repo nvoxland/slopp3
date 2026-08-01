@@ -65,9 +65,9 @@
   stable across restarts, different for every project on the machine.
 
   SALTED, and the salt is load-bearing rather than decorative. This is the
-  THIRD derivation of this shape (`review.server/derived-port` for the UI
+  THIRD derivation of this shape (`ui-api.server/derived-port` for the UI
   listener, `git.server/derived-port` for the git listener), and
-  `review.server/derived-port` already records why they must not share a
+  `ui-api.server/derived-port` already records why they must not share a
   formula: one MCP process binds all of them, so a shared formula would have
   every project \"reliably colliding with itself\".
 

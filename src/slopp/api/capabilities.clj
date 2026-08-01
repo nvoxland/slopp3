@@ -169,7 +169,7 @@
   nil-puns. Some callers need it back: the dev server binds an explicitly
   pinned `http.port` but DERIVES one when nobody pinned it, because a fixed
   default collides between two projects on one machine (the reasoning
-  `review.server/derived-port` records). \"8080\" typed by hand and 8080
+  `ui-api.server/derived-port` records). \"8080\" typed by hand and 8080
   arriving from the registry have to be told apart to do that.
 
   Exported for the same reason `effective` is: the config path is this

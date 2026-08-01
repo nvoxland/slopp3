@@ -2875,7 +2875,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                 " ours to fix, not a missing hub. Its explanation: "
                 (pr-str (:hub/explain (:ui-hub-refused @session)))
                 ". The beat contract crosses the split by COPY"
-                " (review.contracts/project-beat here, its twin over there),"
+                " (ui-api.contracts/project-beat here, its twin over there),"
                 " so a refusal is where drift between them surfaces"))
 
     ;; NOT the refused case — cond-> tests every clause in order, so without

@@ -131,7 +131,7 @@
                 " empty namespaces are exempt (there is no author to ask)")}
    {:rule :bare-throw :grain :done
     :escape "return data / (ex-info …), or ^{:bare-throw-ok \"why\"} on the name when the exact exception type is required by something outside your control — a Java API contract, an InterruptedException, a test proving a non-ex-info gets masked (it polices itself: a marker on a form with no bare throw is reported stale)"
-    :teach "ANY fn throws a freshly-constructed non-ex-info exception. The cost is not tidiness: a bare exception can only be caught by TYPE, so a caller handling one failure catches a whole class and swallows every unrelated bug with it — which is exactly how review.heartbeat/post! came to report a project ABSENT whenever any bug fired. Give the throw ex-data and the catch can be narrow"}
+    :teach "ANY fn throws a freshly-constructed non-ex-info exception. The cost is not tidiness: a bare exception can only be caught by TYPE, so a caller handling one failure catches a whole class and swallows every unrelated bug with it — which is exactly how ui-api.heartbeat/post! came to report a project ABSENT whenever any bug fired. Give the throw ex-data and the catch can be narrow"}
 {:rule :key-not-returned :grain :done
     :escape "fix the assertion to read a key the callee returns, or drop it — a read of a key the callee never returns is always nil"
     :teach "(:k local) where local is bound to a call whose statically-known return shape has no :k — a vacuous assertion that stays green no matter what the code does (assertions-that-cannot-fail)"}
