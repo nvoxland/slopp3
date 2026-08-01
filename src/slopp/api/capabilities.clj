@@ -49,7 +49,7 @@
    {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
    {:key "dev.server" :type [:boolean] :default true
-    :doc "Whether slopp runs this project's app server for you while you work — a dedicated image, re-served at each done point, so a live version is always up without the app holding a serve! call. Set false when this project's HTTP surface is already served by something else: slopp's own store is exactly that case, since its web surface IS the MCP transport and the reviewer UI."}
+    :doc "Whether slopp runs this project's app server for you while you work — a dedicated image, re-served at each done point, so a live version is always up without the app holding a serve! call. Set false when this project's HTTP surface is already served by something else, since a managed server would then serve a second, staler copy of it. slopp's own store is exactly that case: its web surface is the MCP HTTP transport plus the reviewer API, which the live session already serves."}
    {:key "ui.port" :type [:int {:min 1 :max 65535}] :default nil
     :doc "Port this project's own UI/API listener binds. Unset = DERIVED from the store dir — stable across restarts and collision-free, which a fixed default cannot be on a machine running several projects. Set it only to pin a fixed address."}
    {:key "ui.hub-port" :type [:int {:min 0 :max 65535}] :default 7359

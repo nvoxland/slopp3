@@ -278,10 +278,11 @@
 (deftest whether-slopp-manages-a-dev-server-is-its-own-question
   ;; http.enabled means "this project serves HTTP". It does NOT mean "slopp
   ;; should run that server for you", and the two came apart on the first
-  ;; store we looked at — slopp's own. It is http.enabled on a port the MCP
-  ;; process is ALREADY serving from, because its web surface is the
-  ;; transport and the reviewer UI. Autostarting there binds nothing and
-  ;; reports a taken port at every done point.
+  ;; store we looked at — slopp's own. Its web surface IS the MCP HTTP
+  ;; transport plus the reviewer API, which the live session already serves
+  ;; over the LIVE store; a managed server there would boot a second image
+  ;; and serve a snapshot of the page you are looking at, one done point
+  ;; behind it.
   ;;
   ;; So the dev lifecycle gets its own key. Deliberately NOT folded into
   ;; serve-plan: that answers "what would this store serve", which

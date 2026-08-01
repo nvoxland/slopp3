@@ -37,11 +37,20 @@
   exist, and production reads it. `dev.server` says slopp should be the one
   running it.
 
-  They came apart on the first store anyone looked at: slopp's own. It is
-  `http.enabled` on a port the MCP process is already serving from, because
-  its web surface IS the transport and the reviewer UI. Autostarting there
-  would bind nothing and report a taken port at every done point — noise that
-  says the dev server is broken when it is the assumption that is wrong.
+  They came apart on the first store anyone looked at: slopp's own. Its web
+  surface IS the MCP HTTP transport plus the reviewer API, and the live
+  session already serves that — over the LIVE store, at the derived `ui.port`.
+  A managed app server there would boot a second image and serve a SNAPSHOT
+  of the very thing you are looking at, one done point behind the page in
+  front of you. Not a port conflict: a second, staler copy of the same
+  surface.
+
+  (An earlier version of this docstring said 7357 was already held. It is
+  not. Nothing in slopp's running process reads `http.port` at all — the
+  transport takes its port as a CLI argument defaulting to a literal, and the
+  stored capability is a mirror of that number that no code consults. Which
+  is exactly why the reason had to be checked rather than assumed: a
+  plausible port conflict is a much easier story than the real one.)
 
   Deliberately NOT folded into `serve-plan`. That answers \"what would this
   store serve, and where\", which production asks too, and a dev-only opt-out
