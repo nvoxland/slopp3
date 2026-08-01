@@ -30,7 +30,9 @@ CITIZEN — what the form-shaped machinery does not cover. **Core 6** (2026-07-2
 is a category of PLACE — the boundary, where verification stops. **Core 7**
 (2026-07-26) is a category of INTENT — what the agent means to do, against
 write verbs named for where they write; and **Core 6b** is Core 6's second
-half, promoted once it turned out not to be boundary-specific.
+half, promoted once it turned out not to be boundary-specific. **Core 8**
+(2026-07-29) is a category of GRAIN, and **Core 9** (2026-07-31) a category of
+SUBJECT — what a check computes over, versus what it claims to describe.
 
 Cores 6b and 7 were both derived by 5-whys over the OPEN frictions and then
 confirmed against the RESOLVED ones, which is where the evidence is stronger:
@@ -463,7 +465,7 @@ second copy.
   question was answerable, just not there: it moved up to `slopp.api.branch`,
   which can derive the production graph. **The tell is a check that lands in
   a low layer because the DATA happened to be in hand there**, rather than
-  because the layer understands the question.
+  because the layer understands the question. (Core 9.)
 - **A standing condition re-announced on every unrelated operation is noise,
   not news.** Scope a warning to what the operation CHANGED — the merge cycle
   note fires only when the merge actually gained a module edge. Otherwise the
@@ -687,3 +689,46 @@ ergonomics of the interface. Here: edit a form, repair a namespace.
 before anyone asked what defmethod had in common with a derived `def`. A second
 special case for a third instance of one class is the moment to stop and name
 the class — the first one is a fix, the second is evidence.
+
+## Core 9 — a check computed over a PROXY reports on the proxy, in the real thing's voice
+
+**Root.** Named 2026-07-31 by slopp-ui, after the third instance in one
+evening. Not a category of mistake, place, citizen, or intent — a category of
+SUBJECT: what the check is actually looking at, versus what it claims to
+describe.
+
+A check is written against the thing at hand rather than the thing in
+question. The stand-in is usually correct-looking, often derived from the real
+thing, and always cheaper to reach. What it is not is capable of failing the
+way the real thing fails — so the check's *green* means less than it says, its
+*red* names the wrong subject, and either way it speaks with the authority of
+the thing it replaced.
+
+| Instance | The proxy | Standing in for |
+|---|---|---|
+| merge cycle note (`cb007ff`) | the DECLARED manifest | the production module graph |
+| merge heal (`a246bd6`) | `:err`, the post-retry failure | the compile error that actually fired |
+| framework fixture (`09e8535`) | a dependency-free fake | a real framework with transitive deps |
+| slopp-ui's `forward` | `catch java.io.IOException` | "the far side is down" |
+| slopp-ui's load path | `:data nil` | a load's actual state |
+
+Three of those are in this repo's log inside one week, and each was fixed as an
+instance. That is the signature the preamble already warns about.
+
+**Why it is not Core 1.** Core 1 is a READER trusting a value it did not earn.
+This is a CHECK, an error, a fixture or a catch clause being *authored* against
+a stand-in — the failure is on the writing side, and it survives every amount
+of care taken by whoever reads the result.
+
+**Discipline.** Before writing a check, say out loud what it is computing over
+and what question it claims to answer. If those are different nouns, either
+move the check to where the real noun is visible (`slopp.store.merge` could
+not see production code, so the cycle question left that layer) or say in the
+result which noun was used. The existing bullet *"verification checks REALITY,
+not intent"* is this discipline at write-gate scope; the class is wider —
+error reports, test fixtures and catch clauses have all done it.
+
+**Tell:** the check lives at that layer because the DATA was in hand there, not
+because the layer understands the question. A second tell is a stand-in that
+cannot express the interesting failure at all: a dependency-free fake has no
+way to have a bad transitive dep, so its green was never evidence.
