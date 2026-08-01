@@ -1803,3 +1803,34 @@
       (is (= "d1" (:delta terse)))
       (is (= 1 (:deltas terse)))
       (is (= 2 (:affected terse))))))
+
+(deftest the-app-server-comes-up-only-for-a-store-that-asked-for-it
+  ;; This is the assertion that keeps the feature from being a menace. The
+  ;; ^:external tier is four shards; if a session opened during a test run
+  ;; auto-bound a derived port, they would fight over it, and the failure
+  ;; would look like anything except a dev server nobody asked for.
+  (let [web  (first (store/record-config-put (store/empty-store)
+                                             "capabilities" :manifest
+                                             "http.enabled" "true"))
+        plain (atom {:store (store/empty-store) :dir "/tmp/slopp-no-such-dir"})]
+    (testing "a store that serves no HTTP starts nothing"
+      (is (nil? (mcp/start-app! plain)))
+      (is (nil? (:app-server @plain))))
+    (testing "an EPHEMERAL session starts nothing even when the store serves
+              HTTP — there is no dir, and the address is derived from one"
+      (let [eph (atom {:store web})]
+        (is (nil? (mcp/start-app! eph)))
+        (is (nil? (:app-server @eph)))))
+    (testing "a store that serves itself starts nothing — dev.server is the
+              lifecycle's own opt-out, and slopp's own store sets it"
+      (let [off (atom {:store (first (store/record-config-put
+                                      web "capabilities" :manifest
+                                      "dev.server" "false"))
+                       :dir "/tmp/slopp-no-such-dir"})]
+        (is (nil? (mcp/start-app! off)))
+        (is (nil? (:app-server @off)))))
+    (testing "and a done point on an unmanaged store refreshes nothing, so
+              the gate is not something only the startup path applies"
+      ;; the same predicate at both call sites: a gate that guards the start
+      ;; and not the refresh is a gate that opens on the second done
+      (is (nil? (mcp/refresh-app! plain))))))

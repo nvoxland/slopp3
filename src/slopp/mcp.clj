@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.review.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.review.heartbeat :as hb]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.review.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.review.heartbeat :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -637,6 +637,167 @@
                        {:target t}))))
    targets))
 
+(defn- refusal-text
+  "The message a REFUSED call answered with, or nil if it was not a refusal.
+
+  A refusal arrives in two shapes: a thrown exception, which `handle!` has
+  already marked `:isError`, or slopp's own refusal-as-data, which `text!`
+  pr-strs so the payload opens with `{:error`. This is the whole predicate as
+  well as the message — `:refused?` is `(some? (refusal-text r))` — because
+  asking the same question at two call sites is how they drift, and the
+  failure log has four instances of that shape already.
+
+  It UNDER-counts, deliberately: a result carrying `:error` behind another key
+  reads as clean. That is the safe direction for a waste metric — it will
+  never invent a problem, only miss one. What it must not do is lose a
+  refusal it has already been told about, so an `:isError` with no text still
+  answers non-nil."
+  [r]
+  (let [t (:text (first (:content r)))]
+    (cond
+      (and t (str/starts-with? t "{:error")) t
+      (:isError r) (or t "error")
+      :else nil)))
+
+(defn- tools-note!
+  "The notifications/tools/list_changed message when the tool registry has
+  DRIFTED from what this session last advertised (a live reload renamed or
+  added a tool — edit_move_forms replaced an earlier extract-to-namespace tool mid-session and no
+  client could see it), else nil. Emitting updates the baseline, so each
+  drift notifies exactly once. No baseline (tools/list never served) → nil."
+  [session]
+  (let [h    (hash tools/tools)
+        last (:slopp.mcp/tools-hash @session)]
+    (when (and last (not= last h))
+      (swap! session assoc :slopp.mcp/tools-hash h)
+      {:jsonrpc "2.0" :method "notifications/tools/list_changed"})))
+
+^:unsafe (defn start-heartbeat!
+  "Start this project checking in with the UI hub, and record the handle on
+  the session. Never throws; returns the hub url it beats to, or nil.
+
+  `ui.hub-port` 0 means \"no hub\", and a hub that simply is not running is the
+  ordinary case rather than a failure — the beat retries forever and costs
+  nothing, so the project appears in the picker within one interval of a hub
+  starting later. Registering and keeping alive are the same call, deliberately
+  (D-ui-hub).
+
+  Two session keys, and the split between them is the point.
+  `:ui-hub-configured` is where we BEAT — known immediately, true whether or
+  not anyone is listening. `:ui-hub` is this project's own page on the hub, and
+  it exists only while a hub is answering, because the slug in it comes back on
+  the reply and cannot be fabricated. Every beat rewrites it, so a hub that
+  goes away takes the claim with it.
+
+  One key used to carry both meanings: `:ui-hub` was set here, once, from the
+  configured port. Orientation then advertised an address nobody was serving —
+  and the skill tells an agent to hand that address to a human, so the cost
+  landed on the human every time. The reply had the answer all along; nothing
+  was reading it.
+
+  The banner names the HUB's address, not this project's derived port, because
+  the hub url is the one a human is meant to remember and the derived one is an
+  implementation detail they should never have to type."
+  [session dir url]
+  (try
+    (let [port (caps/effective (:store @session) "ui.hub-port")]
+      (when (and dir port (pos? (long port)))
+        (let [hub    (hb/hub-url port)
+              handle (hb/start! hub
+                                #(hb/payload (:store @session) dir url)
+                                #(let [at (hb/hub-address hub %)]
+                                   (cond
+                                     at (swap! session assoc :ui-hub at
+                                               :ui-hub-refused nil)
+                                     ;; a hub that answered and said NO is the
+                                     ;; drift alarm — keep it, or the brief
+                                     ;; reports absence about a running hub
+                                     (hb/refused? %)
+                                     (swap! session assoc :ui-hub-refused %
+                                            :ui-hub nil)
+                                     :else (swap! session assoc :ui-hub nil
+                                                  :ui-hub-refused nil))))]
+          (swap! session assoc :ui-heartbeat handle :ui-hub-configured hub)
+          (.println System/err ^String (str "slopp UI hub: " hub
+                                            " (open this to switch projects)"))
+          hub)))
+    (catch Throwable t
+      (.println System/err ^String (str "slopp UI hub registration unavailable: "
+                                        (.getMessage t)))
+      nil)))
+
+^:unsafe (defn start-ui!
+  "Bring this project's UI listener up beside the MCP server and start its
+  heartbeat to the hub. Returns `ui/serve!`'s map — `{:url :port}`, or
+  `{:error …}` — and NEVER throws.
+
+  The listener still serves the LIVE session and still dies with the server.
+  `:test-map` and `:observed` are persisted and reloaded, so a fresh session is
+  not blank — it is STALE, showing the warranty as of the last verified run
+  rather than the one being changed, and it would boot a second image to show
+  it. That accuracy is what forces the whole hub design (D-ui-hub): a hub
+  cannot answer for a store, so every project answers for itself and the hub
+  proxies.
+
+  What changed is the ADDRESS. The port is derived from the store dir instead
+  of defaulting to a fixed 7359, so projects on one machine never collide, and
+  a taken port falls back to an ephemeral one — the registered url carries
+  whatever was actually bound. Nobody needs to know this number; the address a
+  human remembers is the hub's.
+
+  Follows the git listener's stance exactly, and for the same reason: the UI is
+  OPTIONAL and MCP is not. A busy port, a missing hub, anything at all — it
+  reports a sentence on stderr (stdout is the JSON-RPC channel) and the server
+  carries on. Nothing about a browser page should be able to stop the thing the
+  editor is talking to."
+  ([session] (start-ui! session nil))
+  ([session explicit-port]
+   (let [dir  (:dir @session)
+         want (ui/preferred-port (:store @session) dir explicit-port)
+         try! (fn [p] (try (ui/serve! session p)
+                           (catch Throwable t {:error (or (.getMessage t) (str t))})))
+         r0   (try! want)
+         ;; a derived port is a PREFERENCE: something else already holding it
+         ;; must not cost this project its UI, so fall back to whatever is free.
+         r    (if (and (:error r0) (not (zero? (long want)))) (try! 0) r0)]
+     ;; ON THE SESSION, the way the git listener carries :git-url. The stderr
+     ;; banner below goes to the MCP server's log, which most clients never
+     ;; show a human — so autostart without this is a feature nobody can find.
+     ;; session_brief surfaces it, which is where an agent looks and how the
+     ;; human gets told.
+     (when (:url r) (swap! session assoc :ui-url (:url r)))
+     (.println System/err
+               ^String (if (:url r)
+                         (str "slopp UI: " (:url r))
+                         (str "slopp UI unavailable: " (:error r))))
+     (when (:url r) (start-heartbeat! session dir (:url r)))
+     r)))
+
+^:unsafe (defn refresh-app!
+  "Re-serve this project's app on the CURRENT store, or nil when slopp does
+  not run this store's server. NEVER throws.
+
+  Called at each `done` point, which is the grain the whole feature is built
+  around: mid-episode the store is intentionally incomplete, and a browser
+  reloading into a half-written red state teaches the author to ignore it.
+
+  **The same gate as `start-app!`, and that is not redundancy.** A gate on
+  the startup path only would let the SECOND done point start what the first
+  one declined to — the feature would arrive by accident, in a test run,
+  minutes after everything looked fine.
+
+  `locking` because two done points close together would otherwise both boot,
+  both stop the same predecessor, and race for the port. They queue instead,
+  and nobody waits on them: the call site backgrounds this so `done` returns
+  at its own speed."
+  [session]
+  (let [dir (:dir @session)]
+    (when (and dir (devserver/managed? (:store @session)))
+      (locking session
+        (try (devserver/refresh! session (:store @session) dir)
+             (catch Throwable t
+               {:serving? false :reason (or (.getMessage t) (str t))}))))))
+
 (defn- call-tool! [session {:keys [name arguments]}]
   ;; async-image boot: the store loaded synchronously (this dispatch is live),
   ;; but the image may still be warming on a background thread. Oracle and
@@ -983,8 +1144,17 @@
                                                   :prompt (:prompt a))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))))
-      "done" (text! (external/done! session :label (:label a)
-                                                  :agent (:agent a)))
+      "done" (let [r (external/done! session :label (:label a)
+                                            :agent (:agent a))]
+               ;; the app server catches up to the store at DONE grain, and
+               ;; BACKGROUNDED so it never lengthens a done. A red done still
+               ;; refreshes: done REPORTS rather than refuses and a red one
+               ;; STANDS, so "finished" and "green" are different questions,
+               ;; and looking at the app is part of finding out you were not
+               ;; finished. refresh-app! is a no-op for a store slopp does
+               ;; not run, and never throws.
+               (future (refresh-app! session))
+               (text! r))
       "commit_point" (text! (let [r (external/commit-point! session (:description a)
                                                        :agent (:agent a)
                                                        :force (:force a)
@@ -1126,28 +1296,6 @@
     (flush)
     (System/exit (if (:isError r) 1 0))))
 
-(defn- refusal-text
-  "The message a REFUSED call answered with, or nil if it was not a refusal.
-
-  A refusal arrives in two shapes: a thrown exception, which `handle!` has
-  already marked `:isError`, or slopp's own refusal-as-data, which `text!`
-  pr-strs so the payload opens with `{:error`. This is the whole predicate as
-  well as the message — `:refused?` is `(some? (refusal-text r))` — because
-  asking the same question at two call sites is how they drift, and the
-  failure log has four instances of that shape already.
-
-  It UNDER-counts, deliberately: a result carrying `:error` behind another key
-  reads as clean. That is the safe direction for a waste metric — it will
-  never invent a problem, only miss one. What it must not do is lose a
-  refusal it has already been told about, so an `:isError` with no text still
-  answers non-nil."
-  [r]
-  (let [t (:text (first (:content r)))]
-    (cond
-      (and t (str/starts-with? t "{:error")) t
-      (:isError r) (or t "error")
-      :else nil)))
-
 ^:unsafe (defn handle!
   "Dispatch a JSON-RPC request map; return a response map, or nil for
   notifications. Tool exceptions become an `isError` result (so the agent sees
@@ -1195,19 +1343,6 @@
       {:jsonrpc "2.0" :id id
        :error {:code -32601 :message (str "method not found: " method)}})))
 
-(defn- tools-note!
-  "The notifications/tools/list_changed message when the tool registry has
-  DRIFTED from what this session last advertised (a live reload renamed or
-  added a tool — edit_move_forms replaced an earlier extract-to-namespace tool mid-session and no
-  client could see it), else nil. Emitting updates the baseline, so each
-  drift notifies exactly once. No baseline (tools/list never served) → nil."
-  [session]
-  (let [h    (hash tools/tools)
-        last (:slopp.mcp/tools-hash @session)]
-    (when (and last (not= last h))
-      (swap! session assoc :slopp.mcp/tools-hash h)
-      {:jsonrpc "2.0" :method "notifications/tools/list_changed"})))
-
 (defn serve!
   "Newline-delimited-JSON stdio loop over `in-reader`/`out-writer`."
   [session in-reader out-writer]
@@ -1222,106 +1357,34 @@
       (.flush out-writer)))
   nil)
 
-^:unsafe (defn start-heartbeat!
-  "Start this project checking in with the UI hub, and record the handle on
-  the session. Never throws; returns the hub url it beats to, or nil.
+^:unsafe (defn start-app!
+  "Bring this project's app server up beside the MCP server, or nil when
+  slopp does not run this store's server. NEVER throws.
 
-  `ui.hub-port` 0 means \"no hub\", and a hub that simply is not running is the
-  ordinary case rather than a failure — the beat retries forever and costs
-  nothing, so the project appears in the picker within one interval of a hub
-  starting later. Registering and keeping alive are the same call, deliberately
-  (D-ui-hub).
+  The stance is the git listener's and the UI listener's, for the same
+  reason: **the app server is OPTIONAL and MCP is not.** A busy port, a
+  store that will not load, anything at all — it reports a sentence on
+  stderr (stdout is the JSON-RPC channel) and the server carries on. Nothing
+  about a page in a browser should be able to stop the thing the editor is
+  talking to.
 
-  Two session keys, and the split between them is the point.
-  `:ui-hub-configured` is where we BEAT — known immediately, true whether or
-  not anyone is listening. `:ui-hub` is this project's own page on the hub, and
-  it exists only while a hub is answering, because the slug in it comes back on
-  the reply and cannot be fabricated. Every beat rewrites it, so a hub that
-  goes away takes the claim with it.
+  It goes through `refresh-app!` rather than `devserver/start!`, so the
+  first serve and every later one are the same code path. A start that
+  differed from a swap would be a second lifecycle, and the two would drift
+  exactly where nobody looks — the first boot of a session is the one nobody
+  re-tests.
 
-  One key used to carry both meanings: `:ui-hub` was set here, once, from the
-  configured port. Orientation then advertised an address nobody was serving —
-  and the skill tells an agent to hand that address to a human, so the cost
-  landed on the human every time. The reply had the answer all along; nothing
-  was reading it.
-
-  The banner names the HUB's address, not this project's derived port, because
-  the hub url is the one a human is meant to remember and the derived one is an
-  implementation detail they should never have to type."
-  [session dir url]
-  (try
-    (let [port (caps/effective (:store @session) "ui.hub-port")]
-      (when (and dir port (pos? (long port)))
-        (let [hub    (hb/hub-url port)
-              handle (hb/start! hub
-                                #(hb/payload (:store @session) dir url)
-                                #(let [at (hb/hub-address hub %)]
-                                   (cond
-                                     at (swap! session assoc :ui-hub at
-                                               :ui-hub-refused nil)
-                                     ;; a hub that answered and said NO is the
-                                     ;; drift alarm — keep it, or the brief
-                                     ;; reports absence about a running hub
-                                     (hb/refused? %)
-                                     (swap! session assoc :ui-hub-refused %
-                                            :ui-hub nil)
-                                     :else (swap! session assoc :ui-hub nil
-                                                  :ui-hub-refused nil))))]
-          (swap! session assoc :ui-heartbeat handle :ui-hub-configured hub)
-          (.println System/err ^String (str "slopp UI hub: " hub
-                                            " (open this to switch projects)"))
-          hub)))
-    (catch Throwable t
-      (.println System/err ^String (str "slopp UI hub registration unavailable: "
-                                        (.getMessage t)))
-      nil)))
-
-^:unsafe (defn start-ui!
-  "Bring this project's UI listener up beside the MCP server and start its
-  heartbeat to the hub. Returns `ui/serve!`'s map — `{:url :port}`, or
-  `{:error …}` — and NEVER throws.
-
-  The listener still serves the LIVE session and still dies with the server.
-  `:test-map` and `:observed` are persisted and reloaded, so a fresh session is
-  not blank — it is STALE, showing the warranty as of the last verified run
-  rather than the one being changed, and it would boot a second image to show
-  it. That accuracy is what forces the whole hub design (D-ui-hub): a hub
-  cannot answer for a store, so every project answers for itself and the hub
-  proxies.
-
-  What changed is the ADDRESS. The port is derived from the store dir instead
-  of defaulting to a fixed 7359, so projects on one machine never collide, and
-  a taken port falls back to an ephemeral one — the registered url carries
-  whatever was actually bound. Nobody needs to know this number; the address a
-  human remembers is the hub's.
-
-  Follows the git listener's stance exactly, and for the same reason: the UI is
-  OPTIONAL and MCP is not. A busy port, a missing hub, anything at all — it
-  reports a sentence on stderr (stdout is the JSON-RPC channel) and the server
-  carries on. Nothing about a browser page should be able to stop the thing the
-  editor is talking to."
-  ([session] (start-ui! session nil))
-  ([session explicit-port]
-   (let [dir  (:dir @session)
-         want (ui/preferred-port (:store @session) dir explicit-port)
-         try! (fn [p] (try (ui/serve! session p)
-                           (catch Throwable t {:error (or (.getMessage t) (str t))})))
-         r0   (try! want)
-         ;; a derived port is a PREFERENCE: something else already holding it
-         ;; must not cost this project its UI, so fall back to whatever is free.
-         r    (if (and (:error r0) (not (zero? (long want)))) (try! 0) r0)]
-     ;; ON THE SESSION, the way the git listener carries :git-url. The stderr
-     ;; banner below goes to the MCP server's log, which most clients never
-     ;; show a human — so autostart without this is a feature nobody can find.
-     ;; session_brief surfaces it, which is where an agent looks and how the
-     ;; human gets told.
-     (when (:url r) (swap! session assoc :ui-url (:url r)))
-     (.println System/err
-               ^String (if (:url r)
-                         (str "slopp UI: " (:url r))
-                         (str "slopp UI unavailable: " (:error r))))
-     (when (:url r) (start-heartbeat! session dir (:url r)))
-     r)))
+  A store that is not managed reports NOTHING, not even a failure. Most
+  stores are not web projects, and a line on every startup saying so is how
+  a banner stops being read."
+  [session]
+  (let [r (refresh-app! session)]
+    (when r
+      (.println System/err
+                ^String (if (:serving? r)
+                          (str "slopp app: " (:url r))
+                          (str "slopp app unavailable: " (:reason r)))))
+    r))
 
 ^:unsafe
 (defn -main
@@ -1373,6 +1436,12 @@
     ;; who wanted it had to know to ask again after every restart.
     ;; start-ui! never throws: MCP must serve even when the UI cannot.
     (start-ui! session)
+    ;; the app server comes up beside the UI, for a store that asked for it.
+    ;; BACKGROUNDED: it boots a whole second JVM and loads the app's web
+    ;; surface into it, and nothing about that should sit between the editor
+    ;; and a completed MCP handshake — the same reason the oracle's own boot
+    ;; is async here.
+    (future (start-app! session))
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally
@@ -1381,4 +1450,9 @@
         ;; leaving from us, not by ageing us out thirty seconds later.
         (hb/stop! (:ui-heartbeat @session))
         (ui/stop!)
+        ;; the app image is a CHILD JVM. Its watchdog would reap it when we
+        ;; die anyway, but leaving that to a watchdog means the port stays
+        ;; bound for as long as the reap takes — and the next server to start
+        ;; here wants exactly that port.
+        (devserver/stop! (:app-server @session))
         (api/close! session)))))

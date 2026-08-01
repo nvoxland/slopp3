@@ -29,7 +29,7 @@
   (:require [slopp.api.capabilities :as capabilities]
             [slopp.api.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl]))
 
-(defn managed?
+(defn ^:export managed?
   "Whether slopp should run this store's app server while someone works on it.
 
   Two questions, and they are genuinely different. `http.enabled` says the
@@ -278,7 +278,7 @@
           (assoc booted :serving? false :plan plan)
           (serve-in! booted))))))
 
-(defn stop!
+(defn ^:export stop!
   "Stop a running app server — whatever `start!` returned. Idempotent, and
   safe on a `{:serving? false …}` that never had an image.
 
@@ -292,7 +292,7 @@
     (repl/stop! img))
   nil)
 
-(defn refresh!
+(defn ^:export refresh!
   "Re-serve `store` on this session's app server and return the running map.
   The version that was up is stopped only once the new one has PROVED it
   loads; the result is held on the session as `:app-server`.

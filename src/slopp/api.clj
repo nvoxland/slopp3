@@ -2838,6 +2838,17 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
       ;; which most clients never show anyone. Hand the url over when asked
       ;; what is going on, rather than making them know to ask for it.
       (:ui-url @session) (assoc :ui (:ui-url @session))
+      ;; the APP slopp is running for this project, when it is running one.
+      ;; Its only other announcement is a line on the server's stderr, which
+      ;; most clients never show anyone — so an agent asked "what is going
+      ;; on" is where a human finds out the app has an address at all.
+      (:url (:app-server @session)) (assoc :app (:url (:app-server @session)))
+      ;; and a managed app server that FAILED is not the same as one nobody
+      ;; asked for. Silence on both is how "the dev server is broken" reads
+      ;; as "this project has no dev server", which sends the reader nowhere.
+      (and (:app-server @session) (not (:serving? (:app-server @session))))
+      (assoc :app-note (str "slopp is running this project's app server and it"
+                            " is DOWN: " (:reason (:app-server @session))))
     ;; the HUB's url when this project registered with one — that is the
     ;; address to hand a human on a machine running several projects, and
     ;; the per-project one above is a derived port nobody should type
