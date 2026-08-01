@@ -62,7 +62,7 @@ query_capabilities {}
 | `http.enabled` | `false` | Whether this project serves HTTP. The master opt-in: every web rule and `query_routes` exists only when true. |
 | `http.adapter` | `:http-kit` | `:jdk` is the zero-dependency fallback. |
 | `http.host` | `127.0.0.1` | Bind address. Widen deliberately. |
-| `http.port` | `8080` | What a deployed build binds. The dev server derives its own from the store directory unless you set this, so two projects on one machine cannot collide. |
+| `http.port` | unset | The port the app's server binds. Unset means 8080 in production (`serve!` defaults it) and DERIVED from the store directory for the dev server, so two projects on one machine cannot collide. Set it to pin one address for both. |
 | `http.max-body-bytes` | `1048576` | Largest accepted request body. |
 | `dev.server` | `true` | Whether slopp runs this project's app server while you work — a dedicated image, re-served at each `done`. Set `false` if your handlers take `:web/deps`, if you have `http.static.*` mounts, if your app is a server for something other than itself, or if something else already serves this project's HTTP surface. See [running](../guide/web/running.md). |
 | `auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
