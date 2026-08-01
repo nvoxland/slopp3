@@ -759,3 +759,76 @@ layer understands the question; and the stand-in cannot express the interesting
 failure at all — a dependency-free fake has no way to have a bad transitive
 dep, so its green was never evidence. Both need a reader to already suspect
 something, which is why neither caught any of the six above.
+
+### Sharpening (2026-08-01): a teach string is a check that SPEAKS, and Core 9 applies to what it asserts
+
+Found on `web-undeclared-context`'s refusal, in a cold read by slopp-ui:
+
+> Lifecycle: the builder runs once per app image and **the managed server
+> boots a FRESH image at every done point**, so anything it allocates is new
+> each time.
+
+True of a store slopp runs the server for. The gate fires on any
+`http.enabled` store, including one with `dev.server false` where no managed
+server boots at all — and that store's author is being told, unconditionally,
+about a lifecycle that does not happen to them. A general truth delivered in
+this store's voice: Core 9 one notch down, since nothing is *computed* over a
+proxy, but the sentence still describes a subject other than the reader.
+
+The fix is not to make it conditional. It is to find the phrasing true either
+way — *"anything the builder allocates is new each time it runs"* holds
+whether a managed server exists or not, and is one clause shorter.
+
+**Discipline.** A gate's teaching is asserted to EVERY store the gate can fire
+on. Before writing a clause, ask which stores it is false for; if the answer is
+not "none", either narrow the gate or find the phrasing that holds for all of
+them. The arming condition (`web-enabled?`) tells you the audience — anything
+narrower than it that appears in the string is a claim about a store that may
+not be the one reading.
+
+## Core 10 — a refusal is read in FIX-IT mode, and design rationale is a different room
+
+**Root.** Named 2026-08-01 from the same cold read. slopp-ui hit
+`web-undeclared-context` unprepared, deliberately without opening the SKILL,
+and reported which clauses did work.
+
+**What carried the whole thing was a LITERAL FORM**, not a description of one:
+
+```clj
+(defn ^{:web/context true} app-context [] {…})
+```
+
+From that alone: the marker spelling, the arity, `defn`-not-`def`, the return
+shape. No step sends the reader looking anything up. *"That is the difference
+between a refusal that teaches and one that announces."*
+
+**What did not carry was the sentence I was proudest of.** The refusal argued
+that the context cannot be a performer — true, non-obvious, and the answer to
+a question the reader had not asked. They had already been handed the form;
+they were not reaching for a performer. It was also the only clause requiring
+knowledge of what a performer IS, so it was the one clause opaque to a
+first-time reader, inside the string a first-time reader is most likely to
+meet.
+
+**The two rooms.** Someone DECIDING how to model a context meets the
+docstring, `query_rules`, the SKILL — all fine places for "and here is why it
+cannot be a performer". Someone REFUSED is mid-write with a broken store; the
+question is *what do I type*. Rationale in that room does not just fail to
+help, it argues with an idea the reader has not had.
+
+**Discipline.** A teach string carries three things: WHAT is wrong, the
+CONSEQUENCE if it shipped, and the FIX AS A LITERAL FORM. A fourth clause has
+to earn its place by changing what the reader WRITES, not what they
+understand. The lifecycle caveat passes that test — the obvious builder is
+whatever the app's `serve!` already constructs, moved, which is exactly the
+shape that silently empties, so being told before beats being told after by a
+silent bug. The performer clause fails it. Cutting it took the refusal to
+about two-thirds its length and lost nothing a refused reader could use.
+
+**The measurement is one-shot and worth protecting.** This only works from a
+reader who has not yet learned the rule. Ask them to hit it cold, report
+BEFORE fixing, and answer "could you act on it without going back to the
+skill?" — not "was it clear". "I re-read the skill" is a failure even when the
+reader ends up in the right place. slopp-ui held their fix specifically to keep
+this measurement spendable, which was the right call and better than the
+instruction they were given.
