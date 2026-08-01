@@ -52,6 +52,12 @@ It is a worklist, and a worklist that also carries its own history stops
 reading as a worklist: a log where nine of ten items are already fixed
 scans as nine items of work.
 
+**`ideas/` is gitignored, deliberately and permanently.** It is a LOCAL
+worklist. Do not un-ignore it, do not `git add -f` under it, and do not
+report the untracked state as a finding — the conventions below read like
+a tracked backlog, which is why this keeps getting raised as an accident.
+It isn't one.
+
 So: **when you finish an item, MOVE it — same filename, into
 `ideas/done/`.** Nothing is deleted; the record just stops competing with
 the backlog for attention.
