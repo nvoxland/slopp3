@@ -1400,7 +1400,9 @@
     (when r
       (.println System/err
                 ^String (if (:serving? r)
-                          (str "slopp app: " (:url r))
+                          (str "slopp app: " (:url r)
+                               (when-let [ms (:boot-ms r)]
+                                 (str " (image up in " ms "ms)")))
                           (str "slopp app unavailable: " (:reason r)))))
     r))
 

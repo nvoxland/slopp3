@@ -246,7 +246,8 @@
   The image is stopped on every failing path: a child JVM that outlives the
   attempt to use it is the worst of both outcomes."
   [session store plan]
-  (let [img (session/start-image! session store)]
+  (let [t0  (System/nanoTime)
+        img (session/start-image! session store)]
     (try
       (if-let [err (first (keep (fn [n]
                                   (when-let [e (image/load-ns-into! img store n)]
@@ -254,7 +255,8 @@
                                 (load-order store)))]
         (do (repl/stop! img)
             {:reason (str "the app image could not load " err)})
-        {:image img :plan plan})
+        {:image img :plan plan
+         :boot-ms (quot (- (System/nanoTime) t0) 1000000)})
       (catch Throwable t
         (repl/stop! img)
         {:reason (str "the app image did not come up: " (ex-message t))}))))
@@ -270,11 +272,14 @@
   A failure here is a BIND failure, and by construction it is the only kind
   left: `boot!` already proved the code loads. So the reason it reports is
   narrow enough to act on — something else holds the port."
-  [{:keys [image plan]}]
+  [{:keys [image plan boot-ms]}]
+  ;; `:boot-ms` rides through rather than being measured here: hot-loading a
+  ;; refresh would remove the BOOT and not the bind, so folding the two into
+  ;; one number would make a contended port read as a slow image.
   (try
     (let [[v] (repl/eval! image (serve-code plan))]
       (if (integer? v)
-        {:serving? true :image image :plan plan :port v
+        {:serving? true :image image :plan plan :port v :boot-ms boot-ms
          :url (str "http://" (:host plan) ":" v "/")}
         (do (repl/stop! image)
             {:serving? false :plan plan

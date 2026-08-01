@@ -322,3 +322,35 @@
         (is (pos? (:port (devserver/serve-plan off "/tmp/x"))))))
     (testing "a store that serves no HTTP at all is not managed either"
       (is (not (devserver/managed? (store/empty-store)))))))
+
+(deftest ^:external a-refresh-reports-what-it-cost
+  ;; slopp-ui asked "measure app-image boot cost, and let the number pick the
+  ;; project" — ~2s means state is the only argument for hot-loading a refresh
+  ;; into the RUNNING image, ~15s means it pays on latency alone. But the
+  ;; number is a property of the APP: it loads that store's namespaces with
+  ;; that store's deps. Measuring slopp's own once answers for slopp once, so
+  ;; the boot reports its own cost instead and every app reads its own.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-app"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        s    (-> (store/empty-store)
+                 (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'demo.app
+                               (str "(ns demo.app)\n\n"
+                                    "(defn ^{:web/method :get :web/path \"/hi\"\n"
+                                    "        :malli/schema [:=> [:cat :map] :map]\n"
+                                    "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.enabled" "true"))))
+        sess (atom {})
+        r    (devserver/refresh! sess s dir)]
+    (try
+      (is (:serving? r) (str "refresh! did not serve: " (:reason r)))
+      (testing "the running map carries how long the image took to come up"
+        (is (integer? (:boot-ms r)) r)
+        (is (pos? (:boot-ms r)) "a JVM launch plus a namespace load is never free"))
+      (testing "and it is the BOOT, not the whole refresh — the number that a\n                hot-load would remove, without the bind it would not"
+        ;; if this ever measured the bind too, a slow port would read as a
+        ;; slow image and the comparison hot-load exists to inform is wrong
+        (is (< (:boot-ms r) 120000) r))
+      (finally (devserver/stop! r)))))
