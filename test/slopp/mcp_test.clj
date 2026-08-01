@@ -1184,7 +1184,10 @@
             row (fn [rep k] (some #(when (= k (:key %)) %) (:settings rep)))]
         (testing "an untouched store reports every setting at its default"
           (is (false? (:effective (row rep "http.enabled"))) (pr-str (row rep "http.enabled")))
-          (is (= 8080 (:effective (row rep "http.port"))))
+          ;; a key that HAS a default demonstrates the claim; http.port declares
+      ;; none any more, so it would only demonstrate nil
+      (is (= 1048576 (:effective (row rep "http.max-body-bytes"))))
+      (is (nil? (:effective (row rep "http.port"))))
           (is (not (:set (row rep "http.port"))))
           (is (some #(= "http.static.*" (:key %)) (:patterns rep))))
         (testing "a config_file set is reflected as effective + set"

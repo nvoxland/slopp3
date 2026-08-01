@@ -44,8 +44,8 @@
     :doc "Server adapter. http-kit is the production default; jdk (com.sun.net.httpserver) is the zero-dep fallback."}
    {:key "http.host" :type [:string] :default "127.0.0.1"
     :doc "Bind address. Localhost by default; widen deliberately."}
-   {:key "http.port" :type [:int {:min 1 :max 65535}] :default 8080
-    :doc "Port the HTTP server binds."}
+   {:key "http.port" :type [:int {:min 1 :max 65535}] :default nil
+    :doc "Port the app's HTTP server binds. Unset = 8080 in production (slopp.web/serve! defaults it, so declaring 8080 here would only resolve \"unset\" a layer too early) and DERIVED from the store dir for the dev server, which is what keeps two projects on one machine from colliding. Set it to pin one address for both."}
    {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
    {:key "dev.server" :type [:boolean] :default true

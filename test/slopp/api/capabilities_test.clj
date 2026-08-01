@@ -1,4 +1,13 @@
 (ns slopp.api.capabilities-test
+  "The capability REGISTRY as the single source: that a declared key validates
+  at the write, resolves to one effective value, and reports honestly.
+
+  The through-line is that a registered key must never nil-pun and must never
+  report a value nothing uses. Both halves have been wrong in production —
+  a row deleted from the registry broke no test at all, and `http.port`
+  reported 8080 while the dev server bound a derived port. So the tests here
+  lean on the DECLARATION — defaults, docs, `stored?` against `effective` —
+  rather than on any one consumer's reading of it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.api.capabilities :as caps] [slopp.api :as api] [slopp.api.external :as external]))
@@ -37,7 +46,10 @@
   (testing "effective: the declared default when unset, the parsed value when set"
     (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
       (is (false? (caps/effective s0 "http.enabled")))
-      (is (= 8080 (caps/effective s0 "http.port")))
+      ;; http.port carries no registry default any more — serve! owns the 8080
+    ;; and the dev server derives; see
+    ;; an-unset-port-does-not-report-a-number-nothing-binds
+    (is (nil? (caps/effective s0 "http.port")))
       (is (= :http-kit (caps/effective s0 "http.adapter")))
       (is (= :deny (caps/effective s0 "auth.default-policy")))
       (let [s (-> s0
@@ -77,7 +89,9 @@
       (testing "unset returns to the default"
         (api/config-file! sess "capabilities" :key "http.port" :unset true
                           :prompt "back to default")
-        (is (= 8080 (caps/effective (:store @sess) "http.port"))))
+        ;; http.port's declared default is nil now — serve! owns the 8080 and the
+      ;; dev server derives, so "returns to the default" means returns to unset
+      (is (nil? (caps/effective (:store @sess) "http.port"))))
       (finally (api/close! sess)))))
 
 (deftest report-shows-every-setting-with-provenance
@@ -89,8 +103,8 @@
         row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
     (testing "every concrete registry key is a row with default, effective, and doc"
       (let [port (row "http.port")]
-        (is (= 8080 (:default port)))
-        (is (= 8080 (:effective port)))
+        (is (nil? (:default port)))
+        (is (nil? (:effective port)))
         (is (string? (:doc port)))
         (is (not (:set port)))))
     (testing "a set key carries :set true and the raw stored string"
@@ -166,3 +180,37 @@
           (is (re-find #"capabilities" (str (:note r)))
               "the note must name the one path that IS validated")))
       (finally (api/close! sess)))))
+
+(deftest an-unset-port-does-not-report-a-number-nothing-binds
+  ;; Measured by slopp-ui, 2026-08-01:
+  ;;   query_capabilities → http.port  :effective 8080  (not :set)
+  ;;   actual bind                     51614
+  ;;   curl 8080                       not listening
+  ;;
+  ;; `ui.port` gets this exactly right — `:effective nil`, and its doc says
+  ;; "Unset = DERIVED from the store dir". http.port said 8080 and derived
+  ;; anyway, so the one surface whose job is to report configuration reported
+  ;; a port nothing was listening on.
+  ;;
+  ;; The registry default was the duplicate: `slopp.web/serve!` ALREADY
+  ;; defaults `:web/port` to 8080, so declaring it again here resolved
+  ;; "unset" into "8080" one layer too early — early enough that the dev
+  ;; server's own derivation could no longer be told apart from a pin.
+  (let [s0 (store/empty-store)]
+    (testing "unset reports UNSET, so nothing downstream is bound by it"
+      (is (nil? (caps/effective s0 "http.port")))
+      (is (not (caps/stored? s0 "http.port"))))
+    (testing "and the same shape ui.port already had"
+      (is (nil? (caps/effective s0 "ui.port"))))
+    (testing "a pin still wins, and is reported as pinned"
+      (let [s (first (store/record-config-put s0 "capabilities" :manifest
+                                              "http.port" "9000"))]
+        (is (= 9000 (caps/effective s "http.port")))
+        (is (caps/stored? s "http.port"))))
+    (testing "the DOC has to carry what unset means, since the value no
+              longer can"
+      ;; a nil effective value is only honest if the reader can find out what
+      ;; happens instead — otherwise it trades a wrong number for no answer
+      (let [doc (:doc (caps/find-entry "http.port"))]
+        (is (re-find #"(?i)unset" doc) doc)
+        (is (re-find #"8080" doc) doc)))))
