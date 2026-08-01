@@ -53,6 +53,9 @@
    {:rule :web-undeclared-effect :grain :form
     :escape "define a performer per kind ((defn ^{:web/effect <kind>} name! [ctx …] …)) or reuse an existing kind (query_routes lists the vocabulary)"
     :teach "an endpoint's :web/effects may only name kinds a marked performer provides — a typo'd kind fails at the write, not at the first request (inert until http.enabled)"}
+{:rule :web-undeclared-context :grain :form
+    :escape "declare ONE zero-arg builder ((defn ^{:web/context true} app-context [] {…})) — an app that runs its own serve! should mark the builder it already has and call it, since two definitions of one store's context agree until one gains a key. Dial it down (config_file {path \"rules\" key \"web-undeclared-context\" value \"advisory\"}) for a context that genuinely cannot be built without arguments"
+    :teach "an endpoint reading :web/deps needs a store that declares where those deps come from — otherwise the map arrives nil, which 500s or, worse, answers 200 with an empty body, and generate_client consumes the empty one as a success (inert until http.enabled)"}
    {:rule :web-unsafe-get :grain :form
     :escape "make it :post/:put/:delete, drop the declared effects, or return the change as data from a non-safe endpoint"
     :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until http.enabled)"}
@@ -81,7 +84,7 @@
     :escape "^:breaking-ok on the name (a DELIBERATE break — you own telling downstream; it polices itself, a marker that narrowed nothing is reported stale), restore the arity/key/visibility, or rename for a clean break"
     :teach "a module-external fn's contract narrowed (arity/schema-key/visibility) vs the last-done baseline"}
    {:rule :ambient-state :grain :done
-    :escape "pass state in as an arg, or accept it (a legit top-level cache)"
+    :escape "pass state in as an arg, or accept it (a legit top-level cache — and a defonce that a ^{:web/context true} builder merely REFERENCES is one, since a builder allocating its own atom hands the app a fresh one per call)"
     :teach "a global (def _ (atom/ref/agent/volatile! …)) — ambient mutable state a slice can't track"}
    {:rule :assertions-never-red :grain :done
     :escape "break the subject once and watch the new assertions go red (test_run on that one test), or accept it — advisory, because only you know whether you already did"

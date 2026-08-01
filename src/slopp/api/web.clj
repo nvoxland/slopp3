@@ -310,10 +310,16 @@
   **A marker rather than a capability naming a qualified symbol.** A marker
   makes a GATE possible: both halves are then visible in the store — handlers
   destructuring `:web/deps`, and whether anything claims to build it — so
-  \"this store takes `:web/deps` and declares no builder\" can refuse at the
-  WRITE rather than 500 in a browser. A capability is a string in config,
-  checkable for resolvability at boot, which is later and weaker, and it
-  splits the declaration from the thing declared.
+  \"this store takes `:web/deps` and declares no builder\" refuses at the WRITE
+  rather than 500ing in a browser. That gate is
+  `slopp.edit.modules/web-undeclared-context`, and it is why this is a marker;
+  a capability is a string in config, checkable for resolvability at boot,
+  which is later and weaker, and it splits the declaration from the thing
+  declared.
+
+  The SCAN lives in `slopp.edit.modules/web-context-builders` — shared with
+  the gate, which asks whether ANY builder exists where this asks for THE one.
+  What is here is the singleton POLICY, and only that.
 
   **It cannot be a performer**, and the idea is circular rather than merely
   wrong: performers already RECEIVE the perform-ctx as their first argument,
@@ -325,11 +331,7 @@
   silently is how an app ends up running on deps it did not mean, and the
   failure would surface as a missing key three layers away."
   [store]
-  (let [found (for [nsx (sort (keys (:namespaces store)))
-                    e   (store/forms store nsx)
-                    :when (and (:name e)
-                               (get (modules/web-name-meta e) :web/context))]
-                (symbol (str nsx) (str (:name e))))]
+  (let [found (modules/web-context-builders store)]
     (when (seq found)
       (when (next found)
         (throw (ex-info (str "a store declares exactly ONE ^{:web/context true}"

@@ -1,4 +1,16 @@
 (ns slopp.edit.modules-test
+  "Gates exercised as PURE FUNCTIONS of a store value.
+
+  Every check in `slopp.edit.modules` takes a candidate store and returns a
+  teaching string or nil, so these tests build a small store with
+  `store/ingest`, flip the capabilities that arm a rule, and call the gate
+  directly — no write path, no image, no server. That is what keeps them fast
+  and what makes a refusal's WORDING testable: several assertions here check
+  the teaching, not just that something fired, because the string is the
+  entire user experience of a gate.
+
+  The write path itself — that a refusal actually blocks a write, and that
+  the per-store dial downgrades it — is `slopp.modules-test`'s job."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit.modules :as modules]))
@@ -106,3 +118,36 @@
                 (modules/client-signature (mk "sig.c/b")))))
     (testing "an endpointless store still fingerprints (a stable string)"
       (is (string? (modules/client-signature (store/empty-store)))))))
+
+(deftest the-deps-a-handler-reads-must-have-a-declared-source
+  (let [s0   (store/ingest (store/empty-store) 'shop.api "(ns shop.api)\n")
+        on   (first (store/record-config-put s0 "capabilities" :manifest "http.enabled" "true"))
+        with-builder (store/ingest on 'shop.sys
+                                   (str "(ns shop.sys)\n\n"
+                                        "(defn ^{:web/context true} app-context \"C.\" [] {:registry :r})\n"))
+        land (fn [st form-src]
+               (store/ingest st 'shop.more (str "(ns shop.more)\n\n" form-src "\n")))
+        endpoint (fn [body]
+                   (str "(defn ^{:web/method :get :web/path \"/x\" :web/auth :public} h \"H.\" [req] "
+                        body ")"))]
+    (testing "OFF: inert while http.enabled is absent"
+      (is (nil? (modules/web-undeclared-context (land s0 (endpoint "(:web/deps req)"))
+                                                'shop.more 'h))))
+    (testing "an endpoint reading :web/deps with no builder refuses, naming the marker"
+      (let [teach (str (modules/web-undeclared-context (land on (endpoint "(:web/deps req)"))
+                                                       'shop.more 'h))]
+        (is (re-find #":web/context" teach))
+        (is (re-find #"performer" teach)
+            "the circular third option, answered where someone would propose it")))
+    (testing ":web/keys destructuring is the same read"
+      (let [s (land on (str "(defn ^{:web/method :get :web/path \"/x\" :web/auth :public} h \"H.\"\n"
+                            "  [{:web/keys [deps]}] deps)"))]
+        (is (re-find #":web/context" (str (modules/web-undeclared-context s 'shop.more 'h))))))
+    (testing "a declared builder discharges it"
+      (is (nil? (modules/web-undeclared-context (land with-builder (endpoint "(:web/deps req)"))
+                                                'shop.more 'h))))
+    (testing "an endpoint that never reads deps is not asked to declare a source"
+      (is (nil? (modules/web-undeclared-context (land on (endpoint "req")) 'shop.more 'h))))
+    (testing "a NON-endpoint naming :web/deps is the framework's own dispatcher, not an app handler"
+      (let [s (land on "(defn dispatch! \"D.\" [ctx req] (assoc req :web/deps (:web/perform-ctx ctx)))")]
+        (is (nil? (modules/web-undeclared-context s 'shop.more 'dispatch!)))))))

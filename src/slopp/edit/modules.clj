@@ -1,4 +1,30 @@
-(ns slopp.edit.modules (:require [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.render :as render] [slopp.store :as store] [slopp.edit.refs :as refs] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.store.fields :as fields]))
+(ns slopp.edit.modules
+  "The per-form WRITE GATES (D9) and the derived analysis they judge against.
+
+  A gate is a `(candidate ns-sym form-name)` → teaching-string-or-nil check
+  run against the CANDIDATE store — the value the write would produce — so a
+  violation is refused before it lands rather than found afterwards. That is
+  the whole reason this namespace is shaped the way it is: everything here
+  must be answerable from a store VALUE, with no image and no eval.
+
+  Three families, each with its primitives above its gates: module edges and
+  visibility, purity TIERS and layering, and the D-web surface (auth, routes,
+  effect and context vocabulary, endpoint contracts). `per-form-write-gates`
+  near the bottom is the registry every write site consults — register a new
+  gate THERE, not at the N call sites — and `gate-refusal` is the entry point.
+
+  Its neighbours: `slopp.index.*` derives the reference graph this reads,
+  `slopp.api.rules` joins these gates with the done-time advisories into the
+  one catalog `query_rules` reports, and `slopp.api.web` consumes the same
+  web primitives to answer questions rather than to refuse."
+  (:require [clojure.string :as str]
+            [rewrite-clj.node :as n]
+            [slopp.store.render :as render]
+            [slopp.store :as store]
+            [slopp.edit.refs :as refs]
+            [slopp.index.derive :as derive]
+            [slopp.index.analyze :as analyze]
+            [slopp.store.fields :as fields]))
 
 (defn ^:export modules-manifest
   "The module manifest — {module-string #{dep-module-strings}} — the FOLD
@@ -770,6 +796,23 @@
                    " method, or extend the existing handler (query_routes lists"
                    " every claim)"))))))))
 
+(defn ^:export web-context-builders
+  "Every `^{:web/context true}` fn in the store, as qsyms, sorted — the
+  app-declared sources of `:web/perform-ctx`, the map a handler receives as
+  `:web/deps` and every performer receives as its first argument.
+
+  PLURAL although exactly one is legal, because the SCAN and the singleton
+  POLICY are different jobs and the two callers ask different questions: the
+  `web-undeclared-context` write gate asks whether ANY exists,
+  `slopp.api.web/context-builder` asks for THE one and refuses two. Splitting
+  them keeps a single definition of who builds the context — the alternative
+  is two scans that agree until one gains a case."
+  [store]
+  (vec (for [nsx (sort (keys (:namespaces store)))
+             e   (store/forms store nsx)
+             :when (and (:name e) (get (web-name-meta e) :web/context))]
+         (symbol (str nsx) (str (:name e))))))
+
 (defn ^:export ^{:rule/applies-to :production} web-undeclared-effect
   "The effect-vocabulary gate (D-web): an endpoint declaring `:web/effects`
   kinds may only name kinds some `^{:web/effect <kind>}` performer provides
@@ -942,6 +985,43 @@
                ". Browsers silently ignore unknown attributes, so this would "
                "ship and do nothing."))))))
 
+(defn ^:export ^{:rule/applies-to :production} web-undeclared-context
+  "The context-SOURCE gate (D-web): an endpoint whose body reads `:web/deps`
+  may only do so in a store that declares where those deps come from — one
+  `^{:web/context true}` zero-arg fn. The sibling of `web-undeclared-effect`:
+  an effect kind needs a marked performer, and the context needs a marked
+  builder. Inert until `web-enabled?`. Returns a teaching string, or nil.
+
+  This gate is the reason the context is a MARKER rather than a capability
+  naming a qualified symbol. With the declaration in the store, both halves
+  are visible statically — the handlers that read `:web/deps`, and whether
+  anything claims to build it — so the failure moves to the write that caused
+  it. A capability is a string in config, checkable at boot at the earliest,
+  which is after the browser has already seen the 500.
+
+  Scoped to `:web/path` ENDPOINTS, not to every form naming the keyword: the
+  framework's own dispatcher assigns `:web/deps` onto the request, and gating
+  that would refuse writes to slopp's `slopp.web.dispatch/handle!`."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (when (and (:web/path (web-name-meta e))
+                 (empty? (web-context-builders candidate)))
+        (let [sx    (try (n/sexpr (:node e)) (catch Exception _ nil))
+              nodes (tree-seq coll? seq sx)]
+          (when (or (some #(= :web/deps %) nodes)
+                    (some #(and (map? %) (some #{'deps} (:web/keys %))) nodes))
+            (str ns-sym "/" form-name " reads :web/deps, but this store declares"
+                 " no context builder — so the map would arrive nil, which either"
+                 " 500s or, worse, answers 200 with an empty body. Declare exactly"
+                 " ONE zero-arg builder: (defn ^{:web/context true} app-context []"
+                 " {…}). It cannot be a performer — performers already RECEIVE the"
+                 " context as their first argument, so it is upstream of that"
+                 " vocabulary. Lifecycle: the builder runs once per app image and"
+                 " the managed server boots a FRESH image at every done point, so"
+                 " anything it allocates is new each time — keep live state"
+                 " outside it.")))))))
+
 (def ^:export per-form-write-gates
   "The ordered per-form WRITE gates (the rule-registry seed, D9): each is a
   (candidate ns-sym form-name) → teaching-string-or-nil check. Held as VARS
@@ -952,7 +1032,7 @@
   The web-* gates (D-web) are additionally inert until the store opts into
   HTTP (`web-enabled?`)."
   [#'module-refusal #'tier-refusal #'schema-refusal #'namespaced-keys-refusal #'generated-ns
-   #'web-auth-refusal #'web-endpoint-schema #'web-route-collision #'web-undeclared-effect
+   #'web-auth-refusal #'web-endpoint-schema #'web-route-collision #'web-undeclared-effect #'web-undeclared-context
    #'web-unsafe-get #'web-unknown-group #'web-react-attrs])
 
 (defn ^:export write-gate-names
