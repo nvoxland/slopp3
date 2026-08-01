@@ -453,6 +453,22 @@ second copy.
   accidentally-public surface).
 - **Discoverability is in the SKILL and the RESULT.** Adding a field to a
   composite does not make it found (`report`'s `:intents`, twice ignored).
+- **A check belongs at the layer that can see what it judges — a layer that
+  can only see a PROXY for the real thing will report on the proxy and sound
+  certain.** `slopp.store.merge` sees a delta log and some maps; it cannot
+  tell a test namespace from production code. Judging module cycles there
+  judged the DECLARED manifest, so `slopp.store.db-test`'s require of
+  `slopp.api` made every merge into main warn of a cycle production didn't
+  have — and advise a retraction that would have broken that test. The
+  question was answerable, just not there: it moved up to `slopp.api.branch`,
+  which can derive the production graph. **The tell is a check that lands in
+  a low layer because the DATA happened to be in hand there**, rather than
+  because the layer understands the question.
+- **A standing condition re-announced on every unrelated operation is noise,
+  not news.** Scope a warning to what the operation CHANGED — the merge cycle
+  note fires only when the merge actually gained a module edge. Otherwise the
+  signal that ought to mean "you just did this" degrades into weather, and
+  the first thing anyone learns is to skip it.
 - **Measure MECHANICAL changes on the deterministic wire-cost meter; reserve
   lifetime evals for BEHAVIORAL questions at n≥3.** A per-step delta off ONE
   lifetime run is noise (steps you never touched swung ±30%). (P10.)

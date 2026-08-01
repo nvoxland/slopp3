@@ -251,8 +251,9 @@ and unchecked. Layering *within* a component is no longer a gate.
   (declared/enforced) still carries them.
 - **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
   it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
-  declarations union; `merge-logs` folds them without conflict and NOTES a
-  cycle neither side saw). Writes go through the semantic verb
+  declarations union; `merge-logs` folds them without conflict, and
+  `api.modules/merge-production-cycle` NOTES a cycle neither side saw).
+  Writes go through the semantic verb
   `module_dep {from to [remove] prompt}` — an add that CLOSES a cycle is
   refused, the why rides the delta. The cycle question is asked of the
   **PRODUCTION** graph, the same `production-manifest` the layer view
@@ -264,7 +265,16 @@ and unchecked. Layering *within* a component is no longer a gate.
   `slopp.mcp/handle!` — while `query_depends` showed a clean nine-layer
   DAG. `module_extract` already judged on production edges; `module_dep`
   now matches (`slopp.modules-test/cycle-refusal-judges-production-edges-not-test-fixtures`);
-  reads through `query_depends {modules true}` (manifest +
+  and the MERGE note was the last holdout, warning on every merge into
+  main about `api → edit → image → store → api`, a cycle owed entirely to
+  `slopp.store.db-test` requiring `slopp.api`. Its advice — retract an
+  edge — would have broken that test. **`slopp.store.merge` cannot ask the
+  question at all**: at that layer a store is a delta log and some maps,
+  with no notion of which namespaces are tests, so the check moved UP to
+  `slopp.api.branch`, which takes `production-manifest` of the store the
+  merge produced. It fires only when the merge actually GAINED an edge — a
+  standing cycle re-announced on every unrelated merge is noise, not news.
+  Reads go through `query_depends {modules true}` (manifest +
   standing debt). The manifest projects into git commits/builds as a
   `modules` file (read-only transparency).
 - **Enforcement is on from birth** (`empty-store` has `:modules {}`); the
