@@ -97,42 +97,46 @@
   ;; has to be constructed, and constructing it is pure — which keeps the
   ;; only interesting decisions (what crosses, what comes back) answerable
   ;; without a JVM.
+  ;;
+  ;; The first cut generated four of serve!'s options — namespaces, host,
+  ;; port, adapter, all of which say WHERE to serve — and dropped every one
+  ;; that says what the app NEEDS. Measured on a real app: handlers taking
+  ;; `:web/deps` got nil, which either 500s or, worse, answers 200 with an
+  ;; empty body that a client generator reads as success.
   (let [plan {:enabled? true :mode :dev
               :namespaces ['shop.api 'shop.data]
-              :host "127.0.0.1" :port 51234 :adapter :jdk}
-        code (devserver/serve-code plan)
-        form (edn/read-string code)
-        read (nth form 2)                       ; (:port (slopp.web/serve! …))
-        call (second read)]                     ; (slopp.web/serve! …)
-    (testing "a string, because it crosses an nREPL wire as text"
-      (is (string? code)))
-    (testing "every field of the plan reaches serve!, and nothing else does"
-      (is (= '(do (require (quote slopp.web))
-                  (:port (slopp.web/serve! (quote {:web/namespaces [shop.api shop.data]
-                                                   :web/host "127.0.0.1"
-                                                   :web/port 51234
-                                                   :web/adapter :jdk}))))
-             form)))
-    (testing "the opts are QUOTED — generating a form means every value lands
-              in evaluated position, and a namespace symbol there is read as
-              a CLASS name"
+              :host "127.0.0.1" :port 51234 :adapter :jdk
+              :max-body-bytes 2048
+              :context-builder 'shop.system/deps}
+        form (edn/read-string (devserver/serve-code plan))
+        read (nth form 3)                       ; (:port (slopp.web/serve! …))
+        call (second read)]
+    (testing "the app's CONTEXT is built by the declared builder and passed in"
+      ;; not quoted — this one is a CALL, which is why the opts can no longer
+      ;; be one flat quoted map
+      (is (= '(shop.system/deps) (:web/perform-ctx (last call))) (pr-str call)))
+    (testing "and its namespace is required, since nothing else need reach it"
+      ;; the builder lives wherever the app's system does — it is not part of
+      ;; the served surface and so is not in :web/namespaces
+      (is (some #{'(require (quote shop.system))} form) (pr-str form)))
+    (testing "the body cap rides too — it has a capability, and the generated
+              call ignoring it made that capability describe nothing"
+      (is (= 2048 (:web/max-body-bytes (last call)))))
+    (testing "the address fields still cross, quoted, because a namespace
+              symbol in evaluated position is read as a CLASS name"
       ;; not hypothetical: unquoted, `demo.app` came back from a real app
-      ;; image as `Syntax error (ClassNotFoundException) … demo.app`, from
-      ;; inside a serve call that looked correct. Quoting the whole map
-      ;; rather than the vector keeps it true of fields not invented yet.
-      (is (= 'quote (first (second call)))))
-    (testing "the require is unconditional, so the two framework suppliers are
-              ONE call — the store holds slopp.web (slopp's own store) or the
-              vendored dir does (an ordinary app), and the app never says which"
-      ;; a namespace already loaded through load-ns-into! is marked in
-      ;; *loaded-libs*, so this is a no-op there rather than a second load
-      (is (= '(require (quote slopp.web)) (nth form 1))))
-    (testing "and it evaluates to the BOUND port — an INTEGER, so success
-              cannot be confused with failure, which repl/eval! hands back as
-              a string"
-      ;; Core 1 at the transport: "it bound port 51234" and "it threw" must
-      ;; not share a representation. An eval that returns nil for both is how
-      ;; a dead app server reads as a live one.
+      ;; image as `Syntax error (ClassNotFoundException) … demo.app`
+      (let [opts (last call)]
+        (is (= '(quote [shop.api shop.data]) (:web/namespaces opts)))
+        (is (= "127.0.0.1" (:web/host opts)))
+        (is (= 51234 (:web/port opts)))
+        (is (= :jdk (:web/adapter opts)))))
+    (testing "an app that declares NO builder passes no context, rather than
+              an empty map that would read as one"
+      (let [none (edn/read-string (devserver/serve-code (dissoc plan :context-builder)))]
+        (is (not (contains? (last (second (nth none 2))) :web/perform-ctx)))))
+    (testing "and it still evaluates to the BOUND port — an integer, so a
+              throw (which comes back as a string) cannot read as success"
       (is (= :port (first read))))))
 
 (def fake-web-src
@@ -163,6 +167,8 @@
        "        (handle [_ x]\n"
        "          (let [b (.getBytes\n"
        "                   (str \"ns=\" (pr-str (:web/namespaces opts))\n"
+       "                        \" ctx=\" (pr-str (:web/perform-ctx opts))\n"
+       "                        \" cap=\" (pr-str (:web/max-body-bytes opts))\n"
        "                        \" app=\" (when-let [v (resolve 'demo.app/greeting)] (v))))]\n"
        "            (.sendResponseHeaders x 200 (long (alength b)))\n"
        "            (with-open [o (.getResponseBody x)] (.write o b))))))\n"
@@ -188,6 +194,8 @@
                  (store/ingest 'demo.app
                                (str "(ns demo.app)\n\n"
                                     "(defn greeting \"G.\" [] \"hello from the store\")\n\n"
+                                    "(defn ^{:web/context true} deps \"D.\"\n"
+                                    "  [] {:built-by :the-app})\n\n"
                                     "(defn ^{:web/method :get :web/path \"/hi\"\n"
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
@@ -212,7 +220,17 @@
           ;; this is what makes it an app server rather than a socket: the
           ;; handler reaches demo.app/greeting, which exists only in the
           ;; store and has no classpath to fall back on
-          (is (str/includes? body "hello from the store"))))
+          (is (str/includes? body "hello from the store")))
+        (testing "and the app's declared CONTEXT was BUILT and passed in —
+                  the failure that made a managed server useless to the one
+                  app that measured it"
+          ;; handlers receive this as :web/deps and performers as their first
+          ;; argument. nil either 500s or, worse, answers 200 with an empty
+          ;; body a client generator reads as success.
+          (is (str/includes? body ":built-by :the-app") body))
+        (testing "and the body cap, which had a capability describing nothing
+                  while the generated call ignored it"
+          (is (str/includes? body "cap=1048576") body)))
       (finally (devserver/stop! r)))
     (testing "and stop! takes the whole thing down, because the image IS the
               server — there is no half-stopped state to leak a port"

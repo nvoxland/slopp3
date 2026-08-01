@@ -125,7 +125,12 @@
      :port       (if (capabilities/stored? store "http.port")
                    (capabilities/effective store "http.port")
                    (derived-port dir))
-     :adapter    (capabilities/effective store "http.adapter")}))
+     :adapter    (capabilities/effective store "http.adapter")
+     ;; what the app NEEDS, not only where it answers. Dropping these is what
+     ;; made a managed server 500 on any app that took slopp's own advice to
+     ;; receive its dependencies as :web/deps.
+     :max-body-bytes  (capabilities/effective store "http.max-body-bytes")
+     :context-builder (web/context-builder store)}))
 
 (defn load-order
   "The store namespaces to load into the app image, dependencies first.
@@ -146,9 +151,15 @@
   which, so this asks the store rather than requiring an answer — and its
   absence is a fact, not an error."
   [store]
-  (let [seeds (cond-> (set (web/serving-namespaces store))
-                (contains? (:namespaces store) 'slopp.web) (conj 'slopp.web))
-        want  (into #{} (mapcat #(store/ns-closure store %)) seeds)]
+  (let [builder (web/context-builder store)
+        seeds   (cond-> (set (web/serving-namespaces store))
+                  (contains? (:namespaces store) 'slopp.web) (conj 'slopp.web)
+                  ;; the context builder is NOT part of the served surface —
+                  ;; it declares no route and performs no kind — so nothing
+                  ;; else pulls its namespace in, and the generated call would
+                  ;; require its way out to a classpath the child lacks
+                  builder (conj (symbol (namespace builder))))
+        want    (into #{} (mapcat #(store/ns-closure store %)) seeds)]
     (filterv want (store/ns-dependency-order store))))
 
 (defn serve-code
@@ -158,37 +169,54 @@
   This is where the directive actually lands: the app writes no `serve!`
   call, so slopp writes it, from the plan. Generating it rather than asking
   the app for it is what makes `serve-plan`'s derivations binding — a
-  hand-written call in the app could disagree with them, and the running
-  server would be the one that disagreed.
+  hand-written call could disagree with them, and the running server would be
+  the one that disagreed.
 
-  **The opts are QUOTED.** Generating a form puts every value in EVALUATED
-  position, and a namespace symbol there is read as a class name: unquoted,
-  `demo.app` came back from a real app image as `Syntax error
-  (ClassNotFoundException) … demo.app`, thrown from inside a serve call that
-  read as correct. The whole map is quoted rather than just the namespace
-  vector, so a field added later inherits the fix instead of re-finding it.
+  **It must carry what the app NEEDS, not only where to serve.** The first
+  cut generated four of `serve!`'s options — namespaces, host, port, adapter
+  — and dropped `:web/perform-ctx`, `:web/auth-config`, `:web/routes` and
+  `:web/max-body-bytes`, which is every option describing the application
+  rather than its address. Measured on a real app: handlers taking
+  `:web/deps` received nil, which either 500s (loud) or answers 200 with an
+  empty body (silent, and worse — a client generated against that surface
+  comes back with zero endpoints and looks successful).
 
-  **The `require` is unconditional, so the two framework suppliers are one
-  call.** slopp's own store CONTAINS `slopp.web`, so `load-order` loaded it
-  and `*loaded-libs*` is marked — the require is a no-op. An ordinary app
-  gets the framework vendored onto the child's classpath instead, where the
-  require is the load. Branching on which would make the app declare a thing
-  it cannot know.
+  `:web/perform-ctx` is a CALL to the app's `^{:web/context true}` builder,
+  which is why the opts can no longer be one flat quoted map: the address
+  fields stay quoted (a namespace symbol in evaluated position is read as a
+  class name) and the context is evaluated.
 
-  **It evaluates to the BOUND port — an integer.** `repl/eval!` hands a
-  throw back as a STRING, so an integer result is unambiguous evidence that
-  a socket is open; anything else is the failure, in its own representation.
-  A serve call returning nil on both paths is how a dead app server reads as
-  a live one, which is Core 1 at the transport."
+  **The context is built ONCE per app image — and the app image is REPLACED
+  at every refresh.** So state accumulated in it does not survive a `done`:
+  an atom the builder creates is a new atom each time, and an app that keeps
+  a registry there will find it empty after any done point, silently. Say so
+  to anyone building one; the alternative — hot-loading a refresh into the
+  RUNNING image instead of booting a new one — is the change that would fix
+  it, and it is not made yet.
+
+  Still dropped, deliberately rather than by oversight: `:web/auth-config`
+  (an app with auth will hit this) and `:web/routes` (static mounts, which
+  need the store's bytes and the child image has no store).
+
+  **It evaluates to the BOUND port — an integer.** `repl/eval!` hands a throw
+  back as a STRING, so an integer is unambiguous evidence a socket is open;
+  anything else is the failure, in its own representation."
   [plan]
-  (pr-str (list 'do
-                (list 'require ''slopp.web)
-                (list :port (list 'slopp.web/serve!
-                                  (list 'quote
-                                        {:web/namespaces (vec (:namespaces plan))
-                                         :web/host       (:host plan)
-                                         :web/port       (:port plan)
-                                         :web/adapter    (:adapter plan)}))))))
+  (let [builder (:context-builder plan)
+        opts    (cond-> {:web/namespaces (list 'quote (vec (:namespaces plan)))
+                         :web/host       (:host plan)
+                         :web/port       (:port plan)
+                         :web/adapter    (:adapter plan)}
+                  (:max-body-bytes plan)
+                  (assoc :web/max-body-bytes (:max-body-bytes plan))
+                  builder
+                  (assoc :web/perform-ctx (list builder)))]
+    (pr-str (list* 'do
+                   (list 'require ''slopp.web)
+                   (concat
+                    (when builder
+                      [(list 'require (list 'quote (symbol (namespace builder))))])
+                    [(list :port (list 'slopp.web/serve! opts))])))))
 
 (defn- boot!
   "Bring up an app image for `store` and load its web surface into it —

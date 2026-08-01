@@ -569,3 +569,42 @@
                             (fn [files]
                               (web/store-reader (constantly {:files files})
                                                 (constantly nil)))))
+
+(deftest the-app-declares-its-context-builder-with-a-marker
+  ;; The managed app server writes the `serve!` call, so it needs to know how
+  ;; to build `:web/perform-ctx` — the map a handler receives as `:web/deps`
+  ;; and every performer receives as its first argument. It is app-specific
+  ;; by definition (a registry, a pool, a database handle), so the app has to
+  ;; say, and a MARKER is how everything else in this framework is addressed.
+  ;;
+  ;; A marker rather than a capability naming a qualified symbol, for a
+  ;; reason slopp-ui named: a marker makes a GATE possible. Both halves are
+  ;; then visible in the store — handlers that take `:web/deps`, and whether
+  ;; anything claims to build it — so "this store takes :web/deps and
+  ;; declares no builder" can refuse at the WRITE instead of 500ing in a
+  ;; browser. A capability is a string in config, checkable at boot, which is
+  ;; later and weaker.
+  ;;
+  ;; It cannot be a PERFORMER, and that idea is circular rather than merely
+  ;; wrong: performers already RECEIVE the perform-ctx as their first
+  ;; argument, so the context is strictly upstream of the vocabulary and
+  ;; cannot be a member of it. Stated here because it is the obvious
+  ;; suggestion.
+  (let [ns-src (fn [body] (str "(ns app.system)\n\n" body))
+        one    (store/ingest (store/empty-store) 'app.system
+                             (ns-src (str "(defn ^{:web/context true} deps \"D.\""
+                                          " [] {:registry (atom {})})\n")))]
+    (testing "the marked var, fully qualified — the generated serve call has
+              to name it from another image"
+      (is (= 'app.system/deps (web/context-builder one))))
+    (testing "a store that declares none says so plainly, because MOST apps
+              need no context and that is not a defect"
+      (is (nil? (web/context-builder (store/empty-store)))))
+    (testing "TWO builders is a refusal, not a pick — the context is a
+              singleton and choosing one silently is how an app ends up
+              running on the deps it did not mean"
+      (let [two (store/ingest one 'app.other
+                              (str "(ns app.other)\n\n"
+                                   "(defn ^{:web/context true} deps \"D.\" [] {})\n"))]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"(?i)one"
+                              (web/context-builder two)))))))

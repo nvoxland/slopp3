@@ -297,6 +297,47 @@
            :when sx]
        [(symbol (str nsx) (str (:name e))) (request-literals sx)]))))
 
+(defn context-builder
+  "The qsym of this store's `^{:web/context true}` fn — the zero-arg builder
+  of `:web/perform-ctx` — or nil when the app declares none.
+
+  The managed app server WRITES the `serve!` call, so it has to know how to
+  build the context a handler receives as `:web/deps` and every performer
+  receives as its first argument. That map is app-specific by definition (a
+  registry, a pool, a connection), so the app must say — and a marker is how
+  everything else in this framework is addressed.
+
+  **A marker rather than a capability naming a qualified symbol.** A marker
+  makes a GATE possible: both halves are then visible in the store — handlers
+  destructuring `:web/deps`, and whether anything claims to build it — so
+  \"this store takes `:web/deps` and declares no builder\" can refuse at the
+  WRITE rather than 500 in a browser. A capability is a string in config,
+  checkable for resolvability at boot, which is later and weaker, and it
+  splits the declaration from the thing declared.
+
+  **It cannot be a performer**, and the idea is circular rather than merely
+  wrong: performers already RECEIVE the perform-ctx as their first argument,
+  so the context is strictly upstream of that vocabulary and cannot be a
+  member of it. Written down because it is the obvious suggestion.
+
+  **A SINGLETON**, unlike performers, which are keyed by kind because there
+  are many. So two declarations is a refusal rather than a pick: choosing
+  silently is how an app ends up running on deps it did not mean, and the
+  failure would surface as a missing key three layers away."
+  [store]
+  (let [found (for [nsx (sort (keys (:namespaces store)))
+                    e   (store/forms store nsx)
+                    :when (and (:name e)
+                               (get (modules/web-name-meta e) :web/context))]
+                (symbol (str nsx) (str (:name e))))]
+    (when (seq found)
+      (when (next found)
+        (throw (ex-info (str "a store declares exactly ONE ^{:web/context true}"
+                             " builder; this one has " (count found) ": "
+                             (str/join ", " found))
+                        {:web/context-builders (vec found)})))
+      (first found))))
+
 (defn serving-namespaces
   "Every namespace that must be scanned to serve this store's web surface —
   the derived answer to `serve!`'s `:web/namespaces`, sorted.
