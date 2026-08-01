@@ -14,7 +14,7 @@
   discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.web :as web] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.api.web :as web] [slopp.api :as api] [slopp.api.external :as external] [slopp.web-test :as web-test]))
 
 (deftest routes-derive-from-stored-nodes
   (let [src (str "(ns shop.api)\n\n"
@@ -550,3 +550,22 @@
       (is (not (some #{'shop.api-test} (web/serving-namespaces s)))))
     (testing "a store with no web surface serves nothing, rather than erroring"
       (is (= [] (web/serving-namespaces (store/empty-store)))))))
+
+(deftest the-store-backed-reader-meets-the-reader-contract
+  ;; The RUN lives beside the adapter so the contract can reach a
+  ;; package-private implementation without exporting it for a test's benefit.
+  ;; The contract itself belongs to the port's owner (slopp.web.static), which
+  ;; is the only home that does not make it one implementation's test.
+  ;;
+  ;; It travelled here from slopp.mcp.http-test when the HTTP MCP transport
+  ;; was retired. The adapter was only ever housed there; it answers the same
+  ;; port as `static/file-or-resource-reader`, and the two have diverged
+  ;; before — a mount prefix written `public/` asks for `public//app.css`,
+  ;; which a filesystem normalises away and a manifest lookup does not.
+  ;;
+  ;; In-image and cheap: a store's :files is a plain map, so this adapter
+  ;; needs no database, no session and no socket.
+  (web-test/reader-contract "store"
+                            (fn [files]
+                              (web/store-reader (constantly {:files files})
+                                                (constantly nil)))))

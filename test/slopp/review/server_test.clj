@@ -8,12 +8,18 @@
             [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client]))
 
 (deftest ^:external ui-serve-serves-the-callers-own-session
-  ;; The point of a second listener. slopp.mcp.http/start-server! opens a
-  ;; FRESH session, which is not blank — :test-map and :observed persist and
-  ;; reload — but is BEHIND the session doing the work, and costs a second
-  ;; image to be behind in. The proof is a namespace that exists ONLY in the
-  ;; session handed over: if the page can see it, the page is reading that
-  ;; session.
+  ;; The listener serves the CALLER's session rather than opening one. A
+  ;; fresh session is not blank — :test-map and :observed persist and reload
+  ;; — but it is BEHIND the session doing the work, and costs a second image
+  ;; to be behind in. A page that showed the warranty as of the last write
+  ;; instead of as of now would be wrong exactly when someone is watching it
+  ;; change. The proof is a namespace that exists ONLY in the session handed
+  ;; over: if the page can see it, the page is reading that session.
+  ;;
+  ;; (This used to be phrased against slopp.mcp.http/start-server!, which
+  ;; opened a fresh one. That transport is retired; the reason stands on its
+  ;; own, because it was always about staleness rather than about the other
+  ;; server.)
   (let [st   (store/ingest (store/empty-store) 'demo.only.here
                            "(ns demo.only.here)\n\n(defn f [] 1)\n")
         sess (atom {:store st})]

@@ -46,11 +46,12 @@
   surface.
 
   (An earlier version of this docstring said 7357 was already held. It is
-  not. Nothing in slopp's running process reads `http.port` at all — the
-  transport takes its port as a CLI argument defaulting to a literal, and the
-  stored capability is a mirror of that number that no code consults. Which
-  is exactly why the reason had to be checked rather than assumed: a
-  plausible port conflict is a much easier story than the real one.)
+  not — the transport is a separate entry point and is usually not running.
+  `http.port` means one thing, the port a web app's server binds; slopp's own
+  APIs are an INSTANCE of that, not a second meaning. So slopp's stored 7357
+  is a correct declaration, and `serve-plan` reading it is the primary use.
+  The reason had to be checked rather than assumed: a plausible port conflict
+  is a much easier story than the real one.)
 
   Deliberately NOT folded into `serve-plan`. That answers \"what would this
   store serve, and where\", which production asks too, and a dev-only opt-out

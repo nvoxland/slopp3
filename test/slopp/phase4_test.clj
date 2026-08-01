@@ -1,75 +1,17 @@
 (ns slopp.phase4-test
-  "Phase 4 m1: many agents, ONE store/image. Native MCP over streamable HTTP
-  (POST /mcp) + per-agent attribution on every delta."
+  "Per-agent attribution on every write, and fork/edit/merge end to end.
+
+  Named for Phase 4 m1, which was \"many agents, ONE store/image\" over an
+  HTTP MCP transport. That transport is retired: MCP is stdio and one agent
+  per server (user, 2026-08-01). What survived is what was never about the
+  transport — attribution rides the DELTA, so it holds whoever wrote it and
+  however they connected."
   (:require [clojure.test :refer [deftest is testing]]
-            [cheshire.core :as json]
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.mcp.http :as http] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.web.client :as client])
+            [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
 )
-
-(defn- rpc! [port body]
-  (let [resp (client/request {:http/method  :post
-                              :http/url     (str "http://127.0.0.1:" port "/mcp")
-                              :http/headers {"Content-Type" "application/json"}
-                              :http/body    (json/generate-string body)})]
-    {:status (:http/status resp)
-     :body   (when (seq (:http/body resp))
-               (json/parse-string (:http/body resp) true))}))
-
-(defn- tool! [port agent-name tool args]
-  (get-in (rpc! port {:jsonrpc "2.0" :id 1 :method "tools/call"
-                      :params {:name tool
-                               :arguments (assoc args :agent agent-name)}})
-          [:body :result :content 0 :text]))
-
-(deftest ^:external mcp-over-http-speaks-the-protocol
-  (let [port 7411
-        srv  (http/start-server! port {})]
-    (try
-      (testing "initialize / tools list / notifications, per JSON-RPC"
-        (let [init (rpc! port {:jsonrpc "2.0" :id 1 :method "initialize" :params {}})]
-          (is (= 200 (:status init)))
-          (is (= "slopp" (get-in init [:body :result :serverInfo :name]))))
-        (is (= 202 (:status (rpc! port {:jsonrpc "2.0"
-                                        :method "notifications/initialized"}))))
-        (let [tools (rpc! port {:jsonrpc "2.0" :id 2 :method "tools/list"})]
-          (is (some #(= "edit_replace_form" (:name %))
-                    (get-in tools [:body :result :tools])))))
-      (testing "tool calls work end-to-end through /mcp"
-        (is (re-find #":forms 2"
-                     (tool! port "alice" "ns_create"
-                            {:ns "m1.core"
-                             :source "(ns m1.core)\n(defn f [x] (* 2 x))\n"})))
-        (is (re-find #"\b10\b" (tool! port "alice" "query_eval"
-                                      {:code "(m1.core/f 5)"}))))
-      (finally (http/stop-server! srv)))))
-
-(deftest ^:external two-agents-one-store
-  (let [port 7412
-        srv  (http/start-server! port {})]
-    (try
-      (tool! port "alice" "ns_create"
-             {:ns "team.core"
-              :source "(ns team.core)\n(defn a [x] x)\n(defn b [x] x)\n"})
-      (testing "concurrent different-form writes from two agents both land"
-        (let [results (doall
-                       (pmap (fn [[agent nm body]]
-                               (tool! port agent "edit_replace_form"
-                                      {:ns "team.core" :name nm :source body
-                                       :prompt (str agent "'s change")}))
-                             [["alice" "a" "(defn a [x] (+ x 1))"]
-                              ["bob"   "b" "(defn b [x] (+ x 2))"]]))]
-          (is (every? #(not (re-find #":error|:conflict" %)) results))
-          (let [src (tool! port "carol" "query_source" {:ns "team.core" :full true})]
-            (is (re-find #"\(\+ x 1\)" src))
-            (is (re-find #"\(\+ x 2\)" src)))))
-      (testing "history tells WHO did WHAT (per-agent provenance)"
-        (let [hist (tool! port "carol" "query_history" {:ns "team.core"})]
-          (is (re-find #":agent \"alice\"" hist))
-          (is (re-find #":agent \"bob\"" hist))))
-      (finally (http/stop-server! srv)))))
 
 (deftest ^:external attribution-flows-through-every-write-kind
   (let [sess (external/open!)]

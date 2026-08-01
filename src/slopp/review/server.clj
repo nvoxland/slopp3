@@ -95,7 +95,10 @@
   `{:url :port}` — or `{:error :port}` when the port is taken.
 
   The session is passed in rather than opened here, and that is the whole
-  reason this is not the MCP transport. Not because the warranty is unwritable
+  reason this listener exists separately at all. The reviewer API is a
+  CUSTOM API for the UI — it reuses the web machinery, and it is deliberately
+  not part of what counts as this project's web app (D-ui-api-distinct).
+  Not because the warranty is unwritable
   — `session/persist-trace!` writes `:test-map` to store meta at every verified
   run and `open!` loads it back, so a fresh session is not blank. Because what
   it loads is the last SNAPSHOT: the trace an agent is working against mid-
