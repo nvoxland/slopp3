@@ -490,19 +490,27 @@ are derived from the store, so they cannot disagree with the gates.
 **It does not apply to every app, and the exceptions are not exotic. Set
 `dev.server false` if ANY of these is true:**
 
-- **your handlers take `:web/deps`** — the managed server does not yet build
-  a `:web/perform-ctx`, so an injected dependency arrives nil. That either
-  500s (loud) or returns an empty-but-successful body (silent, and worse);
 - **you have `http.static.*` mounts** — they are not served, so an SPA gets
   its API and a page with no JS, which looks like it works;
+- **you use `:web/auth-config`** — the generated call does not carry it, so
+  identity does not resolve;
 - **your app is a SERVER FOR SOMETHING OTHER THAN ITSELF** — a hub, a proxy,
   anything fronting other projects. It opens no store of its own and can
   never be a managed server's subject; its `serve!` call is the app;
 - **something else already serves this project's HTTP surface** — a managed
   server would then be a second, staler copy of what you are looking at.
 
-The first two are things this skill recommends elsewhere, which is exactly
-why they are named here rather than left to be discovered at a 500.
+**Handlers taking `:web/deps` DO work — declare the builder.** Mark one
+zero-arg fn `^{:web/context true}` and slopp calls it and passes the result as
+`:web/perform-ctx`; handlers receive it as `:web/deps`, performers as their
+first argument. Exactly one per store (it is a singleton, unlike performers,
+which are keyed by kind). It cannot be a performer — performers already
+RECEIVE the context, so it is upstream of that vocabulary.
+
+**But the context does NOT survive a refresh.** Each `done` boots a fresh app
+image, so the builder runs again and anything it allocated — an atom, a pool,
+a cache — is new. An app accumulating state there will find it silently empty
+after any done point. Keep live state outside the context, or opt out.
 
 Where it does apply, three things worth knowing:
 

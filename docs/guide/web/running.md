@@ -11,13 +11,17 @@ into it, and re-serves at every `done` point. `session_brief` reports the url
 as `:app`.
 
 It does not fit every app yet, and the exceptions are ordinary. Set
-`dev.server` to `false` if your handlers take `:web/deps` (the managed server
-does not build a `:web/perform-ctx` yet, so injected dependencies arrive
-nil), if you have `http.static.*` mounts (they are not served, so a
+`dev.server` to `false` if you have `http.static.*` mounts (they are not served, so a
 single-page app gets its API and a page with no JavaScript), if your app is a
 server for something other than itself -- a hub or a proxy, which can never be
 a managed server's subject -- or if something else already serves this
 project's HTTP surface.
+
+Handlers that take `:web/deps` are fine, provided you say how to build them:
+mark one zero-arg function `^{:web/context true}` and slopp calls it, passing
+the result as `:web/perform-ctx`. Exactly one per store. Note that the context
+does **not** survive a refresh -- every `done` boots a fresh app image, so
+anything the builder allocates is new each time. Keep live state elsewhere.
 
 Everything the launch needs is derived from the store -- which namespaces to
 scan, the host, the port -- so there is no hand-kept list that can disagree
