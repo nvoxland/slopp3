@@ -507,9 +507,15 @@ has ordinary in-image tests instead of a JVM apiece:
   not the same question as whether the store serves HTTP. `http.enabled` is
   read by production and by the web rules; `dev.server` (registry default
   `true`) is the dev lifecycle's own opt-out. They came apart on the first
-  store anyone tried: **slopp's own is `http.enabled` on a port the MCP
-  process already holds**, because its web surface IS the transport and the
-  reviewer UI — so slopp's store sets `dev.server false`. Kept OUT of
+  store anyone tried: **slopp's own web surface IS the MCP HTTP transport
+  plus the reviewer API, which the live session already serves over the LIVE
+  store** — so a managed server there would boot a second image and serve a
+  snapshot of the page you are looking at, one done point behind it. slopp's
+  store sets `dev.server false`. (Not a port conflict: nothing in slopp's
+  running process reads `http.port` at all — the transport takes its port as
+  a CLI argument defaulting to a literal, and the stored capability is a
+  mirror of that number no code consults. See
+  `ideas/http-port-means-two-things-now.md`.) Kept OUT of
   `serve-plan` deliberately: a dev-only opt-out does not belong in the answer
   production reads.
 - `serve-plan store dir` → `{:enabled? :mode :namespaces :host :port :adapter}`
