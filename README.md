@@ -142,7 +142,7 @@ them into the right format on every push.
 
 User-facing documentation lives in `docs/` (MkDocs Material) — concepts,
 guides, the tool index, and a release blog. See [DEV.md](./DEV.md) for
-running the dev server, the test tiers, benchmarks, and a one-liner that
+running mcp, the test tiers, benchmarks, and a one-liner that
 builds and serves the docs site locally.
 
 ## Status

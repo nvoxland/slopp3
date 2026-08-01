@@ -4,7 +4,7 @@ This repo is **slopp** — an agent-native codebase system. There are two
 distinct modes of working here, and they use different tools.
 
 **1. Working ON slopp** (this repo's own Clojure code). Everything below
-applies. Setup, the dev server, test tiers, benchmarks, and the docs site:
+applies. Setup, running mcp, test tiers, benchmarks, and the docs site:
 [DEV.md](./DEV.md).
 
 **2. Working THROUGH slopp** — authoring code in a store, here or anywhere.
@@ -144,7 +144,7 @@ the backlog for attention.
 
 | Doc | Read before touching |
 |---|---|
-| `DEV.md` | setup, dev server, tests, benchmarks, the docs site, CI |
+| `DEV.md` | setup, running mcp, tests, benchmarks, the docs site, CI |
 | `.context/architecture.md` | anything — the layer map + core stance |
 | `.context/design-disciplines.md` | building ANY surface/rule — the friction cores + the disciplines that avoid them |
 | `.context/decisions.md` | any design-level change — DECISIONS only |

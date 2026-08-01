@@ -44,9 +44,15 @@ ignored.
 paths for the owned-image launcher before trusting PATH, and forcing the bare
 name makes child images inherit mise's pinned clojure.
 
-## Run the dev server
+## Run mcp
 
-The MCP server is the development surface. From a checkout:
+The MCP server is the development surface, and "mcp" is what to call it. It is
+NOT "the dev server": since 2026-08-01 that phrase means the APP server slopp
+runs for a web project under development (`slopp.api.devserver`, capability
+`dev.server`), which mcp is what STARTS. Two servers, one of them serving your
+code and the other serving you.
+
+From a checkout:
 
 ```sh
 clojure -M -m slopp.boot . --live
