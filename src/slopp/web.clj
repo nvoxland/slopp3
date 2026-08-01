@@ -23,7 +23,9 @@
   [policy identity]
   (dispatch/authorized? policy identity))
 
-(defn ^{:malli/schema [:=> [:cat [:map
+(defn ^{:malli/schema [:=> {:throws [[:map
+                       [:web/missing-performers [:vector :string]]
+                       [:web/namespaces [:vector :symbol]]]]} [:cat [:map
                                   [:web/namespaces [:sequential :symbol]]
                                   [:web/routes {:optional true} [:vector :map]]
                                   [:web/perform-ctx {:optional true} :any]
@@ -90,7 +92,9 @@
   [ctx req]
   (dispatch/handle! ctx req))
 
-(defn ^{:malli/schema [:=> [:cat [:map
+(defn ^{:malli/schema [:=> {:throws [[:map
+                       [:web/missing-performers [:vector :string]]
+                       [:web/namespaces [:vector :symbol]]]]} [:cat [:map
                                   [:web/namespaces [:sequential :symbol]]
                                   [:web/adapter {:optional true} :keyword]
                                   [:web/host {:optional true} :string]

@@ -103,7 +103,7 @@
     :body    (render hiccup)}))
 
 (defn ^:export
-  ^{:malli/schema [:=> [:cat [:map
+  ^{:malli/schema [:=> {:throws []} [:cat [:map
                               [:html/title {:optional true} :string]
                               [:html/head {:optional true} [:sequential :any]]
                               [:html/lang {:optional true} :string]]

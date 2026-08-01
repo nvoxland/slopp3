@@ -15,8 +15,8 @@
   Feature registers Clojure classes for build-time init), `--no-fallback`."
   (:require [clojure.string :as str]))
 
-(defn ^:export ^{:foreign-keys true
-        :malli/schema [:=> [:cat [:map
+(defn ^:export ^{:foreign-keys "clj-kondo's var-definition map — its spelling is not ours to change"
+        :malli/schema [:=> {:throws []} [:cat [:map
                                   [:fixed-arities {:optional true} [:maybe [:set :int]]]
                                   [:varargs-min-arity {:optional true} [:maybe :int]]]]
                        [:enum :vector :apply]]}
