@@ -523,6 +523,15 @@ what that means for the obvious workaround: a builder returning `{:registry
 shape `ambient-state` flags — advisory, with "a legit top-level cache" as its
 named escape, and this is one of them.
 
+**The builder is ZERO-ARG, so it cannot double as a test seam.** If your only
+end-to-end seam was context construction — a `serve!` arity taking a fake
+collaborator, say — the builder becomes the single source of the context and
+simultaneously stops being parameterisable. Two ways out, both fine: inject at
+the HANDLER (`(web/handle! … {:web/deps {:registry … :requester fake}})`,
+which is below the builder and unaffected), or have your own `serve!` call the
+builder and merge an override over it, which keeps one definition and keeps
+the seam. Obvious once said, and not before.
+
 Where it does apply, three things worth knowing:
 
 - **`done` is the grain, not the write.** Mid-episode your store is

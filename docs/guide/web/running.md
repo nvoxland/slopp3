@@ -30,6 +30,13 @@ state elsewhere. A builder returning `{:registry (atom {})}` allocates a new
 atom on every call; only a top-level `defonce` that the builder *references*
 has any chance of outliving a reload.
 
+One consequence worth knowing before you meet it: the builder takes no
+arguments, so it cannot double as a test seam. If your only end-to-end seam
+was context construction -- a `serve!` arity taking a fake collaborator --
+either inject at the handler instead (`:web/deps` is below the builder and
+unaffected) or have your own `serve!` call the builder and merge an override
+over it.
+
 Everything the launch needs is derived from the store -- which namespaces to
 scan, the host, the port -- so there is no hand-kept list that can disagree
 with the surface the gates enforced.
