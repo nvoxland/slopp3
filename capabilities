@@ -1,2 +1,3 @@
+dev.server: false
 http.enabled: true
 http.port: 7357

@@ -221,3 +221,85 @@
               (ex-data (try (client/request {:http/url (:url r)
                                              :http/timeout-ms 5000})
                             (catch clojure.lang.ExceptionInfo e e)))))))))
+
+(deftest ^:external a-refresh-swaps-the-app-and-a-red-store-does-not-take-it-down
+  ;; "Always up" and "up to date" conflict exactly when a boot fails, and at
+  ;; done grain a failing boot is not exotic — mid-episode the store is
+  ;; intentionally incomplete, and red-first IS the normal state. So the new
+  ;; version is proved to LOAD before the old one is killed.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-refresh"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        base (-> (store/empty-store)
+                 (store/ingest 'slopp.web fake-web-src)
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.enabled" "true"))))
+        app  (fn [greeting]
+               (store/ingest base 'demo.app
+                             (str "(ns demo.app)\n\n"
+                                  "(defn greeting \"G.\" [] \"" greeting "\")\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/hi\"\n"
+                                  "        :malli/schema [:=> [:cat :map] :map]\n"
+                                  "        :web/response :map} hi \"H.\" [req] {:ok true})\n")))
+        sess (atom {})
+        body (fn [r] (:http/body (client/request {:http/url (:url r)
+                                                  :http/timeout-ms 5000})))]
+    (try
+      (let [v1 (devserver/refresh! sess (app "version one") dir)]
+        (testing "the first refresh is just a start"
+          (is (:serving? v1) (str "refresh! did not serve: " (:reason v1)))
+          (is (str/includes? (body v1) "version one")))
+        (testing "and it is held on the session, so the next refresh knows
+                  what it is replacing"
+          (is (= v1 (:app-server @sess))))
+        (let [v2 (devserver/refresh! sess (app "version two") dir)]
+          (testing "a second refresh serves the CURRENT store"
+            (is (:serving? v2) (str "refresh! did not re-serve: " (:reason v2)))
+            (is (str/includes? (body v2) "version two")))
+          (testing "on the same url — a stable address is the whole reason to
+                    derive a port rather than take a free one"
+            (is (= (:url v1) (:url v2))))
+          (let [red (store/ingest (app "version three") 'demo.broken
+                                  (str "(ns demo.broken (:require [demo.app :as a]))\n\n"
+                                       "(defn ^{:web/method :get :web/path \"/b\"\n"
+                                       "        :malli/schema [:=> [:cat :map] :map]\n"
+                                       "        :web/response :map} b \"B.\"\n"
+                                       "  [req] (a/nope-not-a-thing))\n"))
+                v3  (devserver/refresh! sess red dir)]
+            (testing "a store that will not load does NOT come up"
+              (is (not (:serving? v3)))
+              (is (str/includes? (str (:reason v3)) "demo.broken")))
+            (testing "and the PREVIOUS version is still answering — the app is
+                      not down because someone was mid-thought"
+              (is (str/includes? (body v2) "version two"))
+              (is (= v2 (:app-server @sess)))))))
+      (finally (devserver/stop! (:app-server @sess))))))
+
+(deftest whether-slopp-manages-a-dev-server-is-its-own-question
+  ;; http.enabled means "this project serves HTTP". It does NOT mean "slopp
+  ;; should run that server for you", and the two came apart on the first
+  ;; store we looked at — slopp's own. It is http.enabled on a port the MCP
+  ;; process is ALREADY serving from, because its web surface is the
+  ;; transport and the reviewer UI. Autostarting there binds nothing and
+  ;; reports a taken port at every done point.
+  ;;
+  ;; So the dev lifecycle gets its own key. Deliberately NOT folded into
+  ;; serve-plan: that answers "what would this store serve", which
+  ;; production will need too, and a dev-only opt-out does not belong in it.
+  (let [web  (-> (store/empty-store)
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.enabled" "true"))))
+        off  (first (store/record-config-put web "capabilities" :manifest
+                                             "dev.server" "false"))]
+    (testing "a web project is managed by default — the whole directive is
+              that the app does not have to ask"
+      (is (devserver/managed? web)))
+    (testing "a project that serves itself opts out, and stays a web project
+              while it does"
+      (is (not (devserver/managed? off)))
+      (is (:enabled? (devserver/serve-plan off "/tmp/x")))
+      (testing "and the plan still says where it WOULD serve, because that is
+                what production asks"
+        (is (pos? (:port (devserver/serve-plan off "/tmp/x"))))))
+    (testing "a store that serves no HTTP at all is not managed either"
+      (is (not (devserver/managed? (store/empty-store)))))))
