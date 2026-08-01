@@ -27,7 +27,7 @@
   incomplete, and reloading a browser into a red half-written state trains
   the author to ignore it."
   (:require [slopp.api.capabilities :as capabilities]
-            [slopp.api.web :as web]))
+            [slopp.api.web :as web] [slopp.store :as store]))
 
 (defn derived-port
   "A localhost port DERIVED from the store dir for this project's APP server —
@@ -82,3 +82,27 @@
                    (capabilities/effective store "http.port")
                    (derived-port dir))
      :adapter    (capabilities/effective store "http.adapter")}))
+
+(defn load-order
+  "The store namespaces to load into the app image, dependencies first.
+
+  The transitive closure of the web surface over the store's require graph
+  — NOT the whole store. The app image exists to run the app: loading
+  everything would make its boot cost grow with the codebase and would put
+  code in a serving process that nothing serving can reach.
+
+  Dependency order is not a nicety here. A store namespace has no classpath
+  presence, so a dependent loaded first would `:require` its way out to the
+  classpath and fail (`image/load-ns-into!` marks `*loaded-libs*` for exactly
+  this reason).
+
+  **`slopp.web` is seeded when the STORE holds it.** slopp's own store does;
+  an ordinary app gets the framework from its declared `slopp-web` coord,
+  already on the child's classpath. Both must work without the app saying
+  which, so this asks the store rather than requiring an answer — and its
+  absence is a fact, not an error."
+  [store]
+  (let [seeds (cond-> (set (web/serving-namespaces store))
+                (contains? (:namespaces store) 'slopp.web) (conj 'slopp.web))
+        want  (into #{} (mapcat #(store/ns-closure store %)) seeds)]
+    (filterv want (store/ns-dependency-order store))))

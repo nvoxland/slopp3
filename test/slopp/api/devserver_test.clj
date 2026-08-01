@@ -52,3 +52,42 @@
       ;; different stores at different grains — a plan that does not say
       ;; which it is becomes a proxy for the other (Core 9)
       (is (= :dev (:mode (devserver/serve-plan on "/tmp/shop"))))) ))
+
+(deftest the-app-image-loads-the-web-surface-and-what-it-reaches
+  (let [s (-> (store/empty-store)
+              (store/ingest 'shop.db "(ns shop.db)\n(defn fetch \"F.\" [id] id)\n")
+              (store/ingest 'shop.api
+                            (str "(ns shop.api (:require [shop.db :as db]))\n\n"
+                                 "(defn ^{:web/method :get :web/path \"/api/u/:id\"\n"
+                                 "        :web/auth :authenticated\n"
+                                 "        :web/reads {:u [:u/by-id [:path-params :id]]}\n"
+                                 "        :malli/schema [:=> [:cat :map] :map]\n"
+                                 "        :web/response :map} u \"U.\" [req] (db/fetch req))\n"))
+              (store/ingest 'shop.data
+                            (str "(ns shop.data)\n"
+                                 "(defn ^{:web/read :u/by-id} by-id \"R.\" [ctx id] id)\n"))
+              ;; nothing in the web surface reaches this
+              (store/ingest 'shop.tools "(ns shop.tools)\n(defn cli \"C.\" [x] x)\n")
+              (#(first (store/record-config-put % "capabilities" :manifest
+                                                "http.enabled" "true"))))
+        order (devserver/load-order s)]
+    (testing "the web surface and everything it transitively requires"
+      (is (= #{'shop.api 'shop.db 'shop.data} (set order))))
+    (testing "a namespace the surface cannot reach is not loaded into the app"
+      ;; the app image exists to run the APP; loading the whole store would
+      ;; make its boot cost grow with the codebase and put code in a serving
+      ;; process that nothing serving can call
+      (is (not (some #{'shop.tools} order))))
+    (testing "dependencies first — the child has no classpath to fall back on"
+      (is (< (.indexOf ^java.util.List order 'shop.db)
+             (.indexOf ^java.util.List order 'shop.api))))
+    (testing "the framework loads from the store when the store is where it lives"
+      ;; slopp's own store HOLDS slopp.web; an ordinary app gets it from the
+      ;; declared slopp-web coord, already on the child's classpath. Neither
+      ;; case may require the app to say which.
+      (let [with-fw (store/ingest s 'slopp.web "(ns slopp.web)\n(defn serve! \"S.\" [o] o)\n")]
+        (is (some #{'slopp.web} (devserver/load-order with-fw)))))
+    (testing "and its absence from the store is not an error"
+      (is (not (some #{'slopp.web} order))))
+    (testing "a store with no web surface loads nothing"
+      (is (= [] (devserver/load-order (store/empty-store)))))))
