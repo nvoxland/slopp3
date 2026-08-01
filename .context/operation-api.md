@@ -491,3 +491,52 @@ CRDT (G9) — the new thing is the DECLARED registry: one entry per key
 :set-of :qualified-symbol :csv`), deliberately not malli — this ns loads in
 the server/boot JVM (kernel deps only; the two-process split). Extending the
 vocabulary = a case in `check-value` + the parser in `effective`, in one ns.
+
+## The app server slopp runs for you (`slopp.api.devserver`)
+
+A web project under development should always have a live version up, and the
+app should hold no `serve!` call, no namespace list and no port to get it.
+Everything needed is already in the store: `http.enabled` says it is a web
+project, the endpoint + performer surface says what to serve, the capability
+registry says where.
+
+The namespace splits DECIDING from RUNNING, and the split is why most of it
+has ordinary in-image tests instead of a JVM apiece:
+
+- `serve-plan store dir` → `{:enabled? :mode :namespaces :host :port :adapter}`
+  or `{:enabled? false :reason …}`. `:namespaces` comes from
+  `api.web/serving-namespaces` — derived, never declared. `:port` prefers a
+  stored `http.port` and otherwise `derived-port`, salted per project for the
+  reason `review.server/derived-port` records (one MCP process binds them all).
+- `load-order store` — the transitive closure of the web surface in dependency
+  order, not the whole store. A store namespace has no classpath presence, so
+  a dependent loaded first would require its way out and fail.
+- `serve-code plan` → the string the image evaluates. The opts are QUOTED
+  (generated forms land in evaluated position, and a namespace symbol there
+  reads as a class name), and it returns the BOUND PORT — an integer, so a
+  throw, which `repl/eval!` returns as a string, cannot read as success.
+- `start!`/`stop!` — the lifecycle. A failure is a sentence, never a throw,
+  and the image is stopped on every failing path.
+
+**The app gets its OWN image.** `session/fresh-image!` sits on the path of
+`edit-replace!`, `rename!`, `move-forms!`, `deps-add!` and
+`merge-into-session!`, so an app served from the oracle would be killed by a
+refactor that never touched it. The two want opposite things — the oracle
+CURRENT and disposable, the app STABLE and pinned — and the oracle's
+requirement is the one that cannot move. The dedicated image also runs on the
+STORE's dependency manifest rather than slopp's, which makes the dev server a
+check on the published surface rather than only a convenience.
+
+Two constraints that are easy to get wrong and expensive to find:
+
+- **Launch through `session/start-image!`, never `repl/start!`.** The door
+  brings `image-deps` and the vendored `framework-dir!` with it; a local
+  launch reproduces "a spare launched in its own dir has nothing vendored,
+  and a JVM cannot pick up a relative classpath directory after launch".
+- **Load with `image/load-ns-into!`, never `load-ns!`.** `currency/stamps` is
+  one process-global atom describing THE ORACLE — see
+  `.context/verification.md`. Stamping a second image's loads into it reports
+  forms as current in a process the oracle never saw.
+
+Nothing starts this automatically yet. The done-grain refresh, the browser
+reload endpoint, the cljs rebuild and the production main are still open.
