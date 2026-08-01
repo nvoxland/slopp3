@@ -294,3 +294,32 @@
                                (<= threshold (get fan-in m 0))
                                (every? banded (deps-of m))))]
     (set/union banded (into #{} (filter hub?) nodes))))
+
+(defn merge-production-cycle
+  "The PRODUCTION module cycle a merge CREATED, or nil.
+
+  `before`/`after` are the store either side of the merge. Reported only
+  when the merge actually GAINED a module edge: the graph is otherwise
+  unchanged, and re-announcing a standing cycle on every unrelated merge
+  is noise rather than news.
+
+  Judged over `production-manifest`, never the declared one. A `-test`
+  namespace folds into its subject module, so its fixture requires ARE
+  declared edges and manufacture back-edges that exist in no production
+  code. slopp's own store is the worked example: `slopp.store.db-test`
+  requires `slopp.api`, which closes
+  `slopp.api -> slopp.edit -> slopp.image -> slopp.store -> slopp.api`, so
+  every merge into main warned of a cycle whose advice — retract an edge —
+  would have broken the test that created it. Every other cycle surface
+  (the graph view, `module_extract`'s plan, the write-time gate) already
+  judged production edges; the merge note was the one that didn't.
+
+  Lives here rather than in `slopp.store.merge` for a layering reason: the
+  production derivation needs `module-of` and the usage rows, which sit
+  well above the store, and the manifest can only be taken AFTER the merge
+  has produced its store."
+  [before after]
+  (when (some (fn [[m deps]]
+                (seq (remove (get (:modules before) m #{}) deps)))
+              (:modules after))
+    (store/modules-cycle (production-manifest after))))

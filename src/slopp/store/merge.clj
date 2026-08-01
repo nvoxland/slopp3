@@ -1,4 +1,19 @@
 (ns slopp.store.merge
+  "Merging one delta log into another — PURE, and deliberately blind.
+
+  Everything here takes stores and returns stores. No image, no loading, no
+  verification, no I/O: `merge-logs` computes what the merged log WOULD be
+  and hands the caller a store plus conflicts, notes and the ids it applied.
+  `slopp.api.branch` owns the consequences. That split is what lets the
+  merge be tested against synthetic stores built from `empty-store`.
+
+  It also bounds what merging may JUDGE. At this layer a store is a delta
+  log and some maps; nothing here knows which namespaces are tests, which
+  requires are production, or what a module means beyond a string key. So a
+  rule needing any of that belongs above — the module-cycle warning lived
+  here once and reported, on every merge into slopp's own main, a cycle that
+  existed only because a `-test` namespace's fixture requires are declared
+  edges. Blindness is the design; judging anyway is the bug."
   (:require [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]
             [slopp.store.semver :as semver]
@@ -409,8 +424,13 @@
                             changed new-nses (conj applied (:id d)))))
 
                   ;; module edges are CRDT-grain: fold theirs in (adds union,
-                  ;; removes disj) — never a conflict. A union can close a
-                  ;; cycle neither side saw; surface it as a note.
+                  ;; removes disj) — never a conflict. A union CAN close a
+                  ;; cycle neither side saw, but it cannot be judged HERE:
+                  ;; only the DECLARED manifest is in reach, and a -test
+                  ;; namespace's fixture requires are declared edges. That
+                  ;; reported a cycle on every merge into slopp's own main
+                  ;; which no production code had. The caller judges
+                  ;; production edges — api.modules/merge-production-cycle.
                   :module-edge
                   (let [st' (if (= :remove (:action d))
                               (let [deps (disj (get-in st [:modules (:from d)] #{})
@@ -419,16 +439,8 @@
                                   (update st :modules dissoc (:from d))
                                   (assoc-in st [:modules (:from d)] deps)))
                               (update-in st [:modules (:from d)]
-                                         (fnil conj #{}) (:to d)))
-                        cyc (when (= :add (:action d))
-                              (store/modules-cycle (:modules st')))]
-                    (done st' idmap (inc merged) conflicts
-                          (cond-> notes
-                            cyc (conj {:modules-cycle cyc
-                                       :reason (str "the merged module graphs form a"
-                                                    " cycle neither side saw — retract"
-                                                    " an edge (module_dep {from .. to .."
-                                                    " remove true})")}))
+                                         (fnil conj #{}) (:to d)))]
+                    (done st' idmap (inc merged) conflicts notes
                           changed new-nses (conj applied (:id d))))
 
                 ;; unknown op: never guess with someone's code

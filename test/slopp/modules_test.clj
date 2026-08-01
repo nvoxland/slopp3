@@ -35,12 +35,23 @@
         (is (empty? (:conflicts r)) (pr-str (:conflicts r)))
         (is (= #{"a.core" "a.util" "a.extra"}
                (get-in r [:store :modules "b.app"])))))
-    (testing "a merge whose union creates a cycle gets a NOTE, not silence"
+    (testing "a union that closes a cycle still merges — judging it is the CALLER's"
+      ;; merge-logs can only see the DECLARED manifest, where a -test
+      ;; namespace's fixture requires are edges. Warning from here reported
+      ;; a cycle on every merge into slopp's own main that no production
+      ;; code had, advising a retraction that would have broken the very
+      ;; test that created the edge. api.modules/merge-production-cycle
+      ;; judges the production graph instead — and it can only run after
+      ;; the merge has produced a store, which is why it cannot live here.
+      ;; These stores have no namespaces at all, which is the other half of
+      ;; the same point: nothing at this layer knows what production means.
       (let [[ours _]   (store/record-module-edge base "x.a" "x.b" :add)
             [theirs _] (store/record-module-edge base "x.b" "x.a" :add)
             r          (merge/merge-logs ours theirs :from "fork")]
         (is (empty? (:conflicts r)))
-        (is (some :modules-cycle (:notes r)) (pr-str (:notes r)))))))
+        (is (= {"x.a" #{"x.b"} "x.b" #{"x.a"}} (:modules (:store r)))
+            "the union lands — CRDT grain is not conditional on acyclicity")
+        (is (not-any? :modules-cycle (:notes r)) (pr-str (:notes r)))))))
 
 (deftest test-namespaces-see-package-private-deep-vars
   ;; a -test ns folds into the package it tests — for visibility, not just

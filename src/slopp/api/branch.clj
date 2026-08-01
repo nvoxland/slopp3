@@ -22,7 +22,7 @@
             [slopp.edit :as edit]
             [slopp.image :as image]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str]))
+            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str] [slopp.api.modules :as modules]))
 
 (defn merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
@@ -123,6 +123,18 @@
                                                          (str (or (:name e) (:id e)))))))
                                        (:changed-form-ids r))
                     verify-nses  (vec (remove #{'*session*} touched-nses))
+;; the cycle note merge-logs cannot make: it sees only the
+                    ;; DECLARED manifest, where a -test namespace's fixture
+                    ;; requires are edges, so it warned on every merge into
+                    ;; main about a cycle no production code had.
+                    mod-cycle    (modules/merge-production-cycle base st'')
+                    notes        (cond-> (vec (:notes r))
+                                   mod-cycle
+                                   (conj {:modules-cycle mod-cycle
+                                          :reason (str "the merged module graphs form a"
+                                                       " cycle neither side saw — retract"
+                                                       " an edge (module_dep {from .. to .."
+                                                       " remove true})")}))
                     summary      (when (seq verify-nses)
                                    (session/run-verification! session verify-nses nil
                                                       :edited edited))]
@@ -135,7 +147,7 @@
                            :conflicts  (:conflicts r)
                            :merge-delta (:id mdelta)}
                     (seq (:new-nses r)) (assoc :new-nses (:new-nses r))
-                    (seq (:notes r))    (assoc :notes (:notes r))
+                    (seq notes)         (assoc :notes notes)
                     summary             (assoc :test summary))
                   t0)))))))))
 

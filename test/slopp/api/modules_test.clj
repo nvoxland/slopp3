@@ -474,3 +474,55 @@
   (testing "a single god-module everything calls is still found"
     (is (= #{"god"}
            (modules/substrate {"a" ["god"] "b" ["god"] "c" ["god"] "god" []})))))
+
+(deftest ^:external a-merge-cycle-note-judges-production-edges
+  ;; The merge's cycle warning was the ONE surface still judging the
+  ;; DECLARED manifest. A `-test` namespace folds into its subject module,
+  ;; so its fixture requires are declared edges — and on slopp's own store
+  ;; `slopp.store.db-test`'s require of `slopp.api` closed
+  ;; `slopp.api → slopp.edit → slopp.image → slopp.store → slopp.api`.
+  ;; Every merge into main reported that cycle, and its advice — retract an
+  ;; edge — would have broken the test that created it. There was no
+  ;; production cycle to fix.
+  (let [sess (external/open!)]
+    (try
+      (swap! sess assoc :adopting? true)
+      (api/ingest! sess 'pa.core "(ns pa.core)\n(defn base \"B.\" [x] x)\n")
+      (api/ingest! sess 'pb.app
+                   (str "(ns pb.app (:require [pa.core :as c]))\n"
+                        "(defn go \"G.\" [x] (c/base x))\n"))
+      ;; the fixture back-edge: production-wise pa.core NEVER reaches pb.app
+      (api/ingest! sess 'pa.core-test
+                   (str "(ns pa.core-test (:require [pb.app :as app]\n"
+                        "                           [clojure.test :refer [deftest is]]))\n"
+                        "(deftest go-t (is (= 1 (app/go 1))))\n"))
+      (swap! sess dissoc :adopting?)
+      (api/adopt-modules! sess)
+      (let [st (:store @sess)
+            ;; `before` lacking the edge is what makes this a merge that
+            ;; GAINED one — the check is scoped to that, so a standing
+            ;; cycle is not re-reported on every unrelated merge.
+            before (assoc st :modules {})]
+        (testing "a cycle that exists ONLY in the declared manifest is not a note"
+          (is (contains? (set (get-in st [:modules "pa.core"])) "pb.app")
+              "precondition: the declared manifest carries the fixture edge")
+          (is (some? (store/modules-cycle (:modules st)))
+              "precondition: judged as DECLARED, this graph is cyclic")
+          (is (nil? (modules/merge-production-cycle before st))
+              (pr-str (:modules st))))
+        (testing "a merge that gained NO module edge reports nothing"
+          (is (nil? (modules/merge-production-cycle st st)))))
+      ;; now a REAL production cycle: pa.core.impl reaches pb.app in
+      ;; production code. Module edges are first-two-segments, so this
+      ;; closes pa.core ⇄ pb.app without an ns-level require cycle.
+      (swap! sess assoc :adopting? true)
+      (api/ingest! sess 'pa.core.impl
+                   (str "(ns pa.core.impl (:require [pb.app :as app]))\n"
+                        "(defn back \"B.\" [x] (app/go x))\n"))
+      (swap! sess dissoc :adopting?)
+      (api/adopt-modules! sess)
+      (testing "a cycle in PRODUCTION code is still reported"
+        (let [st (:store @sess)]
+          (is (some? (modules/merge-production-cycle (assoc st :modules {}) st))
+              (pr-str (:modules st)))))
+      (finally (api/close! sess)))))
