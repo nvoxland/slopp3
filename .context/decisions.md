@@ -3201,3 +3201,55 @@ that says which framework a built tree carries.
 
 Open: whether `slim` / `slim-install` are deleted outright or kept as a local
 convenience. Nothing depends on them once vendoring lands.
+
+### D-mcp-stdio-only (2026-08-01, user decision) — MCP is stdio, and the reviewer API is a distinct custom API
+
+Two rulings in one, and they pull apart a conflation that had been in the code
+since Phase 4.
+
+**MCP is served over stdio.** "We don't need/want multiple agents in the same
+mcp server. So stdio is good for mcp." One agent, one server, one session.
+That removes the entire reason `slopp.mcp.http` existed: it was P4-m1's
+"shared-session multi-agent", N clients on one store/image over native MCP on
+`POST /mcp`.
+
+So the namespace is RETIRED, with its tests, including
+`phase4-test/two-agents-one-store` — the scenario itself. Nothing else
+depended on it: the benchmark calls `mcp/handle!` in-process, `--call` is a
+one-shot CLI through `slopp.boot`, and its only other consumers were its own
+tests. `phase4-test`'s surviving tests (per-agent attribution, fork/edit/merge
+end to end) never used the transport, because attribution rides the DELTA — it
+holds whoever wrote it and however they connected.
+
+**The reviewer UI's APIs are separate and custom, and are NOT this project's
+"web" project.** "Those have to go off http, you can use whatever web
+infrastructure you want that makes them easiest to write. But they aren't part
+of whatever counts as the 'web' project so code reuse is fine, but keep those
+APIs distinct."
+
+So: reusing `slopp.web` to write them is right and stays. What is not right is
+serving them from the same listener as MCP, which
+`slopp.mcp.http/start-server!` did (it mounted `ui-server/served-namespaces`
+alongside `/call` and `/mcp`). That mixing goes with the transport.
+`review.server/serve!` on the derived `ui.port` is the one place the reviewer
+API is served, over the CALLER's live session.
+
+**What this does NOT change.** `http.enabled` on slopp's own store stays: it is
+what turns the web write gates and `query_routes` on for slopp's own
+endpoint-shaped code, which is genuine value. And `http.port` still means one
+thing — the port a web app's server binds (see the 2026-08-01 note under
+`dev.server`). slopp simply has no web APP for it to describe now, which is
+the honest reading and was always the shape of it.
+
+**Consequence recorded, not fixed:** slopp's remaining `:web/`-declared
+endpoints (the reviewer API) are still seen by `query_routes`, the cljs client
+generator and `devserver/serving-namespaces` as "slopp's web app surface".
+Nothing runs on it — `dev.server false` — and no other store has this problem,
+so it is a self-hosting wrinkle rather than a feature request. Revisit only if
+a second store grows tooling endpoints it does not want counted as its app.
+
+**Salvage:** `store-reader` — the LIVE-store adapter behind
+`static/mount-routes`, one of the two implementations held to
+`slopp.web-test/reader-contract` — was only ever HOUSED in the transport. It
+moved to `api.web/store-reader` with its contract run, because it is the
+pattern the dev server will need for `http.static.*` mounts.

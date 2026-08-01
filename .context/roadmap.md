@@ -72,7 +72,12 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
 
 ## P4 — Phase 4 (multi-agent)
 
-- **P4-m1 — Shared-session multi-agent = the first Phase-4 face.** One
+- **P4-m1 — Shared-session multi-agent. RETIRED 2026-08-01** (D-mcp-stdio-only:
+  MCP is stdio, one agent per server). The transport and the
+  `two-agents-one-store` test are deleted; per-agent attribution SURVIVES and
+  is the part that mattered, because it rides the delta rather than the
+  connection. Kept below as the record of what was built and why.
+  One
   server process owns THE session (store + image + db); N agents connect via
   native MCP over streamable HTTP (`POST /mcp`, single-JSON responses,
   notifications → 202). Concurrency safety is the item-4 substrate (atomic

@@ -182,7 +182,6 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), wire shaping (spool/told/hints), turn gate |
 | `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
-| `slopp.mcp.http` | same dispatch over localhost HTTP: `/call` (curl), `/mcp` (native MCP, shared-server mode), `/metrics` |
 | `slopp.mcp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.store.build` | explicit build: files + GraalVM native-image recipe (O4) |
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |

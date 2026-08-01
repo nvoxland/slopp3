@@ -115,7 +115,10 @@ them:
 Two comparability caveats to restate in results write-ups: cells are n=1
 (setup reproduces exactly; numbers carry single-run variance), and when
 reading server-side `/metrics`, filter to the agent's run window by
-timestamp — orchestrator acceptance probes pollute the tail.
+timestamp — orchestrator acceptance probes pollute the tail. (That `/metrics`
+endpoint went with the HTTP transport in D-mcp-stdio-only; the caveat is kept
+because it applies to any per-call size record, and the benchmark's own `call!`
+measures the same wire shape in-process.)
 
 ## Conventional-workflow baselines (one-time rows)
 
@@ -396,7 +399,7 @@ reference graph before touching anything:
 - slopp.api: **103 forms, 195KB**. Of that, **only 23 forms / 22KB (12%) is
   genuinely internal** (no callers outside the slopp.api module, production
   edges only). **78 forms / 171KB (88%) is PUBLIC surface** — called by
-  slopp.mcp, slopp.sync, slopp.mcp.http, slopp.bench, slopp.bench.evalseed. The biggest
+  slopp.mcp, slopp.sync, slopp.bench, slopp.bench.evalseed. The biggest
   forms are ALL public (query-history 12.8KB, done! 12.3KB, move-forms! 8.4KB).
 - So a package-private deep split **cannot deliver the kondo win**: the cost
   IS the public surface, and package-private is exactly what public can't be.

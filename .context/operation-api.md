@@ -312,15 +312,19 @@ rewritten.
 
 ## Transports
 
-Two transports share the SAME dispatch (`mcp/handle`):
+MCP is served over STDIO, and only stdio (D-mcp-stdio-only, 2026-08-01).
+There was an HTTP transport sharing the same `mcp/handle` dispatch — `/call`
+for curl, `/mcp` for native MCP over streamable HTTP, `/metrics` for payload
+sizes — and it is retired. Its reason for existing was N agents sharing one
+server, which is explicitly not wanted; nothing else depended on it (the
+benchmark calls `mcp/handle!` in-process, `--call` is a one-shot CLI), and
+its store-backed static reader moved to `api.web/store-reader`.
+
 - **MCP stdio** (`clojure -M -m slopp.mcp [dir]`) — Claude Code and Codex
   (`config.toml` recipe in README). Optional dir = durable session. The
   in-repo `.mcp.json` runs it THROUGH `slopp.boot` (`-m slopp.boot . --snapshot`)
   so slopp serves from its own store, no exported source — see
   "Running from the store" below.
-- **HTTP** (`clojure -M -m slopp.mcp.http <port> [dir]`, or
-  `http/start-server!` programmatically) — localhost-only JSON for
-  curl/scripting/evals; `/metrics` returns per-call payload sizes.
 - **Git smart-HTTP** (`clojure -M -m slopp.git <port> [dir]`, or
   `git/start-server!`) — P4-m8: any git client clones/fetches/pushes the
   milestone projection at `http://127.0.0.1:<port>/slopp.git`.
@@ -516,8 +520,8 @@ has ordinary in-image tests instead of a JVM apiece:
   thing, the port a web app's server binds; slopp's own APIs are an INSTANCE
   of that, so its stored 7357 is a correct declaration and `serve-plan`
   reading it is the primary use. What is wrong runs the other way:
-  `mcp.http/-main` hardcodes the literal instead of reading the capability —
-  `ideas/the-mcp-transport-ignores-the-store-that-declares-its-port.md`.)
+  slopp has no web APP at all — the reviewer API is a distinct custom API,
+  not this project's web surface.)
   Kept OUT of
   `serve-plan` deliberately: a dev-only opt-out does not belong in the answer
   production reads.
