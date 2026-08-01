@@ -70,7 +70,7 @@
           :to        (:to-ns r)
           :to-export (modules/export-level store (:to-ns r) (:to-name r))})))
 
-(defn ^{:export "slopp.review"} production-manifest
+(defn ^{:export "slopp.ui-api"} production-manifest
   "Module dependency edges from PRODUCTION namespaces only — the
   architecture VIEW's graph. A `-test` namespace folds into its subject
   module (module-of strips `-test`), so its fixture deps would manufacture
@@ -79,7 +79,7 @@
   manifest still carries the test edges — this derivation is for
   layers/cycles, not for enforcement.
 
-  Exported to the `slopp.review` subtree because that is the architecture view:
+  Exported to the `slopp.ui-api` subtree because that is the architecture view:
   the Code screen draws this graph. Not public — no other caller has asked."
   ([store] (production-manifest store (module-usage-rows store)))
   ([store rows]

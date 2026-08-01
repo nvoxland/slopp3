@@ -1,12 +1,12 @@
-(ns slopp.review.heartbeat-test
+(ns slopp.ui-api.heartbeat-test
   "What a check-in must get right: a project always has a name a human
   recognises, the beat matches the contract the hub validates it against, the
   first one is immediate, and an orderly shutdown says goodbye."
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.review.heartbeat :as beat]
-            [slopp.review.contracts :as contracts] [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
+            [slopp.ui-api.heartbeat :as beat]
+            [slopp.ui-api.contracts :as contracts] [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
 
 (deftest a-beat-says-who-and-where-and-nothing-it-does-not-know
   (let [named (assoc-in (store/empty-store) [:config "capabilities" :values]

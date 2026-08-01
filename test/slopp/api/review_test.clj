@@ -120,7 +120,7 @@
       (is (not (contains? (set (:flags (row 'cl.client/draw))) :untested))))))
 
 (deftest review-scan-knows-an-endpoint-is-called-by-the-ROUTER
-  ;; Measured on slopp's own store: all eight forms of `slopp.review.api` — the
+  ;; Measured on slopp's own store: all eight forms of `slopp.ui-api.api` — the
   ;; entire HTTP API this project serves — flagged :unused, which review_scan
   ;; glosses as "dead public surface". Zero in-store callers is CORRECT and the
   ;; conclusion is wrong: an endpoint's caller is the router, which resolves it
@@ -153,7 +153,7 @@
     (testing "a PERFORMER is the same case — resolved by vocabulary at server
               assembly, by name, so it has no caller either. Found by fixing the
               endpoint half and re-scanning: all eight of slopp's own
-              `slopp.review.reads` performers were still reported dead."
+              `slopp.ui-api.reads` performers were still reported dead."
       (let [p (row 'ep.api/things-read)]
         (is (some? p) (pr-str r))
         (is (not (contains? (set (:flags p)) :unused)) (pr-str p))))

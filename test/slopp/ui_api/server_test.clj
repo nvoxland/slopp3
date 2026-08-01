@@ -1,9 +1,9 @@
-(ns slopp.review.server-test
+(ns slopp.ui-api.server-test
   "The project listener's two promises: it serves the CALLER's session (the
   reason it is not the MCP transport), and its address is derived rather than
   fixed, so two projects on one machine never fight for a port."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.review.server :as server]
+            [slopp.ui-api.server :as server]
             [slopp.store :as store]
             [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client]))
 

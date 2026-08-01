@@ -1,4 +1,4 @@
-(ns slopp.review.model-test
+(ns slopp.ui-api.model-test
   "Tests for the reviewer UI's read models — what the server hands the client.
 
   Every test here builds a REAL store with `store/ingest` rather than a map
@@ -11,7 +11,7 @@
   a string, silently stopping being a reference — so symbols become text
   exactly once, in the model, and this namespace is where that is enforced."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.review.model :as model]
+            [slopp.ui-api.model :as model]
             [slopp.store :as store]))
 
 (defn- json-shaped?

@@ -1,4 +1,4 @@
-(ns slopp.review.server
+(ns slopp.ui-api.server
   "The listener a project serves its OWN reviewer UI on.
 
   One per MCP process, over the live session — which is the whole reason this
@@ -11,10 +11,11 @@
   Its address is derived rather than configured (D-ui-hub). The fixed
   `ui.port` default worked for one project on a machine and collided for the
   second; now nobody needs to know this port at all, because the address a
-  human remembers belongs to `slopp.review.hub`, which proxies here."
+  human remembers belongs to the HUB, which is its own project (`slopp-ui`)
+  and proxies here."
   (:require [slopp.api.capabilities :as caps]
             [slopp.web :as web]
-            [slopp.review.reads] [slopp.review.api]))
+            [slopp.ui-api.reads] [slopp.ui-api.endpoints]))
 
 (defonce ^:private current
   ;; defonce, not def: under --live this namespace reloads on every edit,
@@ -38,14 +39,21 @@
 (def ^:export served-namespaces
   "Every namespace this project's API serves — endpoints AND read performers.
 
-  ONE list, exported, because there are two servers that mount it
-  (`ui/serve!` and the MCP http transport) and a literal repeated at both is
-  how a namespace ends up served by nobody. That is not hypothetical: the
-  compiled client bundle 404'd on every page for two waves behind a 200 for
-  the page itself, because one list got a new entry and the other did not.
+  ONE list, exported. It had two mounts — `serve!` here and the MCP http
+  transport — and a literal repeated at both is how a namespace ends up
+  served by nobody: the compiled client bundle 404'd on every page for two
+  waves behind a 200 for the page itself, because one list got a new entry
+  and the other did not.
 
-  Both halves of a request live here. `slopp.review.api` declares the `/api/*`
-  routes; `slopp.review.reads` declares the `:web/read` performers they resolve
+  The transport is retired (D-mcp-stdio-only), so `serve!` is the only mount
+  now, and that is the POINT rather than an excuse to inline it: mounting the
+  reviewer API anywhere else is what the decision rules out. This API is a
+  distinct custom API for the UI, not part of what counts as a web project,
+  and one exported list is what makes a second mount a visible choice rather
+  than a copied literal.
+
+  Both halves of a request live here. `slopp.ui-api.api` declares the `/api/*`
+  routes; `slopp.ui-api.reads` declares the `:web/read` performers they resolve
   through. Reads are addressed by VOCABULARY rather than by var, so an
   endpoint names a KIND and the performer for it is found — but that also
   means a list carrying only one of the two namespaces answers 500 rather
@@ -54,7 +62,7 @@
   It is a short list now and stays that way: a project serves JSON and the
   EDN contract, nothing else. The pages a human looks at belong to the hub,
   which is a separate application (D-ui-hub part 4)."
-  ['slopp.review.reads 'slopp.review.api])
+  ['slopp.ui-api.reads 'slopp.ui-api.endpoints])
 
 (defn ^:export derived-port
   "A localhost port DERIVED from the store dir for this project's own UI

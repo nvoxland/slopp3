@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.review.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.review.heartbeat :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.ui-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 

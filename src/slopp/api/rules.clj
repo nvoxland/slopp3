@@ -680,7 +680,7 @@
    VALUE — which is where a DOCSTRING sits — so it never once fired on a
    documented global, i.e. on every global anyone had bothered to justify, and
    looked healthy for its entire life while nine accumulated. The same class
-   recurred in `contract-drift` a day later, and again in `slopp.review.reads/
+   recurred in `contract-drift` a day later, and again in `slopp.ui-api.reads/
    form-doc`, which showed a `def`'s value as its docstring on the reviewer
    page until this rule found it.
 

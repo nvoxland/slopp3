@@ -962,7 +962,7 @@
 (deftest the-web-framework-never-reaches-back-into-slopp
   ;; slopp.web.* is the FRAMEWORK slopp ships to users: build.clj's slim
   ;; io.github.nvoxland/slopp-web jar is exactly slopp/web.clj + slopp/web/**.
-  ;; slopp.review.* is slopp's OWN webapp built on that framework — a peer of any
+  ;; slopp.ui-api.* is slopp's OWN webapp built on that framework — a peer of any
   ;; user's app. The dependency runs ui -> web and NEVER the reverse, because a
   ;; framework namespace that reaches back into slopp's core makes that jar
   ;; unloadable, and it breaks at the USER's require time rather than ours.
@@ -1006,7 +1006,7 @@
   ;; the two surfaces disagreed: the architecture view showed a clean DAG
   ;; while the gate refused an edge for closing a cycle only a test made.
   ;;
-  ;; Found in anger: slopp.mcp → slopp.review was refused for closing
+  ;; Found in anger: slopp.mcp → slopp.ui-api was refused for closing
   ;; ui → api → index → mcp → ui, where index → mcp exists only because
   ;; slopp.index.deps-test calls slopp.mcp/handle!.
   (let [sess (external/open!)]

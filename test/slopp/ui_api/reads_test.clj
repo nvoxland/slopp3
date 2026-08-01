@@ -1,11 +1,11 @@
-(ns slopp.review.reads-test
+(ns slopp.ui-api.reads-test
   "The store browser through the PORTLESS pipeline: route → policy →
   declared reads → handler, against an in-memory fixture store. The
   escaping assertion is a SECURITY test — the browser renders arbitrary
   store source."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.review.reads :as pages]))
+            [slopp.ui-api.reads :as pages]))
 
 (deftest a-defs-value-is-not-its-docstring
   ;; Pattern 1, alive in the shipped UI. `form-doc` read `(nth sx 2 nil)` and

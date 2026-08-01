@@ -1,10 +1,10 @@
-(ns slopp.review.api-test
+(ns slopp.ui-api.endpoints-test
   "Tests for the JSON boundary, run through the REAL dispatcher.
 
   Two disciplines, both learned from failures. First, build the context from
   `server/served-namespaces` rather than a hand-picked subset: endpoints and
   their read performers live in different namespaces, so a context holding
-  only `slopp.review.api` answers 500 and tests nothing — and a bundle served by
+  only `slopp.ui-api.api` answers 500 and tests nothing — and a bundle served by
   nothing once 404'd for two waves behind a 200 for the page.
 
   Second, validate every response against the SAME contract var the typed
@@ -14,9 +14,9 @@
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.review.api]
-            [slopp.review.contracts :as contracts]
-            [slopp.web :as web] [slopp.review.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
+            [slopp.ui-api.endpoints]
+            [slopp.ui-api.contracts :as contracts]
+            [slopp.web :as web] [slopp.ui-api.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -29,8 +29,8 @@
                               "(ns demo.core)\n\n(defn hello \"Says hi.\" [x] x)\n")
                 (store/ingest 'demo.util "(ns demo.util)\n\n(defn undocumented [x] x)\n"))
                 ;; the served list, not a hand-picked subset: the reads these
-        ;; endpoints declare are performed by slopp.review.pages, so a context
-        ;; holding only slopp.review.api answers 500 and tests nothing real
+        ;; endpoints declare are performed by slopp.ui-api.reads, so a context
+        ;; holding only slopp.ui-api.api answers 500 and tests nothing real
         ctx (web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
         GET (fn [uri] (web/handle! ctx {:request-method :get :uri uri}))]
@@ -80,7 +80,7 @@
   ;; a LIST that someone had to remember to add to. So the list is one var,
   ;; and this test is the reason it is one var.
   (testing "the served list names both halves of a request"
-    (is (= #{'slopp.review.reads 'slopp.review.api}
+    (is (= #{'slopp.ui-api.reads 'slopp.ui-api.endpoints}
            (set server/served-namespaces))))
   (testing "serving that list actually routes the API — and a project serves
             NOTHING ELSE, which is the shape the split settled on"
@@ -245,7 +245,7 @@
 
 (deftest ^:external a-consumer-generates-an-equivalent-client-from-the-published-contract
   ;; The fixed point the whole split rests on. A store that has never seen
-  ;; slopp.review.contracts generates, from HTTP alone, a client equivalent to the
+  ;; slopp.ui-api.contracts generates, from HTTP alone, a client equivalent to the
   ;; one local generation produces from the store. If this holds, the reviewer
   ;; UI can live in its own project; if it does not, the wire format is lossy
   ;; and nothing downstream is worth building.
