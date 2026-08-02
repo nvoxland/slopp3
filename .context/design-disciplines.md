@@ -190,6 +190,22 @@ The retarget is trivial; noticing is the work, and what makes it noticeable is
 pairing every "must be absent" with a "must be present" against the same
 population.
 
+**And the twin the same day, from the other direction.** The shipped-prose
+guard was built with a probe asserting its detector CAN FIRE on a known-bad
+line, and none asserting it STAYS SILENT on a known-good one. The first rename
+it met was one whose new name contains the old (`auth.bearer.` →
+`web.auth.bearer.`), the match was an unanchored substring, and it reported 17
+findings of which 17 were false — every one a line that had just been
+corrected. So:
+
+> A detector needs BOTH probes — one input it must flag, one it must not.
+> A check that flags everything is exactly as uninformative as one that flags
+> nothing, and only the second failure mode is usually tested for.
+
+The good-input probe caught a second bug within a minute of existing: a
+bracket expression in the escaping that BSD `sed` rejected while looking
+correct.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by

@@ -315,6 +315,15 @@ a scan that silently found nothing passes every comparison you make against it.
 (is (= expected (set (map :ns found))))
 ```
 
+**And if you are building the FILTER, probe it both ways.** A detector needs an
+input it must flag and an input it must NOT — verify only that it can fire and
+every false-positive mode goes untested. A guard shipped here with a can-fire
+probe and no can-stay-silent one; the first rename it met was one whose new
+name contained the old (`a.b.` → `x.a.b.`), the match was an unanchored
+substring, and it reported every freshly-corrected line as a violation. A check
+that flags everything is exactly as uninformative as one that flags nothing,
+and it teaches its reader to stop looking.
+
 **This applies to a shell command exactly as it does to an `is`.** A rename was
 verified with `query_capabilities | grep ':set true'` → no output → read as "the
 rename landed". Empty meant two things at once: *nothing is set*, and *the tool
