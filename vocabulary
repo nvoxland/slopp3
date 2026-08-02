@@ -1,2 +1,16 @@
 effects: external
+http.adapter: web.adapter
+http.enabled: web.enabled
+http.host: web.host
+http.max-body-bytes: web.max-body-bytes
+http.port: web.port
+http.static: web.static
 reads: internal
+slopp.api.crossings: slopp.index.crossings
+slopp.edit.refs: slopp.index.refs
+slopp.http-api.heartbeat: slopp.hub
+slopp.store.build: slopp.build
+slopp.ui-api: slopp.http-api
+ui-hub: hub
+ui.hub-port: slopp.hub.port
+ui.port: slopp.api.port
