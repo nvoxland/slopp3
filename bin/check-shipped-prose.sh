@@ -79,16 +79,43 @@ echo "scanning $n_files shipped prose file(s) for $n_terms retired spelling(s)"
 [ "$n_terms" -gt 0 ] || { echo "FAIL: no retired vocabulary declared -- this check would pass vacuously" >&2; exit 2; }
 [ "$n_files" -gt 0 ] || { echo "FAIL: no prose files found -- this check would pass vacuously" >&2; exit 2; }
 
-# the detector must be able to fire: a check that cannot fail is not a check
-probe=$(mktemp -d)/probe.md
-first=$(echo "$RETIRED" | head -1)
-printf 'a line naming %s\n' "$first" > "$probe"
-grep -qF -- "$first" "$probe" || { echo "FAIL: the detector does not fire on a known-bad line" >&2; exit 2; }
+# MATCH AT A SEGMENT BOUNDARY, not as a substring.
+#
+# A rename whose NEW name CONTAINS the old one -- `auth.bearer.` ->
+# `web.auth.bearer.` -- makes an unanchored fixed-string scan report every
+# correctly-renamed line as a violation. Measured the first time one landed:
+# 17 findings, all 17 false, every one of them prose that had just been fixed.
+# A guard against stale names that fires hardest on the freshly-corrected ones
+# teaches you to stop reading it.
+#
+# So the term must start where a segment starts. `.` counts as a segment
+# character, so `web.auth.bearer.` no longer matches `auth.bearer.`, while a
+# real mention -- after a backtick, a quote, a space, a line start -- still
+# does. Same whole-segment rule rename_sweep uses, for the same reason.
+# escape by ALLOWLIST -- anything not alphanumeric/_/- gets a backslash. The
+# denylist version of this line was a bracket expression, and it broke on BSD
+# sed while looking correct; the negative probe below is what reported it.
+rx_escape() { printf '%s' "$1" | sed -E 's/[^A-Za-z0-9_-]/\\&/g'; }
+
+# the detector must fire on a known-bad line AND stay silent on a known-good
+# one. Only the first half existed, which is exactly how the substring bug got
+# in: "it can fail" was checked, "it can pass" was not.
+probe_dir=$(mktemp -d)
+first_pair=$(grep -E '^[^:]*[._-][^:]*:' "$VOCAB_SRC" | head -1)
+first_old=${first_pair%%:*}
+first_new=$(printf '%s' "${first_pair#*:}" | sed -E 's/^ +//')
+printf 'a line naming %s\n' "$first_old" > "$probe_dir/bad.md"
+printf 'a line naming %s\n' "$first_new" > "$probe_dir/good.md"
+first_rx="(^|[^A-Za-z0-9._-])$(rx_escape "$first_old")"
+grep -qE -- "$first_rx" "$probe_dir/bad.md" \
+  || { echo "FAIL: the detector does not fire on a known-bad line" >&2; exit 2; }
+grep -qE -- "$first_rx" "$probe_dir/good.md" \
+  && { echo "FAIL: the detector fires on the REPLACEMENT ($first_new) -- every corrected line would read as a violation" >&2; exit 2; }
 
 found=0
 while IFS= read -r term; do
   [ -n "$term" ] || continue
-  if hits=$(grep -HnF -- "$term" $FILES 2>/dev/null); then
+  if hits=$(grep -HnE -- "(^|[^A-Za-z0-9._-])$(rx_escape "$term")" $FILES 2>/dev/null); then
     while IFS= read -r h; do
       echo "  [$term] $h"
       found=1
