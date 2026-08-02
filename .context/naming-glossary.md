@@ -21,6 +21,15 @@ resolve here.
 | `slopp.api.crossings` | `slopp.index.crossings` | its pair — `refs` answers every edge INSIDE the store, `crossings` the edges that LEAVE it. Landed together so the pair is one module |
 | `slopp.store.build` | `slopp.build` | not the store: the GraalVM native-image build target. Pure generators, zero internal requires, three callers in three different modules — shared layer-0 infrastructure |
 
+## Removed — what an old record refers to that no longer exists
+
+| Gone | What replaced it, if anything |
+|---|---|
+| `slopp.git.server`, "the git listener", "the embedded listener", "SERVER face" | Nothing. Serving the store to a git client AS a remote was removed (`D-git-push-pull-only`). Git is push/pull to a repo slopp does not own: `slopp.git` projects, `slopp.git.client` transports, `slopp.sync` orchestrates |
+| `query_git`'s `:git-url` / `:url` / `:remote` | `query_git` answers about the external remote only — `:external` (`git-remote`/`git-base-sha`), or a refusal naming how to set one |
+| `refs/heads/wip/<branch>`, `slopp.git/ensure-wip!` | Nothing. wip refs existed only to be advertised to a client cloning from the listener |
+| `:git-server` / `:git-url` session keys | Nothing |
+
 ## Config keys
 
 | Old | New | When / why |

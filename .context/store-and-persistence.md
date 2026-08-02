@@ -206,7 +206,7 @@ sites derive from it:
 - `.slopp/` is gitignored; what users commit to VCS is an open Phase-4
   question (the delta DAG is meant to BE the history).
 
-## Git bridge (P4-m8 + G-series, `slopp.git` + `slopp.sync`) — in-memory, two faces
+## Git bridge (P4-m8 + G-series, `slopp.git` + `slopp.sync`) — in-memory, projection + transport-out
 
 - **No on-disk git repo, ever.** `open-repo!` builds a JGit in-memory
   `InMemoryRepository` (DFS backend, built with `FS/DETECTED` — TransportLocal
@@ -238,11 +238,14 @@ sites derive from it:
 - `git_map` (main store.db) pins each `:commit` delta → sha at first projection,
   keyed `(delta_id, fingerprint)` (fingerprint = SHA-256 of `[id at description
   target]`); query surfaces read it, and it's the insert-skip key above.
-- **SERVER face (local, read-only):** milestones served over localhost
-  smart-HTTP (clone/fetch); `git-receive-pack` is never advertised, so pushes
-  to the local listener are refused. Edits arrive through slopp's write tools.
-  (The old push-IMPORT was dropped with the on-disk bare repo — nothing durable
-  to lose.)
+- **The local SERVER face is GONE (2026-08-02).** Milestones used to be served
+  over localhost smart-HTTP so a git client could clone/fetch the store as a
+  remote. It forced exact-project handling that got complex for what it bought,
+  and it carried the third `derived-port` implementation. Removed with
+  `slopp.git.server`, its two test namespaces, and `ensure-wip!` — the wip refs
+  (`refs/heads/wip/<line>`) existed only to be advertised to such a client, and
+  minting one rendered every source in the store on every projection for a
+  reader that no longer existed.
 - **CLIENT face (external, G-series):** `git/push-to-remote!` pushes the same
   projection to a NORMAL remote (GitHub, any bare repo) — fast-forward only,
   never force; `git/fetch-remote!` + `git/tree-at` read a remote tip and tree

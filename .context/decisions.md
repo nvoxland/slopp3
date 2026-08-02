@@ -3362,3 +3362,71 @@ written against whichever is true when they are written, and changing it later
 breaks them in the direction of state that unexpectedly persists — harder to
 notice than state that vanishes. See
 `ideas/how-slopp-learns-the-apps-perform-ctx.md`.
+
+## D-git-push-pull-only (2026-08-02, user decision) — slopp publishes to git; it is not itself a git remote
+
+**Decided:** the git feature slopp supports is **push/pull to a repo slopp does
+not own**. The ability for a git client to talk to slopp and browse its history
+*as* a remote is REMOVED.
+
+Gone: `slopp.git.server` (refs advertisement, upload-pack, localhost lifecycle,
+CLI entry), the embedded listener `slopp.mcp/-main` opened on a durable dir,
+`query_git`'s `:git-url`, the `:git-server` session key, and the test
+namespaces `slopp.git-server-test` / `slopp.git-embedded-test`.
+
+Kept, and unaffected: `slopp.git` (the projection), `slopp.git.client`
+(transport out), `slopp.sync` (the store side) — `git_push`, `git_pull`,
+`git_clone`, `git_conflicts`, `git_resolve`.
+
+**Why:** serving the store as a remote forced exact-project handling that got
+overly complex for what it bought. It was also believed already gone, which is
+its own evidence about how much it was used.
+
+### What this revises
+
+**G3** said JGit push/fetch "runs against the same `InMemoryRepository` as the
+local read-only listener." The repo and the `FS/DETECTED` construction stay —
+TransportLocal still NPEs on an FS-less DFS repo — but there is no listener to
+share it with.
+
+**The store-adoption leak list** (three things that had to follow the store
+rather than the dir) loses its second entry: `mcp/-main` no longer starts a git
+listener at all, so it cannot recreate the store that serving-without-adopting
+exists to avoid.
+
+**`D-hub`'s salt.** `http-api.server/derived-port` is salted specifically to
+avoid landing on the git listener's port for the same dir. That listener is
+gone and the salt now distinguishes it from nothing. **It stays anyway**, for a
+reason that has nothing to do with git: the derivation IS the address, so
+changing it relocates every project's UI and strands every saved url.
+`api.devserver/derived-port`'s salt is still genuinely load-bearing — one MCP
+process still binds both it and the UI listener.
+
+### Three things fell out that the plan did not anticipate
+
+1. **`ensure-wip!` was dead the moment the listener went.** `refs/heads/wip/<line>`
+   held a throwaway commit of live un-milestone'd state so a client could
+   `git diff origin/main..origin/wip/main`. Its own docstring records that wip
+   refs are never pinned in `git_map`, never a milestone parent, and rejected
+   on push — so the advertisement was the only reader. It was minted into the
+   IN-MEMORY projection repo, which `mirror-push!` never touches (that uses the
+   on-disk `.git`), and `push-to-remote!` pushes named branches only. Deleted,
+   along with `delete-ref!`, whose only caller it was. This was not free to
+   keep: minting one rendered every source in the store and inserted a commit
+   object on **every** projection — every push, pull and milestone.
+
+2. **`slopp.sync/pull!` got simpler, not harder.** It read the listener's shared
+   jgit ctx and fell back to opening its own. The plan treated preserving that
+   context as a required untangle; in fact removing the special case makes
+   `pull!` the same shape as `push!` and `publish-local!`, which already
+   open-and-close their own. Three sync operations, one shape.
+
+3. **`slopp.mcp → slopp.git` is now unused** and retired. The listener was the
+   MCP transport's only direct use of git projection; everything git-shaped
+   goes through `slopp.sync`, which is where publish/absorb belongs.
+
+**Also found, unrelated but adjacent:** `slopp.edit/reentrant-vars` listed
+`slopp.git/start-server!`. That var never existed — it was
+`slopp.git.server/start-server!` — so the exclusion had never matched anything.
+A quoted symbol set is not checked against the store, which is how a name can
+sit in a registry looking exactly like coverage.

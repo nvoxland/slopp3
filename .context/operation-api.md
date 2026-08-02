@@ -325,33 +325,19 @@ its store-backed static reader moved to `api.web/store-reader`.
   in-repo `.mcp.json` runs it THROUGH `slopp.boot` (`-m slopp.boot . --snapshot`)
   so slopp serves from its own store, no exported source — see
   "Running from the store" below.
-- **Git smart-HTTP** (`clojure -M -m slopp.git <port> [dir]`, or
-  `git/start-server!`) — P4-m8: any git client clones/fetches/pushes the
-  milestone projection at `http://127.0.0.1:<port>/slopp.git`.
-  JGit's UploadPack/ReceivePack own the wire format (stateless RPC,
-  protocol v0); `ensure-projected!` runs before every refs advertisement,
-  so foreign commit points from live sessions are served without a
-  restart. Pushes import through `import-push!`: net span → ingests + ONE
-  verified edit group + a `:commit` marker per incoming commit (original
-  sha preserved); the api session (image included) boots LAZILY on the
-  first push — clone-only servers never pay for it. Red tests land
-  honestly; compile failures and structural violations reject with the
-  reason on the pusher's terminal. `refs/heads/wip/<branch>` mirrors
-  un-milestone'd live state (read-only, deleted when clean) — tools
-  `git diff origin/main..origin/wip/main`. Localhost-only, no auth.
-  **Embedded (M7):** `slopp.mcp/-main` on a durable dir ALSO opens this
-  listener in-process on a dir-DERIVED port (`git/derived-port` — stable
-  across restarts so a saved `git remote` keeps working; a taken port
-  falls back to ephemeral; the actual `:port`/`:url` is returned). The
-  listener keeps its OWN lazy session, so a push never perturbs the
-  agent's checkout. The `query_git` tool surfaces `:git-url` (stashed on
-  the session by `-main`). So the agent's own server IS the git remote —
-  no external daemon. `slopp.git`'s own `-main` also defaults its port to
-  `derived-port` now. GOTCHA: keep
-  `slopp.git` reflection-free — reflective JGit calls resolve classes via
-  the per-thread classloader and break on HTTP dispatch threads (only
-  visible under add-lib REPLs, but the hints also keep the hot path
-  cheap).
+- ~~**Git smart-HTTP**~~ — **REMOVED 2026-08-02.** Serving the store to a git
+  client AS a remote (`slopp.git.server`, the embedded listener `slopp.mcp/-main`
+  opened on a dir-derived port, `query_git`'s `:git-url`, and the
+  `refs/heads/wip/<branch>` mirror of un-milestone'd state) is gone. It forced
+  exact-project handling that got complex for what it bought, and it carried
+  the third `derived-port` implementation — the salt in
+  `http-api.server/derived-port` exists to dodge a port nothing binds now.
+  Git as slopp supports it is **push/pull to a repo slopp does not own**:
+  `git_push`, `git_pull`, `git_clone` (`slopp.git` projects, `slopp.git.client`
+  transports, `slopp.sync` orchestrates).
+  STILL TRUE and worth keeping: **keep `slopp.git` reflection-free** — reflective
+  JGit calls resolve classes via the per-thread classloader (only visible under
+  add-lib REPLs, but the hints also keep the hot path cheap).
 
 ## MCP transport (`slopp.mcp`)
 
@@ -421,8 +407,9 @@ its store-backed static reader moved to `api.web/store-reader`.
 - `git_conflicts {}` → unresolved pull conflicts (path, ns, reason, RAW
   remote source to merge from). `git_resolve {path?}` clears one (or all) —
   unblocks `git_push`.
-- `query_git` reports the local read-only listener URL AND `:external`
-  (`git-remote`/`git-base-sha`) when set.
+- `query_git` reports `:external` (`git-remote`/`git-base-sha`) when set, and
+  otherwise refuses naming how to set one. It used to lead with a local
+  listener URL; there is no listener.
 - CLI (fileless tree — everything enters through the boot trampoline):
   `clojure -M -m slopp.boot <dir> --main slopp.sync/-main
   clone <url> <dir> | push <dir> [url] | pull <dir>`. Auth:

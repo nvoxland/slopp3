@@ -74,8 +74,8 @@ Nothing to set up. The server runs in your project directory and creates
 `.slopp/store.db` on your first **write**. Add `.slopp/` to `.gitignore`.
 
 Serving a directory does not adopt it. In a project with no store, the server
-writes nothing to disk at all -- no `.slopp/`, no git listener, no
-session-pause checkpoints -- so leaving the plugin enabled globally does not
+writes nothing to disk at all -- no `.slopp/`, no session-pause
+checkpoints -- so leaving the plugin enabled globally does not
 turn unrelated repos into slopp projects.
 
 One consequence in a brand-new project: the prompt hook has no store to record

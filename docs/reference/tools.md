@@ -33,7 +33,7 @@ as a sentence.
 with that session — so the MCP server brings one up at boot and `session_brief`
 reports the url as `:ui`. `ui_serve` is for changing the port, restarting it,
 or `stop: true`. A listener that cannot bind never blocks the server: it prints
-a sentence and MCP carries on, exactly as the git listener does.
+a sentence and MCP carries on. The UI is optional; MCP is not.
 
 **`:ui` is not the address you give a human** — they would see JSON. That is
 `:ui-hub`, below.
@@ -202,7 +202,7 @@ Three things worth knowing:
 | `query_changes {from to}` | Net per-form diffs with the red/green arc. `from` takes `"start"`, `"last-commit"`, `"last-done"` or a delta id. |
 | `report` | The summary/handoff composite: milestones, changes with their asks, verification state, alignment. |
 | `query_commits` | Milestones newest first, with `:alignment` proving the git branch head matches the latest projection. |
-| `query_git` | This session's git view: the read-only listener URL and the saved remote. |
+| `query_git` | This session's git view: the saved external remote and the clone base it grafts onto. |
 
 ## Writing
 
