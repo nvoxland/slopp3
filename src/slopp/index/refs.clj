@@ -1,4 +1,4 @@
-(ns slopp.edit.refs
+(ns slopp.index.refs
   "THE reference graph: every reference in a store as one canonical record
   stream — producers (kondo, carrier walks, declarations) normalize HERE;
   consumers (gates, unused, review, moves) never re-integrate sources.

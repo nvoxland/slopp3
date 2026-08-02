@@ -201,7 +201,7 @@
   found by a real app measuring a live server rather than by anything here.
 
   A partial classification would be worse than none, which is why each entry
-  carries a REASON — the same discipline `slopp.api.crossings/internal-markers`
+  carries a REASON — the same discipline `slopp.index.crossings/internal-markers`
   follows. An entry whose reason is \"not done yet\" is a worklist item that
   cannot be lost; an entry with no reason is an omission wearing a decision's
   clothes."

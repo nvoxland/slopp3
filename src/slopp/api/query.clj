@@ -33,7 +33,7 @@
             [slopp.api.telemetry :as telemetry]
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.store.render :as render]
             [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
 

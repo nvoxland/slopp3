@@ -21,7 +21,7 @@
             [rewrite-clj.node :as n]
             [slopp.store.render :as render]
             [slopp.store :as store]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.index.derive :as derive]
             [slopp.index.analyze :as analyze]
             [slopp.store.fields :as fields]))

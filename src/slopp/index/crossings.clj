@@ -1,7 +1,8 @@
-(ns slopp.api.crossings
+(ns slopp.index.crossings
   "The edges that LEAVE the store — Core 6's missing representation.
 
-  `slopp.edit.refs` makes every edge INSIDE the store answerable: who calls
+  `slopp.index.refs`, its sibling here, makes every edge INSIDE the store
+  answerable: who calls
   what, what a rename touches, which tests cover a form. There has never been
   an equivalent for an edge that leaves — form data handed to garden, form
   metadata read as a route table, a contract turned into JSON for a browser,
@@ -196,7 +197,7 @@
     forms that reach it. A kind nothing here uses is simply absent; the
     registry is the vocabulary, not the finding.
   - **`:unchecked`** — of those, the ones with no `:checked-by`. This is the
-    output that matters: `slopp.edit.refs` makes every edge INSIDE the store
+    output that matters: `slopp.index.refs` makes every edge INSIDE the store
     answerable, and there was no equivalent question for an edge leaving it,
     so each exit grew an ad-hoc check or none and nobody could tell which.
   - **`:unclassified`** — a `web/`, `malli/` or `rule/`-namespaced marker in

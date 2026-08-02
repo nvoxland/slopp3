@@ -1,4 +1,4 @@
-(ns slopp.api.crossings-test
+(ns slopp.index.crossings-test
   "Cover for the boundary inventory.
 
   The subject computes almost nothing, so these are not tests of a
@@ -10,7 +10,7 @@
   Pure over a store value, so in-image and sub-millisecond."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.api.crossings :as crossings] [slopp.api.external :as external] [slopp.api.rules.markers :as markers]))
+            [slopp.index.crossings :as crossings] [slopp.api.external :as external] [slopp.api.rules.markers :as markers]))
 
 (deftest the-inventory-reports-holes-and-refuses-to-miss-a-new-one
   ;; Core 6: slopp models edges INSIDE the store — the reference graph — and

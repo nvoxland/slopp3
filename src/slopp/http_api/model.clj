@@ -20,7 +20,7 @@
   core→shell dependency full_check's tier-layering check refuses."
   (:require [slopp.store :as store]
             [slopp.api.query :as query]
-            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
+            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
             [slopp.api.modules :as api.modules]))
 
 (defn ^:export change-view
@@ -364,7 +364,7 @@
   `covered-by` bounds its static reach. The trade is honest and worth
   naming: a test that exercises this namespace through an intermediary is
   not listed here. Form-granular coverage — with observed-versus-static
-  provenance — is `slopp.edit.refs/covered-by`'s job, and it answers a
+  provenance — is `slopp.index.refs/covered-by`'s job, and it answers a
   narrower question than a namespace page asks."
   [store nsx]
   (let [sym   (symbol (str nsx))

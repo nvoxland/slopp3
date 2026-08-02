@@ -35,7 +35,7 @@
   stateful part, deliberately, so the cases worth testing can be stated as
   data instead of staged in a live process."
   (:require [slopp.store :as store]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.image.currency :as currency]
             [rewrite-clj.node :as n]))
 

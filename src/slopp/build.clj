@@ -1,4 +1,4 @@
-(ns slopp.store.build
+(ns slopp.build
   "The native-binary build target (O4): pure generators for everything an
   explicit `build!` needs to compile a store-built project into a
   self-contained executable via GraalVM native-image.

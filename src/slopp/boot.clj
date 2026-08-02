@@ -598,15 +598,42 @@
       (into #{} (remove defined) interned))))
 
 ^:unsafe (defn- reload-ns!
-  "Load `new-source` into `ns-sym` and drop the vars it no longer defines.
+  "Load `new-source` into `ns-sym`, clearing its aliases first and dropping
+  the vars it no longer defines after.
 
-  The unmapping runs only AFTER a successful load, and the ordering is the
-  safety property: a reload that throws leaves the namespace exactly as it
-  was. Gutting first would turn a compile error into a dead namespace, which
-  is strictly worse than the stale var this exists to remove."
+  The two cleanups sit on OPPOSITE sides of the load, and the asymmetry is
+  the whole design:
+
+  **Vars are unmapped AFTER, and only on success.** A reload that throws
+  leaves the namespace exactly as it was. Gutting first would turn a compile
+  error into a dead namespace, which is strictly worse than the stale var
+  this exists to remove.
+
+  **Aliases are cleared BEFORE, unconditionally** — because an alias is what
+  makes the load throw. A rename rewrites every dependent's `ns` form to
+  point the same alias at a new target, and `Namespace.addAlias` refuses
+  outright: `\"Alias refs already exists in namespace slopp.api, aliasing
+  slopp.edit.refs\"`. The alias outlives the failed load, so the next poll
+  fails identically, forever. Three occurrences each cost a process restart,
+  and each was logged as a mystery because the compiler wraps the
+  `IllegalStateException` and `.getMessage` reports only the position.
+
+  Clearing first is safe in a way that gutting vars is not, and for a reason
+  worth stating: the `ns` form is the FIRST form loaded and re-establishes
+  every alias it declares, so a successful load restores them immediately. A
+  failed load leaves already-compiled vars working, since an alias resolves
+  symbols at COMPILE time and nothing at runtime reads it.
+
+  Clearing all of them rather than diffing against the new source is
+  deliberate: computing which aliases changed means re-implementing `ns`
+  require parsing — prefix lists, `:as-alias`, `:refer` — a near-duplicate of
+  Clojure's own reader that would drift from it silently."
   [ns-sym new-source]
-  (let [before (when-let [n (find-ns ns-sym)]
-                 (set (keys (ns-interns n))))]
+  (let [existing (find-ns ns-sym)
+        before   (when existing (set (keys (ns-interns existing))))]
+    (when existing
+      (doseq [a (keys (ns-aliases existing))]
+        (ns-unalias existing a)))
     (load-string new-source)
     (when-let [n (find-ns ns-sym)]
       (doseq [s (departed-vars before new-source)]

@@ -1,14 +1,14 @@
 slopp.addelete: slopp.api slopp.store
-slopp.api: slopp.boot slopp.edit slopp.image slopp.index slopp.store slopp.web
+slopp.api: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.store slopp.web
 slopp.bench: slopp.api slopp.mcp slopp.store
 slopp.branch: slopp.api slopp.store
-slopp.build-native: slopp.api slopp.store
+slopp.build-native: slopp.api slopp.build
 slopp.chsig: slopp.api slopp.edit slopp.store
 slopp.coldload: slopp.index
 slopp.coldload-gate: slopp.api slopp.edit slopp.store
 slopp.commit: slopp.api slopp.mcp slopp.store
 slopp.concurrency: slopp.api slopp.store
-slopp.edit: slopp.cache slopp.image slopp.index slopp.store
+slopp.edit: slopp.image slopp.index slopp.store
 slopp.edit-group: slopp.api slopp.store
 slopp.effect-boundary: slopp.api slopp.edit
 slopp.episode: slopp.api slopp.mcp slopp.store
@@ -17,7 +17,7 @@ slopp.eval-findings: slopp.api slopp.store
 slopp.extract: slopp.api
 slopp.f3c: slopp.api
 slopp.files: slopp.api slopp.store
-slopp.git: slopp.store
+slopp.git: slopp.build slopp.store
 slopp.git-client: slopp.api slopp.git
 slopp.git-concurrency: slopp.api slopp.git
 slopp.git-embedded: slopp.api slopp.git slopp.mcp
@@ -25,9 +25,9 @@ slopp.git-projection: slopp.api slopp.git slopp.store
 slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
-slopp.http-api: slopp.api slopp.edit slopp.store slopp.web
+slopp.http-api: slopp.api slopp.edit slopp.index slopp.store slopp.web
 slopp.image: slopp.boot slopp.rt slopp.store
-slopp.index: slopp.api slopp.cache slopp.image slopp.mcp slopp.store
+slopp.index: slopp.api slopp.build slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.index slopp.store
 slopp.mcp: slopp.api slopp.git slopp.http-api slopp.store slopp.sync slopp.web

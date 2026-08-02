@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
+            [slopp.store.render :as render] [slopp.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the

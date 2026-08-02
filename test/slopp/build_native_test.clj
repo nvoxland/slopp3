@@ -8,7 +8,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store.build :as build] [slopp.api.external :as external])
+            [slopp.build :as build] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

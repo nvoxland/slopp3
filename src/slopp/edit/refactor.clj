@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.store.render :as render]
-            [clojure.string :as str] [clojure.set :as set] [slopp.edit.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules]))
+            [clojure.string :as str] [clojure.set :as set] [slopp.index.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is

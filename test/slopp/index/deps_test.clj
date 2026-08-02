@@ -5,7 +5,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store.build :as build]
+            [slopp.build :as build]
             [slopp.index.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]

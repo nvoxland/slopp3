@@ -9,7 +9,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.store.render :as render]
-            [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+            [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."

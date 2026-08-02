@@ -187,7 +187,7 @@
                    :deprecated :const :file :line :column :name :ns :inline
                    :inline-arities :test :redef :author :since :no-doc}
         ;; a namespaced key belongs to whoever owns the namespace — slopp's own
-        ;; :web/* and :rule/* are classified in slopp.api.crossings, which asks a
+        ;; :web/* and :rule/* are classified in slopp.index.crossings, which asks a
         ;; different question about them (do they cross a boundary?)
         ours?    (fn [k] (and (simple-keyword? k)
                               (not (contains? clojures k))))]

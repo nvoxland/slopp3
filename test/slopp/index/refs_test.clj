@@ -1,9 +1,9 @@
-(ns slopp.edit.refs-test
+(ns slopp.index.refs-test
   "THE reference graph: every kind of reference — kondo-static, carrier
   positions, declarations — as ONE canonical record stream all tools
   consume. Producers normalize here; consumers never re-integrate."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.store :as store]))
 
 (deftest the-graph-sees-every-reference-kind

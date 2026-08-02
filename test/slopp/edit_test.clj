@@ -17,7 +17,7 @@
             [slopp.store.render :as render]
             [slopp.image.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit] [slopp.edit.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str]))
+            [slopp.edit :as edit] [slopp.index.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 

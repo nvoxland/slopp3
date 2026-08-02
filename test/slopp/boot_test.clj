@@ -410,3 +410,47 @@
   (testing "a throwable with no message at all still names its class"
     (is (re-find #"NullPointerException"
                  (boot/failure-message (NullPointerException.))))))
+
+^:unsafe (deftest a-rename-repoints-an-alias-instead-of-wedging-the-reload
+  ;; The live-reload wedge, root-caused after three occurrences and two
+  ;; failed investigations. Renaming a namespace rewrites every dependent's
+  ;; `ns` form to point the SAME alias at a new target, and
+  ;; `Namespace.addAlias` refuses that outright:
+  ;;
+  ;;   Alias refs already exists in namespace slopp.api, aliasing slopp.edit.refs
+  ;;
+  ;; It is an IllegalStateException raised while the `ns` form evaluates, so
+  ;; the compiler wraps it and `.getMessage` reports only "Syntax error
+  ;; macroexpanding at (1:1)." — which is why two occurrences were logged as
+  ;; a mystery. Deterministic and permanent: the alias outlives the failed
+  ;; load, so every subsequent poll fails identically. A fresh JVM has no
+  ;; alias and loads the same source fine, which is why the store stays green
+  ;; while the host is stuck, and why only a process restart ever cleared it.
+  ;;
+  ;; ^:unsafe because reproducing a load is the only honest way to test one:
+  ;; the failure lives in the JVM's namespace objects, not in any value a
+  ;; pure function could be handed.
+  (let [old-ns 'bootprobe.alias-old
+        new-ns 'bootprobe.alias-new
+        dep-ns 'bootprobe.alias-dep
+        src    (fn [target]
+                 (str "(ns " dep-ns " (:require [" target " :as t]))\n"
+                      "(defn reach [] (t/answer))\n"))]
+    (try
+      (load-string (str "(ns " old-ns ")\n(defn answer [] :old)\n"))
+      (load-string (str "(ns " new-ns ")\n(defn answer [] :new)\n"))
+
+      (testing "the dependent loads against its original target"
+        (#'boot/reload-ns! dep-ns (src old-ns))
+        (is (= :old ((ns-resolve dep-ns 'reach)))))
+
+      (testing "the same alias, re-pointed by a rename, reloads"
+        (#'boot/reload-ns! dep-ns (src new-ns))
+        (is (= :new ((ns-resolve dep-ns 'reach)))
+            "a reload must clear the stale alias rather than throw on it")
+        (is (= new-ns (ns-name (get (ns-aliases (find-ns dep-ns)) 't)))
+            "and the alias must end up pointing at the new target"))
+
+      (finally
+        (doseq [n [old-ns new-ns dep-ns]]
+          (when (find-ns n) (remove-ns n)))))))

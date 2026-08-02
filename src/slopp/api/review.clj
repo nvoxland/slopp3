@@ -22,7 +22,7 @@
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.edit.modules :as edit.modules]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.index :as index]
             [slopp.store.render :as render]
             [slopp.store :as store] [slopp.api.done :as done]))

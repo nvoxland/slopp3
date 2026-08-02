@@ -19,7 +19,7 @@
   died."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [slopp.image.repl :as repl] [slopp.image.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.edit.refs :as refs]))
+            [slopp.image.repl :as repl] [slopp.image.testmain :as testmain] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.index.refs :as refs]))
 
 (defn ^{:export "slopp.verification"} parse-test-summary
   "Parse a clojure.test runner's terminal summary into

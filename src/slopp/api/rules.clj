@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.edit.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."

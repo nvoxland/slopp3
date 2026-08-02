@@ -22,7 +22,7 @@
   crossed back."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.edit.refs :as refs] [slopp.api.orient :as orient] [clojure.set :as set]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.api.orient :as orient] [clojure.set :as set]))
 
 (def tiers-resource-path
   "Where a build writes its purity tiers and where `deps_add` looks for them.

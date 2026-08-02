@@ -211,7 +211,7 @@
   ;;
   ;; While analysis runs against the cache dir it is IO, so every namespace
   ;; calling analyze inherits an :external dependency — which is what kept
-  ;; slopp.refactor, slopp.edit.modules and slopp.edit.refs from layering.
+  ;; slopp.refactor, slopp.edit.modules and slopp.index.refs from layering.
   (let [dir  (java.nio.file.Files/createTempDirectory
               "kondo-probe" (make-array java.nio.file.attribute.FileAttribute 0))
         f    (.toFile dir)

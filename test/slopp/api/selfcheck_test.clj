@@ -18,7 +18,7 @@
   (:require [clojure.test :refer [deftest testing is]]
             [clojure.string :as str]
             [slopp.store :as store]
-            [slopp.edit.refs :as refs]
+            [slopp.index.refs :as refs]
             [slopp.api.external :as external]))
 
 (deftest ^:external every-public-write-verb-is-reachable-from-the-wire
