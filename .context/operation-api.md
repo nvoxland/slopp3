@@ -464,8 +464,8 @@ The `capabilities` config file is the store's APP MANIFEST + opt-in surface
 (what kind of application this is: name/version/entry point, whether it
 serves HTTP, ports, auth providers, groups). It rides the ordinary `:config`
 CRDT (G9) — the new thing is the DECLARED registry: one entry per key
-(`{:key :type :default :doc}`, wildcards like `auth.static.*` /
-`groups.*.members`), from which everything derives:
+(`{:key :type :default :doc}`, wildcards like `web.auth.static.*` /
+`web.auth.groups.*.members`), from which everything derives:
 
 - `find-entry`/`check-value` — `config_file {path "capabilities"}` VALIDATES
   at write: unknown keys and type-failing values refuse with teaching

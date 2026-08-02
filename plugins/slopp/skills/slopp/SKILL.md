@@ -477,6 +477,15 @@ Opt in once: `config_file {path "capabilities" key "web.enabled" value
 lists them all with types and defaults; a typo'd key or bad value refuses at
 the write). A store that never opts in has no web surface and no web rules.
 
+**A capability key's FIRST SEGMENT names who owns it**, and
+`query_capabilities` reports it per row with the vocabulary beside it:
+`slopp.*` is the framework's and is RESERVED — your app can never own a key
+there — `app.*` is any project's, and `web.*` is the web app type's. So
+everything a web project configures, auth included, sits under `web.`:
+`web.port`, `web.static.<prefix>`, `web.auth.providers`,
+`web.auth.groups.<name>.members`. A key belonging to no declared owner is not
+a capability and refuses at the write.
+
 **An endpoint is one `defn` carrying its whole contract in name metadata** —
 no route table, no macro:
 
@@ -619,7 +628,7 @@ returned); request bodies are capped (default 1 MiB — thread
 passwords are salted PBKDF2 (`slopp.web.auth/hash-password` — mint one with
 `query_eval`, it is not on the `slopp.web` facade), bearer and
 password compares are constant-time, and **OIDC requires a configured
-`auth.oidc.audience`** — an unset audience denies every token (a resource
+`web.auth.oidc.audience`** — an unset audience denies every token (a resource
 server must not accept cross-audience tokens). Row-level authz is still yours:
 slopp does not taint-track a handler returning another tenant's rows.
 

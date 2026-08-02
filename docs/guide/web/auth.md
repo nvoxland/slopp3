@@ -26,21 +26,21 @@ empty conjunction would otherwise have authorized everyone.
 
 A resolved identity is `{:web/sub "alice" :web/groups #{"staff"} :web/provider
 :bearer}`, or `nil` for anonymous. It arrives on the request as
-`:web/identity`. Providers are tried in the order `auth.providers` lists them,
+`:web/identity`. Providers are tried in the order `web.auth.providers` lists them,
 the first one to claim the request wins, and configured group membership
 augments whatever the provider asserted.
 
 ```clj
-config_file {path "capabilities" key "auth.providers" value "bearer,static"}
-config_file {path "capabilities" key "groups.staff.members" value "alice,bob"}
+config_file {path "capabilities" key "web.auth.providers" value "bearer,static"}
+config_file {path "capabilities" key "web.auth.groups.staff.members" value "alice,bob"}
 ```
 
 | Provider | Config | Notes |
 |---|---|---|
-| `bearer` | `auth.bearer.tokens.<name>` = `{:secret "env:SHOP_TOKEN" :groups ["staff"]}` | Constant-time compare. |
-| `static` | `auth.static.users.<name>` = `{:password-hash "pbkdf2$..." :groups ["staff"]}` | Basic auth. Salted PBKDF2. |
-| `proxy-header` | `auth.proxy.trusted`, `auth.proxy.user-header`, `auth.proxy.groups-header` | Only honoured from a trusted `:remote-addr`. |
-| `oidc` | `auth.oidc.issuer`, `auth.oidc.audience`, `auth.oidc.groups-claim` | Resource server. |
+| `bearer` | `web.auth.bearer.tokens.<name>` = `{:secret "env:SHOP_TOKEN" :groups ["staff"]}` | Constant-time compare. |
+| `static` | `web.auth.static.users.<name>` = `{:password-hash "pbkdf2$..." :groups ["staff"]}` | Basic auth. Salted PBKDF2. |
+| `proxy-header` | `web.auth.proxy.trusted`, `web.auth.proxy.user-header`, `web.auth.proxy.groups-header` | Only honoured from a trusted `:remote-addr`. |
+| `oidc` | `web.auth.oidc.issuer`, `web.auth.oidc.audience`, `web.auth.oidc.groups-claim` | Resource server. |
 
 Secrets are `env:NAME` indirections, because the capabilities config is
 projected into git. The capabilities gate refuses a credential literal.
@@ -61,7 +61,7 @@ by `kid`, `iss`/`exp`/`aud` checked, claims mapped to an identity. The browser
 login flow stays the IdP's job or a proxy's.
 
 !!! warning "An unset audience denies every token"
-    `auth.oidc.audience` has no default. A resource server that accepts tokens
+    `web.auth.oidc.audience` has no default. A resource server that accepts tokens
     minted for a different audience is a confused-deputy hole, so an unset
     audience fails closed rather than skipping the check.
 

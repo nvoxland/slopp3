@@ -52,6 +52,17 @@ and not there is how a rename keeps its blind spot.
 | `http.adapter` | `web.adapter` | ditto. The VALUE stays `http-kit`: that is a library name, not a key |
 | `http.max-body-bytes` | `web.max-body-bytes` | ditto |
 | `http.static.*` | `web.static.*` | ditto. Distinct from the `slopp.web.static` NAMESPACE, which keeps its `slopp.` prefix |
+| `auth.*` | `web.auth.*` | **the whole auth family (2026-08-02).** Measured before moving it: every reader was `slopp.web.auth/config-from-values` or the `web-unknown-group` write gate — nothing generic read it, and three of the four providers (bearer, proxy-header, oidc) are HTTP mechanisms outright. Covers `providers`, `default-policy`, `session.ttl-seconds`, and the `static.*` / `bearer.*` / `proxy.*` / `oidc.*` patterns |
+| `groups.*.members` | `web.auth.groups.*.members` | ditto, and under `auth` rather than beside it: a group exists to be named by `:web/auth [:group …]` |
+
+**The rule these two rows install, which is the durable part:** a capability
+key's FIRST SEGMENT names its OWNER, and the vocabulary is
+`slopp.api.capabilities/owners` — `slopp` (framework, reserved by R1), `app`
+(any project), `web` (the web app type). `every-capability-key-declares-its-owner`
+refuses a key belonging to nobody, so app type #2 declares its owner and its
+keys under that segment instead of adding to a generic pool. That is R6
+satisfied for this registry, and it is why `auth.*` moved rather than being
+argued about: the honest place to say who owns a key is the key.
 
 ## Session and `session_brief` keys
 

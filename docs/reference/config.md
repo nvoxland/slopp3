@@ -70,9 +70,9 @@ query_capabilities {}
 | `web.host` | `127.0.0.1` | Bind address. Widen deliberately. |
 | `web.port` | unset | The port the app's server binds. Unset means 8080 in production (`serve!` defaults it) and DERIVED from the store directory for the dev server, so two projects on one machine cannot collide. Set it to pin one address for both. |
 | `web.max-body-bytes` | `1048576` | Largest accepted request body. |
-| `auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
-| `auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
-| `auth.session.ttl-seconds` | `86400` | Browser session lifetime. |
+| `web.auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
+| `web.auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
+| `web.auth.session.ttl-seconds` | `86400` | Browser session lifetime. |
 
 !!! note "There is no `dev.server` setting"
 
@@ -95,13 +95,30 @@ Some keys are *families* whose tail is part of the setting:
 | Pattern | Meaning |
 |---|---|
 | `web.static.<url-prefix>` | A static mount. The value is a files-manifest path prefix: `web.static./assets` = `public`. |
-| `auth.static.users.<name>` | `{:password-hash "pbkdf2$..." :groups [...]}` |
-| `auth.bearer.tokens.<name>` | `{:secret "env:NAME" :groups [...]}` |
-| `auth.proxy.*` / `auth.oidc.*` | Provider settings. Secrets are `env:NAME` indirections. |
-| `groups.<name>.members` | Comma-separated members of a named group. |
+| `web.auth.static.users.<name>` | `{:password-hash "pbkdf2$..." :groups [...]}` |
+| `web.auth.bearer.tokens.<name>` | `{:secret "env:NAME" :groups [...]}` |
+| `web.auth.proxy.*` / `web.auth.oidc.*` | Provider settings. Secrets are `env:NAME` indirections. |
+| `web.auth.groups.<name>.members` | Comma-separated members of a named group, for `:web/auth [:group ...]`. |
 
 `query_capabilities` is the current list for the version you are on. The web
 keys are covered in [auth and security](../guide/web/auth.md).
+
+### The first segment names the owner
+
+Every key belongs to someone, and the name says who. `query_capabilities`
+reports the owner per row, with the vocabulary beside it:
+
+| Segment | Whose |
+|---|---|
+| `slopp.` | slopp itself. **Reserved** — your app can never own a key here. |
+| `app.` | Any project, whatever kind of application it is. |
+| `web.` | The web app type. Present in every store, inert until `web.enabled`. |
+
+A key under no declared owner is not a capability and refuses at the write.
+That is what keeps one app type's settings from spreading into the generic
+pool under names that do not say whose they are: auth is web's, so it is
+`web.auth.*`, and a second application type would arrive as its own segment
+rather than as more keys in the middle of this table.
 
 ## The client config file
 
