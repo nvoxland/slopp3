@@ -3,7 +3,7 @@
   `slopp.web`, whose other half serves.
 
   It exists because three namespaces were each building their own
-  `java.net.http.HttpClient` (`slopp.http-api.heartbeat`,
+  `java.net.http.HttpClient` (`slopp.hub`,
   `slopp.web.jwks`, `slopp.api.cljs`), which made all three untestable for the
   same reason and none of them testable by the same fix. The transport is
   identical in all three; only the POLICY differs, and policy is the part worth

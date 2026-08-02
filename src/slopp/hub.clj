@@ -1,6 +1,12 @@
-(ns slopp.http-api.heartbeat
-  "The project half of the UI hub: the loop that tells a hub this project
+(ns slopp.hub
+  "The project half of the hub wire: the loop that tells a hub this project
   exists and is still answering.
+
+  A hub is a separate application that fronts several projects at once; today
+  that is `slopp-ui`, which renders pages, and calling this \"the UI hub\" named
+  it for the one consumer that exists rather than for the role. Any project
+  built on slopp — slopp itself included — talks to one through this namespace,
+  and nothing here knows or cares what the far side does with the beat.
 
   Registering and keeping alive are the SAME call (D-hub), which is what
   removes every piece of state machinery you would otherwise need here — no
@@ -10,7 +16,7 @@
 
   The HUB is the other end of this wire, and it is not in this store — it is
   its own project (`slopp-ui`), which is why the shape they agree on crosses
-  by COPY: [[slopp.http-api.contracts/project-beat]] here, its hand-maintained
+  by COPY: [[project-beat]] here, its hand-maintained
   twin over there. Neither store can read the other, so a hub REFUSING a beat
   is where drift between the two copies surfaces."
   (:require [clojure.string :as str]
@@ -35,7 +41,7 @@
 
 (defn ^:export payload
   "The check-in a project sends: who it is, where it answers, and what it is
-  doing — [[slopp.http-api.contracts/project-beat]].
+  doing — [[project-beat]].
 
   The name is `app.name` when the store sets one and the directory's own name
   otherwise, because a project that configured nothing still has to appear in
@@ -216,7 +222,7 @@
                               (try (on-answer answer) (catch Throwable _ nil))
                               (try (Thread/sleep (interval-from answer))
                                    (catch InterruptedException _ nil)))))
-                        "slopp-ui-heartbeat")
+                        "slopp-hub-heartbeat")
                    (.setDaemon true)
                    (.start))]
      {:thread thread :running running :hub-url hub-url :payload-fn payload-fn
@@ -258,3 +264,31 @@
   (let [slug (str/trim (str (:slug answer)))]
     (when (seq slug)
       (str hub-url "p/" slug))))
+
+(def project-beat
+  "`POST /api/register` — one project's check-in.
+
+  Registration and keepalive are the same call (D-hub), so this is the
+  only shape a project ever sends. `:dir` is the identity; everything else
+  may change between beats, including the name.
+
+  The optional keys are the ones a project might not know about itself, and
+  each is `:maybe` as well as optional because a client sending an explicit
+  null is telling the truth about not knowing.
+
+  **This is a TWIN, not a source of truth.** The hub owns `POST /api/register`
+  and validates every beat against its own copy of this schema; we cannot read
+  its store and it cannot read ours, so nothing proves the two agree. Two things
+  make that survivable rather than a silent trap: the hub PUBLISHES its copy at
+  `GET /api/contracts` (fetch it and diff — `:endpoints` → `/api/register` →
+  `:request`), and a beat it rejects comes back as `{:hub/refused …}`, surfacing
+  in `session_brief` as a refusal rather than as an absent hub. Drift is
+  detectable and diagnosable; it is not prevented. Change this and you must
+  change the hub in the same breath."
+  [:map
+   [:name :string]
+   [:dir :string]
+   [:url :string]
+   [:pid {:optional true} [:maybe :int]]
+   [:version {:optional true} [:maybe :string]]
+   [:status {:optional true} [:maybe :string]]])

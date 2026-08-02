@@ -1,12 +1,12 @@
-(ns slopp.http-api.heartbeat-test
+(ns slopp.hub-test
   "What a check-in must get right: a project always has a name a human
   recognises, the beat matches the contract the hub validates it against, the
   first one is immediate, and an orderly shutdown says goodbye."
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.http-api.heartbeat :as beat]
-            [slopp.http-api.contracts :as contracts] [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
+            [slopp.hub :as beat]
+            [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
 
 (deftest a-beat-says-who-and-where-and-nothing-it-does-not-know
   (let [named (assoc-in (store/empty-store) [:config "capabilities" :values]
@@ -22,8 +22,8 @@
           "a trailing slash is not a nameless project"))
     (testing "the beat satisfies the contract the hub validates it against"
       (let [p (beat/payload named "/w/inv" "http://127.0.0.1:1/")]
-        (is (m/validate contracts/project-beat p)
-            (str "project-beat contract: " (m/explain contracts/project-beat p)))
+        (is (m/validate beat/project-beat p)
+            (str "project-beat contract: " (m/explain beat/project-beat p)))
         (is (= "/w/inv" (:dir p)))
         (is (= "2.1.0" (:version p)))
         (is (pos? (:pid p)) "the pid is what lets a human find the process behind a stuck project")))))
@@ -173,7 +173,7 @@
   ;;
   ;; This became reachable the moment the hub started validating the beat
   ;; (`slopp-ui.hub/register!`), which it does because the beat is the one
-  ;; contract crossing the split by COPY: `contracts/project-beat` here is a
+  ;; contract crossing the split by COPY: `project-beat` here is a
   ;; hand-maintained twin of the hub's, and neither store can read the other. So
   ;; the whole drift-detection story is "the hub 400s and we say so" — and if we
   ;; swallow the 400, there is no story at all.

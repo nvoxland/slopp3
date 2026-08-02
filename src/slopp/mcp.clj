@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.http-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.http-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.http-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -663,7 +663,7 @@
       {:jsonrpc "2.0" :method "notifications/tools/list_changed"})))
 
 ^:unsafe (defn start-heartbeat!
-  "Start this project checking in with the UI hub, and record the handle on
+  "Start this project checking in with a hub, and record the handle on
   the session. Never throws; returns the hub url it beats to, or nil.
 
   `slopp.hub.port` 0 means \"no hub\", and a hub that simply is not running is the
@@ -707,12 +707,12 @@
                                             :hub nil)
                                      :else (swap! session assoc :hub nil
                                                   :hub-refused nil))))]
-          (swap! session assoc :ui-heartbeat handle :hub-configured hub)
-          (.println System/err ^String (str "slopp UI hub: " hub
+          (swap! session assoc :hub-heartbeat handle :hub-configured hub)
+          (.println System/err ^String (str "slopp hub: " hub
                                             " (open this to switch projects)"))
           hub)))
     (catch Throwable t
-      (.println System/err ^String (str "slopp UI hub registration unavailable: "
+      (.println System/err ^String (str "slopp hub registration unavailable: "
                                         (.getMessage t)))
       nil)))
 
@@ -1450,7 +1450,7 @@
       (finally
         ;; deregister BEFORE the listener goes: the hub should learn we are
         ;; leaving from us, not by ageing us out thirty seconds later.
-        (hb/stop! (:ui-heartbeat @session))
+        (hb/stop! (:hub-heartbeat @session))
         (ui/stop!)
         ;; the app image is a CHILD JVM. Its watchdog would reap it when we
         ;; die anyway, but leaving that to a watchdog means the port stays

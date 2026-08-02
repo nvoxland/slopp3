@@ -174,31 +174,3 @@
    [:modules [:sequential module-row]]
    [:layers [:sequential [:sequential :string]]]
    [:cycles [:sequential [:sequential :string]]]])
-
-(def project-beat
-  "`POST /api/register` — one project's check-in.
-
-  Registration and keepalive are the same call (D-hub), so this is the
-  only shape a project ever sends. `:dir` is the identity; everything else
-  may change between beats, including the name.
-
-  The optional keys are the ones a project might not know about itself, and
-  each is `:maybe` as well as optional because a client sending an explicit
-  null is telling the truth about not knowing.
-
-  **This is a TWIN, not a source of truth.** The hub owns `POST /api/register`
-  and validates every beat against its own copy of this schema; we cannot read
-  its store and it cannot read ours, so nothing proves the two agree. Two things
-  make that survivable rather than a silent trap: the hub PUBLISHES its copy at
-  `GET /api/contracts` (fetch it and diff — `:endpoints` → `/api/register` →
-  `:request`), and a beat it rejects comes back as `{:hub/refused …}`, surfacing
-  in `session_brief` as a refusal rather than as an absent hub. Drift is
-  detectable and diagnosable; it is not prevented. Change this and you must
-  change the hub in the same breath."
-  [:map
-   [:name :string]
-   [:dir :string]
-   [:url :string]
-   [:pid {:optional true} [:maybe :int]]
-   [:version {:optional true} [:maybe :string]]
-   [:status {:optional true} [:maybe :string]]])
