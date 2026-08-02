@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client]))
+            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -354,3 +354,42 @@
         ;; slow image and the comparison hot-load exists to inform is wrong
         (is (< (:boot-ms r) 120000) r))
       (finally (devserver/stop! r)))))
+
+(deftest the-generated-serve-call-accounts-for-every-option-it-could-carry
+  ;; The generalisation of `catalog-covers-every-registered-rule`, which is
+  ;; the one completeness test this codebase had and the only reason the new
+  ;; write gate could not ship uncataloged.
+  ;;
+  ;; This is the instance that was MISSING: `serve-code` enumerated four of
+  ;; the eight options by hand, and the four it dropped were every option
+  ;; describing the APP rather than its address. Nothing compared the two, so
+  ;; it took a real app measuring a live server to find it — and the loudest
+  ;; symptom was the quiet one, `/api/contracts` answering 200 with an empty
+  ;; document that `generate_client` reads as success.
+  ;;
+  ;; Derived from the ARGLISTS rather than from the malli schemas: the
+  ;; destructuring IS the implementation, so it cannot drift from what the
+  ;; functions actually read. The schemas can and do — `serve!`'s omits
+  ;; :web/routes and :web/max-body-bytes, which `context` destructures.
+  (let [opt-keys  (fn [v] (->> (:arglists (meta v)) first first :web/keys
+                               (map #(keyword "web" (name %))) set))
+        ;; serve! reads the address options and hands the whole map to
+        ;; context, which reads the rest. Both, because either alone is half.
+        accepted  (into (opt-keys #'web/serve!) (opt-keys #'web/context))
+        plan      {:namespaces ['demo.app] :host "127.0.0.1" :port 1234
+                   :adapter :http-kit :max-body-bytes 42
+                   :context-builder 'demo.sys/deps}
+        generated (->> (edn/read-string {:default (fn [_ v] v)}
+                                        (devserver/serve-code plan))
+                       (tree-seq coll? seq)
+                       (filter map?)
+                       first keys set)
+        dropped   (set (keys devserver/unserved-options))]
+    (testing "every option is either generated or declared deliberately dropped"
+      (is (= accepted (into generated dropped))
+          (str "unaccounted for: " (set/difference accepted generated dropped))))
+    (testing "and a dropped one says WHY, so the gap is a decision and not an omission"
+      ;; the rule `crossings/internal-markers` already follows: a partial
+      ;; classification is worse than none, because the one real hole drowns
+      ;; in the entries nobody explained
+      (is (every? #(and (string? %) (seq %)) (vals devserver/unserved-options))))))

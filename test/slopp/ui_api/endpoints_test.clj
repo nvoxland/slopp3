@@ -79,9 +79,16 @@
   ;; 200 for the page itself. The cause was not a bug in any function — it was
   ;; a LIST that someone had to remember to add to. So the list is one var,
   ;; and this test is the reason it is one var.
-  (testing "the served list names both halves of a request"
-    (is (= #{'slopp.ui-api.reads 'slopp.ui-api.endpoints}
-           (set server/served-namespaces))))
+  ;; What this used to assert — that the list equals a hardcoded pair — was
+  ;; the SAME defect one level up. Add a third endpoint-bearing namespace,
+  ;; forget the list, and the hardcoded pair still matches the unchanged list:
+  ;; green, while the failure it claims to pin has happened. A test that
+  ;; restates a list cannot notice the list falling behind the code.
+  ;;
+  ;; `server-test/the-served-list-is-checked-against-what-declares-endpoints`
+  ;; does that job by DERIVING the set from vars carrying :web/path or
+  ;; :web/read. What stays here is the part derivation cannot answer: that
+  ;; serving the list actually routes, and that nothing else is served.
   (testing "serving that list actually routes the API — and a project serves
             NOTHING ELSE, which is the shape the split settled on"
     ;; the endpoints and the READ performers live in different namespaces, so

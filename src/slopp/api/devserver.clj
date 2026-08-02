@@ -162,6 +162,30 @@
         want    (into #{} (mapcat #(store/ns-closure store %)) seeds)]
     (filterv want (store/ns-dependency-order store))))
 
+(def ^:export unserved-options
+  "Options `slopp.web/serve!` and `slopp.web/context` accept that the generated
+  call deliberately does NOT carry, and why each is missing.
+
+  This exists so the gap is CLASSIFIED rather than merely absent, and
+  `devserver-test/the-generated-serve-call-accounts-for-every-option-it-could-carry`
+  holds the classification total: a new option on either function fails that
+  test until it is generated or listed here. Without it `serve-code` was four
+  of eight, and the four it dropped were every option describing the APP —
+  found by a real app measuring a live server rather than by anything here.
+
+  A partial classification would be worse than none, which is why each entry
+  carries a REASON — the same discipline `slopp.api.crossings/internal-markers`
+  follows. An entry whose reason is \"not done yet\" is a worklist item that
+  cannot be lost; an entry with no reason is an omission wearing a decision's
+  clothes."
+  {:web/routes      "static mounts and programmatic rows. The child image has
+                     no store, so the bytes a mount would serve have nowhere to
+                     come from — a design problem, not a missing line, and the
+                     one gap still blocking the app that measures this"
+   :web/auth-config "not threaded yet. Nobody has hit it only because the apps
+                     measuring the managed server have no auth; one that did
+                     would deny everything, or fail resolving identity"})
+
 (defn serve-code
   "The expression the app image evaluates to start serving `plan`, as a
   STRING — it crosses an nREPL wire, which carries text.
