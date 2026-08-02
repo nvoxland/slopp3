@@ -68,7 +68,7 @@
   (let [s0 (store/ingest (store/empty-store) 'shop.api "(ns shop.api)\n\n(defn seed \"S.\" [x] x)\n")
         on (-> s0
                (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
-               (store/record-config-put "capabilities" :manifest "groups.admin.members" "alice") first)
+               (store/record-config-put "capabilities" :manifest "web.auth.groups.admin.members" "alice") first)
         land (fn [st form-src]
                (store/ingest st 'shop.more (str "(ns shop.more)\n\n" form-src "\n")))]
     (testing "a policy naming a configured group lands"

@@ -45,7 +45,7 @@
                 " which defaults to unqualified keys: the argument for bare keys assumes"
                 " context disambiguates, and an agent reads one form")}
    {:rule :web-auth-refusal :grain :form
-    :escape "declare :web/auth on the endpoint (:public typed out, :authenticated, or [:group \"<name>\"]) — or dial the rule down and let auth.default-policy govern"
+    :escape "declare :web/auth on the endpoint (:public typed out, :authenticated, or [:group \"<name>\"]) — or dial the rule down and let web.auth.default-policy govern"
     :teach "an endpoint (:web/path) must declare its auth policy — default-deny: an unsecured route is a visible decision, never an omission (inert until web.enabled)"}
    {:rule :web-route-collision :grain :form
     :escape "change the path or method, or extend the existing handler (query_routes lists every claim)"
@@ -60,7 +60,7 @@
     :escape "make it :post/:put/:delete, drop the declared effects, or return the change as data from a non-safe endpoint"
     :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until web.enabled)"}
    {:rule :web-unknown-group :grain :form
-    :escape "config_file {path \"capabilities\" key \"groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
+    :escape "config_file {path \"capabilities\" key \"web.auth.groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
     :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until web.enabled)"}
    {:rule :web-react-attrs :grain :form
     :escape "spell it as HTML (:class, :for), replace handlers with a link/form targeting an endpoint, or dial it down (config_file {path \"rules\" key \"web-react-attrs\" value \"advisory\"}) for a map that is genuinely not an element"

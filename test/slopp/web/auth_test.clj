@@ -64,18 +64,24 @@
       (is (nil? (rid {:headers {}}))))))
 
 (deftest capabilities-values-parse-into-auth-config
-  (let [values {"auth.providers" "bearer,proxy-header"
-                "auth.bearer.tokens.ci" "{:secret \"env:CI\" :groups [\"ci\"]}"
-                "auth.static.users.alice" "{:password-hash \"abc\" :groups [\"admin\"]}"
-                "auth.proxy.trusted" "10.0.0.1,10.0.0.2"
-                "auth.proxy.user-header" "x-forwarded-user"
-                "auth.proxy.groups-header" "x-forwarded-groups"
-                "groups.admin.members" "alice,bob"
+  (let [values {"web.auth.providers" "bearer,proxy-header"
+                "web.auth.bearer.tokens.ci" "{:secret \"env:CI\" :groups [\"ci\"]}"
+                "web.auth.static.users.alice" "{:password-hash \"abc\" :groups [\"admin\"]}"
+                "web.auth.proxy.trusted" "10.0.0.1,10.0.0.2"
+                "web.auth.proxy.user-header" "x-forwarded-user"
+                "web.auth.proxy.groups-header" "x-forwarded-groups"
+                "web.auth.groups.admin.members" "alice,bob"
                 "web.port" "7357"}
         cfg (auth/config-from-values values)]
     (testing "the provider list parses in declared order"
       (is (= [:bearer :proxy-header] (:auth/providers cfg))))
     (testing "per-provider entries parse their EDN values under their name key"
+      ;; the NAME, not a suffix of it. This used to be `(subs k 19)` — a
+      ;; character count standing in for the length of the prefix matched one
+      ;; line above it, so adding the `web.` segment would have parsed the
+      ;; token as "s.ci": a config that looks fine and matches nothing.
+      ;; Same shape as the static-mounts bug: match by one spelling, trim by
+      ;; another's length.
       (is (= {:secret "env:CI" :groups ["ci"]}
              (get-in cfg [:auth/bearer "ci"])))
       (is (= "abc" (get-in cfg [:auth/static "alice" :password-hash]))))
@@ -85,7 +91,12 @@
     (testing "group membership collects"
       (is (= #{"alice" "bob"} (get-in cfg [:auth/groups "admin"]))))
     (testing "non-auth keys are ignored"
-      (is (nil? (:web.port cfg))))))
+      (is (nil? (:web.port cfg))))
+    (testing "the retired spellings are not read — no backwards compatibility"
+      (is (= {} (auth/config-from-values
+                 {"auth.providers" "bearer"
+                  "auth.bearer.tokens.ci" "{:secret \"env:CI\"}"
+                  "groups.admin.members" "alice"}))))))
 
 (deftest oidc-verifies-rs256-bearer-jwts
   (let [kp   (.generateKeyPair (doto (java.security.KeyPairGenerator/getInstance "RSA")
@@ -130,7 +141,7 @@
 
 (deftest proxy-header-lookup-is-case-insensitive
   ;; review W7: adapters lowercase all request header names, but an operator
-  ;; naturally configures `auth.proxy.user-header = X-Forwarded-User`, stored
+  ;; naturally configures `web.auth.proxy.user-header = X-Forwarded-User`, stored
   ;; verbatim — so the lookup missed the lowercased key and the trusted-proxy
   ;; provider was silently non-functional (fails closed, but broken).
   (let [config {:auth/providers [:proxy-header]
@@ -166,7 +177,7 @@
     (is (not (auth/verify-password "x" nil)))))
 
 (deftest oidc-requires-a-configured-audience
-  ;; review W2: when auth.oidc.audience was unset, verify-jwt accepted ANY
+  ;; review W2: when web.auth.oidc.audience was unset, verify-jwt accepted ANY
   ;; validly-signed unexpired token from the issuer — incl. one minted for a
   ;; different client (confused-deputy / cross-audience replay). Audience
   ;; validation is mandatory for a resource server: unset → deny; set → the

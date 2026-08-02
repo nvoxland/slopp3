@@ -139,44 +139,51 @@
   :auth/proxy {...} :auth/groups {...}}` — ONE parser, used by slopp's own
   serving (store values) and by a built app (the rendered capabilities
   file). Entry values are EDN, read with the SAFE reader; unparseable
-  entries are skipped rather than thrown."
+  entries are skipped rather than thrown.
+
+  Keys are the `web.auth.*` family (`slopp.api.capabilities/registry` is
+  where they are declared and typed). A per-provider name is the tail AFTER
+  the prefix, taken from the prefix itself — the counted offset it replaces
+  was the same defect as matching by one spelling and trimming by another's
+  length, and it survives a rename only by accident."
   [values]
   (let [edn* (fn [s] (try (edn/read-string (str s))
                           (catch Exception _ nil)))
-        csv  (fn [s] (into [] (remove str/blank?) (map str/trim (str/split (str s) #","))))]
+        csv  (fn [s] (into [] (remove str/blank?) (map str/trim (str/split (str s) #","))))
+        tail (fn [prefix k] (when (str/starts-with? k prefix) (subs k (count prefix))))]
     (reduce-kv
      (fn [cfg k v]
        (let [k (str k)]
          (cond
-           (= k "auth.providers")
+           (= k "web.auth.providers")
            (assoc cfg :auth/providers (mapv keyword (csv v)))
 
-           (str/starts-with? k "auth.bearer.tokens.")
-           (assoc-in cfg [:auth/bearer (subs k 19)] (edn* v))
+           (tail "web.auth.bearer.tokens." k)
+           (assoc-in cfg [:auth/bearer (tail "web.auth.bearer.tokens." k)] (edn* v))
 
-           (str/starts-with? k "auth.static.users.")
-           (assoc-in cfg [:auth/static (subs k 18)] (edn* v))
+           (tail "web.auth.static.users." k)
+           (assoc-in cfg [:auth/static (tail "web.auth.static.users." k)] (edn* v))
 
-           (= k "auth.proxy.trusted")
+           (= k "web.auth.proxy.trusted")
            (assoc-in cfg [:auth/proxy :trusted] (set (csv v)))
 
-           (= k "auth.proxy.user-header")
+           (= k "web.auth.proxy.user-header")
            (assoc-in cfg [:auth/proxy :user-header] (str v))
 
-           (= k "auth.proxy.groups-header")
+           (= k "web.auth.proxy.groups-header")
            (assoc-in cfg [:auth/proxy :groups-header] (str v))
 
-           (= k "auth.oidc.issuer")
+           (= k "web.auth.oidc.issuer")
            (assoc-in cfg [:auth/oidc :issuer] (str v))
 
-           (= k "auth.oidc.audience")
+           (= k "web.auth.oidc.audience")
            (assoc-in cfg [:auth/oidc :audience] (str v))
 
-           (= k "auth.oidc.groups-claim")
+           (= k "web.auth.oidc.groups-claim")
            (assoc-in cfg [:auth/oidc :groups-claim] (str v))
 
            :else
-           (if-let [[_ g] (re-matches #"groups\.([^.]+)\.members" k)]
+           (if-let [[_ g] (re-matches #"web\.auth\.groups\.([^.]+)\.members" k)]
              (assoc-in cfg [:auth/groups g] (set (csv v)))
              cfg))))
      {}

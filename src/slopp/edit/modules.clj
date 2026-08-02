@@ -865,17 +865,18 @@
 
 (defn ^:export ^{:rule/applies-to :production} web-unknown-group
   "The policy-vocabulary gate (D-web): an endpoint's `:web/auth` may only
-  name groups the `capabilities` config defines (`groups.<name>.…` keys) —
-  a typo'd group would silently deny every request forever, the authz twin
-  of the nil-pun. Walks composite policies ([:any …]/[:all …]). Inert
-  until `web-enabled?`. Returns a teaching string, or nil when clean."
+  name groups the `capabilities` config defines
+  (`web.auth.groups.<name>.…` keys) — a typo'd group would silently deny
+  every request forever, the authz twin of the nil-pun. Walks composite
+  policies ([:any …]/[:all …]). Inert until `web-enabled?`. Returns a
+  teaching string, or nil when clean."
   [candidate ns-sym form-name]
   (when (web-enabled? candidate)
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
       (let [m (web-name-meta e)]
         (when (:web/path m)
           (let [known (into #{}
-                            (keep #(second (re-matches #"groups\.([^.]+)\..*" (str %))))
+                            (keep #(second (re-matches #"web\.auth\.groups\.([^.]+)\..*" (str %))))
                             (keys (get-in candidate [:config "capabilities" :values] {})))
                 named (fn named [p]
                         (cond
@@ -889,7 +890,7 @@
                    " defines no such group"
                    (when (seq known)
                      (str " (configured: " (str/join ", " (sort known)) ")"))
-                   " — config_file {path \"capabilities\" key \"groups."
+                   " — config_file {path \"capabilities\" key \"web.auth.groups."
                    (first missing) ".members\" value \"…\"} defines it, or fix"
                    " the name"))))))))
 

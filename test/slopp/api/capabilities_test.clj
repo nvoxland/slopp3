@@ -10,7 +10,7 @@
   rather than on any one consumer's reading of it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.capabilities :as caps] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.api.capabilities :as caps] [slopp.api :as api] [slopp.api.external :as external] [clojure.string :as str]))
 
 (deftest registry-declares-and-resolves-keys
   (testing "every registry entry carries key, type, default slot, and doc"
@@ -24,11 +24,16 @@
     (is (= "web.enabled" (:key (caps/find-entry "web.enabled")))))
   (testing "wildcard keys: a trailing * is a prefix (one or more segments), a mid * is one segment"
     (is (= "web.static.*" (:key (caps/find-entry "web.static./assets"))))
-    (is (= "auth.static.*" (:key (caps/find-entry "auth.static.users.alice"))))
-    (is (= "groups.*.members" (:key (caps/find-entry "groups.admin.members")))))
+    (is (= "web.auth.static.*" (:key (caps/find-entry "web.auth.static.users.alice"))))
+    (is (= "web.auth.groups.*.members" (:key (caps/find-entry "web.auth.groups.admin.members")))))
   (testing "an unknown key resolves to nothing"
     (is (nil? (caps/find-entry "http.prot")))
-    (is (nil? (caps/find-entry "groups.admin.member")))))
+    ;; the mid-`*` pattern still demands its tail. Left as `groups.admin.member`
+    ;; this would have gone on passing after the family moved under web.auth —
+    ;; green because NO `groups.` key resolves any more, which is not what it
+    ;; was written to observe.
+    (is (nil? (caps/find-entry "web.auth.groups.admin.member")))
+    (is (some? (caps/find-entry "web.auth.groups.admin.members")))))
 
 (deftest values-check-and-take-effect
   (testing "check-value: nil when the string suits the type, a teaching string when not"
@@ -41,8 +46,8 @@
     (is (string? (caps/check-value (caps/find-entry "web.adapter") "jetty")))
     (is (nil? (caps/check-value (caps/find-entry "app.main") "app.core/-main")))
     (is (string? (caps/check-value (caps/find-entry "app.main") "not a symbol")))
-    (is (nil? (caps/check-value (caps/find-entry "auth.providers") "static,bearer")))
-    (is (string? (caps/check-value (caps/find-entry "auth.providers") "static,ldap"))))
+    (is (nil? (caps/check-value (caps/find-entry "web.auth.providers") "static,bearer")))
+    (is (string? (caps/check-value (caps/find-entry "web.auth.providers") "static,ldap"))))
   (testing "effective: the declared default when unset, the parsed value when set"
     (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
       (is (false? (caps/effective s0 "web.enabled")))
@@ -51,14 +56,14 @@
     ;; an-unset-port-does-not-report-a-number-nothing-binds
     (is (nil? (caps/effective s0 "web.port")))
       (is (= :http-kit (caps/effective s0 "web.adapter")))
-      (is (= :deny (caps/effective s0 "auth.default-policy")))
+      (is (= :deny (caps/effective s0 "web.auth.default-policy")))
       (let [s (-> s0
                   (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
                   (store/record-config-put "capabilities" :manifest "web.port" "7357") first
-                  (store/record-config-put "capabilities" :manifest "auth.providers" "static,bearer") first)]
+                  (store/record-config-put "capabilities" :manifest "web.auth.providers" "static,bearer") first)]
         (is (true? (caps/effective s "web.enabled")))
         (is (= 7357 (caps/effective s "web.port")))
-        (is (= #{:static :bearer} (caps/effective s "auth.providers")))
+        (is (= #{:static :bearer} (caps/effective s "web.auth.providers")))
         (testing "an unset key still falls back beside set ones"
           (is (= :http-kit (caps/effective s "web.adapter"))))))))
 
@@ -82,10 +87,14 @@
           (is (nil? (:error r)) (pr-str r))
           (is (= 7357 (caps/effective (:store @sess) "web.port")))))
       (testing "a wildcard-governed key is known, not alien"
-        (let [r (api/config-file! sess "capabilities" :key "groups.admin.members" :value "alice,bob"
+        (let [r (api/config-file! sess "capabilities" :key "web.auth.groups.admin.members" :value "alice,bob"
                                   :prompt "a group")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= #{"alice" "bob"} (caps/effective (:store @sess) "groups.admin.members")))))
+          (is (= #{"alice" "bob"} (caps/effective (:store @sess) "web.auth.groups.admin.members")))))
+      (testing "a key under an undeclared owner is refused like any unknown key"
+        (let [r (api/config-file! sess "capabilities" :key "groups.admin.members" :value "alice"
+                                  :prompt "the retired spelling")]
+          (is (re-find #"is not a capability" (str (:error r))) (pr-str r))))
       (testing "unset returns to the default"
         (api/config-file! sess "capabilities" :key "web.port" :unset true
                           :prompt "back to default")
@@ -98,7 +107,7 @@
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
         s  (-> s0
                (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
-               (store/record-config-put "capabilities" :manifest "groups.admin.members" "alice,bob") first)
+               (store/record-config-put "capabilities" :manifest "web.auth.groups.admin.members" "alice,bob") first)
         rep (caps/report s)
         row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
     (testing "every concrete registry key is a row with default, effective, and doc"
@@ -113,7 +122,7 @@
         (is (true? (:set en)))
         (is (= "true" (:value en)))))
     (testing "a set wildcard-governed key appears as a row"
-      (let [g (row "groups.admin.members")]
+      (let [g (row "web.auth.groups.admin.members")]
         (is (some? g))
         (is (true? (:set g)))
         (is (= #{"alice" "bob"} (:effective g)))))
@@ -122,21 +131,28 @@
       (is (some #(= "web.static.*" (:key %)) (:patterns rep))))))
 
 (deftest secret-literals-refuse-in-capabilities
-  (testing "a literal secret in an auth.* credential key refuses"
+  (testing "a literal secret in a web.auth.* credential key refuses"
     (is (re-find #"env:" (str (caps/config-refusal
-                               "auth.bearer.tokens.ci"
+                               "web.auth.bearer.tokens.ci"
                                "{:secret \"hunter2\" :groups [\"ci\"]}"))))
     (is (re-find #"env:" (str (caps/config-refusal
-                               "auth.oidc.client-secret" "abc123")))))
+                               "web.auth.oidc.client-secret" "abc123")))))
   (testing "an env: indirection passes"
     (is (nil? (caps/config-refusal
-               "auth.bearer.tokens.ci"
+               "web.auth.bearer.tokens.ci"
                "{:secret \"env:CI_TOKEN\" :groups [\"ci\"]}")))
-    (is (nil? (caps/config-refusal "auth.oidc.client-secret" "env:OIDC_SECRET"))))
+    (is (nil? (caps/config-refusal "web.auth.oidc.client-secret" "env:OIDC_SECRET"))))
   (testing "a password HASH is the safe form, not a secret literal"
     (is (nil? (caps/config-refusal
-               "auth.static.users.alice"
-               "{:password-hash \"9f86d08...\" :groups [\"admin\"]}")))))
+               "web.auth.static.users.alice"
+               "{:password-hash \"9f86d08...\" :groups [\"admin\"]}"))))
+  (testing "the credential check is anchored to the auth family, not to the word"
+    ;; it reads `web.auth.` + a token/secret position. The retired `auth.`
+    ;; spelling is not a capability at all now, so it refuses for the OTHER
+    ;; reason — which is right, and worth pinning so a later widening of the
+    ;; prefix match does not quietly re-admit it.
+    (is (re-find #"is not a capability"
+                 (str (caps/config-refusal "auth.oidc.client-secret" "abc123"))))))
 
 (deftest ui-ports-are-two-settings-and-the-project-one-defaults-to-derived
   ;; D-hub. A machine runs many slopp projects, so the port a project's own
@@ -248,3 +264,58 @@
         (is (true? (:effective en)) (pr-str en))))
     (testing "nothing orphaned says so by absence, like :debt does"
       (is (nil? (:orphaned (caps/report (put (store/empty-store) "web.enabled" "true"))))))))
+
+(deftest every-capability-key-declares-its-owner
+  ;; R6: no slopp surface may assume a project is a web project, and support
+  ;; for an app TYPE lives under that type's name. The registry was the
+  ;; violation — 14 of 19 entries were web's, and 8 of those sat under `auth.`
+  ;; and `groups.`, names that claim to be generic project settings. Measured
+  ;; before renaming them: every reader was `slopp.web.auth/config-from-values`
+  ;; or the `web-unknown-group` write gate. Nothing generic read them.
+  ;;
+  ;; The invariant is the key's FIRST SEGMENT, not a declared `:owner` field,
+  ;; because a field that restates the name is a second source of truth that
+  ;; can disagree with it. So app type #2 adds an owner to `caps/owners` and
+  ;; its keys under that segment; a key belonging to nobody fails here.
+  (testing "every registry key's first segment is a declared owner"
+    (let [segment #(first (str/split (str %) #"\."))
+          stray (remove #(contains? caps/owners (segment (:key %))) caps/registry)]
+      (is (empty? (map :key stray))
+          "a capability key under an undeclared owner — add the owner to caps/owners, or move the key under an existing one")))
+  (testing "the owners each say what they are, since query_capabilities shows them"
+    (is (every? (comp seq val) caps/owners))
+    (is (contains? caps/owners "web") "the web app type owns its own keys")
+    (is (contains? caps/owners "slopp") "R1: the framework prefix is reserved"))
+  (testing "auth and groups are web's, and the names say so"
+    (is (some #(= "web.auth.providers" (:key %)) caps/registry))
+    (is (= "web.auth.static.*" (:key (caps/find-entry "web.auth.static.users.alice"))))
+    (is (= "web.auth.groups.*.members" (:key (caps/find-entry "web.auth.groups.admin.members"))))
+    (is (nil? (caps/find-entry "auth.providers"))
+        "the retired spelling resolves to nothing — no backwards compatibility")
+    (is (nil? (caps/find-entry "groups.admin.members")))))
+
+(deftest the-report-says-who-owns-each-setting
+  ;; The R6 complaint was not only that the names lied — it was that every
+  ;; project is shown every key. A store that will never serve HTTP still
+  ;; reads `web.auth.oidc.*` and `web.max-body-bytes` as things it could set.
+  ;;
+  ;; Filtering them OUT is the wrong fix and worth saying why: `web.enabled`
+  ;; is itself a web key, so "hide web keys until web is on" hides the switch
+  ;; that turns it on. Attribution is the fix — the rows say whose they are,
+  ;; and the owner vocabulary says what that means, so fourteen settings read
+  ;; as one feature.
+  (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
+        rep (caps/report s0)
+        row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
+    (testing "every settings row and every pattern names its owner"
+      (is (seq (:settings rep)))
+      (is (seq (:patterns rep)))
+      (is (every? :owner (:settings rep)))
+      (is (every? :owner (:patterns rep))))
+    (testing "the owner is the key's first segment, so it cannot disagree with the name"
+      (is (= "web" (:owner (row "web.port"))))
+      (is (= "app" (:owner (row "app.name"))))
+      (is (= "slopp" (:owner (row "slopp.hub.port")))))
+    (testing "the report carries the vocabulary, not just the labels"
+      (is (= caps/owners (:owners rep)))
+      (is (string? (get (:owners rep) "web"))))))
