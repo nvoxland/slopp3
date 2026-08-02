@@ -202,6 +202,18 @@ not a clean bill of health:**
   proves a `:cljc`/`:cljs` namespace actually compiles.
 - `module_dep` checks cycles over PRODUCTION edges; whether anything uses the
   edge is `query_depends {modules true}`'s `:unused-edges`.
+
+**Declare a tier BEFORE you move a namespace, or its destination declares it
+for you.** `ns_rename` carries an EXPLICIT tier along with the namespace — the
+declaration is re-keyed to the new name and nothing changes. It cannot carry
+one that was never made. An undeclared namespace is `:external` only because
+nothing more specific claims it, so moving it under a prefix that DOES claim
+something silently re-tiers it: move an undeclared IO namespace into a module
+declared `:pure` and it inherits `:pure`, which is a tightening nobody wrote
+and nobody reviewed. Since `module_purity` does not check layering, the
+contradiction surfaces later, at `full_check`, far from the move that caused
+it. One `module_purity` call before the rename costs nothing and makes the
+tier survive the move by being stated rather than inherited.
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.

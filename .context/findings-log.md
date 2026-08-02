@@ -1146,3 +1146,41 @@ operation can produce a SECOND, different error, and that one is about the
 recovery, not the fault. Any error surfaced from after a retry has to say which
 attempt it came from — otherwise the recovery becomes the story and the bug
 hides behind it.
+
+## A move can silently TIGHTEN an undeclared purity tier (2026-08-02, restructure wave)
+
+Measured while moving three namespaces out of `slopp.api`/`slopp.edit`/
+`slopp.store`. The recorded belief going in was "a namespace move breaks its
+purity tier" — from the `slopp.api.artifacts` → `slopp.store.artifacts` move,
+where `done` reported the namespace landing under a `:pure` prefix while
+supporting only `:external`.
+
+That belief is wrong, and the correction matters because it points at a
+different fix. **`ns_rename` carries an EXPLICIT declaration intact** —
+verified on three renames in one episode (`slopp.edit.refs` `:internal` →
+`slopp.index.refs`, `slopp.api.crossings` `:pure` → `slopp.index.crossings`,
+`slopp.store.build` `:pure` → `slopp.build`); all three arrived declared and
+the old keys were gone.
+
+What it cannot carry is a declaration that was never made. `slopp.api.artifacts`
+was UNDECLARED. Undeclared is `:external` only because nothing more specific
+claims it — it is the ABSENCE of a claim, not a claim of `:external` (the same
+distinction the skill draws for `remove: true` vs declaring the permissive
+value). Tiers inherit by namespace prefix with most-specific-wins, so moving an
+unclaimed namespace under a module that DOES claim something re-tiers it. It
+landed under `slopp.store`, which is declared `:pure`, and inherited `:pure`.
+
+**So the class is: absence-of-claim is positional, and a move changes
+position.** Anything inherited rather than stated is re-decided by wherever it
+lands, and `module_purity` does not check layering, so the contradiction
+surfaces at the next `full_check` rather than at the move.
+
+The rule shipped in `plugins/slopp/skills/slopp/SKILL.md`: declare the tier
+before the move, so it survives by being stated instead of inherited.
+
+Worth noting how the wrong version got recorded — the observed symptom (a
+tier was wrong after a move) was generalised into a mechanism (moves break
+tiers) without checking whether the tier had ever been declared. One
+`query_depends {modules true}` read on the next three moves settled it. This
+is the third claim in this wave that failed on contact with measurement, all
+three from trusting prose over tool output.
