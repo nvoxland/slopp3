@@ -7,7 +7,7 @@ contract, and the gates that check every other write check it too.
 ## Opt in once
 
 ```clj
-config_file {path "capabilities" key "http.enabled" value "true"}
+config_file {path "capabilities" key "web.enabled" value "true"}
 ```
 
 Every web rule, and `query_routes` itself, is inert until that is true. A store
@@ -132,7 +132,7 @@ state.
 
 ## What the gates check
 
-All of these are inert until `http.enabled`, and every one is severity-dialable
+All of these are inert until `web.enabled`, and every one is severity-dialable
 like any other [rule](../verification.md#rules).
 
 | Rule | Refuses |

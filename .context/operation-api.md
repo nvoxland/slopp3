@@ -487,7 +487,7 @@ vocabulary = a case in `check-value` + the parser in `effective`, in one ns.
 
 A web project under development should always have a live version up, and the
 app should hold no `serve!` call, no namespace list and no port to get it.
-Everything needed is already in the store: `http.enabled` says it is a web
+Everything needed is already in the store: `web.enabled` says it is a web
 project, the endpoint + performer surface says what to serve, the capability
 registry says where.
 
@@ -495,7 +495,7 @@ The namespace splits DECIDING from RUNNING, and the split is why most of it
 has ordinary in-image tests instead of a JVM apiece:
 
 - `managed? store` — whether slopp should RUN this store's server, which is
-  not the same question as whether the store serves HTTP. `http.enabled` is
+  not the same question as whether the store serves HTTP. `web.enabled` is
   read by production and by the web rules; `dev.server` (registry default
   `true`) is the dev lifecycle's own opt-out. They came apart on the first
   store anyone tried: **slopp's own web surface IS the MCP HTTP transport
@@ -503,7 +503,7 @@ has ordinary in-image tests instead of a JVM apiece:
   store** — so a managed server there would boot a second image and serve a
   snapshot of the page you are looking at, one done point behind it. slopp's
   store sets `dev.server false`. (Not a port conflict — the transport is a
-  separate entry point and is usually not running. `http.port` means ONE
+  separate entry point and is usually not running. `web.port` means ONE
   thing, the port a web app's server binds; slopp's own APIs are an INSTANCE
   of that, so its stored 7357 is a correct declaration and `serve-plan`
   reading it is the primary use. What is wrong runs the other way:
@@ -515,7 +515,7 @@ has ordinary in-image tests instead of a JVM apiece:
 - `serve-plan store dir` → `{:enabled? :mode :namespaces :host :port :adapter}`
   or `{:enabled? false :reason …}`. `:namespaces` comes from
   `api.web/serving-namespaces` — derived, never declared. `:port` prefers a
-  stored `http.port` and otherwise `derived-port`, salted per project for the
+  stored `web.port` and otherwise `derived-port`, salted per project for the
   reason `review.server/derived-port` records (one MCP process binds them all).
 - `load-order store` — the transitive closure of the web surface in dependency
   order, not the whole store. A store namespace has no classpath presence, so

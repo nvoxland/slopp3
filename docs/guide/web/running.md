@@ -10,12 +10,17 @@ to get one: slopp boots a dedicated image for the app, loads the web surface
 into it, and re-serves at every `done` point. `session_brief` reports the url
 as `:app`.
 
-It does not fit every app yet, and the exceptions are ordinary. Set
-`dev.server` to `false` if you have `http.static.*` mounts (they are not served, so a
-single-page app gets its API and a page with no JavaScript), if your app is a
-server for something other than itself -- a hub or a proxy, which can never be
-a managed server's subject -- or if something else already serves this
-project's HTTP surface.
+**There is nothing to turn on, and nothing to turn off.** Whether slopp manages
+your server is derived: it does, unless the calling process already serves
+every namespace your store would. That is true of exactly one store -- slopp's
+own, whose web surface *is* the API its live session already serves -- so in
+practice, if your project opts into `web.enabled`, slopp runs it.
+
+`web.static.*` mounts are served (the bytes are materialized for the child
+image, which has no store of its own), and handlers taking `:web/deps` work
+provided you declare the builder, below. The one gap left is
+`:web/auth-config`: the generated call does not carry it, so an app using it
+gets a managed server on which identity does not resolve.
 
 Handlers that take `:web/deps` are fine, provided you say how to build them:
 mark one zero-arg function `^{:web/context true}` and slopp calls it, passing
@@ -55,7 +60,7 @@ Three things follow from the design that are worth knowing up front:
   you look at the page, rather than when someone deploys.
 
 The address is derived from the store directory, so two projects on one
-machine never collide. Set `http.port` to pin it.
+machine never collide. Set `web.port` to pin it.
 
 ## Serving it yourself
 
@@ -80,7 +85,7 @@ adapter, and returns a handle for `stop!`.
 | `:web/perform-ctx` | `nil` | Passed to every read and effect performer, and to the handler as `:web/deps`. |
 | `:web/auth-config` | `nil` | The provider config identity resolves through. See [auth](auth.md). |
 | `:web/routes` | `[]` | Extra route rows appended to the derived ones -- static mounts, anything programmatic. |
-| `:web/max-body-bytes` | 1048576 | Request body cap. Thread the `http.max-body-bytes` capability in. |
+| `:web/max-body-bytes` | 1048576 | Request body cap. Thread the `web.max-body-bytes` capability in. |
 
 The adapter is a value behind a one-function seam, which is what keeps the
 server library a config key rather than a rewrite.
@@ -122,7 +127,7 @@ Binary files ride the files manifest, content-addressed:
 ```clj
 file_put {path "public/logo.png" content "<base64>"
           encoding "base64" content-type "image/png"}
-config_file {path "capabilities" key "http.static./assets" value "public"}
+config_file {path "capabilities" key "web.static./assets" value "public"}
 ```
 
 The mount key's tail is the URL prefix and the value is a path prefix on the

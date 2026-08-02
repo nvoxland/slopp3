@@ -91,8 +91,8 @@ Two capabilities configure it:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `ui.hub-port` | `7359` | The hub this project registers with. `0` = register with no hub. |
-| `ui.port` | *unset* | The port this project's own listener binds. Unset = derived from the store dir. Set it only to pin a fixed address. |
+| `slopp.hub.port` | `7359` | The hub this project registers with. `0` = register with no hub. |
+| `slopp.api.port` | *unset* | The port this project's own listener binds. Unset = derived from the store dir. Set it only to pin a fixed address. |
 
 ### Serving a slopp app under a path prefix
 
@@ -128,12 +128,12 @@ url and it uses none of this. What follows is for YOUR app behind YOUR proxy.
 
 ## Web applications
 
-Everything here is inert until `http.enabled`. See the [web apps
+Everything here is inert until `web.enabled`. See the [web apps
 guide](../guide/web/index.md).
 
 | Tool | What it does |
 |---|---|
-| `query_routes` | The declared web surface: every endpoint's method, path, auth policy and handler, `:rendered-by` (the forms whose links/forms target it), plus the derived effect/read vocabularies. Empty with teaching until `http.enabled`. |
+| `query_routes` | The declared web surface: every endpoint's method, path, auth policy and handler, `:rendered-by` (the forms whose links/forms target it), plus the derived effect/read vocabularies. Empty with teaching until `web.enabled`. |
 | `module_platform {module platform}` | Declare a namespace's target platform: `:jvm`, `:cljc`, or `:cljs`. Namespace path, most-specific wins. |
 | `compile_client {output?}` | Compile every `:cljc` and `:cljs` namespace to one JS bundle with the configured backend. Warnings anchor to the owning form. |
 | `generate_client {ns? from?}` | Write the typed `fetch` client as an edit-protected `:cljs` namespace — from the endpoints this store serves, or with `from` from a contract another API publishes. |

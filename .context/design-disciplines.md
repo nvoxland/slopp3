@@ -769,7 +769,7 @@ Found on `web-undeclared-context`'s refusal, in a cold read by slopp-ui:
 > each time.
 
 True of a store slopp runs the server for. The gate fires on any
-`http.enabled` store, including one with `dev.server false` where no managed
+`web.enabled` store, including one with `dev.server false` where no managed
 server boots at all — and that store's author is being told, unconditionally,
 about a lifecycle that does not happen to them. A general truth delivered in
 this store's voice: Core 9 one notch down, since nothing is *computed* over a

@@ -95,9 +95,9 @@ static analyzer cannot see, and each one has a test modelling the hole:
   message plus only an explicit `:web/public` allowlist. Any other exception is
   a generic 500 with the detail logged server-side, never returned.
 - **Bodies are bounded.** Both adapters read at most `:web/max-body-bytes`
-  (default 1 MiB, from the `http.max-body-bytes` capability) and answer 413.
+  (default 1 MiB, from the `web.max-body-bytes` capability) and answer 413.
 - **Static reads are contained.** Traversal is refused in the route handler
   before the reader is called, and the built-app reader re-checks that the
   canonical path stays under its root.
-- **`http.host` defaults to `127.0.0.1`.** Widening the bind address is a
+- **`web.host` defaults to `127.0.0.1`.** Widening the bind address is a
   deliberate edit.

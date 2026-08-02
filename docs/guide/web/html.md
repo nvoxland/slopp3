@@ -126,7 +126,7 @@ check ties the stylesheet endpoint to every page linking it, like any other
 route.
 
 Raw or vendored CSS is not a renderer problem: `file_put` the `.css` and serve
-it through an `http.static.*` mount. See [static
+it through an `web.static.*` mount. See [static
 assets](running.md#static-assets).
 
 ## Seeing it

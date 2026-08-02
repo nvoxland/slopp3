@@ -9,7 +9,7 @@ the server about a payload -- fail at the write instead of in production.
 Nothing here exists until a store asks for it:
 
 ```clj
-config_file {path "capabilities" key "http.enabled" value "true"}
+config_file {path "capabilities" key "web.enabled" value "true"}
 ```
 
 The shape of it:

@@ -449,7 +449,7 @@ full map.
 
 ## Web applications (D-web)
 
-Opt in once: `config_file {path "capabilities" key "http.enabled" value
+Opt in once: `config_file {path "capabilities" key "web.enabled" value
 "true"}` (every capability key is registry-declared — `query_capabilities`
 lists them all with types and defaults; a typo'd key or bad value refuses at
 the write). A store that never opts in has no web surface and no web rules.
@@ -472,7 +472,7 @@ Request/response maps are RING-shaped (`:request-method` `:uri` `:body` /
 path, policy, handler, the declared `:web/request`/`:web/response` contract,
 and the derived effect/read vocabularies.
 
-**Write gates** (all inert until `http.enabled`; dial via `rules` config):
+**Write gates** (all inert until `web.enabled`; dial via `rules` config):
 - every endpoint DECLARES `:web/auth` — `:public` is typed out, never implied
 - every endpoint TYPES its contract — `:web/response` (all) and `:web/request`
   (body methods `:post`/`:put`/`:patch`) — a `.cljc` malli schema VAR
@@ -499,18 +499,20 @@ every `done` point; `session_brief` carries the url as `:app`. Where that
 applies you write no `serve!` call, no namespace list and no port — all three
 are derived from the store, so they cannot disagree with the gates.
 
-**It does not apply to every app, and the exceptions are not exotic. Set
-`dev.server false` if ANY of these is true:**
+**There is no switch, and you do not need one.** Whether slopp manages your
+server is DERIVED: it does, unless the calling process already serves every
+namespace your store would — true of exactly one store, slopp's own, whose web
+surface *is* the API the live session already serves. A project cannot answer
+this wrong because it is never asked. (It used to be a `dev.server` capability.
+The only adopter who ever set it set it to work around 404ing assets, and the
+switch then made a bug look like a preference for a week.)
 
-- **you have `http.static.*` mounts** — they are not served, so an SPA gets
-  its API and a page with no JS, which looks like it works;
-- **you use `:web/auth-config`** — the generated call does not carry it, so
-  identity does not resolve;
-- **your app is a SERVER FOR SOMETHING OTHER THAN ITSELF** — a hub, a proxy,
-  anything fronting other projects. It opens no store of its own and can
-  never be a managed server's subject; its `serve!` call is the app;
-- **something else already serves this project's HTTP surface** — a managed
-  server would then be a second, staler copy of what you are looking at.
+`web.static.*` mounts and handlers taking `:web/deps` both work — the generated
+call carries the mounts and calls your context builder.
+
+**One real gap: `:web/auth-config` is not carried,** so an app using it gets a
+managed server on which identity does not resolve. There is nothing to
+configure around it; if that is you, say so rather than working around it.
 
 **Handlers taking `:web/deps` DO work — declare the builder, and slopp
 insists.** Mark one zero-arg fn `^{:web/context true}`; slopp calls it and
@@ -557,7 +559,7 @@ Where it does apply, three things worth knowing:
   at the page instead of when someone deploys — but that signal depends on
   the page working, so it is worth nothing until the exceptions above are.
 
-`http.port` pins the address; unset, it is derived from the store dir so two
+`web.port` pins the address; unset, it is derived from the store dir so two
 projects on one machine never collide.
 
 **The runtime underneath: `slopp.web`.** `(web/serve! {:web/namespaces
@@ -589,7 +591,7 @@ cannot emit an undeclared kind, even one a performer provides); error bodies
 are redacted — an `ex-info` with `:web/status` surfaces its message plus only
 a `:web/public` allowlist, anything else is a generic 500 (detail logged, not
 returned); request bodies are capped (default 1 MiB — thread
-`:web/max-body-bytes` from the `http.max-body-bytes` capability into
+`:web/max-body-bytes` from the `web.max-body-bytes` capability into
 `serve!`); the static asset reader contains paths under its root. Auth: static
 passwords are salted PBKDF2 (`slopp.web.auth/hash-password` — mint one with
 `query_eval`, it is not on the `slopp.web` facade), bearer and
@@ -647,7 +649,7 @@ injection door; `;` is allowed because data URIs use it). Serve it, then
 `:html/head` — that `:href` is a literal, so `web-dangling-route-refs`
 ties the link to the stylesheet endpoint like any other route. Raw or
 vendored CSS goes through a static `.css` asset (`file_put` + an
-`http.static.*` mount), not the renderer.
+`web.static.*` mount), not the renderer.
 
 **Client code is ClojureScript — same store, compiled to JS (D-web-cljs).**
 Browser logic is authored like everything else: forms in the store, edited by
@@ -985,7 +987,7 @@ once per machine. It needs no store and never opens one: it holds a registry
 fed by heartbeats, renders every page a human looks at, and proxies
 `/p/<slug>/api/*` to whichever project owns that slug. Every project
 registers itself every few seconds, and one that stops answering is greyed out
-rather than dropped. Configure with the `ui.hub-port` capability (`0` = don't
+rather than dropped. Configure with the `slopp.hub.port` capability (`0` = don't
 register); the interval comes back on the registration response, so the two
 sides share no compiled-in number and can be different releases.
 

@@ -141,7 +141,7 @@ scripts to buy taxonomy.
 `slopp.web.*` is what users depend on — `build.clj`'s slim `slopp-web` jar ships
 exactly `slopp/web.clj` + `slopp/web/**`, and the `slopp.web` module declares
 ZERO outgoing edges, so the gate refuses any call from the framework into
-slopp's core. slopp's own webapp (`slopp.ui-api`) depends on the framework the
+slopp's core. slopp's own webapp (`slopp.http-api`) depends on the framework the
 way a user's app would, never the reverse.
 
 **And since 2026-07-28 there is a stronger test of that boundary than a gate.**
@@ -154,7 +154,7 @@ all. What remains here is the API and its read performers — a project serves
 to say so, since a module named for a UI it no longer contains is exactly the
 kind of claim a reader trusts. That rename overshot: `review` is what
 `slopp.api.review` (review_scan, risk triage) already meant, so one word named
-two unrelated things across two modules. It is **`slopp.ui-api`** since
+two unrelated things across two modules. It is **`slopp.http-api`** since
 2026-08-01 — not the UI, the API *for* it, which is what the first rename was
 reaching for. A gate says the framework may not call into the
 core; a separate process that cannot even load it says so louder, and it found

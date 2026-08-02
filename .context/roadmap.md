@@ -581,7 +581,7 @@ gestures at. Two enforceable pieces the user proposed:
 1. **A gate requiring a SCHEMA on every web endpoint** — a web-facing `defn`
    (`:web/method`/`:web/path`) must declare the shape of what it READS
    (request/params) and RETURNS (response body), the way `:web/auth` is already
-   mandatory. Refuse-grade, dial-able; inert until `http.enabled`. This makes
+   mandatory. Refuse-grade, dial-able; inert until `web.enabled`. This makes
    the request/response contract a first-class, checkable artifact instead of
    living implicitly in the handler body.
 

@@ -37,6 +37,12 @@ resolve here.
 |---|---|---|
 | `ui.port` | `slopp.api.port` | named for its consumer. Becomes an **output** in phase 2 — bind a free port, report the number |
 | `ui.hub-port` | `slopp.hub.port` | the port slopp reaches OUT to, not one it serves |
+| `http.enabled` | `web.enabled` | **the whole `http.*` family became `web.*` (2026-08-02, user decision).** `http` names the PROTOCOL; what a project opts into is the WEB feature — routing, auth, static mounts, the client build, ten of the thirty-four rules. A browser session TTL and an OIDC redirect are not HTTP-the-protocol. R6: an app type's support lives under that type's name, so app type #2 gets its own `<type>.enabled` without renaming this one |
+| `http.port` | `web.port` | ditto — and `web.port` was already the name the plan and the docs used |
+| `http.host` | `web.host` | ditto |
+| `http.adapter` | `web.adapter` | ditto. The VALUE stays `http-kit`: that is a library name, not a key |
+| `http.max-body-bytes` | `web.max-body-bytes` | ditto |
+| `http.static.*` | `web.static.*` | ditto. Distinct from the `slopp.web.static` NAMESPACE, which keeps its `slopp.` prefix |
 
 ## Session and `session_brief` keys
 

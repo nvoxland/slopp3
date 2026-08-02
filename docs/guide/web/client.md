@@ -42,11 +42,11 @@ compile_client {}
 
 Every `:cljc` and `:cljs` namespace compiles with the configured backend --
 real ClojureScript, running on the JVM, no Node -- into one `:simple` bundle.
-The default output path is `public/cljs/main.js`, so a `http.static./assets`
+The default output path is `public/cljs/main.js`, so a `web.static./assets`
 mount pointing at `public` serves it at `/js/main.js`:
 
 ```clj
-config_file {path "capabilities" key "http.static./assets" value "public"}
+config_file {path "capabilities" key "web.static./assets" value "public"}
 ```
 
 The bundle is an **artifact**, not a tracked file: the store records its sha

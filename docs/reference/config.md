@@ -59,21 +59,36 @@ query_capabilities {}
 | `app.name` | the store directory name | Application name, at build time. |
 | `app.version` | `0.0.0` | Carried into build artifacts. |
 | `app.main` | unset | The entry fn (`myapp.core/-main`). `build` falls back to it when given no `main` argument. |
-| `http.enabled` | `false` | Whether this project serves HTTP. The master opt-in: every web rule and `query_routes` exists only when true. |
-| `http.adapter` | `:http-kit` | `:jdk` is the zero-dependency fallback. |
-| `http.host` | `127.0.0.1` | Bind address. Widen deliberately. |
-| `http.port` | unset | The port the app's server binds. Unset means 8080 in production (`serve!` defaults it) and DERIVED from the store directory for the dev server, so two projects on one machine cannot collide. Set it to pin one address for both. |
-| `http.max-body-bytes` | `1048576` | Largest accepted request body. |
-| `dev.server` | `true` | Whether slopp runs this project's app server while you work — a dedicated image, re-served at each `done`. Set `false` if your handlers take `:web/deps`, if you have `http.static.*` mounts, if your app is a server for something other than itself, or if something else already serves this project's HTTP surface. See [running](../guide/web/running.md). |
+| `web.enabled` | `false` | Whether this project serves HTTP. The master opt-in: every web rule and `query_routes` exists only when true. |
+| `web.adapter` | `:http-kit` | `:jdk` is the zero-dependency fallback. |
+| `web.host` | `127.0.0.1` | Bind address. Widen deliberately. |
+| `web.port` | unset | The port the app's server binds. Unset means 8080 in production (`serve!` defaults it) and DERIVED from the store directory for the dev server, so two projects on one machine cannot collide. Set it to pin one address for both. |
+| `web.max-body-bytes` | `1048576` | Largest accepted request body. |
 | `auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
 | `auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
 | `auth.session.ttl-seconds` | `86400` | Browser session lifetime. |
+
+!!! note "There is no `dev.server` setting"
+
+    Whether slopp runs your app server while you work is **derived, not
+    configured**. It manages one unless the calling process already serves
+    every namespace that store would -- which is true of exactly one store on
+    earth, slopp's own, whose web surface *is* the API the live session
+    already serves.
+
+    It used to be a `dev.server` capability, and that asked every project a
+    question only one of them should answer. It misfired the way footguns do:
+    the second project to meet it set `false` because its static assets were
+    404ing, and the switch then presented a bug as a preference for a week.
+    Computing it means a project cannot answer wrong, and cannot use the
+    answer to paper over something else. See
+    [running](../guide/web/running.md).
 
 Some keys are *families* whose tail is part of the setting:
 
 | Pattern | Meaning |
 |---|---|
-| `http.static.<url-prefix>` | A static mount. The value is a files-manifest path prefix: `http.static./assets` = `public`. |
+| `web.static.<url-prefix>` | A static mount. The value is a files-manifest path prefix: `web.static./assets` = `public`. |
 | `auth.static.users.<name>` | `{:password-hash "pbkdf2$..." :groups [...]}` |
 | `auth.bearer.tokens.<name>` | `{:secret "env:NAME" :groups [...]}` |
 | `auth.proxy.*` / `auth.oidc.*` | Provider settings. Secrets are `env:NAME` indirections. |
