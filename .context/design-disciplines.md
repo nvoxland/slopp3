@@ -138,7 +138,7 @@ channel.
 
 ## Core 2 — one relationship is first-class; the rest rot
 
-**Root.** THE reference graph (`slopp.edit.refs`) is the crown jewel —
+**Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
 architecture.md calls it "the single source of truth for who references what."
 But it was a **var** reference graph, and every other relationship the code
 expresses got a point-fix or nothing: keyword contracts read via

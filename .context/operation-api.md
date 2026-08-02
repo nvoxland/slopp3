@@ -256,7 +256,7 @@ write time, instead of a fresh JVM catching it later.
   `:main` (qualified entry fn) it also emits the O4 native-binary recipe:
   a generated launcher, a `:native` deps alias, and `build-native.sh`
   (user runs it; needs GraalVM 21+ on PATH). Generators live in
-  `slopp.store.build`; X4 guards apply, plus: a deps.edn the build didn't
+  `slopp.build`; X4 guards apply, plus: a deps.edn the build didn't
   generate is never overwritten. **Native-compat gate (M6):** each manifest
   dep's jars are scanned for `META-INF/native-image/**` (GraalVM reachability
   metadata) → `:declared`/`:none` verdict (cached in `dep_surface.native`); a

@@ -102,10 +102,17 @@ the backlog for attention.
   existing on disk. **Those two are projections**: `build!` materializes them
   from the store over `target/jar-src/`, so a hand-edit there is silently
   discarded at build time and looks exactly like a stale jar. Edit
-  `slopp.boot` / `slopp.rt` through the tools like everything else — the only
-  thing special about them is that `--live` cannot reload them, so a change
-  needs a rebuild and a restart. There is no `:test` alias, so
-  `clojure -M:test` does not work here; see DEV.md.
+  `slopp.boot` / `slopp.rt` through the tools like everything else. What is
+  special about them is narrower than "needs a restart", and the distinction
+  is worth knowing because it decides whether you interrupt the user:
+  **a kernel function the poll loop CALLS is hot-fixable** (`reload-ns!` is
+  looked up per poll, so a redefinition takes effect on the next one — this
+  is how the alias wedge was fixed on a running host); **the loop's own body
+  is not**, since `watch-live!` is already executing; and **a fresh boot
+  always needs the rebuilt jar**, because the kernel must come from the jar
+  to exist before the store is readable at all. So: rebuild always, restart
+  only when the change is in the boot path or the loop body. There is no
+  `:test` alias, so `clojure -M:test` does not work here; see DEV.md.
 - **Decisions are settled in `.context/decisions.md`** — that file holds
   DECISIONS ONLY (D/C/O/H/G/S/R4 + the named `D-*` series). Don't
   re-litigate silently — revisit explicitly, and record the change.
@@ -153,6 +160,7 @@ the backlog for attention.
 | `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.api` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
 | `.context/operation-api.md` | `slopp.api`, `slopp.mcp`, `slopp.edit.refactor` |
+| `.context/naming-glossary.md` | reading any OLD record — old→new for renamed namespaces, keys and retired phrases |
 | `.context/dogfooding.md` | user tests, benchmark suite, findings backlog |
 | `.context/working-in-this-repo.md` | dev workflow, REPL, tests, commits |
 | `.context/writing-style.md` | `docs/`, the blog, release notes, README copy |

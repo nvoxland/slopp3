@@ -57,7 +57,7 @@
   observe but never redefines code.
 
 - **THE reference graph is the single source of truth for "who references
-  what"** (`slopp.edit.refs`). Every producer of reference knowledge
+  what"** (`slopp.index.refs`). Every producer of reference knowledge
   NORMALIZES INTO it at the source — kondo-resolved statics, syntactically-
   qualified un-required calls, carrier positions (`query-call`/`invoke!`/
   `late-ref`), and marker declarations (`^:entry-point`/`^:unused-ok` as
@@ -177,9 +177,10 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.rt` | runtime support inside the image: traced (multi-ns) test runs + failure capture, observe |
 | `slopp.image` | store↔image bridge: load-ns!, traced-test-run (dependency-closure instrumentation) |
 | `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
+| `slopp.index.refs` | THE reference graph (deep, world-exported): canonical form-anchored records from every producer — static/carrier/declared; `refs`/`refs-to` are the only reference query surface. Every edge INSIDE the store |
+| `slopp.index.crossings` | its outward pair: the registry of exit KINDS — what leaves, to where, `:checked-by`, `:blind` — plus the markers slopp owns that deliberately stay inside. Verifies nothing on purpose; makes exits ENUMERABLE so an unchecked one says so |
 | `slopp.edit.refactor` | position-based structural rewrites (rename, extract, subform) |
 | `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate; pure-eval gate (query_store) |
-| `slopp.edit.refs` | THE reference graph (deep, world-exported): canonical form-anchored records from every producer — static/carrier/declared; `refs`/`refs-to` are the only reference query surface |
 | `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
 | `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |
@@ -187,7 +188,7 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
 | `slopp.mcp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
-| `slopp.store.build` | explicit build: files + GraalVM native-image recipe (O4) |
+| `slopp.build` | explicit build: files + GraalVM native-image recipe (O4). Pure generators, zero internal requires — layer 0, because its three callers (`slopp.git`, `slopp.api.external`, `slopp.api.cljs`) sit in different modules |
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
 | `slopp.index.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.store.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
