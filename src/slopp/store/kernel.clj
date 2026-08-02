@@ -84,8 +84,13 @@
   file on `main` AND as namespaces in the store, and both copies are live — the
   file serves a `main`-checkout dev run (which is how the benchmarks execute),
   the store's projection is what the jar ships and what `build!` materializes
-  for the external tier. They have drifted twice, and both times a human found
-  it days later by diffing on a hunch.
+  for the external tier. They have drifted four times. The first
+  three were found by a human diffing on a hunch, days later. The fourth was
+  found by this function — which by then had been written, was correct, and
+  had never once run, because the CI lane that calls it lived on a branch
+  nobody had pushed. A guard that has produced no verdicts is
+  indistinguishable from one that always passes, and it reads in the repo
+  exactly like coverage.
 
   **The invariant is surface + behaviour parity, NOT identity.** Three things
   differ legitimately and forever:
@@ -99,14 +104,24 @@
     `=` ignores metadata, so this falls out for free — which is exactly why
     VISIBILITY is compared explicitly below: it is surface, it can ride in
     metadata, and meta-blindness would otherwise hide it.
-  - **the `(ns …)` form** — different require sets by construction.
+  - **the `(ns …)` form** — never compared, because only `def*` forms are.
+    It MAY differ, since the two copies are loaded by different things; it is
+    excluded on that principle rather than because it does. Measured
+    2026-08-02: byte-identical. So do not plan a reconciliation around \"the
+    requires differ and must be merged by hand\" — that belief cost a
+    scheduled manual pass before anyone checked.
 
   Anything else is drift. `accepted` names the forms whose difference is
-  DECLARED — the store's `watch-live!` docstring explains its own `^:unsafe`
-  marker, which is true there and meaningless in the file — and the
-  declaration polices itself: a name that no longer differs comes back as
-  `:stale-accepted`, because a blocking check with no escape gets switched off
-  and an escape nobody prunes stops meaning anything.
+  DECLARED — prose true in one copy and meaningless in the other is the case
+  it exists for — and the declaration polices itself: a name that no longer
+  differs comes back as `:stale-accepted`, because a blocking check with no
+  escape gets switched off and an escape nobody prunes stops meaning
+  anything.
+
+  **As of 2026-08-02 the list is EMPTY and both copies are fully
+  reconciled**, which is the state to keep. `watch-live!` was the one standing
+  entry; the reconciliation made it identical, and the staleness check is what
+  said so rather than letting a mute button survive its reason.
 
   Takes SOURCE STRINGS and nothing else, because the two copies are only both
   reachable from the repo root — the MCP server's cwd and no test's. A test
