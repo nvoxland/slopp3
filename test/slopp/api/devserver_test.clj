@@ -616,3 +616,26 @@
                             (make-array java.nio.file.attribute.FileAttribute 0)))
             o2 (devserver/materialize-static! st {"/assets" "public"} empty-dir)]
         (is (not (.exists (java.io.File. (str o2 "/public/cljs/main.js")))))))))
+
+(deftest a-bind-failure-leads-with-the-diagnosis-and-says-what-to-do
+  ;; slopp-ui hit this in anger (they squatted the port on purpose to see it)
+  ;; and reported the message back: the ONE useful clause, "Address already in
+  ;; use", arrived last, behind a class name, a stack frame and a `-2` line
+  ;; number — and nothing said what was expected of them.
+  (testing "the measured case: something else holds the port"
+    (let [raw (str "class java.net.BindException: Execution error (BindException)"
+                   " at sun.nio.ch.Net/bind0 (Net.java:-2).\nAddress already in use")
+          m   (#'devserver/bind-failure 7999 raw)]
+      (is (str/starts-with? m "port 7999 is already in use")
+          (str "the diagnosis has to be the first thing read: " m))
+      (is (str/includes? m "web.port")
+          (str "a refusal that does not say what to do costs a round trip: " m))
+      (is (not (str/includes? m "sun.nio.ch"))
+          (str "the frame is noise in FRONT of the answer: " m))))
+  (testing "an unrecognized failure keeps every byte rather than guessing"
+    ;; the honest half. A bind can fail for reasons this does not model
+    ;; (privileged port, unresolvable host), and a confident wrong sentence
+    ;; is worse than a verbose right one.
+    (let [m (#'devserver/bind-failure 7999 "Permission denied")]
+      (is (str/includes? m "Permission denied") m)
+      (is (str/includes? m "7999") m))))

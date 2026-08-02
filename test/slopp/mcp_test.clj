@@ -1907,3 +1907,27 @@
               done point saying so is how a report stops being read"
       (is (nil? (mcp/refresh-app! (atom {:store (store/empty-store)
                                          :dir "/tmp/slopp-no-such-dir"})))))))
+
+(deftest done-says-when-the-re-serve-it-triggered-broke-the-app
+  ;; slopp-ui: "an agent can run `done`, get a clean report, and have just
+  ;; taken its own app server down without being told." The re-serve happens
+  ;; AT the done point and the failure appeared only in session_brief — a
+  ;; different call an agent has no reason to make. Action and announcement
+  ;; living in separate calls.
+  (testing "a failed re-serve is news, and carries the reason"
+    (let [n (#'mcp/app-note-for {:serving? false
+                                 :reason "port 7999 is already in use — free it, or set web.port to another"})]
+      (is (some? n))
+      (is (str/includes? n "port 7999 is already in use") n)
+      (is (str/includes? n "DOWN") (str "the state has to be unmissable: " n))))
+  (testing "a healthy re-serve says nothing"
+    (is (nil? (#'mcp/app-note-for {:serving? true :port 7359 :url "http://127.0.0.1:7359/"}))))
+  (testing "a store slopp does not run says nothing — most stores are not web projects"
+    (is (nil? (#'mcp/app-note-for nil))))
+  (testing "a DELIBERATE stop is not a failure and must not read as one"
+    ;; the two opt-out branches return :serving? false with a reason that
+    ;; describes a correct outcome. Reporting those as breakage would train
+    ;; the reader to skim the line that matters.
+    (is (nil? (#'mcp/app-note-for
+               {:serving? false :stopped true
+                :reason "web.enabled is false for this store — the managed app server was stopped"})))))

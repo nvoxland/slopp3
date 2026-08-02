@@ -214,3 +214,37 @@
       (let [doc (:doc (caps/find-entry "web.port"))]
         (is (re-find #"(?i)unset" doc) doc)
         (is (re-find #"8080" doc) doc)))))
+
+(deftest orphaned-stored-keys-are-named-rather-than-dropped
+  ;; Found by slopp-ui crossing the http.* -> web.* rename. They ran
+  ;; query_capabilities on a store holding three stored values and got back
+  ;; ZERO :set true anywhere, with no mention that the three existed — so the
+  ;; tool whose job is "what is configured here" reported an unconfigured
+  ;; store while the reason its app server would not start sat in the config
+  ;; it declined to name.
+  ;;
+  ;; UNSET and SET-UNDER-A-NAME-THIS-BUILD-NO-LONGER-KNOWS shared one
+  ;; representation, at the exact moment the difference IS the diagnosis. The
+  ;; join already has both halves; the orphans are the rows that fall off it.
+  (let [put (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
+        s   (-> (store/empty-store)
+                (put "web.enabled" "true")
+                (put "http.enabled" "true")
+                (put "http.static./assets" "public"))
+        rep (caps/report s)]
+    (testing "a stored key with no registry row is reported, with its value"
+      (is (= #{"http.enabled" "http.static./assets"}
+             (set (map :key (:orphaned rep))))
+          (pr-str (:orphaned rep)))
+      (is (= "public"
+             (->> (:orphaned rep)
+                  (filter #(= "http.static./assets" (:key %)))
+                  first :value))
+          "the VALUE is the migration instruction — naming the key alone
+           still makes someone go and look it up"))
+    (testing "keys the registry does know are unaffected"
+      (let [en (first (filter #(= "web.enabled" (:key %)) (:settings rep)))]
+        (is (true? (:set en)) (pr-str en))
+        (is (true? (:effective en)) (pr-str en))))
+    (testing "nothing orphaned says so by absence, like :debt does"
+      (is (nil? (:orphaned (caps/report (put (store/empty-store) "web.enabled" "true"))))))))

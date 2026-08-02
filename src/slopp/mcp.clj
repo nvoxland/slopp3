@@ -763,6 +763,36 @@
      (when (:url r) (start-heartbeat! session dir (:url r)))
      r)))
 
+(defn- app-note-for
+  "The line `done` should carry about the app server it just re-served, given
+  [[refresh-app!]]'s result — or nil, which is the usual answer.
+
+  Three outcomes and only one of them is news. **Nothing to do** (nil: this
+  store is not one slopp runs, which is most stores) and **it came back up**
+  are both silent, because a line at every done point is how a report stops
+  being read. A re-serve that FAILED is the opposite case: it is news, this
+  done caused it, and this is the only moment the causing change is still in
+  the author's hand.
+
+  **A deliberate stop is not a failure**, and the distinction is the whole
+  reason `:stopped` exists. Opting out of a managed server, or this session
+  already serving the surface itself, both end with `:serving? false` and a
+  reason describing a CORRECT outcome. Reporting those as breakage would put
+  a scary line in front of someone who got exactly what they asked for, and
+  train them to skim the one that matters.
+
+  Reported by the first consumer to lose an app server this way: `done`
+  returned a clean report, the failure appeared only in `session_brief`, and
+  an agent has no reason to make that second call. Action and announcement
+  belonged in the same one."
+  [refreshed]
+  (when (and (map? refreshed)
+             (false? (:serving? refreshed))
+             (not (:stopped refreshed))
+             (:reason refreshed))
+    (str "the app server slopp runs for this project is DOWN after this done: "
+         (:reason refreshed))))
+
 ^:unsafe (defn refresh-app!
   "Re-serve this project's app on the CURRENT store, or stop a managed server
   the store has opted out of. nil when there is nothing to do. NEVER throws.
@@ -803,6 +833,11 @@
           (try (devserver/stop! running) (catch Throwable _))
           (swap! session dissoc :app-server))
         {:serving? false
+         ;; STOPPED ON PURPOSE, and that has to be legible to the caller:
+         ;; `done` reports a re-serve that BROKE and must not report this,
+         ;; which is indistinguishable without the flag — same :serving?
+         ;; false, same shape of reason, opposite meaning.
+         :stopped true
          ;; `managed?` is false for two different reasons now, and a stopped
          ;; server that names the wrong one sends someone to change the
          ;; wrong thing
@@ -1160,16 +1195,33 @@
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))))
       "done" (let [r (external/done! session :label (:label a)
-                                            :agent (:agent a))]
-               ;; the app server catches up to the store at DONE grain, and
-               ;; BACKGROUNDED so it never lengthens a done. A red done still
-               ;; refreshes: done REPORTS rather than refuses and a red one
-               ;; STANDS, so "finished" and "green" are different questions,
-               ;; and looking at the app is part of finding out you were not
-               ;; finished. refresh-app! is a no-op for a store slopp does
-               ;; not run, and never throws.
-               (future (refresh-app! session))
-               (text! r))
+                                            :agent (:agent a))
+                   ;; the app server catches up to the store at DONE grain. A
+                   ;; red done still refreshes: done REPORTS rather than
+                   ;; refuses and a red one STANDS, so "finished" and "green"
+                   ;; are different questions, and looking at the app is part
+                   ;; of finding out you were not finished. refresh-app! never
+                   ;; throws.
+                   ;;
+                   ;; This used to be fire-and-forget, so a re-serve that
+                   ;; failed said nothing HERE and appeared only in
+                   ;; session_brief — a different call an agent has no reason
+                   ;; to make. An author could finish a unit of work, get a
+                   ;; clean report, and have just taken their own app server
+                   ;; down. So the result is waited for and reported: the
+                   ;; action and its announcement belong in one call.
+                   ;;
+                   ;; It costs only a store that HAS a managed server —
+                   ;; refresh-app! returns nil immediately for anything slopp
+                   ;; does not run, which is most stores, and that is the same
+                   ;; test as "could this line ever be news". The deref bound
+                   ;; is a backstop, not a budget: on expiry we say nothing
+                   ;; rather than guess, and the future still lands the truth
+                   ;; in the session for session_brief.
+                   app (deref (future (refresh-app! session)) 20000 nil)]
+               (text! (if-let [note (app-note-for app)]
+                        (assoc r :app-note note)
+                        r)))
       "commit_point" (text! (let [r (external/commit-point! session (:description a)
                                                        :agent (:agent a)
                                                        :force (:force a)

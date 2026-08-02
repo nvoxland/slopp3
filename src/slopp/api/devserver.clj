@@ -382,6 +382,33 @@
         (repl/stop! img)
         {:reason (str "the app image did not come up: " (ex-message t))}))))
 
+(defn- bind-failure
+  "The sentence a failed bind should REPORT, given the `port` asked for and
+  the `raw` failure the app image handed back.
+
+  A failure at this point is a bind failure by construction — [[boot!]] has
+  already proved the code loads — so the common case is knowable and worth
+  saying plainly.
+
+  **The diagnosis leads and the next step follows it.** What the JVM produces
+  is `class java.net.BindException: Execution error (BindException) at
+  sun.nio.ch.Net/bind0 (Net.java:-2).` and then, after a newline, `Address
+  already in use` — the one clause that matters, arriving last, behind a class
+  name, a stack frame and a `-2` line number. The reader is an agent deciding
+  what to do next, and it had to parse three pieces of noise to reach the
+  answer and then still did not know what was expected of it. Reported by the
+  first consumer to hit this in anger.
+
+  **An unmodelled failure keeps every byte.** A privileged port, an
+  unresolvable host, something not thought of — a confident wrong sentence is
+  worse than a verbose right one, so anything this does not recognise falls
+  through with its raw text intact rather than being squeezed into the shape
+  of the case that IS understood."
+  [port raw]
+  (if (re-find #"(?i)address already in use" (str raw))
+    (str "port " port " is already in use — free it, or set web.port to another")
+    (str "the app image would not serve on port " port ": " raw)))
+
 (defn- serve-in!
   "Bind the server inside an already-loaded app image (`boot!`'s result) and
   return the running map — `{:serving? true :image :plan :port :url}`, or
@@ -404,13 +431,11 @@
          :url (str "http://" (:host plan) ":" v "/")}
         (do (repl/stop! image)
             {:serving? false :plan plan
-             :reason (str "the app image would not serve on port "
-                          (:port plan) ": " v)})))
+             :reason (bind-failure (:port plan) v)})))
     (catch Throwable t
       (repl/stop! image)
       {:serving? false :plan plan
-       :reason (str "the app image would not serve on port " (:port plan)
-                    ": " (ex-message t))})))
+       :reason (bind-failure (:port plan) (ex-message t))})))
 
 (defn start!
   "Bring this store's app server up in a DEDICATED image and return

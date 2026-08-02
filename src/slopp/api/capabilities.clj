@@ -213,13 +213,32 @@
            (str/join ", " (map :key registry))))))
 
 (defn report
-  "The `query_capabilities` payload: `{:settings [...] :patterns [...]}`.
+  "The `query_capabilities` payload: `{:settings [...] :patterns [...]}`, plus
+  `:orphaned` when the store has stored keys this build does not recognise.
   `:settings` = one row per CONCRETE registry key `{:key :effective :default
   :doc}` (+ `:set true :value <raw>` when the store sets it), plus a row for
   every stored key a wildcard pattern governs. `:patterns` = the wildcard
   entries themselves (key + doc) — they name families, they are not
   settable rows. A pure function of the store value, so it is correct on
-  any branch and at any revision."
+  any branch and at any revision.
+
+  **`:orphaned` is the rename path, and it used to be invisible.** This is a
+  JOIN of the registry against the stored config, and a stored key with no
+  registry row simply fell off it. So a store carrying three settings under
+  retired names reported ZERO `:set true` and said nothing at all — the tool
+  whose job is *what is configured here* describing an unconfigured store,
+  while the reason its app server would not start sat in the config it
+  declined to mention. UNSET and SET-UNDER-A-NAME-I-NO-LONGER-KNOW shared one
+  representation at the exact moment the difference IS the diagnosis.
+
+  The rows carry the VALUE, not just the key, because that makes the answer a
+  migration instruction rather than a prompt to go and look. Absent when there
+  are none, the way the module manifest's `:debt` is — this always computes,
+  so absence unambiguously means none.
+
+  Found by the first store to cross a capability rename. With
+  `no-backwards-compatibility` standing policy that path is common rather than
+  rare, so the report has to survive it."
   [store]
   (let [values (get-in store [:config "capabilities" :values] {})
         concrete? #(not (str/includes? (:key %) "*"))
@@ -231,12 +250,22 @@
                              :doc (:doc entry)}
                       (some? v) (assoc :set true :value v))))
         rows (mapv #(setting (:key %) %) (filter concrete? registry))
-        wild (into []
-                   (comp (filter (fn [k] (nil? (some #(when (= (:key %) k) %)
-                                                     registry))))
-                         (keep (fn [k] (when-let [e (find-entry k)]
-                                         (setting k e)))))
-                   (sort (keys values)))]
-    {:settings (into rows wild)
-     :patterns (mapv #(select-keys % [:key :doc])
-                     (remove concrete? registry))}))
+        exact? (fn [k] (some #(when (= (:key %) k) %) registry))
+        ;; every stored key the concrete rows above did not already cover:
+        ;; some are governed by a wildcard pattern, and the rest are governed
+        ;; by nothing, which is the case this used to drop on the floor.
+        loose (remove exact? (sort (keys values)))
+        {governed true orphans false} (group-by #(some? (find-entry %)) loose)
+        wild (mapv #(setting % (find-entry %)) governed)
+        orphaned (mapv (fn [k] {:key k :value (get values k)}) orphans)]
+    (cond-> {:settings (into rows wild)
+             :patterns (mapv #(select-keys % [:key :doc])
+                             (remove concrete? registry))}
+      (seq orphaned)
+      (assoc :orphaned orphaned
+             :orphaned-note
+             (str "stored under names this slopp does not know — nothing reads"
+                  " them. They are usually a capability RENAME you have not"
+                  " migrated: set the current key (query_capabilities lists"
+                  " them all) and then config_file {path \"capabilities\" key"
+                  " <old> unset true}")))))
