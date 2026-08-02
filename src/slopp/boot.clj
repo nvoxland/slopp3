@@ -22,44 +22,25 @@
 (defn- log! [& parts]
   (.println System/err ^String (apply str parts)))
 
-(defonce boot-info
-  ;; the host's own currency record — session_brief reads it (resolved
-  ;; dynamically; absent in processes that didn't boot from a store) to
-  ;; answer "which code is this server actually running": :snapshot mode =
-  ;; the store AT LAUNCH, :live mode = launch + successful reloads of
-  ;; MAIN-journal commits. A branch line's writes live in its own
-  ;; mini-journal and are DELIBERATELY invisible to the watcher — host code
-  ;; tracks the main line; branch serving behavior is verified in the image
-  ;; or a fresh JVM. Keys: :dir :mode :booted-at, then :last-reload-at
-  ;; :reloads :failed maintained by watch-live!.
-  (atom nil))
-
-(defn current-boot-info
-  "The boot-info record, or nil — the fn face session_brief reaches through
-  a late-ref carrier (an atom cannot be a carrier target)."
-  []
-  @boot-info)
-
 ;; --- store → source (raw jdbc; no slopp code, so it can bootstrap slopp) ---
-
 ^:reads (defn- open-conn
-          "The store db under `dir`, or NIL when `dir` has no store yet.
+  "The store db under `dir`, or NIL when `dir` has no store yet.
 
   A read must never CREATE: the kernel boots in whatever directory the MCP
   client launched the server in, so an unadopted project has to stay
-  untouched (D-serving-is-not-adoption). This runs before `slopp.mcp/-main`,
-  which is why gating the server layer alone was not enough — boot got there
-  first and made the store the server then found. Materialization belongs to
-  the first write (`api.session/ensure-db!`)."
-          [dir]
-          (let [f (io/file dir ".slopp" "store.db")]
-            (when (.exists f)
-              (let [conn (jdbc/get-connection
-                          (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
-      ;; the live watcher polls a db a live writer owns; without a busy timeout
-      ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
-                (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
-                conn))))
+  untouched (D-serving-is-not-adoption). This runs before
+  `slopp.mcp/-main`, which is why gating the server layer alone was not
+  enough — boot got there first and made the store the server then found.
+  Materialization belongs to the first write (`api.session/ensure-db!`)."
+  [dir]
+  (let [f (io/file dir ".slopp" "store.db")]
+    (when (.exists f)
+      (let [conn (jdbc/get-connection
+                  (jdbc/get-datasource {:dbtype "sqlite" :dbname (str f)}))]
+        ;; the live watcher polls a db a live writer owns; without a busy timeout
+        ;; every contended read throws instead of waiting (slopp.db/open! sets 5s)
+        (jdbc/execute! conn ["PRAGMA busy_timeout=5000"])
+        conn))))
 
 ^:reads (defn store-sources
           "{ns-sym source} for every namespace in the store db — the store's own
@@ -100,7 +81,6 @@
                        (group-by #(symbol (:elements/ns %)))))))
 
 ;; --- dependency order (internal requires only) ---
-
 (defn- internal-requires
   "The in-store namespaces `source`'s ns form requires (external libs dropped)."
   [source all-nses]
@@ -129,37 +109,273 @@
           (into order remaining))))))
 
 ;; --- load into the CURRENT jvm ---
-
 (defn- stamp-loaded! [ns-sym]
   ;; mark the ns loaded so a later internal (require ...) is a no-op (there is
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
+(def default-repos
+  "Where to look for artifacts when the runtime cannot say — the same two the
+  Clojure CLI's root deps.edn configures, so this RESTORES the default rather
+  than inventing one."
+  {"central" {:url "https://repo1.maven.org/maven2/"}
+   "clojars" {:url "https://repo.clojars.org/"}})
+
+(def bundled-libs-path
+  "Resource naming what the host uberjar already provides, lib→coord.
+
+  Written by `build.clj` from the very basis that produced the jar, so it
+  cannot drift from what shipped — the alternative, restating slopp's deps by
+  hand, is a claim that goes stale the first time `deps.edn` changes."
+  "META-INF/slopp/bundled-libs.edn")
+
+(def framework-version-path
+  "Resource naming which `slopp-web` release this jar's `slopp/web/**` IS.
+
+  Written by `build.clj` from the tracked `META-INF/MANIFEST.MF`'s
+  `X-Slopp-Web-Version`, so the number is authored in ONE place and the jar
+  cannot claim a version it was not built as.
+
+  Deliberately NOT in `bundled-libs.edn`, which feeds `host-lib-divergence` —
+  that reports \"your declaration is inert, the host's copy wins\", the opposite
+  of the truth for slopp-web (D-framework-injection)."
+  "META-INF/slopp/framework-version.edn")
+
+(defn framework-version
+  "The `slopp-web` release THIS slopp corresponds to, or nil when the process
+  cannot say — a `clojure -M` run, a checkout, the oracle image.
+
+  A STAMP, not a maven version: slopp-web is never published, so this says which
+  framework a jar carries and which one a built tree was given, and nothing
+  resolves against it. `api.session/vendor-framework!` writes it beside the
+  vendored files, which is what lets a built tree say what it holds.
+
+  In the KERNEL because both consumers need it and nothing lower is shared:
+  `slopp.image` sits below `slopp.api`, so a helper up there would be a
+  backwards dependency.
+
+  nil is a legitimate answer and every caller must stay silent on it — a
+  checkout has no published identity to vendor or to be behind."
+  []
+  (when-let [r (io/resource framework-version-path)]
+    (not-empty (str/trim (slurp r)))))
+
+(defn framework-files
+  "The framework slopp vendors into stores it serves: `{\"slopp/web.clj\" src …}`,
+  or nil when this process cannot supply it (a checkout, a `clojure -M` run).
+
+  D-framework-injection part 2. `slopp-web` is NEVER published to a remote, so a
+  maven coord in a store's deps or a built app's `deps.edn` names something only
+  the machine that ran `slim-install` can resolve — portable in appearance and
+  not in fact. Copying the source in is what makes a built app self-contained.
+
+  The LIST comes from a generated resource rather than a glob, because a jar
+  cannot enumerate its own resources by prefix, and rather than a hand-written
+  vector, because that goes stale the first time a namespace joins slopp.web.
+  Missing content for a listed file is skipped rather than thrown on: a partial
+  vendor is a compile error at the far end, which is louder and more localised
+  than a boot failure here."
+  []
+  (when-let [r (io/resource "META-INF/slopp/framework-files.edn")]
+    (not-empty
+     (into {} (keep (fn [p]
+                      (when-let [res (io/resource p)]
+                        [p (slurp res)])))
+           (edn/read-string (slurp r))))))
+
+(defn framework-deps
+  "What the vendored framework needs from OUTSIDE — `{lib coord}` — or nil when
+  this process cannot say.
+
+  Vendoring `slopp/web/**` copies SOURCE and discards the pom, and the pom was
+  what pulled garden, hiccup, cheshire and http-kit onto the classpath. Found
+  by slopp-ui removing the coord: the framework landed correctly and then failed
+  INSIDE `slopp.web.css`, which requires `garden.core`. The vendored files were
+  all present; nothing carried what they needed.
+
+  Generated by `build.clj` from the files' own requires against the basis that
+  produced the jar, so it cannot go stale the way a hand-written list would —
+  and would, silently, now that the coord which used to mask it is gone.
+
+  Both consumers read it from here: `api.session` merges it into every image's
+  `-Sdeps`, and `api.external/build!` into the generated `deps.edn`. A built app
+  that got the source and not the deps fails exactly as the image did."
+  []
+  (when-let [r (io/resource "META-INF/slopp/framework-deps.edn")]
+    (not-empty (edn/read-string (slurp r)))))
+
+(defn bundled-libs
+  "lib→coord for everything the host uberjar carries, or nil when this process
+  is not running from one (a `clojure -M` run, a checkout, the oracle image)."
+  []
+  (when-let [r (io/resource bundled-libs-path)]
+    (not-empty (edn/read-string (slurp r)))))
+
+(defn- basis-libs-to-seed
+  "PURE. What belongs in the basis's `:libs` given `current` and what the jar
+  bundles — the bundled set when there is no basis to speak of, else nil.
+
+  A FALLBACK, never an override, for the same reason `ensure-repos!` is one: a
+  process the Clojure CLI started already has a real basis describing a real
+  classpath, and replacing it with the jar's inventory would describe a
+  classpath that process does not have."
+  [current bundled]
+  (when (and (empty? current) (seq bundled))
+    bundled))
+
+(defn host-lib-divergence
+  "PURE. Where `manifest` and what the host jar `bundled` disagree about a
+  version: lib→`{:declared coord :in-force coord}`, empty when they agree.
+
+  Seeding the basis stops `add-libs` from CLAIMING it added a bundled lib, but
+  it cannot make the declaration govern — a jar the parent classloader already
+  holds cannot be displaced, so in this process the host's copy runs whatever
+  the store declares. The point of naming it is that the disagreement is real
+  and asymmetric: the oracle image is a separate `clojure -Sdeps` JVM that
+  resolves the manifest properly, so the version the TESTS run against and the
+  version the SERVER runs can differ, and every surface said neither.
+
+  Compared on version identity rather than the whole coord, because a resolved
+  coord carries `:deps/manifest`/`:parents` a declared one never has, and a
+  declared one carries `:exclusions` that are not a version disagreement."
+  [manifest bundled]
+  (let [ident #(select-keys % [:mvn/version :git/sha :git/tag :local/root])]
+    (into (sorted-map)
+          (keep (fn [[lib coord]]
+                  (when-let [have (get bundled lib)]
+                    (when (not= (ident coord) (ident have))
+                      [lib {:declared coord :in-force (ident have)}]))))
+          manifest)))
+
+^{:unsafe "reaching clojure.java.basis.impl needs requiring-resolve, which the dialect denylists. The kernel is the one place that may: it is what knows this process is a jar and what that jar contains."}
+(defn ensure-bundled-libs!
+  "Tell the dependency resolver what this process ALREADY HAS, returning
+  `{:libs n :action :seeded|:kept}`.
+
+  `add-libs` drops any coord whose lib is already in the basis's `:libs` — by
+  SYMBOL, ignoring version — and passes the rest to resolution as `:existing`.
+  A `java -jar` process has no basis, so that set is empty and both halves
+  misfire: a lib the uberjar bundles is 'added' and then loses to the parent
+  classloader, and every add drags in a transitive graph resolved as though
+  the JVM were bare — MEASURED: adding one small library re-added
+  `org.clojure/clojure` itself, plus ten others already present.
+
+  Seeding what the jar bundles fixes both at the source. A bundled lib is
+  skipped outright rather than falsely added, and what genuinely is new
+  resolves against a true picture of the classpath."
+  []
+  (let [bundled (bundled-libs)
+        current (:libs ((requiring-resolve 'clojure.java.basis/current-basis)))]
+    (if-let [seed (basis-libs-to-seed current bundled)]
+      (do ((requiring-resolve 'clojure.java.basis.impl/update-basis!)
+           update :libs merge seed)
+          {:libs (count seed) :action :seeded})
+      {:libs (count current) :action :kept})))
+
+^{:unsafe "reaching clojure.java.basis.impl needs requiring-resolve, which the dialect denylists. The kernel is the one place that may: it is what has to make `java -jar slopp.jar <dir>` resolve a manifest at all."}
+(defn ensure-repos!
+  "Make sure the dependency resolver has somewhere to LOOK, returning
+  `{:repos … :action :seeded|:kept}`.
+
+  `add-libs` builds its Maven procurer from the current BASIS's namespaced
+  keys, and a `java -jar` process has no basis — so `:mvn/repos` is empty.
+  Maven then neither downloads an artifact nor TRUSTS one `~/.m2` already
+  holds: a cached POM records the repository it came from
+  (`jackson-base-2.17.0.pom>central=`), and one it cannot attribute to a
+  configured repo is reported as `Could not find artifact`. That is why this
+  looked like a cold cache for so long, and why `clojure -Sdeps … -Spath`
+  always resolved the same coord from the same `~/.m2`: the CLI supplies a
+  basis, and nothing here did.
+
+  A FALLBACK, never an override. A process started by the CLI, or one pointed
+  at a private mirror, has already been told where to look, and replacing that
+  would break exactly the case this default is guessing at."
+  []
+  (let [current ((requiring-resolve 'clojure.java.basis/current-basis))]
+    (if (seq (:mvn/repos current))
+      {:repos (:mvn/repos current) :action :kept}
+      (do ((requiring-resolve 'clojure.java.basis.impl/update-basis!)
+           merge {:mvn/repos default-repos})
+          {:repos default-repos :action :seeded}))))
+
+^{:unsafe "add-libs IS the dynamic-classpath escape hatch, and making a thread capable of it means installing a classloader and binding the vars the dialect denylists. The kernel is the one place that can do this."}
+(defn- add-libs-here!
+  "Run Clojure 1.12 `add-libs` for `deps` on THIS thread, whatever thread it
+  is — the whole reason this is its own function.
+
+  Two things must be true of the thread, and outside a REPL neither is:
+
+  - a `DynamicClassLoader` as the context loader, or the resolved jars have
+    nowhere to land (the launcher's loader is static);
+  - a THREAD binding for `*data-readers*`, because add-libs refreshes the
+    reader table with `set!` and `set!` on an unbound-in-this-thread var
+    throws \"Can't change/establish root binding of *data-readers* with set\".
+
+  `clojure.main` establishes the second (its `with-bindings` covers
+  `*data-readers*`); an AOT `java -jar` main does not. MEASURED: without it
+  every one of slopp's own 13 manifest coords failed with exactly that
+  message and nothing landed on the classpath — while the store booted fine
+  off the host uberjar, so the manifest read as satisfied and was not."
+  [deps]
+  (let [t (Thread/currentThread)]
+    (when-not (instance? clojure.lang.DynamicClassLoader
+                         (.getContextClassLoader t))
+      (.setContextClassLoader
+       t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
+  (ensure-repos!)
+  (ensure-bundled-libs!)
+  (binding [*repl* true, *data-readers* *data-readers*]
+    ((requiring-resolve 'clojure.repl.deps/add-libs) deps)))
+
+^{:unsafe "add-libs IS the dynamic-classpath escape hatch: it needs *repl* bound and a DynamicClassLoader installed under it, which is exactly what the dialect denylists. The kernel is the one place that can do this, because it is what makes `java -jar slopp.jar <dir>` work for a store with dependencies."}
 (defn- add-manifest-libs!
   "Resolve the store's Tier-1 dependency manifest (the `deps` meta row) onto
   THIS JVM's classpath via Clojure 1.12 add-libs (`*repl*` bound — the
   programmatic context), so a store whose code requires external libs boots
   from the bare kernel: `java -jar slopp.jar <dir>` works for ANY app.
-  Idempotent for coords already present. Failures WARN and continue — the
-  namespace load that needed the jar will name the real problem."
+  Idempotent for coords already present.
+
+  ONE failing coord must not take the others down with it. `add-libs` resolves
+  the whole map as a single graph, so one unresolvable transitive pom — a
+  parent BOM that a local `~/.m2` holds as a `.pom` but Maven declines to use
+  offline, say — threw, and the catch dropped EVERY declared dependency.
+
+  What that looks like from inside is worse than a missing jar, because
+  nothing appears to be missing. The libs still resolve, from whatever the
+  HOST jar happens to carry, at whatever version it carries: a store that had
+  `deps_add`ed malli 0.16.4 was running 0.17.0, and its manifest was
+  decoration. An app checking that it depends only on what it DECLARES — the
+  whole question a store-free consumer of the slim jar exists to answer —
+  would have been told yes.
+
+  So: the whole map first, because one resolution is both faster and more
+  correct (a single graph, consistent versions), and coord-by-coord only on
+  failure — degrading to a partial classpath that NAMES what is missing
+  rather than a silent empty one."
   [conn]
   (when-let [deps (some-> (jdbc/execute-one!
                            conn ["SELECT v FROM meta WHERE k = 'deps'"])
                           :meta/v edn/read-string not-empty)]
     (try
-      ;; add-libs needs a DynamicClassLoader as the thread's context loader
-      ;; (outside a REPL the launcher's loader is static) — install one over
-      ;; the current loader so the resolved jars have somewhere to land
-      (let [t (Thread/currentThread)]
-        (when-not (instance? clojure.lang.DynamicClassLoader
-                             (.getContextClassLoader t))
-          (.setContextClassLoader
-           t (clojure.lang.DynamicClassLoader. (.getContextClassLoader t)))))
-      (binding [*repl* true]
-        ((requiring-resolve 'clojure.repl.deps/add-libs) deps))
+      (add-libs-here! deps)
       (catch Throwable t
-        (log! "slopp.boot: could not add manifest deps ("
-              (.getMessage t) ") — continuing")))))
+        (log! "slopp.boot: manifest deps did not resolve as one graph ("
+              (.getMessage t) ") — retrying one at a time")
+        (let [failed (reduce
+                      (fn [acc [lib coord]]
+                        (try
+                          (add-libs-here! {lib coord})
+                          acc
+                          (catch Throwable t2
+                            (conj acc (str lib " (" (.getMessage t2) ")")))))
+                      []
+                      deps)]
+          (if (seq failed)
+            (log! "slopp.boot: could not add " (count failed) " of "
+                  (count deps) " manifest deps: " (str/join "; " failed)
+                  " — continuing; a require that needs one will say so")
+            (log! "slopp.boot: manifest deps resolved individually ("
+                  (count deps) ")")))))))
 
 ^:reads (defn store-platforms
           "The store's `module-platforms` register — {path-string
@@ -189,7 +405,71 @@
                   last)]
     (not= :cljs (get platforms best))))
 
-(defn load-store!
+(defonce ^{:doc "What THIS process has loaded, and how it compares to the store.
+
+  `:nses` is {ns-sym source-hash}, written by every door that loads store code
+  into this JVM — `load-store!` at boot and `watch-live!`'s reload. `:stale` is
+  the last measured answer, recomputed whenever the store's sources are in
+  hand; `:armed?` separates \"not measured yet\" from \"measured, nothing stale\",
+  because nil and [] are different claims and only one of them is a promise.
+
+  Why a measurement and not the watcher's `:failed` map: those disagree, and
+  friction 20a is the case where the map was wrong. A rename left the watcher
+  retrying a namespace that no longer EXISTS — failing forever, reporting the
+  host stale, costing a milestone a fresh JVM — while the process held every
+  live namespace at current source. A comparison against the store's current
+  sources answers that correctly and for free: a deleted namespace is simply
+  not in `now`, so it cannot be stale."}
+  host-loaded
+  (atom {:armed? false :nses {} :stale nil}))
+
+(defn host-stale-of
+  "Namespaces THIS process does not hold at the store's current source.
+
+  `loaded` is {ns-sym source-hash}, recorded at each successful load;
+  `now` is the current {ns-sym source} from `store-sources`, already filtered
+  to what a JVM may load (a :cljs namespace is never loaded here by design, so
+  counting it would be a permanent false positive).
+
+  Both sides are KERNEL-rendered, and that is load-bearing rather than
+  incidental: `store-sources` and `slopp.store.render/render-ns` are
+  independent renderings — the kernel has to render with no slopp code loaded
+  — so a comparison across them would report every namespace stale the first
+  time they differed by a space. Compare like with like or do not compare.
+
+  A namespace the store has since DELETED is absent from `now` and so is not
+  reported: this measure answers \"is this process behind the store\", and a
+  namespace the store dropped is a different question."
+  [loaded now]
+  (vec (sort (for [[ns-sym src] now
+                   :when (not= (get loaded ns-sym) (hash src))]
+               ns-sym))))
+
+(defn- record-loaded!
+  "Note that this process now holds `ns-sym` at `src`."
+  [ns-sym src]
+  (swap! host-loaded assoc-in [:nses ns-sym] (hash src)))
+
+(defn- measure-host!
+  "Recompute host staleness against `now` ({ns-sym source}, JVM-loadable only)
+  and ARM the record — after this, nil no longer means \"nobody looked\"."
+  [now]
+  (swap! host-loaded
+         (fn [s] (assoc s :armed? true :stale (host-stale-of (:nses s) now)))))
+
+(defn host-drift
+  "Namespaces THIS process does not hold at the store's current source, or NIL
+  when that has never been measured.
+
+  Never [] on a guess: an empty vector is the positive claim that this host is
+  current, and only a comparison earns it. The distinction is the entire point
+  — `host-brief` says \"not measured\" for nil and can finally stop hedging for
+  []."
+  []
+  (let [s @host-loaded]
+    (when (:armed? s) (:stale s))))
+
+^:unsafe (defn load-store!
   "Load every JVM-LOADABLE namespace of the store at `dir` into the CURRENT JVM,
   dependency order: load-string each rendered source + a *loaded-libs* stamp.
   A :cljs namespace is SKIPPED — it compiles to JavaScript and its libs are not
@@ -197,9 +477,28 @@
   unbootable (D-web-cljs). The store's
   dependency MANIFEST resolves onto the classpath first (add-manifest-libs!),
   so store code may require its Tier-1 libs. Returns the
-  {ns source} map that was loaded. A load failure is rethrown NAMING the
-  namespace — a bare load-string error carries NO_SOURCE_PATH and no ns, which
-  is useless on the one code path with no oracle behind it.
+  {ns source} map that was loaded, carrying `:load-failures` in its METADATA
+  when some namespace did not load.
+
+  **Best-effort, deliberately (frictions 3b/3f/19).** This used to rethrow on
+  the first failure, and the blast radius was the whole system: `slopp.boot`
+  loads every store namespace, so ONE namespace that no longer compiles took
+  down every tool in every process — including the `edit_add_form` that would
+  have put the missing form back. Three times in one wave a store reached a
+  state its own tools could not open, and the only way back was `rm -rf
+  .slopp` and a re-import. That is a catastrophic answer to an ordinary
+  mistake: a delete whose form still had a caller.
+
+  So a failure now costs its OWN namespace and whatever genuinely depends on
+  it, not the session. The editing surface comes up, the failures are NAMED,
+  and the agent can fix the thing that broke. A broken namespace you can edit
+  is strictly better than a working store you cannot reach.
+
+  The names matter as much as the survival: a bare load-string error carries
+  NO_SOURCE_PATH and no ns, which is useless on the one code path with no
+  oracle behind it. Each failure records the namespace and the message, and
+  dependents that fail because of it are recorded the same way — so the list
+  reads as one cause and its consequences rather than as many faults.
 
   A dir with NO store loads nothing and returns {} — same shape as a store
   that exists and is empty. Serving an unadopted dir is legal and leaves it
@@ -209,25 +508,63 @@
     (with-open [conn c]
       (add-manifest-libs! conn)
       (let [sources   (store-sources conn)
-            platforms (store-platforms conn)]
+            platforms (store-platforms conn)
+            failed    (volatile! [])]
         (doseq [ns-sym (dependency-order sources)
                 :when  (jvm-loadable? platforms ns-sym)]
-          (try (load-string (get sources ns-sym))
-               (catch Throwable t
-                 (throw (ex-info (str "slopp.boot: failed to load namespace "
-                                      ns-sym " from the store at " dir
-                                      ": " (.getMessage t))
-                                 {:ns ns-sym :dir dir} t))))
-          (stamp-loaded! ns-sym))
-        sources))
+          (try
+            (load-string (get sources ns-sym))
+            (stamp-loaded! ns-sym)
+            (record-loaded! ns-sym (get sources ns-sym))
+            (catch Throwable t
+              (vswap! failed conj {:ns ns-sym :why (str (.getMessage t))}))))
+        (measure-host! (into {} (filter #(jvm-loadable? platforms (key %))) sources))
+        (when (seq @failed)
+          (log! "slopp.boot:" (count @failed)
+                "namespace(s) did NOT load —" (str/join ", " (map :ns @failed))
+                "— the store is open and editable anyway; fix them and restart."
+                "First:" (:why (first @failed))))
+        (with-meta sources {:load-failures @failed})))
     {}))
 
 ;; --- live mode: track the store, reload changed nses into this jvm ---
-
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
-(defn- departed-vars
+(defonce boot-info
+  ;; the host's own currency record — session_brief reads it (through the
+  ;; late-ref carrier; absent in processes that didn't boot from a store) to
+  ;; answer "which code is this server actually running": :snapshot mode =
+  ;; the store AT LAUNCH, :live mode = launch + successful reloads of
+  ;; MAIN-journal commits. A branch line's writes live in its own
+  ;; mini-journal and are DELIBERATELY invisible to the watcher — host code
+  ;; tracks the main line; branch serving behavior is verified in the image
+  ;; or a fresh JVM. Keys: :dir :mode :booted-at, then :last-reload-at
+  ;; :reloads :failed maintained by watch-live!.
+  (atom nil))
+
+(defn current-boot-info
+  "The boot-info record, or nil — the fn face session_brief reaches through
+  a late-ref carrier (an atom cannot be a carrier target).
+
+  Carries the MEASURED host currency (`host-drift`) beside the recorded boot
+  facts, so every reader gets the comparison without having to ask for it. Two
+  different KINDS of thing travel in this map on purpose, and the difference is
+  the point: `:failed` is what once happened, `:host-drift` is what is true
+  now. A reader holding only the first was the whole of friction 20a — a
+  watcher retrying a renamed-away namespace, failing forever, reporting stale
+  code in a process that held every live namespace at current source.
+
+  `:host-drift` is ABSENT when nothing has measured, `[]` when a comparison
+  found this process current, and a list when it is behind. Three claims, not
+  two, because \"I did not look\" must not read as \"I looked and it was fine\"."
+  []
+  (when-let [info @boot-info]
+    (let [stale (host-drift)]
+      (cond-> info
+        (some? stale) (assoc :host-drift stale)))))
+
+^:unsafe (defn- departed-vars
   "The names in `interned` that `new-source` no longer defines — what a live
   reload leaves behind.
 
@@ -260,22 +597,71 @@
       #{}
       (into #{} (remove defined) interned))))
 
-(defn- reload-ns!
-  "Load `new-source` into `ns-sym` and drop the vars it no longer defines.
+^:unsafe (defn- reload-ns!
+  "Load `new-source` into `ns-sym`, clearing its aliases first and dropping
+  the vars it no longer defines after.
 
-  The unmapping runs only AFTER a successful load, and the ordering is the
-  safety property: a reload that throws leaves the namespace exactly as it
-  was. Gutting first would turn a compile error into a dead namespace, which
-  is strictly worse than the stale var this exists to remove."
+  The two cleanups sit on OPPOSITE sides of the load, and the asymmetry is
+  the whole design:
+
+  **Vars are unmapped AFTER, and only on success.** A reload that throws
+  leaves the namespace exactly as it was. Gutting first would turn a compile
+  error into a dead namespace, which is strictly worse than the stale var
+  this exists to remove.
+
+  **Aliases are cleared BEFORE, unconditionally** — because an alias is what
+  makes the load throw. A rename rewrites every dependent's `ns` form to
+  point the same alias at a new target, and `Namespace.addAlias` refuses
+  outright: `\"Alias refs already exists in namespace slopp.api, aliasing
+  slopp.edit.refs\"`. The alias outlives the failed load, so the next poll
+  fails identically, forever. Three occurrences each cost a process restart,
+  and each was logged as a mystery because the compiler wraps the
+  `IllegalStateException` and `.getMessage` reports only the position.
+
+  Clearing first is safe in a way that gutting vars is not, and for a reason
+  worth stating: the `ns` form is the FIRST form loaded and re-establishes
+  every alias it declares, so a successful load restores them immediately. A
+  failed load leaves already-compiled vars working, since an alias resolves
+  symbols at COMPILE time and nothing at runtime reads it.
+
+  Clearing all of them rather than diffing against the new source is
+  deliberate: computing which aliases changed means re-implementing `ns`
+  require parsing — prefix lists, `:as-alias`, `:refer` — a near-duplicate of
+  Clojure's own reader that would drift from it silently."
   [ns-sym new-source]
-  (let [before (when-let [n (find-ns ns-sym)]
-                 (set (keys (ns-interns n))))]
+  (let [existing (find-ns ns-sym)
+        before   (when existing (set (keys (ns-interns existing))))]
+    (when existing
+      (doseq [a (keys (ns-aliases existing))]
+        (ns-unalias existing a)))
     (load-string new-source)
     (when-let [n (find-ns ns-sym)]
       (doseq [s (departed-vars before new-source)]
         (ns-unmap n s)))))
 
-(defn watch-live!
+(defn failure-message
+  "The sentence a reload failure should REPORT: the throwable's own message,
+  plus the root cause's when they differ.
+
+  A compiler error arrives wrapped, and the wrapper's message is a POSITION,
+  not a reason — `\"Syntax error macroexpanding at (1:1).\"` is what
+  `.getMessage` gives for every macroexpansion failure in every namespace. The
+  reason is one or more causes down. Keeping only the wrapper made distinct
+  failures indistinguishable, and it cost two live-reload wedges that could
+  not be reproduced afterward because the reason never left the process.
+
+  A throwable with no message reports its class instead, since
+  `NullPointerException` is information and an empty string is not."
+  [^Throwable t]
+  (let [describe (fn [^Throwable x]
+                   (or (not-empty (str (.getMessage x)))
+                       (.getName (class x))))
+        root     (loop [x t] (if-let [c (ex-cause x)] (recur c) x))]
+    (if (identical? root t)
+      (describe t)
+      (str (describe t) " — caused by: " (describe root)))))
+
+^:unsafe (defn watch-live!
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
   green-gate means only compilable code ever loads. Caveat: long-lived instances
@@ -299,13 +685,17 @@
   many minutes, and the REASON existed only in the server log — a file no
   slopp surface exposes, on a system whose whole claim is that the store
   answers everything. `boot-info` now carries the message and the consecutive
-  attempt count, so a verdict marked suspect can say what to do about it."
+  attempt count, so a verdict marked suspect can say what to do about it.
+
+  ^:unsafe: the store loader IS load-string (it evaluates rendered store
+  source), which the dialect denylist bans for ordinary code — here it is the
+  whole point."
   [dir & {:keys [interval-ms] :or {interval-ms 500}}]
   (let [conn (loop []
-               ;; an unadopted dir has no store until its first write
-               ;; materializes one — WAIT for it rather than dying at boot
-               (or (open-conn dir)
-                   (do (Thread/sleep (long interval-ms)) (recur))))]
+             ;; an unadopted dir has no store until its first write
+             ;; materializes one — WAIT for it rather than dying at boot
+             (or (open-conn dir)
+                 (do (Thread/sleep (long interval-ms)) (recur))))]
     (loop [dv (data-version conn), prev (store-sources conn)]
       (let [[dv' prev']
             (try
@@ -321,15 +711,18 @@
                         failed  (reduce (fn [failed ns-sym]
                                           (try (reload-ns! ns-sym (get now ns-sym))
                                                (stamp-loaded! ns-sym)
+                                               (record-loaded! ns-sym (get now ns-sym))
                                                failed
                                                (catch Throwable t
-                                                 (log! "live-reload failed for " ns-sym
-                                                       ": " (.getMessage t))
-                                                 (assoc failed ns-sym (str (.getMessage t))))))
+                                                 (let [why (failure-message t)]
+                                                   (log! "live-reload failed for " ns-sym ": " why)
+                                                   (assoc failed ns-sym why)))))
                                         {} changed)
                         loaded  (remove failed changed)]
                     (when (seq loaded)
                       (log! "live-reloaded: " (str/join " " loaded)))
+                    (measure-host!
+                     (into {} (filter #(jvm-loadable? platforms (key %))) now))
                     ;; keep the currency record honest: a failed ns stays
                     ;; listed until a later poll reloads it (it also holds
                     ;; the version baseline back, below)
@@ -354,12 +747,11 @@
                     [(if (seq failed) dv dv2)
                      (reduce #(assoc %1 %2 (get prev %2)) now (keys failed))])))
               (catch Throwable t
-                (log! "live-reload poll error (continuing): " (.getMessage t))
+                (log! "live-reload poll error (continuing): " (failure-message t))
                 [dv prev]))]
         (recur dv' prev')))))
 
 ;; --- entry ---
-
 (defn parse-args
   "Parse boot's CLI: <dir> [--snapshot|--live] [--main ns/fn arg...]
                            [--call tool [args]].
@@ -382,7 +774,7 @@
        :main  (symbol (or (second post) "slopp.mcp/-main"))
        :args  (if (seq extra) extra [dir])})))
 
-(defn -main
+^:unsafe (defn -main
   "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn arg...]
 
   Load the store's program into THIS jvm and run its entry point (default
@@ -412,7 +804,13 @@
                 " populated one lives at " dir "/.slopp/store.db).")
           (log! "slopp.boot: no slopp store at " dir " — serving an"
                 " unadopted directory and leaving it untouched. Your first"
-                " write creates " dir "/.slopp/store.db."))))
+                " write creates " dir "/.slopp/store.db.")))
+      ;; a namespace that did not load is now SURVIVABLE (load-store! is
+      ;; best-effort), which makes saying so the whole job: an agent whose
+      ;; store came up half-loaded must learn it from orientation rather than
+      ;; from the first confusing failure downstream.
+      (when-let [f (seq (:load-failures (meta sources)))]
+        (swap! boot-info assoc :load-failures (vec f))))
     (when live?
       (doto (Thread. ^Runnable (fn [] (watch-live! dir)))
         (.setDaemon true)
