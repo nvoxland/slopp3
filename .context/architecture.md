@@ -112,7 +112,7 @@ Namespaces are grouped so that **a component IS a module** — modules are the
 first two ns segments, so `slopp.store.db` is part of module `slopp.store`,
 and a cross-component call needs a declared edge while an intra-component one
 does not. Before this, 28 flat modules sat with no coarser grouping and sizes
-160× apart; `slopp.bench` (2 forms) had the same standing as `slopp.api` (322).
+160× apart; `slopp.lab` (2 forms) had the same standing as `slopp.api` (322).
 
 The resulting graph is acyclic and nearly linear:
 
@@ -195,7 +195,7 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.git` | P4-m8 git compatibility: the PROJECTION over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, journal→commit projection, grafting onto `git-base-sha`). Exists to be PUSHED — serving it to a git client as a remote was removed |
 | `slopp.git.client` | CLIENT face (deep): push the projection to a normal external remote / fetch a remote's objects; credentials; 30s transport timeouts |
 | `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.api`): `push!` store→remote (saves `git-remote` meta; refused while conflicts stand), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored, `git-base-sha` recorded), `pull!` 3-way form-granular absorb (remote wins where we're clean; both-touched → off-log `quarantine` conflict; ends with a `:git-sha` chain marker); CLI `-main clone|push|pull` |
-| `slopp.bench` / `slopp.benchmark` | metrics / scripted sample-app benchmark |
+| `slopp.lab` | the instruments a HUMAN runs (R5), never the system: `lab.benchmark` (scripted sample-app wire-cost meter), `lab.evalseed` (seeds eval-round template codebases), `lab.mine` (demand mining over provenance journals), plus reference-query-cost on the root. None has a caller or a test, and that is the shared property rather than rot |
 
 ## Cross-cutting gotchas
 

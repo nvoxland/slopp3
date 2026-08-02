@@ -209,10 +209,10 @@ Two rules for writing:
 At milestones:
 
 ```sh
-clojure -M -m slopp.boot . --snapshot --main slopp.bench.benchmark/-main
+clojure -M -m slopp.boot . --snapshot --main slopp.lab.benchmark/-main
 ```
 
-The tree is fileless, so a plain `-m slopp.bench.benchmark` finds nothing.
+The tree is fileless, so a plain `-m slopp.lab.benchmark` finds nothing.
 History appends to `benchmarks/results.md`, which is **gitignored**: it is a
 local record, not a committed one, so rows only ever compare against other rows
 from the same machine. Don't commit it and don't reinstate it in CI.

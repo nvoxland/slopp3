@@ -29,6 +29,10 @@ and not there is how a rename keeps its blind spot.
 | `slopp.edit.refs` | `slopp.index.refs` | THE reference graph is derived, content-memoized and never stored: `slopp.index`'s genre, not the edit pipeline's. Side effect: the edit pipeline no longer touches `slopp.cache` at all |
 | `slopp.api.crossings` | `slopp.index.crossings` | its pair — `refs` answers every edge INSIDE the store, `crossings` the edges that LEAVE it. Landed together so the pair is one module |
 | `slopp.store.build` | `slopp.build` | not the store: the GraalVM native-image build target. Pure generators, zero internal requires, three callers in three different modules — shared layer-0 infrastructure |
+| `slopp.bench` | `slopp.lab` | **R5, 2026-08-02.** The module was named for what two of its four namespaces DO, so the other two had nowhere to be — `slopp.store.mine` sat under storage because it reads `store.db`, which is a hosting relationship, not a subject. The shared property is the CALLER: a human, by hand. That is why none of the four has a caller or a test, and why the 1a′ audit read `store.mine` as rot and floated deleting it — the code could not say it was deliberate |
+| `slopp.bench.benchmark` | `slopp.lab.benchmark` | ditto |
+| `slopp.bench.evalseed` | `slopp.lab.evalseed` | ditto — 15 KB seeding slopp's own eval rounds, downloaded by every user and usable by none |
+| `slopp.store.mine` | `slopp.lab.mine` | ditto, and it changes MODULE: a demand-mining CLI over provenance journals is an instrument, not storage |
 | `slopp.http-api.heartbeat` | `slopp.hub` | registering and beating is HUB INTEGRATION, not part of the generic external API — every project on slopp talks to a hub, slopp itself included. `slopp.http-api.contracts/project-beat` came with it (→ `slopp.hub/project-beat`): the beat's shape describes the HUB's `POST /api/register`, so it was the one non-API contract in the API's registry |
 
 ## Removed — what an old record refers to that no longer exists

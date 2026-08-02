@@ -63,14 +63,14 @@ METER (catches payload/latency creep per write op); its rows are not
 evidence about agent-level value. Wave-5-style guided evals measure "does
 the taught workflow function", not "does the product win".
 
-## Wire-cost regression meter (`slopp.benchmark`)
+## Wire-cost regression meter (`slopp.lab.benchmark`)
 
 Purpose: track whether the product is getting better to use — **wall time**
 and **token cost** (chars/4 of the JSON actually sent/received through
 `mcp/handle`) to build each sample app via scripted agent sessions.
 
-- Run: `clojure -M -m slopp.boot . --snapshot --main slopp.bench.benchmark/-main`
-  (the tree is fileless — plain `-m slopp.bench.benchmark` finds nothing; NOT part
+- Run: `clojure -M -m slopp.boot . --snapshot --main slopp.lab.benchmark/-main`
+  (the tree is fileless — plain `-m slopp.lab.benchmark` finds nothing; NOT part
   of `clojure -M:test` — it
   spawns several JVMs and takes minutes).
 - Each app = a deterministic script of MCP tool calls (deliberate red steps
@@ -145,7 +145,7 @@ reach for it because they don't know it exists?" — rename would have failed
 that test too). Two standing instruments keep the tool surface matched to
 REAL demand:
 
-1. **Workaround mining** — `clojure -M -m slopp.store.mine <store-dir> ...` scans
+1. **Workaround mining** — `clojure -M -m slopp.lab.mine <store-dir> ...` scans
    any provenance journal for manual refactoring shapes (change-signature:
    defn arg-vector changed + nearby caller replaces; inline: defn deleted +
    nearby caller replaces). Run it over every eval store and dogfood project
@@ -317,7 +317,7 @@ removed; done!'s green-by-vacancy fallback caught by its own first real
 use and fixed via closure-bounded selection — test-nses-reaching now
 shared by done! and the affected slice). Stale command fixed: the
 benchmark runs via the boot kernel (`clojure -M -m slopp.boot .
---snapshot --main slopp.bench.benchmark/-main`) — the tree is fileless.
+--snapshot --main slopp.lab.benchmark/-main`) — the tree is fileless.
 Improvement candidates parked: :still-red compression for repeated
 identical failure sets; per-write :all fallback stays ns-scoped by
 design (fast) now that the done-point is the reaching safety net.
@@ -399,7 +399,7 @@ reference graph before touching anything:
 - slopp.api: **103 forms, 195KB**. Of that, **only 23 forms / 22KB (12%) is
   genuinely internal** (no callers outside the slopp.api module, production
   edges only). **78 forms / 171KB (88%) is PUBLIC surface** — called by
-  slopp.mcp, slopp.sync, slopp.bench, slopp.bench.evalseed. The biggest
+  slopp.mcp, slopp.sync, slopp.lab, slopp.lab.evalseed. The biggest
   forms are ALL public (query-history 12.8KB, done! 12.3KB, move-forms! 8.4KB).
 - So a package-private deep split **cannot deliver the kondo win**: the cost
   IS the public surface, and package-private is exactly what public can't be.
