@@ -200,7 +200,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "source"]}}
    {:name "edit_delete_form"
-    :description "Delete a top-level form (verified write; ns-unmap in the image, and a defmethod is unregistered from its multi). REFUSES while anything still CALLS it, naming the callers — the same stance ns_delete takes for a namespace something still requires, and for the same reason: the delete would commit, the namespace would fail to RELOAD, and the store would boot nowhere. Only compile-time (:static) references block; a quoted symbol or a ^{:covers} marker does not, and a recursive fn is not its own caller. To remove a caller and its callee TOGETHER, use edit_group with the caller's delete step FIRST — a group applies steps in order against one store value and verifies once at the end. Say WHY in prompt."
+    :description "Delete a top-level form (verified write; ns-unmap in the image, and a defmethod is unregistered from its multi). REFUSES while anything still CALLS it, naming the callers — the same stance ns_delete takes for a namespace something still requires, and for the same reason: the delete would commit, the namespace would fail to RELOAD, and the store would boot nowhere. Only compile-time (:static) references block; a quoted symbol or a ^{:covers} marker does not, and a recursive fn is not its own caller. To remove a caller and its callee together, delete the CALLERS first and the callee last — dependency order reversed, one call each. Two forms that call EACH OTHER have no valid order: edit_replace_form one to drop the call, then delete both. Say WHY in prompt."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :prompt {:type "string"}
@@ -638,8 +638,8 @@
    properties, its forgiveness aliases (extra-accepted-arg-keys), and the
    universal cross-cutting keys (:agent stamped by the dispatch, :prompt intent,
    :verbose full payload). nil for a name the server does not advertise
-   (edit_group is deliberately off-wire; an unknown name) — that tool opts OUT
-   of strict validation rather than refusing every key."
+   (`edit-group!` is deliberately off-wire; an unknown name) — that tool opts
+   OUT of strict validation rather than refusing every key."
   [name]
   (when-let [d (some #(when (= name (:name %)) %) tools)]
     (into (into #{:agent :prompt :verbose} (extra-accepted-arg-keys name))

@@ -510,10 +510,12 @@
                    " — delete or update them first."
                    " query_depends {on \"" qsym "\"} lists every caller."
                    " Deleting it now would be accepted and the RELOAD would"
-                   " fail, leaving the store unable to boot. To remove a"
-                   " caller and its callee together, use edit_group with the"
-                   " caller's delete step FIRST — a group applies its steps in"
-                   " order and verifies once at the end.")})))
+                   " fail, leaving the store unable to boot. Delete the"
+                   " CALLERS first and this last — dependency order reversed,"
+                   " one edit_delete_form each, every step verified. If two"
+                   " forms call EACH OTHER there is no valid order: use"
+                   " edit_replace_form on one to drop the call, then delete"
+                   " both.")})))
 
 (defn ambiguous-form-error
   "nil when exactly one element of `ns-sym` bears on `nm`; otherwise the

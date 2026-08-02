@@ -666,13 +666,19 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
   any test runs, so verification reported zero tests and nothing wrong while
   the store stopped booting entirely (frictions 3f/19).
 
-  The escape hatch is `edit_group`, which is deliberately NOT guarded this way:
-  its steps apply in order to one store value and verify once at the end, so a
-  caller and its callee can go together, and a mid-sequence state with a
-  dangling reference is legitimate. That also keeps `undo!` /
-  `revert-episode!` / the rename sweeps working — they ride through the group
-  path and replay machine-ordered deltas, where insisting on a
-  never-dangling intermediate state would refuse correct work.
+  An agent's way through is ORDER: delete the callers first and the callee
+  last, one call each. The refusal says so and names `query_depends` for the
+  list.
+
+  `edit-group!` is deliberately NOT guarded this way, and it is an INTERNAL
+  seam rather than an escape hatch — it is deliberately NOT on the wire, and
+  this docstring used to offer it as though it were. Its steps apply in order to one store value and
+  verify once at the end, so a mid-sequence state holding a dangling reference
+  is legitimate. That is what keeps `undo!` / `revert-episode!` /
+  `change-signature!` / the rename sweeps working: they replay
+  MACHINE-ordered deltas, where insisting on a never-dangling intermediate
+  would refuse correct work. A human-ordered sequence has no such warrant,
+  which is why the guard stays on the per-form tool.
 
   Refuses when `nm` addresses TWO elements (a legacy `(declare nm)` beside its
   definition): resolving by position deletes whichever happens to come first,

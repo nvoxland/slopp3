@@ -1142,23 +1142,39 @@
   ;; vacuous a second time.
   (let [st     (external/built-store)
         known  (into #{} (map :name) tools/tools)
-        ;; two exclusions, both deliberate rather than convenient:
-        ;;   git_map    — a SQLITE TABLE, not a tool (every use is in the
-        ;;                sha-mapping code; the prefix alone lies here)
-        ;;   edit_group — documented as DELIBERATELY not on the wire, so
-        ;;                prose naming its absence is correct
-        exempt #{"git_map" "edit_group"}
+        ;; ONE exclusion by name: git_map is a SQLITE TABLE, not a tool (every
+        ;; use is in the sha-mapping code; the prefix alone lies here).
+        exempt #{"git_map"}
+        ;; edit_group is deliberately off the wire (see
+        ;; edit-group-stays-off-the-wire-on-purpose), and prose SAYING SO is
+        ;; correct. Exactly one production form is entitled to say it: its own
+        ;; definition. This used to exempt the NAME instead, which waived
+        ;; "use edit_group with the caller's delete step FIRST" in
+        ;; edit_delete_form's refusal, its tool description, the shipped skill
+        ;; and two doc pages — an instruction to call a tool that is not on the
+        ;; wire, in the surface an agent reads at the moment it is blocked.
+        ;; An exemption keyed on the NAME cannot tell "this does not exist"
+        ;; from "call this", and only one of those is worth waiving.
+        ;;
+        ;; The convention that makes one exemption enough: the UNDERSCORE
+        ;; spelling is a tool you can call, the HYPHEN spelling is a var. Prose
+        ;; explaining that the seam is off-wire refers to `edit-group!`, which
+        ;; this pattern does not match and should not. Only the form arguing
+        ;; what the TOOL would be needs to spell it with an underscore.
+        off-wire {"edit_group" 'slopp.api/edit-group!}
         pat    #"\b((?:query|edit|ns|module|deps|branch|git|turn|config|file)_[a-z0-9_]+)"
         prod   (remove #(str/ends-with? (str %) "-test") (keys (:namespaces st)))
         bad    (vec (distinct
                      (for [nsx  prod
                            e    (store/forms st nsx)
-                           :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                           :let [s    (try (n/sexpr (:node e)) (catch Exception _ nil))
+                                 here (symbol (str nsx) (str (:name e)))]
                            text (filter string? (tree-seq coll? seq s))
                            [_ nm] (re-seq pat text)
                            :when (not (known nm))
-                           :when (not (exempt nm))]
-                       (str nm " named by " nsx "/" (:name e)))))]
+                           :when (not (exempt nm))
+                           :when (not= here (get off-wire nm))]
+                       (str nm " named by " here))))]
     (testing "there is a POPULATION — this guard scanned an empty store for its whole life"
       (is (< 50 (count prod))
           (str "expected slopp's production namespaces, got " (count prod)))
