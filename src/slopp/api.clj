@@ -229,7 +229,7 @@
                       summary (if load?
                                 (session/run-verification! session ns-sym nil :edited edited)
                                 session/cljs-deferred-summary)
-                      recompiled (session/maybe-recompile-client! session ns-sym)]
+                      recompiled (session/after-write! session ns-sym)]
                   (session/commit-appended! session
                                             #(store/record-verification % ns-sym summary)
                                             [])
@@ -524,7 +524,7 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                                         :edited edited)
                              session/cljs-deferred-summary)
                 existing (count (filter (comp pre-warned :var) (:warnings r)))
-recompiled (session/maybe-recompile-client! session ns-sym)]
+recompiled (session/after-write! session ns-sym)]
             (session/commit-appended! session
                               #(store/record-verification % ns-sym summary) [])
             (session/with-ms
@@ -632,7 +632,7 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
                 existing   (count (filter (comp pre-warned :var) all-w))
                 advisories (when nm (:advisories (edit.modules/gate-check
                                                   (:store @session) ns-sym nm)))
-recompiled (session/maybe-recompile-client! session ns-sym)]
+recompiled (session/after-write! session ns-sym)]
             (session/commit-appended! session
                                       #(store/record-verification % ns-sym summary)
                                       [])

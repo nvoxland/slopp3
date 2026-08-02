@@ -478,101 +478,6 @@
                        {:url (str url) :status status})))
      (edn/read-string body))))
 
-(defn ^:export generate-client-from!
-  "Generate a typed client for an API this app CONSUMES, from the contract
-   published at `url` — the cross-store twin of [[generate-client!]].
-
-   Writes TWO namespaces: a `:cljc` contracts namespace of the published
-   schemas (so the JVM oracle verifies them and the bundle can compile them),
-   and the `:cljs` client of typed wrappers pointing at it. Both are
-   `^:generated` — regenerate, never hand-edit.
-
-   This is what lets a UI live in a different store from the API it renders:
-   nothing here reads the producer's store, and the producer publishes values,
-   not source it expects anyone to trust.
-
-   Returns `{:generated :contracts :wrappers :endpoints :platform :delta}`, or
-   `:problems` when the contract could not be used at all."
-  [session url & {:keys [ns]}]
-  (let [st0      (:store @session)
-        target   (symbol (str (or ns
-                                  (get-in st0 [:config "client" :values "generated-ns"])
-                                  'app.client.api)))
-        cns      (symbol (str/replace (str target) #"[^.]+$" "contracts"))
-        document (fetch-contract url)
-        {:keys [defs wrappers problems]} (contract->plan document cns)]
-    (if (empty? wrappers)
-      (cond-> {:generated target :contracts cns :wrappers [] :endpoints 0
-               :note "no endpoints in the published contract — nothing generated"}
-        (seq problems) (assoc :problems problems))
-      (let [csrc (render-contracts-ns cns defs)
-            src  (render-client-ns target wrappers)]
-        (session/commit-appended!
-         session
-         (fn [s]
-           (let [s1 (first (store/record-module-platform s (str cns) :cljc))
-                 s2 (store/ingest s1 cns csrc)
-                 s3 (first (store/record-module-platform s2 (str target) :cljs))]
-             (store/ingest s3 target src)))
-         [cns target])
-        (let [recompiled (session/maybe-recompile-client! session target)]
-          (cond-> {:generated target
-                   :contracts cns
-                   :wrappers  (mapv (comp str :fn-name) wrappers)
-                   :endpoints (count wrappers)
-                   :platform  :cljs
-                   :source    (str url)
-                   :delta     (:id (last (:deltas (:store @session))))}
-            (seq problems) (assoc :problems problems)
-            recompiled     (merge recompiled)))))))
-
-(defn ^:export generate-client!
-  "Generate the typed client (D-web-contracts part 2): read every web endpoint's
-   contract (client-wrapper-specs) and write a stored, edit-PROTECTED :cljs
-   namespace of typed fetch wrappers — one per endpoint, validating the request
-   out and the response in against the SAME shared :cljc schema the server
-   enforces. The target namespace defaults to the `client`/`generated-ns` config,
-   else app.client.api; `:ns` overrides. The write goes through store/ingest
-   (BELOW the per-form gates — so regeneration overwrites wholesale and is the
-   only writer) and marks the module :cljs, so `compile_client` picks it up; when
-   `client`/`auto-compile` is on the write schedules a background recompile.
-   Endpoints whose schema can't ship to the client (non-:cljc, or a missing var)
-   are SKIPPED and surfaced in :problems so the namespace always compiles. An
-   EXPLICIT step (mirrors compile_client); a done-advisory nudges regeneration
-   when endpoints drift. slopp provisions malli itself (build! injects it — the
-   generated code requires it), so the agent never hand-adds slopp's plumbing.
-   Returns {:generated :wrappers :endpoints :platform :delta} (+ :problems,
-   recompile keys) — or a :note when there is nothing to generate."
-  [session & {:keys [ns]}]
-  (let [st0    (:store @session)
-        target (symbol (str (or ns
-                                (get-in st0 [:config "client" :values "generated-ns"])
-                                'app.client.api)))
-        {:keys [wrappers problems]} (client-wrapper-specs st0)]
-    (if (empty? wrappers)
-      (cond-> {:generated target :wrappers [] :endpoints 0
-               :note "no shippable endpoints — nothing generated"}
-        (seq problems) (assoc :problems problems))
-      (let [src (render-client-ns target wrappers)]
-        (session/commit-appended!
-         session
-         (fn [s]
-           (let [s1 (first (store/record-module-platform s (str target) :cljs))
-                 s2 (store/ingest s1 target src)]
-             ;; record the contract fingerprint so the done-advisory can detect
-             ;; endpoint drift and nudge a regenerate (the "explicit" safety net)
-             (first (store/record-config-put s2 "client" :manifest "generated-sig"
-                                             (edit.modules/client-signature st0)))))
-         [target])
-        (let [recompiled (session/maybe-recompile-client! session target)]
-          (cond-> {:generated target
-                   :wrappers  (mapv (comp str :fn-name) wrappers)
-                   :endpoints (count wrappers)
-                   :platform  :cljs
-                   :delta     (:id (last (:deltas (:store @session))))}
-            (seq problems) (assoc :problems problems)
-            recompiled     (merge recompiled)))))))
-
 (defn foreign-libs-for
   "The `:foreign-libs` entries the ClojureScript compiler needs for a store's
   declared JavaScript.
@@ -707,3 +612,189 @@
                       (when (.isDirectory f) (run! rm! (.listFiles f)))
                       (.delete f))]
               (rm! (io/file dir)))))))))
+
+(defn client-compile-guard!
+  "The per-session single-flight guard for background client recompiles
+  (D-web-cljs (c) async): an atom `{:running? :dirty? :last}`. Lazily created on
+  the session atom, atomically, so concurrent client writes share ONE guard."
+  [session]
+  (:client-compile
+   (swap! session update :client-compile
+          #(or % (atom {:running? false :dirty? false :last nil})))))
+
+(defn recompile-loop!
+  "Background thread body (D-web-cljs (c) async): compile the client bundle,
+  then — if another client write set `:dirty?` while we compiled — clear it and
+  compile AGAIN (coalescing), else set `:running?` false and stop. Each
+  outcome is stored on `guard` under `:last`, surfaced on a later write; a
+  compile error is captured, never thrown into the daemon."
+  [session guard]
+  (loop []
+    (let [outcome (try
+                    (let [r (compile-client! session)]
+                      (if (:error r)
+                        {:client-recompile-error (:error r)}
+                        {:client-recompiled (:output r)}))
+                    (catch Throwable t
+                      {:client-recompile-error (ex-message t)}))
+          [old _] (swap-vals! guard
+                              (fn [s]
+                                (-> (if (:dirty? s)
+                                      (assoc s :dirty? false)
+                                      (assoc s :running? false))
+                                    (assoc :last outcome))))]
+      (when (:dirty? old) (recur)))))
+
+(defn schedule-client-recompile!
+  "Single-flight (D-web-cljs (c) async): start a background compile thread only
+  if none is running; otherwise mark the in-flight one `:dirty?` so it compiles
+  once more when it finishes. `swap-vals!` gives the pre-swap state, so exactly
+  the false→true transition starts the daemon."
+  [session]
+  (let [guard   (client-compile-guard! session)
+        [old _] (swap-vals! guard
+                            #(if (:running? %)
+                               (assoc % :dirty? true)
+                               (assoc % :running? true :dirty? false)))]
+    (when-not (:running? old)
+      (doto (Thread. ^Runnable #(recompile-loop! session guard)
+                     "slopp-client-recompile")
+        (.setDaemon true)
+        (.start)))))
+
+(defn maybe-recompile-client!
+  "Dev loop (D-web-cljs): when `client`/`auto-compile` is ON and `ns-sym` is a
+  CLIENT namespace (`:cljc`/`:cljs`), schedule an ASYNC background recompile of
+  the client bundle so a `--live` server serves fresh JS — WITHOUT blocking the
+  write. Single-flight + coalescing (a write during a compile triggers exactly
+  ONE more compile after it — the bundle always reflects the latest edit).
+  Returns `{:client-recompiling true}` immediately, plus `:client-recompile-prev`
+  (the previous background compile's outcome — `{:client-recompiled path}` or
+  `{:client-recompile-error msg}`) once one has finished; or nil when disabled or
+  `ns-sym` is not a client namespace.
+
+  The compile runs on a daemon thread and commits the served blob when done;
+  a compile error is captured on the guard and surfaces on a later write, never
+  thrown here.
+
+  Reached through `session/after-write!`, which the `defmethod`s below register
+  on the client platforms — so an ordinary `:jvm` write never arrives here at
+  all, and the write engine does not name this namespace (R6). This used to run
+  IN the engine and reach back for `compile-client!` through
+  `store/late-ref`, because `slopp.api.cljs` requires `slopp.api.external` →
+  `slopp.api`, so a static require would have cycled. The escape hatch was
+  holding up the misplacement, not the load order: registering points the edge
+  the one way that never cycles, and the call below is now ordinary.
+
+  The platform check stays even though the dispatch already made it, because
+  `generate-client!` calls this directly — it is this function's own contract,
+  not the hook's."
+  [session ns-sym]
+  (let [st (:store @session)]
+    (when (and (= "true" (str (get-in st [:config "client" :values "auto-compile"])))
+               (#{:cljc :cljs} (store/platform-for st ns-sym)))
+      (schedule-client-recompile! session)
+      (let [prev (:last @(client-compile-guard! session))]
+        (cond-> {:client-recompiling true}
+          prev (assoc :client-recompile-prev prev))))))
+
+(defn ^:export generate-client-from!
+  "Generate a typed client for an API this app CONSUMES, from the contract
+   published at `url` — the cross-store twin of [[generate-client!]].
+
+   Writes TWO namespaces: a `:cljc` contracts namespace of the published
+   schemas (so the JVM oracle verifies them and the bundle can compile them),
+   and the `:cljs` client of typed wrappers pointing at it. Both are
+   `^:generated` — regenerate, never hand-edit.
+
+   This is what lets a UI live in a different store from the API it renders:
+   nothing here reads the producer's store, and the producer publishes values,
+   not source it expects anyone to trust.
+
+   Returns `{:generated :contracts :wrappers :endpoints :platform :delta}`, or
+   `:problems` when the contract could not be used at all."
+  [session url & {:keys [ns]}]
+  (let [st0      (:store @session)
+        target   (symbol (str (or ns
+                                  (get-in st0 [:config "client" :values "generated-ns"])
+                                  'app.client.api)))
+        cns      (symbol (str/replace (str target) #"[^.]+$" "contracts"))
+        document (fetch-contract url)
+        {:keys [defs wrappers problems]} (contract->plan document cns)]
+    (if (empty? wrappers)
+      (cond-> {:generated target :contracts cns :wrappers [] :endpoints 0
+               :note "no endpoints in the published contract — nothing generated"}
+        (seq problems) (assoc :problems problems))
+      (let [csrc (render-contracts-ns cns defs)
+            src  (render-client-ns target wrappers)]
+        (session/commit-appended!
+         session
+         (fn [s]
+           (let [s1 (first (store/record-module-platform s (str cns) :cljc))
+                 s2 (store/ingest s1 cns csrc)
+                 s3 (first (store/record-module-platform s2 (str target) :cljs))]
+             (store/ingest s3 target src)))
+         [cns target])
+        (let [recompiled (maybe-recompile-client! session target)]
+          (cond-> {:generated target
+                   :contracts cns
+                   :wrappers  (mapv (comp str :fn-name) wrappers)
+                   :endpoints (count wrappers)
+                   :platform  :cljs
+                   :source    (str url)
+                   :delta     (:id (last (:deltas (:store @session))))}
+            (seq problems) (assoc :problems problems)
+            recompiled     (merge recompiled)))))))
+
+(defn ^:export generate-client!
+  "Generate the typed client (D-web-contracts part 2): read every web endpoint's
+   contract (client-wrapper-specs) and write a stored, edit-PROTECTED :cljs
+   namespace of typed fetch wrappers — one per endpoint, validating the request
+   out and the response in against the SAME shared :cljc schema the server
+   enforces. The target namespace defaults to the `client`/`generated-ns` config,
+   else app.client.api; `:ns` overrides. The write goes through store/ingest
+   (BELOW the per-form gates — so regeneration overwrites wholesale and is the
+   only writer) and marks the module :cljs, so `compile_client` picks it up; when
+   `client`/`auto-compile` is on the write schedules a background recompile.
+   Endpoints whose schema can't ship to the client (non-:cljc, or a missing var)
+   are SKIPPED and surfaced in :problems so the namespace always compiles. An
+   EXPLICIT step (mirrors compile_client); a done-advisory nudges regeneration
+   when endpoints drift. slopp provisions malli itself (build! injects it — the
+   generated code requires it), so the agent never hand-adds slopp's plumbing.
+   Returns {:generated :wrappers :endpoints :platform :delta} (+ :problems,
+   recompile keys) — or a :note when there is nothing to generate."
+  [session & {:keys [ns]}]
+  (let [st0    (:store @session)
+        target (symbol (str (or ns
+                                (get-in st0 [:config "client" :values "generated-ns"])
+                                'app.client.api)))
+        {:keys [wrappers problems]} (client-wrapper-specs st0)]
+    (if (empty? wrappers)
+      (cond-> {:generated target :wrappers [] :endpoints 0
+               :note "no shippable endpoints — nothing generated"}
+        (seq problems) (assoc :problems problems))
+      (let [src (render-client-ns target wrappers)]
+        (session/commit-appended!
+         session
+         (fn [s]
+           (let [s1 (first (store/record-module-platform s (str target) :cljs))
+                 s2 (store/ingest s1 target src)]
+             ;; record the contract fingerprint so the done-advisory can detect
+             ;; endpoint drift and nudge a regenerate (the "explicit" safety net)
+             (first (store/record-config-put s2 "client" :manifest "generated-sig"
+                                             (edit.modules/client-signature st0)))))
+         [target])
+        (let [recompiled (maybe-recompile-client! session target)]
+          (cond-> {:generated target
+                   :wrappers  (mapv (comp str :fn-name) wrappers)
+                   :endpoints (count wrappers)
+                   :platform  :cljs
+                   :delta     (:id (last (:deltas (:store @session))))}
+            (seq problems) (assoc :problems problems)
+            recompiled     (merge recompiled)))))))
+
+(defmethod session/after-write! :cljs [session ns-sym]
+  (maybe-recompile-client! session ns-sym))
+
+(defmethod session/after-write! :cljc [session ns-sym]
+  (maybe-recompile-client! session ns-sym))

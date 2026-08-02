@@ -1,8 +1,23 @@
 (ns slopp.api.session-test
+  "The write engine's JUDGEMENTS, not its writing.
+
+  `rebased-write!` is exercised everywhere — every edit test in the store runs
+  it — so what needs its own tests is the part the engine DECIDES: which tests
+  a change impacts (per form, with the declared-coverage union and the
+  fall-back when there is no trace), which of those cross the tier boundary,
+  when a require change is inert, and when a failed load is healed by replaying
+  a namespace this call never touched.
+
+  Those share a failure mode a green suite cannot show you: deciding to run TOO
+  LITTLE looks exactly like passing. So they are pinned against hand-built
+  stores where the right answer is known by construction.
+
+  Also here: the engine's R6 guard, which is about what the engine may KNOW
+  rather than about what it does."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external] [rewrite-clj.parser :as p]))
+            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
 
 (deftest ^:external heal-replays-a-new-namespace-this-call-did-not-touch
   ;; The MERGE shape, and the gap the sibling test below does not cover.
@@ -369,3 +384,34 @@
       (is (re-find #"pre" msg))
       (is (re-find #"(?i)before" msg)
           "says which of the two came first"))))
+
+(deftest ^:external the-write-engine-names-no-app-type
+  ;; R6: no slopp.* surface may assume a project is a web project. The write
+  ;; engine is the most generic surface slopp has — every edit verb hands it a
+  ;; pure transform — and it carried five forms of ClojureScript BUNDLE
+  ;; machinery, wired into add-form!/edit-replace!/ingest! so that every write
+  ;; in the system asked whether there was a client to recompile.
+  ;;
+  ;; It reached the client build through (store/late-ref 'slopp.api.cljs/…),
+  ;; and the reason is the tell: a STATIC require would have cycled, because
+  ;; the client build requires the operation surface that calls the engine. The
+  ;; ^:unsafe escape hatch existed only to hold a misplacement together.
+  ;;
+  ;; Why this is a named test and not a layering rule: layering is a
+  ;; MODULE-grain question, and both namespaces are in module slopp.api. The
+  ;; drawer was hiding the violation from the check built to find it. When the
+  ;; client build leaves for its own module this becomes an ordinary layering
+  ;; finding — which is the point of the split, and this test survives the move
+  ;; as the specific statement of it.
+  (let [st  (external/built-store)
+        src (render/render-ns st 'slopp.api.session)]
+    (testing "there is a population — the vacuity that ate a sibling guard"
+      (is (< 50 (count (:namespaces st))))
+      (is (re-find #"rebased-write!" src)
+          "rendered the wrong namespace, or rendered nothing"))
+    (testing "the write engine names no client-build namespace, by any path"
+      ;; require, qualified ref, late-ref target and prose all read the same
+      ;; here on purpose: an engine whose DOCS explain bundle recompilation
+      ;; still knows about clients.
+      (is (= [] (vec (re-seq #"slopp\.api\.cljs" src)))
+          "the offending mentions are the failure value"))))
