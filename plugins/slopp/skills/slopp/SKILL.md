@@ -302,6 +302,29 @@ about this now** (`assertions-never-red`): a test that gained assertions and
 never bounced this episode comes back as an advisory, because a rule that
 relies on you remembering is not a rule.
 
+**A filter used as evidence needs a positive control.** The sibling of the
+above, and the cheapest habit on this page: before believing a filter found
+nothing, assert its POPULATION was non-empty. Two empty sets compare equal, and
+a scan that silently found nothing passes every comparison you make against it.
+
+```clj
+(is (seq found)                          ; ← the positive control
+    "no namespace declares an endpoint — the scan found nothing, which
+     would make the comparison below pass by being empty on both sides")
+(is (= expected (set (map :ns found))))
+```
+
+**This applies to a shell command exactly as it does to an `is`.** A rename was
+verified with `query_capabilities | grep ':set true'` → no output → read as "the
+rename landed". Empty meant two things at once: *nothing is set*, and *the tool
+cannot see what is set* — and it was the second. The fix is one more command:
+count the population first (`| grep -c ':key'`), because a non-zero count is
+what makes the zero from the real filter mean anything.
+
+The general form is worth memorizing, because it costs one line and it catches
+a class you cannot otherwise see: **an empty result standing in for a verified
+one.** Ask it of any check whose pass is a silence.
+
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
 2× the commentary plain-file agents did, and it was ALL of the remaining

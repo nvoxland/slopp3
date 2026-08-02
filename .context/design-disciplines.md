@@ -168,6 +168,43 @@ the rename was `grep -o '…:set true…'` returning no output, which was read a
 itself the symptom. A check whose PASS and whose BUG produce the same silence
 is this core aimed at the person holding it.
 
+**And that has a cheap general form, contributed by the consumer who found the
+join bug:**
+
+> **Any filter used as evidence needs a positive control — assert the
+> population is non-empty before believing the filter found nothing in it.**
+
+One line, no infrastructure, and it applies to a shell pipeline exactly as it
+applies to an `is`. The grep above needed `| grep -c ':key'` first: a non-zero
+count proves the TOOL answered, which is what makes the zero from the real
+filter mean anything.
+
+It unifies two instances we had been treating as unrelated. Ours was the
+verification grep. Theirs, written two days earlier without naming the rule:
+
+```clj
+(is (seq found)
+    "no namespace declares an endpoint — the scan found nothing, which would
+     make the comparison below pass by being empty on both sides")
+```
+
+Same failure in different clothes — **an empty result standing in for a
+verified one** — and it is also the exact shape of this skill's existing
+`(is (empty? (:unused r)))` example, where the key never existed and
+`(empty? nil)` passed forever. Three instances, one rule, and the rule is
+cheaper than any of the three fixes.
+
+It composes with **Core 9**'s tell (*what did I avoid doing to make this check
+cheap?*): a bare filter IS the cheap version of a comparison, and the
+population check is precisely the part it skipped.
+
+**Not a gate, deliberately — for now.** Detecting "this assertion could pass
+vacuously" statically is the kind of restrict-before-analysis this document's
+"Wrong directions" section already records as a measured dead end, and a noisy
+advisory on every `empty?`/`=` over a derived collection would be worse than
+nothing. It ships as a PRACTICE in the skill instead. Revisit if a precise
+population-shaped signal turns up.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
