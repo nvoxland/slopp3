@@ -179,6 +179,41 @@ applies to an `is`. The grep above needed `| grep -c ':key'` first: a non-zero
 count proves the TOOL answered, which is what makes the zero from the real
 filter mean anything.
 
+**Third instance, 2026-08-02, and this one was already IN the suite.** The
+assertion `(nil? (caps/find-entry "groups.admin.member"))` existed to pin that
+the mid-`*` pattern demands its `.members` tail. Moving the family to
+`web.auth.groups.*` left it green — because no `groups.` key resolves at all
+now, so the whole population it was filtering had gone. A passing assertion
+that no longer observes what it was written to observe is indistinguishable
+from one that does, which is Core 1 in the test suite rather than in a tool.
+The retarget is trivial; noticing is the work, and what makes it noticeable is
+pairing every "must be absent" with a "must be present" against the same
+population.
+
+### The prefix and its length, written down in two places
+
+Twice in two days, in different namespaces, the same defect: a name matched by
+one spelling and trimmed by another's LENGTH.
+
+```clj
+(re-matches #"http\.static\..+" (str k))            ; matched the OLD key
+(subs (str k) (count "web.static."))                ; trimmed by the NEW one
+(str/starts-with? k "auth.bearer.tokens.")          ; matched the prefix
+(subs k 19)                                         ; trimmed by a number
+```
+
+Both produced a value that looked structurally fine and matched nothing —
+`{}` from the first, `"s.ci"` from the second. Neither threw. This is Core 2
+at its smallest grain: the relationship "this integer IS the length of that
+string" is real, load-bearing, and invisible to every tool in the system, so
+it rots the moment the string changes. The fix is the same each time — derive
+the tail from the prefix you matched — and the tell is any literal count, or
+any regex, standing next to the name it silently duplicates.
+
+That is why a config-KEY rename is not a concept rename: the token is a
+dotted string, so it lives in string literals, regex literals, doc tables and
+character counts, and only the first of those is anything a sweep can see.
+
 It unifies two instances we had been treating as unrelated. Ours was the
 verification grep. Theirs, written two days earlier without naming the rule:
 
