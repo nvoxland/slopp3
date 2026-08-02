@@ -21,10 +21,10 @@
                  "        :web/auth [:group \"admin\"]} get-user \"U.\" [req] req)\n\n"
                  "(defn ^{:web/effect :user/insert} insert-user! \"I.\" [ctx row] row)\n")
         s0  (store/ingest (store/empty-store) 'shop.api src)
-        on  (first (store/record-config-put s0 "capabilities" :manifest "http.enabled" "true"))
+        on  (first (store/record-config-put s0 "capabilities" :manifest "web.enabled" "true"))
         land (fn [st form-src]
                (store/ingest st 'shop.more (str "(ns shop.more)\n\n" form-src "\n")))]
-    (testing "OFF: no web gate fires while http.enabled is absent"
+    (testing "OFF: no web gate fires while web.enabled is absent"
       (let [s (land s0 "(defn ^{:web/method :get :web/path \"/x\"} bare \"B.\" [req] req)")]
         (is (nil? (modules/web-auth-refusal s 'shop.more 'bare)))))
     (testing "web-auth-refusal: an endpoint with no :web/auth refuses with teaching"
@@ -67,7 +67,7 @@
 (deftest web-unknown-group-guards-the-policy-vocabulary
   (let [s0 (store/ingest (store/empty-store) 'shop.api "(ns shop.api)\n\n(defn seed \"S.\" [x] x)\n")
         on (-> s0
-               (store/record-config-put "capabilities" :manifest "http.enabled" "true") first
+               (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
                (store/record-config-put "capabilities" :manifest "groups.admin.members" "alice") first)
         land (fn [st form-src]
                (store/ingest st 'shop.more (str "(ns shop.more)\n\n" form-src "\n")))]
@@ -81,7 +81,7 @@
     (testing "composite policies are walked"
       (let [s (land on "(defn ^{:web/method :get :web/path \"/c\" :web/auth [:any :authenticated [:group \"ghost\"]]} c \"C.\" [req] req)")]
         (is (re-find #"ghost" (str (modules/web-unknown-group s 'shop.more 'c))))))
-    (testing "inert until http.enabled"
+    (testing "inert until web.enabled"
       (let [s (land s0 "(defn ^{:web/method :get :web/path \"/d\" :web/auth [:group \"ghost\"]} d \"D.\" [req] req)")]
         (is (nil? (modules/web-unknown-group s 'shop.more 'd)))))))
 
@@ -121,7 +121,7 @@
 
 (deftest the-deps-a-handler-reads-must-have-a-declared-source
   (let [s0   (store/ingest (store/empty-store) 'shop.api "(ns shop.api)\n")
-        on   (first (store/record-config-put s0 "capabilities" :manifest "http.enabled" "true"))
+        on   (first (store/record-config-put s0 "capabilities" :manifest "web.enabled" "true"))
         with-builder (store/ingest on 'shop.sys
                                    (str "(ns shop.sys)\n\n"
                                         "(defn ^{:web/context true} app-context \"C.\" [] {:registry :r})\n"))
@@ -130,7 +130,7 @@
         endpoint (fn [body]
                    (str "(defn ^{:web/method :get :web/path \"/x\" :web/auth :public} h \"H.\" [req] "
                         body ")"))]
-    (testing "OFF: inert while http.enabled is absent"
+    (testing "OFF: inert while web.enabled is absent"
       (is (nil? (modules/web-undeclared-context (land s0 (endpoint "(:web/deps req)"))
                                                 'shop.more 'h))))
     (testing "an endpoint reading :web/deps with no builder refuses, naming the marker"
@@ -150,7 +150,7 @@
           ;; where someone DECIDING meets it.
           (is (not (re-find #"performer" teach)) teach))
         (testing "and the lifecycle line is true for the store being refused"
-          ;; this gate fires on any http.enabled store, including one with
+          ;; this gate fires on any web.enabled store, including one with
           ;; dev.server false where no managed server boots at all. A clause
           ;; phrased around done points asserts, to that reader, a behaviour
           ;; that does not happen to them — a general truth in this store's

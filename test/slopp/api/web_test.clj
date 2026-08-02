@@ -30,7 +30,7 @@
                  "(defn ^{:web/read :user/by-id} user-by-id \"R.\" [ctx id] id)\n\n"
                  "(defn plain \"P.\" [x] x)\n")
         s0  (store/ingest (store/empty-store) 'shop.api src)
-        on  (first (store/record-config-put s0 "capabilities" :manifest "http.enabled" "true"))]
+        on  (first (store/record-config-put s0 "capabilities" :manifest "web.enabled" "true"))]
     (testing "endpoints: every :web/path form, read off the stored node"
       (let [eps (web/endpoints s0)
             by-path (fn [p] (some #(when (= p (:path %)) %) eps))]
@@ -48,7 +48,7 @@
     (testing "performers: the app-defined effect/read vocabulary"
       (is (= {:user/insert 'shop.api/insert-user!} (web/performers s0 :web/effect)))
       (is (= {:user/by-id 'shop.api/user-by-id} (web/performers s0 :web/read))))
-    (testing "routes-report is empty-and-says-why until http.enabled"
+    (testing "routes-report is empty-and-says-why until web.enabled"
       (is (false? (:enabled (web/routes-report s0))))
       (is (empty? (:routes (web/routes-report s0)))))
     (testing "routes-report with the capability on"
@@ -72,7 +72,7 @@
                                "(defn ^{:web/method :get :web/path \"/pre\"} pre \"P.\" [req] req)"
                                :prompt "pre-optin endpoint")]
           (is (nil? (:error r)) (pr-str r))))
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "an endpoint with no :web/auth is refused with teaching, and never lands"
         (let [r (api/add-form! sess 'shop.api
@@ -134,8 +134,8 @@
                  "        [:a {:href (:uri req)} \"dyn\"]])\n\n"
                  "(defn ^{:web/method :get :web/path \"/todo/:id\" :web/auth :public} todo-page \"O.\" [req] req)\n")
         s (store/ingest (store/empty-store) 'shop.ui src)
-        s (first (store/record-config-put s "capabilities" :manifest "http.enabled" "true"))
-        s (first (store/record-config-put s "capabilities" :manifest "http.static./assets" "public"))
+        s (first (store/record-config-put s "capabilities" :manifest "web.enabled" "true"))
+        s (first (store/record-config-put s "capabilities" :manifest "web.static./assets" "public"))
         s (first (store/record-file-put s "public/app.css" "body{}"))
         {:keys [dangling unresolved]} (web/dangling-route-refs s)]
     (testing "unserved refs: no route, mount without the file, prefix into nothing"
@@ -144,19 +144,19 @@
     (testing "dynamic refs are named, not counted clean"
       (is (= '[shop.ui/todos-page] (mapv :form unresolved))))
     (testing "a mount written with a TRAILING SLASH resolves the same way.
-              The capability's own doc line showed `http.static./assets =
+              The capability's own doc line showed `web.static./assets =
               public/`, and that form built `public//app.css`, which no
               manifest holds — so following the documentation made every
               asset link in the app read as dangling."
       (let [s2 (first (store/record-config-put s "capabilities" :manifest
-                                               "http.static./assets" "public/"))]
+                                               "web.static./assets" "public/"))]
         (is (= #{["/nowhere" :exact] ["/assets/missing.css" :exact] ["/gone/" :prefix]}
                (set (map (juxt :path :kind)
                          (:dangling (web/dangling-route-refs s2))))))))
     (testing "an ARTIFACT under a mount is served too. compile_client writes the
               bundle as an artifact — bytes to the content-addressed cache,
               sha to the journal, because inlining it cost 30MB of delta log —
-              and then tells you to add an http.static mount. A mount that
+              and then tells you to add an web.static mount. A mount that
               could not see it made that advice impossible to follow: the
               bundle every page loads read as a dangling link."
       (let [src2 (str "(ns shop.doc)\n\n"
@@ -177,7 +177,7 @@
                  "(defn ^{:web/method :get :web/path \"/todo/:id\" :web/auth :public} todo-page \"O.\" [req]\n"
                  "  [:a {:href \"/todos\"} \"back\"])\n")
         s (store/ingest (store/empty-store) 'shop.ui src)
-        s (first (store/record-config-put s "capabilities" :manifest "http.enabled" "true"))
+        s (first (store/record-config-put s "capabilities" :manifest "web.enabled" "true"))
         rows (:routes (web/routes-report s))
         by-path (fn [p] (some #(when (= p (:path %)) %) rows))]
     (testing "exact refs attach through the matcher, prefix refs through the path pattern"
@@ -193,11 +193,11 @@
                    (str "(ns ui.core)\n\n"
                         "(defn ^{:web/method :get :web/path \"/home\" :web/auth :public :web/response :map} home \"H.\" [req]\n"
                         "  [:a {:href \"/nowhere\"} \"x\"])\n"))
-      (testing "inert until http.enabled"
+      (testing "inert until web.enabled"
         (let [r (external/done! sess :label "pre-optin")]
           (is (empty? (get-in r [:findings :web-dangling-route-refs]))
               (pr-str (:findings r)))))
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a dangling href fires with the form and path"
         (let [r (external/done! sess :label "dangling")]
@@ -218,7 +218,7 @@
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'ui.rx "(ns ui.rx)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a React attribute name in a literal hiccup element refuses, teaching the HTML spelling"
         (let [r (api/add-form! sess 'ui.rx
@@ -242,7 +242,7 @@
                                "(defn ^{:web/method :get :web/path \"/pre\" :web/auth :public} pre \"P.\" [req] req)"
                                :prompt "pre-optin endpoint")]
           (is (nil? (:error r)) (pr-str r))))
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "under opt-in, an endpoint with auth but NO :web/response is refused, never lands"
         (let [r (api/add-form! sess 'shopc.api
@@ -263,7 +263,7 @@
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'shopr.api "(ns shopr.api)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a POST endpoint with :web/response but NO :web/request is refused"
         (let [r (api/add-form! sess 'shopr.api
@@ -446,7 +446,7 @@
   ;; standing warning.
   (let [sess (external/open!)]
     (try
-      (api/config-file! sess "capabilities" :key "http.enabled" :value "true"
+      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "the web rules are inert until the store opts in")
       (api/ingest! sess 'spa.ui
                    (str "(ns spa.ui)\n"
@@ -616,9 +616,9 @@
   ;; of them learns about trailing slashes. This is the shared one.
   (let [put (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
         s   (-> (store/empty-store)
-                (put "http.enabled" "true")
-                (put "http.static./assets" "public")
-                (put "http.static./js" "public/cljs/"))]
+                (put "web.enabled" "true")
+                (put "web.static./assets" "public")
+                (put "web.static./js" "public/cljs/"))]
     (testing "the key tail is the URL prefix, the value the manifest prefix"
       (is (= {"/assets" "public" "/js" "public/cljs"} (web/static-mounts s))))
     (testing "a trailing slash is trimmed, as the capability doc promises"

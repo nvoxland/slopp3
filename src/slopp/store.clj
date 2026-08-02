@@ -753,7 +753,7 @@
   inlining `compile_client`'s output cost 30MB of log across fifteen
   compiles — and that difference is nobody's business at the point of asking
   what is served at a path. Splitting it was: `compile_client` writes the
-  bundle as an artifact and then names the `http.static.*` mount that would
+  bundle as an artifact and then names the `web.static.*` mount that would
   serve it, and the mount looked in `:files` and found nothing, so the advice
   could not be followed by anyone who took it.
 

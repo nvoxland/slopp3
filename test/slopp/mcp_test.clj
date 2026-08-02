@@ -1199,18 +1199,18 @@
       (let [rep (edn/read-string (call! sess "query_capabilities" {}))
             row (fn [rep k] (some #(when (= k (:key %)) %) (:settings rep)))]
         (testing "an untouched store reports every setting at its default"
-          (is (false? (:effective (row rep "http.enabled"))) (pr-str (row rep "http.enabled")))
-          ;; a key that HAS a default demonstrates the claim; http.port declares
+          (is (false? (:effective (row rep "web.enabled"))) (pr-str (row rep "web.enabled")))
+          ;; a key that HAS a default demonstrates the claim; web.port declares
       ;; none any more, so it would only demonstrate nil
-      (is (= 1048576 (:effective (row rep "http.max-body-bytes"))))
-      (is (nil? (:effective (row rep "http.port"))))
-          (is (not (:set (row rep "http.port"))))
-          (is (some #(= "http.static.*" (:key %)) (:patterns rep))))
+      (is (= 1048576 (:effective (row rep "web.max-body-bytes"))))
+      (is (nil? (:effective (row rep "web.port"))))
+          (is (not (:set (row rep "web.port"))))
+          (is (some #(= "web.static.*" (:key %)) (:patterns rep))))
         (testing "a config_file set is reflected as effective + set"
-          (call! sess "config_file" {:path "capabilities" :key "http.port" :value "7357"
+          (call! sess "config_file" {:path "capabilities" :key "web.port" :value "7357"
                                      :prompt "port for the wire test"})
           (let [rep (edn/read-string (call! sess "query_capabilities" {}))
-                port (row rep "http.port")]
+                port (row rep "web.port")]
             (is (= 7357 (:effective port)) (pr-str port))
             (is (true? (:set port)))
             (is (= "7357" (:value port))))))
@@ -1253,9 +1253,9 @@
       (testing "disabled: empty with the opt-in teaching"
         (let [rep (edn/read-string (call! sess "query_routes" {}))]
           (is (false? (:enabled rep)) (pr-str rep))
-          (is (re-find #"http.enabled" (str (:note rep))))))
+          (is (re-find #"web.enabled" (str (:note rep))))))
       (testing "enabled: the declared route reports with its policy"
-        (call! sess "config_file" {:path "capabilities" :key "http.enabled" :value "true"
+        (call! sess "config_file" {:path "capabilities" :key "web.enabled" :value "true"
                                    :prompt "opt in"})
         (call! sess "edit_add_form"
                {:ns "wr.api"
@@ -1829,7 +1829,7 @@
   ;; would look like anything except a dev server nobody asked for.
   (let [web  (first (store/record-config-put (store/empty-store)
                                              "capabilities" :manifest
-                                             "http.enabled" "true"))
+                                             "web.enabled" "true"))
         plain (atom {:store (store/empty-store) :dir "/tmp/slopp-no-such-dir"})]
     (testing "a store that serves no HTTP starts nothing"
       (is (nil? (mcp/start-app! plain)))
@@ -1878,7 +1878,7 @@
   (let [put  (fn [st k v] (first (store/record-config-put st "capabilities"
                                                           :manifest k v)))
         off  (-> (store/empty-store)
-                 (put "http.enabled" "true")
+                 (put "web.enabled" "true")
                  (store/ingest 'slopp.http-api.reads
                                (str "(ns slopp.http-api.reads)\n\n"
                                     "(defn ^{:web/method :get :web/path \"/api/x\"\n"

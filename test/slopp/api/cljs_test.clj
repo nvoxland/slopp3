@@ -343,7 +343,7 @@
 (deftest ^:external compiling-a-bundle-says-how-to-serve-it
   ;; The bundle existed in the files manifest from the wave that added it, and
   ;; every page 404'd on it for two more, because serving it needs an
-  ;; http.static.* mount and nothing said so. Serving it IS one config line —
+  ;; web.static.* mount and nothing said so. Serving it IS one config line —
   ;; the gap was never capability, it was that the line was undiscoverable.
   ;;
   ;; Discoverability lives in the RESULT, not in a doc someone might read:
@@ -358,12 +358,12 @@
       (testing "nothing serves the output yet, so the result says how"
         (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
           (is (nil? (:error r)) (pr-str r))
-          (is (re-find #"http\.static\." (str (:serve-with r)))
+          (is (re-find #"web\.static\." (str (:serve-with r)))
               (str "expected the mount line: " (pr-str r)))
           (is (re-find #"config_file" (str (:serve-with r))) (pr-str r))))
       (testing "once a mount covers it, the hint goes away"
         ;; repeating advice already taken is how a result becomes noise
-        (api/config-file! sess "capabilities" :key "http.static./js"
+        (api/config-file! sess "capabilities" :key "web.static./js"
                           :value "public/cljs" :prompt "serve the bundle")
         (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
           (is (nil? (:serve-with r)) (pr-str r))))

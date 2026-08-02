@@ -355,11 +355,11 @@
   "Done-advisory (D-web): a CHANGED endpoint whose policy is :public and
    which declares `:web/effects` kinds — a publicly-writable surface should
    be a decision someone made, not an omission. Fires per form with the
-   declared kinds; inert until the store opts into HTTP (http.enabled).
+   declared kinds; inert until the store opts into HTTP (web.enabled).
    v1 reads the DECLARATION; a public endpoint mutating without declaring
    is web-unsafe-get's (GET) or the effects-vocabulary's territory."
   [_session st* changed]
-  (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
+  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
     (vec (keep (fn [fid]
                  (when-let [e (store/form-by-id st* fid)]
                    (let [m (edit.modules/web-name-meta e)]
@@ -375,7 +375,7 @@
   "Done-advisory (D-web-html): rendered links/forms targeting a path no
    declared route or static mount serves — the UI nil-pun: it ships and
    404s. Fires STORE-WIDE, like dead surface, because deleting a route
-   dangles an UNCHANGED form's link. Inert until http.enabled. The
+   dangles an UNCHANGED form's link. Inert until web.enabled. The
    `^{:web/external-path \\\"why\\\"}` marker on the rendering form discharges.
 
    Dynamic (`:unresolved`) refs ride along as `:severity :info` findings:
@@ -383,7 +383,7 @@
    — the only way to keep them from flipping an `:error` rule red — which
    hid the one part of this check a human has to judge."
   [_session st* _changed]
-  (when (= "true" (get-in st* [:config "capabilities" :values "http.enabled"]))
+  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
     (let [{:keys [dangling unresolved]} (api.web/dangling-route-refs st*)]
       (vec (concat dangling
                    (map #(assoc % :severity :info) unresolved))))))
@@ -1011,9 +1011,9 @@
    ;; a publicly-writable endpoint should be a decision, not an omission —
    ;; the question grade, like shell-widening: only the author knows
    {:key :web-public-mutation :severity :advisory :applies-to :production :check #'web-public-mutation-check
-    :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
+    :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
    {:key :web-dangling-route-refs :severity :error :applies-to :production :check #'dangling-route-refs-check
-    :selftest-note "gated on the store's http.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
+    :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
    {:key :stale-client :severity :advisory :applies-to :production :check #'client-stale-check
     :selftest-note (str "needs a recorded client/generated-sig config (a source-only"
                         " fixture cannot carry one) — covered by rules-test/"

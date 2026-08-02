@@ -256,7 +256,7 @@
         b64    (.encodeToString (java.util.Base64/getEncoder) png)
         theirs (-> b
                    (store/record-config-put "capabilities" :manifest
-                                            "http.enabled" "true") first
+                                            "web.enabled" "true") first
                    (store/record-file-put "public/a.png" b64
                                           :encoding "base64"
                                           :content-type "image/png") first
@@ -265,7 +265,7 @@
         r      (merge/merge-logs ours theirs)]
     (testing "config crosses"
       (is (= "true" (get-in (:store r)
-                            [:config "capabilities" :values "http.enabled"]))))
+                            [:config "capabilities" :values "web.enabled"]))))
     (testing "a text file crosses"
       (is (= "hello\n" (get-in (:store r) [:files "NOTES.md"]))))
     (testing "a binary file crosses WITH its bytes"
@@ -412,8 +412,8 @@
   ;; tiers on both sides. Ephemeral merge tests never reached append!, so
   ;; nothing caught it. The merge must re-mint state deltas with a fresh id.
   (let [b      (base)
-        ours   (first (store/record-config-put b "capabilities" :manifest "http.port" "8080"))
-        theirs (first (store/record-config-put b "capabilities" :manifest "http.enabled" "true"))
+        ours   (first (store/record-config-put b "capabilities" :manifest "web.port" "8080"))
+        theirs (first (store/record-config-put b "capabilities" :manifest "web.enabled" "true"))
         {:keys [store]} (merge/merge-logs ours theirs :from "branch:web#x")
         ids    (mapv :id (store/deltas store))
         base-ids (set (map :id (store/deltas ours)))
@@ -423,7 +423,7 @@
     (testing "the appendable tail (what db/append! inserts) collides with nothing already committed"
       (is (empty? (filter base-ids tail)) (pr-str tail)))
     (testing "the crossed config still converges (state, not just ids)"
-      (is (= "true" (get-in store [:config "capabilities" :values "http.enabled"])))
-      (is (= "8080" (get-in store [:config "capabilities" :values "http.port"]))))
+      (is (= "true" (get-in store [:config "capabilities" :values "web.enabled"])))
+      (is (= "8080" (get-in store [:config "capabilities" :values "web.port"]))))
     (testing "the re-minted delta keeps provenance to theirs"
       (is (some :merged-from (drop (count (store/deltas ours)) (store/deltas store)))))))

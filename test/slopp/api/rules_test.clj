@@ -367,7 +367,7 @@
                  "(defn ^{:web/method :get :web/path \"/ping\" :web/auth :public} ping \"P.\" [req] req)\n")
         s0  (store/ingest (store/empty-store) 'pm.api src)
         on  (first (store/record-config-put s0 "capabilities" :manifest
-                                            "http.enabled" "true"))
+                                            "web.enabled" "true"))
         ids (mapv :id (store/forms on 'pm.api))
         f   (fn [st] (rules/web-public-mutation-check nil st ids))]
     (testing "a public endpoint declaring effect kinds fires, naming the kinds"
@@ -375,7 +375,7 @@
         (is (= 1 (count r)) (pr-str r))
         (is (= 'pm.api/signup (:form (first r))))
         (is (= [:user/insert] (:web/effects (first r))))))
-    (testing "inert until http.enabled"
+    (testing "inert until web.enabled"
       (is (empty? (f s0))))))
 
 (deftest client-stale-advisory-fires-on-endpoint-drift
@@ -468,7 +468,7 @@
                  "  [:div [:a {:href \"/nowhere\"} \"bad\"]\n"
                  "        [:a {:href (:uri req)} \"dyn\"]])\n")
         s (store/ingest (store/empty-store) 'shop.ui src)
-        s (first (store/record-config-put s "capabilities" :manifest "http.enabled" "true"))
+        s (first (store/record-config-put s "capabilities" :manifest "web.enabled" "true"))
         found (rules/dangling-route-refs-check nil s nil)
         by-sev (group-by :severity found)]
     (testing "the dangling ref is a status-affecting finding, as before"

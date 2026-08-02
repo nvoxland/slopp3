@@ -4,7 +4,7 @@
 
   An app should not have to hold a `serve!` call, a namespace list, or a port
   to be reachable while it is being written. Everything needed is already in
-  the store — `http.enabled` says it is a web project, the endpoint and
+  the store — `web.enabled` says it is a web project, the endpoint and
   performer surface says what to serve, the capability registry says where.
   This namespace turns those into a launch, and keeps it current.
 
@@ -60,7 +60,7 @@
   "Whether slopp should run this store's app server while someone works on
   it — `already-served` being what the calling process has mounted itself.
 
-  Two questions, and only one of them is the project's. `http.enabled` says
+  Two questions, and only one of them is the project's. `web.enabled` says
   the project SERVES HTTP — that is what makes the web rules and
   `query_routes` exist, and production reads it. The second used to be the
   `dev.server` capability and is now [[self-served?]], computed: a store
@@ -79,7 +79,7 @@
   store serve, and where\", which production asks too, and a dev-only
   exemption in it would be an answer to a question it was not asked."
   [store already-served]
-  (boolean (and (capabilities/effective store "http.enabled")
+  (boolean (and (capabilities/effective store "web.enabled")
                 (not (self-served? store already-served)))))
 
 (defn derived-port
@@ -97,7 +97,7 @@
   its derived one is taken, because \"nobody needs to know this number; the
   address a human remembers is the hub's\". Nobody remembers an address for
   the app: a developer types it into a browser and keeps the tab. So a taken
-  port is REPORTED (`start!` says so, and `http.port` is the fix, named in
+  port is REPORTED (`start!` says so, and `web.port` is the fix, named in
   the message) rather than answered with a url that moves each time.
 
   The realistic collision is with our OWN previous server, which `refresh!`
@@ -122,7 +122,7 @@
   `:namespaces` is DERIVED (`web/serving-namespaces`) — the app never hands
   over a list it can get wrong.
 
-  `:port` prefers an explicitly SET `http.port` and otherwise DERIVES. The
+  `:port` prefers an explicitly SET `web.port` and otherwise DERIVES. The
   registry default of 8080 stands for production, where a known number is the
   point; a dev session wants collision-freedom instead, because two projects
   on one machine both taking the default is not a rare case — it is the
@@ -135,22 +135,22 @@
   different grains, and an unlabelled plan is a stand-in for whichever the
   reader assumed."
   [store dir]
-  (if-not (capabilities/effective store "http.enabled")
+  (if-not (capabilities/effective store "web.enabled")
     {:enabled? false
-     :reason (str "http.enabled is false — config_file {path \"capabilities\" "
-                  "key \"http.enabled\" value \"true\"} opts this store into HTTP")}
+     :reason (str "web.enabled is false — config_file {path \"capabilities\" "
+                  "key \"web.enabled\" value \"true\"} opts this store into web")}
     {:enabled?   true
      :mode       :dev
      :namespaces (web/serving-namespaces store)
-     :host       (capabilities/effective store "http.host")
-     :port       (if (capabilities/stored? store "http.port")
-                   (capabilities/effective store "http.port")
+     :host       (capabilities/effective store "web.host")
+     :port       (if (capabilities/stored? store "web.port")
+                   (capabilities/effective store "web.port")
                    (derived-port dir))
-     :adapter    (capabilities/effective store "http.adapter")
+     :adapter    (capabilities/effective store "web.adapter")
      ;; what the app NEEDS, not only where it answers. Dropping these is what
      ;; made a managed server 500 on any app that took slopp's own advice to
      ;; receive its dependencies as :web/deps.
-     :max-body-bytes  (capabilities/effective store "http.max-body-bytes")
+     :max-body-bytes  (capabilities/effective store "web.max-body-bytes")
      :context-builder (web/context-builder store)
      ;; the app's own assets. A UI's stylesheet and cljs bundle ARE the
      ;; product, so a managed server that 404s them is not a lesser version
@@ -292,9 +292,17 @@
   RUNNING image instead of booting a new one — is the change that would fix
   it, and it is not made yet.
 
-  Still dropped, deliberately rather than by oversight: `:web/auth-config`
-  (an app with auth will hit this) and `:web/routes` (static mounts, which
-  need the store's bytes and the child image has no store).
+  `:web/routes` USED to be dropped for a reason that sounded structural —
+  static mounts need the store's bytes and the child image has no store. It
+  was not structural: `mount-routes` takes a READER, so materializing the
+  bytes and handing the child a file reader serves them without the child
+  ever seeing a store. That is what `materialize-static!` does, and it is why
+  a UI's stylesheet and cljs bundle now reach a managed server.
+
+  **`:web/auth-config` is still dropped, and it is the last one.** An app
+  with auth gets a managed server on which identity does not resolve. There
+  is no switch to turn the managed server off — [[managed?]] is derived — so
+  this is a gap to close, not a case to configure around.
 
   **It evaluates to the BOUND port — an integer.** `repl/eval!` hands a throw
   back as a STRING, so an integer is unambiguous evidence a socket is open;

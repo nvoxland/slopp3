@@ -17,13 +17,13 @@
                  "        :web/response :map} users \"U.\" [req] req)\n")
         off (store/ingest (store/empty-store) 'shop.api src)
         on  (first (store/record-config-put off "capabilities" :manifest
-                                            "http.enabled" "true"))
+                                            "web.enabled" "true"))
         put (fn [s k v] (first (store/record-config-put s "capabilities"
                                                         :manifest k v)))]
-    (testing "http.enabled is the opt-in, and refusing says how to opt in"
+    (testing "web.enabled is the opt-in, and refusing says how to opt in"
       (let [p (devserver/serve-plan off "/tmp/shop")]
         (is (false? (:enabled? p)))
-        (is (re-find #"http\.enabled" (:reason p)))
+        (is (re-find #"web\.enabled" (:reason p)))
         (is (nil? (:port p)) "nothing is bound for a store that never opted in")))
     (testing "what to serve comes from the store, never from the caller"
       (is (= ['shop.api] (:namespaces (devserver/serve-plan on "/tmp/shop")))))
@@ -31,11 +31,11 @@
       (let [p (devserver/serve-plan on "/tmp/shop")]
         (is (= "127.0.0.1" (:host p)))
         (is (= :http-kit (:adapter p)))))
-    (testing "an explicitly set http.port WINS — a pinned address stays pinned"
-      (is (= 9999 (:port (devserver/serve-plan (put on "http.port" "9999")
+    (testing "an explicitly set web.port WINS — a pinned address stays pinned"
+      (is (= 9999 (:port (devserver/serve-plan (put on "web.port" "9999")
                                                "/tmp/shop")))))
     (testing "unset, the port DERIVES from the store dir"
-      ;; http.port's registry DEFAULT is 8080, and a fixed default is exactly
+      ;; web.port's registry DEFAULT is 8080, and a fixed default is exactly
       ;; what http-api.server/derived-port exists to refuse: it "worked for
       ;; exactly one project and collided for the second". Production wants a
       ;; known number, so the default still stands there — but two dev
@@ -69,7 +69,7 @@
               ;; nothing in the web surface reaches this
               (store/ingest 'shop.tools "(ns shop.tools)\n(defn cli \"C.\" [x] x)\n")
               (#(first (store/record-config-put % "capabilities" :manifest
-                                                "http.enabled" "true"))))
+                                                "web.enabled" "true"))))
         order (devserver/load-order s)]
     (testing "the web surface and everything it transitively requires"
       (is (= #{'shop.api 'shop.db 'shop.data} (set order))))
@@ -236,7 +236,7 @@
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
                  (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.enabled" "true"))))
+                                                   "web.enabled" "true"))))
         sess (atom {})
         r    (devserver/start! sess s dir)]
     (try
@@ -288,7 +288,7 @@
                  (store/ingest 'slopp.web fake-web-src)
                  (store/ingest 'slopp.web.static fake-static-src)
                  (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.enabled" "true"))))
+                                                   "web.enabled" "true"))))
         app  (fn [greeting]
                (store/ingest base 'demo.app
                              (str "(ns demo.app)\n\n"
@@ -331,7 +331,7 @@
       (finally (devserver/stop! (:app-server @sess))))))
 
 (deftest whether-slopp-manages-a-dev-server-is-its-own-question
-  ;; http.enabled means "this project serves HTTP". It does NOT mean "slopp
+  ;; web.enabled means "this project serves HTTP". It does NOT mean "slopp
   ;; should run that server for you", and the two came apart on the first
   ;; store we looked at — slopp's own. Its web surface IS the reviewer API,
   ;; which the live session already serves over the LIVE store; a managed
@@ -353,7 +353,7 @@
                                    "        :malli/schema [:=> [:cat :map] :map]\n"
                                    "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
                 (#(first (store/record-config-put % "capabilities" :manifest
-                                                  "http.enabled" "true"))))]
+                                                  "web.enabled" "true"))))]
     (testing "a web project is managed, and the app does not have to ask —
               nothing it can configure turns this off any more"
       (is (devserver/managed? web #{'something.else})))
@@ -386,7 +386,7 @@
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
                  (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.enabled" "true"))))
+                                                   "web.enabled" "true"))))
         sess (atom {})
         r    (devserver/refresh! sess s dir)]
     (try
@@ -494,8 +494,8 @@
   ;; which `file-or-resource-reader` already does, given a dir.
   (let [put  (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
         s    (-> (store/empty-store)
-                 (put "http.enabled" "true")
-                 (put "http.static./assets" "public"))
+                 (put "web.enabled" "true")
+                 (put "web.static./assets" "public"))
         s    (first (store/record-file-put s "public/app.css" "body{}"))
         s    (first (store/record-file-put s "public/deep/x.txt" "hi"))
         s    (first (store/record-file-put s "src/notes.md" "# not mounted"))
@@ -528,9 +528,9 @@
                                (str "(ns demo.app)\n\n"
                                     "(defn greeting \"G.\" [] \"hello\")\n"))
                  (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.enabled" "true")))
+                                                   "web.enabled" "true")))
                  (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.static./assets" "public")))
+                                                   "web.static./assets" "public")))
                  (#(first (store/record-file-put % "public/app.css"
                                                  "body{color:rebeccapurple}"))))
         sess (atom {})
@@ -566,7 +566,7 @@
                                     "(defn ^{:web/method :get :web/path \"/hi\"\n"
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
-                 (put "http.enabled" "true"))]
+                 (put "web.enabled" "true"))]
     (testing "an ordinary web project is not self-served, whatever else is running"
       (is (not (devserver/self-served? web #{'some.other.ns}))))
     (testing "a store whose every serving namespace this process already serves IS"

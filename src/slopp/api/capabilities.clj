@@ -2,8 +2,8 @@
   "The capability REGISTRY and the readers for it — what a store may declare
   about itself, and what those declarations currently say.
 
-  Capabilities are the store's own configuration surface (`http.enabled`,
-  `http.port`, the `auth.*` and `http.static.*` families): typed, defaulted,
+  Capabilities are the store's own configuration surface (`web.enabled`,
+  `web.port`, the `auth.*` and `web.static.*` families): typed, defaulted,
   documented in one table, and written only through a gate that validates
   against it. `config_file` refuses an unregistered key, which is what keeps
   this a vocabulary rather than a bag.
@@ -30,7 +30,7 @@
   kernel deps only (the two-process split; the `schema-refusal` precedent).
   A `*` in a key is a pattern: trailing `*` matches one-or-more remaining
   segments (`auth.static.*`), a mid `*` exactly one (`groups.*.members`).
-  Defaults are chosen so `http.enabled = true` alone yields a working,
+  Defaults are chosen so `web.enabled = true` alone yields a working,
   localhost-bound, deny-by-default server."
   [{:key "app.name" :type [:string] :default nil
     :doc "Application name. Unset = the store directory name at build time."}
@@ -38,23 +38,23 @@
     :doc "Application version, carried into build artifacts."}
    {:key "app.main" :type [:qualified-symbol] :default nil
     :doc "The entry fn (app.core/-main). Unset = build's :main arg required."}
-   {:key "http.enabled" :type [:boolean] :default false
+   {:key "web.enabled" :type [:boolean] :default false
     :doc "Whether this project serves HTTP. The master opt-in: web rules and query_routes exist only when true."}
-   {:key "http.adapter" :type [:enum "http-kit" "jdk"] :default :http-kit
+   {:key "web.adapter" :type [:enum "http-kit" "jdk"] :default :http-kit
     :doc "Server adapter. http-kit is the production default; jdk (com.sun.net.httpserver) is the zero-dep fallback."}
-   {:key "http.host" :type [:string] :default "127.0.0.1"
+   {:key "web.host" :type [:string] :default "127.0.0.1"
     :doc "Bind address. Localhost by default; widen deliberately."}
-   {:key "http.port" :type [:int {:min 1 :max 65535}] :default nil
+   {:key "web.port" :type [:int {:min 1 :max 65535}] :default nil
     :doc "Port the app's HTTP server binds. Unset = 8080 in production (slopp.web/serve! defaults it, so declaring 8080 here would only resolve \"unset\" a layer too early) and DERIVED from the store dir for the dev server, which is what keeps two projects on one machine from colliding. Set it to pin one address for both."}
-   {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
+   {:key "web.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
    
    {:key "slopp.api.port" :type [:int {:min 1 :max 65535}] :default nil
     :doc "Port this project's own UI/API listener binds. Unset = DERIVED from the store dir — stable across restarts and collision-free, which a fixed default cannot be on a machine running several projects. Set it only to pin a fixed address."}
    {:key "slopp.hub.port" :type [:int {:min 0 :max 65535}] :default 7359
     :doc "The hub this project registers with. The hub is a SEPARATE application (it never opens a store), so this is the one number both sides have to agree on by configuration rather than by sharing code — the project beats to it, the hub binds it. Everything else about the beat, including how often, comes back on the registration response. 0 = register with no hub."}
-   {:key "http.static.*" :type [:string] :default nil
-    :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public serves public/cljs/main.js at /assets/cljs/main.js). A trailing slash on either is trimmed."}
+   {:key "web.static.*" :type [:string] :default nil
+    :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (web.static./assets = public serves public/cljs/main.js at /assets/cljs/main.js). A trailing slash on either is trimmed."}
    {:key "auth.providers" :type [:set-of [:enum "static" "bearer" "proxy-header" "oidc"]] :default #{}
     :doc "Enabled identity providers, comma-separated."}
    {:key "auth.default-policy" :type [:enum "deny" "authenticated" "public"] :default :deny
@@ -166,7 +166,7 @@
 
   `effective` deliberately erases that distinction so a registered key never
   nil-puns. Some callers need it back: the dev server binds an explicitly
-  pinned `http.port` but DERIVES one when nobody pinned it, because a fixed
+  pinned `web.port` but DERIVES one when nobody pinned it, because a fixed
   default collides between two projects on one machine (the reasoning
   `http-api.server/derived-port` records). \"8080\" typed by hand and 8080
   arriving from the registry have to be told apart to do that.

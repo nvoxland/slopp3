@@ -810,7 +810,7 @@
                    (str "this session already serves this store's surface — the"
                         " managed app server was stopped, because a second one"
                         " would serve a staler copy of the same pages")
-                   (str "http.enabled is false for this store — the managed app"
+                   (str "web.enabled is false for this store — the managed app"
                         " server was stopped"))}))))
 
 (defn- call-tool! [session {:keys [name arguments]}]

@@ -46,34 +46,34 @@
                 " context disambiguates, and an agent reads one form")}
    {:rule :web-auth-refusal :grain :form
     :escape "declare :web/auth on the endpoint (:public typed out, :authenticated, or [:group \"<name>\"]) — or dial the rule down and let auth.default-policy govern"
-    :teach "an endpoint (:web/path) must declare its auth policy — default-deny: an unsecured route is a visible decision, never an omission (inert until http.enabled)"}
+    :teach "an endpoint (:web/path) must declare its auth policy — default-deny: an unsecured route is a visible decision, never an omission (inert until web.enabled)"}
    {:rule :web-route-collision :grain :form
     :escape "change the path or method, or extend the existing handler (query_routes lists every claim)"
-    :teach "one method+path has one owning endpoint — a duplicate route refuses at the write instead of surprising at startup (inert until http.enabled)"}
+    :teach "one method+path has one owning endpoint — a duplicate route refuses at the write instead of surprising at startup (inert until web.enabled)"}
    {:rule :web-undeclared-effect :grain :form
     :escape "define a performer per kind ((defn ^{:web/effect <kind>} name! [ctx …] …)) or reuse an existing kind (query_routes lists the vocabulary)"
-    :teach "an endpoint's :web/effects may only name kinds a marked performer provides — a typo'd kind fails at the write, not at the first request (inert until http.enabled)"}
+    :teach "an endpoint's :web/effects may only name kinds a marked performer provides — a typo'd kind fails at the write, not at the first request (inert until web.enabled)"}
 {:rule :web-undeclared-context :grain :form
     :escape "declare ONE zero-arg builder ((defn ^{:web/context true} app-context [] {…})) — an app that runs its own serve! should mark the builder it already has and call it, since two definitions of one store's context agree until one gains a key. Dial it down (config_file {path \"rules\" key \"web-undeclared-context\" value \"advisory\"}) for a context that genuinely cannot be built without arguments"
-    :teach "an endpoint reading :web/deps needs a store that declares where those deps come from — otherwise the map arrives nil, which 500s or, worse, answers 200 with an empty body, and generate_client consumes the empty one as a success (inert until http.enabled)"}
+    :teach "an endpoint reading :web/deps needs a store that declares where those deps come from — otherwise the map arrives nil, which 500s or, worse, answers 200 with an empty body, and generate_client consumes the empty one as a success (inert until web.enabled)"}
    {:rule :web-unsafe-get :grain :form
     :escape "make it :post/:put/:delete, drop the declared effects, or return the change as data from a non-safe endpoint"
-    :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until http.enabled)"}
+    :teach "a :get/:head endpoint must be SAFE — it may neither declare :web/effects kinds nor reach a mutation (inert until web.enabled)"}
    {:rule :web-unknown-group :grain :form
     :escape "config_file {path \"capabilities\" key \"groups.<name>.members\" value \"…\"} defines the group, or fix the name in :web/auth"
-    :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until http.enabled)"}
+    :teach "an endpoint's [:group …] policy may only name groups the capabilities config defines — a typo'd group silently denies forever, the authz nil-pun (inert until web.enabled)"}
    {:rule :web-react-attrs :grain :form
     :escape "spell it as HTML (:class, :for), replace handlers with a link/form targeting an endpoint, or dial it down (config_file {path \"rules\" key \"web-react-attrs\" value \"advisory\"}) for a map that is genuinely not an element"
-    :teach "a literal hiccup element carries a React attribute name (:className, :htmlFor, :onClick…) — browsers silently ignore unknown attributes, so it ships and does nothing (inert until http.enabled)"}
+    :teach "a literal hiccup element carries a React attribute name (:className, :htmlFor, :onClick…) — browsers silently ignore unknown attributes, so it ships and does nothing (inert until web.enabled)"}
    {:rule :web-endpoint-schema :grain :form
     :escape "add :web/response (and :web/request on a body method) to the endpoint's name metadata — a .cljc malli schema var (shareable/reusable) or an inline [:map …] for a one-off — or dial it down (config_file {path \"rules\" key \"web-endpoint-schema\" value \"advisory\"})"
-    :teach "a :web/path endpoint must declare :web/response (and :web/request on a :post/:put/:patch body method) — its contract, shared .cljc so the client validates against the SAME schema (D-web-contracts; inert until http.enabled)"}
+    :teach "a :web/path endpoint must declare :web/response (and :web/request on a :post/:put/:patch body method) — its contract, shared .cljc so the client validates against the SAME schema (D-web-contracts; inert until web.enabled)"}
    {:rule :web-public-mutation :grain :done
     :escape "tighten :web/auth, or accept it — a deliberately public write surface (signup, webhook) is legitimate and this asks per changed form"
-    :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until http.enabled)"}
+    :teach "a changed :public endpoint declares :web/effects kinds — a publicly writable surface should be a decision, not an omission (inert until web.enabled)"}
    {:rule :web-dangling-route-refs :grain :done
     :escape "fix the path, add the endpoint or static asset, or mark the RENDERING form — ^{:web/external-path \"why\"} when something OUTSIDE this store serves it, ^{:web/client-path \"why\"} when the literal is THIS app's own client-router key that the render prefixes before it reaches the DOM (an SPA screen). Pick by which is true: the crossings inventory reports them as different exits, and external-path on an app path files a false statement in the one report that says what is unchecked"
-    :teach "a rendered link/form targets a path no declared route or static mount serves — the UI nil-pun: it ships and 404s. Dynamic paths ride along as :info findings: reported, never status-flipping (inert until http.enabled)"}
+    :teach "a rendered link/form targets a path no declared route or static mount serves — the UI nil-pun: it ships and 404s. Dynamic paths ride along as :info findings: reported, never status-flipping (inert until web.enabled)"}
    {:rule :schema-drift :grain :done
     :escape "fix the schema or the impl so they agree"
     :teach "a written :=> schema disagrees with its live impl (generative mg/check)"}

@@ -942,7 +942,7 @@
   (capabilities/report (:store @session)))
 
 (defn ^:export query-routes
-  "The store's declared web surface: `http.enabled`, every endpoint row
+  "The store's declared web surface: `web.enabled`, every endpoint row
    (method, path, auth policy, handler, declared `:web/effects`/`:web/reads`,
    schema presence, the `^:web/effectful` escape), and the derived
    effect/read vocabularies — the SAME derivations the web write gates

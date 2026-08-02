@@ -113,10 +113,10 @@
     :description "The ENFORCEMENT CATALOG for this store: every D9 rule (write gates + done-time advisories) with its grain, its EFFECTIVE per-store severity, how to discharge it, and what it means. See what's gated and at what grade. Dial any rule with config_file {path rules key <rule> value <severity>} — off / advisory / error / refuse."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_capabilities"
-    :description "Every capability setting for this store: the declared registry (type, default, doc) joined with the stored `capabilities` config — effective values, what's set, and the wildcard families (http.static.*, auth.<provider>.*, groups.*.members). Set with config_file {path capabilities key <k> value <v>}; writes validate against the registry."
+    :description "Every capability setting for this store: the declared registry (type, default, doc) joined with the stored `capabilities` config — effective values, what's set, and the wildcard families (web.static.*, auth.<provider>.*, groups.*.members). Set with config_file {path capabilities key <k> value <v>}; writes validate against the registry."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_routes"
-    :description "The store's declared WEB surface: every endpoint (method, path, auth policy, handler, declared :web/effects / :web/reads, schema presence) plus the derived effect/read performer vocabularies — the same derivations the web write gates enforce. Empty with teaching until http.enabled."
+    :description "The store's declared WEB surface: every endpoint (method, path, auth policy, handler, declared :web/effects / :web/reads, schema presence) plus the derived effect/read performer vocabularies — the same derivations the web write gates enforce. Empty with teaching until web.enabled."
     :inputSchema {:type "object" :properties {}}}
    {:name "query_rule_telemetry"
     :description "The D9 rules' FIRE-RATE + DISCHARGE signal for this store — the demand signal the severity dial is set by. Per rule: how often it fires (dones/instances), whether findings get :discharged (fixed) or :persisted (keep recurring = ignored/friction); plus escape-marker density (agents opting out via ^:unsafe/^:reads/^:unused-ok) and the current dials. Read-only history analysis over the delta log. Optional since (a delta/commit id from query_commits) windows it."

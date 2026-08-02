@@ -349,10 +349,10 @@
          (str/join "\n\n" (map render-wrapper wrappers)))))
 
 (defn- served-by-a-mount?
-  "Whether any `http.static.*` mount would serve `path`.
+  "Whether any `web.static.*` mount would serve `path`.
 
   A mount key's tail is the URL prefix and its value a files-manifest path
-  prefix (`http.static./js = public/cljs` serves `public/cljs/main.js` at
+  prefix (`web.static./js = public/cljs` serves `public/cljs/main.js` at
   `/js/main.js`), so the question is just whether some mount's value is a
   prefix of the written path.
 
@@ -366,7 +366,7 @@
   [store path]
   (boolean
    (some (fn [[k v]]
-           (and (re-matches #"http\.static\..+" (str k))
+           (and (re-matches #"web\.static\..+" (str k))
                 (str/starts-with? (str path) (str v))))
          (get-in store [:config "capabilities" :values]))))
 
@@ -683,7 +683,7 @@
                                                    prior))
                     ;; A bundle nothing serves is the failure this just had: slopp's own sat
                     ;; in the manifest for two waves while every page 404'd on it,
-                    ;; because serving it needs an http.static.* mount and nothing
+                    ;; because serving it needs an web.static.* mount and nothing
                     ;; said so. Serving it IS one line — the gap was
                     ;; discoverability, so the tool that wrote the file names the
                     ;; line, and goes quiet once a mount covers the path.
@@ -697,9 +697,9 @@
                       (assoc :serve-with
                              (let [dir (or (second (re-matches #"(.*)/[^/]+" output))
                                            output)]
-                               (str "no http.static mount serves " output
+                               (str "no web.static mount serves " output
                                     " — config_file {path \"capabilities\" key"
-                                    " \"http.static./js\" value \"" dir "\"} mounts it"
+                                    " \"web.static./js\" value \"" dir "\"} mounts it"
                                     " at /js/. (An endpoint that reads the file"
                                     " serves it too; this checked mounts only.)")))))))))
           (finally

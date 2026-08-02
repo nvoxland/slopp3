@@ -146,7 +146,7 @@
 (deftest bounded-body-caps-the-request-read
   ;; review W8: both adapters slurp the whole body unbounded (JDK → heap/OOM
   ;; DoS; http-kit falls back to its own default), and the configured
-  ;; http.max-body-bytes was read by nothing. The shared bounded reader caps
+  ;; web.max-body-bytes was read by nothing. The shared bounded reader caps
   ;; it and signals overflow so the adapter can answer 413.
   (let [in (fn [s] (java.io.ByteArrayInputStream. (.getBytes (str s) "UTF-8")))]
     (testing "a body within the cap reads through"

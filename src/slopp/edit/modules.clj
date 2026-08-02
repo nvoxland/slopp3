@@ -707,10 +707,10 @@
 
 (defn web-enabled?
   "The D-web master opt-in, read off the candidate store's `capabilities`
-  config: http.enabled = \"true\". Every web gate is inert without it — a
+  config: web.enabled = \"true\". Every web gate is inert without it — a
   store that never opts into HTTP is untouched (the adoption story)."
   [candidate]
-  (= "true" (get-in candidate [:config "capabilities" :values "http.enabled"])))
+  (= "true" (get-in candidate [:config "capabilities" :values "web.enabled"])))
 
 (defn ^:export web-name-meta
   "The metadata on a stored form's NAME symbol, read off the node — no eval
@@ -1016,7 +1016,7 @@
     performer is. It lives in `slopp.api.web/context-builder`'s docstring and
     the SKILL, where someone deciding meets it.
   - **the lifecycle framed around done points and the managed server** — this
-    gate fires on any `http.enabled` store, including one with `dev.server`
+    gate fires on any `web.enabled` store, including one with `dev.server`
     false where no managed server boots at all. Told to that reader it
     asserts a behaviour that does not happen to them: a general truth
     delivered in this store's voice, which is Core 9 one notch down. What is

@@ -1,6 +1,27 @@
 (ns slopp.web.auth-test
-  (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web.auth :as auth] [cheshire.core :as cjson]))
+  "Identity, and the config that produces it.
+
+  Two halves that fail differently. The first is CONFIG PARSING — the
+  `auth.*` capability family becomes an auth config, and a store's typed
+  values are the only input, so a rename or a re-typing of that family shows
+  up here before it shows up in a request. That test also pins the negative:
+  a non-auth key in the same map is IGNORED rather than absorbed.
+
+  The second is the PROVIDERS themselves — static passwords, bearer tokens,
+  a trusted proxy header, OIDC — and each is tested against the way it is
+  attacked rather than the way it is used: passwords salted and iterated, a
+  proxy header matched case-insensitively because a proxy may send any
+  casing, an RS256 JWT verified against a key pair generated in the test, and
+  an OIDC config REFUSED when it names no audience. The signing helpers are
+  local on purpose; a fake signer would only prove the fake agrees with
+  itself.
+
+  That is the shape to keep when adding a provider: the assertion that
+  matters is usually the one expecting anonymity, because an auth check that
+  silently accepts is indistinguishable from one that works."
+  (:require [clojure.test :refer [deftest testing is]]
+            [slopp.web.auth :as auth]
+            [cheshire.core]))
 
 (deftest providers-resolve-identity
   (let [config {:auth/providers [:bearer :static :proxy-header]
@@ -50,7 +71,7 @@
                 "auth.proxy.user-header" "x-forwarded-user"
                 "auth.proxy.groups-header" "x-forwarded-groups"
                 "groups.admin.members" "alice,bob"
-                "http.port" "7357"}
+                "web.port" "7357"}
         cfg (auth/config-from-values values)]
     (testing "the provider list parses in declared order"
       (is (= [:bearer :proxy-header] (:auth/providers cfg))))
@@ -64,7 +85,7 @@
     (testing "group membership collects"
       (is (= #{"alice" "bob"} (get-in cfg [:auth/groups "admin"]))))
     (testing "non-auth keys are ignored"
-      (is (nil? (:http.port cfg))))))
+      (is (nil? (:web.port cfg))))))
 
 (deftest oidc-verifies-rs256-bearer-jwts
   (let [kp   (.generateKeyPair (doto (java.security.KeyPairGenerator/getInstance "RSA")

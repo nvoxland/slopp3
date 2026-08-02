@@ -4,7 +4,7 @@
 
   The through-line is that a registered key must never nil-pun and must never
   report a value nothing uses. Both halves have been wrong in production —
-  a row deleted from the registry broke no test at all, and `http.port`
+  a row deleted from the registry broke no test at all, and `web.port`
   reported 8080 while the dev server bound a derived port. So the tests here
   lean on the DECLARATION — defaults, docs, `stored?` against `effective` —
   rather than on any one consumer's reading of it."
@@ -20,10 +20,10 @@
       (is (vector? (:type e)) (pr-str e))
       (is (string? (:doc e)) (pr-str e))))
   (testing "exact keys resolve"
-    (is (= "http.port" (:key (caps/find-entry "http.port"))))
-    (is (= "http.enabled" (:key (caps/find-entry "http.enabled")))))
+    (is (= "web.port" (:key (caps/find-entry "web.port"))))
+    (is (= "web.enabled" (:key (caps/find-entry "web.enabled")))))
   (testing "wildcard keys: a trailing * is a prefix (one or more segments), a mid * is one segment"
-    (is (= "http.static.*" (:key (caps/find-entry "http.static./assets"))))
+    (is (= "web.static.*" (:key (caps/find-entry "web.static./assets"))))
     (is (= "auth.static.*" (:key (caps/find-entry "auth.static.users.alice"))))
     (is (= "groups.*.members" (:key (caps/find-entry "groups.admin.members")))))
   (testing "an unknown key resolves to nothing"
@@ -32,83 +32,83 @@
 
 (deftest values-check-and-take-effect
   (testing "check-value: nil when the string suits the type, a teaching string when not"
-    (is (nil? (caps/check-value (caps/find-entry "http.port") "8080")))
-    (is (string? (caps/check-value (caps/find-entry "http.port") "banana")))
-    (is (string? (caps/check-value (caps/find-entry "http.port") "70000")))
-    (is (nil? (caps/check-value (caps/find-entry "http.enabled") "true")))
-    (is (string? (caps/check-value (caps/find-entry "http.enabled") "yes")))
-    (is (nil? (caps/check-value (caps/find-entry "http.adapter") "jdk")))
-    (is (string? (caps/check-value (caps/find-entry "http.adapter") "jetty")))
+    (is (nil? (caps/check-value (caps/find-entry "web.port") "8080")))
+    (is (string? (caps/check-value (caps/find-entry "web.port") "banana")))
+    (is (string? (caps/check-value (caps/find-entry "web.port") "70000")))
+    (is (nil? (caps/check-value (caps/find-entry "web.enabled") "true")))
+    (is (string? (caps/check-value (caps/find-entry "web.enabled") "yes")))
+    (is (nil? (caps/check-value (caps/find-entry "web.adapter") "jdk")))
+    (is (string? (caps/check-value (caps/find-entry "web.adapter") "jetty")))
     (is (nil? (caps/check-value (caps/find-entry "app.main") "app.core/-main")))
     (is (string? (caps/check-value (caps/find-entry "app.main") "not a symbol")))
     (is (nil? (caps/check-value (caps/find-entry "auth.providers") "static,bearer")))
     (is (string? (caps/check-value (caps/find-entry "auth.providers") "static,ldap"))))
   (testing "effective: the declared default when unset, the parsed value when set"
     (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
-      (is (false? (caps/effective s0 "http.enabled")))
-      ;; http.port carries no registry default any more — serve! owns the 8080
+      (is (false? (caps/effective s0 "web.enabled")))
+      ;; web.port carries no registry default any more — serve! owns the 8080
     ;; and the dev server derives; see
     ;; an-unset-port-does-not-report-a-number-nothing-binds
-    (is (nil? (caps/effective s0 "http.port")))
-      (is (= :http-kit (caps/effective s0 "http.adapter")))
+    (is (nil? (caps/effective s0 "web.port")))
+      (is (= :http-kit (caps/effective s0 "web.adapter")))
       (is (= :deny (caps/effective s0 "auth.default-policy")))
       (let [s (-> s0
-                  (store/record-config-put "capabilities" :manifest "http.enabled" "true") first
-                  (store/record-config-put "capabilities" :manifest "http.port" "7357") first
+                  (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
+                  (store/record-config-put "capabilities" :manifest "web.port" "7357") first
                   (store/record-config-put "capabilities" :manifest "auth.providers" "static,bearer") first)]
-        (is (true? (caps/effective s "http.enabled")))
-        (is (= 7357 (caps/effective s "http.port")))
+        (is (true? (caps/effective s "web.enabled")))
+        (is (= 7357 (caps/effective s "web.port")))
         (is (= #{:static :bearer} (caps/effective s "auth.providers")))
         (testing "an unset key still falls back beside set ones"
-          (is (= :http-kit (caps/effective s "http.adapter"))))))))
+          (is (= :http-kit (caps/effective s "web.adapter"))))))))
 
 (deftest ^:external capabilities-config-validates-at-write
   (let [sess (external/open!)]
     (try
       (testing "an unknown capability key is refused with teaching"
-        (let [r (api/config-file! sess "capabilities" :key "http.prot" :value "8080"
+        (let [r (api/config-file! sess "capabilities" :key "web.prot" :value "8080"
                                   :prompt "typo'd key")]
-          (is (re-find #"http\.prot" (str (:error r))) (pr-str r))
+          (is (re-find #"web\.prot" (str (:error r))) (pr-str r))
           (is (re-find #"query_capabilities" (str (:error r))) (pr-str r))))
       (testing "a bad value is refused with the type teaching"
-        (let [r (api/config-file! sess "capabilities" :key "http.port" :value "banana"
+        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "banana"
                                   :prompt "bad port")]
           (is (re-find #"integer" (str (:error r))) (pr-str r))
-          (is (nil? (get-in (:store @sess) [:config "capabilities" :values "http.port"]))
+          (is (nil? (get-in (:store @sess) [:config "capabilities" :values "web.port"]))
               "the refused value never landed")))
       (testing "a good value lands and takes effect"
-        (let [r (api/config-file! sess "capabilities" :key "http.port" :value "7357"
+        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
                                   :prompt "real port")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= 7357 (caps/effective (:store @sess) "http.port")))))
+          (is (= 7357 (caps/effective (:store @sess) "web.port")))))
       (testing "a wildcard-governed key is known, not alien"
         (let [r (api/config-file! sess "capabilities" :key "groups.admin.members" :value "alice,bob"
                                   :prompt "a group")]
           (is (nil? (:error r)) (pr-str r))
           (is (= #{"alice" "bob"} (caps/effective (:store @sess) "groups.admin.members")))))
       (testing "unset returns to the default"
-        (api/config-file! sess "capabilities" :key "http.port" :unset true
+        (api/config-file! sess "capabilities" :key "web.port" :unset true
                           :prompt "back to default")
-        ;; http.port's declared default is nil now — serve! owns the 8080 and the
+        ;; web.port's declared default is nil now — serve! owns the 8080 and the
       ;; dev server derives, so "returns to the default" means returns to unset
-      (is (nil? (caps/effective (:store @sess) "http.port"))))
+      (is (nil? (caps/effective (:store @sess) "web.port"))))
       (finally (api/close! sess)))))
 
 (deftest report-shows-every-setting-with-provenance
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
         s  (-> s0
-               (store/record-config-put "capabilities" :manifest "http.enabled" "true") first
+               (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
                (store/record-config-put "capabilities" :manifest "groups.admin.members" "alice,bob") first)
         rep (caps/report s)
         row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
     (testing "every concrete registry key is a row with default, effective, and doc"
-      (let [port (row "http.port")]
+      (let [port (row "web.port")]
         (is (nil? (:default port)))
         (is (nil? (:effective port)))
         (is (string? (:doc port)))
         (is (not (:set port)))))
     (testing "a set key carries :set true and the raw stored string"
-      (let [en (row "http.enabled")]
+      (let [en (row "web.enabled")]
         (is (true? (:effective en)))
         (is (true? (:set en)))
         (is (= "true" (:value en)))))
@@ -118,8 +118,8 @@
         (is (true? (:set g)))
         (is (= #{"alice" "bob"} (:effective g)))))
     (testing "wildcard patterns are listed as patterns, not as settable rows"
-      (is (nil? (row "http.static.*")))
-      (is (some #(= "http.static.*" (:key %)) (:patterns rep))))))
+      (is (nil? (row "web.static.*")))
+      (is (some #(= "web.static.*" (:key %)) (:patterns rep))))))
 
 (deftest secret-literals-refuse-in-capabilities
   (testing "a literal secret in an auth.* credential key refuses"
@@ -168,7 +168,7 @@
   (let [sess (external/open!)]
     (try
       (testing "a capabilities write was checked against the registry"
-        (let [r (api/config-file! sess "capabilities" :key "http.port" :value "7357"
+        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
                                   :prompt "real port")]
           (is (= [:registry] (:verified r)) (pr-str r))
           (is (= [] (:unverified r)) (pr-str r))))
@@ -183,12 +183,12 @@
 
 (deftest an-unset-port-does-not-report-a-number-nothing-binds
   ;; Measured by slopp-ui, 2026-08-01:
-  ;;   query_capabilities → http.port  :effective 8080  (not :set)
+  ;;   query_capabilities → web.port  :effective 8080  (not :set)
   ;;   actual bind                     51614
   ;;   curl 8080                       not listening
   ;;
   ;; `slopp.api.port` gets this exactly right — `:effective nil`, and its doc says
-  ;; "Unset = DERIVED from the store dir". http.port said 8080 and derived
+  ;; "Unset = DERIVED from the store dir". web.port said 8080 and derived
   ;; anyway, so the one surface whose job is to report configuration reported
   ;; a port nothing was listening on.
   ;;
@@ -198,19 +198,19 @@
   ;; server's own derivation could no longer be told apart from a pin.
   (let [s0 (store/empty-store)]
     (testing "unset reports UNSET, so nothing downstream is bound by it"
-      (is (nil? (caps/effective s0 "http.port")))
-      (is (not (caps/stored? s0 "http.port"))))
+      (is (nil? (caps/effective s0 "web.port")))
+      (is (not (caps/stored? s0 "web.port"))))
     (testing "and the same shape slopp.api.port already had"
       (is (nil? (caps/effective s0 "slopp.api.port"))))
     (testing "a pin still wins, and is reported as pinned"
       (let [s (first (store/record-config-put s0 "capabilities" :manifest
-                                              "http.port" "9000"))]
-        (is (= 9000 (caps/effective s "http.port")))
-        (is (caps/stored? s "http.port"))))
+                                              "web.port" "9000"))]
+        (is (= 9000 (caps/effective s "web.port")))
+        (is (caps/stored? s "web.port"))))
     (testing "the DOC has to carry what unset means, since the value no
               longer can"
       ;; a nil effective value is only honest if the reader can find out what
       ;; happens instead — otherwise it trades a wrong number for no answer
-      (let [doc (:doc (caps/find-entry "http.port"))]
+      (let [doc (:doc (caps/find-entry "web.port"))]
         (is (re-find #"(?i)unset" doc) doc)
         (is (re-find #"8080" doc) doc)))))

@@ -1,2 +1,2 @@
-http.enabled: true
-http.port: 7357
+web.enabled: true
+web.port: 7357

@@ -173,7 +173,7 @@
      (assoc ref :form (symbol (str nsx) (str (:name e)))))))
 
 (defn routes-report
-  "The `query_routes` payload. `http.enabled` false → `{:enabled false
+  "The `query_routes` payload. `web.enabled` false → `{:enabled false
   :routes [] :note …}` — a store that never opted into HTTP has no web
   surface and no web rules (the adoption story). Enabled → every endpoint
   row (`endpoints`), each carrying `:rendered-by` (the forms whose
@@ -181,10 +181,10 @@
   prefix refs through the path pattern) when any do, plus the derived
   performer vocabularies (`:effect-kinds` / `:read-kinds`)."
   [store]
-  (if-not (capabilities/effective store "http.enabled")
+  (if-not (capabilities/effective store "web.enabled")
     {:enabled false :routes []
-     :note (str "http.enabled is false — config_file {path \"capabilities\" "
-                "key \"http.enabled\" value \"true\"} opts this store into HTTP")}
+     :note (str "web.enabled is false — config_file {path \"capabilities\" "
+                "key \"web.enabled\" value \"true\"} opts this store into HTTP")}
     (let [refs    (ui-route-refs store)
           renders (fn [row]
                     (->> refs
@@ -203,7 +203,7 @@
 (defn dangling-route-refs
   "`ui-route-refs` joined against what the store actually serves: declared
   endpoints (through the router's matcher, so parameterized paths match),
-  `http.static.*` mounts (an :exact path must map to a file that EXISTS on
+  `web.static.*` mounts (an :exact path must map to a file that EXISTS on
   the manifest), and route/mount prefixes for :prefix refs. Returns
   `{:dangling [ref …] :unresolved [ref …]}` — dynamic refs are NAMED, never
   counted clean."
@@ -215,7 +215,7 @@
         ;; and every asset link in the app would read as dangling
         mounts (into {}
                      (keep (fn [[k v]]
-                             (when-let [[_ m] (re-matches #"http\.static\.(.+)" (str k))]
+                             (when-let [[_ m] (re-matches #"web\.static\.(.+)" (str k))]
                                [m (str/replace (str v) #"/+$" "")])))
                      (get-in store [:config "capabilities" :values]))
         static-file? (fn [path]
@@ -377,10 +377,10 @@
        vec))
 
 (defn ^:export static-mounts
-  "This store's `http.static.*` mounts as `{url-prefix manifest-prefix}`.
+  "This store's `web.static.*` mounts as `{url-prefix manifest-prefix}`.
 
   The key's tail is the URL prefix and the value a files-manifest path
-  prefix, so `http.static./assets = public` serves `public/logo.png` at
+  prefix, so `web.static./assets = public` serves `public/logo.png` at
   `/assets/logo.png`. Feeds `slopp.web.static/mount-routes`, which pairs it
   with a reader — [[store-reader]] for a live store, and
   `slopp.web.static/file-or-resource-reader` for the managed dev server,
@@ -398,8 +398,8 @@
   [store]
   (into {}
         (for [[k v] (get-in store [:config "capabilities" :values])
-              :when (re-matches #"http\.static\..+" (str k))]
-          [(str/replace (subs (str k) (count "http.static.")) #"/$" "")
+              :when (re-matches #"web\.static\..+" (str k))]
+          [(str/replace (subs (str k) (count "web.static.")) #"/$" "")
            (str/replace (str v) #"/$" "")])))
 
 (defn store-reader
