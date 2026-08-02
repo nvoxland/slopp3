@@ -20,6 +20,7 @@ resolve here.
 | `slopp.edit.refs` | `slopp.index.refs` | THE reference graph is derived, content-memoized and never stored: `slopp.index`'s genre, not the edit pipeline's. Side effect: the edit pipeline no longer touches `slopp.cache` at all |
 | `slopp.api.crossings` | `slopp.index.crossings` | its pair — `refs` answers every edge INSIDE the store, `crossings` the edges that LEAVE it. Landed together so the pair is one module |
 | `slopp.store.build` | `slopp.build` | not the store: the GraalVM native-image build target. Pure generators, zero internal requires, three callers in three different modules — shared layer-0 infrastructure |
+| `slopp.http-api.heartbeat` | `slopp.hub` | registering and beating is HUB INTEGRATION, not part of the generic external API — every project on slopp talks to a hub, slopp itself included. `slopp.http-api.contracts/project-beat` came with it (→ `slopp.hub/project-beat`): the beat's shape describes the HUB's `POST /api/register`, so it was the one non-API contract in the API's registry |
 
 ## Removed — what an old record refers to that no longer exists
 
@@ -37,6 +38,25 @@ resolve here.
 | `ui.port` | `slopp.api.port` | named for its consumer. Becomes an **output** in phase 2 — bind a free port, report the number |
 | `ui.hub-port` | `slopp.hub.port` | the port slopp reaches OUT to, not one it serves |
 
+## Session and `session_brief` keys
+
+| Old | New | When / why |
+|---|---|---|
+| `:ui-hub` | `:hub` | this project's own page on the hub, present only while one is answering |
+| `:ui-hub-note` | `:hub-note` | the configured address that is silent, or the refusal |
+| `:ui-hub-configured` | `:hub-configured` | where we BEAT — known immediately, true whether or not anyone listens |
+| `:ui-heartbeat` | `:hub-heartbeat` | the beat's handle. It was never the UI's |
+
+**These are the ones that bit.** The `ui-hub`→`hub` sweep rewrote 19 store
+forms and did not touch the files, so `plugins/slopp/skills/slopp/SKILL.md`,
+`plugins/slopp/skills/slopp-review/SKILL.md` and `docs/reference/tools.md`
+went on documenting `:ui-hub` — a key that returns nil. An agent following the
+SHIPPED skill would read the brief, find nothing, and report that no hub was
+answering. Fixed 2026-08-02, along with a second error in the same paragraph:
+`:hub` already ends in `/p/<slug>`, and slopp-review's template appended it a
+second time. The store-prose guard could not see any of it; see
+`ideas/restructure-wave-frictions.md` §9.
+
 **R1, the rule these follow:** `slopp.` prefixes framework config keys and the
 prefix is RESERVED — a user's app can never own a key under it. Project keys
 (`web.*`, `app.*`) carry no prefix. R1 applies to config keys ONLY: not tool
@@ -51,6 +71,7 @@ These name things that still exist; the phrase is what was retired.
 | "the dev server" | keeping a web project live in development — the mechanism is web tooling's, and it is `live` there |
 | "the app server" | the web project's own server, on `web.port` |
 | "the reviewer UI" / "reviewer API" | the external API (`slopp.api.*`) and its consumers. A viewing UI is ONE consumer, not the surface's identity |
+| "the UI hub" | "a hub" / "the hub". A hub is a role — one process per machine holding a registry fed by heartbeats. Rendering pages is what today's only hub (`slopp-ui`) happens to do with that registry, not what a hub is. `D-ui-hub` keeps its name as a decision ID |
 
 Naming a piece for its consumer or its current contents is the bug this whole
 restructure exists to fix (**R3**). Both change; that is what stranded

@@ -132,8 +132,8 @@ rows the gates can't see:
   truth and it's already verified; `query_commits {:alignment}` proves handoff
   state in one read.
 - **Point the human at the change screen — on the HUB, not on your own port.**
-  `session_brief`'s `:ui-hub` is the address that renders pages;
-  `<ui-hub>/p/<slug>/change/<from>..<to>` (the milestone ids from
+  `session_brief`'s `:hub` is the address that renders pages, and the slug is
+  already in it; `<hub>/change/<from>..<to>` (the milestone ids from
   `query_commits`) is that milestone reviewed form by form — recorded ask, line
   diff, blast radius, each form linking its permalink with callers above and
   callees inlined. `:ui` is your project's own listener and serves `/api/*`

@@ -949,7 +949,7 @@ change review (module → namespace → form, with each form's recorded ask, its
 line diff and its blast radius), form permalinks by ID with callers above and
 callees inlined below, and the namespace index.
 
-**Hand over `session_brief`'s `:ui-hub`, not its `:ui`.** Those are different
+**Hand over `session_brief`'s `:hub`, not its `:ui`.** Those are different
 things and giving out the wrong one wastes someone's time:
 
 - `:ui` is THIS project's own listener, and it serves `/api/*` — JSON, and the
@@ -957,15 +957,15 @@ things and giving out the wrong one wastes someone's time:
   it at boot), it runs on your live session so warranty and observed examples
   are the ones you actually have, and it has no pages in it at all. A human
   opening it sees JSON.
-- `:ui-hub` is this project's own page on the hub — a separate application, one
+- `:hub` is this project's own page on the hub — a separate application, one
   per machine, that renders every screen and fronts each project at
   `/p/<slug>/`. That is the address a person wants, and the screens hang off
-  it: `<ui-hub>/change/<from>..<to>`, `<ui-hub>/store`,
-  `<ui-hub>/store/form/<id>`.
+  it: `<hub>/change/<from>..<to>`, `<hub>/store`,
+  `<hub>/store/form/<id>`.
 
-**`:ui-hub` is present only while a hub is ANSWERING**, because the slug in it
+**`:hub` is present only while a hub is ANSWERING**, because the slug in it
 comes back on each heartbeat and cannot be fabricated. If no hub is running you
-get `:ui-hub-note` instead, naming the address that is silent — a hub is
+get `:hub-note` instead, naming the address that is silent — a hub is
 optional, so its absence is an ordinary state rather than an error. Don't paper
 over the note by handing out the bare hub root: nothing is serving it.
 

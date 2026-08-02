@@ -36,7 +36,7 @@ or `stop: true`. A listener that cannot bind never blocks the server: it prints
 a sentence and MCP carries on. The UI is optional; MCP is not.
 
 **`:ui` is not the address you give a human** — they would see JSON. That is
-`:ui-hub`, below.
+`:hub`, below.
 
 ### One hub, many projects
 
@@ -48,7 +48,7 @@ directory** rather than fixed — stable across restarts, and never the same as
 the project next to it. You are not expected to know that number.
 
 The address you remember belongs to the **hub**, one process per machine, and
-`session_brief` reports it as `:ui-hub`. It is a separate application — built
+`session_brief` reports it as `:hub`. It is a separate application — built
 with slopp, not inside it — that never opens a store: it holds a registry fed
 by heartbeats, renders every page, and proxies `/p/<slug>/api/*` to whichever
 project owns that slug. Every screen lives there:
