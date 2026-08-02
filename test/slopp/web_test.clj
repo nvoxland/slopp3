@@ -13,7 +13,7 @@
   own tests through the client would close the loop and let a symmetric bug —
   client omits a header, server ignores it — pass both suites."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web :as web] [slopp.web.static :as static] [slopp.web.router :as router]))
+            [slopp.web :as web] [slopp.web.static :as static] [slopp.web.router :as router] [clojure.string :as str]))
 
 (defn ^{:web/method :get :web/path "/w/mine/:owner" :web/auth :authenticated}
   t-mine
@@ -332,3 +332,61 @@
                            (.mkdirs (.getParentFile f))
                            (spit f content)))
                        (static/file-or-resource-reader dir)))))
+
+(deftest bind-diagnosis-is-the-one-recognizer-for-a-taken-port
+  ;; Three listeners answered "the port is taken" three different ways, and
+  ;; the plan's founding symptom was that they disagreed. Measured before
+  ;; this: `http-api.server/serve!` walked the cause chain and said "port N
+  ;; is not available"; `api.devserver/bind-failure` regexed a wire string
+  ;; and said "port N is already in use"; `slopp.web/serve!` said nothing at
+  ;; all and let a BindException reach the operator.
+  ;;
+  ;; They differ for ONE honest reason — they hold different things. The
+  ;; in-process caller has a Throwable; the dev server has a text blob that
+  ;; crossed an nREPL wire. So the recognizer takes either, and the sentence
+  ;; is written once. What each caller adds is its own NEXT STEP, which is
+  ;; the part that legitimately differs: only the dev server knows the
+  ;; failure is fixable with `web.port`.
+  (testing "a Throwable carrying a BindException anywhere in its cause chain"
+    (is (= "port 8080 is already in use"
+           (web/bind-diagnosis 8080 (java.net.BindException. "Address already in use"))))
+    (is (= "port 8080 is already in use"
+           (web/bind-diagnosis 8080 (ex-info "wrapped" {} (java.net.BindException. "nope"))))
+        "the cause chain is walked — http-kit wraps"))
+  (testing "a text blob that crossed a wire, where the class is gone"
+    (is (= "port 7357 is already in use"
+           (web/bind-diagnosis
+            7357
+            (str "class java.net.BindException: Execution error (BindException) at"
+                 " sun.nio.ch.Net/bind0 (Net.java:-2).\nAddress already in use")))))
+  (testing "nil for anything it does not recognize — the caller keeps every byte"
+    (is (nil? (web/bind-diagnosis 8080 (java.net.UnknownHostException. "nowhere"))))
+    (is (nil? (web/bind-diagnosis 8080 "Syntax error compiling at (app/core.clj:1:1)")))
+    (is (nil? (web/bind-diagnosis 8080 nil)))))
+
+(deftest ^:external serve-on-a-taken-port-leads-with-the-diagnosis
+  ;; The production half of the same rule the dev server already follows. An
+  ;; operator starting a built app on a held port got
+  ;; `class java.net.BindException: Execution error (BindException) at
+  ;; sun.nio.ch.Net/bind0 (Net.java:-2).` and then, after a newline, the one
+  ;; clause that matters. Three pieces of noise before the answer.
+  ;;
+  ;; A clash is an ERROR here and stays one — never a hunt for a free port.
+  ;; The url an operator was handed must not quietly stop being the url that
+  ;; works, which is the same stance http-api/serve! takes.
+  (let [held (web/serve! {:web/namespaces [] :web/port 0})
+        port (:port held)]
+    (try
+      (let [t (try (web/serve! {:web/namespaces [] :web/port port})
+                   nil
+                   (catch Throwable t t))]
+        (testing "it still fails — a taken port is never routed around"
+          (is (some? t) "binding a held port must not succeed"))
+        (testing "the diagnosis leads"
+          (is (str/starts-with? (str (ex-message t))
+                                (str "port " port " is already in use"))))
+        (testing "and the raw failure survives behind it, not squeezed out"
+          (is (re-find #"(?i)address already in use" (str (ex-message t)))))
+        (testing "the port rides as data, so a caller need not re-parse the sentence"
+          (is (= port (:web/port (ex-data t))))))
+      (finally (web/stop! held)))))

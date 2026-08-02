@@ -122,9 +122,46 @@
   [ctx req]
   (dispatch/handle! ctx req))
 
+(defn bind-diagnosis
+  "The leading sentence for a failed bind on `port`, or nil when `failure`
+  is not a port clash. `failure` is either a Throwable or the TEXT one left
+  behind after crossing a wire.
+
+  **The diagnosis only, never the next step.** What to do about a taken port
+  is not the framework's to say: slopp's dev server knows the answer is
+  `web.port`, an operator running a built jar set the port some other way,
+  and inventing advice for them would be a confident wrong sentence. So this
+  writes the half every caller shares and each caller appends its own.
+
+  **Both representations, because the callers genuinely hold different
+  things.** In-process the failure is an exception, and http-kit wraps it, so
+  the cause chain is walked. The dev server's failure comes back from a child
+  image over nREPL as printed text with the class name already stringified —
+  there is no Throwable left to interrogate. Two ways in, one answer out;
+  before this there were three answers, phrased three ways, and \"the port is
+  taken\" read differently depending on which listener you asked.
+
+  **Anything unrecognized returns nil and the caller keeps every byte.** A
+  privileged port, an unresolvable host, something not thought of — squeezing
+  those into the shape of the case that IS understood is how a confident wrong
+  sentence replaces a verbose right one."
+  [port failure]
+  (let [taken? (cond
+                 (nil? failure) false
+                 (instance? Throwable failure)
+                 (loop [t failure]
+                   (cond (nil? t) false
+                         (instance? java.net.BindException t) true
+                         :else (recur (.getCause ^Throwable t))))
+                 :else (boolean (re-find #"(?i)address already in use" (str failure))))]
+    (when taken?
+      (str "port " port " is already in use"))))
+
 (defn ^{:malli/schema [:=> {:throws [[:map
                        [:web/missing-performers [:vector :string]]
-                       [:web/namespaces [:vector :symbol]]]]} [:cat [:map
+                       [:web/namespaces [:vector :symbol]]]
+                      [:map
+                       [:web/port :int]]]} [:cat [:map
                                   [:web/namespaces [:sequential :symbol]]
                                   [:web/adapter {:optional true} :keyword]
                                   [:web/host {:optional true} :string]
@@ -138,15 +175,27 @@
   :web/perform-ctx …}`. :http-kit is the production default (D-web §9);
   :jdk is the zero-dep fallback. Returns the adapter's handle
   (+ :web/adapter) for `stop!`. The adapter is a VALUE — the seam that
-  keeps the server library choice a config key, not a rewrite."
+  keeps the server library choice a config key, not a rewrite.
+
+  **A taken port THROWS, and the diagnosis leads.** It is never routed around
+  — an address someone was handed must not quietly become a different one, so
+  there is no port hunt here in production any more than in development. What
+  changed is only what the operator reads: [[bind-diagnosis]]'s sentence
+  first, the adapter's raw failure preserved behind it, and `:web/port` in the
+  ex-data so a caller acts on the number rather than re-parsing the sentence."
   [{:web/keys [adapter host port] :or {adapter :http-kit host "127.0.0.1" port 8080}
     :as opts}]
   (let [ctx (context opts)]
-    (case adapter
-      :http-kit (assoc (httpkit/start! ctx {:host host :port port})
-                       :web/adapter :http-kit)
-      :jdk (assoc (jdk/start! ctx {:host host :port port})
-                  :web/adapter :jdk))))
+    (try
+      (case adapter
+        :http-kit (assoc (httpkit/start! ctx {:host host :port port})
+                         :web/adapter :http-kit)
+        :jdk (assoc (jdk/start! ctx {:host host :port port})
+                    :web/adapter :jdk))
+      (catch Throwable t
+        (if-let [d (bind-diagnosis port t)]
+          (throw (ex-info (str d "\n" (ex-message t)) {:web/port port} t))
+          (throw t))))))
 
 (defn stop!
   "Stop a `serve!` return."

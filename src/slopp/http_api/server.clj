@@ -139,9 +139,11 @@
       (reset! current {:server srv :port p :url url})
       {:url url :port p})
     (catch Exception e
-      (if (loop [t e]
-            (cond (nil? t) false
-                  (instance? java.net.BindException t) true
-                  :else (recur (.getCause t))))
-        {:error (str "port " port " is not available") :port port}
+      ;; the recognition AND the sentence come from slopp.web — this used to
+      ;; walk its own cause chain and phrase its own answer, one of three
+      ;; listeners doing that differently. What stays here is the part that is
+      ;; genuinely this listener's: it REPORTS rather than throws, because the
+      ;; caller is a tool result.
+      (if-let [d (web/bind-diagnosis port e)]
+        {:error d :port port}
         (throw e)))))

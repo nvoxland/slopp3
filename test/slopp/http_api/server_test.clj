@@ -68,7 +68,11 @@
     (let [held (web/serve! {:web/namespaces [] :web/port 0})]
       (try
         (let [r (server/serve! (atom {:store (store/empty-store)}) (:port held))]
-          (is (= (str "port " (:port held) " is not available") (:error r)))
+          ;; the same sentence every listener uses — slopp.web/bind-diagnosis writes
+          ;; it once. Three listeners phrased this three ways ("is not available"
+          ;; here, "is already in use" in the dev server, a raw BindException in
+          ;; production), which is the disagreement this consolidates.
+          (is (= (str "port " (:port held) " is already in use") (:error r)))
           (is (nil? (server/running)) "a failed bind leaves nothing tracked"))
         (finally (web/stop! held) (server/stop!))))))
 

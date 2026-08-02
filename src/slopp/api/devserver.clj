@@ -27,7 +27,7 @@
   incomplete, and reloading a browser into a red half-written state trains
   the author to ignore it."
   (:require [slopp.api.capabilities :as capabilities]
-            [slopp.api.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts]))
+            [slopp.api.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts] [slopp.web :as framework]))
 
 (defn ^:export self-served?
   "Whether the calling process ALREADY serves everything `store` would —
@@ -399,14 +399,25 @@
   answer and then still did not know what was expected of it. Reported by the
   first consumer to hit this in anger.
 
+  **The diagnosis is the framework's, the next step is this caller's.** Only
+  what to DO about a taken port differs between listeners, and only this one
+  can say `web.port` — `slopp.web` also serves operators who set the port some
+  other way, and the UI listener's answer is a different number entirely. So
+  `framework/bind-diagnosis` writes the shared half and each caller appends
+  its own, rather than three listeners each recognising the failure and
+  phrasing it.
+
   **An unmodelled failure keeps every byte.** A privileged port, an
   unresolvable host, something not thought of — a confident wrong sentence is
-  worse than a verbose right one, so anything this does not recognise falls
-  through with its raw text intact rather than being squeezed into the shape
-  of the case that IS understood."
+  worse than a verbose right one, so anything the recogniser does not know
+  falls through with its raw text intact rather than being squeezed into the
+  shape of the case that IS understood.
+
+  `raw` is TEXT, not a Throwable: it crossed an nREPL wire from the child
+  image, which is why the recogniser takes both representations."
   [port raw]
-  (if (re-find #"(?i)address already in use" (str raw))
-    (str "port " port " is already in use — free it, or set web.port to another")
+  (if-let [d (framework/bind-diagnosis port raw)]
+    (str d " — free it, or set web.port to another")
     (str "the app image would not serve on port " port ": " raw)))
 
 (defn- serve-in!
