@@ -136,6 +136,38 @@ end of the diagnosis, it is a pointer one layer down. Silence has a source, and
 it is usually a place where an error channel was dropped in favour of a value
 channel.
 
+**Sharpening (2026-08-02): a JOIN drops what falls off it, and reports the
+remainder as the whole truth.** `query_capabilities` is a join of the capability
+registry against the stored config. A stored key with no registry row simply
+fell out of the `keep`, so a store carrying three settings under RETIRED names
+reported zero `:set true` and mentioned nothing — the tool whose job is *what is
+configured here* describing an unconfigured store, while the reason its app
+server would not start sat in the config it declined to name.
+
+The shape is this core's exactly: **UNSET** and **SET UNDER A NAME THIS BUILD NO
+LONGER KNOWS** shared one representation, at the precise moment the difference
+IS the diagnosis. What makes it worth its own entry is *where* it hid — not in a
+check that under-counted, but in the ordinary structure of a join, where the
+unmatched side is discarded by construction and nothing looks like it is missing.
+
+Two things generalize:
+
+- **Ask what falls off the join.** Any surface built by matching stored data
+  against a declared schema has an unmatched bucket, and reporting it is nearly
+  free — both halves are already in hand. `report` gained `:orphaned` in one
+  binding.
+- **`no-backwards-compatibility` makes the migration path COMMON, not rare.**
+  Retired names are the standing policy, so "your store holds values under names
+  I no longer know" is an ordinary state a read has to be able to say. It was
+  found by the first store other than ours to cross a capability rename, and it
+  would have replaced a bespoke hand-written migration message with one call.
+
+Worth noting how it was nearly missed: the verification command run to confirm
+the rename was `grep -o '…:set true…'` returning no output, which was read as
+"nothing stale is recognized" — the correct conclusion, from output that was
+itself the symptom. A check whose PASS and whose BUG produce the same silence
+is this core aimed at the person holding it.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —

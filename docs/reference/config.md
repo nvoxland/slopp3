@@ -48,6 +48,12 @@ registry with a type, a default, and a doc line. That buys two things:
   do nothing.
 - **Reads never nil-pun.** `query_capabilities` lists every setting with its
   default and its effective value; a registered key always has an answer.
+- **Names this build no longer knows are reported, not dropped.** Capability
+  keys get renamed and there is no back-compat, so a store can hold values
+  under retired names. Those come back under `:orphaned`, with their values
+  and what to do about them -- otherwise a store mid-rename reads as
+  unconfigured, which is how the reason your app server will not start ends
+  up sitting in a config the tool declined to mention.
 
 ```clj
 config_file {path "capabilities" key "app.main" value "myapp.core/-main"}
