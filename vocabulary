@@ -15,9 +15,13 @@ http.port: web.port
 http.static: web.static
 reads: internal
 slopp.api.crossings: slopp.index.crossings
+slopp.bench: slopp.lab
+slopp.bench.benchmark: slopp.lab.benchmark
+slopp.bench.evalseed: slopp.lab.evalseed
 slopp.edit.refs: slopp.index.refs
 slopp.http-api.heartbeat: slopp.hub
 slopp.store.build: slopp.build
+slopp.store.mine: slopp.lab.mine
 slopp.ui-api: slopp.http-api
 ui-hub: hub
 ui.hub-port: slopp.hub.port

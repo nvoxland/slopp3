@@ -1078,7 +1078,7 @@
   ;; question a second way — `(get (:module-tiers store) (module-of ns))` — and
   ;; the two disagreed on 28 of slopp's own 75 production namespaces.
   ;;
-  ;; The dangerous direction is the one measured on `slopp.store.mine`, whose
+  ;; The dangerous direction is the one measured on `slopp.lab.mine`, whose
   ;; own `:external` declaration exists BECAUSE a fold silently governed it
   ;; `:pure` (frictions #11): the report said `:pure` anyway. A migration aid
   ;; that misreports where the code stands is worse than none.

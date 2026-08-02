@@ -366,7 +366,7 @@
   look more fundamental than it is."
   '#{slopp.api/external-test-run!
      slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
-     slopp.boot/-main slopp.bench.benchmark/-main})
+     slopp.boot/-main slopp.lab.benchmark/-main})
 
 (def image-spawning-vars
   "Vars that spawn ONE image and return. A deftest touching one is still kept

@@ -1,4 +1,4 @@
-(ns slopp.bench
+(ns slopp.lab
   "DESIGN.md §10 Phase-1 metric: the payload an agent must consume to answer
   'where is ns/sym referenced, and show its definition' via slopp's form-addressed
   queries vs. a grep-and-read-the-file baseline. Chars are a token proxy (~chars/4).

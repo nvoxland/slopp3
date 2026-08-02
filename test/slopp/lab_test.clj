@@ -1,7 +1,7 @@
-(ns slopp.bench-test
+(ns slopp.lab-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.bench :as bench]))
+            [slopp.lab :as bench]))
 
 (def sample
   (str "(ns sample)\n\n"
