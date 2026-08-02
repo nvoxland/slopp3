@@ -89,6 +89,22 @@ the backlog for attention.
    valid, so a careless sweep breaks correct guidance. The same sweep covers
    `docs/`, `DEV.md`, and this file.
 
+   **DECLARE the rename, and most of that sweep stops being manual.**
+   `config_file {path "vocabulary" key <old> value <new>}` is the
+   machine-readable twin of `.context/naming-glossary.md`, and two checks read
+   it: the `retired-vocabulary` done-advisory over store FORMS, and
+   `bin/check-shipped-prose.sh` (CI lane `shipped-prose`) over the skills and
+   `docs/`. Declaring is the step a rename must not skip — a rename that
+   rewrites the store and walks past the files is how four bugs shipped on
+   2026-08-02, including a skill telling agents to read a `session_brief` key
+   that returns nil.
+
+   Two limits, both measured, so you know what is still yours: a retired term
+   that reads as an ORDINARY ENGLISH WORD (`reads`, `effects`) is skipped by
+   the prose scan — it matched 90+ lines of legitimate prose — and
+   `docs/blog/posts/**` is excluded because a dated record correctly keeps its
+   original names.
+
 ## Always-on rules
 
 - **What this is:** an agent-native codebase system — the top-level form is

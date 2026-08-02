@@ -35,6 +35,40 @@ jobs:
         env:
           SLOPP_CLOJURE: clojure
         run: clojure -M:test
+  # The SHIPPED prose — plugins/slopp/skills/** and docs/** — is the product,
+  # and until now nothing checked it. The guard that exists for this class,
+  # mcp-test's slopp-prose-never-names-a-tool-that-does-not-exist, scans STORE
+  # FORMS; the skills and docs are FILES, and no test can reach them: the
+  # external tier runs in the materialized build dir, which carries src, test
+  # and the config projections and NOT docs/ or plugins/. Same shape as the
+  # kernel below — two copies of one truth, only both visible from a checkout
+  # that can see both refs.
+  #
+  # Four bugs went out through that gap in a single day (2026-08-02). The
+  # skill told agents to read session_brief's :ui-hub, a key that returns nil,
+  # and to set dev.server, a capability config_file would refuse;
+  # slopp-review's url template double-appended /p/<slug>, a guaranteed 404 in
+  # the bullet whose point is that the wrong address costs a 404; the tools
+  # reference documented ui.hub-port and ui.port. Every one was a rename that
+  # rewrote the store and walked past the files, and all four were found by a
+  # human grep that happened for an unrelated reason.
+  #
+  # This is the inverse of kernel-parity's reach: main holds the prose,
+  # slopp/main holds the store's rendered `vocabulary`. Declaring a rename
+  # there is what gives this teeth, and it is the step a rename must not skip.
+  shipped-prose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0   # slopp/main must be reachable — it holds the vocabulary
+      # No JVM: the prose is files and the vocabulary is a rendered config, so
+      # this is git and grep. It also means a broken store cannot make this
+      # lane unrunnable, which matters for the one check aimed at what ships.
+      - name: Shipped prose names nothing we retired
+        run: bin/check-shipped-prose.sh
+
   # The kernel (slopp.rt, slopp.boot) exists TWICE and both copies are live:
   # a hand-maintained file on main serves a main-checkout dev run — which is
   # how the benchmarks execute — while the store's projection is what the jar

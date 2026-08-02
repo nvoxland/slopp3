@@ -11,6 +11,15 @@ was learned. This table is what keeps them readable instead.
 place. Past-tense records of what happened keep their original names, and
 resolve here.
 
+**This file has a machine-readable twin: the store's `vocabulary` config.**
+Every row below should also be `config_file {path "vocabulary" key <old> value
+<new>}`, because two checks read that and nothing reads this. The
+`retired-vocabulary` done-advisory scans store FORMS (keywords, requiring an
+enumeration — a lone `:reads` is usually the still-valid marker), and
+`bin/check-shipped-prose.sh` scans the shipped skills and `docs/` (exact
+match, distinctive terms only, dated blog posts excluded). Adding the row here
+and not there is how a rename keeps its blind spot.
+
 ## Namespaces
 
 | Old | New | When / why |
