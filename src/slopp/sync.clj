@@ -400,8 +400,7 @@
   (let [dir (:dir @session)]
     (if-not dir
       {:error "pull needs a durable session (a store dir)"}
-      (let [shared (get-in @session [:git-server :ctx])
-            ctx    (or shared (git/open-ctx! dir))]
+      (let [ctx (git/open-ctx! dir)]
         (try
           (let [url (resolve-remote dir (db/get-meta (:slopp.git/map-conn ctx) "git-remote"))]
             (if (str/blank? (str url))
@@ -421,7 +420,7 @@
                       (nil? mb)  {:error "unrelated histories — was the remote rewritten? re-clone"}
                       (= mb tip) {:up-to-date true}
                       :else      (apply-pull! session ctx url mb tip agent)))))))
-          (finally (when-not shared (git/close-ctx! ctx))))))))
+          (finally (git/close-ctx! ctx)))))))
 
 ^:reads (defn conflicts
   "Unresolved pull conflicts for the store at `dir` — each row carries the

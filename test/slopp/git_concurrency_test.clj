@@ -4,14 +4,13 @@
   via INSERT OR IGNORE + read-back, ref updates CAS (a lost race re-reads
   and finds the ref already where it wanted it). Two independent projection
   contexts over one store dir stand in for two server processes."
-  (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
             [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.server :as server] [clojure.java.io :as io] [slopp.api.external :as external])
+            [slopp.git :as git]
+            [slopp.api.external :as external])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]
-           [org.eclipse.jgit.api Git]))
+           [java.nio.file.attribute FileAttribute]))
 
 (defn- temp-dir [nm]
   (str (Files/createTempDirectory nm (make-array FileAttribute 0))))
@@ -61,30 +60,25 @@
             (git/close-ctx! ctx2))))
       (finally (api/close! sess)))))
 
-(deftest ^:external foreign-milestone-served-without-restart
-  ;; the m5b operating model: another agent's server shares the store dir;
-  ;; its milestones must be served by the git server with NO restart —
-  ;; projection reads the journals from disk on every advertisement
+(deftest ^:external foreign-milestone-projected-without-restart
+  ;; the m5b operating model: another agent's server shares the store dir, and
+  ;; its milestones must reach the projection with NO restart — projection
+  ;; re-reads the journals from disk every time rather than trusting a cache
+  ;; built when the context opened.
+  ;;
+  ;; This used to observe the property by cloning from the git listener, which
+  ;; is gone. The listener was only the instrument; the property is the
+  ;; projection's, and asserting it against a FRESHLY opened context is a
+  ;; stronger check than the old commit-message prefix — it compares the
+  ;; long-lived context to ground truth rather than to a string.
   (let [dir   (temp-dir "slopp-git-foreign")
         sess1 (external/open! {:slopp.api/dir dir})
-        
-        
-        ;; 0 = the OS assigns a genuinely-free loopback port ATOMICALLY (#136).
-        ;; free-port guessed one BEFORE binding, and its wildcard socket never
-        ;; conflicted with 127.0.0.1 — so it could hand back a port another
-        ;; shard's server was serving. bind-localhost! then relocated silently
-        ;; and the caller talked to the abandoned port.
-        srv   (server/start-server! 0 {:dir dir})
-        url   (:url srv)
-        tip   (fn []
-                (some #(when (= "refs/heads/main" (.getName %))
-                         (.name (.getObjectId %)))
-                      (-> (Git/lsRemoteRepository) (.setRemote url)
-                          (.setHeads true) (.call))))]
+        ctx   (git/open-ctx! dir)
+        tip   (fn [c] (get-in (git/ensure-projected! c) [:refs "main"]))]
     (try
       (api/ingest! sess1 'gc.core seed)
       (external/commit-point! sess1 "v1" :agent "alice")
-      (let [tip1 (tip)]
+      (let [tip1 (tip ctx)]
         (is (some? tip1))
         ;; a SECOND session on the same dir — a foreign writer
         (let [sess2 (external/open! {:slopp.api/dir dir})]
@@ -93,15 +87,13 @@
                                :prompt "foreign work" :agent "bob")
             (external/commit-point! sess2 "v2: foreign milestone" :agent "bob")
             (finally (api/close! sess2))))
-        (let [tip2 (tip)]
-          (is (not= tip1 tip2))
-          (let [clone-dir (temp-dir "slopp-git-foreign-clone")]
-            (with-open [g (-> (Git/cloneRepository) (.setURI url)
-                              (.setDirectory (io/file clone-dir))
-                              (.call))]
-              (is (str/starts-with?
-                   (.getFullMessage (first (-> g (.log) (.call))))
-                   "v2: foreign milestone"))))))
+        (let [tip2  (tip ctx)
+              fresh (let [c2 (git/open-ctx! dir)]
+                      (try (tip c2) (finally (git/close-ctx! c2))))]
+          (testing "the long-lived context advanced past the pre-foreign tip"
+            (is (not= tip1 tip2)))
+          (testing "and it agrees with a context opened after the foreign write"
+            (is (= fresh tip2)))))
       (finally
-        (server/stop-server! srv)
+        (git/close-ctx! ctx)
         (api/close! sess1)))))

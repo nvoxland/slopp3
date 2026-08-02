@@ -75,9 +75,13 @@
   nobody needs to know the number, because the address a human remembers is
   the hub's.
 
-  SALTED, unlike `slopp.git.server/derived-port`, which hashes the bare dir.
-  One MCP process binds both listeners, so sharing the formula would have
-  every project reliably colliding with itself.
+  SALTED — originally to keep it off the git listener's port for the same
+  dir, since one MCP process bound both and an unsalted formula would have
+  had every project collide with itself. That listener is gone and the salt
+  now distinguishes this from nothing. It STAYS anyway, and the reason is
+  the only one that matters here: the formula IS the address. Changing it
+  relocates every project's UI on every machine, and anything holding a
+  saved url points at a dead port. A vestigial salt is cheaper than that.
 
   A preference, not a guarantee: a taken port falls back to an ephemeral one
   at bind time, and the registered url carries whatever was actually bound."

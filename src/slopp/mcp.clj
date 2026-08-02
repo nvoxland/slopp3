@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.http-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.http-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.http-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.http-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -511,24 +511,14 @@
                            (when-let [r (db/get-meta conn "git-remote")]
                              {:git-remote   r
                               :git-base-sha (db/get-meta conn "git-base-sha")}))]
-                       (cond
-                         (:git-url @session)
-                         (cond-> {:url (:git-url @session)
-                                  :remote (str "git remote add slopp " (:git-url @session))
-                                  :note (str "milestones (commit_point) are the commits; "
-                                             "the local listener is read-only clone/fetch; "
-                                             "publish OUT with git_push; "
-                                             "wip/<branch> = live un-milestone'd state")}
-                           ext (assoc :external ext))
-
-                         ext
+                       (if ext
                          {:external ext
-                          :note "no local listener; git_push publishes to :external"}
-
-                         :else
-                         {:error (str "no git listener on this session"
-                                      " (ephemeral session, or the port"
-                                      " couldn't bind)")}))))
+                          :note (str "milestones (commit_point) are the commits; "
+                                     "git_push publishes the projection to the "
+                                     "remote and git_pull absorbs from it")}
+                         {:error (str "no git remote configured — git_push {url}"
+                                      " sets one, or git_clone rebuilds a store"
+                                      " from one")}))))
    "query_commits"
    (fn [session a _sym]
      (text! (if (:commit a)
@@ -745,8 +735,8 @@
   whatever was actually bound. Nobody needs to know this number; the address a
   human remembers is the hub's.
 
-  Follows the git listener's stance exactly, and for the same reason: the UI is
-  OPTIONAL and MCP is not. A busy port, a missing hub, anything at all — it
+  The stance every optional listener here takes: the UI is OPTIONAL and MCP
+  is not. A busy port, a missing hub, anything at all — it
   reports a sentence on stderr (stdout is the JSON-RPC channel) and the server
   carries on. Nothing about a browser page should be able to stop the thing the
   editor is talking to."
@@ -760,7 +750,7 @@
          ;; a derived port is a PREFERENCE: something else already holding it
          ;; must not cost this project its UI, so fall back to whatever is free.
          r    (if (and (:error r0) (not (zero? (long want)))) (try! 0) r0)]
-     ;; ON THE SESSION, the way the git listener carries :git-url. The stderr
+     ;; ON THE SESSION, so a reader can find it. The stderr
      ;; banner below goes to the MCP server's log, which most clients never
      ;; show a human — so autostart without this is a feature nobody can find.
      ;; session_brief surfaces it, which is where an agent looks and how the
@@ -1386,8 +1376,8 @@
   "Bring this project's app server up beside the MCP server, or nil when
   slopp does not run this store's server. NEVER throws.
 
-  The stance is the git listener's and the UI listener's, for the same
-  reason: **the app server is OPTIONAL and MCP is not.** A busy port, a
+  The stance is the UI listener's, for the same reason: **the app server is
+  OPTIONAL and MCP is not.** A busy port, a
   store that will not load, anything at all — it reports a sentence on
   stderr (stdout is the JSON-RPC channel) and the server carries on. Nothing
   about a page in a browser should be able to stop the thing the editor is
@@ -1423,16 +1413,12 @@
   Serving a dir that is NOT slopp-managed writes NOTHING there: the server
   is launched in whatever directory the editor has open, so adoption has to
   be something you do, not something that happens to you. The store is
-  created by the first real write (`slopp.api.session/ensure-db!`), and
-  until then the git listener stays down too — opening its context would
-  create the very store this is avoiding.
+  created by the first real write (`slopp.api.session/ensure-db!`).
 
-  A durable session ALSO opens an in-process git smart-HTTP listener on a
-  dir-derived port (localhost) — a READ-ONLY remote (clone/fetch of
-  milestones) any git client can point at with no external daemon;
-  `query_git` reports the URL. Publishing to a NORMAL external remote
-  (GitHub etc.) goes through `git_push`; `git_clone` rebuilds a fileless
-  store from one (slopp.sync)."
+  Git is push/pull to a remote slopp does not own: `git_push` publishes the
+  projection, `git_clone` rebuilds a fileless store from one (slopp.sync).
+  Serving the store to a git client AS a remote was removed — it forced
+  exact-project handling for less than it cost."
   [& [dir]]
   (when dir
     (when-let [r (sync/maybe-auto-import! dir)]
@@ -1447,16 +1433,6 @@
                                       :slopp.api/async-image? true}
                              dir (assoc :slopp.api/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
-    (when (and dir (:db @session))
-      (try
-        (let [srv (server/start-server! (server/derived-port dir) {:dir dir})]
-          (swap! session assoc :git-server srv :git-url (:url srv))
-          ;; stdout is the JSON-RPC channel; banner goes to stderr
-          (binding [*out* *err*]
-            (println (str "slopp git remote: " (:url srv)))))
-        (catch Throwable t                       ; git is optional; MCP must serve
-          (binding [*out* *err*]
-            (println (str "slopp git remote unavailable: " (.getMessage t)))))))
     ;; the reviewer UI comes up with the server, always. It serves the LIVE
     ;; session and therefore dies with it — that is the trade that keeps its
     ;; warranty numbers honest — so nothing ever brought it back, and a human
@@ -1472,7 +1448,6 @@
     (try
       (serve! session (io/reader System/in) (io/writer System/out))
       (finally
-        (when-let [srv (:git-server @session)] (server/stop-server! srv))
         ;; deregister BEFORE the listener goes: the hub should learn we are
         ;; leaving from us, not by ageing us out thirty seconds later.
         (hb/stop! (:ui-heartbeat @session))

@@ -86,12 +86,11 @@
   "A localhost port DERIVED from the store dir for this project's APP server —
   stable across restarts, different for every project on the machine.
 
-  SALTED, and the salt is load-bearing rather than decorative. This is the
-  THIRD derivation of this shape (`http-api.server/derived-port` for the UI
-  listener, `git.server/derived-port` for the git listener), and
-  `http-api.server/derived-port` already records why they must not share a
-  formula: one MCP process binds all of them, so a shared formula would have
-  every project \"reliably colliding with itself\".
+  SALTED, and here the salt is still load-bearing. There were three
+  derivations of this shape; the git listener's went with the listener, so
+  this and `http-api.server/derived-port` are what remain — and one MCP
+  process binds both, so a shared formula would have every project
+  \"reliably colliding with itself\".
 
   A PREFERENCE that can be refused, and here the answer DIVERGES from the UI
   listener on purpose. `mcp/start-ui!` falls back to an ephemeral port when

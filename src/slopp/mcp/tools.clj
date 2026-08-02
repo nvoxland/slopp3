@@ -547,7 +547,7 @@
     :description "Milestones, newest first — TITLE lines only (+ :more-lines); {commit \"dN\"} drills into ONE full description (targets plug into query_changes from/to). With a git remote configured, :alignment PROVES whether the slopp branch head is the latest milestone's projection — trust it; no worktree/sqlite cross-checks."
     :inputSchema {:type "object" :properties {:commit {:type "string"}}}}
    {:name "query_git"
-    :description "This session's git view: the embedded read-only listener URL + the saved external remote."
+    :description "This session's git view: the saved external remote and the clone base it grafts onto, or a refusal naming how to set one."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_push"
     :description "Publish slopp history to the git remote: from a checkout, pushes your slopp/<branch> mirror branches (current store branch by default; branches: [...] for more); a fileless store publishes its projection. First url becomes the saved default; one-off urls never rewrite it. Fast-forward only."

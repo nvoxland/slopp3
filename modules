@@ -20,9 +20,7 @@ slopp.files: slopp.api slopp.store
 slopp.git: slopp.build slopp.store
 slopp.git-client: slopp.api slopp.git
 slopp.git-concurrency: slopp.api slopp.git
-slopp.git-embedded: slopp.api slopp.git slopp.mcp
 slopp.git-projection: slopp.api slopp.git slopp.store
-slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
 slopp.http-api: slopp.api slopp.edit slopp.index slopp.store slopp.web
@@ -30,7 +28,7 @@ slopp.image: slopp.boot slopp.rt slopp.store
 slopp.index: slopp.api slopp.build slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.git slopp.http-api slopp.store slopp.sync slopp.web
+slopp.mcp: slopp.api slopp.http-api slopp.store slopp.sync slopp.web
 slopp.merge: slopp.store
 slopp.modules: slopp.api slopp.edit slopp.store
 slopp.multiproc: slopp.api slopp.store

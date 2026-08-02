@@ -1494,10 +1494,9 @@
   ;; be there.
   ;;
   ;; The constraint that shapes this: the UI is OPTIONAL and the MCP server is
-  ;; not. The git listener already established the pattern — it starts beside
-  ;; the server, and a failure prints a sentence to stderr and is otherwise
-  ;; ignored, because "git is optional; MCP must serve". A UI that threw on a
-  ;; busy port would take the whole server down over a browser page.
+  ;; not. An optional listener starts beside the server, and a failure prints
+  ;; a sentence to stderr and is otherwise ignored. A UI that threw on a busy
+  ;; port would take the whole server down over a browser page.
   (let [sess (external/open!)]
     (try
       (testing "a port someone else holds FALLS BACK rather than costing this

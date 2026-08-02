@@ -72,7 +72,7 @@
           (is (nil? (server/running)) "a failed bind leaves nothing tracked"))
         (finally (web/stop! held) (server/stop!))))))
 
-(deftest the-ui-port-is-derived-from-the-dir-and-salted-away-from-the-git-listener
+(deftest the-ui-port-is-derived-from-the-dir-and-the-formula-is-frozen
   (testing "stable across calls, so a url that worked last session still does"
     (is (= (server/derived-port "/w/a") (server/derived-port "/w/a"))))
   (testing "inside the private range"
@@ -80,9 +80,12 @@
   (testing "two projects on one machine get two ports — the collision a fixed
             default guaranteed, and the reason slopp.api.port now defaults to unset"
     (is (not= (server/derived-port "/w/a") (server/derived-port "/w/b"))))
-  (testing "SALTED, so it does not land on the git listener's port for the
-            same dir: one MCP process binds both, and an unsalted formula
-            would make every project collide with itself"
+  ;; The salt was originally to dodge the git listener's port for the same
+  ;; dir. That listener is gone, so this no longer separates it from
+  ;; anything — it pins the formula instead, which is the property that
+  ;; actually matters now: the derivation IS the address, so changing it
+  ;; relocates every project's UI and strands every saved url.
+  (testing "the formula is frozen — an unsalted hash is a DIFFERENT address"
     (is (not= (server/derived-port "/w/a")
               (+ 49152 (mod (hash "/w/a") 16384))))))
 

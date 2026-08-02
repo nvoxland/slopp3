@@ -3,9 +3,10 @@
   repo (`InMemoryRepository` — there is NO on-disk git repo; `store.db` is
   the source of truth and the git repo a rebuildable cache):
 
-  - SERVER: a generated projection of the journal's :commit milestones,
-    served READ-ONLY (clone/fetch) over local smart-HTTP. Edits arrive
-    through slopp's write tools, never `git push` to this server.
+  - PROJECTION: the journal's :commit milestones generated as git objects.
+    Serving these to a git client over local smart-HTTP was removed — it
+    forced exact-project handling for less than it bought — so the
+    projection now exists to be PUSHED rather than browsed in place.
   - CLIENT: the same projection pushed to a NORMAL external remote (GitHub
     etc.) — the remote holds real .clj files; fetch reads a remote's tip and
     tree back (the clone/pull side lives in `slopp.sync`). A cloned store
@@ -235,60 +236,6 @@
               :else (throw (ex-info (str "git ref update failed: " res)
                                     {:ref ref-name :result res})))))))))
 
-(defn- delete-ref! [^Repository repo ref-name]
-  (when (.resolve repo ref-name)
-    (-> (doto (.updateRef repo ref-name) (.setForceUpdate true))
-        (.delete))))
-
-(defn- ensure-wip!
-  "refs/heads/wip/<line>: a throwaway commit of the LIVE store state (the
-  element rows), minted whenever it differs from the last milestone's tree
-  and deleted when clean. 'Uncommitted changes' can't cross the git wire —
-  a synthetic ref is the protocol-legal idiom (cf. refs/pull/*, Gerrit's
-  refs/changes/*): tools `git diff origin/main..origin/wip/main`.
-  Deterministic (tree from the rows, timestamp from the journal head), so
-  concurrent projectors converge; never pinned in git_map, never a
-  milestone parent, rejected on push. On a cloned store the baseline tip
-  may be the graft base itself (no local milestone yet)."
-  [{:slopp.git/keys [^Repository repo]} line-name conn deltas tip-sha]
-  (let [ref-name (str "refs/heads/wip/" line-name)]
-    (if (or (nil? tip-sha) (empty? deltas))
-      (delete-ref! repo ref-name)          ; no baseline / nothing local yet
-      (with-open [ins (.newObjectInserter repo)]
-        (let [tree-id (insert-tree! ins (commit-paths
-                                         (db/rendered-sources conn)
-                                         (db/deps conn)
-                                         (db/files conn)
-                                         (db/config-files conn)
-                                         #(db/get-blob conn %)))
-              tip     (ObjectId/fromString tip-sha)
-              m-tree  (with-open [rw (RevWalk. repo)]
-                        (.getId (.getTree (.parseCommit rw tip))))]
-          (if (= tree-id m-tree)
-            (delete-ref! repo ref-name)
-            (let [mpos  (last (keep-indexed
-                               (fn [i d] (when (= :commit (:op d)) i))
-                               deltas))
-                  since (if mpos (- (count deltas) (inc mpos)) (count deltas))
-                  desc  (if mpos (:description (nth deltas mpos)) "the clone base")
-                  at    (Instant/ofEpochMilli (long (:at (last deltas))))
-                  msg   (if (pos? since)
-                          (str "wip: " since " delta"
-                               (when (not= 1 since) "s")
-                               " since \"" desc "\"\n")
-                          (str "wip: live state differs from \"" desc "\"\n"))
-                  cb    (doto (CommitBuilder.)
-                          (.setTreeId tree-id)
-                          (.setParentId tip)
-                          (.setAuthor (PersonIdent. "slopp" "wip@slopp" at
-                                                    ^java.time.ZoneId ZoneOffset/UTC))
-                          (.setCommitter (PersonIdent. "slopp" "wip@slopp" at
-                                                       ^java.time.ZoneId ZoneOffset/UTC))
-                          (.setMessage msg))
-                  cid   (.insert ins cb)]
-              (.flush ins)
-              (set-branch-ref! repo (str "wip/" line-name) (.name cid)))))))))
-
 ;; ---------------------------------------------------------------------------
 ;; projection
 (defn project-journal!
@@ -412,14 +359,11 @@
             (try ((store/late-ref 'slopp.git.client/fetch-remote!) repo url)
                  (catch Exception _ nil))))
         (let [main-tip (project-journal! ctx "main" main-ds :base base)
-              _        (ensure-wip! ctx "main" map-conn main-ds main-tip)
               refs     (into {"main" main-tip}
                              (map (fn [[nm bdir]]
                                     [nm (with-open [conn (db/open! bdir)]
-                                          (let [ds  (db/deltas-after conn 0)
-                                                tip (project-journal! ctx nm ds :base base)]
-                                            (ensure-wip! ctx nm conn ds tip)
-                                            tip))]))
+                                          (project-journal! ctx nm (db/deltas-after conn 0)
+                                                            :base base))]))
                              (branch-journals dir))]
           (doseq [[nm sha] refs :when sha]
             (set-branch-ref! repo nm sha))

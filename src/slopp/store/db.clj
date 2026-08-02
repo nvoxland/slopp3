@@ -17,7 +17,7 @@
             [clojure.java.io :as io]
             [next.jdbc :as jdbc]
             [rewrite-clj.parser :as p]
-            [rewrite-clj.node :as n] [slopp.store.fields :as fields] [slopp.store :as store] [clojure.string :as str]))
+            [rewrite-clj.node :as n] [slopp.store.fields :as fields] [slopp.store :as store]))
 
 (def ^:private store-dir-gitignore
   "What lands in `.slopp/.gitignore`. The `*` is the whole mechanism: it
@@ -195,32 +195,6 @@
                         ON CONFLICT(id) DO UPDATE SET native = excluded.native"
                        id (pr-str verdict)]))
 
-^:reads (defn ^:export rendered-sources
-  "{ns-sym rendered-source} straight from the element rows — the live state
-  without parsing, replaying, or a session (the wip projection reads it per
-  request).
-
-  It must agree with `render-ns` exactly, which means SYNTHESIZING the same
-  separators rather than concatenating what is stored: forms joined by one
-  blank line, a form's `comment` directly above it, `sep` rows ignored.
-  Concatenation was byte-exact only while whitespace lived in the rows. Once
-  the renderer started supplying it, the old version quietly produced a
-  DIFFERENT tree here — dropping every comment and jamming forms together —
-  so the wip ref reported uncommitted work against a clean journal, forever."
-  [conn]
-  (into {}
-        (map (fn [[ns-sym rows]]
-               [ns-sym (str (str/join "\n\n"
-                                      (map (fn [r]
-                                             (if-let [c (:elements/comment r)]
-                                               (str c "\n" (:elements/source r))
-                                               (:elements/source r)))
-                                           rows))
-                            "\n")]))
-        (->> (jdbc/execute! conn ["SELECT ns, kind, source, comment FROM elements
-                                   WHERE kind = 'form' ORDER BY ns, pos"])
-             (group-by #(symbol (:elements/ns %))))))
-
 ^:reads (defn ^:export commit-shas
   "P4-m8: {delta-id git-sha} from the projection's pinning table (created and
   written by slopp.git; this is read-only convenience for query surfaces).
@@ -245,14 +219,6 @@
         (jdbc/execute! conn ["SELECT * FROM deltas ORDER BY seq LIMIT -1 OFFSET ?"
                              (long n)])))
 
-^:reads (defn ^:export config-files
-  "The store's structured-config entries ({path {:format :values}}), read
-  straight from meta — for the projection paths that need it session-free."
-  [conn]
-  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'config'"])
-              :meta/v edn/read-string)
-      {}))
-
 (defn put-blobs!
   "Write `blobs` ({sha → bytes}) INSERT OR IGNORE — content-addressed, so
   rewriting an existing sha is a no-op. Callable inside a transaction."
@@ -267,14 +233,6 @@
   [conn sha]
   (some-> (jdbc/execute-one! conn ["SELECT bytes FROM blobs WHERE sha = ?" (str sha)])
           :blobs/bytes))
-
-^:reads (defn ^:export files
-  "The store's non-code files manifest ({path → text}), read straight from
-  meta — for the git projection paths that need it without a session."
-  [conn]
-  (or (some-> (jdbc/execute-one! conn ["SELECT v FROM meta WHERE k = 'files'"])
-              :meta/v edn/read-string)
-      {}))
 
 ^:reads (defn ^:export load-store
   "Reconstruct the full in-memory store from the db, or nil if empty. Every
