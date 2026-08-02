@@ -32,10 +32,12 @@ refuses to retire a namespace something still requires. Only references that
 must resolve at compile time count, so a quoted symbol or a `^{:covers}` marker
 does not block you, and a recursive function is not its own caller.
 
-To remove a caller and its callee together, put both in one `edit_group` with
-the caller's delete step first. A group applies its steps in order against a
-single store value and verifies once at the end, so an intermediate state with
-a dangling reference is fine -- that is the deliberate escape hatch.
+To remove a caller and its callee together, delete in reverse dependency order:
+the callers first, the callee last, one call each. Every step verifies, and
+every intermediate state is a program that loads.
+
+Two forms that call *each other* have no valid order. Break the cycle first --
+`edit_replace_form` one of them to drop the call -- then delete both.
 
 `query_depends {on "some.ns/name"}` answers the same question *before* you
 write, which is what you want when you are planning a removal rather than

@@ -215,7 +215,7 @@ Three things worth knowing:
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |
 | `edit_replace_form {ns name source}` | Replace a whole form. |
 | `edit_subform {ns form source}` | A change inside a big form, by `match`, `text: true`, or `where: {key value}`. |
-| `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). Refuses while anything still calls it, naming the callers; to remove a caller and its callee together use `edit_group` with the caller deleted first. |
+| `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). Refuses while anything still calls it, naming the callers; to remove a caller and its callee together, delete in reverse dependency order — callers first, callee last. |
 | `edit_move {ns name before}` | Reorder within a namespace. |
 | `edit_comment {ns name text}` | Set (or clear) the comment block rendered above a form. The comment is owned by the form, so it travels with it. |
 | `edit_revert {ns name to?}` | Revert one form to an earlier version. |
