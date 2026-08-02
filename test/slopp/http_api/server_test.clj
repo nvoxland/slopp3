@@ -1,9 +1,9 @@
-(ns slopp.ui-api.server-test
+(ns slopp.http-api.server-test
   "The project listener's two promises: it serves the CALLER's session (the
   reason it is not the MCP transport), and its address is derived rather than
   fixed, so two projects on one machine never fight for a port."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ui-api.server :as server]
+            [slopp.http-api.server :as server]
             [slopp.store :as store]
             [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client] [clojure.set :as set] [clojure.string :as str]))
 
@@ -78,7 +78,7 @@
   (testing "inside the private range"
     (is (<= 49152 (server/derived-port "/w/a") 65535)))
   (testing "two projects on one machine get two ports — the collision a fixed
-            default guaranteed, and the reason ui.port now defaults to unset"
+            default guaranteed, and the reason slopp.api.port now defaults to unset"
     (is (not= (server/derived-port "/w/a") (server/derived-port "/w/b"))))
   (testing "SALTED, so it does not land on the git listener's port for the
             same dir: one MCP process binds both, and an unsalted formula
@@ -88,7 +88,7 @@
 
 (deftest the-preferred-port-resolves-explicit-then-configured-then-derived
   (let [pinned (assoc-in (store/empty-store) [:config "capabilities" :values]
-                         {"ui.port" "7400"})]
+                         {"slopp.api.port" "7400"})]
     (testing "an explicit request wins — ui_serve {port} still means that port"
       (is (= 9000 (server/preferred-port pinned "/w/a" 9000))))
     (testing "then the configured value, for someone who wants a fixed address"
@@ -145,7 +145,7 @@
                                      (or (:web/path m) (:web/read m)))
                                   (vals (ns-publics nsx))))
         candidates (->> (all-ns) (map ns-name)
-                        (filter #(str/starts-with? (str %) "slopp.ui-api."))
+                        (filter #(str/starts-with? (str %) "slopp.http-api."))
                         ;; endpoint-shaped forms in tests are fixtures and
                         ;; claim no route — query_routes scopes the same way
                         (remove #(str/ends-with? (str %) "-test")))

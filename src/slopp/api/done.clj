@@ -1,4 +1,34 @@
 (ns slopp.api.done
+  "The done point's PURE half: what closing a unit of work would FIND, and
+  what it would rewrite.
+
+  The effectful loop — run the suite, try a removal, re-verify, record the
+  boundary — lives in `slopp.api`. Everything here is a function of the store,
+  which is what lets the done point's judgements be tested with plain maps
+  instead of a JVM apiece.
+
+  Three things it answers:
+
+  - **Normalization.** Which changed forms the conservative,
+    behavior-preserving rewriter would actually touch (`normalize-rewrites`
+    reports; nothing is committed), and the commit of those as one
+    `:normalize` changeset (`apply-normalization!`, which throws rather than
+    returning data — a normalization that will not compile is an invariant
+    violation, and recording a boundary over code the image never accepted
+    would be worse than failing).
+  - **Unused requires.** Kondo's candidates, minus the ones marked
+    `^:side-effect`. That marker is an EMPIRICAL escape, not a hint: it means
+    removing the require was tried and BROKE verification, so the require is
+    load-bearing in a way the reference graph cannot see. Such a require is
+    kept, never re-tried, and never reported as unused.
+  - **Lint, as ANCHORS rather than coordinates.** Each finding carries its
+    owning form and a match-ready `:at` snippet, and `:row`/`:col` are
+    dropped. A row number is meaningless to a form-addressed agent and stale
+    the moment anything above it shifts; a form plus a snippet stays true and
+    is already what the edit tools take.
+
+  Lint here is EPISODE-scoped on purpose. Re-judging code this episode never
+  touched is `full_check`'s job — done names it rather than doing it unasked."
   (:require [clojure.string :as str]
             [slopp.api.session :as session]
             [slopp.index :as index]

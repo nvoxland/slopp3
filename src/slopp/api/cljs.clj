@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.api.artifacts :as artifacts] [slopp.web.client :as client]))
+            [slopp.store.render :as render] [slopp.store.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -341,7 +341,7 @@
          ;; Every wrapper's path is root-absolute, which makes this namespace
          ;; unservable behind a proxy that mounts the app under a prefix —
          ;; /api/x resolves at the PROXY, and the page arrives and does
-         ;; nothing (D-ui-hub part 2). One base, set once by whatever mounts
+         ;; nothing (D-hub part 2). One base, set once by whatever mounts
          ;; the app; "" is exactly the behaviour every existing app has.
          "(defonce ^:export base (atom \"\"))\n\n"
          "(defn ^:export set-base! [b] (reset! base b))\n\n"

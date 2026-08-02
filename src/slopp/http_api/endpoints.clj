@@ -1,4 +1,4 @@
-(ns slopp.ui-api.endpoints
+(ns slopp.http-api.endpoints
   "The reviewer UI's JSON boundary — one function per endpoint.
 
   This is what D-spa is organised around: an explicit, typed, independently
@@ -9,17 +9,17 @@
   client.
 
   Two things are deliberately elsewhere. The reads are PERFORMED in
-  `slopp.ui-api.reads`, addressed by vocabulary rather than by var — which is why
-  `slopp.ui-api.server/served-namespaces` names both namespaces and why serving
+  `slopp.http-api.reads`, addressed by vocabulary rather than by var — which is why
+  `slopp.http-api.server/served-namespaces` names both namespaces and why serving
   only this one yields 500s. And the payloads are SHAPED in
-  `slopp.ui-api.model`; handlers here restate them key by key because that is
+  `slopp.http-api.model`; handlers here restate them key by key because that is
   where symbols become strings, JSON having no symbol type.
 
   This is now the WHOLE of what a slopp project serves. The reviewer UI moved
   to its own project and consumes these endpoints over HTTP like any other
   client, so an explicit typed independently testable surface stopped being
   an organising principle and became the only thing there is."
-  (:require [slopp.ui-api.contracts :as contracts]))
+  (:require [slopp.http-api.contracts :as contracts]))
 
 (defn ^{:web/method :get :web/path "/api/namespaces" :web/auth :public
         :web/response contracts/namespace-list
@@ -32,7 +32,7 @@
   is shared store-wide and any endpoint answering the same question answers it
   the same way — which mattered more when an HTML page in this store declared
   the same read, and is still what keeps the read reusable now that the pages
-  belong to the hub (D-ui-hub part 4).
+  belong to the hub (D-hub part 4).
 
   `:ns` is stringified HERE because the wire is JSON and JSON has no symbols.
   Doing it at the boundary rather than in the read leaves the read's own value
@@ -73,7 +73,7 @@
   timeline
   "GET /api/timeline — milestones newest first, plus the working set.
 
-  A projection, not new logic: `slopp.ui-api.model/timeline` already returns a
+  A projection, not new logic: `slopp.http-api.model/timeline` already returns a
   JSON-shaped value, which is why the SPA rewrite is mostly moving rendering
   rather than inventing data."
   [req]
@@ -132,7 +132,7 @@
   "GET /api/modules — the architecture: one row per module, the layering, and
   the cycles.
 
-  A projection, not new logic: `slopp.ui-api.model/module-index` already returns
+  A projection, not new logic: `slopp.http-api.model/module-index` already returns
   JSON-shaped data, so there is nothing to reshape here. That is the payoff
   of shaping once in the model — symbols become strings exactly one place,
   and this endpoint cannot disagree with the model about what a module is.

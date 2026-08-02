@@ -1,4 +1,32 @@
 (ns slopp.index.derive
+  "The PURE derivations over a kondo analysis: the call graph, the anchor
+  vocabularies, and the D6 effect computation built on both.
+
+  Nothing here runs kondo — `slopp.index.analyze` does that and hands the
+  result in. Everything here is a function of that value, which is what lets
+  the effect rules be tested against synthetic analyses.
+
+  **The vocabularies are fixed anchor SETS, and they are split by axis on
+  purpose.** `effectful-leaves` is modification only, because `!` means
+  MUTATION by convention — so console output gets `console-leaves`, a separate
+  axis that can block `:pure` without demanding a bang in the name, and
+  non-determinism gets a third. Collapsing them would force a `!` onto
+  functions that only print, or let a `rand` pass as pure; both were paid for
+  before the axes were separated.
+
+  **Effect is a monotonic fixpoint over the call graph** — a var is effectful
+  if it transitively reaches an anchor — so it is cycle-safe by construction.
+  An anchor is a leaf, a bang-named callee, or a call into an OPAQUE external
+  dependency, that last one worst-case: slopp cannot see the dep's body, so
+  the call is effectful until an author asserts otherwise.
+
+  **Interop has to seed the fixpoint separately, and that is not a detail.**
+  `(ServerSocket. p)` produces no var usage and therefore no call-graph edge,
+  which left a namespace that opens a socket and blocks on `accept` effect-free
+  by every derivation here — and so declarable `:pure`. The `!`-naming rule
+  missed it for the same reason: it fires when a non-bang fn REACHES an
+  effect, and nothing reached one. `external-interop-vars` is why that hole is
+  closed, and why `analyze` requests `:java-class-usages`."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]))

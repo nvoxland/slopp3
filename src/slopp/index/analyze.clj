@@ -1,4 +1,25 @@
 (ns slopp.index.analyze
+  "clj-kondo's `:analysis` over a source string — var definitions, var usages,
+  namespace definitions and usages — and nothing else.
+
+  **It runs its OWN pass, deliberately not the linter's.** The two want
+  different worlds: `:findings` depend on cross-namespace facts and so need
+  kondo's on-disk cache, while `:analysis` is a function of source ALONE.
+  Sharing one cached pass made analysis into IO, and IO here is inherited by
+  every caller — which is most of the pure core. The cost of the split is a
+  second kondo run for sources that also get linted; the benefit is that the
+  core can layer at all.
+
+  Measured before splitting, rather than assumed: a warm-cache run and a
+  `:cache false` run differ ONLY in `:fixed-arities` on cross-namespace var
+  USAGES, and nothing in slopp reads that — every arity reader takes it from
+  var DEFINITIONS, which are same-source and unaffected.
+
+  **The memo key carries the CONFIG, not just the source.** Source alone was
+  once called the honest key, and it was, right up until the config moved:
+  adding `:java-class-usages` left every already-memoized analysis answering
+  without it. Not an error — just a quietly older answer, in the one process
+  where hot-reload makes config changes routine."
   (:require [clj-kondo.core :as kondo]
             [slopp.cache :as cache]
             [slopp.index.derive :as derive]))

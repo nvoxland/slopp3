@@ -25,17 +25,18 @@ slopp.git-projection: slopp.api slopp.git slopp.store
 slopp.git-server: slopp.api slopp.git
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
+slopp.http-api: slopp.api slopp.edit slopp.store slopp.web
 slopp.image: slopp.boot slopp.rt slopp.store
 slopp.index: slopp.api slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.git slopp.store slopp.sync slopp.ui-api slopp.web
+slopp.mcp: slopp.api slopp.git slopp.http-api slopp.store slopp.sync slopp.web
 slopp.merge: slopp.store
 slopp.modules: slopp.api slopp.edit slopp.store
 slopp.multiproc: slopp.api slopp.store
 slopp.observe: slopp.api
 slopp.orientation: slopp.api slopp.edit
-slopp.phase4: slopp.api slopp.mcp slopp.store slopp.web
+slopp.phase4: slopp.api slopp.store
 slopp.rename: slopp.api slopp.store
 slopp.store: slopp.api slopp.cache
 slopp.subform: slopp.api
@@ -44,8 +45,6 @@ slopp.surgeon: slopp.api
 slopp.sync: slopp.api slopp.boot slopp.git slopp.store
 slopp.sync-plan: slopp.sync
 slopp.trace: slopp.api
-slopp.trivia: slopp.store
-slopp.ui-api: slopp.api slopp.edit slopp.store slopp.web
 slopp.unsafe: slopp.api slopp.edit slopp.store
 slopp.verification: slopp.api slopp.image slopp.rt slopp.store
-slopp.warm-spare: slopp.api slopp.image
+slopp.warm-spare: slopp.api

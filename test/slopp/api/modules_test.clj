@@ -444,11 +444,11 @@
    "slopp.git"   ["slopp.store"]
    "slopp.image" ["slopp.rt" "slopp.store"]
    "slopp.index" ["slopp.cache" "slopp.image"]
-   "slopp.mcp"   ["slopp.api" "slopp.git" "slopp.store" "slopp.sync" "slopp.ui-api" "slopp.web"]
+   "slopp.mcp"   ["slopp.api" "slopp.git" "slopp.store" "slopp.sync" "slopp.http-api" "slopp.web"]
    "slopp.rt"    []
    "slopp.store" ["slopp.cache"]
    "slopp.sync"  ["slopp.api" "slopp.boot" "slopp.git" "slopp.store"]
-   "slopp.ui-api"    ["slopp.api" "slopp.edit" "slopp.store" "slopp.web"]
+   "slopp.http-api"    ["slopp.api" "slopp.edit" "slopp.store" "slopp.web"]
    "slopp.web"   []})
 
 (deftest substrate-on-a-real-manifest-names-the-foundation-and-nothing-else

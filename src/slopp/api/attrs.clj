@@ -1,4 +1,25 @@
 (ns slopp.api.attrs
+  "The store's domain-keyword VOCABULARY, and the typo advisory built on it.
+
+  Open maps are the guardrail slopp cannot otherwise offer: a misspelled
+  namespaced key does not fail, it nil-puns, and an agent reading one slice
+  cannot see that `:user/emial` was meant to be `:user/email`. Everything here
+  exists to make that one failure visible.
+
+  **The inventory is DERIVED, never stored.** `keyword-inventory` is a pure
+  function of the forms, so it is correct by construction on every branch,
+  after every merge, and at any past revision — the merge machinery reconciles
+  FORMS, and f(forms) follows for free. That is why this namespace has no
+  index to merge, no per-delta snapshot, and no invalidation logic; recompute
+  when needed, and memoize behind a store-version key only if a profile ever
+  calls for it.
+
+  Two surfaces come off the inventory, and they are the write side and the
+  read side of the same idea: `near-duplicate-keys` is the write-time advisory
+  (a CHANGED form's NEW key sitting one Damerau edit from an ESTABLISHED one),
+  and `vocabulary` is the browse that prevents the typo in the first place —
+  established keys most-used first, so an agent REUSES `:user/email` instead
+  of inventing a near-duplicate."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store] [clojure.string :as str]))
 

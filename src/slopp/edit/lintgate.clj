@@ -1,4 +1,28 @@
 (ns slopp.edit.lintgate
+  "The lint gate on a WRITE: which new kondo findings a candidate store would
+  introduce, and which of those are worth stopping for.
+
+  **What blocks is a SET of finding types, never a severity level.** A write is
+  mid-work by definition, so the only question askable here is whether the FORM
+  is internally incoherent right now — an unresolved symbol, a wrong arity.
+  Whether the CODEBASE is finished is `done`'s question. Gating writes on
+  severity instead killed red-first TDD, the module lifecycle and carried-lint
+  compression, and refused `(if x y)` written on the way to adding its else
+  branch.
+
+  **Your own form refuses; someone else's carries.** An error inside a form
+  being written comes back as a refusal, because you can fix it now and the
+  types involved are almost never false positives. A NEW error in some other
+  form — a stale caller after an incremental signature change — comes back as
+  `:carried` instead, so the REPL flow keeps moving and the done point
+  re-checks it hard. Pre-existing findings never block, so legacy cannot
+  deadlock a store.
+
+  Refusals here also teach, because the commonest cause of an own-form error
+  is an edit that was too NARROW: a binding and its use, a loop and its recur,
+  an arglist and its body must change together — and they are one form, so it
+  is one edit. Agents reliably misread that as needing atomicity ACROSS forms
+  and reach for a batch primitive that does not exist."
   (:require [clojure.string :as str]
             [slopp.edit :as edit]
             [slopp.index :as index]

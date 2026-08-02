@@ -308,7 +308,7 @@
      the accessor is flagging the fix.
 
   **Measured over the whole store: 5 candidate sites, 4 explained by 2 and 3,
-  and the one that survived was a real live bug** — `slopp.ui-api.reads/form-doc`
+  and the one that survived was a real live bug** — `slopp.http-api.reads/form-doc`
   showed a `def`'s value as its docstring on the reviewer page. That is the
   discharge rate the withdrawn rule could not reach.
 

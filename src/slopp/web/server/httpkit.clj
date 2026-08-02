@@ -1,4 +1,24 @@
 (ns slopp.web.server.httpkit
+  "The production adapter (D-web §9): http-kit — ring-compatible,
+  WebSocket-capable, proven under native-image.
+
+  An adapter owns exactly two things — **the socket, and the wire encoding** —
+  and it is the only place in the framework allowed to know about either. It
+  turns a live request into the ring-shaped map `dispatch/handle!` expects
+  (JSON body decoded to DATA, because no handler should ever see an
+  InputStream), calls it, and encodes what comes back: JSON, unless the
+  response says `:web/raw`, in which case the body is written verbatim with
+  the headers it carries.
+
+  Everything ABOVE this line is pure and testable without a port; everything
+  below is somebody else's library. That is what makes the adapter a VALUE —
+  `serve!` picks one by keyword, so the server library is a config choice
+  rather than a rewrite. `slopp.web.server.jdk` is the same contract with no
+  dependency, and the two agreeing is the point.
+
+  Body size is capped from the context (`:web/max-body-bytes`, 1 MiB by
+  default) and answered 413, because an unbounded slurp is bounded only by
+  heap — the same guard, from the same shared reader, in both adapters."
   (:require [slopp.web.dispatch :as dispatch]
             [org.httpkit.server :as hk]
             [cheshire.core :as json]

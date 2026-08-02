@@ -1,4 +1,25 @@
 (ns slopp.web.router
+  "Reading a URL, and nothing else. The two halves of one — match the PATH
+  against a route table, parse the QUERY STRING into data — because they are
+  the same question asked of the two sides of the `?`.
+
+  Pure: request data in, decision data out. No identity, no policy, no
+  handler, no socket. `slopp.web.dispatch` is what puts those in order around
+  it; this namespace never learns they exist, which is why it is also the only
+  part of the framework `slopp.api` exports (`match` carries
+  `:export \"slopp.api\"` — the store's route analysis reasons about paths with
+  the same matcher that serves them, so the two cannot disagree).
+
+  Two rules carry most of the weight:
+
+  - **Precedence is fewest-captures-wins, and a trailing `*rest` ranks far
+    below both a static segment and a single-segment `:capture`.** That is what
+    makes a catch-all safe to add: it can never steal a route that already
+    matched, so a static mount or an SPA fallback is a pure addition.
+  - **A malformed query pair is dropped, never thrown.** A query string is
+    arbitrary text off the network, and the answer to garbage is a page, not a
+    500. A bare key is PRESENT with an empty value — present-and-empty is a
+    different fact from absent, and a handler must be able to tell them apart."
   (:require [clojure.string :as str]))
 
 (defn ^{:export "slopp.api"

@@ -1,4 +1,32 @@
 (ns slopp.web.dispatch
+  "The request pipeline, and **the order IS the guarantee**: identity →
+  route → policy → declared reads → handler → effects. A handler is
+  unreachable un-authorized, and it cannot be reached by any other path,
+  because there is exactly one.
+
+  Everything here is in-process. Request map in, response map out; the socket
+  belongs to an adapter. That is what makes an app's whole behaviour — auth,
+  reads, effects, error mapping — testable without a port.
+
+  Three properties this namespace owns, each of which exists because the
+  static gates cannot see far enough:
+
+  - **Effects are BOUNDED by the route's declaration.** `web-unsafe-get` and
+    `web-undeclared-effect` read a handler BODY; a handler that computes its
+    effects defeats them. So the dispatcher refuses an undeclared kind before
+    running any of them, and validates every kind before the first one — a
+    typo must not leave a partial write.
+  - **A nil policy DENIES, and so does an empty composite.** `[:all]` over
+    nothing is vacuously true, which would authorize everyone; default-deny
+    here matches the write-time refusal rather than contradicting it.
+  - **Failure is DATA, and disclosure is a decision.** An `ex-info` carrying
+    `:web/status` surfaces its message plus only an explicit `:web/public`
+    allowlist. Anything else is a generic 500 with the detail on stderr — the
+    body never carries an internal.
+
+  Query parsing happens once, here, so no app writes its own splitter — and a
+  declared read addresses `[:query-params :view]` exactly as it addresses
+  `[:path-params :id]`."
   (:require [slopp.web.router :as router] [slopp.web.auth :as auth] [clojure.string :as str]))
 
 (defn authorized?

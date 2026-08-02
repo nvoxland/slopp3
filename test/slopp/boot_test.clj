@@ -382,3 +382,31 @@
     (testing "a second call never seeds over the first"
       (is (= :kept (:action (#'boot/ensure-bundled-libs!)))
           "once the basis names its libs, it is the basis"))))
+
+(deftest a-reload-failure-reports-the-cause-not-the-wrapper
+  (testing "a wrapped compiler error surfaces the reason, not just its position"
+    ;; the shape actually observed: getMessage stops at the wrapper, and the
+    ;; sentence an operator needs ("Unable to resolve symbol: nsfilter") is one
+    ;; or more causes down. Reporting only the wrapper makes every distinct
+    ;; failure look like the same one.
+    (let [root    (RuntimeException. "Unable to resolve symbol: nsfilter")
+          wrapped (RuntimeException. "Syntax error macroexpanding at (1:1)." root)
+          msg     (boot/failure-message wrapped)]
+      (is (re-find #"nsfilter" msg)
+          "the root cause's message must reach the report")
+      (is (re-find #"macroexpanding" msg)
+          "the wrapper's position is still worth keeping — it says WHERE")))
+
+  (testing "a chain deeper than one level walks to the bottom"
+    (let [root (RuntimeException. "boom at the bottom")
+          mid  (RuntimeException. "middle" root)
+          top  (RuntimeException. "top" mid)]
+      (is (re-find #"boom at the bottom" (boot/failure-message top)))))
+
+  (testing "an unwrapped throwable reports its message once, not twice"
+    (let [msg (boot/failure-message (RuntimeException. "plain"))]
+      (is (= "plain" msg))))
+
+  (testing "a throwable with no message at all still names its class"
+    (is (re-find #"NullPointerException"
+                 (boot/failure-message (NullPointerException.))))))

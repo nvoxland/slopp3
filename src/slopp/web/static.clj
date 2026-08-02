@@ -1,4 +1,29 @@
-(ns slopp.web.static (:require [clojure.string :as str]))
+(ns slopp.web.static
+  "Serving BYTES rather than handlers: mount a URL prefix over a path prefix
+  and answer whatever is under it, as a raw response the adapters write
+  verbatim — no JSON wrapping, no handler var.
+
+  The seam is the **reader**. `mount-routes` takes one, and where the bytes
+  actually live is that reader's business: a built app resolves a file under
+  its root and then a classpath resource (`file-or-resource-reader`, which is
+  how a native binary carries its own assets); a live store looks the path up
+  in a manifest instead. Same routes, same mounts, different reader — which is
+  what lets `--live` and a shipped jar serve the identical asset tree.
+
+  **The subject of this namespace is containment.** A static mount spans a
+  whole subtree via the router's trailing catch-all, which removes the
+  one-segment route that used to stop `..` by accident. So traversal is
+  refused TWICE on purpose: in `mount-routes` before the reader is ever
+  called, because a custom reader may check nothing at all, and again inside
+  `file-or-resource-reader`, because a reader must defend itself rather than
+  trust the route shape that happens to precede it. A rejected path is
+  indistinguishable from a missing one — 404, never a leak.
+
+  A trailing slash on a configured prefix is normalised away here, since a
+  filesystem reader silently forgives `public//app.css` and a store-backed one
+  does not — the same config would otherwise work in a built app and serve
+  nothing under `--live`."
+  (:require [clojure.string :as str]))
 
 (def ^:private content-types
   "Extension → media type for the built-app reader (a store-backed reader

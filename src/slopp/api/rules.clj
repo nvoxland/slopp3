@@ -125,7 +125,7 @@
    The reason it is worth having at all is not tidiness. A bare exception can
    only be caught by TYPE, so a caller who wants to handle one failure ends up
    catching a whole class and swallowing every unrelated bug in the same block.
-   That is not hypothetical: `ui-api.heartbeat/post!` wrapped its entire body
+   That is not hypothetical: `http-api.heartbeat/post!` wrapped its entire body
    in `(catch Exception _ nil)` and reported the project as ABSENT whenever any
    bug fired, and it was only that wide because the transport underneath threw
    a bare `IOException`. Give the throw `ex-data` and the catch can be narrow.
@@ -680,7 +680,7 @@
    VALUE — which is where a DOCSTRING sits — so it never once fired on a
    documented global, i.e. on every global anyone had bothered to justify, and
    looked healthy for its entire life while nine accumulated. The same class
-   recurred in `contract-drift` a day later, and again in `slopp.ui-api.reads/
+   recurred in `contract-drift` a day later, and again in `slopp.http-api.reads/
    form-doc`, which showed a `def`'s value as its docstring on the reviewer
    page until this rule found it.
 

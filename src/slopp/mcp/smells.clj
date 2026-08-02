@@ -1,4 +1,32 @@
 (ns slopp.mcp.smells
+  "Noticing that an agent is using the tools the hard way, and saying so once.
+
+  A tool call carries no intent, so this reads SHAPE over a session: three
+  `test_run`s in a row, two whole-namespace dumps, a search streak, a
+  `test_run` immediately before `done`. Each pattern maps to one line naming
+  the tool that would have answered in a single call. The registry is the
+  whole design — `[key owner-tools fires? message]` over a counter map — so a
+  new smell found by dogfooding is one entry and no plumbing.
+
+  Two rules exist because a mis-aimed hint is worse than no hint, and both
+  were learned the hard way:
+
+  - **A smell is only considered on a call it OWNS.** Reading every counter on
+    every call surfaced a stale search streak on a `deps_add`, and a hint that
+    could not possibly describe what you just did teaches an agent to stop
+    reading hints.
+  - **Once per session, and at most once per 30 minutes per STORE** — the
+    cooldown lives in db-meta so it survives a restart. Advice repeated is
+    advice ignored.
+
+  Messages are suggestions and never refuse anything.
+
+  **Known limitation: this counts shape, and shape is not intent.** The
+  whole-namespace dump hint is right for the read-one-form-then-edit-it loop
+  and wrong during restructuring, where the unit of comprehension genuinely IS
+  the whole namespace. A counter cannot tell those apart, so the hint fires on
+  the legitimate case; the cooldown is what keeps that tolerable rather than a
+  fix."
   (:require [clojure.edn :as edn]
             [slopp.store.db :as db]
             [slopp.mcp.tools :as tools]))

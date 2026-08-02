@@ -1,4 +1,21 @@
 (ns slopp.web.server.jdk
+  "The zero-dependency adapter: `com.sun.net.httpserver`, already in the JDK.
+
+  Same contract as `slopp.web.server.httpkit` — own the socket and the wire
+  encoding, own nothing else. Request in, `dispatch/handle!`, JSON out unless
+  the response says `:web/raw`. Port 0 binds ephemeral and the return carries
+  the real number.
+
+  It exists for two reasons. The first is that a web app should be runnable
+  with no server library at all, which matters most in the smallest cases — a
+  fixture, a probe, a project not yet sure it wants the dependency. The second
+  is structural: **a seam with one implementation is not a seam.** Having a
+  second adapter is what keeps the framework from quietly growing a dependency
+  on http-kit's particular ring dialect, and any behaviour the two disagree
+  on is a bug in whichever one is doing more than it should.
+
+  Not the default — http-kit is (`serve!`'s `:web/adapter` defaults to
+  `:http-kit`). Reach for `:jdk` when the dependency is the problem."
   (:require [slopp.web.dispatch :as dispatch]
             [cheshire.core :as json] [clojure.string :as str])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]

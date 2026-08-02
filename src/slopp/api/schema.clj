@@ -1,4 +1,32 @@
 (ns slopp.api.schema
+  "The generative schema check: does a form's declared `:=>` `:malli/schema`
+  actually hold when the function is CALLED?
+
+  A schema that lies is worse than no schema, and nothing else in slopp can
+  catch it — lint reads syntax, tests read the cases someone thought of, and a
+  `:=>` declaration is simply believed by every reader downstream. So a
+  changed form carrying one gets `malli.generator/check` run against its LIVE
+  var, and a counterexample is drift (D2).
+
+  **Candidate selection is the whole design here.** Generative checking CALLS
+  the function, so a candidate has to be safe to call with arbitrary generated
+  input:
+
+  - **Analyzer-pure in the strict sense** — no effects AND no non-determinism.
+    Effect-free is not enough: a `rand`-using function would make the check
+    FLAKE, and drift is `:error`, so a flake would turn a green `done` red.
+  - **Declaring no `:throws`.** A `:=>` asserts a total function and the
+    checker treats any exception as drift, but a form that declares
+    `{:throws …}` has said in advance that it signals failure by throwing —
+    calling it with generated input and reporting the throw is the checker
+    misreading a declaration it now has access to. An EMPTY `:throws` is
+    still checked, and the asymmetry is the point: `[]` is a claim that
+    nothing is signalled, so a throw contradicts the author.
+
+  **The check runs in the IMAGE, never in this process.** malli is an inherent
+  dependency of the project's image; the server runs on kernel deps and cannot
+  call it. Hence `check-string` builds a self-contained eval-string and
+  `drift!` hands it to the repl."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.store :as store]

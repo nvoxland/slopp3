@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set]))
+            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -36,7 +36,7 @@
                                                "/tmp/shop")))))
     (testing "unset, the port DERIVES from the store dir"
       ;; http.port's registry DEFAULT is 8080, and a fixed default is exactly
-      ;; what ui-api.server/derived-port exists to refuse: it "worked for
+      ;; what http-api.server/derived-port exists to refuse: it "worked for
       ;; exactly one project and collided for the second". Production wants a
       ;; known number, so the default still stands there — but two dev
       ;; sessions on one machine must not fight, so an UNSET port derives.
@@ -153,8 +153,17 @@
   served if the store's namespaces really loaded into that image). Routing
   is `slopp.web`'s job and is tested in `slopp.web-test`; nothing here
   stands in for it. Zero deps on purpose: the child image carries only the
-  store's own manifest, which for this fixture is empty."
+  store's own manifest, which for this fixture is empty.
+
+  It echoes `:web/routes` for the same reason it echoes `:web/perform-ctx`:
+  the managed server's failures have all been options that never crossed,
+  and an option is only observably carried if something on the far side can
+  be asked about it."
   (str "(ns slopp.web\n"
+       ;; the real framework ships these as one vendored family on the
+       ;; child's classpath; here they are store namespaces, so the sibling
+       ;; is only loaded if something makes it REACHABLE
+       "  (:require [slopp.web.static])\n"
        "  (:import [com.sun.net.httpserver HttpServer HttpHandler]\n"
        "           [java.net InetSocketAddress]))\n"
        "\n"
@@ -169,11 +178,37 @@
        "                   (str \"ns=\" (pr-str (:web/namespaces opts))\n"
        "                        \" ctx=\" (pr-str (:web/perform-ctx opts))\n"
        "                        \" cap=\" (pr-str (:web/max-body-bytes opts))\n"
+       "                        \" routes=\" (pr-str (:web/routes opts))\n"
        "                        \" app=\" (when-let [v (resolve 'demo.app/greeting)] (v))))]\n"
        "            (.sendResponseHeaders x 200 (long (alength b)))\n"
        "            (with-open [o (.getResponseBody x)] (.write o b))))))\n"
        "    (.start srv)\n"
        "    {:port (.getPort (.getAddress srv))}))\n"))
+
+(def fake-static-src
+  "A stand-in `slopp.web.static` for the app-image test, as store source.
+
+  Faked for the same reason as [[fake-web-src]] — nothing is vendored in a
+  checkout — but this one has to do REAL WORK to be worth anything. The
+  wiring under test is store bytes → a temp dir the parent writes → a reader
+  in a child JVM that has no store, and only a reader that actually opens
+  the file proves the chain. So `file-or-resource-reader` here slurps from
+  `root` rather than returning a canned value, and `mount-routes` puts what
+  it read into the row.
+
+  The real pair is tested in `web-test/static-mounts-serve-raw-bytes`;
+  nothing here stands in for routing or for content-type resolution."
+  (str "(ns slopp.web.static)\n"
+       "\n"
+       "(defn file-or-resource-reader \"R.\" [root]\n"
+       "  (fn [path]\n"
+       "    (let [f (java.io.File. (str root) (str path))]\n"
+       "      (when (.isFile f) {:content (slurp f)}))))\n"
+       "\n"
+       "(defn mount-routes \"M.\" [mounts reader]\n"
+       "  (vec (for [[url prefix] mounts]\n"
+       "         {:mounted url\n"
+       "          :read (:content (reader (str prefix \"/app.css\")))})))\n"))
 
 (deftest ^:external the-app-server-comes-up-and-answers-without-the-app-asking
   ;; The directive this whole namespace exists for: "when we have a web slopp
@@ -191,6 +226,7 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         s    (-> (store/empty-store)
                  (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'slopp.web.static fake-static-src)
                  (store/ingest 'demo.app
                                (str "(ns demo.app)\n\n"
                                     "(defn greeting \"G.\" [] \"hello from the store\")\n\n"
@@ -250,6 +286,7 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         base (-> (store/empty-store)
                  (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'slopp.web.static fake-static-src)
                  (#(first (store/record-config-put % "capabilities" :manifest
                                                    "http.enabled" "true"))))
         app  (fn [greeting]
@@ -296,32 +333,39 @@
 (deftest whether-slopp-manages-a-dev-server-is-its-own-question
   ;; http.enabled means "this project serves HTTP". It does NOT mean "slopp
   ;; should run that server for you", and the two came apart on the first
-  ;; store we looked at — slopp's own. Its web surface IS the MCP HTTP
-  ;; transport plus the reviewer API, which the live session already serves
-  ;; over the LIVE store; a managed server there would boot a second image
-  ;; and serve a snapshot of the page you are looking at, one done point
-  ;; behind it.
+  ;; store we looked at — slopp's own. Its web surface IS the reviewer API,
+  ;; which the live session already serves over the LIVE store; a managed
+  ;; server there would boot a second image and serve a snapshot of the page
+  ;; you are looking at, one done point behind it.
   ;;
-  ;; So the dev lifecycle gets its own key. Deliberately NOT folded into
-  ;; serve-plan: that answers "what would this store serve", which
-  ;; production will need too, and a dev-only opt-out does not belong in it.
-  (let [web  (-> (store/empty-store)
-                 (#(first (store/record-config-put % "capabilities" :manifest
-                                                   "http.enabled" "true"))))
-        off  (first (store/record-config-put web "capabilities" :manifest
-                                             "dev.server" "false"))]
-    (testing "a web project is managed by default — the whole directive is
-              that the app does not have to ask"
-      (is (devserver/managed? web)))
-    (testing "a project that serves itself opts out, and stays a web project
-              while it does"
-      (is (not (devserver/managed? off)))
-      (is (:enabled? (devserver/serve-plan off "/tmp/x")))
+  ;; That used to be the `dev.server` capability. It is now DERIVED, because
+  ;; the exemption is a fact about the running process and never a project's
+  ;; preference — see `the-only-store-that-should-not-be-managed-is-derivable`
+  ;; for why a knob only one store should touch is a footgun for everyone.
+  ;;
+  ;; Deliberately NOT folded into serve-plan: that answers "what would this
+  ;; store serve", which production will need too, and a dev-only exemption
+  ;; does not belong in it.
+  (let [web (-> (store/empty-store)
+                (store/ingest 'app.api
+                              (str "(ns app.api)\n\n"
+                                   "(defn ^{:web/method :get :web/path \"/hi\"\n"
+                                   "        :malli/schema [:=> [:cat :map] :map]\n"
+                                   "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
+                (#(first (store/record-config-put % "capabilities" :manifest
+                                                  "http.enabled" "true"))))]
+    (testing "a web project is managed, and the app does not have to ask —
+              nothing it can configure turns this off any more"
+      (is (devserver/managed? web #{'something.else})))
+    (testing "a store this process already serves is exempt, and stays a web
+              project while it is"
+      (is (not (devserver/managed? web #{'app.api})))
+      (is (:enabled? (devserver/serve-plan web "/tmp/x")))
       (testing "and the plan still says where it WOULD serve, because that is
                 what production asks"
-        (is (pos? (:port (devserver/serve-plan off "/tmp/x"))))))
+        (is (pos? (:port (devserver/serve-plan web "/tmp/x"))))))
     (testing "a store that serves no HTTP at all is not managed either"
-      (is (not (devserver/managed? (store/empty-store)))))))
+      (is (not (devserver/managed? (store/empty-store) #{}))))))
 
 (deftest ^:external a-refresh-reports-what-it-cost
   ;; slopp-ui asked "measure app-image boot cost, and let the number pick the
@@ -335,6 +379,7 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         s    (-> (store/empty-store)
                  (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'slopp.web.static fake-static-src)
                  (store/ingest 'demo.app
                                (str "(ns demo.app)\n\n"
                                     "(defn ^{:web/method :get :web/path \"/hi\"\n"
@@ -376,9 +421,13 @@
         ;; serve! reads the address options and hands the whole map to
         ;; context, which reads the rest. Both, because either alone is half.
         accepted  (into (opt-keys #'web/serve!) (opt-keys #'web/context))
+                ;; every option it COULD carry, so the plan has to exercise them all —
+        ;; a plan missing :static made :web/routes look ungenerated and let the
+        ;; stale "deliberately dropped" entry survive the change that generated it
         plan      {:namespaces ['demo.app] :host "127.0.0.1" :port 1234
                    :adapter :http-kit :max-body-bytes 42
-                   :context-builder 'demo.sys/deps}
+                   :context-builder 'demo.sys/deps
+                   :static {"/assets" "public"} :static-dir "/tmp/x"}
         generated (->> (edn/read-string {:default (fn [_ v] v)}
                                         (devserver/serve-code plan))
                        (tree-seq coll? seq)
@@ -392,4 +441,178 @@
       ;; the rule `crossings/internal-markers` already follows: a partial
       ;; classification is worse than none, because the one real hole drowns
       ;; in the entries nobody explained
-      (is (every? #(and (string? %) (seq %)) (vals devserver/unserved-options))))))
+      (is (every? #(and (string? %) (seq %)) (vals devserver/unserved-options))))
+    (testing "nothing is BOTH generated and declared dropped"
+      ;; The union check above cannot see this: a key in both sets still
+      ;; satisfies it, so prose explaining why an option is missing survives
+      ;; the write that stops it being missing. Same hand-kept-twin shape
+      ;; this test exists to kill, one level up — the classification is
+      ;; itself a list that has to track the code.
+      (is (empty? (set/intersection generated dropped))
+          (str "declared dropped but actually generated: "
+               (set/intersection generated dropped))))))
+
+(deftest a-managed-app-serves-the-static-assets-it-declares
+  ;; The managed server answered 404 for every static mount, because mounts
+  ;; read the store's file manifest and the child image has no store. The
+  ;; project that hurt is the one whose whole purpose is to be LOOKED AT: a
+  ;; UI's stylesheet and its cljs bundle are the product, so "managed" meant
+  ;; an unstyled page with a dead bundle. That project switched dev.server
+  ;; off, which reads as "the feature does not apply to me" and is really
+  ;; "the feature is broken for me" — the switch hid the bug.
+  ;;
+  ;; The seam was already right: `mount-routes` takes a READER fn, not a
+  ;; store, and `file-or-resource-reader` is the filesystem one. So the fix
+  ;; is materialize-then-point, not a new mechanism.
+  (let [plan {:namespaces ['demo.app] :host "127.0.0.1" :port 1234
+              :adapter :http-kit
+              :static {"/assets" "public"}
+              :static-dir "/tmp/slopp-static-probe"}
+        code (devserver/serve-code plan)]
+    (testing "the generated call mounts the prefixes the store declared"
+      (is (str/includes? code "mount-routes") "no mount call was generated")
+      (is (str/includes? code "/assets"))
+      (is (str/includes? code "public")))
+    (testing "reading from the dir the parent materialized, since the child has no store"
+      (is (str/includes? code "file-or-resource-reader"))
+      (is (str/includes? code "/tmp/slopp-static-probe")))
+    (testing "and the namespace providing both is REQUIRED in the child"
+      ;; Asserting the substring "slopp.web.static" passes on the qualified
+      ;; symbol alone, so the first version of this went green while the
+      ;; generated code would still have thrown at runtime — the child had
+      ;; the symbol and not the namespace. Match the require FORM.
+      (is (str/includes? code "(require (quote slopp.web.static))")
+          "the child resolves slopp.web.static/mount-routes only if it required it"))
+    (testing "a plan with no mounts generates no routes key at all"
+      (is (not (str/includes? (devserver/serve-code (dissoc plan :static :static-dir))
+                              "mount-routes"))
+          "an app without mounts must not pay for the machinery"))))
+
+(deftest static-bytes-are-materialized-for-a-child-that-has-no-store
+  ;; The whole reason mounts were unserved. The child image is a separate JVM
+  ;; with no store, so the bytes have to be somewhere it can read them —
+  ;; which `file-or-resource-reader` already does, given a dir.
+  (let [put  (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
+        s    (-> (store/empty-store)
+                 (put "http.enabled" "true")
+                 (put "http.static./assets" "public"))
+        s    (first (store/record-file-put s "public/app.css" "body{}"))
+        s    (first (store/record-file-put s "public/deep/x.txt" "hi"))
+        s    (first (store/record-file-put s "src/notes.md" "# not mounted"))
+        ;; tracked files carry their content inline, so the blob fallback is
+        ;; never consulted here — artifacts are the case that needs it
+        dir  (devserver/materialize-static! s {"/assets" "public"} (constantly nil))]
+    (testing "a mounted file lands under the dir at its manifest path"
+      (is (= "body{}" (slurp (str dir "/public/app.css")))))
+    (testing "nested paths keep their shape, so one mount serves a TREE"
+      (is (= "hi" (slurp (str dir "/public/deep/x.txt")))))
+    (testing "a file no mount covers is not copied — the dir is the mount, not the store"
+      (is (not (.exists (java.io.File. (str dir "/src/notes.md"))))))
+    (testing "no mounts means no dir, so an app without assets allocates nothing"
+      (is (nil? (devserver/materialize-static! s {} (constantly nil)))))))
+
+(deftest ^:external a-managed-server-carries-the-apps-assets-all-the-way-into-the-child
+  ;; The wiring test. The unit tests prove `serve-code` generates a mount and
+  ;; `materialize-static!` writes bytes; neither would have caught the actual
+  ;; defect, which was that nothing connected them. The chain is: store
+  ;; manifest → a temp dir the parent writes → a reader in a child JVM that
+  ;; has no store — three processes' worth of assumptions and no single unit
+  ;; that spans them.
+  (let [dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-app-static"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+        s    (-> (store/empty-store)
+                 (store/ingest 'slopp.web fake-web-src)
+                 (store/ingest 'slopp.web.static fake-static-src)
+                 (store/ingest 'demo.app
+                               (str "(ns demo.app)\n\n"
+                                    "(defn greeting \"G.\" [] \"hello\")\n"))
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.enabled" "true")))
+                 (#(first (store/record-config-put % "capabilities" :manifest
+                                                   "http.static./assets" "public")))
+                 (#(first (store/record-file-put % "public/app.css"
+                                                 "body{color:rebeccapurple}"))))
+        sess (atom {})
+        r    (devserver/start! sess s dir)]
+    (try
+      (is (:serving? r) (str "start! did not serve: " (:reason r)))
+      (let [body (:http/body (client/request {:http/url (:url r)
+                                              :http/timeout-ms 5000}))]
+        (testing "the mount the store declared reached the child as a route"
+          (is (str/includes? body ":mounted \"/assets\"") body))
+        (testing "and the child READ the file — store bytes, materialized,
+                  opened by a process that cannot see the store"
+          ;; the assertion that spans all three. A mount that arrived but
+          ;; pointed at an empty dir passes the line above and fails here.
+          (is (str/includes? body "rebeccapurple") body)))
+      (finally (devserver/stop! r)))))
+
+(deftest the-only-store-that-should-not-be-managed-is-derivable
+  ;; `dev.server` existed for exactly one true case: a store whose HTTP
+  ;; surface the live session ALREADY serves, where a managed server would
+  ;; boot a second image and serve a staler copy of the page in front of
+  ;; you. That is slopp's own store, and it is the only one on earth.
+  ;;
+  ;; A capability that one store should ever set is a footgun for everyone
+  ;; else, and it went off within a week: the second project to meet it set
+  ;; it false because its ASSETS were 404ing, and the switch then hid that
+  ;; bug rather than reporting it. So the question stops being asked and
+  ;; starts being computed — this process knows what it serves.
+  (let [put  (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
+        web  (-> (store/empty-store)
+                 (store/ingest 'app.api
+                               (str "(ns app.api)\n\n"
+                                    "(defn ^{:web/method :get :web/path \"/hi\"\n"
+                                    "        :malli/schema [:=> [:cat :map] :map]\n"
+                                    "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
+                 (put "http.enabled" "true"))]
+    (testing "an ordinary web project is not self-served, whatever else is running"
+      (is (not (devserver/self-served? web #{'some.other.ns}))))
+    (testing "a store whose every serving namespace this process already serves IS"
+      (is (devserver/self-served? web #{'app.api})))
+    (testing "and a store that serves NOTHING is not self-served — two empty
+              sets agree, and vacuous truth here would silently stop managing
+              every non-web project's server for the wrong reason"
+      (is (not (devserver/self-served? (store/empty-store) #{}))))))
+
+(deftest static-bytes-for-an-artifact-come-from-the-on-disk-cache
+  ;; Measured against slopp-ui's real store minutes after shipping mounts:
+  ;; `/assets/cljs/main.js` still 404ed. Its assets are ARTIFACTS
+  ;; (compile_client writes the bundle as one), `store/file-content`
+  ;; answered `:content nil`, every path was filtered out, and the
+  ;; materialized dir held nothing.
+  ;;
+  ;; An artifact keeps its bytes OUT OF LINE under
+  ;; `<store-dir>/.slopp/artifacts/<sha>`. `:content nil` carries two facts
+  ;; at once — there are no bytes, and the bytes are one indirection away —
+  ;; and the skip written for the first silently swallowed the second,
+  ;; producing precisely the 404 it existed to avoid.
+  ;;
+  ;; **This uses a REAL artifact deliberately** (slopp-ui's suggestion, and
+  ;; they were right): the first version passed a synthetic fetcher, went
+  ;; green, and proved only that the plumbing called something — while the
+  ;; accessor underneath was the blob table, which does not hold artifacts
+  ;; and returned nil for the real sha. A fixture standing in for the thing
+  ;; under test cannot fail the way production does. Their store also had an
+  ;; EMPTY `:files`, so a fixture with any tracked asset would half-work and
+  ;; read as success.
+  (let [dir   (str (java.nio.file.Files/createTempDirectory
+                    "slopp-artifact-store"
+                    (make-array java.nio.file.attribute.FileAttribute 0)))
+        bs    (.getBytes "console.log(1)" "UTF-8")
+        entry (artifacts/put! dir bs {:kind :cljs}
+                              :content-type "application/javascript")
+        st    {:artifacts {"public/cljs/main.js" entry} :blobs {}}
+        out   (devserver/materialize-static! st {"/assets" "public"} dir)]
+    (testing "the artifact's bytes are read from the cache and written out"
+      (is (= "console.log(1)" (slurp (str out "/public/cljs/main.js")))))
+    (testing "and inline content is NOT required — the store answers nil for it"
+      (is (nil? (:content (store/file-content st "public/cljs/main.js")))))
+    (testing "a store-dir holding no such artifact skips and does not throw —
+              one dead asset must not take down a server serving every other path"
+      (let [empty-dir (str (java.nio.file.Files/createTempDirectory
+                            "slopp-empty-store"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+            o2 (devserver/materialize-static! st {"/assets" "public"} empty-dir)]
+        (is (not (.exists (java.io.File. (str o2 "/public/cljs/main.js")))))))))

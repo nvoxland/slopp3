@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.api.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.api.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.api.rules :as rules] [slopp.api.done :as done] [slopp.api.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.api.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.edit.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.api.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -2867,35 +2867,35 @@ recompiled (session/maybe-recompile-client! session ns-sym)]
     ;; revisited — so a machine with no hub had orientation hand a human a
     ;; connection refused. A hub is optional; absence is an ordinary state and
     ;; has to be sayable.
-    (:ui-hub @session) (assoc :ui-hub (:ui-hub @session))
+    (:hub @session) (assoc :hub (:hub @session))
     ;; a hub that REFUSED our beat is a third state, and it must not read as
     ;; the second. The hub validates each check-in against its own copy of the
     ;; beat contract — a hand-maintained twin of ours, because neither store
     ;; can read the other — so this 400 IS the notification that the two
     ;; copies diverged. Called "no hub is answering" it sends someone to check
     ;; whether a hub is running, the one thing that is not wrong.
-    (and (not (:ui-hub @session)) (:ui-hub-refused @session))
-    (assoc :ui-hub-note
-           (str "the hub at " (:ui-hub-configured @session) " REFUSED this"
+    (and (not (:hub @session)) (:hub-refused @session))
+    (assoc :hub-note
+           (str "the hub at " (:hub-configured @session) " REFUSED this"
                 " project's check-in with "
-                (:hub/refused (:ui-hub-refused @session))
+                (:hub/refused (:hub-refused @session))
                 " — it is running and it rejected what we sent, so this is"
                 " ours to fix, not a missing hub. Its explanation: "
-                (pr-str (:hub/explain (:ui-hub-refused @session)))
+                (pr-str (:hub/explain (:hub-refused @session)))
                 ". The beat contract crosses the split by COPY"
-                " (ui-api.contracts/project-beat here, its twin over there),"
+                " (http-api.contracts/project-beat here, its twin over there),"
                 " so a refusal is where drift between them surfaces"))
 
     ;; NOT the refused case — cond-> tests every clause in order, so without
     ;; this guard both fire and the generic note overwrites the specific one
-    (and (not (:ui-hub @session))
-         (not (:ui-hub-refused @session))
-         (:ui-hub-configured @session))
-    (assoc :ui-hub-note
-           (str "no hub is answering at " (:ui-hub-configured @session)
+    (and (not (:hub @session))
+         (not (:hub-refused @session))
+         (:hub-configured @session))
+    (assoc :hub-note
+           (str "no hub is answering at " (:hub-configured @session)
                 " — this project keeps beating, so it appears within one"
                 " interval of a hub starting. Start one (the slopp-ui"
-                " project) or set the ui.hub-port capability to 0. Until"
+                " project) or set the slopp.hub.port capability to 0. Until"
                 " then :ui is all there is, and it serves JSON"))
       relevant   (assoc :relevant relevant))))
 

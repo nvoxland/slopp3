@@ -1,4 +1,4 @@
-(ns slopp.ui-api.server
+(ns slopp.http-api.server
   "The listener a project serves its OWN reviewer UI on.
 
   One per MCP process, over the live session — which is the whole reason this
@@ -8,14 +8,14 @@
   than what the agent is working against right now, and it would boot a second
   image to see even that.
 
-  Its address is derived rather than configured (D-ui-hub). The fixed
-  `ui.port` default worked for one project on a machine and collided for the
+  Its address is derived rather than configured (D-hub). The fixed
+  `slopp.api.port` default worked for one project on a machine and collided for the
   second; now nobody needs to know this port at all, because the address a
   human remembers belongs to the HUB, which is its own project (`slopp-ui`)
   and proxies here."
   (:require [slopp.api.capabilities :as caps]
             [slopp.web :as web]
-            [slopp.ui-api.reads] [slopp.ui-api.endpoints]))
+            [slopp.http-api.reads] [slopp.http-api.endpoints]))
 
 (defonce ^:private current
   ;; defonce, not def: under --live this namespace reloads on every edit,
@@ -52,8 +52,8 @@
   and one exported list is what makes a second mount a visible choice rather
   than a copied literal.
 
-  Both halves of a request live here. `slopp.ui-api.api` declares the `/api/*`
-  routes; `slopp.ui-api.reads` declares the `:web/read` performers they resolve
+  Both halves of a request live here. `slopp.http-api.api` declares the `/api/*`
+  routes; `slopp.http-api.reads` declares the `:web/read` performers they resolve
   through. Reads are addressed by VOCABULARY rather than by var, so an
   endpoint names a KIND and the performer for it is found — but that also
   means a list carrying only one of the two namespaces answers 500 rather
@@ -61,15 +61,15 @@
 
   It is a short list now and stays that way: a project serves JSON and the
   EDN contract, nothing else. The pages a human looks at belong to the hub,
-  which is a separate application (D-ui-hub part 4)."
-  ['slopp.ui-api.reads 'slopp.ui-api.endpoints])
+  which is a separate application (D-hub part 4)."
+  ['slopp.http-api.reads 'slopp.http-api.endpoints])
 
 (defn ^:export derived-port
   "A localhost port DERIVED from the store dir for this project's own UI
   listener — stable across restarts, and different for every project on the
   machine.
 
-  This is what replaced a fixed `ui.port` default (D-ui-hub). One well-known
+  This is what replaced a fixed `slopp.api.port` default (D-hub). One well-known
   port worked for exactly one project and collided for the second; deriving
   makes the collision structurally impossible instead of configured away, and
   nobody needs to know the number, because the address a human remembers is
@@ -86,7 +86,7 @@
 
 (defn ^:export preferred-port
   "Which port this project's UI listener should try: an explicit request
-  first, then the configured `ui.port`, then [[derived-port]] for `dir`, then
+  first, then the configured `slopp.api.port`, then [[derived-port]] for `dir`, then
   0 (ephemeral) when there is no dir to derive from.
 
   ONE resolution, because two callers ask — the autostart in `slopp.mcp` and
@@ -94,7 +94,7 @@
   on an address neither of them reported."
   [store dir explicit]
   (or explicit
-      (caps/effective store "ui.port")
+      (caps/effective store "slopp.api.port")
       (some-> dir derived-port)
       0))
 
@@ -105,7 +105,7 @@
   The session is passed in rather than opened here, and that is the whole
   reason this listener exists separately at all. The reviewer API is a
   CUSTOM API for the UI — it reuses the web machinery, and it is deliberately
-  not part of what counts as this project's web app (D-ui-api-distinct).
+  not part of what counts as this project's web app (D-http-api-distinct).
   Not because the warranty is unwritable
   — `session/persist-trace!` writes `:test-map` to store meta at every verified
   run and `open!` loads it back, so a fresh session is not blank. Because what

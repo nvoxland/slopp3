@@ -27,47 +27,69 @@
   incomplete, and reloading a browser into a red half-written state trains
   the author to ignore it."
   (:require [slopp.api.capabilities :as capabilities]
-            [slopp.api.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl]))
+            [slopp.api.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts]))
+
+(defn ^:export self-served?
+  "Whether the calling process ALREADY serves everything `store` would —
+  `already-served` being the namespaces it has mounted itself.
+
+  The one true case for not managing a store's app server, and the reason
+  it is derived rather than declared. Managing this store would boot a
+  second image and serve a SNAPSHOT of the very surface you are looking at,
+  one done point behind the page in front of you — not a port conflict, a
+  staler copy. slopp's own store is that case: its web surface is the
+  reviewer API the live session already serves, over the LIVE store.
+
+  It replaced the `dev.server` capability, which asked every project a
+  question only one store on earth should answer. That misfired exactly as
+  a footgun does: the second project to meet it set it false because its
+  static ASSETS were 404ing, and the switch then presented a bug as a
+  preference for a week. Computing it means a project cannot answer wrong,
+  and cannot use the answer to paper over something else.
+
+  **A store serving NOTHING is not self-served**, though every one of its
+  zero namespaces is trivially already served. Vacuous truth here would
+  exempt every non-web project for a reason that has nothing to do with
+  them — the emptiness guard, in the position where it actually bites."
+  [store already-served]
+  (let [nses (set (web/serving-namespaces store))]
+    (boolean (and (seq nses)
+                  (every? (set already-served) nses)))))
 
 (defn ^:export managed?
-  "Whether slopp should run this store's app server while someone works on it.
+  "Whether slopp should run this store's app server while someone works on
+  it — `already-served` being what the calling process has mounted itself.
 
-  Two questions, and they are genuinely different. `http.enabled` says the
-  project SERVES HTTP — that is what makes the web rules and `query_routes`
-  exist, and production reads it. `dev.server` says slopp should be the one
-  running it.
+  Two questions, and only one of them is the project's. `http.enabled` says
+  the project SERVES HTTP — that is what makes the web rules and
+  `query_routes` exist, and production reads it. The second used to be the
+  `dev.server` capability and is now [[self-served?]], computed: a store
+  whose surface this process already serves must not get a second, staler
+  copy of it.
 
-  They came apart on the first store anyone looked at: slopp's own. Its web
-  surface IS the MCP HTTP transport plus the reviewer API, and the live
-  session already serves that — over the LIVE store, at the derived `ui.port`.
-  A managed app server there would boot a second image and serve a SNAPSHOT
-  of the very thing you are looking at, one done point behind the page in
-  front of you. Not a port conflict: a second, staler copy of the same
-  surface.
-
-  (An earlier version of this docstring said 7357 was already held. It is
-  not — the transport is a separate entry point and is usually not running.
-  `http.port` means one thing, the port a web app's server binds; slopp's own
-  APIs are an INSTANCE of that, not a second meaning. So slopp's stored 7357
-  is a correct declaration, and `serve-plan` reading it is the primary use.
-  The reason had to be checked rather than assumed: a plausible port conflict
-  is a much easier story than the real one.)
+  **Nothing a web project configures decides this any more, and that is the
+  point.** A project under development should not have to think about
+  turning its server on, or keeping it current — those are slopp's job, and
+  a per-project switch is an invitation to answer a question nobody should
+  be asked. The evidence it was one: the only adopter that ever set the
+  switch set it to work around 404ing assets, and the switch then made a
+  bug look like a preference.
 
   Deliberately NOT folded into `serve-plan`. That answers \"what would this
-  store serve, and where\", which production asks too, and a dev-only opt-out
-  in it would be an answer to a question it was not asked."
-  [store]
+  store serve, and where\", which production asks too, and a dev-only
+  exemption in it would be an answer to a question it was not asked."
+  [store already-served]
   (boolean (and (capabilities/effective store "http.enabled")
-                (capabilities/effective store "dev.server"))))
+                (not (self-served? store already-served)))))
 
 (defn derived-port
   "A localhost port DERIVED from the store dir for this project's APP server —
   stable across restarts, different for every project on the machine.
 
   SALTED, and the salt is load-bearing rather than decorative. This is the
-  THIRD derivation of this shape (`ui-api.server/derived-port` for the UI
+  THIRD derivation of this shape (`http-api.server/derived-port` for the UI
   listener, `git.server/derived-port` for the git listener), and
-  `ui-api.server/derived-port` already records why they must not share a
+  `http-api.server/derived-port` already records why they must not share a
   formula: one MCP process binds all of them, so a shared formula would have
   every project \"reliably colliding with itself\".
 
@@ -105,7 +127,7 @@
   registry default of 8080 stands for production, where a known number is the
   point; a dev session wants collision-freedom instead, because two projects
   on one machine both taking the default is not a rare case — it is the
-  second project. Same conclusion `ui.port` reached, phrased in its own doc
+  second project. Same conclusion `slopp.api.port` reached, phrased in its own doc
   as a fixed default having \"worked for exactly one project and collided for
   the second\".
 
@@ -130,7 +152,12 @@
      ;; made a managed server 500 on any app that took slopp's own advice to
      ;; receive its dependencies as :web/deps.
      :max-body-bytes  (capabilities/effective store "http.max-body-bytes")
-     :context-builder (web/context-builder store)}))
+     :context-builder (web/context-builder store)
+     ;; the app's own assets. A UI's stylesheet and cljs bundle ARE the
+     ;; product, so a managed server that 404s them is not a lesser version
+     ;; of the app — it is an unusable one, and the project it happened to
+     ;; switched the managed server off rather than reading it as a bug.
+     :static          (web/static-mounts store)}))
 
 (defn load-order
   "The store namespaces to load into the app image, dependencies first.
@@ -178,13 +205,61 @@
   follows. An entry whose reason is \"not done yet\" is a worklist item that
   cannot be lost; an entry with no reason is an omission wearing a decision's
   clothes."
-  {:web/routes      "static mounts and programmatic rows. The child image has
-                     no store, so the bytes a mount would serve have nowhere to
-                     come from — a design problem, not a missing line, and the
-                     one gap still blocking the app that measures this"
+  {
    :web/auth-config "not threaded yet. Nobody has hit it only because the apps
                      measuring the managed server have no auth; one that did
                      would deny everything, or fail resolving identity"})
+
+(defn ^:export materialize-static!
+  "Write every file the `mounts` cover into a fresh temp dir and return its
+  path — nil when there are no mounts, so an app without assets allocates
+  nothing. `store-dir` is the STORE's directory, the root of the on-disk
+  artifact cache.
+
+  The managed app image is a separate JVM with NO store, which is the whole
+  reason static mounts went unserved: `mount-routes` takes a reader, and the
+  only reader the child could have used wanted a store. Materializing turns
+  that into the reader it CAN use, `file-or-resource-reader`, pointed at a
+  dir. Paths keep their manifest shape under the dir, so one mount serves a
+  tree rather than a flat list.
+
+  **An ARTIFACT keeps its bytes OUT OF LINE, so `store/file-content` answers
+  with metadata and a nil `:content` — that is the ordinary case, not an
+  edge one.** `compile_client` writes the cljs bundle as an artifact, so for
+  a UI this is every asset it has: the first real app to try this had an
+  EMPTY `:files` and two artifacts, and got a materialized dir containing
+  nothing. `artifacts/fetch` is the accessor that reads
+  `<store-dir>/.slopp/artifacts/<sha>`; the blob table is a different store
+  and does not hold these.
+
+  **`store-dir` is deliberately not called `dir` here.** The output dir is
+  also a dir, and the first cut of this fetched artifacts from the temp
+  directory it was writing INTO — which resolves, returns nothing, and skips
+  exactly the files it was added to rescue.
+
+  A path nothing can supply is SKIPPED rather than fatal: a missing asset is
+  a 404, and a throw would take down a server serving every other path. That
+  skip is why this shipped broken and silent once already, so anything that
+  reaches it is worth suspecting before it is trusted."
+  [store mounts store-dir]
+  (when (seq mounts)
+    (let [out     (java.nio.file.Files/createTempDirectory
+                   "slopp-static"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+          covered (vals mounts)]
+      (doseq [path (concat (keys (:files store)) (keys (:artifacts store)))
+              :when (some #(str/starts-with? (str path) (str %)) covered)
+              :let  [entry   (store/file-content store path)
+                     content (or (:content entry)
+                                 (when store-dir
+                                   (:bytes (artifacts/fetch store-dir store path))))]
+              :when (some? content)]
+        (let [f (io/file (str out) (str path))]
+          (io/make-parents f)
+          (if (bytes? content)
+            (io/copy content f)
+            (spit f content))))
+      (str out))))
 
 (defn serve-code
   "The expression the app image evaluates to start serving `plan`, as a
@@ -227,6 +302,7 @@
   anything else is the failure, in its own representation."
   [plan]
   (let [builder (:context-builder plan)
+        mounts  (not-empty (:static plan))
         opts    (cond-> {:web/namespaces (list 'quote (vec (:namespaces plan)))
                          :web/host       (:host plan)
                          :web/port       (:port plan)
@@ -234,10 +310,18 @@
                   (:max-body-bytes plan)
                   (assoc :web/max-body-bytes (:max-body-bytes plan))
                   builder
-                  (assoc :web/perform-ctx (list builder)))]
+                  (assoc :web/perform-ctx (list builder))
+                  mounts
+                  (assoc :web/routes
+                         (list 'slopp.web.static/mount-routes
+                               mounts
+                               (list 'slopp.web.static/file-or-resource-reader
+                                     (:static-dir plan)))))]
     (pr-str (list* 'do
                    (list 'require ''slopp.web)
                    (concat
+                    (when mounts
+                      [(list 'require ''slopp.web.static)])
                     (when builder
                       [(list 'require (list 'quote (symbol (namespace builder))))])
                     [(list :port (list 'slopp.web/serve! opts))])))))
@@ -279,7 +363,13 @@
                                 (load-order store)))]
         (do (repl/stop! img)
             {:reason (str "the app image could not load " err)})
-        {:image img :plan plan
+        ;; the bytes are materialized HERE because this is the last place that
+        ;; holds the store — `serve-in!` has only the plan, and the child
+        ;; image has neither. A fresh dir per boot rather than a cached one:
+        ;; the image is replaced at every refresh, so assets that changed
+        ;; mid-episode would otherwise serve stale from a dir nobody rewrote.
+        {:image img
+         :plan  (assoc plan :static-dir (materialize-static! store (:static plan) (:dir @session)))
          :boot-ms (quot (- (System/nanoTime) t0) 1000000)})
       (catch Throwable t
         (repl/stop! img)

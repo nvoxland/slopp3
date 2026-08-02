@@ -1,8 +1,8 @@
-(ns slopp.ui-api.heartbeat
+(ns slopp.http-api.heartbeat
   "The project half of the UI hub: the loop that tells a hub this project
   exists and is still answering.
 
-  Registering and keeping alive are the SAME call (D-ui-hub), which is what
+  Registering and keeping alive are the SAME call (D-hub), which is what
   removes every piece of state machinery you would otherwise need here — no
   connect, no reconnect, no backoff, no \"have I registered yet\". A hub that
   is down, starts later, or restarts underneath us is one case, and the next
@@ -10,7 +10,7 @@
 
   The HUB is the other end of this wire, and it is not in this store — it is
   its own project (`slopp-ui`), which is why the shape they agree on crosses
-  by COPY: [[slopp.ui-api.contracts/project-beat]] here, its hand-maintained
+  by COPY: [[slopp.http-api.contracts/project-beat]] here, its hand-maintained
   twin over there. Neither store can read the other, so a hub REFUSING a beat
   is where drift between the two copies surfaces."
   (:require [clojure.string :as str]
@@ -35,7 +35,7 @@
 
 (defn ^:export payload
   "The check-in a project sends: who it is, where it answers, and what it is
-  doing — [[slopp.ui-api.contracts/project-beat]].
+  doing — [[slopp.http-api.contracts/project-beat]].
 
   The name is `app.name` when the store sets one and the directory's own name
   otherwise, because a project that configured nothing still has to appear in
@@ -160,7 +160,7 @@
   interval after its server started would read as broken for ten seconds
   every single time.
 
-  Registration and keepalive are the same call (D-ui-hub), so this loop needs
+  Registration and keepalive are the same call (D-hub), so this loop needs
   no state machine and no reconnect logic. A hub that is down, starts later,
   or restarts underneath us is all one case — the next beat registers us
   again, and the only cost is up to one interval of absence.

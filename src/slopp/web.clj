@@ -1,4 +1,34 @@
 (ns slopp.web
+  "The ONE namespace a web app requires — everything else under `slopp.web`
+  is reached through here.
+
+  Six functions, and the split between them is the point:
+
+  - **`context` and `serve!`** assemble an app from its NAMESPACES. The route
+    table and both performer vocabularies derive from var METADATA
+    (`:web/path`, `:web/read`, `:web/effect`), so an app is declared where its
+    code is rather than in a table that drifts from it. `serve!` is `context`
+    plus a socket; `context` alone is what a test uses.
+  - **`handle!`** runs a whole request with no socket anywhere — request map
+    in, response map out. An app's tests live here, not against a port.
+  - **`enforce` and `authorized?`** are the two shapes of row-level permission
+    that route policy cannot express: refuse, or branch.
+
+  The recurring difficulty this namespace exists to manage is that **assembly
+  is where a web app fails silently.** Performers resolve by VOCABULARY
+  store-wide, so a `:web/namespaces` list missing half the app assembles
+  happily and then answers 500 — not 404 — at request time, with the detail
+  server-side. That is the worst pairing available: the failure with no check
+  is also the hardest one to read from outside. So `context` refuses an
+  incomplete context up front; it costs a set difference and it is the only
+  place holding everything the check needs.
+
+  This module reaches back into NOTHING else in slopp — pinned by
+  `slopp.modules-test/the-web-framework-never-reaches-back-into-slopp` — which
+  is what lets `build.clj` ship it as the standalone
+  `io.github.nvoxland/slopp-web` jar. A require of `slopp.store` from anywhere
+  under here would pass every test in this repo and break at a USER's require
+  time."
   (:require [slopp.web.routes :as routes]
             [slopp.web.dispatch :as dispatch]
             [slopp.web.server.jdk :as jdk] [slopp.web.server.httpkit :as httpkit] [clojure.string :as str]))

@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.ui-api.server :as ui-server] [slopp.web.client :as client]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1502,7 +1502,7 @@
     (try
       (testing "a port someone else holds FALLS BACK rather than costing this
                 project its UI — the autostart's port is a preference derived
-                from the dir, not an address anyone asked for (D-ui-hub), and
+                from the dir, not an address anyone asked for (D-hub), and
                 the url it reports is whatever was actually bound"
         (let [;; 127.0.0.1 EXPLICITLY, not the wildcard: a ServerSocket on 0.0.0.0
               ;; does not stop http-kit binding 127.0.0.1 on the same port, so
@@ -1531,12 +1531,12 @@
             (is (= (:url r) (:ui (api/session-brief sess)))))
           (testing "starting the UI does NOT make the brief claim a hub — no
                     hub is running here, and this assertion used to be
-                    `(swap! sess assoc :ui-hub …)` followed by reading it back,
+                    `(swap! sess assoc :hub …)` followed by reading it back,
                     which proved only that assoc works. The claim it was
-                    standing in for was false: `:ui-hub` was set from the
+                    standing in for was false: `:hub` was set from the
                     CONFIGURED port whether or not anything answered"
             (let [b (api/session-brief sess)]
-              (is (nil? (:ui-hub b)) (pr-str (select-keys b [:ui :ui-hub])))))
+              (is (nil? (:hub b)) (pr-str (select-keys b [:ui :hub])))))
           (ui-server/stop!)))
       (finally
         (ui-server/stop!)
@@ -1732,7 +1732,7 @@
   ;; source, and … the milestone timeline and per-milestone change review",
   ;; and told the caller to hand that url to a human — for a listener that
   ;; answers 404 {"error":"no route"} at `/`. The pages moved to the hub with
-  ;; D-ui-hub part 4 and the description did not follow.
+  ;; D-hub part 4 and the description did not follow.
   ;;
   ;; Sibling of slopp-prose-never-names-a-tool-that-does-not-exist, and the
   ;; same class: a gate sees var references, never a promise made in prose.
@@ -1824,11 +1824,20 @@
       (let [eph (atom {:store web})]
         (is (nil? (mcp/start-app! eph)))
         (is (nil? (:app-server @eph)))))
-    (testing "a store that serves itself starts nothing — dev.server is the
-              lifecycle's own opt-out, and slopp's own store sets it"
-      (let [off (atom {:store (first (store/record-config-put
-                                      web "capabilities" :manifest
-                                      "dev.server" "false"))
+    (testing "a store THIS PROCESS already serves starts nothing — the one
+              exemption, and it is derived rather than configured"
+      ;; slopp's own store is this case and the only one: its surface is the
+      ;; reviewer API the live session already serves, so a managed copy
+      ;; would be a second, staler one. It used to be the `dev.server`
+      ;; capability, which asked every project a question only this store
+      ;; should answer — and the one adopter that answered it did so to work
+      ;; around 404ing assets, which the switch then hid.
+      (let [off (atom {:store (store/ingest
+                               web 'slopp.http-api.reads
+                               (str "(ns slopp.http-api.reads)\n\n"
+                                    "(defn ^{:web/method :get :web/path \"/api/x\"\n"
+                                    "        :malli/schema [:=> [:cat :map] :map]\n"
+                                    "        :web/response :map} x \"X.\" [req] {:ok true})\n"))
                        :dir "/tmp/slopp-no-such-dir"})]
         (is (nil? (mcp/start-app! off)))
         (is (nil? (:app-server @off)))))
@@ -1839,21 +1848,27 @@
       (is (nil? (mcp/refresh-app! plain))))))
 
 (deftest opting-out-stops-a-server-that-is-already-running
-  ;; Measured by slopp-ui, 2026-08-01: after `config_file dev.server false`
-  ;; (verified `:effective false`), `session_brief` still reported
+  ;; Measured by slopp-ui, 2026-08-01: after opting out (verified in the
+  ;; config at the time), `session_brief` still reported
   ;; `:app http://127.0.0.1:51614/` and the url still answered. The config
   ;; said the managed server did not exist and the surface advertised it
   ;; anyway.
   ;;
   ;; The cause is that the gate guarded the wrong verb: `refresh-app!`
   ;; checked `managed?` and returned, which stops RE-SERVING and never stops
-  ;; SERVING. Opting out of a running thing has to be an action, not the
-  ;; absence of one.
+  ;; SERVING. Ceasing to be managed has to produce an ACTION, not the
+  ;; absence of one — and that is MORE true now the exemption is derived,
+  ;; because a store can become self-served by a write rather than by
+  ;; someone deliberately flipping a switch.
   (let [put  (fn [st k v] (first (store/record-config-put st "capabilities"
                                                           :manifest k v)))
         off  (-> (store/empty-store)
                  (put "http.enabled" "true")
-                 (put "dev.server" "false"))
+                 (store/ingest 'slopp.http-api.reads
+                               (str "(ns slopp.http-api.reads)\n\n"
+                                    "(defn ^{:web/method :get :web/path \"/api/x\"\n"
+                                    "        :malli/schema [:=> [:cat :map] :map]\n"
+                                    "        :web/response :map} x \"X.\" [req] {:ok true})\n")))
         ;; no :image on the handle — devserver/stop! tolerates a handle with
         ;; no process, which is what keeps this test in-image instead of
         ;; costing a JVM to assert bookkeeping
@@ -1867,7 +1882,11 @@
     (testing "and it SAYS so, because a silent stop reads as 'this project
               never had a managed server'"
       (is (false? (:serving? r)))
-      (is (re-find #"dev\.server" (str (:reason r))) (pr-str r)))
+      (testing "naming WHICH of the two reasons applied — `managed?` is false
+                for a store that serves no HTTP and for one already served
+                here, and a stop that names the wrong one sends someone to
+                change the wrong thing"
+        (is (re-find #"already serves" (str (:reason r))) (pr-str r))))
     (testing "a store that was never managed and has nothing running stays
               silent — most stores are not web projects, and a line at every
               done point saying so is how a report stops being read"

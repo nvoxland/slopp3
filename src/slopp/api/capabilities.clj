@@ -48,11 +48,10 @@
     :doc "Port the app's HTTP server binds. Unset = 8080 in production (slopp.web/serve! defaults it, so declaring 8080 here would only resolve \"unset\" a layer too early) and DERIVED from the store dir for the dev server, which is what keeps two projects on one machine from colliding. Set it to pin one address for both."}
    {:key "http.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
-   {:key "dev.server" :type [:boolean] :default true
-    :doc "Whether slopp runs this project's app server for you while you work — a dedicated image, re-served at each done point, so a live version is always up without the app holding a serve! call. Set false when this project's HTTP surface is already served by something else, since a managed server would then serve a second, staler copy of it. slopp's own store is exactly that case: its web surface is the MCP HTTP transport plus the reviewer API, which the live session already serves."}
-   {:key "ui.port" :type [:int {:min 1 :max 65535}] :default nil
+   
+   {:key "slopp.api.port" :type [:int {:min 1 :max 65535}] :default nil
     :doc "Port this project's own UI/API listener binds. Unset = DERIVED from the store dir — stable across restarts and collision-free, which a fixed default cannot be on a machine running several projects. Set it only to pin a fixed address."}
-   {:key "ui.hub-port" :type [:int {:min 0 :max 65535}] :default 7359
+   {:key "slopp.hub.port" :type [:int {:min 0 :max 65535}] :default 7359
     :doc "The UI hub this project registers with. The hub is a SEPARATE application (it never opens a store), so this is the one number both sides have to agree on by configuration rather than by sharing code — the project beats to it, the hub binds it. Everything else about the beat, including how often, comes back on the registration response. 0 = register with no hub."}
    {:key "http.static.*" :type [:string] :default nil
     :doc "Static mount: the key's tail is the URL prefix, the value a files-manifest path prefix (http.static./assets = public serves public/cljs/main.js at /assets/cljs/main.js). A trailing slash on either is trimmed."}
@@ -169,7 +168,7 @@
   nil-puns. Some callers need it back: the dev server binds an explicitly
   pinned `http.port` but DERIVES one when nobody pinned it, because a fixed
   default collides between two projects on one machine (the reasoning
-  `ui-api.server/derived-port` records). \"8080\" typed by hand and 8080
+  `http-api.server/derived-port` records). \"8080\" typed by hand and 8080
   arriving from the registry have to be told apart to do that.
 
   Exported for the same reason `effective` is: the config path is this

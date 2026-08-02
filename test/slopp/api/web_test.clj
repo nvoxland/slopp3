@@ -608,3 +608,25 @@
                                    "(defn ^{:web/context true} deps \"D.\" [] {})\n"))]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"(?i)one"
                               (web/context-builder two)))))))
+
+(deftest static-mounts-are-read-once-from-the-capability-family
+  ;; The family was parsed privately inside `cljs/served-by-a-mount?`, so the
+  ;; managed server could not ask the same question without writing a second
+  ;; parser — and two parsers of one config family agree right up until one
+  ;; of them learns about trailing slashes. This is the shared one.
+  (let [put (fn [s k v] (first (store/record-config-put s "capabilities" :manifest k v)))
+        s   (-> (store/empty-store)
+                (put "http.enabled" "true")
+                (put "http.static./assets" "public")
+                (put "http.static./js" "public/cljs/"))]
+    (testing "the key tail is the URL prefix, the value the manifest prefix"
+      (is (= {"/assets" "public" "/js" "public/cljs"} (web/static-mounts s))))
+    (testing "a trailing slash is trimmed, as the capability doc promises"
+      ;; not cosmetic: a store-backed reader looks the path up in a manifest
+      ;; rather than on a filesystem that would normalise it, so `public/`
+      ;; asks for `public//main.js` and gets nothing
+      (is (= "public/cljs" (get (web/static-mounts s) "/js"))))
+    (testing "non-mount capabilities are not mistaken for mounts"
+      (is (nil? (get (web/static-mounts s) "enabled"))))
+    (testing "a store with no mounts declares none"
+      (is (empty? (web/static-mounts (store/empty-store)))))))

@@ -1,4 +1,4 @@
-(ns slopp.api.artifacts
+(ns slopp.store.artifacts
   "Derived files: the bytes live on disk, the store holds the sha and the
   recipe.
 

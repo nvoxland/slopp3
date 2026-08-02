@@ -1,4 +1,25 @@
 (ns slopp.git.client
+  "Talking OUT to somebody else's git: fetch a remote's objects in, push the
+  projection out. The two operations slopp needs to interoperate with a repo
+  it does not own.
+
+  Direction is what distinguishes this from the rest of the module. `slopp.git`
+  PROJECTS the store into git objects — an in-memory JGit repo built from the
+  delta log — and this namespace carries those objects across a wire, over
+  https with a token or over a filesystem path.
+
+  Two rules, both about not lying to the remote:
+
+  - **Fast-forward only.** A diverged remote is an honest `{:error …}` naming
+    what happened and saying to pull first. There is no force path, because
+    the store is not the authority on a repo it shares.
+  - **The push is COMPLETE or it doesn't go.** A cloned store's grafted chain
+    can reference a base object it has never held, so a missing base is
+    fetched before projecting — a push that succeeds while leaving the remote
+    unable to resolve its own history is worse than a refusal.
+
+  `ctx` is an opaque handle from `git/open-ctx!`; the JGit repo inside it is
+  shared with the projection, which is why it outlives any one operation."
   (:require [clojure.java.io :as io]
             [slopp.store.db :as db]
             [slopp.git :as git])

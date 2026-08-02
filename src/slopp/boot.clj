@@ -612,6 +612,28 @@
       (doseq [s (departed-vars before new-source)]
         (ns-unmap n s)))))
 
+(defn failure-message
+  "The sentence a reload failure should REPORT: the throwable's own message,
+  plus the root cause's when they differ.
+
+  A compiler error arrives wrapped, and the wrapper's message is a POSITION,
+  not a reason — `\"Syntax error macroexpanding at (1:1).\"` is what
+  `.getMessage` gives for every macroexpansion failure in every namespace. The
+  reason is one or more causes down. Keeping only the wrapper made distinct
+  failures indistinguishable, and it cost two live-reload wedges that could
+  not be reproduced afterward because the reason never left the process.
+
+  A throwable with no message reports its class instead, since
+  `NullPointerException` is information and an empty string is not."
+  [^Throwable t]
+  (let [describe (fn [^Throwable x]
+                   (or (not-empty (str (.getMessage x)))
+                       (.getName (class x))))
+        root     (loop [x t] (if-let [c (ex-cause x)] (recur c) x))]
+    (if (identical? root t)
+      (describe t)
+      (str (describe t) " — caused by: " (describe root)))))
+
 ^:unsafe (defn watch-live!
   "Poll the store's data_version; when another writer commits, reload the
   namespaces whose source changed into THIS jvm (dependency order). The store's
@@ -665,9 +687,9 @@
                                                (record-loaded! ns-sym (get now ns-sym))
                                                failed
                                                (catch Throwable t
-                                                 (log! "live-reload failed for " ns-sym
-                                                       ": " (.getMessage t))
-                                                 (assoc failed ns-sym (str (.getMessage t))))))
+                                                 (let [why (failure-message t)]
+                                                   (log! "live-reload failed for " ns-sym ": " why)
+                                                   (assoc failed ns-sym why)))))
                                         {} changed)
                         loaded  (remove failed changed)]
                     (when (seq loaded)
@@ -698,7 +720,7 @@
                     [(if (seq failed) dv dv2)
                      (reduce #(assoc %1 %2 (get prev %2)) now (keys failed))])))
               (catch Throwable t
-                (log! "live-reload poll error (continuing): " (.getMessage t))
+                (log! "live-reload poll error (continuing): " (failure-message t))
                 [dv prev]))]
         (recur dv' prev')))))
 

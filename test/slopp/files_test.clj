@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc] [slopp.api.artifacts :as artifacts]))
+            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc] [slopp.store.artifacts :as artifacts]))
 
 (def wf ".github/workflows/test.yml")
 

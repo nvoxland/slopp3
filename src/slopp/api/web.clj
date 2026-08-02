@@ -376,6 +376,32 @@
        sort
        vec))
 
+(defn ^:export static-mounts
+  "This store's `http.static.*` mounts as `{url-prefix manifest-prefix}`.
+
+  The key's tail is the URL prefix and the value a files-manifest path
+  prefix, so `http.static./assets = public` serves `public/logo.png` at
+  `/assets/logo.png`. Feeds `slopp.web.static/mount-routes`, which pairs it
+  with a reader — [[store-reader]] for a live store, and
+  `slopp.web.static/file-or-resource-reader` for the managed dev server,
+  whose child image has no store and reads materialized bytes instead.
+
+  **Trailing slashes are trimmed on both sides, and that is not cosmetic.**
+  `mount-routes` adds its own separator, so `public/` asks the reader for
+  `public//main.js` — which a filesystem quietly normalises and a manifest
+  lookup does not, making the same config work or 404 depending on which
+  reader is behind it. Pinned by `web-test/static-mounts-serve-raw-bytes`.
+
+  Exists because `cljs/served-by-a-mount?` had parsed this family privately,
+  which left the managed server no way to ask the same question without a
+  second parser of one config family."
+  [store]
+  (into {}
+        (for [[k v] (get-in store [:config "capabilities" :values])
+              :when (re-matches #"http\.static\..+" (str k))]
+          [(str/replace (subs (str k) (count "http.static.")) #"/$" "")
+           (str/replace (str v) #"/$" "")])))
+
 (defn store-reader
   "The LIVE-store reader for `static/mount-routes`: resolve `path` through the
   store's manifest (text) or its content-addressed artifacts (bytes), falling

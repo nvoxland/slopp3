@@ -1,4 +1,19 @@
 (ns slopp.api.deps
+  "What a DEPENDENCY brings, cached: its public API surface, and its GraalVM
+  native-image verdict.
+
+  Both answers are expensive (resolve the coord, open the jars, walk them) and
+  neither changes for a given `lib`@`coord`, so both memoize into the store's
+  durable dep caches; the process-level memo in `slopp.index.deps` covers
+  ephemeral sessions that have no db.
+
+  **Every read here is best-effort and returns nil on failure — that is a
+  stance, not missing error handling.** Surface analysis exists to make a
+  `deps_add` more informative, so a dependency whose jars will not open must
+  still be addable; failing the add would trade a real capability for a
+  cosmetic one. The single place a verdict is allowed to BLOCK is a build, and
+  only against `native-incompatible-deps` — which is empty, because a missing
+  reachability manifest is a WARN and not an incompatibility."
   (:require [slopp.store.db :as db]
             [slopp.index.deps :as deps]))
 

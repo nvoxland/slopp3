@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.ui-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.ui-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.git.server :as server] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.api.rules :as rules] [slopp.http-api.server :as ui] [slopp.api.capabilities :as caps] [slopp.api.doctor :as doctor] [slopp.http-api.heartbeat :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -676,20 +676,20 @@
   "Start this project checking in with the UI hub, and record the handle on
   the session. Never throws; returns the hub url it beats to, or nil.
 
-  `ui.hub-port` 0 means \"no hub\", and a hub that simply is not running is the
+  `slopp.hub.port` 0 means \"no hub\", and a hub that simply is not running is the
   ordinary case rather than a failure — the beat retries forever and costs
   nothing, so the project appears in the picker within one interval of a hub
   starting later. Registering and keeping alive are the same call, deliberately
-  (D-ui-hub).
+  (D-hub).
 
   Two session keys, and the split between them is the point.
-  `:ui-hub-configured` is where we BEAT — known immediately, true whether or
-  not anyone is listening. `:ui-hub` is this project's own page on the hub, and
+  `:hub-configured` is where we BEAT — known immediately, true whether or
+  not anyone is listening. `:hub` is this project's own page on the hub, and
   it exists only while a hub is answering, because the slug in it comes back on
   the reply and cannot be fabricated. Every beat rewrites it, so a hub that
   goes away takes the claim with it.
 
-  One key used to carry both meanings: `:ui-hub` was set here, once, from the
+  One key used to carry both meanings: `:hub` was set here, once, from the
   configured port. Orientation then advertised an address nobody was serving —
   and the skill tells an agent to hand that address to a human, so the cost
   landed on the human every time. The reply had the answer all along; nothing
@@ -700,24 +700,24 @@
   implementation detail they should never have to type."
   [session dir url]
   (try
-    (let [port (caps/effective (:store @session) "ui.hub-port")]
+    (let [port (caps/effective (:store @session) "slopp.hub.port")]
       (when (and dir port (pos? (long port)))
         (let [hub    (hb/hub-url port)
               handle (hb/start! hub
                                 #(hb/payload (:store @session) dir url)
                                 #(let [at (hb/hub-address hub %)]
                                    (cond
-                                     at (swap! session assoc :ui-hub at
-                                               :ui-hub-refused nil)
+                                     at (swap! session assoc :hub at
+                                               :hub-refused nil)
                                      ;; a hub that answered and said NO is the
                                      ;; drift alarm — keep it, or the brief
                                      ;; reports absence about a running hub
                                      (hb/refused? %)
-                                     (swap! session assoc :ui-hub-refused %
-                                            :ui-hub nil)
-                                     :else (swap! session assoc :ui-hub nil
-                                                  :ui-hub-refused nil))))]
-          (swap! session assoc :ui-heartbeat handle :ui-hub-configured hub)
+                                     (swap! session assoc :hub-refused %
+                                            :hub nil)
+                                     :else (swap! session assoc :hub nil
+                                                  :hub-refused nil))))]
+          (swap! session assoc :ui-heartbeat handle :hub-configured hub)
           (.println System/err ^String (str "slopp UI hub: " hub
                                             " (open this to switch projects)"))
           hub)))
@@ -735,7 +735,7 @@
   `:test-map` and `:observed` are persisted and reloaded, so a fresh session is
   not blank — it is STALE, showing the warranty as of the last verified run
   rather than the one being changed, and it would boot a second image to show
-  it. That accuracy is what forces the whole hub design (D-ui-hub): a hub
+  it. That accuracy is what forces the whole hub design (D-hub): a hub
   cannot answer for a store, so every project answers for itself and the hub
   proxies.
 
@@ -803,7 +803,7 @@
   at its own speed."
   [session]
   (let [dir (:dir @session)]
-    (if (and dir (devserver/managed? (:store @session)))
+    (if (and dir (devserver/managed? (:store @session) ui/served-namespaces))
       (locking session
         (try (devserver/refresh! session (:store @session) dir)
              (catch Throwable t
@@ -813,8 +813,15 @@
           (try (devserver/stop! running) (catch Throwable _))
           (swap! session dissoc :app-server))
         {:serving? false
-         :reason (str "dev.server is false for this store — the managed app"
-                      " server was stopped")}))))
+         ;; `managed?` is false for two different reasons now, and a stopped
+         ;; server that names the wrong one sends someone to change the
+         ;; wrong thing
+         :reason (if (devserver/self-served? (:store @session) ui/served-namespaces)
+                   (str "this session already serves this store's surface — the"
+                        " managed app server was stopped, because a second one"
+                        " would serve a staler copy of the same pages")
+                   (str "http.enabled is false for this store — the managed app"
+                        " server was stopped"))}))))
 
 (defn- call-tool! [session {:keys [name arguments]}]
   ;; async-image boot: the store loaded synchronously (this dispatch is live),

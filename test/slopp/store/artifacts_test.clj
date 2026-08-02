@@ -1,4 +1,4 @@
-(ns slopp.api.artifacts-test
+(ns slopp.store.artifacts-test
   "Tests for derived files — the half of the manifest that carries no bytes.
 
   Two properties are defended here and everything else is detail. First, the
@@ -9,11 +9,11 @@
   their sha, must report the recipe rather than fail, because deleting a
   cache is an ordinary thing to do and should never look like corruption.
 
-  Lives under `slopp.api` so `slopp.api.artifacts` can stay package-private —
-  widening a surface to make a test reachable is how visibility rules quietly
-  stop meaning anything."
+  Lives under `slopp.store` so `slopp.store.artifacts` can stay
+  package-private — widening a surface to make a test reachable is how
+  visibility rules quietly stop meaning anything."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.artifacts :as artifacts]
+            [slopp.store.artifacts :as artifacts]
             [slopp.store :as store]))
 
 (deftest ^:external artifacts-keep-bytes-out-of-the-journal-and-stay-recoverable

@@ -1,4 +1,28 @@
 (ns slopp.api.query
+  "Every READ in the operation API — the implementations behind the `query_*`
+  tools.
+
+  This is the largest surface in `slopp.api`, and it is large because it holds
+  four different kinds of question that share little beyond a prefix:
+
+  - **Source as it stands now** — outline, source, project, search,
+    namespaces.
+  - **The graph** — symbols, references, deps, callers, impact, flow. Answers
+    about how forms reach each other, all derived from the analyzer.
+  - **The store over TIME** — history, lineage, a form at a delta, status at a
+    delta, and what changed across a span. Spans take NAMED anchors
+    (`:start`, `:last-commit`, `:last-done`) rather than raw delta ids,
+    because demanding an id sent agents hunting through `query_history` for
+    it, and when the hunt did not pay off they left for `git diff` instead
+    (eval9 measured ~20k chars of it in a single handoff step).
+  - **Composite DRIVER reads** — `query-slice` and `query-brief`. These are
+    not conveniences layered over the primitives; they are the reads meant to
+    REPLACE a loop. A slice answers \"the form I am about to edit, plus
+    interface cards for everything it reaches\" in one call, so
+    outline→guess→fetch stops being the shape of reading at all.
+
+  That last group is the reason the rest is here: the primitive reads are what
+  a driver read is BUILT from, not what an agent should normally reach for."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.api.attrs :as attrs]

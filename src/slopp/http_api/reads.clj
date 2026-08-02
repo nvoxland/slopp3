@@ -1,19 +1,19 @@
-(ns slopp.ui-api.reads
+(ns slopp.http-api.reads
   "Read-only store browser: server-rendered hiccup pages over the query
   surfaces — the D-web-html dogfood. Plain links, full-page renders, zero
   writes; rendering arbitrary store source through the escaper is a
   standing security exercise.
 
-  Lives in slopp.ui-api.**, slopp's OWN webapp, and never in slopp.web.** —
+  Lives in slopp.http-api.**, slopp's OWN webapp, and never in slopp.web.** —
   slopp.web is the framework every user's app is built on and ships in the
   slim jar, so an app page placed there would ride into every user's
-  application. The dependency runs slopp.ui-api → slopp.web, never back.
+  application. The dependency runs slopp.http-api → slopp.web, never back.
 
   Pages hold hiccup and nothing else; the data they render is assembled by
-  slopp.ui-api.model, which is where a static JSON sink would attach."
+  slopp.http-api.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.ui-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract]))
+            [slopp.http-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract]))
 
 (defn ^{:web/read :browse/namespaces} namespaces-read
   "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."
@@ -70,7 +70,7 @@
 
   The namespace list arrives through `perform-ctx` rather than being reached
   for here: only the SERVER knows what it serves, and a performer that imported
-  that list would invert the dependency (slopp.ui-api.server already requires this
+  that list would invert the dependency (slopp.http-api.server already requires this
   namespace). It is data on the way in, like every other dep."
   [ctx _]
   (contract/contract-document (:served-namespaces ctx)))

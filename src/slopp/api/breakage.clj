@@ -1,4 +1,32 @@
 (ns slopp.api.breakage
+  "Did this episode BREAK a contract that something outside the module depends
+  on?
+
+  Hickey's Spec-ulation, made mechanical: growth is always safe, breakage has
+  to be visible. An agent editing one form can see its callers INSIDE the
+  store; it cannot see the callers that are not in the store at all, and those
+  are exactly the ones a narrowing hurts. So the baseline is the last done
+  point, the subject is a CHANGED `defn` that WAS module-external then, and
+  the only question asked is whether its surface got SMALLER.
+
+  Three narrowings, each additive to a finding: a dropped fixed arity, a
+  dropped `:=>` arg-map key, and visibility (was a boundary, now private or
+  unexported). Widening is never reported.
+
+  **Undeterminable is never a finding.** Variadic arities, absent schemas and
+  unparseable forms all answer \"no narrowing\" rather than guessing. A false
+  breakage flag on a safe change teaches agents to ignore the rule, and that
+  costs more than the misses do.
+
+  `^:breaking-ok` on the name discharges a finding, because privatising a
+  function with no outside callers is a CORRECT change and a rule that cannot
+  be discharged can only ever be advisory. Like `^:unused-ok` and
+  `^:ambient-ok`, the marker POLICES ITSELF: on a changed form that narrowed
+  nothing it reports `:stale-marker`, so it cannot be sprinkled ahead of time
+  or left behind as a permanent opt-out. That self-check deliberately sits
+  OUTSIDE the boundary filter — once a narrowing lands the new baseline is
+  already private, so a guard on the old form's boundary status would never
+  see the stale marker again."
   (:require [clojure.set :as set]
             [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]

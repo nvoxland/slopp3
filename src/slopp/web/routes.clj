@@ -1,4 +1,26 @@
-(ns slopp.web.routes)
+(ns slopp.web.routes
+  "Where an app's shape comes from: **var metadata, read off the loaded
+  namespaces.** A public var carrying `:web/path` IS a route; a var carrying
+  `:web/read` or `:web/effect` IS an entry in a performer vocabulary. There is
+  no route table to keep in step with the code, because there is no route
+  table.
+
+  That makes this the UNIVERSAL source — a live store, a jar, and a native
+  binary all answer from the same var metadata, and it is the same contract
+  `query_routes` reads off the STORED node. The store-side gates and this
+  namespace are two readings of one declaration, which is the only reason a
+  write-time refusal can predict a runtime behaviour.
+
+  One consequence worth stating plainly, since it is silent: **a namespace
+  that isn't loaded contributes nothing.** Not an error — nothing. That is why
+  `slopp.web/context` checks the assembled result against what the routes
+  declare rather than trusting the namespace list it was handed.
+
+  `spa-rows` is the one place this namespace generates rather than reads, and
+  it is deliberately narrow: a client-routed document declares the prefixes it
+  owns (`:web/spa [\"/store\"]`) and gets one scoped catch-all each. A root
+  catch-all would be worse than the bug it fixes — an app that can never 404
+  has no way left to distinguish a typo from a page.")
 
 (defn ^:export spa-rows
   "The catch-all rows a client-routed document contributes — one per declared

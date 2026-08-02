@@ -508,7 +508,7 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external the-brief-names-a-hub-only-while-one-is-answering
-  ;; The lie this closes, measured on a real session: `:ui-hub` was set the
+  ;; The lie this closes, measured on a real session: `:hub` was set the
   ;; moment the heartbeat STARTED and never revisited, so a machine with no hub
   ;; running had orientation hand out "http://127.0.0.1:7359/" — a connection
   ;; refused where a page was promised. The skill tells an agent to hand THIS
@@ -522,54 +522,54 @@
       (testing "a registered project is named by its own page, not the hub root
                 — the slug is the one thing only the hub can tell us, so having
                 it IS the proof we are registered"
-        (swap! sess assoc :ui-hub "http://127.0.0.1:7359/p/slopp2")
+        (swap! sess assoc :hub "http://127.0.0.1:7359/p/slopp2")
         (let [b (api/session-brief sess)]
-          (is (= "http://127.0.0.1:7359/p/slopp2" (:ui-hub b)))
-          (is (nil? (:ui-hub-note b))
+          (is (= "http://127.0.0.1:7359/p/slopp2" (:hub b)))
+          (is (nil? (:hub-note b))
               "nothing to explain when the address works")))
       (testing "a hub configured but not answering is NAMED as that, and the
                 address is withheld rather than guessed"
-        (swap! sess dissoc :ui-hub)
-        (swap! sess assoc :ui-hub-configured "http://127.0.0.1:7359/")
+        (swap! sess dissoc :hub)
+        (swap! sess assoc :hub-configured "http://127.0.0.1:7359/")
         (let [b (api/session-brief sess)]
-          (is (nil? (:ui-hub b))
+          (is (nil? (:hub b))
               "handing over an address nothing answers is the whole bug")
-          (is (string? (:ui-hub-note b)))
-          (is (re-find #"7359" (:ui-hub-note b))
+          (is (string? (:hub-note b)))
+          (is (re-find #"7359" (:hub-note b))
               "the note must name the address that is not answering, or it
                cannot be acted on")))
-      (testing "no hub configured at all says nothing — ui.hub-port 0 is a
+      (testing "no hub configured at all says nothing — slopp.hub.port 0 is a
                 deliberate choice and does not need explaining every session"
-        (swap! sess dissoc :ui-hub :ui-hub-configured)
+        (swap! sess dissoc :hub :hub-configured)
         (let [b (api/session-brief sess)]
-          (is (nil? (:ui-hub b)))
-          (is (nil? (:ui-hub-note b)))))
+          (is (nil? (:hub b)))
+          (is (nil? (:hub-note b)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external a-hub-that-refused-us-says-so-rather-than-reading-as-absent
   ;; The drift alarm has to end up somewhere an agent looks, and session_brief is
   ;; that place. The hub validates each beat against its own copy of the beat
-  ;; contract — a hand-maintained twin of `ui-api.contracts/project-beat`, since
+  ;; contract — a hand-maintained twin of `http-api.contracts/project-beat`, since
   ;; neither store can read the other — so a 400 IS the notification that the two
   ;; copies have diverged. Reported as "no hub is answering" it would send
   ;; somebody to check whether a hub is running, which is the one thing that is
   ;; not wrong.
   (let [sess (external/open!)]
     (try
-      (swap! sess assoc :ui-hub-configured "http://127.0.0.1:7359/")
+      (swap! sess assoc :hub-configured "http://127.0.0.1:7359/")
       (testing "configured, nothing answering — the hub is simply not running"
-        (let [note (:ui-hub-note (api/session-brief sess))]
+        (let [note (:hub-note (api/session-brief sess))]
           (is (string? note))
           (is (re-find #"(?i)no hub is answering" note) note)))
       (testing "configured, and REFUSING us — a different situation, and the
                 note must not send someone to start a hub that is already up"
-        (swap! sess assoc :ui-hub-refused
+        (swap! sess assoc :hub-refused
                {:hub/refused 400
                 :hub/explain {:error "does not satisfy the contract"
                               :explain {:dir ["missing required key"]}}})
         (let [b    (api/session-brief sess)
-              note (:ui-hub-note b)]
-          (is (nil? (:ui-hub b))
+              note (:hub-note b)]
+          (is (nil? (:hub b))
               "refused is not registered, so there is still no address")
           (is (string? note))
           (is (re-find #"400" note) note)
@@ -579,9 +579,9 @@
           (is (not (re-find #"(?i)no hub is answering" note))
               (str "and it must NOT say the hub is absent — it answered: " note))))
       (testing "and a beat that succeeds afterwards clears the alarm"
-        (swap! sess dissoc :ui-hub-refused)
-        (swap! sess assoc :ui-hub "http://127.0.0.1:7359/p/slopp2")
+        (swap! sess dissoc :hub-refused)
+        (swap! sess assoc :hub "http://127.0.0.1:7359/p/slopp2")
         (let [b (api/session-brief sess)]
-          (is (= "http://127.0.0.1:7359/p/slopp2" (:ui-hub b)))
-          (is (nil? (:ui-hub-note b)) (pr-str (:ui-hub-note b)))))
+          (is (= "http://127.0.0.1:7359/p/slopp2" (:hub b)))
+          (is (nil? (:hub-note b)) (pr-str (:hub-note b)))))
       (finally (api/close! sess)))))

@@ -139,14 +139,14 @@
                "{:password-hash \"9f86d08...\" :groups [\"admin\"]}")))))
 
 (deftest ui-ports-are-two-settings-and-the-project-one-defaults-to-derived
-  ;; D-ui-hub. A machine runs many slopp projects, so the port a project's own
+  ;; D-hub. A machine runs many slopp projects, so the port a project's own
   ;; UI listener binds cannot have a fixed default — that is a guaranteed
   ;; collision. Unset means DERIVED from the store dir: stable across
   ;; restarts, conflict-free, and nobody has to know it, because the address a
   ;; human remembers is the hub's.
-  (let [entry (caps/find-entry "ui.port")]
-    (is (= "ui.port" (:key entry)))
-    (is (nil? (caps/effective (store/empty-store) "ui.port"))
+  (let [entry (caps/find-entry "slopp.api.port")]
+    (is (= "slopp.api.port" (:key entry)))
+    (is (nil? (caps/effective (store/empty-store) "slopp.api.port"))
         "unset = derive from the dir; an explicit value is for someone who wants a fixed address")
     (is (nil? (caps/check-value entry "7400")))
     (is (string? (caps/check-value entry "not-a-port"))
@@ -154,9 +154,9 @@
   ;; The well-known port belongs to the HUB now, and the hub is started by a
   ;; human. This default is the one number both halves read: the project uses
   ;; it to find a hub, the hub CLI uses it to bind.
-  (let [entry (caps/find-entry "ui.hub-port")]
-    (is (= "ui.hub-port" (:key entry)))
-    (is (= 7359 (caps/effective (store/empty-store) "ui.hub-port")))
+  (let [entry (caps/find-entry "slopp.hub.port")]
+    (is (= "slopp.hub.port" (:key entry)))
+    (is (= 7359 (caps/effective (store/empty-store) "slopp.hub.port")))
     (is (nil? (caps/check-value entry "0"))
         "0 is legal and means: this project registers with no hub")))
 
@@ -187,7 +187,7 @@
   ;;   actual bind                     51614
   ;;   curl 8080                       not listening
   ;;
-  ;; `ui.port` gets this exactly right — `:effective nil`, and its doc says
+  ;; `slopp.api.port` gets this exactly right — `:effective nil`, and its doc says
   ;; "Unset = DERIVED from the store dir". http.port said 8080 and derived
   ;; anyway, so the one surface whose job is to report configuration reported
   ;; a port nothing was listening on.
@@ -200,8 +200,8 @@
     (testing "unset reports UNSET, so nothing downstream is bound by it"
       (is (nil? (caps/effective s0 "http.port")))
       (is (not (caps/stored? s0 "http.port"))))
-    (testing "and the same shape ui.port already had"
-      (is (nil? (caps/effective s0 "ui.port"))))
+    (testing "and the same shape slopp.api.port already had"
+      (is (nil? (caps/effective s0 "slopp.api.port"))))
     (testing "a pin still wins, and is reported as pinned"
       (let [s (first (store/record-config-put s0 "capabilities" :manifest
                                               "http.port" "9000"))]

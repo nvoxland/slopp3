@@ -1,4 +1,28 @@
 (ns slopp.web.css
+  "Stylesheets as Clojure DATA — the analogue of `slopp.web.html` for the
+  other half of a page. Garden rules in, a minified CSS string or a ready
+  `text/css` response out.
+
+  Being data is the whole value, and it is also the whole exposure: garden
+  renders any STRING it is handed verbatim into a selector or a value, so an
+  interpolated string is an injection door. Hence two refusals, both measured
+  rather than theorised:
+
+  - **Block-breakout characters (`{`, `}`, `<`) in any string.** `;` is
+    deliberately allowed — data URIs need it, and without a `}` a stray `;`
+    can only add a declaration to the rule it is already in.
+  - **A function anywhere in the rule data.** No function is meaningful CSS,
+    and garden does not reject one — it stringifies it, so
+    `clojure.core$_GT_@185af676` lands in a selector and the browser silently
+    drops the rule. This SHIPPED: a bare `>` reaching for a child combinator
+    reads as `clojure.core/>` and swallows the neighbouring selector, so
+    `[:.app > :nav {:width \"16rem\"}]` rendered as `.app{width:16rem}` and the
+    whole application container was 16rem wide for a wave — behind a 200 and
+    valid-looking CSS.
+
+  For raw or vendored CSS, don't fight the refusals: serve a static `.css`
+  asset (`slopp.web.static`), which is the supported route for text this
+  namespace deliberately will not vouch for."
   (:require [garden.core :as garden]))
 
 (defn- check-breakout

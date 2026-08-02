@@ -1,4 +1,40 @@
-(ns slopp.cache)
+(ns slopp.cache
+  "THE memo. Every cache in a slopp store goes through `cached` or
+  `cached-last`, and a hand-rolled atom is the thing this namespace exists to
+  make unnecessary.
+
+  Not because one atom is tidier than five. Because a hand-rolled memo is
+  **invisible**: nothing can clear it between tests, nothing can say what the
+  process is holding, and nothing can tell the tier gate that mutating it is
+  an internal optimization rather than an effect on the world. That last one
+  is the load-bearing part — \"is my memo semantically transparent?\" is an
+  author's claim no tool can check, while \"does this write go through
+  `slopp.cache`?\" is decidable. Measured on slopp before this existed: five
+  hand-rolled caches across three namespaces, three different shapes, and an
+  eviction policy buried in a `swap!`.
+
+  What being visible buys, concretely:
+
+  - **`without-caching!`** makes every call recompute, so a test proves the
+    computation instead of the cache. A cached fn tested normally may be
+    answering from an earlier test entirely.
+  - **`reset-all!`** and **`registry`** turn \"what is this process holding?\"
+    into a read.
+  - **The key is a VALUE you pass**, so every term the result depends on sits
+    in one place. Staleness is always an omitted term — slopp's own lint memo
+    served findings computed under an old linter config until the config hash
+    joined its key.
+
+  Two strategies, and the second is not a stylistic variant. `cached` keys on
+  VALUE. `cached-last` keys on IDENTITY and holds one entry, for keys too
+  large to hash — the whole-store reference graph is memoized on the store
+  itself, which is immutable, so same identity means same content by
+  construction. Identity keying is WRONG for anything rebuilt per call: two
+  `=` values that are not `identical?` miss every time and the cache silently
+  never hits.
+
+  `without-caching!` takes a thunk rather than wrapping a body because the
+  dialect bans user macros (D4).")
 
 (def ^:private ^:ambient-ok caches
   "Every blessed cache, `{cache-id {key value}}`.
