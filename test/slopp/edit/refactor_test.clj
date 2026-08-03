@@ -478,3 +478,28 @@
       (let [p (refactor/subform-replace-plan st 'w.core 'f "(nope)"
                                              "(let [n 1] $1)" true)]
         (is (:error p))))))
+
+(deftest a-module-row-names-the-moved-var-the-caller-actually-called
+  ;; A row targeting the destination recorded only "this var calls to-ns" and
+  ;; never WHICH moved var, so everything downstream had to guess. The export
+  ;; postcondition looked up a var named nil, found nothing, and reported
+  ;; every landed export as unlanded — 39 phantom problems on one move. And
+  ;; the export flag could only ever be applied to the whole moved set at
+  ;; once, so a move either widened visibility it was not asked to widen or
+  ;; refused on a var that was already exported.
+  ;;
+  ;; The callee is in the reference row the whole time; it was dropped on the
+  ;; way into the usage map.
+  (let [st (fixture-store)
+        p  (refactor/move-plan st 'mv.core '[util mid] 'mv.helpers {})
+        to (filter #(= 'mv.helpers (:to %)) (:module-rows p))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (seq to) (pr-str (:module-rows p)))
+    (testing "every destination row names its callee"
+      (is (every? :to-name to) (pr-str to)))
+    (testing "and it is the MOVED var, not the caller's own name"
+      (is (= '#{mid} (set (map :to-name to))) (pr-str to)))
+    (testing "outside callers and the stay-behind alike"
+      (is (= '#{[mv.app go] [mv.core-test mid-t] [mv.core entry]}
+             (set (map (juxt :from-ns :from-var) to)))
+          (pr-str to)))))

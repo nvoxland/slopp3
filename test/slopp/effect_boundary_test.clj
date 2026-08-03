@@ -209,6 +209,10 @@
               v (:tier-layering r)]
           (is (some #(and (= 'ly.core (:ns %)) (= 'ly.shell (:requires %))) v)
               (pr-str v))
+          ;; ly.shell DECLARED :effects, so its tier is a claim rather than an
+          ;; absence — the control for :requires-undeclared, which otherwise
+          ;; could be marking every row and nobody would notice
+          (is (not-any? :requires-undeclared v) (pr-str v))
           (is (re-find #"(?i)looser" (str (:tier-layering-note r)))
               (pr-str (:tier-layering-note r)))
           ;; discriminating: `red` proves nothing unless every OTHER red-maker is
@@ -286,4 +290,35 @@
         (api/ingest! sess 'tw.free "(ns tw.free)\n(defn ^:unused-ok k [x] x)\n")
         (let [r (api/add-require! sess 'tw.free "[tw.util :as u]" :prompt "wire")]
           (is (nil? (:tier-note r)) (pr-str (:tier-note r)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external tier-layering-says-when-the-shell-was-never-declared
+  ;; The finding names the namespace whose CLAIM breaks — and that namespace
+  ;; is the one with nothing to fix, because it did not change. When the
+  ;; required namespace is `:external` only because NOBODY DECLARED IT, the
+  ;; actionable move is to declare ITS tier, and the row has to say which of
+  ;; the two cases this is: an absence and a deliberate `:external` read
+  ;; identically otherwise.
+  ;;
+  ;; Measured on a split: seven forms left a `:pure` namespace and the new one
+  ;; was born undeclared, so the report accused the namespace that had not
+  ;; moved. Four times in one session, each read as a fresh mystery.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'lu.helper
+                   "(ns lu.helper)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
+      (api/module-dep! sess "lu.core" "lu.helper" :prompt "fixture edge")
+      (api/ingest! sess 'lu.core
+                   (str "(ns lu.core (:require [lu.helper :as h]))\n"
+                        "(defn ^:unused-ok go \"P.\" [x] (h/calc x))\n"))
+      (is (nil? (:error (api/module-tier! sess "lu.core" :pure :prompt "core"))))
+      (let [r (external/full-check! sess)
+            v (first (filter #(= 'lu.core (:ns %)) (:tier-layering r)))]
+        (is (some? v) (pr-str (:tier-layering r)))
+        (is (= 'lu.helper (:requires v)) (pr-str v))
+        (testing "the row says the shell tier is an ABSENCE, not a claim"
+          (is (true? (:requires-undeclared v)) (pr-str v)))
+        (testing "and the note points at the declaration as a candidate fix"
+          (is (re-find #"(?i)declar" (str (:tier-layering-note r)))
+              (pr-str (:tier-layering-note r)))))
       (finally (api/close! sess)))))

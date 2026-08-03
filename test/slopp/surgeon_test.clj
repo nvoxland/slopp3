@@ -488,3 +488,46 @@
           (is (some? (:error r)) (pr-str r))
           (is (re-find #"cycle" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-move-into-a-new-namespace-carries-the-tier-it-left
+  ;; UNDECLARED is `:external` by absence of a claim, so a namespace born from
+  ;; a move is born in the shell. The forms that left were PURE the moment
+  ;; before — same module, same code — and the split invented a core→shell
+  ;; dependency out of nothing. Worse, `full_check` reported it against the
+  ;; namespace that did NOT change, since that is the one whose claim breaks;
+  ;; the namespace missing the declaration is the actionable one and went
+  ;; unmentioned. Hit four times in one session.
+  ;;
+  ;; `ns_rename` has no equivalent gap — it RELOCATES a declaration rather
+  ;; than copying it, measured twice. The asymmetry between the two relocation
+  ;; verbs was invisible until a whole-store check.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tq.core
+                   (str "(ns tq.core)\n\n"
+                        "(defn ^:unused-ok pick \"P.\" [m] (get m :a))\n\n"
+                        "(defn ^:unused-ok double-it \"D.\" [x] (* 2 x))\n"))
+      (is (nil? (:error (api/module-tier! sess "tq.core" :pure
+                                          :prompt "a real core"))))
+      (let [r (api/move-forms! sess 'tq.core ["double-it"] 'tq.split
+                               :prompt "split the arithmetic out")]
+        (is (nil? (:error r)) (pr-str r)))
+      (testing "the target carries the tier its forms already satisfied"
+        (is (= :pure (get (:module-tiers (:store @sess)) "tq.split"))
+            (pr-str (:module-tiers (:store @sess)))))
+
+      (testing "an UNDECLARED source mints nothing — absence is not a claim"
+        ;; the honest default is what was true one delta ago, and for an
+        ;; undeclared source that is "nobody has said". Stamping :external
+        ;; here would defeat a deliberate move INTO a pure subtree, where the
+        ;; right outcome is the write gate refusing impure forms on the way in.
+        (api/ingest! sess 'tu.core
+                     (str "(ns tu.core)\n\n"
+                          "(defn ^:unused-ok keep-it \"K.\" [x] x)\n\n"
+                          "(defn ^:unused-ok take-it \"T.\" [x] (inc x))\n"))
+        (let [r (api/move-forms! sess 'tu.core ["take-it"] 'tu.split
+                                 :prompt "split an undeclared namespace")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (nil? (get (:module-tiers (:store @sess)) "tu.split"))
+            (pr-str (:module-tiers (:store @sess)))))
+      (finally (api/close! sess)))))

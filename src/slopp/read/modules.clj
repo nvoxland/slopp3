@@ -264,12 +264,19 @@
 
   An operation that reports what it MEANT to do is indistinguishable from one
   that did it, and the difference only shows up somewhere else, later. One
-  read-back at the tail of the op is the whole cost."
+  read-back at the tail of the op is the whole cost.
+
+  Reads the callee off `:to-name`, which every module row now carries. While
+  the destination rows omitted it this asked `export-level` about a var named
+  nil, found nothing, and reported every LANDED export as unlanded — 39
+  phantom findings on one move, each naming a bare namespace and no var. A
+  postcondition that cannot name its subject is not a weaker check, it is a
+  wrong one."
   [store rows]
-  (vec (sort (for [{:keys [to name to-export]} rows
+  (vec (sort (for [{:keys [to to-name to-export]} rows
                    :when to-export
-                   :when (not (modules/export-level store to name))]
-               (symbol (str to) (str name))))))
+                   :when (not (modules/export-level store to to-name))]
+               (symbol (str to) (str to-name))))))
 
 (defn ^:export substrate
   "The modules to draw as a FOUNDATION BAND rather than as nodes with edges.

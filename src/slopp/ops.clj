@@ -2121,20 +2121,22 @@ recompiled (session/after-write! session ns-sym)]
             rows     (map (fn [r]
                             (assoc r :to-export
                                    (if (= (symbol (str to-ns)) (:to r))
-                                     ;; ALL-OR-NOTHING for the moved set, and it
-                                     ;; cannot yet be per-var: a row targeting the
-                                     ;; destination records only that
-                                     ;; :from-ns/:from-var calls `to-ns`, never
-                                     ;; WHICH moved var — move-plan's :module-rows
-                                     ;; carries :to-name for moved→stay rows only.
-                                     ;; So a var that is ALREADY ^:export still
-                                     ;; needs the flag passed again (the node keeps
-                                     ;; its own metadata, so this understates what
-                                     ;; the move writes), and passing it exports
-                                     ;; every moved var alike. Widening ext-usages
-                                     ;; to carry the callee is what fixes it.
-                                     export
-                                     (edit.modules/export-level st (:to r) (:name r)))))
+                                     ;; PER VAR, and the option WIDENS rather
+                                     ;; than replaces. A var that is already
+                                     ;; ^:export keeps that level through the
+                                     ;; move — its node carries its own
+                                     ;; metadata — so claiming otherwise made
+                                     ;; the move refuse on visibility until the
+                                     ;; flag was re-passed for something
+                                     ;; already true, and passing it then
+                                     ;; exported every moved var alike. Read
+                                     ;; off FROM-NS, where the var still lives:
+                                     ;; to-ns does not hold it until this lands.
+                                     (or export
+                                         (edit.modules/export-level
+                                          st (symbol (str from-ns)) (:to-name r)))
+                                     (edit.modules/export-level
+                                      st (:to r) (:to-name r)))))
                           (:module-rows plan))
             ;; edges the move's rewires necessitate are part of its intent
             tmanif   (edit.modules/module-test-manifest st)
@@ -2180,6 +2182,34 @@ recompiled (session/after-write! session ns-sym)]
                                       :prompt (or prompt (str "move-forms: " from-ns " → " to-ns))
                                       :agent agent)))
                             st-g edges)
+                ;; 0b. a namespace born from a move is born UNDECLARED, and
+                ;; undeclared is :external by absence of a claim — so forms
+                ;; that just left a :pure core arrive in the shell, and the
+                ;; split invents a core→shell dependency out of nothing. The
+                ;; honest default is what was true one delta ago: the source's
+                ;; governing tier. Recorded BEFORE the ingest, so the moved
+                ;; forms are verified against it on the way in.
+                ;;
+                ;; Only from a source that CARRIES a claim, and only when the
+                ;; target would otherwise be governed differently. An
+                ;; undeclared source mints nothing — stamping :external there
+                ;; would defeat a deliberate move INTO a pure subtree, where
+                ;; the right outcome is the gate refusing impure forms.
+                ;; `ns_rename` has no equivalent gap: it RELOCATES a
+                ;; declaration rather than copying it, and the asymmetry
+                ;; between the two relocation verbs was invisible until a
+                ;; whole-store check named the namespace that did NOT change.
+                st0 (let [src (symbol (str from-ns))]
+                      (if (and (:new-ns? plan)
+                               (tiers/tier-declared? st src)
+                               (not= (tiers/tier-for st src)
+                                     (tiers/tier-for st to-ns)))
+                        (first (store/record-module-tier
+                                st0 (str to-ns) (tiers/tier-for st src)
+                                :prompt (or prompt
+                                            (str "move-forms: " from-ns " → " to-ns))
+                                :agent agent))
+                        st0))
                 ;; 1. the target: ingest new, or append + requires to existing
                 st1 (if (:new-ns? plan)
                       (store/ingest st0 to-ns (:new-src plan) :agent agent)
@@ -3475,6 +3505,30 @@ recompiled (session/after-write! session ns-sym)]
                               " edge is declared or the call restructured. "
                               axes))))))))
 
+(defn- sweep-left-behind
+  "Forms still binding `kname` through a `from-ns`-qualified `:keys`
+  destructuring — what a keyword sweep did not reach.
+
+  Read off the store AFTER the write, over the OLD key: whatever still names
+  it was, by construction, not rewritten. That is a reality check rather than
+  a claim about what the changeset meant to do, and it is the same discipline
+  `ns_rename`'s `:left-behind` runs on.
+
+  Text-prefiltered on the entry's own spelling before parsing, because this
+  runs over every form in the store and the entry cannot be bound without
+  being written."
+  [st kname from-ns]
+  (let [entry (str (refactor/keys-entry from-ns))]
+    (vec (for [nsx (sort (keys (:namespaces st)))
+               e   (store/forms st nsx)
+               :when (:name e)
+               :let [src (n/string (:node e))]
+               :when (and (str/includes? src entry)
+                          (str/includes? src kname)
+                          (refactor/destructures-key? src kname from-ns))]
+           {:ns nsx :form (:name e) :via :destructuring
+            :text (str "{" entry " [" kname "]}")}))))
+
 (defn rename-sweep!
   "Q14: the docs-team rename as ONE intent — every namespace, var, keyword,
   and prose occurrence of `from` (as a whole word/segment, boundary-guarded)
@@ -3484,7 +3538,20 @@ recompiled (session/after-write! session ns-sym)]
   sweep means 'everything named that', locals and prose included; the
   dialect/isolation gates and the test run judge the result. eval9's
   measured loss (13.6k tokens / 37 calls / one restart for zone->region
-  across 41 nses vs sed's one pass) is this op's demand signal."
+  across 41 nses vs sed's one pass) is this op's demand signal.
+
+  A KEYWORD rename (both sides starting `:`) carries a structural half the
+  text pass cannot see: `{:a/keys [x]}` names its key as a SYMBOL, with the
+  qualifier written in the entry beside it. That entry is matched on the FROM
+  qualifier and only on it — `{:keys [x]}` names `:x` and survives a rename of
+  `:a/x` untouched. Two reports come out of it, because neither half is a text
+  substitution and both were silent once:
+
+  - `:requalified` — destructurings this call restructured. A keyword rename's
+    diff should not contain a semantic change without naming it.
+  - `:left-behind` — destructurings it DECLINED. Changing a key's NAME rather
+    than its qualifier cannot move the symbol: the symbol is a local binding
+    the body still reads, so the rename is yours to finish."
   [session from to & {:keys [prompt agent dry-run]}]
   (let [from (str from)
         to   (str to)
@@ -3523,34 +3590,41 @@ recompiled (session/after-write! session ns-sym)]
                                     (sort nses)))]
         (if (:error nsr)
           nsr
-          (let [st    (:store @session)
-                ;; renaming a KEYWORD to a qualified one has a structural half the text
-                ;; pass cannot see: `{:keys [x]}` names its key as a SYMBOL, so a
-                ;; literal-only sweep leaves it reading the old unqualified key —
-                ;; compiles, gates clean, reads nil at runtime.
+          (let [st      (:store @session)
                 kw?     (and (str/starts-with? from ":")
                              (str/starts-with? to ":"))
-                kname   (when kw? (last (str/split (subs from 1) #"/")))
-                to-ns   (when kw?
-                          (let [b (subs to 1)]
-                            (when (str/includes? b "/")
-                              (first (str/split b #"/")))))
-                rewrite (fn [src]
-                          (let [s (str/replace src pat to)]
-                            (if (and to-ns (str/includes? s ":keys")
-                                     (str/includes? s kname))
-                              (refactor/requalify-keys s kname to-ns)
-                              s)))
+                qual    (fn [k] (let [b (subs k 1)]
+                                  (when (str/includes? b "/")
+                                    (first (str/split b #"/")))))
+                lname   (fn [k] (last (str/split (subs k 1) #"/")))
+                kname   (when kw? (lname from))
+                from-ns (when kw? (qual from))
+                to-ns   (when kw? (qual to))
+                ;; only a rename that leaves the key's NAME alone can move the
+                ;; symbol — it is a local binding, not a keyword
+                requal? (and kw? (= kname (lname to)) (not= from-ns to-ns))
+                from-k  (when kw? (str (refactor/keys-entry from-ns)))
                 ;; select on the REWRITE, not the pattern: a form whose only
                 ;; occurrence is a :keys destructuring holds no keyword literal
-                steps (vec (for [nsx (store/ns-dependency-order st)
-                                 e   (store/forms st nsx)
-                                 :when (:name e)
-                                 :let [src  (n/string (:node e))
-                                       src' (rewrite src)]
-                                 :when (not= src src')]
-                             {:action :replace :ns nsx :name (:name e)
-                              :source src'}))]
+                rows    (vec (for [nsx (store/ns-dependency-order st)
+                                   e   (store/forms st nsx)
+                                   :when (:name e)
+                                   :let [src  (n/string (:node e))
+                                         txt  (str/replace src pat to)
+                                         src' (if (and requal?
+                                                       (str/includes? txt from-k)
+                                                       (str/includes? txt kname))
+                                                (refactor/requalify-keys
+                                                 txt kname from-ns to-ns)
+                                                txt)]
+                                   :when (not= src src')]
+                               {:ns nsx :name (:name e) :source src'
+                                :requalified? (not= txt src')}))
+                steps   (mapv #(-> (select-keys % [:ns :name :source])
+                                   (assoc :action :replace))
+                              rows)
+                requal  (vec (for [r rows :when (:requalified? r)]
+                               {:ns (:ns r) :form (:name r)}))]
             (cond
               (and (empty? steps) (empty? (:renamed-namespaces nsr)))
               {:error (str "nothing named " from
@@ -3566,13 +3640,16 @@ recompiled (session/after-write! session ns-sym)]
                                                            (:store @session) ns name)))]
                                  {:form (symbol (str ns) (str name))
                                   :strings? (refactor/match-in-strings? src pat)}))
-                    rows     (mapv classify steps)]
+                    rows'    (mapv classify steps)
+                    left     (when kw? (seq (sweep-left-behind st kname from-ns)))]
                 (merge nsr
                        {:dry-run true
                         :forms (count steps)
-                        :in-code (filterv (complement :strings?) rows)
-                        :in-strings (filterv :strings? rows)}
-                       (when (some :strings? rows)
+                        :in-code (filterv (complement :strings?) rows')
+                        :in-strings (filterv :strings? rows')}
+                       (when (seq requal) {:requalified requal})
+                       (when left {:left-behind (vec left)})
+                       (when (some :strings? rows')
                          {:note (str "string-literal hits REVIEW FIRST: a sweep"
                                      " rewrites keyword text inside strings, so"
                                      " a test fixture can be left"
@@ -3585,7 +3662,18 @@ recompiled (session/after-write! session ns-sym)]
               (let [r (edit-group! session steps :prompt why :agent agent)]
                 (if (:error r)
                   r
-                  (merge r (assoc nsr :forms (count steps))))))))))))
+                  (let [left (when kw?
+                               (seq (sweep-left-behind (:store @session)
+                                                       kname from-ns)))]
+                    (cond-> (merge r (assoc nsr :forms (count steps)))
+                      (seq requal) (assoc :requalified requal)
+                      left (assoc :left-behind (vec left)
+                                  :note (str "these destructurings still name "
+                                             from " and were NOT rewritten: a"
+                                             " :keys entry binds the key's NAME"
+                                             " as a local the body reads, so"
+                                             " only the QUALIFIER can be moved"
+                                             " for you")))))))))))))
 
 (defn requalify-boundary-keys!
   "Namespace a module-external fn's OPTION KEYS in one verified intent: its
@@ -3639,7 +3727,7 @@ recompiled (session/after-write! session ns-sym)]
                                     (let [s' (refactor/requalify-call-args
                                               s (heads nsx) (name k) tons)]
                                       (if target?
-                                        (refactor/requalify-keys s' (name k) tons)
+                                        (refactor/requalify-keys s' (name k) nil tons)
                                         s')))
                                   src ks))
                 steps   (vec (for [nsx (store/ns-dependency-order st)

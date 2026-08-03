@@ -896,7 +896,16 @@ client-deps (merge (:client-deps st) (:client provided))
                          :when (not (str/ends-with? (str n) "-test"))
                          :let [t (tiers/tier-for st n)]
                          v (tiers/layering-violations st n t)]
-                     {:ns n :tier t :requires (:requires v) :requires-tier (:tier v)}))
+                     ;; :external by ABSENCE and :external by DECLARATION read identically
+                     ;; in the row, and only the first has a one-call fix. The
+                     ;; finding names the namespace whose CLAIM breaks, which is
+                     ;; the one that did not change; say which case this is so
+                     ;; the reader is not sent to restructure code when a
+                     ;; missing declaration is the whole story.
+                     (cond-> {:ns n :tier t
+                              :requires (:requires v) :requires-tier (:tier v)}
+                       (not (tiers/tier-declared? st (:requires v)))
+                       (assoc :requires-undeclared true))))
         ;; MODULE layering — the architecture graph, and a DIFFERENT graph
         ;; from the tiers above, so a green there says nothing about this.
         ;; The module rules are WRITE gates: they see only code written
@@ -978,7 +987,15 @@ client-deps (merge (:client-deps st) (:client provided))
                                       " a namespace depends on one at a LOOSER"
                                       " tier. Either move what it needs into a"
                                       " core namespace, or its own tier is a"
-                                      " claim it does not earn"))
+                                      " claim it does not earn"
+                                      (when (some :requires-undeclared layer)
+                                        (str ". Rows marked :requires-undeclared"
+                                             " name a dependency that is"
+                                             " :external only because nothing"
+                                             " DECLARED it — usually a namespace"
+                                             " a move or split just created;"
+                                             " module_purity on that namespace"
+                                             " may be the whole fix"))))
       mods                (assoc :module-violations mods
                                  :module-violations-note
                                  (str (:count mods) " module rule violation(s)"

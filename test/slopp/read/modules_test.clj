@@ -422,12 +422,17 @@
   ;;
   ;; Verification must check REALITY, not intent. An operation that reports
   ;; what it MEANT to do is indistinguishable from one that did it.
+  ;;
+  ;; The callee is `:to-name`, the one spelling every module row uses. It was
+  ;; `:name` here and absent on the destination rows that make up most of a
+  ;; real move, which is how this check spent a session reporting every landed
+  ;; export as unlanded under a bare namespace and no var.
   (let [st (store/ingest (store/empty-store) 'pe.deep.core
                          (str "(ns pe.deep.core)\n"
                               "(defn ^:export landed \"L.\" [x] x)\n"
                               "(def ^:dynamic *missed* nil)\n"
                               "(defn plain \"P.\" [x] x)\n"))
-        row (fn [nm] {:to 'pe.deep.core :name nm :to-export true})]
+        row (fn [nm] {:to 'pe.deep.core :to-name nm :to-export true})]
     (testing "a planned export that IS on the committed form reports nothing"
       (is (= [] (modules/unlanded-exports st [(row 'landed)]))))
     (testing "a planned export the store does not carry is REPORTED"
@@ -439,11 +444,11 @@
              (modules/unlanded-exports st [(row 'landed) (row '*missed*) (row 'plain)]))))
     (testing "rows that planned NO export are not this check's business"
       (is (= [] (modules/unlanded-exports
-                 st [{:to 'pe.deep.core :name 'plain :to-export nil}]))))
+                 st [{:to 'pe.deep.core :to-name 'plain :to-export nil}]))))
     (testing "a subtree export (a string level) counts as planned too"
       (is (= '[pe.deep.core/plain]
              (modules/unlanded-exports
-              st [{:to 'pe.deep.core :name 'plain :to-export "pe.other"}]))))))
+              st [{:to 'pe.deep.core :to-name 'plain :to-export "pe.other"}]))))))
 
 (deftest substrate-bands-sinks-that-many-modules-depend-on
   (testing "a sink two or more modules depend on is foundation"

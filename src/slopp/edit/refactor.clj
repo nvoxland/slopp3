@@ -918,6 +918,9 @@
   Returns {:error msg} with teaching for the impossible cases, else
   {:new-ns? :new-src|:append :to-require-adds :rewrites {fid {:ns :name :node
   :src}} :require-adds {ns spec-str} :module-rows :removals :moved}.
+  Every `:module-rows` entry is `{:from-ns :from-var :to :to-name}` — the
+  CALL, in both directions, so a consumer can act per moved var rather than
+  per caller.
   Direction rules: stay→moved gives from-ns a require on to-ns; moved→stay
   gives to-ns a require back and QUALIFIES bare refs to PUBLIC stay-behinds
   (private callees refuse — move them too or make them public); both at once
@@ -940,13 +943,18 @@
         ;; direction analysis reads THE graph (store-internal questions);
         ;; kondo rows remain only for EXTERNAL-lib require selection
         srefs (refs/ns-refs store from-ns)
-        stay->moved (set (keep #(when (and (= from-ns (:to-ns %))
-                                           (moved (:to-name %))
-                                           (:from-var %)
-                                           (not (moved (:from-var %)))
-                                           (not= :declared (:via %)))
-                                  (:from-var %))
-                               srefs))
+        ;; the CALL, not just the caller. A module row that records only "this
+        ;; var reaches to-ns" cannot say which moved var it reached, and every
+        ;; consumer downstream is then forced to guess or go all-or-nothing.
+        ;; The callee is right here in the reference row.
+        stay->moved-calls (set (keep #(when (and (= from-ns (:to-ns %))
+                                                 (moved (:to-name %))
+                                                 (:from-var %)
+                                                 (not (moved (:from-var %)))
+                                                 (not= :declared (:via %)))
+                                        [(:from-var %) (:to-name %)])
+                                     srefs))
+        stay->moved (set (map first stay->moved-calls))
         moved->stay (set (keep #(when (and (= from-ns (:to-ns %))
                                            (not (moved (:to-name %)))
                                            (moved (:from-var %))
@@ -1007,7 +1015,8 @@
                                            (not= from-ns (:from-ns r))
                                            (not= :declared (:via r)))
                                     (update m (:from-ns r)
-                                            (fnil conj #{}) (:from-var r))
+                                            (fnil conj #{})
+                                            [(:from-var r) (:to-name r)])
                                     m))
                                 {} (refs/refs store))
             need-alias  (cond-> (set (keys ext-usages))
@@ -1130,16 +1139,21 @@
                                      :let [specs (require-specs store nsx)]
                                      :when (not-any? #(= (:lib %) to-ns) specs)]
                                  [nsx (str "[" to-ns " :as " (get alias-of nsx) "]")]))
+            ;; every row is {:from-ns :from-var :to :to-name} — ONE shape, in both
+            ;; directions. The destination rows used to omit :to-name while the
+            ;; moved→stay rows spelled the same fact `:name`, so a consumer
+            ;; reading rows generically got nil on the majority of them.
             module-rows (vec (concat
-                              (for [[nsx fs] ext-usages, f fs]
-                                {:from-ns nsx :from-var f :to to-ns})
-                              (when (seq stay->moved)
-                                (for [f (sort stay->moved)]
-                                  {:from-ns from-ns :from-var f :to to-ns}))
+                              (for [[nsx calls] ext-usages, [f nm] calls]
+                                {:from-ns nsx :from-var f :to to-ns :to-name nm})
+                              (when (seq stay->moved-calls)
+                                (for [[f nm] (sort stay->moved-calls)]
+                                  {:from-ns from-ns :from-var f
+                                   :to to-ns :to-name nm}))
                               (when (seq moved->stay)
                                 (for [nm (sort moved->stay)]
                                   {:from-ns to-ns :from-var (first (sort moved))
-                                   :to from-ns :name nm}))))]
+                                   :to from-ns :to-name nm}))))]
         (if (seq no-alias)
           {:error (str "no usable alias for " to-ns " in " (vec no-alias)
                        " — their existing aliases collide; rename those first")}
@@ -1250,64 +1264,131 @@
 
           :else (recur (z/next z)))))))
 
-(defn ^:export requalify-keys
-  "Rewrite `{:keys [x]}` destructuring to `{:to-ns/keys [x]}` for the single key
-  named `key-name`, leaving every other key in the vector where it is.
+(defn ^:export keys-entry
+  "The destructuring entry a key qualified by `ns-part` is bound through:
+  `:keys` when `ns-part` is blank, `:<ns-part>/keys` otherwise.
+
+  Small, and named because it is the join between a KEYWORD (`:a/x`, what a
+  rename is given) and a DESTRUCTURING (`{:a/keys [x]}`, where the same key is
+  spelled with its qualifier one position to the left)."
+  [ns-part]
+  (if (str/blank? (str ns-part))
+    :keys
+    (keyword (str ns-part) "keys")))
+
+(defn- keys-binding
+  "Map node `mnode`'s `{k [… sym …]}` destructuring entry as
+  `{:pairs :entry :vector :sym}`, or nil when this map does not bind `sym`
+  through `k`.
+
+  THE definition of \"this destructuring names that key\", in one place
+  because its absence broke a keyword sweep in both directions at once. A
+  `:keys` vector names its key as a SYMBOL, with the qualifier written only in
+  the entry beside it — so a pass that matches the symbol alone both skips
+  `{:a/keys [x]}` while renaming `:a/x` and rewrites `{:keys [x]}`, which
+  names `:x` and has nothing to do with the rename. The entry keyword is the
+  whole of the missing check.
+
+  `k` is `:keys` for an unqualified key and `:<ns>/keys` for a qualified one —
+  see `keys-entry`."
+  [mnode k sym]
+  (let [sx    (fn [nd] (try (n/sexpr nd) (catch Exception _ ::none)))
+        kids  (fn [nd] (vec (filter n/sexpr-able? (n/children nd))))
+        pairs (vec (partition 2 (kids mnode)))
+        entry (first (filter #(= k (sx (first %))) pairs))
+        vec-n (second entry)]
+    (when (and entry (= :vector (n/tag vec-n)))
+      (when-let [tgt (first (filter #(= sym (sx %)) (kids vec-n)))]
+        {:pairs pairs :entry entry :vector vec-n :sym tgt}))))
+
+(defn ^:export destructures-key?
+  "True when `src` binds `key-name` through a `{:from-ns/keys [key-name]}`
+  destructuring (`{:keys [key-name]}` when `from-ns` is blank).
+
+  The question `requalify-keys` answers by rewriting, asked without
+  rewriting — for the case it must DECLINE. A sweep that changes a key's
+  NAME rather than its qualifier cannot move the symbol, because the symbol
+  is a LOCAL BINDING the body still reads; renaming it here would rename a
+  binding on the strength of a keyword. So the sweep leaves those alone and
+  reports them, which is only possible if it can see them."
+  [src key-name from-ns]
+  (let [k      (keys-entry from-ns)
+        wanted (symbol (str key-name))]
+    (loop [z (z/of-string src)]
+      (cond
+        (z/end? z) false
+
+        (and (= :map (n/tag (z/node z)))
+             (keys-binding (z/node z) k wanted))
+        true
+
+        :else (recur (z/next z))))))
+
+(defn ^{:export true
+        :breaking-ok "from-ns is REQUIRED, not optional: which entry the rewrite matches is the whole correctness question, and a defaulted from would let a caller re-create the bug by omission. Both callers moved with it, and nothing outside this store calls it."}
+  requalify-keys
+  "Move the single key named `key-name` from the `from-ns`-qualified
+  destructuring entry to the `to-ns`-qualified one, leaving every other key in
+  the vector where it is. Either side may be blank, which is the unqualified
+  `{:keys [x]}` entry.
 
   The half a textual keyword sweep cannot do. A map destructuring names its
   keys as SYMBOLS inside a `:keys` vector, so renaming the keyword LITERAL
-  `:x` to `:to-ns/x` everywhere leaves `{:keys [x]}` still asking for the
-  unqualified `:x` — code that compiles, passes every gate, and reads nil at
-  runtime.
+  `:a/x` to `:b/x` everywhere leaves `{:a/keys [x]}` still asking for `:a/x` —
+  code that compiles, passes every gate, and reads nil at runtime.
+
+  **Which entry is matched is the entire correctness question**, and it is
+  `from-ns` that answers it, never the symbol. `{:keys [x]}` names `:x`; a
+  rename of `:a/x` must not touch it. That check's absence broke both
+  directions of one sweep at once — the qualified destructurings were skipped
+  and the unqualified ones were rewritten to read a key they had never named.
+  See `keys-binding`.
 
   Rebuilds the destructuring map by MOVING the symbol's node, never by
   round-tripping through `sexpr`: a rebuild from sexpr silently drops type
   hints (`^Repository repo`), turning direct interop into reflection. Any
   other entry — `:as`, `:or`, another `:ns/keys` — is carried through
-  untouched, and an existing `:to-ns/keys` absorbs the symbol so sweeping
-  several keys of one handle converges on a single entry.
+  untouched; the source entry disappears when its last member leaves, and an
+  existing destination entry absorbs the symbol, so sweeping several keys of
+  one handle converges on a single entry.
 
-  Pure: source string in, source string out; untouched when nothing matches.
-  A `to-ns` of nil (renaming TOWARD an unqualified key) is a deliberate no-op."
-  [src key-name to-ns]
-  (if (str/blank? (str to-ns))
-    src
-    (let [qkeys (keyword (str to-ns) "keys")
-          sym   (symbol (str key-name))
-          sx    (fn [nd] (try (n/sexpr nd) (catch Exception _ ::none)))
-          kids  (fn [nd] (vec (filter n/sexpr-able? (n/children nd))))
-          vnode (fn [ns] (n/vector-node (interpose (n/spaces 1) ns)))
-          rebuild
-          (fn [mnode]
-            (let [pairs (vec (partition 2 (kids mnode)))
-                  pair  (fn [k] (first (filter #(= k (sx (first %))) pairs)))
-                  kp    (pair :keys)
-                  vec-n (second kp)]
-              (when (and kp (= :vector (n/tag vec-n)))
-                (let [vkids (kids vec-n)
-                      tgt   (first (filter #(= sym (sx %)) vkids))]
-                  (when tgt
-                    (let [kept   (vec (remove #(= % tgt) vkids))
-                          qp     (pair qkeys)
-                          others (remove #(or (= % kp) (= % qp)) pairs)
-                          qkept  (if qp (conj (kids (second qp)) tgt) [tgt])
-                          new    (concat
-                                  (when (seq kept)
-                                    [[(n/keyword-node :keys) (vnode kept)]])
-                                  [[(n/keyword-node qkeys) (vnode qkept)]]
-                                  others)]
-                      (n/map-node
-                       (interpose (n/spaces 1) (apply concat new)))))))))]
-      (loop [z (z/of-string src)]
-        (cond
-          (z/end? z) (z/root-string z)
+  Pure: source string in, source string out; untouched when nothing matches,
+  and a no-op when the two qualifications are the same."
+  [src key-name from-ns to-ns]
+  (let [from-k (keys-entry from-ns)
+        to-k   (keys-entry to-ns)]
+    (if (= from-k to-k)
+      src
+      (let [wanted (symbol (str key-name))
+            kids   (fn [nd] (vec (filter n/sexpr-able? (n/children nd))))
+            vnode  (fn [ns] (n/vector-node (interpose (n/spaces 1) ns)))
+            sx     (fn [nd] (try (n/sexpr nd) (catch Exception _ ::none)))
+            rebuild
+            (fn [mnode]
+              (when-let [b (keys-binding mnode from-k wanted)]
+                (let [tgt    (:sym b)
+                      pairs  (:pairs b)
+                      kept   (vec (remove #(= % tgt) (kids (:vector b))))
+                      dest   (first (filter #(= to-k (sx (first %))) pairs))
+                      others (remove #(or (= % (:entry b)) (= % dest)) pairs)
+                      moved  (if dest (conj (kids (second dest)) tgt) [tgt])
+                      new    (concat
+                              (when (seq kept)
+                                [[(n/keyword-node from-k) (vnode kept)]])
+                              [[(n/keyword-node to-k) (vnode moved)]]
+                              others)]
+                  (n/map-node
+                   (interpose (n/spaces 1) (apply concat new))))))]
+        (loop [z (z/of-string src)]
+          (cond
+            (z/end? z) (z/root-string z)
 
-          (= :map (n/tag (z/node z)))
-          (if-let [m' (rebuild (z/node z))]
-            (recur (z/next (z/replace z m')))
-            (recur (z/next z)))
+            (= :map (n/tag (z/node z)))
+            (if-let [m' (rebuild (z/node z))]
+              (recur (z/next (z/replace z m')))
+              (recur (z/next z)))
 
-          :else (recur (z/next z)))))))
+            :else (recur (z/next z))))))))
 
 (defn ^:export symbol-mention-re
   "A regex matching `nm` as a whole SYMBOL token in prose or a string — bounded
@@ -1417,6 +1498,7 @@
                                  manifest
                                  [{:from-ns (:from-ns' r) :from-var (:from-var r)
                                    :to (:to-ns' r)
+                                   :to-name (:to-name r)
                                    :to-export (edit.modules/export-level
                                                store (:to-ns r) (:to-name r))}])))
         exports  (->> cands

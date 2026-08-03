@@ -148,16 +148,22 @@
   (or (:module-test-edges store) {}))
 
 (defn ^:export module-violations
-  "The module system's pure RULES over resolved usage rows (kondo
-  var-usages shape: {:from-ns :from-var :to :to-export}) — nil `manifest`
-  = a pre-adoption store, rules off. Two rules: (1) RECURSIVE VISIBILITY —
+  "The module system's pure RULES over resolved usage rows ({:from-ns
+  :from-var :to :to-name :to-export}) — nil `manifest` = a pre-adoption
+  store, rules off. Two rules: (1) RECURSIVE VISIBILITY —
   an ns deeper than two segments is callable only from namespaces sharing
   its parent prefix, unless the target var's :export widens it (true =
   world surface; a prefix string = that subtree only); (2) DECLARED EDGES
   — a cross-module call requires the caller's module to list the target
   module in the manifest. Rows must already be filtered to store-internal
-  targets. Returns violation maps ({:from-ns :from-var :target-ns :rule
-  :error}), nil when clean.
+  targets. Returns violation maps ({:from-ns :from-var :target-ns
+  :target-name :rule :error}), nil when clean.
+
+  `:to-name` is the CALLEE, and a visibility refusal is the one finding that
+  needs it: its whole instruction is \"mark the target ^:export\", which was
+  unactionable while the row named only the target namespace. It is
+  optional — a row that does not know its callee degrades the MESSAGE, never
+  the rule, since the rules themselves are about namespaces.
 
   `test-manifest` ([[module-test-manifest]]) satisfies rule 2 for a TEST
   caller only — a module may declare that its fixtures cross an edge its
@@ -169,7 +175,7 @@
   ([manifest test-manifest rows]
    (when manifest
      (->> (distinct rows)
-          (keep (fn [{:keys [from-ns from-var to to-export]}]
+          (keep (fn [{:keys [from-ns from-var to to-name to-export]}]
                   (let [caller-mod (module-of from-ns)
                         ;; fold -test so a spec shares its subject package's prefix (deep helpers
                         ;; stay testable); edges already fold via module-of
@@ -178,6 +184,7 @@
                         tsegs      (str/split (str to) #"\.")
                         tmod       (module-of to)
                         parent     (str/join "." (butlast tsegs))
+                        target     (if to-name (str to "/" to-name) (str to))
                         under?     (fn [prefix]
                                      (or (= caller-str prefix)
                                          (str/starts-with? caller-str (str prefix "."))))
@@ -192,39 +199,43 @@
                       (= (str from-ns) (str to)) nil
 
                       (and (> (count tsegs) 2) (not visible?))
-                      {:from-ns from-ns :from-var from-var :target-ns to
-                       :rule :visibility
-                       :error (if (string? to-export)
-                                (str from-ns "/" from-var " calls " to " which is"
-                                     " exported only within " to-export ".* — call"
-                                     " it from inside that subtree, raise its"
-                                     " :export level, or use " tmod "'s public"
-                                     " surface")
-                                (str from-ns "/" from-var " calls " to " which is"
-                                     " package-private to " parent ".* (recursive"
-                                     " visibility) — call " tmod "'s public"
-                                     " surface, mark the target ^:export in its"
-                                     " defn to hoist it into that surface"
-                                     " (^{:export \"prefix\"} exposes it to a"
-                                     " subtree only), or move the definition up"
-                                     " a level"))}
+                      (cond-> {:from-ns from-ns :from-var from-var :target-ns to
+                               :rule :visibility
+                               :error (if (string? to-export)
+                                        (str from-ns "/" from-var " calls " target
+                                             " which is exported only within "
+                                             to-export ".* — call"
+                                             " it from inside that subtree, raise its"
+                                             " :export level, or use " tmod "'s public"
+                                             " surface")
+                                        (str from-ns "/" from-var " calls " target
+                                             " which is package-private to " parent
+                                             ".* (recursive visibility) — call " tmod
+                                             "'s public surface, mark " target
+                                             " ^:export in its defn to hoist it into"
+                                             " that surface (^{:export \"prefix\"}"
+                                             " exposes it to a subtree only), or move"
+                                             " the definition up a level"))}
+                        to-name (assoc :target-name to-name))
 
                       (and (not= tmod caller-mod) (not declared?))
-                      {:from-ns from-ns :from-var from-var :target-ns to
-                       :rule :undeclared-edge
-                       :error (str from-ns "/" from-var " uses " to " but module "
-                                   caller-mod " does not declare " tmod
-                                   " — declare the edge: module_dep {from \""
-                                   caller-mod "\" to \"" tmod "\"} (say why in"
-                                   " prompt), or restructure the call"
-                                   (when test?
-                                     (str ". This caller is a TEST, so"
-                                          " {test-only true} declares it for"
-                                          " fixtures WITHOUT licensing production"
-                                          " code under " caller-mod " to cross —"
-                                          " and a test-only edge is not a"
-                                          " production edge, so it cannot close a"
-                                          " cycle")))}
+                      (cond-> {:from-ns from-ns :from-var from-var :target-ns to
+                               :rule :undeclared-edge
+                               :error (str from-ns "/" from-var " uses " target
+                                           " but module " caller-mod
+                                           " does not declare " tmod
+                                           " — declare the edge: module_dep {from \""
+                                           caller-mod "\" to \"" tmod "\"} (say why in"
+                                           " prompt), or restructure the call"
+                                           (when test?
+                                             (str ". This caller is a TEST, so"
+                                                  " {test-only true} declares it for"
+                                                  " fixtures WITHOUT licensing production"
+                                                  " code under " caller-mod " to cross —"
+                                                  " and a test-only edge is not a"
+                                                  " production edge, so it cannot close a"
+                                                  " cycle")))}
+                        to-name (assoc :target-name to-name))
 
                       :else nil))))
           seq))))
@@ -531,6 +542,7 @@
          {:from-ns   (:from-ns r)
           :from-var  (:from-var r)
           :to        (:to-ns r)
+          :to-name   (:to-name r)
           :to-export (export-level store (:to-ns r) (:to-name r))})))
 
 (defn ^:export relocation-debt

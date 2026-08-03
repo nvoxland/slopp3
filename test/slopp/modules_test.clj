@@ -1679,3 +1679,28 @@
         (let [r (api/module-dep! sess "mc.app" "mc.util" :prompt "as advised")]
           (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest a-visibility-refusal-names-the-var-to-export
+  ;; The refusal's one instruction is "mark the target ^:export in its defn",
+  ;; and it named only the target NAMESPACE — so the var to mark had to be
+  ;; worked out by hand, every time, from a message that had it available.
+  ;; The callee was dropped one layer down, in the usage row, which is why
+  ;; three separate reports each came out one fact short of actionable.
+  (let [v (first (modules/module-violations
+                  {}
+                  [{:from-ns 'vz.a.caller :from-var 'go
+                    :to 'vz.b.deep :to-name 'helper :to-export nil}]))]
+    (is (= :visibility (:rule v)) (pr-str v))
+    (testing "the prose names the var, so the fix is readable straight off"
+      (is (re-find #"vz\.b\.deep/helper" (str (:error v))) (pr-str v)))
+    (testing "and the row carries it, so a consumer need not parse the prose"
+      (is (= 'helper (:target-name v)) (pr-str v))))
+  (testing "a row that does not know its callee still refuses, generically"
+    ;; module_extract and the hand-built rows in these tests both predate
+    ;; :to-name; a missing callee must degrade the MESSAGE, never the rule.
+    (let [v (first (modules/module-violations
+                    {}
+                    [{:from-ns 'vz.a.caller :from-var 'go
+                      :to 'vz.b.deep :to-export nil}]))]
+      (is (= :visibility (:rule v)) (pr-str v))
+      (is (not (re-find #"/nil" (str (:error v)))) (pr-str v)))))

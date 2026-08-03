@@ -417,3 +417,97 @@
         (let [r (api/ns-rename! sess 'rn.clean 'rn.spotless :prompt "regroup")]
           (is (nil? (:left-behind r)) (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest ^:external sweep-requalifies-only-the-destructuring-that-names-the-old-key
+  ;; A `:keys` destructuring names its key as a SYMBOL, so the sweep has to
+  ;; decide which ENTRY that symbol belongs to without the qualifier ever
+  ;; being written beside it. It got that decision wrong in both directions
+  ;; at once, out of one missing check: does this destructuring name the key
+  ;; being renamed?
+  ;;
+  ;;   UNDER — `{:rkold/keys [ztarget]}` was not followed at all. The form's
+  ;;   schema, docstring and all 64 call sites moved to the new key while the
+  ;;   destructuring kept reading the old one.
+  ;;   OVER  — `{:keys [ztarget]}` was requalified on the strength of the
+  ;;   SYMBOL alone, changing which key it reads. Seven forms destructuring
+  ;;   an unqualified `:dir` were rewritten to read `:slopp.ops/dir`.
+  ;;
+  ;; Both present as nil arriving silently through a green verification, which
+  ;; is why the assertions that matter here are runtime VALUES and not source
+  ;; matches: a positive control is the only thing that separates "reads the
+  ;; right key" from "reads nothing and says so quietly".
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'rk.core
+                   (str "(ns rk.core)\n\n"
+                        "(defn mk-q [] {:rkold/ztarget 1 :rkold/zother 2})\n\n"
+                        "(defn mk-u [] {:ztarget 9})\n\n"
+                        "(defn split [{:rkold/keys [ztarget zother]}]\n"
+                        "  [ztarget zother])\n\n"
+                        "(defn wholesale [{:rkold/keys [ztarget]}] ztarget)\n\n"
+                        "(defn bare [{:keys [ztarget]}] ztarget)\n"))
+      (let [r (api/rename-sweep! sess ":rkold/ztarget" ":rknew/ztarget"
+                                 :prompt "move the key to its new owner")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the STRUCTURAL half of the diff is named, not silent"
+          (is (= '#{[rk.core split] [rk.core wholesale]}
+                 (set (map (juxt :ns :form) (:requalified r))))
+              (pr-str r))))
+      (let [src (query/query-source sess 'rk.core)]
+        (testing "a qualified destructuring SPLITS when only some members move"
+          (is (re-find #":rkold/keys \[zother\]" src) src)
+          (is (re-find #":rknew/keys \[ztarget\]" src) src))
+        (testing "and requalifies wholesale when all of them do"
+          (is (re-find #"\(defn wholesale \[\{:rknew/keys \[ztarget\]\}\]" src) src)
+          (is (not (re-find #":rkold/keys \[\]" src)) src))
+        (testing "an UNQUALIFIED destructuring names :ztarget — leave it alone"
+          (is (re-find #"\(defn bare \[\{:keys \[ztarget\]\}\]" src) src)))
+      (testing "and every one of them still reads its own key at runtime"
+        (is (= [[1 2]] (api/query-eval sess "(rk.core/split (rk.core/mk-q))")))
+        (is (= [1] (api/query-eval sess "(rk.core/wholesale (rk.core/mk-q))")))
+        (is (= [9] (api/query-eval sess "(rk.core/bare (rk.core/mk-u))"))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-sweep-that-cannot-move-a-destructuring-names-it
+  ;; The one case the structural pass has to DECLINE. `{:lb/keys [zbefore]}`
+  ;; binds the local `zbefore`, which the body reads; a rename of the key's
+  ;; NAME rather than its qualifier could only be applied here by renaming
+  ;; that binding — on the strength of a keyword, through every shadow in the
+  ;; form. Declining is right.
+  ;;
+  ;; Declining SILENTLY is how the under-application shipped: a form whose
+  ;; literals and docstring all moved, still destructuring the old key,
+  ;; reading nil through a green verification. So the sweep says what it left,
+  ;; and the check runs over the OLD key AFTER the write — whatever still
+  ;; names it was, by construction, not rewritten.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'lb.core
+                   (str "(ns lb.core)\n\n"
+                        "(defn mk [] {:lb/zbefore 4})\n\n"
+                        "(defn read-it [{:lb/keys [zbefore]}] zbefore)\n"))
+      (let [r    (api/rename-sweep! sess ":lb/zbefore" ":lb/zafter"
+                                    :prompt "rename the key itself")
+            left (:left-behind r)]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the literal moved, so the destructuring is now stranded"
+          (is (re-find #":lb/zafter 4" (query/query-source sess 'lb.core))))
+        (testing "and the sweep names the form it could not finish"
+          (is (= [{:ns 'lb.core :form 'read-it :via :destructuring
+                   :text "{:lb/keys [zbefore]}"}]
+                 left)
+              (pr-str r)))
+        (testing "the note says these were NOT rewritten, and why"
+          (is (re-find #"(?i)not rewritten" (str (:note r))) (pr-str (:note r)))
+          (is (re-find #"(?i)local" (str (:note r))) (pr-str (:note r)))))
+      (testing "a sweep that only requalifies leaves nothing behind — absence means checked-and-none"
+        (api/ingest! sess 'lb.clean
+                     (str "(ns lb.clean)\n\n"
+                          "(defn mk [] {:one/zkey 5})\n\n"
+                          "(defn read-it [{:one/keys [zkey]}] zkey)\n"))
+        (let [r (api/rename-sweep! sess ":one/zkey" ":two/zkey"
+                                   :prompt "move the key's owner")]
+          (is (nil? (:left-behind r)) (pr-str r))
+          (is (= [{:ns 'lb.clean :form 'read-it}] (:requalified r)) (pr-str r))
+          (is (= [5] (api/query-eval sess "(lb.clean/read-it (lb.clean/mk))")))))
+      (finally (api/close! sess)))))
