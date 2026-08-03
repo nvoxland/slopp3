@@ -44,6 +44,11 @@ and not there is how a rename keeps its blind spot.
 | `slopp.api.currency` | `slopp.rules.currency` | ditto — "is the running image the code the store describes" is a check by comparison. This is the one 1a could never land in `slopp.image`: it reads the reference graph, which is above `image` no matter which module owns it |
 | `slopp.api.attrs` | `slopp.rules.keywords` | ditto, and it changes the WORD. All five forms are the store's namespaced-keyword vocabulary plus the typo advisory built on it — nothing about "attributes". Coherent namespace, wrong name (1a′ finding) |
 | `slopp.api.web` | `slopp.rules.web` | ditto, and the checks module is its ONLY legal home: its docstring argues a rule that refuses at the write and a report that lists the surface *"must agree, and they only can if they are one derivation"*, and it cannot join `slopp.webdev` without cycling against the write engine that requires it |
+| `slopp.api.query` | `slopp.read.query` | **phase 1b, module 3 of 4 (2026-08-02).** Asking the store a question and telling it to change are different jobs, and the layer map now says so: `slopp.read` is layer 6, the operations that call it layer 7. The `query_*` front door |
+| `slopp.api.history` | `slopp.read.history` | ditto — the store over TIME is a read: status-at/after, resolve-at, verify-at, lineage, plus the human renderings of each |
+| `slopp.api.orient` | `slopp.read.orient` | ditto — `session_brief`, form cards, host warnings. The first thing a session reads |
+| `slopp.api.telemetry` | `slopp.read.telemetry` | ditto, and it renames a live SESSION KEY with it: `:slopp.api.telemetry/calls` → `:slopp.read.telemetry/calls`, written by `slopp.mcp/handle!` and folded by `slopp.api/turn-end!`. `ns_rename` rewrites requires and qualified refs, not qualified KEYWORDS — this was the only stale one in the store, and it was stale for about four minutes |
+| `slopp.api.modules` | `slopp.read.modules` | ditto — the module system's read side, against `slopp.edit.modules`'s write side. `production-manifest`'s scoped `^{:export "slopp.http-api"}` widened to `^:export` here: the regroup put its two callers in different subtrees, and a scoped export names exactly one |
 
 ## Removed — what an old record refers to that no longer exists
 

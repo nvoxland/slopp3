@@ -182,7 +182,32 @@ A scoped export breaks from the other end. `^{:export "billing.invoice"}` names
 the *caller's* subtree, so moving the caller invalidates an export in a
 namespace nothing touched -- possibly in a module you are not working on.
 Re-point the string, or widen it to `^:export` if the var really is module
-surface.
+surface. Moving the *callee* breaks it too, more quietly: a scoped export names
+exactly one subtree, so a var reached by two callers that used to share a
+module needs a plain `^:export` the moment a regroup separates them.
+
+### Declare the edges before the rename, not during it
+
+`ns_rename` rewrites every caller's require and qualified references, and each
+of those rewrites goes through the write gate. So an undeclared crossing is
+refused *mid-rename*, one edge at a time, and each refusal names only the edge
+that just blocked. The tool declares none of them and pre-reports none of them.
+
+Work the whole set out first. Simulate the rename over the reference graph --
+map old namespace names to new, re-derive the module on both ends of every
+reference, keep the crossings that touch the new module, diff against
+`query_depends {modules true}` -- then declare them all and rename with nothing
+in the way. Two things the count usually gets wrong: every *caller's* module
+needs an edge, not just the module you are moving; and a crossing only `-test`
+namespaces make wants `test_only true`, not a production edge that overstates
+the architecture.
+
+One more thing a rename leaves behind, and this one is silent: **qualified
+keywords**. `:billing.invoice/customer-id` survives `billing.invoice` →
+`billing.statement` intact, because a keyword is not a reference. Nothing
+breaks and nothing turns red -- the name just starts lying. Sweep them with
+`query_search`, and decide each one rather than rewriting in bulk: a qualified
+keyword can be a wire or storage key something outside the store already holds.
 
 ### Why this axis
 

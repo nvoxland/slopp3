@@ -183,7 +183,7 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.edit` | write pipeline pieces: parse → dialect gate → hot-load; observe gate; pure-eval gate (query_store) |
 | `slopp.edit.modules` | the module-RULES engine (deep, world-exported surface): membership (`module-of`, test-fold), recursive visibility + the `:export` dial, declared-edge checks, gate entry points (`module-refusal`/`module-scan`), manifest derivation |
 | `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
-| `slopp.api.history` | package-private deep ns (first real deep-module): delta-timeline readings (status-at/after, resolve-at, verify-at) + human renderings (diffs, stories, timestamps) |
+| `slopp.read` | every question asked OF the store, one layer BELOW the operations that answer with it: `read.query` (the `query_*` front door), `read.history` (the store over time — status-at/after, resolve-at, verify-at, plus the human renderings), `read.orient` (`session_brief`, form cards, host warnings), `read.modules` (the module system's read side, against `slopp.edit.modules`'s write side), `read.telemetry` (the folds slopp measures itself with) |
 | `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), wire shaping (spool/told/hints), turn gate |
 | `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |

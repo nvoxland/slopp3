@@ -320,7 +320,7 @@ The oracle must never return a false verdict. Everything here serves that.
    covered verification, and verification turned out to be a fifth of the
    wall clock — measured on one real session, 1,703s elapsed against 390s
    recorded. `slopp.mcp/handle!` now stamps BOTH edges of every `tools/call`
-   into `:slopp.api.telemetry/calls`, and `turn-end!` folds it with
+   into `:slopp.read.telemetry/calls`, and `turn-end!` folds it with
    `telemetry/call-timing` onto the `:turn-end` delta:
    `{:calls :slopp-ms :outside-ms :elapsed-ms :slopp-share :top}`. One
    chokepoint, so `test_run`, `module_extract`, `compile_client`, `restart`,

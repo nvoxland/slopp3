@@ -250,7 +250,25 @@ and reports which caller forces each export; `ns_rename` does not.
 names the CALLER's subtree, so relocating the caller invalidates an export in
 a namespace nothing touched — often in a module you are not working on. Same
 blind spot, mirrored: re-point the string, or widen it to plain `^:export` if
-the var really is module surface.
+the var really is module surface. Moving the CALLEE breaks it too, and more
+quietly: a scoped export names exactly ONE subtree, so a var reached by two
+callers that used to share a module needs plain `^:export` the moment the
+regroup separates them.
+
+**Declare the module edges BEFORE a cross-module rename, not during it.**
+`ns_rename` rewrites every caller's require and qualified refs, and each of
+those rewrites goes through the write gate — so an undeclared crossing is
+refused mid-rename, one edge at a time, and each refusal names only the edge
+that just blocked. `ns_rename` neither declares them nor reports which will be
+needed. Work the whole set out first, from THE reference graph, by simulating
+the rename: map old namespace names to new, re-derive the module on both ends
+of every reference, keep the crossings that touch the new module, and diff
+against `query_depends {modules true}`. A `query_store` of about a dozen lines
+answers it in one call. Then `module_dep` them all and rename with nothing in
+the way. **Both halves matter**: the count is usually larger than it looks
+(every CALLER's module needs an edge, not just the one you are moving), and a
+crossing that only `-test` namespaces make wants `test_only true` rather than a
+production edge that overstates the architecture.
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.
@@ -265,6 +283,16 @@ TOKEN strings (`:prose false`): a path, a `:main-opts` namespace, a `(require
 reads wrong. `:test-sibling` means the `-test` namespace still carries the old
 name, which files its tests under the old module. Absence of `:left-behind`
 means checked-and-none, not unchecked.
+
+**It does not rewrite qualified KEYWORDS either, and that one is silent.**
+`:acme.billing/customer-id` survives `acme.billing` → `acme.invoice` intact,
+because a keyword is not a reference — nothing breaks, no test turns red, and
+the name simply starts lying. If a namespace owns keys named after it (an
+options map, a context map, a session key — a common and good habit), sweep
+them yourself with `query_search {pattern ":acme\\.billing/"}`. Whether to
+rewrite each one is a JUDGEMENT: a qualified keyword can be a wire or storage
+key that something outside your store already holds, and re-spelling it there
+breaks a consumer slopp cannot see.
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the
