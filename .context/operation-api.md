@@ -254,6 +254,31 @@ write time, instead of a fresh JVM catching it later.
   `refactor/move-plan` (unit-tested), atomic executor. Limits (refused or
   compile-gated): `:refer`'d moved names, java `:import`, shadowed-local
   mis-qualification.
+  **Every `:module-rows` entry is `{:from-ns :from-var :to :to-name}`** —
+  the CALL, in both directions. The destination rows carried no callee
+  until 2026-08-03 (only `moved→stay` rows did, spelled `:name`), and three
+  reports were each one fact short of actionable because of it:
+  `:export-not-landed` looked up a var named nil and reported every LANDED
+  export as unlanded (39 phantoms on one move), `export: true` could only
+  be applied to the whole moved set at once, and a `:visibility` refusal
+  said "mark the target `^:export`" while naming only the namespace. All
+  three read the row now; `export` WIDENS per var rather than replacing,
+  read off `from-ns` where the var still lives.
+  **A NEW target is seeded with the source's purity tier** when the source
+  DECLARED one and the target would otherwise be governed differently —
+  recorded before the ingest, so the moved forms are verified against it on
+  the way in. Undeclared is `:external` by absence of a claim, so without
+  this a split dropped forms out of a `:pure` core into the shell and
+  `full_check` reported the core→shell edge against the namespace that had
+  NOT changed. An undeclared source mints nothing: stamping `:external`
+  would defeat a deliberate move INTO a pure subtree, where the right
+  outcome is the gate refusing impure forms. `ns_rename` needs no
+  equivalent — it RELOCATES a declaration rather than copying it, and the
+  asymmetry between the two relocation verbs was invisible until a
+  whole-store check. `full_check`'s `:tier-layering` rows now carry
+  `:requires-undeclared` for the same reason: `:external` by absence and
+  `:external` by declaration read identically, and only the first has a
+  one-call fix.
 - `query-store` / MCP `query_store {code [timeout_ms]}` — the STORE-VALUE
   oracle: one read-only `(fn [store] ...)` evaluated over the current
   immutable store value IN THE SERVER (where the value lives — nothing is
@@ -326,6 +351,21 @@ those tokens (descending order so positions stay valid). Shadowed locals are
 never touched because kondo never reports them as var usages.
 **Limitation:** symbols inside `:refer` vectors aren't var-usages → not
 rewritten.
+
+**`requalify-keys` matches the destructuring entry on the FROM qualifier**,
+never on the symbol. `{:a/keys [x]}` names `:a/x` and `{:keys [x]}` names
+`:x`; a `:keys` vector writes the key as a SYMBOL with the qualifier one
+position to the left, so a pass matching the symbol alone is wrong in BOTH
+directions at once — it skipped the qualified destructurings while renaming
+`:a/x` and rewrote the unqualified ones, changing which key they read. That
+was one missing check, and it broke seven forms through a green verification
+on 2026-08-03; `keys-binding` is now the single definition of "this
+destructuring names that key", shared by the rewrite and by
+`destructures-key?`. `rename_sweep` reports both halves — `:requalified` for
+what it restructured (a keyword rename's diff should not contain a semantic
+change silently) and `:left-behind` for what it DECLINED. It declines a
+NAME change: the symbol is a local binding the body reads, so only the
+qualifier can be moved for you.
 
 ## Transports
 
