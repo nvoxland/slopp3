@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps])
+            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -31,7 +31,7 @@
           (is (= [10] (api/query-eval sess "(cn.core/f 5)")))))
       (testing ":source carries provenance via :agent"
         (is (some #(= "alice" (:agent %))
-                  (query/query-lineage sess 'cn.core 'f))))
+                  (history/query-lineage sess 'cn.core 'f))))
       (testing ":requires still scaffolds an empty namespace"
         (let [r (api/create-ns! sess 'cn.util :requires ["[clojure.string :as str]"])]
           (is (nil? (:error r)))
@@ -61,7 +61,7 @@
                                    "(defn tainted [a] (add (swap! a inc) 1))"
                                    :prompt "call add")]
           (is (nil? (:error r)) (pr-str r)))
-        (is (seq (query/query-references sess 'demo 'add))))
+        (is (seq (graph/query-references sess 'demo 'add))))
       (testing "a cycle (add calls tainted, which already calls add) AUTO-DECLARES"
         ;; mutual recursion has no legal order — the pipeline inserts a marked
         ;; declare instead of refusing; the agent writes none
@@ -78,7 +78,7 @@
           (is (nil? (:error r)))
           (is (= [42] (api/query-eval sess "(demo/tainted 42)")))))
       (testing "query.lineage shows provenance (ingest + replaces, with prompts)"
-        (let [lin (query/query-lineage sess 'demo 'tainted)]
+        (let [lin (history/query-lineage sess 'demo 'tainted)]
           (is (contains? (set (map :op lin)) :ingest))
           (is (contains? (set (map :op lin)) :replace))
           (is (some #(= "defang" (:prompt %)) lin))))

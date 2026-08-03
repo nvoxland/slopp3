@@ -8,7 +8,7 @@
             [rewrite-clj.parser]
             [slopp.store :as store]
             [slopp.store.render]
-            [slopp.ops :as api] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")
@@ -63,7 +63,7 @@
 
           (testing "provenance shows which server did what"
             (api/sync-with-journal! s2)
-            (let [hist (pr-str (query/query-history s2))]
+            (let [hist (pr-str (history/query-history s2))]
               (is (re-find #"server-1" hist))
               (is (re-find #"server-2" hist))))
           (finally (api/close! s2))))

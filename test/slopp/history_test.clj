@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as api]
             [slopp.mcp]
-            [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.store :as store] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (deftest ^:external form-history-is-reconstructible
   (let [sess (external/open!)]
@@ -16,23 +16,23 @@
       (api/edit-replace! sess 'h.core 'f "(defn f [x] (inc x))" :prompt "bump by one")
       (api/edit-replace! sess 'h.core 'f "(defn f [x] (+ 2 x))" :prompt "bump by two")
       (testing "every content version of the form, oldest first, with intent"
-        (let [h (query/query-form-history sess 'h.core 'f)]
+        (let [h (history/query-form-history sess 'h.core 'f)]
           (is (= 3 (count h)))
           (is (= [:ingest :replace :replace] (mapv :op h)))
           (is (re-find #"\[x\] x" (:source (first h))))
           (is (= "bump by one" (:prompt (second h))))
           (is (re-find #"\+ 2 x" (:source (last h))))))
       (testing "the log reads as a filterable story"
-        (let [hist (query/query-history sess :contains "bump by one")]
+        (let [hist (history/query-history sess :contains "bump by one")]
           (is (= 1 (count hist)))
           (is (= :replace (:op (first hist)))))
-        (is (<= (count (query/query-history sess :limit 3)) 3)))
+        (is (<= (count (history/query-history sess :limit 3)) 3)))
       (testing "done labels appear in the story"
         (external/done! sess :label "phase one done")
         (is (= :done
-               (:op (first (query/query-history sess :contains "phase one"))))))
+               (:op (first (history/query-history sess :contains "phase one"))))))
       (testing "lineage responses stay lean (no bulk sources)"
-        (is (not-any? :sources (query/query-lineage sess 'h.core 'f))))
+        (is (not-any? :sources (history/query-lineage sess 'h.core 'f))))
       (finally (api/close! sess)))))
 
 (def seed
@@ -55,17 +55,17 @@
         (let [v2 (external/commit-point! sess "v2: f adds 100" :agent "a")]
           (testing "a form renders as it stood at a past delta"
             (is (= "(defn f [x] (+ x 1))"
-                   (:source (query/query-form-at sess 'hi.core 'f
+                   (:source (history/query-form-at sess 'hi.core 'f
                                                :at (:target v1)))))
             (is (= "(defn f [x] (+ x 100))"
-                   (:source (query/query-form-at sess 'hi.core 'f
+                   (:source (history/query-form-at sess 'hi.core 'f
                                                :at (:target v2))))))
           (testing "a COMMIT id resolves to its target (time-travel to a milestone)"
             (is (= "(defn f [x] (+ x 1))"
-                   (:source (query/query-form-at sess 'hi.core 'f
+                   (:source (history/query-form-at sess 'hi.core 'f
                                                :at (:commit v1))))))
           (testing "the version carries the was-green-at status of that point"
-            (is (= :green (:status (query/query-form-at sess 'hi.core 'f
+            (is (= :green (:status (history/query-form-at sess 'hi.core 'f
                                                       :at (:target v2))))))))
       (finally (api/close! sess)))))
 
@@ -77,11 +77,11 @@
         (api/add-form! sess 'hi.core "(defn late [x] x)"
                        :prompt "added later" :agent "a")
         (testing "a form absent at that point is an honest error, not a guess"
-          (is (:error (query/query-form-at sess 'hi.core 'late :at early))))
+          (is (:error (history/query-form-at sess 'hi.core 'late :at early))))
         (testing "an unknown delta is refused"
-          (is (:error (query/query-form-at sess 'hi.core 'f :at "d99999"))))
+          (is (:error (history/query-form-at sess 'hi.core 'f :at "d99999"))))
         (testing ":at is required"
-          (is (:error (query/query-form-at sess 'hi.core 'f)))))
+          (is (:error (history/query-form-at sess 'hi.core 'f)))))
       (finally (api/close! sess)))))
 
 (deftest ^:external form-at-delta-follows-renames
@@ -91,12 +91,12 @@
       (let [before (:id (last (store/deltas (:store @sess))))]
         (api/rename! sess 'hi.core 'g 'doubler :prompt "clearer name" :agent "a")
         (testing "the OLD name resolves at a delta before the rename"
-          (let [r (query/query-form-at sess 'hi.core 'g :at before)]
+          (let [r (history/query-form-at sess 'hi.core 'g :at before)]
             (is (nil? (:error r)) (pr-str r))
             (is (= "(defn ^:unused-ok g [x] (* x 2))" (:source r)))))
         (testing "the NEW name resolves at the current head"
           (let [head (:id (last (store/deltas (:store @sess))))
-                r    (query/query-form-at sess 'hi.core 'doubler :at head)]
+                r    (history/query-form-at sess 'hi.core 'doubler :at head)]
             (is (nil? (:error r)) (pr-str r))
             (is (str/includes? (:source r) "doubler")))))
       (finally (api/close! sess)))))
@@ -109,20 +109,20 @@
       (api/ingest! sess 'hi.core seed)
       (let [green-head (:id (last (store/deltas (:store @sess))))]
         (testing "a delta after a passing verify is green, naming its verify delta"
-          (let [r (query/query-status-at sess :at green-head)]
+          (let [r (history/query-status-at sess :at green-head)]
             (is (= :green (:status r)))
             (is (some? (:verify r)))))
         (testing "a commit id resolves to its target's status"
           (let [c (external/commit-point! sess "v1" :agent "a")]
-            (is (= :green (:status (query/query-status-at sess :at (:commit c)))))))
+            (is (= :green (:status (history/query-status-at sess :at (:commit c)))))))
         (testing "a deliberately red state reads red"
           (api/edit-replace! sess 'hi.core 'f-t
                              "(deftest f-t (is (= 999 (f 1))))"
                              :prompt "break it" :agent "a")
           (let [red-head (:id (last (store/deltas (:store @sess))))]
-            (is (= :red (:status (query/query-status-at sess :at red-head))))))
+            (is (= :red (:status (history/query-status-at sess :at red-head))))))
         (testing "an unknown delta is refused"
-          (is (:error (query/query-status-at sess :at "d99999")))))
+          (is (:error (history/query-status-at sess :at "d99999")))))
       (finally (api/close! sess)))))
 
 (deftest ^:external form-history-versions-carry-was-green-at
@@ -134,7 +134,7 @@
       (api/edit-replace! sess 'hi.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
                          :prompt "make it red" :agent "a")
       (testing "each version of a form is tagged with the state it landed in"
-        (let [h (query/query-form-history sess 'hi.core 'f)]
+        (let [h (history/query-form-history sess 'hi.core 'f)]
           (is (every? #(contains? % :status) h))
           (is (= :green (:status (first h))))))
       (finally (api/close! sess)))))
@@ -166,19 +166,19 @@
       (api/edit-replace! sess 'hi.core 'g "(defn g [x] (* x 3))"
                          :prompt "unrelated tweak" :agent "a")
       (testing "a prompt match returns the delta AND the forms it touched"
-        (let [r (query/query-search-history sess "auth")]
+        (let [r (history/query-search-history sess "auth")]
           (is (= 1 (count r)))
           (is (= "add auth bounds check" (:prompt (first r))))
           (is (some #{'hi.core/f} (:forms (first r))))
           (is (some? (:at (first r))))))
       (testing "matching is case-insensitive"
-        (is (= 1 (count (query/query-search-history sess "AUTH")))))
+        (is (= 1 (count (history/query-search-history sess "AUTH")))))
       (testing "a turn INTENT match catches deltas whose own prompt is silent"
         (api/turn-begin! sess :agent "b" :intent "wire up the login flow")
         (api/edit-replace! sess 'hi.core 'g "(defn g [x] (* x 5))"
                            :prompt "tweak again" :agent "b")
         (api/turn-end! sess :agent "b")
-        (let [r (query/query-search-history sess "login")]
+        (let [r (history/query-search-history sess "login")]
           (is (seq r))
           (is (every? #(= "wire up the login flow" (:turn-intent %)) r))))
       (testing "a commit-point DESCRIPTION is searchable"
@@ -186,10 +186,10 @@
         ;; :commit marker (with its description) lands and is searchable
         (external/commit-point! sess "auth milestone shipped" :agent "a" :force true)
         (is (some #(= "auth milestone shipped" (:description %))
-                  (query/query-search-history sess "milestone"))))
+                  (history/query-search-history sess "milestone"))))
       (testing "a blank pattern is refused; limit is respected"
-        (is (:error (query/query-search-history sess "  ")))
-        (is (<= (count (query/query-search-history sess "x" :limit 1)) 1)))
+        (is (:error (history/query-search-history sess "  ")))
+        (is (<= (count (history/query-search-history sess "x" :limit 1)) 1)))
       (finally (api/close! sess)))))
 
 (deftest ^:external search-history-rides-the-mcp-surface
@@ -217,9 +217,9 @@
       (api/edit-replace! sess 'hi.core 'f "(defn f [x] (- x 9))"
                          :prompt "now subtract" :agent "a")
       (testing "EDN rows now also carry a human :at"
-        (is (every? :at (query/query-form-history sess 'hi.core 'f))))
+        (is (every? :at (history/query-form-history sess 'hi.core 'f))))
       (testing "text format is a per-version LINE-diff story with intents"
-        (let [txt (query/query-form-history sess 'hi.core 'f :format "text")]
+        (let [txt (history/query-form-history sess 'hi.core 'f :format "text")]
           (is (str/includes? txt "form hi.core/f"))
           (is (str/includes? txt "bump to two"))
           (is (str/includes? txt "now subtract"))
@@ -247,7 +247,7 @@
                      :prompt "add b" :agent "u")
       (api/undo! sess :prompt "the warm-pool idea did not pan out" :agent "u")
       (testing "the dead-end's why survives the text rendering"
-        (let [txt (query/query-history sess :dead-ends true :format "text")]
+        (let [txt (history/query-history sess :dead-ends true :format "text")]
           (is (string? txt) (pr-str txt))
           (is (re-find #"warm-pool idea did not pan out" txt) txt)
           (is (re-find #"(?i)dead" txt) txt)))

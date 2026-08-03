@@ -5,7 +5,7 @@
    static (no live trace needed)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.read.query :as query]))
+            [slopp.read.query :as query] [slopp.read.graph :as graph]))
 
 (defn- covers-store []
   (-> (store/empty-store)
@@ -19,7 +19,7 @@
   ;; tests that EXERCISE or CLAIM the form (observed ∪ declared). A ^{:covers}
   ;; test names a dispatch path the trace never records, so it must appear.
   (let [sess (atom {:store (covers-store) :test-map {}})
-        r    (query/query-impact sess 'qi.core 'target)]
+        r    (graph/query-impact sess 'qi.core 'target)]
     (is (= {:count 1 :tests ['qi.core-test/cover-t]} (:covered-by r)) (pr-str r))))
 
 (deftest query-brief-honours-declared-coverage

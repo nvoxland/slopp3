@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (def seed
   (str "(ns cc.core)\n"
@@ -87,9 +87,9 @@
         (is (= [6] (api/query-eval sess "(rv.core/f 5)")))
         (testing "the revert is itself provenance"
           (is (re-find #"revert to"
-                       (str (:prompt (last (query/query-lineage sess 'rv.core 'f))))))))
+                       (str (:prompt (last (history/query-lineage sess 'rv.core 'f))))))))
       (testing "revert to a specific delta from form history"
-        (let [v1 (first (query/query-form-history sess 'rv.core 'f))
+        (let [v1 (first (history/query-form-history sess 'rv.core 'f))
               r  (api/revert-form! sess 'rv.core 'f :to (:delta v1))]
           (is (nil? (:error r)))
           (is (= [5] (api/query-eval sess "(rv.core/f 5)")))))

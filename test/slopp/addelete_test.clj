@@ -13,7 +13,7 @@
             [slopp.ops :as api]
             [slopp.ops.external :as external]
             [slopp.read.query :as query]
-            [slopp.store :as store]))
+            [slopp.store :as store] [slopp.read.history :as history]))
 
 (def target
   (str "(ns adm\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -39,7 +39,7 @@
         (testing "the new form is live in the image"
           (is (= [12] (api/query-eval sess "(adm/triple 4)"))))
         (testing "its lineage starts at the :add delta"
-          (is (= [:add] (mapv :op (query/query-lineage sess 'adm 'triple)))))
+          (is (= [:add] (mapv :op (history/query-lineage sess 'adm 'triple)))))
         (testing "verification ran and was recorded"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (testing "effect warnings surface at add time (D6)"

@@ -1,41 +1,43 @@
 (ns slopp.read.query
-  "Every READ in the operation API — the implementations behind the `query_*`
-  tools.
+  "Reading the code AS IT STANDS — outline, source, project, search,
+  namespaces — plus the composite DRIVER reads built on top of that.
 
-  This is the largest surface in `slopp.api`, and it is large because it holds
-  four different kinds of question that share little beyond a prefix:
+  The drivers are the point. `query-slice` and `query-brief` are not
+  conveniences layered over the primitives; they are the reads meant to
+  REPLACE a loop. A slice answers \"the form I am about to edit, plus
+  interface cards for everything it reaches\" in one call, so
+  outline→guess→fetch stops being the shape of reading at all. The primitives
+  are what a driver read is BUILT from, not what an agent should normally
+  reach for.
 
-  - **Source as it stands now** — outline, source, project, search,
-    namespaces.
-  - **The graph** — symbols, references, deps, callers, impact, flow. Answers
-    about how forms reach each other, all derived from the analyzer.
-  - **The store over TIME** — history, lineage, a form at a delta, status at a
-    delta, and what changed across a span. Spans take NAMED anchors
-    (`:start`, `:last-commit`, `:last-done`) rather than raw delta ids,
-    because demanding an id sent agents hunting through `query_history` for
-    it, and when the hunt did not pay off they left for `git diff` instead
-    (eval9 measured ~20k chars of it in a single handoff step).
-  - **Composite DRIVER reads** — `query-slice` and `query-brief`. These are
-    not conveniences layered over the primitives; they are the reads meant to
-    REPLACE a loop. A slice answers \"the form I am about to edit, plus
-    interface cards for everything it reaches\" in one call, so
-    outline→guess→fetch stops being the shape of reading at all.
+  Two subjects used to live here and no longer do: the store over TIME is
+  `slopp.read.history`, and how forms reach each other is `slopp.read.graph`.
+  This namespace's own docstring had named all four kinds for a long time
+  while keeping them, on the argument that the drivers are built from all
+  three — which is a DEPENDENCY relationship, not a shared subject, and the
+  same mistake that once filed `slopp.lab.mine` under `slopp.store` for
+  reading `store.db`. Measured before splitting: partition by those four
+  kinds and every internal call lands inside a cluster, with only the drivers
+  crossing.
 
-  That last group is the reason the rest is here: the primitive reads are what
-  a driver read is BUILT from, not what an agent should normally reach for."
+  Still mixed in, and named here rather than quietly kept: five
+  single-purpose reads that report a DECLARED fact rather than code —
+  `query-capabilities`, `query-routes`, `query-rule-telemetry`,
+  `query-vocabulary` — plus `query-store`, the read-only oracle escape hatch.
+  Each belongs with the subject it reports on (capabilities with
+  `slopp.project`, routes and rule telemetry with `slopp.rules`). Those are
+  other MODULES, so moving them is a cross-module change with edges to
+  declare — not the within-module regroup this was."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.rules.keywords :as attrs]
             [slopp.read.history :as history]
-            [slopp.read.modules :as modules]
             [slopp.read.orient :as orient]
-            [slopp.rules.shape :as shape]
             [slopp.read.telemetry :as telemetry]
             [slopp.edit :as edit]
-            [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]
             [slopp.store.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.rules.web :as web]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.rules.web :as web] [slopp.read.graph :as graph]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -93,189 +95,6 @@
                :source     (n/string (:node f))}
         (edit/unsafe? (:node f)) (assoc :unsafe? true)
         (edit/reads? (:node f))  (assoc :reads? true)))))
-
-(defn ^:export query-references
-  "Usages of `ns-sym/nm` across EVERY namespace (F-3c3 — same-ns-only results
-  sent an eval agent to query_search instead; analyses are memo-cached, so the
-  full scan is cheap)."
-  [session ns-sym nm]
-  (let [st (:store @session)]
-    (vec (mapcat (fn [n]
-                   (derive/references (analyze/analyze (render/render-ns st n))
-                                     ns-sym nm))
-                 (sort (keys (:namespaces st)))))))
-
-(defn ^:export label-ancestors
-  "The ancestor prefixes of a `/`-delimited agent label, root-first:
-  \"a/b/c\" → (\"a\" \"a/b\" \"a/b/c\"). A sub-agent labels itself by appending to
-  its parent's path, so `turn-intents` walks these prefixes to resolve a
-  delta's enclosing turn through its root agent's `turn-begin`."
-  [agent-label]
-  (when agent-label
-    (let [parts (clojure.string/split agent-label #"/")]
-      (map #(clojure.string/join "/" (take (inc %) parts))
-           (range (count parts))))))
-
-(defn ^:export turn-intents
-  "delta-id → the enclosing turn's verbatim :intent (resolved through the
-  delta's agent, sub-agent path labels riding their root's turn). Derived
-  at query time; truncated for display."
-  [ds]
-  (loop [ds ds, open {}, out {}]
-    (if-let [d (first ds)]
-      (let [open (case (:op d)
-                   :turn-begin (assoc open (:agent d) (:intent d))
-                   :turn-end   (dissoc open (:agent d))
-                   open)
-            in   (some open (or (label-ancestors (:agent d)) []))
-            out  (if in
-                   (assoc out (:id d)
-                          (if (> (count in) 160)
-                            (str (subs in 0 157) "...")
-                            in))
-                   out)]
-        (recur (rest ds) open out))
-      out)))
-
-(defn ^:export query-lineage
-  "Provenance chain for `nm`: the deltas that created or changed its form (who
-  touched it, via which op, driven by which prompt)."
-  [session ns-sym nm]
-  (let [st (:store @session)
-        id (:id (store/form-named st ns-sym nm))]
-    (when id
-      (let [ti (turn-intents (store/deltas st))]
-        (->> (store/deltas st)
-             (filter (fn [d]
-                       (or (= id (:form-id d))
-                           (some #{id} (:form-ids d)))))
-             ;; lean: bulk content lives in query-form-history, not here
-             (mapv #(cond-> (dissoc % :sources :changeset :result)
-                      (ti (:id %)) (assoc :turn-intent (ti (:id %))))))))))
-
-(defn ^:export query-form-history
-  "Every content version of `nm`'s form, oldest first, with the intent that
-  produced it, when, the verification state it landed in, and what that
-  verification COST:
-  [{:delta :op :prompt :source :status :at :turn-intent :ms}]. `:status`
-  (was-green-at, HM2) is the project's verification state governing each
-  version — semantic × history, per form.
-
-  Three views over ONE derivation of the form's life, because a second walk is
-  how two surfaces come to disagree about the same version:
-  - default — the versions as data;
-  - `:format \"text\"` (HM4) — the form's LIFE as a per-version LINE-diff story;
-  - `:effort true` — what the form COST to get green (`history/form-effort`):
-    red→green cycles, distinct asks, recorded time, and how much of the life
-    that time actually covers."
-  [session ns-sym nm & {:keys [format effort]}]
-  (let [st (:store @session)
-        id (:id (store/form-named st ns-sym nm))]
-    (when id
-      (let [ti       (turn-intents (store/deltas st))
-            versions (vec (for [d     (store/deltas st)
-                                :let  [src (get-in d [:sources id])]
-                                :when src]
-                            (cond-> {:delta (:id d) :op (:op d)
-                                     :prompt (:prompt d) :source src
-                                     :status (history/status-after st (:id d))
-                                     :at (history/human-time (:at d))}
-                              (ti (:id d)) (assoc :turn-intent (ti (:id d)))
-                              ;; the cost the verification recorded, present
-                              ;; only for versions written after verification
-                              ;; started timing itself — form-effort reports
-                              ;; that coverage rather than summing past it
-                              (get-in (history/verify-after st (:id d)) [:result :ms])
-                              (assoc :ms (get-in (history/verify-after st (:id d))
-                                                 [:result :ms])))))]
-        (cond
-          effort (history/form-effort (symbol (str ns-sym) (str nm)) versions)
-          (= "text" (some-> format name))
-          (history/render-form-history-text (symbol (str ns-sym) (str nm)) versions)
-          :else versions)))))
-
-(defn ^:export query-search-history
-  "Delta-log search — the 'which prompts touched X' query. Case-insensitive
-  substring match of `pattern` against each delta's prompt, done label,
-  commit/turn description, turn-end note, AND its enclosing turn intent;
-  returns the matching deltas NEWEST-first with the forms they touched (as
-  ns/name qsyms, resolved as of that delta) and the human time. `:limit`
-  (default 25). Pairs with `query-form-at`/`query-lineage` to drill in."
-  [session pattern & {:keys [limit] :or {limit 25}}]
-  (if (str/blank? (str pattern))
-    {:error "query-search-history needs a non-blank pattern"}
-    (let [st  (:store @session)
-          ds  (store/deltas st)
-          ti  (turn-intents ds)
-          pat (str/lower-case (str pattern))
-          hit? (fn [d]
-                 (some #(and % (str/includes? (str/lower-case (str %)) pat))
-                       [(:prompt d) (:label d) (:description d) (:note d)
-                        (ti (:id d))]))
-          form-name (fn [d fid]
-                      (or (some-> (get-in d [:sources fid]) store/name-of-source str)
-                          (some-> (store/form-by-id st fid) :name str)
-                          (when (= fid (:form-id d)) (some-> (:name d) str))
-                          (str fid)))
-          touched (fn [d]
-                    (vec (for [fid (history/delta-fids d)]
-                           (symbol (str (or (store/ns-of-form-id st fid) (:ns d)))
-                                   (form-name d fid)))))]
-      (->> ds
-           reverse
-           (filter hit?)
-           (take (or limit 25))
-           (mapv (fn [d]
-                   (cond-> {:delta (:id d) :op (:op d) :at (history/human-time (:at d))}
-                     (:prompt d)      (assoc :prompt (:prompt d))
-                     (:label d)       (assoc :label (:label d))
-                     (:description d) (assoc :description (:description d))
-                     (:note d)        (assoc :note (:note d))
-                     (ti (:id d))     (assoc :turn-intent (ti (:id d)))
-                     (seq (history/delta-fids d)) (assoc :forms (touched d)))))))))
-
-(defn ^:export query-history
-  "The delta log as a story, newest first. Filters: `:ns`, `:contains`
-  (substring of prompt/label — and, collapsed, of turn intents). `:limit`
-  (default 20). `:collapse true` returns EPISODE rows instead of raw deltas —
-  one row per agent-work-unit between done-points, the readable long-term
-  view. `:dead-ends true` lists SCRAPPED explorations (the reverts) with their
-  why and the forms they dropped; a namespace/form string narrows to those
-  that touched it. All rows carry `:at` (local date-time)."
-  [session & {:keys [ns contains limit collapse format dead-ends] :or {limit 20}}]
-  (let [
-        rows
-        (cond
-          dead-ends
-          (history/dead-ends (:store @session)
-                             (when (string? dead-ends) dead-ends))
-
-          collapse
-          (let [ds       (store/deltas (:store @session))
-                relevant (filter #(or (contains? #{:ingest :add :replace :delete
-                                                   :rename :normalize :move :merge}
-                                                 (:op %))
-                                      (= :done (:op %)))
-                                 ds)
-                pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
-                rows     (history/episode-rows relevant)]
-            (history/collapse-rows  ds pos rows contains limit))
-
-          :else
-          (->> (store/deltas (:store @session))
-               reverse
-               (filter #(or (nil? ns) (= ns (:ns %))))
-               (filter #(or (nil? contains)
-                            (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
-                                  [(:prompt %) (:label %)])))
-               (take limit)
-               (mapv (fn [d]
-                       (cond-> (select-keys d [:id :op :ns :prompt :label :group
-                                               :agent :form-id :form-ids :old
-                                               :new :before])
-                         (:at d) (assoc :at (history/human-time (:at d))))))))]
-    (cond-> rows
-      (= "text" (some-> format name)) history/render-history-text)))
 
 (defn ^:export query-outline
   "A namespace's shape at a glance (orientation, T2): every defined var with
@@ -343,338 +162,12 @@
     (catch Exception ex
       {:error (str "bad pattern: " (ex-message ex))})))
 
-(def ^:export content-ops
-  #{:ingest :add :replace :delete :rename :normalize :move :merge})
-
-(defn ^:export episode-boundary
-  "Where `agent-label`'s episode begins: its own last :done — or, for
-  an agent that has never marked done, the last stable spot (ANY agent's
-  done) before its first activity, so pre-existing history is never
-  mistaken for contested work. nil = log start."
-  [store agent-label]
-  (let [ds  (store/deltas store)
-        own (last (filter #(and (= :done (:op %))
-                                (= agent-label (:agent %)))
-                          ds))]
-    (:id (or own
-             (let [ckpts     (filter #(= :done (:op %)) ds)
-                   first-own (first (filter #(and (contains? content-ops (:op %))
-                                                  (= agent-label (:agent %)))
-                                            ds))]
-               (if first-own
-                 (let [pos  (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
-                       fpos (get pos (:id first-own))]
-                   (last (filter #(< (get pos (:id %)) fpos) ckpts)))
-                 (last ckpts)))))))
-
-(defn ^:export episode-span
-  "Deltas after `agent`'s episode boundary (all agents' — callers filter)."
-  [store agent]
-  (let [ds (store/deltas store)]
-    (if-let [b (episode-boundary store agent)]
-      (rest (drop-while #(not= b (:id %)) ds))
-      ds)))
-
-(defn- span-anchor
-  "Resolve a NAMED span anchor to the delta id a span should START at:
-  `:start` (the whole log), `:last-commit` (work since the last milestone),
-  `:last-done` (work since the last done) — the same vocabulary `undo!`
-  accepts, as keyword or wire string. Anything else passes through as a
-  literal delta id.
-
-  Why: `from` used to demand a raw delta id, so \"what changed across this
-  lifetime, with code\" began with a hunt through `query_history` for the
-  right id — and when the hunt didn't pay off, agents left for `git diff`
-  (eval9 measured ~20k chars of it in one handoff step). An anchor that
-  points at nothing resolves to nil, which falls back to the episode view
-  rather than throwing."
-  [st from]
-  (let [ds     (store/deltas st)
-        named? (fn [ks] (contains? ks from))
-        ;; the delta AFTER the last marker — the span starts with the work
-        ;; that FOLLOWS the milestone/done, not the marker itself
-        after  (fn [pred]
-                 (when-let [m (last (filter pred ds))]
-                   (:id (second (drop-while #(not= (:id m) (:id %)) ds)))))]
-    (cond
-      (named? #{:start "start" ":start"})
-      (:id (first ds))
-
-      (named? #{:last-commit "last-commit" ":last-commit"})
-      (after #(= :commit (:op %)))
-
-      (named? #{:last-done "last-done" ":last-done"})
-      (after #(= :done (:op %)))
-
-      :else from)))
-
-(defn ^:export query-changes
-  "The agent's EPISODE — everything since `:agent`'s last done: net
-  per-form diffs (:was/:now), the step list, and the verification arc. The
-  'what have I done since my last stable spot' view. Parallel agents with
-  distinct :agent labels each see only their own work. `:format \"text\"`
-  renders it as a human story with LINE diffs instead of full sources."
-  [session & {:keys [agent from to format]}]
-  (let [st       (:store @session)
-        from     (span-anchor st from)
-        boundary (if from
-                   ;; historical span: `from`/`to` are delta ids (e.g. from a
-                   ;; collapsed history row); boundary = just BEFORE `from`
-                   (:id (last (take-while #(not= from (:id %))
-                                          (store/deltas st))))
-                   (episode-boundary st agent))
-        span     (if from
-                   (let [ds (drop-while #(not= from (:id %))
-                                        (store/deltas st))]
-                     (if to
-                       (let [[pre [t & _]] (split-with #(not= to (:id %)) ds)]
-                         (concat pre (when t [t])))
-                       ds))
-                   (episode-span st agent))
-        mine     (filter #(and (contains? content-ops (:op %))
-                               (or (nil? agent) (= agent (:agent %))))
-                         span)
-        fids     (distinct (mapcat history/delta-fids mine))
-        was      (store/sources-at st boundary)
-        del-info (into {}
-                       (keep (fn [d]
-                               (when (= :delete (:op d))
-                                 [(:form-id d) [(:ns d) (:name d)]])))
-                       mine)
-        at-end   (when to (store/sources-at st to))
-        forms    (vec (keep (fn [fid]
-                              (let [e   (store/form-by-id st fid)
-                                    now (if to
-                                          (get at-end fid)
-                                          (some-> e :node n/string))
-                                    old (get was fid)]
-                                (when (not= old now)
-                                  (let [[dns dnm] (get del-info fid)
-                                        qform (if e
-                                                (symbol (str (store/ns-of-form-id st fid))
-                                                        (str (or (:name e) fid)))
-                                                (symbol (str dns) (str (or dnm fid))))]
-                                    (cond-> {:form    qform
-                                             :form-id fid
-                                             :status  (cond (nil? old) :added
-                                                            (nil? now) :deleted
-                                                            :else      :modified)}
-                                      old (assoc :was old)
-                                      now (assoc :now now))))))
-                            fids))
-        arc      (vec (for [d span
-                            :when (= :verify (:op d))
-                            :let [r (:result d)]]
-                        {:delta (:id d)
-                         :fail  (+ (:fail r 0) (:error r 0))}))]
-    (cond-> {:agent agent
-             :since (or boundary :log-start)
-             :steps (mapv #(select-keys % [:id :op :ns :prompt]) mine)
-             :forms forms
-             :verification-arc arc}
-      (= "text" (some-> format name)) history/render-changes-text)))
-
-(defn ^:export callee-adjacency
-  "qsym → sorted vector of STORE-INTERNAL callee qsyms, across every ns."
-  [st]
-  (let [internal? (:namespaces st)]
-    (reduce
-     (fn [adj ns-sym]
-       (let [an (analyze/analyze (render/render-ns st ns-sym))]
-         (reduce (fn [adj u]
-                   (if (and (:from-var u) (internal? (:to u)))
-                     (update adj
-                             (symbol (str (:from u)) (str (:from-var u)))
-                             (fnil conj (sorted-set))
-                             (symbol (str (:to u)) (str (:name u))))
-                     adj))
-                 adj (:var-usages an))))
-     {}
-     (keys (:namespaces st)))))
-
-(defn ^:export query-deps
-  "The transitive CALLEE tree of ns/name (store-internal): what does this
-  form reach? The planning input for extractions and blast-radius checks.
-  Returns {:root q :calls {qsym [callees...]}} for every reachable form."
-  [session ns-sym nm]
-  (let [st   (:store @session)
-        adj  (callee-adjacency st)
-        root (symbol (str ns-sym) (str nm))]
-    (loop [calls {} frontier [root]]
-      (if-let [q (first frontier)]
-        (if (contains? calls q)
-          (recur calls (subvec frontier 1))
-          (let [cs (vec (get adj q []))]
-            (recur (assoc calls q cs) (into (subvec frontier 1) cs))))
-        {:root root :calls calls}))))
-
 (defn ^:export query-namespaces
   "What exists? Every store namespace with its form count (orientation, T2)."
   [session]
   (let [st (:store @session)]
     (vec (for [ns-sym (keys (:namespaces st))]
            {:ns ns-sym :forms (count (store/forms st ns-sym))}))))
-
-(defn ^:export query-status-at
-  "was-green-at: the project's verification state that GOVERNED delta `at`
-  (a delta id, or a commit-point id → its target) — the last `:verify` at or
-  before it. Returns {:at :status (:green|:red|:unknown) :verify <delta-id>}
-  or {:error} for an unknown delta."
-  [session & {:keys [at]}]
-  (let [st (:store @session)]
-    (cond
-      (nil? at)              {:error "query-status-at needs :at"}
-      (nil? (history/resolve-at st at)) {:error (str "no delta " at
-                                             " in this branch's history")}
-      :else (let [rid (history/resolve-at st at)]
-              (cond-> {:at rid :status (history/status-at st rid)}
-                (history/verify-at st rid) (assoc :verify (:id (history/verify-at st rid))))))))
-
-(defn ^:export fid-ns-at
-  "form-id → owning namespace as of delta `at-id`, folded from the log (each
-  content delta carries its `:ns` and the form-ids it touched). Lets
-  time-travel disambiguate same-named forms in different namespaces at a
-  PAST point, without depending on the current store's membership."
-  [store at-id]
-  (reduce (fn [m d]
-            (let [m (reduce #(assoc %1 %2 (:ns d)) m (history/delta-fids d))]
-              (if (= at-id (:id d)) (reduced m) m)))
-          {} (store/deltas store)))
-
-(defn ^:export query-form-at
-  "Time-travel: form `nm` in `ns-sym` as its SOURCE stood at delta `at` (a
-  delta id, or a commit-point id → its target). Returns
-  {:ns :name :at :source :status} — `:status` is the project's verification
-  state that governed that point (was-green-at) — or {:error}. Names are
-  resolved AT that delta (so a form that was later renamed still answers to
-  the name it had then). The form's source is stored verbatim per version,
-  so this is exact, not reconstructed."
-  [session ns-sym nm & {:keys [at]}]
-  (let [st (:store @session)]
-    (cond
-      (nil? at)
-      {:error "query-form-at needs :at (a delta id or a commit-point id)"}
-
-      (nil? (history/resolve-at st at))
-      {:error (str "no delta " at " in this branch's history")}
-
-      :else
-      (let [rid   (history/resolve-at st at)
-            srcs  (store/sources-at st rid)
-            ns-of (fid-ns-at st rid)
-            fid   (some (fn [[fid src]]
-                          (when (and (= ns-sym (get ns-of fid))
-                                     (= (str nm) (str (store/name-of-source src))))
-                            fid))
-                        srcs)]
-        (if fid
-          {:ns ns-sym :name nm :at rid :source (get srcs fid)
-           :status (history/status-at st rid)}
-          {:error (str nm " was not present in " ns-sym " at " rid)})))))
-
-(defn ^:export query-flow
-  "Rock 4: where a FIELD flows — every form using keyword `kw` (\":rush?\"),
-  with the using lines. The cross-namespace thread an agent otherwise
-  re-derives by reading each layer.
-
-  Reads `edit.refs/keyword-refs` — THE keyword graph — rather than scanning
-  text, so a key read by DESTRUCTURING is included: `{:user/keys [id]}` uses
-  `:user/id` while containing no such token, and a text scan silently omitted
-  exactly the module-boundary fns that destructure a handle. Rows from a
-  destructuring carry `:via :destructuring`."
-  [session kw]
-  (let [target (keyword (str/replace (str kw) #"^:" ""))
-        st     (:store @session)
-        dpat   (re-pattern (str "(?<![\\w.:-])"
-                                (java.util.regex.Pattern/quote
-                                 (str ":" (some-> (namespace target) (str "/")) "keys"))
-                                "(?![\\w-])"))
-        lpat   (re-pattern (str "(?<![\\w.:-])"
-                                (java.util.regex.Pattern/quote (str target))
-                                "(?![\\w?!*+<>=-])"))]
-    (->> (refs/keyword-refs st)
-         (filter #(= target (:kw %)))
-         (sort-by (juxt (comp str :from-ns) (comp str :from-var)))
-         (mapv (fn [{:keys [from-ns from-var via]}]
-                 (let [src   (some-> (store/form-named st from-ns from-var)
-                                     :node n/string)
-                       pat   (if (= :destructuring via) dpat lpat)
-                       lines (when src
-                               (filterv #(re-find pat %) (str/split-lines src)))]
-                   (cond-> {:ns from-ns :form from-var
-                            :lines (mapv str/trim (take 3 lines))}
-                     (= :destructuring via) (assoc :via :destructuring))))))))
-
-(defn ^:export coverage-view
-  "The `:covered-by` shape both `query-impact` and `query-brief` report:
-   `{:count n :tests [first 8] :more k}`. Capped because a central form is
-   covered by HUNDREDS of tests — `slopp.ops.external/open!` by 284 — and printing
-   them all pushed the keys the caller actually asked for past the response
-   trim, making a working answer read as a broken one. The remainder is
-   COUNTED, never silently dropped."
-  [test-syms]
-  (let [ts (vec test-syms)]
-    (cond-> {:count (count ts) :tests (vec (take 8 ts))}
-      (> (count ts) 8) (assoc :more (- (count ts) 8)))))
-
-(defn ^:export query-impact
-  "Rock 4: the blast radius of reshaping `ns-sym/nm`, answered from THE
-  reference graph — call sites grouped per caller form (:calls),
-  value/higher-order references (:value-refs — a template rewrite can't
-  reach those), CARRIER references (:carrier-refs — quoted-symbol
-  positions; signature templates can't reach those either), outside-world
-  declarations (:declared), and the tests runtime evidence says exercise
-  it (:covered-by — the graph's :observed records, as {:count :tests :more}:
-  capped at 8 with the remainder counted, since a central form has hundreds). change_signature's discovery as a READ: plan the edit before paying for it.
-
-  When the form takes or is passed a MAP, `:shape` answers the other half —
-  the keys it READS off its first argument (destructured, body, `:=>` schema,
-  `:or`-optional) against the literal keys its callers PASS, grouped by
-  key-set, with the diff in `:mismatch`. Renaming a key, or wondering who
-  supplies one, is a read here rather than a grep. `:unknown-shape` names the
-  callers passing a non-literal: a syntactic reader cannot see through a
-  binding, so trust `:mismatch` only as far as that list is empty."
-  [session ns-sym nm]
-  (let [st (:store @session)]
-    (if-not (store/form-named st ns-sym nm)
-      (edit/missing-form-error st ns-sym nm)
-      (let [qsym    (symbol (str ns-sym) (str nm))
-            rs      (refs/refs-to st qsym)
-            statics (filter #(= :static (:via %)) rs)
-            callers (->> statics
-                         (group-by (juxt :from-ns :from-var))
-                         (mapv (fn [[[nsx from] us]]
-                                 {:ns nsx :form from
-                                  :calls (count (keep :arity us))
-                                  :value-refs (count (remove :arity us))}))
-                         (sort-by (juxt (comp str :ns) (comp str :form)))
-                         vec)
-            carried (vec (sort (distinct
-                                (for [r rs :when (= :carrier (:via r))]
-                                  (symbol (str (:from-ns r)) (str (:from-var r)))))))
-            marks   (vec (sort (remove #{:covers} (keep :marker rs))))
-            all-ts  (->> (refs/covered-by st (:test-map @session) qsym)
-                         ;; the canonical coverage edge set, sliced to the tests
-                         ;; that EXERCISE or CLAIM this form — observed evidence
-                         ;; plus ^{:covers} declarations (the dispatch path the
-                         ;; trace never records). Static reach is excluded here:
-                         ;; :covered-by means "covers it", not "might reach it".
-                         (filter #(some #{:observed :declared} (:via %)))
-                         (map :test)
-                         sort vec)
-            ;; a central form is covered by HUNDREDS of tests. Printing them
-            ;; all pushed the keys actually asked for past the response
-            ;; trim — a working answer read as a broken one.
-            tests   (coverage-view all-ts)
-            shp     (shape/shape-of st ns-sym nm callers)]
-        (cond-> {:target qsym :callers callers :covered-by tests}
-          (seq carried) (assoc :carrier-refs carried)
-          (seq marks)   (assoc :declared marks)
-          shp           (assoc :shape shp)
-          (or (some (comp pos? :value-refs) callers) (seq carried))
-          (assoc :hint (str "value/higher-order and carrier refs can't be"
-                            " template-rewritten — change_signature handles"
-                            " :calls; edit the others by hand")))))))
 
 ^:reads (defn ^:export query-slice
   "The focused read (driver, not doer): FULL source for the form you're
@@ -688,7 +181,7 @@
   [session ns-sym nm & {:keys [depth limit match window] :or {depth 2 limit 8}}]
   (if-let [e (store/form-named (:store @session) ns-sym nm)]
     (let [root    (symbol (str ns-sym) (str nm))
-          adj     (:calls (query-deps session ns-sym nm))
+          adj     (:calls (graph/query-deps session ns-sym nm))
           reached (loop [level [root] seen #{root} acc [] d 0]
                     (if (>= d depth)
                       acc
@@ -727,137 +220,6 @@
                :cards cards}
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
-
-^:reads (defn ^:export query-depends
-  "The generic dependency front door: what depends on `on` (`:direction
-  :dependents`, the default) or what `on` depends on (`:direction
-  :dependencies`), where `on` is a NAMESPACE, a VAR (\"ns/name\"), or a
-  KEYWORD (\":dest-zone\"). Dependents: ns → who requires it + qualified
-  refs; var → blast radius (callers, value refs, covering tests); keyword
-  → the field's flow. Dependencies: var → the transitive callee tree; ns
-  → its requires. `:modules true` (no `on`) → the module graph (:manifest=DECLARED, :layers/:cycles=PRODUCTION-only; declared
-  edges + any standing debt). One tool to ask — results carry :kind."
-  [session on & {:keys [direction modules detail] :or {direction :dependents}}]
-  (let [st (:store @session)]
-    (if modules
-      (if (seq (str on))
-        (assoc (modules/module-surface session on) :kind :module-surface)
-        (let [manifest (or (edit.modules/modules-manifest st) {})
-              rows     (edit.modules/module-usage-rows st)
-              actual   (into #{}
-                             (comp (map (fn [{:keys [from-ns to]}]
-                                          [(edit.modules/module-of from-ns)
-                                           (edit.modules/module-of to)]))
-                                   (remove (fn [[a b]] (= a b))))
-                             rows)
-              unused   (vec (for [[m ds] (sort manifest)
-                                  d      (sort ds)
-                                  :when  (not (contains? actual [m d]))]
-                              [m d]))
-              over     (modules/overstated-edges st rows)
-              ;; layers/cycles reflect PRODUCTION architecture (test fixtures excluded);
-              ;; :manifest below stays the DECLARED/enforced set
-              graph    (store/module-layers (modules/production-manifest st rows))]
-          (cond-> {:kind :modules
-                   :manifest (into (sorted-map)
-                                   (map (fn [[m ds]] [m (vec (sort ds))]))
-                                   manifest)
-                   :layers (:layers graph)
-                   :debt (modules/module-debt st rows)
-                   :purity (let [p (modules/purity-standing st)]
-                             ;; :could-tighten is a one-time ADOPTION worklist, but it
-                             ;; rode every response: 2,304 of 5,584 chars (41%) on the
-                             ;; eval9 seed, byte-identical across three calls in one
-                             ;; lifetime. Names answer "which modules?"; the per-module
-                             ;; :declared/:supports detail is one flag away.
-                             (if detail
-                               p
-                               (cond-> (assoc p :could-tighten
-                                              (vec (sort (keys (:could-tighten p)))))
-                                 (seq (:could-tighten p))
-                                 (assoc :note (str "could-tighten lists module NAMES —"
-                                                   " query_depends {modules true, detail true}"
-                                                   " adds each one's declared/supports")))))}
-            (seq (:module-platforms st))
-            ;; declared target platforms (undeclared = :jvm, so absent here) —
-            ;; answers "which namespaces are :cljs client / :cljc shared?" (D-web-cljs)
-            (assoc :platforms (into (sorted-map) (:module-platforms st)))
-
-            (seq (:cycles graph))
-            (assoc :cycles (:cycles graph))
-
-            (seq (edit.modules/module-test-manifest st))
-            ;; a SEPARATE relation, so a reader who saw only :modules would
-            ;; conclude these crossings are undeclared debt when they are
-            ;; declared and deliberate
-            (assoc :test-edges (into (sorted-map)
-                                     (map (fn [[m ds]] [m (vec (sort ds))]))
-                                     (edit.modules/module-test-manifest st))
-                   :test-edges-note (str "edges a module's -test namespaces may"
-                                         " cross and its production code may"
-                                         " NOT — not production edges, so they"
-                                         " are absent from :layers and :cycles"
-                                         " by construction"))
-
-            (seq unused)
-            (assoc :unused-edges unused
-                   :unused-note (str "declared but no call uses them —"
-                                     " module_dep {from .. to .. remove true}"
-                                     " retires an edge"))
-
-            (seq over)
-            ;; the unused report's sibling, and invisible to it: something DOES
-            ;; cross these, just never production code. Worth a line because a
-            ;; declared edge is what the CYCLE check reads, so one of these can
-            ;; refuse a legitimate declaration in an unrelated module.
-            (assoc :overstated-edges over
-                   :overstated-note (str "declared as PRODUCTION but only -test"
-                                         " namespaces cross them — the manifest"
-                                         " claims a dependency the production"
-                                         " code does not have, and the cycle"
-                                         " check believes it. module_dep"
-                                         " {from .. to .. test_only true} then"
-                                         " {.. remove true} says it honestly")))))
-      (let [on (str/trim (str on))]
-        (cond
-          (str/starts-with? on ":")
-          {:kind :keyword :on on :rows (query-flow session on)}
-
-          (str/includes? on "/")
-          (let [[nsx nm] (str/split on #"/" 2)]
-            (if (= :dependencies direction)
-              (let [r (query-deps session (symbol nsx) (symbol nm))]
-                (assoc r :kind :var :on on :direction :dependencies))
-              (let [r (query-impact session (symbol nsx) (symbol nm))]
-                (if (:error r) r (assoc r :kind :var :on on)))))
-
-          (contains? (:namespaces st) (symbol on))
-          (let [target   (symbol on)
-                requires (vec (sort (distinct (vals (edit/require-aliases st target)))))]
-            (if (= :dependencies direction)
-              {:kind :namespace :on target :direction :dependencies
-               :requires requires}
-              (let [req-set     (fn [nsx] (set (vals (edit/require-aliases st nsx))))
-                    required-by (vec (sort (filter #(and (not= % target)
-                                                         (contains? (req-set %) target))
-                                                   (keys (:namespaces st)))))
-                    pat         (re-pattern (str "(?<![\\w.-])"
-                                                 (java.util.regex.Pattern/quote on) "/"))
-                    refs        (vec (for [nsx (sort (keys (:namespaces st)))
-                                           :when (not= nsx target)
-                                           e (store/forms st nsx)
-                                           :when (and (:name e)
-                                                      (re-find pat (n/string (:node e))))]
-                                       {:ns nsx :form (:name e)}))]
-                {:kind :namespace :on target
-                 :required-by required-by
-                 :requires requires
-                 :qualified-refs (vec (take 20 refs))})))
-
-          :else
-          {:error (str "nothing named " on
-                       " — `on` is a namespace, var (ns/name), or :keyword;"
-                       " modules true reads the module manifest")})))))
 
 ^:unsafe (defn ^:export query-store
   "The STORE-VALUE oracle: evaluate one read-only `(fn [store] ...)` over
@@ -921,7 +283,7 @@
     (edit/missing-form-error (:store @session) ns-sym nm)
     (let [
           sym     (query-symbol session ns-sym nm)
-          callers (vec (query-references session ns-sym nm))
+          callers (vec (graph/query-references session ns-sym nm))
           tmap    (:test-map @session)
           qsym    (symbol (str ns-sym) (str nm))
           tests   (let [e  (store/form-named (:store @session) ns-sym nm)
@@ -939,13 +301,13 @@
                          (filter #(and (not (contains? (:via %) :observed))
                                        (not (seen (:test %)))))
                          (mapv #(select-keys % [:test :via :hops]))))
-          why     (last (query-lineage session ns-sym nm))]
+          why     (last (history/query-lineage session ns-sym nm))]
       (cond-> {:ns ns-sym :name nm :source (:source sym)}
         (:effectful? sym) (assoc :effectful? true)
         (:reads? sym)     (assoc :reads? true)
         (:unsafe? sym)    (assoc :unsafe? true)
         (seq callers)     (assoc :callers callers)
-        (seq tests)       (assoc :covered-by (coverage-view tests))
+        (seq tests)       (assoc :covered-by (graph/coverage-view tests))
         (seq reached)     (assoc :reached-by reached)
         (and (seq tmap) (empty? tests) (empty? reached) (not (:test? sym)))
         (assoc :untested true)

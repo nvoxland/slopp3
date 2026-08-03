@@ -1,11 +1,26 @@
 (ns slopp.read.history
-  "Package-private history/status helpers for the slopp.api module: delta
-  timeline readings (status-at/after, resolve-at, verify-at) and the human
-  renderings (line diffs, change/form-history stories, timestamps). Deep ns
-  — reachable only within slopp.api.* (and its specs); the public surface
-  stays on slopp.api."
+  "The store over TIME — when, by whom, and in what state. One namespace,
+  because a timeline reading and the query that reports it are one subject.
+
+  Two halves that lived apart until they did not: the pure FOLDS over the
+  delta log (status at and after a delta, milestone rows, line diffs,
+  timestamps, what one form cost to get green) and the READS built on them
+  (lineage, a form's every version, delta-log search, the log as a story, an
+  episode's net per-form diffs, and time travel to a form as its source
+  stood). The reads arrived from `slopp.read.query`, which held them beside
+  two unrelated subjects.
+
+  Spans take NAMED anchors (`:start`, `:last-commit`, `:last-done`) rather
+  than raw delta ids. Demanding an id sent agents hunting through
+  `query_history` for one, and when the hunt did not pay off they left for
+  `git diff` instead — eval9 measured ~20k chars of it in a single handoff
+  step.
+
+  The anchor everything here is relative to is an EPISODE boundary, and it is
+  per-agent: `episode-boundary` resolves to that agent's own last `:done`, so
+  two agents working one store read different spans out of the same log."
   (:require [clojure.string :as str]
-            [slopp.store :as store]))
+            [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (defn verify-after
   "The `:verify` delta a write PRODUCED: the first one at or after `at-id`,
@@ -507,3 +522,365 @@
      :asks            (count (distinct (keep #(or (:prompt %) (:turn-intent %)) vs)))
      :verification-ms (when (seq costs) (reduce + costs))
      :measured        {:with-cost (count costs) :of (count vs)}}))
+
+(defn ^:export label-ancestors
+  "The ancestor prefixes of a `/`-delimited agent label, root-first:
+  \"a/b/c\" → (\"a\" \"a/b\" \"a/b/c\"). A sub-agent labels itself by appending to
+  its parent's path, so `turn-intents` walks these prefixes to resolve a
+  delta's enclosing turn through its root agent's `turn-begin`."
+  [agent-label]
+  (when agent-label
+    (let [parts (clojure.string/split agent-label #"/")]
+      (map #(clojure.string/join "/" (take (inc %) parts))
+           (range (count parts))))))
+
+(defn ^:export turn-intents
+  "delta-id → the enclosing turn's verbatim :intent (resolved through the
+  delta's agent, sub-agent path labels riding their root's turn). Derived
+  at query time; truncated for display."
+  [ds]
+  (loop [ds ds, open {}, out {}]
+    (if-let [d (first ds)]
+      (let [open (case (:op d)
+                   :turn-begin (assoc open (:agent d) (:intent d))
+                   :turn-end   (dissoc open (:agent d))
+                   open)
+            in   (some open (or (label-ancestors (:agent d)) []))
+            out  (if in
+                   (assoc out (:id d)
+                          (if (> (count in) 160)
+                            (str (subs in 0 157) "...")
+                            in))
+                   out)]
+        (recur (rest ds) open out))
+      out)))
+
+(defn ^:export query-lineage
+  "Provenance chain for `nm`: the deltas that created or changed its form (who
+  touched it, via which op, driven by which prompt)."
+  [session ns-sym nm]
+  (let [st (:store @session)
+        id (:id (store/form-named st ns-sym nm))]
+    (when id
+      (let [ti (turn-intents (store/deltas st))]
+        (->> (store/deltas st)
+             (filter (fn [d]
+                       (or (= id (:form-id d))
+                           (some #{id} (:form-ids d)))))
+             ;; lean: bulk content lives in query-form-history, not here
+             (mapv #(cond-> (dissoc % :sources :changeset :result)
+                      (ti (:id %)) (assoc :turn-intent (ti (:id %))))))))))
+
+(defn ^:export query-form-history
+  "Every content version of `nm`'s form, oldest first, with the intent that
+  produced it, when, the verification state it landed in, and what that
+  verification COST:
+  [{:delta :op :prompt :source :status :at :turn-intent :ms}]. `:status`
+  (was-green-at, HM2) is the project's verification state governing each
+  version — semantic × history, per form.
+
+  Three views over ONE derivation of the form's life, because a second walk is
+  how two surfaces come to disagree about the same version:
+  - default — the versions as data;
+  - `:format \"text\"` (HM4) — the form's LIFE as a per-version LINE-diff story;
+  - `:effort true` — what the form COST to get green (`history/form-effort`):
+    red→green cycles, distinct asks, recorded time, and how much of the life
+    that time actually covers."
+  [session ns-sym nm & {:keys [format effort]}]
+  (let [st (:store @session)
+        id (:id (store/form-named st ns-sym nm))]
+    (when id
+      (let [ti       (turn-intents (store/deltas st))
+            versions (vec (for [d     (store/deltas st)
+                                :let  [src (get-in d [:sources id])]
+                                :when src]
+                            (cond-> {:delta (:id d) :op (:op d)
+                                     :prompt (:prompt d) :source src
+                                     :status (status-after st (:id d))
+                                     :at (human-time (:at d))}
+                              (ti (:id d)) (assoc :turn-intent (ti (:id d)))
+                              ;; the cost the verification recorded, present
+                              ;; only for versions written after verification
+                              ;; started timing itself — form-effort reports
+                              ;; that coverage rather than summing past it
+                              (get-in (verify-after st (:id d)) [:result :ms])
+                              (assoc :ms (get-in (verify-after st (:id d))
+                                                 [:result :ms])))))]
+        (cond
+          effort (form-effort (symbol (str ns-sym) (str nm)) versions)
+          (= "text" (some-> format name))
+          (render-form-history-text (symbol (str ns-sym) (str nm)) versions)
+          :else versions)))))
+
+(defn ^:export query-search-history
+  "Delta-log search — the 'which prompts touched X' query. Case-insensitive
+  substring match of `pattern` against each delta's prompt, done label,
+  commit/turn description, turn-end note, AND its enclosing turn intent;
+  returns the matching deltas NEWEST-first with the forms they touched (as
+  ns/name qsyms, resolved as of that delta) and the human time. `:limit`
+  (default 25). Pairs with `query-form-at`/`query-lineage` to drill in."
+  [session pattern & {:keys [limit] :or {limit 25}}]
+  (if (str/blank? (str pattern))
+    {:error "query-search-history needs a non-blank pattern"}
+    (let [st  (:store @session)
+          ds  (store/deltas st)
+          ti  (turn-intents ds)
+          pat (str/lower-case (str pattern))
+          hit? (fn [d]
+                 (some #(and % (str/includes? (str/lower-case (str %)) pat))
+                       [(:prompt d) (:label d) (:description d) (:note d)
+                        (ti (:id d))]))
+          form-name (fn [d fid]
+                      (or (some-> (get-in d [:sources fid]) store/name-of-source str)
+                          (some-> (store/form-by-id st fid) :name str)
+                          (when (= fid (:form-id d)) (some-> (:name d) str))
+                          (str fid)))
+          touched (fn [d]
+                    (vec (for [fid (delta-fids d)]
+                           (symbol (str (or (store/ns-of-form-id st fid) (:ns d)))
+                                   (form-name d fid)))))]
+      (->> ds
+           reverse
+           (filter hit?)
+           (take (or limit 25))
+           (mapv (fn [d]
+                   (cond-> {:delta (:id d) :op (:op d) :at (human-time (:at d))}
+                     (:prompt d)      (assoc :prompt (:prompt d))
+                     (:label d)       (assoc :label (:label d))
+                     (:description d) (assoc :description (:description d))
+                     (:note d)        (assoc :note (:note d))
+                     (ti (:id d))     (assoc :turn-intent (ti (:id d)))
+                     (seq (delta-fids d)) (assoc :forms (touched d)))))))))
+
+(defn ^:export query-history
+  "The delta log as a story, newest first. Filters: `:ns`, `:contains`
+  (substring of prompt/label — and, collapsed, of turn intents). `:limit`
+  (default 20). `:collapse true` returns EPISODE rows instead of raw deltas —
+  one row per agent-work-unit between done-points, the readable long-term
+  view. `:dead-ends true` lists SCRAPPED explorations (the reverts) with their
+  why and the forms they dropped; a namespace/form string narrows to those
+  that touched it. All rows carry `:at` (local date-time)."
+  [session & {:keys [ns contains limit collapse format]
+              dead-ends? :dead-ends
+              :or {limit 20}}]
+  (let [
+        rows
+        (cond
+          dead-ends?
+          (dead-ends (:store @session)
+                     (when (string? dead-ends?) dead-ends?))
+
+          collapse
+          (let [ds       (store/deltas (:store @session))
+                relevant (filter #(or (contains? #{:ingest :add :replace :delete
+                                                   :rename :normalize :move :merge}
+                                                 (:op %))
+                                      (= :done (:op %)))
+                                 ds)
+                pos      (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
+                rows     (episode-rows relevant)]
+            (collapse-rows  ds pos rows contains limit))
+
+          :else
+          (->> (store/deltas (:store @session))
+               reverse
+               (filter #(or (nil? ns) (= ns (:ns %))))
+               (filter #(or (nil? contains)
+                            (some (fn [s] (and s (clojure.string/includes? (str s) contains)))
+                                  [(:prompt %) (:label %)])))
+               (take limit)
+               (mapv (fn [d]
+                       (cond-> (select-keys d [:id :op :ns :prompt :label :group
+                                               :agent :form-id :form-ids :old
+                                               :new :before])
+                         (:at d) (assoc :at (human-time (:at d))))))))]
+    (cond-> rows
+      (= "text" (some-> format name)) render-history-text)))
+
+(def ^:export content-ops
+  #{:ingest :add :replace :delete :rename :normalize :move :merge})
+
+(defn ^:export episode-boundary
+  "Where `agent-label`'s episode begins: its own last :done — or, for
+  an agent that has never marked done, the last stable spot (ANY agent's
+  done) before its first activity, so pre-existing history is never
+  mistaken for contested work. nil = log start."
+  [store agent-label]
+  (let [ds  (store/deltas store)
+        own (last (filter #(and (= :done (:op %))
+                                (= agent-label (:agent %)))
+                          ds))]
+    (:id (or own
+             (let [ckpts     (filter #(= :done (:op %)) ds)
+                   first-own (first (filter #(and (contains? content-ops (:op %))
+                                                  (= agent-label (:agent %)))
+                                            ds))]
+               (if first-own
+                 (let [pos  (into {} (map-indexed (fn [i d] [(:id d) i])) ds)
+                       fpos (get pos (:id first-own))]
+                   (last (filter #(< (get pos (:id %)) fpos) ckpts)))
+                 (last ckpts)))))))
+
+(defn ^:export episode-span
+  "Deltas after `agent`'s episode boundary (all agents' — callers filter)."
+  [store agent]
+  (let [ds (store/deltas store)]
+    (if-let [b (episode-boundary store agent)]
+      (rest (drop-while #(not= b (:id %)) ds))
+      ds)))
+
+(defn span-anchor
+  "Resolve a NAMED span anchor to the delta id a span should START at:
+  `:start` (the whole log), `:last-commit` (work since the last milestone),
+  `:last-done` (work since the last done) — the same vocabulary `undo!`
+  accepts, as keyword or wire string. Anything else passes through as a
+  literal delta id.
+
+  Why: `from` used to demand a raw delta id, so \"what changed across this
+  lifetime, with code\" began with a hunt through `query_history` for the
+  right id — and when the hunt didn't pay off, agents left for `git diff`
+  (eval9 measured ~20k chars of it in one handoff step). An anchor that
+  points at nothing resolves to nil, which falls back to the episode view
+  rather than throwing."
+  [st from]
+  (let [ds     (store/deltas st)
+        named? (fn [ks] (contains? ks from))
+        ;; the delta AFTER the last marker — the span starts with the work
+        ;; that FOLLOWS the milestone/done, not the marker itself
+        after  (fn [pred]
+                 (when-let [m (last (filter pred ds))]
+                   (:id (second (drop-while #(not= (:id m) (:id %)) ds)))))]
+    (cond
+      (named? #{:start "start" ":start"})
+      (:id (first ds))
+
+      (named? #{:last-commit "last-commit" ":last-commit"})
+      (after #(= :commit (:op %)))
+
+      (named? #{:last-done "last-done" ":last-done"})
+      (after #(= :done (:op %)))
+
+      :else from)))
+
+(defn ^:export query-changes
+  "The agent's EPISODE — everything since `:agent`'s last done: net
+  per-form diffs (:was/:now), the step list, and the verification arc. The
+  'what have I done since my last stable spot' view. Parallel agents with
+  distinct :agent labels each see only their own work. `:format \"text\"`
+  renders it as a human story with LINE diffs instead of full sources."
+  [session & {:keys [agent from to format]}]
+  (let [st       (:store @session)
+        from     (span-anchor st from)
+        boundary (if from
+                   ;; historical span: `from`/`to` are delta ids (e.g. from a
+                   ;; collapsed history row); boundary = just BEFORE `from`
+                   (:id (last (take-while #(not= from (:id %))
+                                          (store/deltas st))))
+                   (episode-boundary st agent))
+        span     (if from
+                   (let [ds (drop-while #(not= from (:id %))
+                                        (store/deltas st))]
+                     (if to
+                       (let [[pre [t & _]] (split-with #(not= to (:id %)) ds)]
+                         (concat pre (when t [t])))
+                       ds))
+                   (episode-span st agent))
+        mine     (filter #(and (contains? content-ops (:op %))
+                               (or (nil? agent) (= agent (:agent %))))
+                         span)
+        fids     (distinct (mapcat delta-fids mine))
+        was      (store/sources-at st boundary)
+        del-info (into {}
+                       (keep (fn [d]
+                               (when (= :delete (:op d))
+                                 [(:form-id d) [(:ns d) (:name d)]])))
+                       mine)
+        at-end   (when to (store/sources-at st to))
+        forms    (vec (keep (fn [fid]
+                              (let [e   (store/form-by-id st fid)
+                                    now (if to
+                                          (get at-end fid)
+                                          (some-> e :node n/string))
+                                    old (get was fid)]
+                                (when (not= old now)
+                                  (let [[dns dnm] (get del-info fid)
+                                        qform (if e
+                                                (symbol (str (store/ns-of-form-id st fid))
+                                                        (str (or (:name e) fid)))
+                                                (symbol (str dns) (str (or dnm fid))))]
+                                    (cond-> {:form    qform
+                                             :form-id fid
+                                             :status  (cond (nil? old) :added
+                                                            (nil? now) :deleted
+                                                            :else      :modified)}
+                                      old (assoc :was old)
+                                      now (assoc :now now))))))
+                            fids))
+        arc      (vec (for [d span
+                            :when (= :verify (:op d))
+                            :let [r (:result d)]]
+                        {:delta (:id d)
+                         :fail  (+ (:fail r 0) (:error r 0))}))]
+    (cond-> {:agent agent
+             :since (or boundary :log-start)
+             :steps (mapv #(select-keys % [:id :op :ns :prompt]) mine)
+             :forms forms
+             :verification-arc arc}
+      (= "text" (some-> format name)) render-changes-text)))
+
+(defn ^:export query-status-at
+  "was-green-at: the project's verification state that GOVERNED delta `at`
+  (a delta id, or a commit-point id → its target) — the last `:verify` at or
+  before it. Returns {:at :status (:green|:red|:unknown) :verify <delta-id>}
+  or {:error} for an unknown delta."
+  [session & {:keys [at]}]
+  (let [st (:store @session)]
+    (cond
+      (nil? at)              {:error "query-status-at needs :at"}
+      (nil? (resolve-at st at)) {:error (str "no delta " at
+                                             " in this branch's history")}
+      :else (let [rid (resolve-at st at)]
+              (cond-> {:at rid :status (status-at st rid)}
+                (verify-at st rid) (assoc :verify (:id (verify-at st rid))))))))
+
+(defn ^:export fid-ns-at
+  "form-id → owning namespace as of delta `at-id`, folded from the log (each
+  content delta carries its `:ns` and the form-ids it touched). Lets
+  time-travel disambiguate same-named forms in different namespaces at a
+  PAST point, without depending on the current store's membership."
+  [store at-id]
+  (reduce (fn [m d]
+            (let [m (reduce #(assoc %1 %2 (:ns d)) m (delta-fids d))]
+              (if (= at-id (:id d)) (reduced m) m)))
+          {} (store/deltas store)))
+
+(defn ^:export query-form-at
+  "Time-travel: form `nm` in `ns-sym` as its SOURCE stood at delta `at` (a
+  delta id, or a commit-point id → its target). Returns
+  {:ns :name :at :source :status} — `:status` is the project's verification
+  state that governed that point (was-green-at) — or {:error}. Names are
+  resolved AT that delta (so a form that was later renamed still answers to
+  the name it had then). The form's source is stored verbatim per version,
+  so this is exact, not reconstructed."
+  [session ns-sym nm & {:keys [at]}]
+  (let [st (:store @session)]
+    (cond
+      (nil? at)
+      {:error "query-form-at needs :at (a delta id or a commit-point id)"}
+
+      (nil? (resolve-at st at))
+      {:error (str "no delta " at " in this branch's history")}
+
+      :else
+      (let [rid   (resolve-at st at)
+            srcs  (store/sources-at st rid)
+            ns-of (fid-ns-at st rid)
+            fid   (some (fn [[fid src]]
+                          (when (and (= ns-sym (get ns-of fid))
+                                     (= (str nm) (str (store/name-of-source src))))
+                            fid))
+                        srcs)]
+        (if fid
+          {:ns ns-sym :name nm :at rid :source (get srcs fid)
+           :status (status-at st rid)}
+          {:error (str nm " was not present in " ns-sym " at " rid)})))))

@@ -2,7 +2,7 @@
   "Fixes for what the symmetric eval surfaced (S-series)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (deftest ^:external s1-non-compiling-forms-are-rejected-not-silently-committed
   (let [sess (external/open!)]
@@ -62,7 +62,7 @@
         (is (= [10] (api/query-eval sess "(s2.core/caller 5)")))
         (is (= [:u] (api/query-eval sess "(s2.core/util)"))))
       (testing "lineage records the :move"
-        (is (contains? (set (map :op (query/query-lineage sess 's2.core 'util)))
+        (is (contains? (set (map :op (history/query-lineage sess 's2.core 'util)))
                        :move)))
       (testing "validation"
         (is (:error (api/move-form! sess 's2.core 'nope :before 'caller)))

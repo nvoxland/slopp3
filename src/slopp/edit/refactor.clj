@@ -805,6 +805,28 @@
          (or (= 'defn- (first s))
              (boolean (:private (meta (second s))))))))
 
+(defn- name-export-level
+  "The `:export` level a def's NAME node ALREADY declares — `true`, a prefix
+   string, or nil for none.
+
+   Walks every meta layer rather than checking the outermost, because a name
+   can be wrapped more than once (`^:export ^:dynamic *hook*`) and the marker
+   we are looking for may sit under one that is nothing to do with exports.
+
+   [[export-mark]] asks this before wrapping. Without it a move stacked a
+   second marker onto a var that was already exported, and `defn ^:export
+   ^:export f` is what landed in the store — valid Clojure, since reader
+   metadata merges, which is exactly why nothing failed and it took a
+   regex-shaped test assertion to notice."
+  [k]
+  (when (= :meta (n/tag k))
+    (let [kids (remove #(#{:whitespace :comment} (n/tag %)) (n/children k))
+          sx   (try (n/sexpr (first kids)) (catch Exception _ nil))]
+      (cond
+        (= sx :export)                        true
+        (and (map? sx) (contains? sx :export)) (:export sx)
+        :else (some-> (second kids) name-export-level)))))
+
 (defn- export-mark
   "The def form with an export marker on its name symbol — `level` true
   gives `^:export` (world surface); a prefix string gives
@@ -839,7 +861,7 @@
           mark (if (true? level)
                  (n/keyword-node :export)
                  (p/parse-string (pr-str {:export (str level)})))]
-      (if nami
+      (if (and nami (not= level (name-export-level (nth (vec kids) nami))))
         (n/replace-children
          node
          (map-indexed (fn [i k] (if (= i nami) (n/meta-node mark k) k)) kids))

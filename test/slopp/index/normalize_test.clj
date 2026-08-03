@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.normalize :as norm]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
@@ -52,7 +52,7 @@
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
           (is (= [:pos] (api/query-eval sess "(cp.core/classify 5)"))))
         (testing "provenance: a :normalize delta + a :done boundary"
-          (is (contains? (set (map :op (query/query-lineage sess 'cp.core 'classify)))
+          (is (contains? (set (map :op (history/query-lineage sess 'cp.core 'classify)))
                          :normalize))
           (is (= :done (:op (last (store/deltas (:store @sess))))))))
       (testing "an immediate second done is a no-op"

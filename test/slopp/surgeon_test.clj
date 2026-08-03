@@ -2,7 +2,7 @@
   "clj-surgeon-inspired structural ops, slopp-grade: gated, verified,
   recorded. query_deps / fix_declares / ns_rename / edit_move_forms."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (def core-src
   (str "(ns sg.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -23,7 +23,7 @@
       (api/ingest! sess 'sg.core core-src)
       (api/module-dep! sess "sg.util" "sg.core" :prompt "fixture edge")
       (api/ingest! sess 'sg.util util-src)
-      (let [d (query/query-deps sess 'sg.util 'wrap)]
+      (let [d (graph/query-deps sess 'sg.util 'wrap)]
         (is (= 'sg.util/wrap (:root d)))
         (is (= ['sg.core/top] (get (:calls d) 'sg.util/wrap)))
         (is (= ['sg.core/mid] (get (:calls d) 'sg.core/top)))
@@ -427,4 +427,64 @@
               (str "the orphaned require must leave with the form:\n" src))
           (is (re-find #"clojure\.set" src)
               (str "a require still in use must stay:\n" src))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-test-only-caller-does-not-make-a-within-module-move-a-cycle
+  ;; move-forms! computed the edges a move NEEDS against the production
+  ;; manifest alone, so a crossing declared {test-only true} looked undeclared
+  ;; and was charged to the move. Two things made that wrong at once: the
+  ;; crossing is a TEST crossing, which module_dep's own docstring says "is NOT
+  ;; a production edge, so no cycle question applies to it"; and the move here
+  ;; does not change the crossing at all, both namespaces being in one module.
+  ;; store-violations already joins both manifests — this was the second
+  ;; derivation of an existing rule, drifting from it.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tmv.store.core "(ns tmv.store.core)\n\n(defn ^:export keep! \"K.\" [x] x)\n")
+      (api/module-dep! sess "tmv.read" "tmv.store" :prompt "reads read the store")
+      (api/ingest! sess 'tmv.read.query
+                   (str "(ns tmv.read.query (:require [tmv.store.core :as core]))\n\n"
+                        "(defn ^:export f \"F.\" [x] (core/keep! x))\n"))
+      (api/ingest! sess 'tmv.read.history "(ns tmv.read.history)\n\n(defn spare \"S.\" [x] x)\n")
+      (api/module-dep! sess "tmv.store" "tmv.read" :test-only true
+                       :prompt "the store's TESTS drive a read")
+      (api/ingest! sess 'tmv.store.db-test
+                   (str "(ns tmv.store.db-test (:require [tmv.read.query :as q]))\n\n"
+                        "(defn probe \"P.\" [x] (q/f x))\n"))
+      (testing "a within-module move whose only outside caller is a TEST is not a cycle"
+        (let [r (api/move-forms! sess 'tmv.read.query '[f] 'tmv.read.history
+                                 ;; f is ALREADY ^:export and its node carries
+                                 ;; that to the new home, so the flag is
+                                 ;; redundant in fact — but the check cannot see
+                                 ;; it, because a row targeting the destination
+                                 ;; does not record WHICH moved var was called.
+                                 ;; Passing it is the honest fixture until
+                                 ;; :module-rows carries the callee.
+                                 :export true
+                                 :prompt "the time reads belong with history")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (re-find #"defn \^:export f" (query/query-source sess 'tmv.read.history)))
+          (is (re-find #"history/f" (query/query-source sess 'tmv.store.db-test))
+              "the test caller was rewritten to the new home")))
+      ;; THE CONTROL. Fixing the above must not amount to switching the cycle
+      ;; check off: a move that genuinely needs a new PRODUCTION edge closing a
+      ;; cycle still has to refuse. Moving f into ctl.c makes ctl.b need ctl.c
+      ;; while ctl.c -> ctl.b already exists. TWO-segment namespaces throughout,
+      ;; deliberately: at three, every one of these is package-private, and
+      ;; module-violations reports visibility BEFORE the undeclared edge — so a
+      ;; deep fixture refuses for the wrong reason and proves nothing about the
+      ;; cycle check. The first draft of this control did exactly that.
+      (testing "a production caller still closes a cycle, and is still refused"
+        (api/ingest! sess 'ctl.a "(ns ctl.a)\n\n(defn f \"F.\" [x] (inc x))\n")
+        (api/module-dep! sess "ctl.b" "ctl.a" :prompt "b uses a")
+        (api/ingest! sess 'ctl.b
+                     (str "(ns ctl.b (:require [ctl.a :as a]))\n\n"
+                          "(defn g \"G.\" [x] (a/f x))\n"))
+        (api/module-dep! sess "ctl.c" "ctl.b" :prompt "c uses b")
+        (api/ingest! sess 'ctl.c
+                     (str "(ns ctl.c (:require [ctl.b :as b]))\n\n"
+                          "(defn h \"H.\" [x] (b/g x))\n"))
+        (let [r (api/move-forms! sess 'ctl.a '[f] 'ctl.c :prompt "control")]
+          (is (some? (:error r)) (pr-str r))
+          (is (re-find #"cycle" (str (:error r))) (pr-str r))))
       (finally (api/close! sess)))))

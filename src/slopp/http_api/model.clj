@@ -43,7 +43,7 @@
     ;; changed here" and "that is not a range" are different answers, and
     ;; only the second one is a 404.
     (when (and (contains? ids from) (contains? ids to))
-      (let [ch        (query/query-changes session :from from :to to)
+      (let [ch        (history/query-changes session :from from :to to)
             by-target (refs/refs-by-target st)
             prompts   (store/prompt-by-form st)
             rows      (for [{:keys [form form-id status was now]} (:forms ch)
@@ -131,7 +131,7 @@
         since      (if last-commit
                      (rest (drop-while #(not= last-commit (:id %)) ds))
                      ds)
-        mine       (filter #(contains? query/content-ops (:op %)) since)
+        mine       (filter #(contains? history/content-ops (:op %)) since)
         asks       (vec (keep :prompt mine))
         shown      8]
     {:milestones milestones

@@ -11,7 +11,7 @@
   asserts the unexempted case alongside it: a report that had simply stopped
   finding anything would satisfy the first half on its own."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.read.modules :as modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.edit.modules :as edit.modules]))
+            [slopp.ops :as api] [slopp.read.modules :as modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.ops.external :as external] [slopp.edit.modules :as edit.modules] [slopp.read.graph :as graph]))
 
 (deftest ^:external the-module-surface-is-browsable
   (let [sess (external/open!)]
@@ -62,7 +62,7 @@
         (is (re-find #"modules true" (str (:error (modules/module-surface sess "zz.nope"))))))
       (testing "the graph view: layers, and drift toward DEAD edges is named"
         (api/module-dep! sess "mb.app" "mc.ghost" :prompt "declared, never used")
-        (let [r (query/query-depends sess nil :modules true)]
+        (let [r (graph/query-depends sess nil :modules true)]
           ;; mc.ghost is a phantom (declared edge, NO code) — production layers
           ;; exclude it, though :unused-edges still flags the dead edge
           (is (= [["ma.core"] ["mb.app"]] (:layers r)) (pr-str r))
@@ -97,7 +97,7 @@
                         "(deftest go-t (is (= 1 (app/go 1))))\n"))
       (swap! sess dissoc :adopting?)
       (api/adopt-modules! sess)   ; production pb.app→pa.core; the back-edge is TEST-only
-      (let [r (query/query-depends sess nil :modules true)]
+      (let [r (graph/query-depends sess nil :modules true)]
         (testing "adoption declares the fixture's crossing WITHOUT claiming a dependency"
           (is (not (contains? (set (get-in r [:manifest "pa.core"])) "pb.app"))
               (str "pa.core does not depend on pb.app — only its test does: "
@@ -203,7 +203,7 @@
       (api/ingest! sess 'pm.core "(ns pm.core)\n(defn add [x y] (+ x y))\n")
       (api/ingest! sess 'pm.edge
                    "(ns pm.edge)\n(defn roll [] (rand))\n")
-      (let [r (query/query-depends sess nil :modules true :detail true)]
+      (let [r (graph/query-depends sess nil :modules true :detail true)]
         (testing "a module whose code is clean is reported as tightenable"
           (is (= :pure (get-in r [:purity :could-tighten "pm.core" :supports]))
               (pr-str (:purity r))))
@@ -213,7 +213,7 @@
               (pr-str (:purity r)))))
       (testing "once declared, it is reported as declared and no longer offered"
         (api/module-tier! sess "pm.core" :pure :prompt "clean core")
-        (let [r (query/query-depends sess nil :modules true :detail true)]
+        (let [r (graph/query-depends sess nil :modules true :detail true)]
           (is (= :pure (get-in r [:purity :declared "pm.core"])) (pr-str r))
           (is (nil? (get-in r [:purity :could-tighten "pm.core"])) (pr-str r))))
       (finally (api/close! sess)))))
@@ -291,7 +291,7 @@
       (api/ingest! sess 'ct.core "(ns ct.core)\n(defn ^:unused-ok add \"A.\" [x y] (+ x y))\n")
       (api/ingest! sess 'ct.edge "(ns ct.edge)\n(defn ^:unused-ok roll \"R.\" [] (rand))\n")
       (testing "default: could-tighten names only, and it says where the detail is"
-        (let [r  (query/query-depends sess nil :modules true)
+        (let [r  (graph/query-depends sess nil :modules true)
               ct (get-in r [:purity :could-tighten])]
           (is (vector? ct) (str "expected a name vector, got: " (pr-str ct)))
           (is (some #{"ct.core"} ct) (pr-str ct))
@@ -299,12 +299,12 @@
           (is (re-find #"(?i)detail" (str (get-in r [:purity :note])))
               (pr-str (:purity r)))))
       (testing "detail true: the full per-module worklist comes back"
-        (let [r  (query/query-depends sess nil :modules true :detail true)
+        (let [r  (graph/query-depends sess nil :modules true :detail true)
               ct (get-in r [:purity :could-tighten])]
           (is (map? ct) (pr-str ct))
           (is (= :pure (get-in ct ["ct.core" :supports])) (pr-str ct))))
       (testing "the architecture answer is unaffected by the default"
-        (let [r (query/query-depends sess nil :modules true)]
+        (let [r (graph/query-depends sess nil :modules true)]
           (is (some? (:layers r)))
           (is (map? (:manifest r)))))
       (finally (api/close! sess)))))
@@ -600,7 +600,7 @@
                        :prompt "declared for production, but only the -test crosses it")
       (api/module-dep! sess "od.probe" "oa.core"
                        :prompt "an all-test module's edge — no production code exists to cross it")
-      (let [r    (query/query-depends sess nil :modules true)
+      (let [r    (graph/query-depends sess nil :modules true)
             over (set (:overstated-edges r))]
         (testing "the edge only a -test namespace crosses is flagged"
           (is (contains? over ["ob.app" "oc.util"]) (pr-str r)))

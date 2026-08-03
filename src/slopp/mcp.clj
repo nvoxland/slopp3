@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.ops :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver] [slopp.read.history :as history] [slopp.read.graph :as graph]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -990,7 +990,7 @@
                                                         :match (:match a)
                                                         :window (:window a))))
       "query_depends" (text! (told! session name a
-                                        (query/query-depends session (:on a)
+                                        (graph/query-depends session (:on a)
                                                           :modules (:modules a)
                                                           :detail (:detail a)
                                                           :direction (if (= "dependencies" (:direction a))
@@ -1026,7 +1026,7 @@
                                                  :user (:user a)))
       "turn_end" (text! (api/turn-end! session :agent (:agent a)
                                                :note (:note a)))
-      "query_changes" (text! (query/query-changes session :agent (:agent a)
+      "query_changes" (text! (history/query-changes session :agent (:agent a)
                                                    :from (:from a) :to (:to a)
                                                    :format (:format a)))
       "episode_revert" (text! (-> (api/revert-episode! session
@@ -1038,36 +1038,36 @@
                                         (let [nm (:name a)]
                                           (cond
                                             (and nm (:at a))
-                                            (assoc (query/query-form-at session (sym :ns) (sym :name)
+                                            (assoc (history/query-form-at session (sym :ns) (sym :name)
                                                                      :at (:at a))
                                                    :kind :form-at)
 
                                             (and nm (:effort a))
-                                            (assoc (query/query-form-history session (sym :ns) (sym :name)
+                                            (assoc (history/query-form-history session (sym :ns) (sym :name)
                                                                              :effort true)
                                                    :kind :form-effort)
 
                                             nm
                                             {:kind :form-history
-                                             :versions (query/query-form-history session (sym :ns) (sym :name)
+                                             :versions (history/query-form-history session (sym :ns) (sym :name)
                                                                               :format (:format a))}
 
                                             (:at a)
-                                            (assoc (query/query-status-at session :at (:at a))
+                                            (assoc (history/query-status-at session :at (:at a))
                                                    :kind :status-at)
 
                                             (:contains a)
                                             {:kind :prompts
-                                             :hits (query/query-search-history session (:contains a)
+                                             :hits (history/query-search-history session (:contains a)
                                                                             :limit (:limit a))}
 
                                             (:dead_ends a)
                                             {:kind :dead-ends
-                                             :dead-ends (query/query-history
+                                             :dead-ends (history/query-history
                                                          session :dead-ends (:dead_ends a))}
 
                                             :else
-                                            (query/query-history session
+                                            (history/query-history session
                                                               :ns (some-> (:ns a) symbol)
                                                               :collapse (:collapse a)
                                                               :format (:format a)

@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.store.render :as render]
             [slopp.store.db :as db]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n])
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n] [slopp.read.history :as history])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -67,7 +67,7 @@
         (testing "the image was reloaded from the store"
           (is (= [6] (api/query-eval sess2 "(demo/add 2 3)"))))
         (testing "lineage (incl. prompt and verification) survives"
-          (let [lin (query/query-lineage sess2 'demo 'add)]
+          (let [lin (history/query-lineage sess2 'demo 'add)]
             (is (some #(= "off-by-one" (:prompt %)) lin))
             (is (contains? (set (map :op lin)) :ingest)))
           (is (= :verify (:op (last (store/deltas (:store @sess2)))))))

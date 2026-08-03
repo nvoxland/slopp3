@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.read.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -1707,7 +1707,7 @@ recompiled (session/after-write! session ns-sym)]
   query-form-history). Rides the standard replace pipeline, so the revert is
   itself compile-gated, verified, and recorded provenance."
   [session ns-sym nm & {:keys [to prompt agent]}]
-  (let [hist (query/query-form-history session ns-sym nm)]
+  (let [hist (history/query-form-history session ns-sym nm)]
     (cond
       (nil? hist)
       (edit/missing-form-error (:store @session) ns-sym nm)
@@ -1785,7 +1785,7 @@ recompiled (session/after-write! session ns-sym)]
                    done-anchor?
                    (:id (last (filter #(= :done (:op %)) all)))
                    :else to)
-        mine?    (fn [d] (and (contains? query/content-ops (:op d))
+        mine?    (fn [d] (and (contains? history/content-ops (:op d))
                               (= agent (:agent d))))
         ;; POSITIONAL addressing counts over the LOG. `(take-last n (filter
         ;; mine? all))` counted over the SURVIVORS, so "the last one" meant
@@ -1795,7 +1795,7 @@ recompiled (session/after-write! session ns-sym)]
         ;; "undo my :verify"; a marker that also carries content — :merge — is
         ;; not.
         transparent? (fn [d] (and (contains? fields/markers (:op d))
-                                  (not (contains? query/content-ops (:op d)))))
+                                  (not (contains? history/content-ops (:op d)))))
         recent   (when-not to
                    (take-last (max 1 (or deltas 1)) (remove transparent? all)))
         blocked  (vec (for [d recent :when (not (mine? d))]
@@ -1844,11 +1844,11 @@ recompiled (session/after-write! session ns-sym)]
 
       :else
       (let [from    (:id target)
-            changes (query/query-changes session :agent agent :from from)
+            changes (history/query-changes session :agent agent :from from)
             span    (drop-while #(not= from (:id %)) all)
             others  (into #{}
                           (mapcat history/delta-fids)
-                          (filter #(and (contains? query/content-ops (:op %))
+                          (filter #(and (contains? history/content-ops (:op %))
                                         (not (mine? %)))
                                   span))
             {:keys [steps shared]} (history/revert-steps changes others)]
@@ -1898,12 +1898,12 @@ recompiled (session/after-write! session ns-sym)]
         ;; real-agent delta as someone else's and skipped the session's own
         ;; forms.
         agent   (or agent (:agent-id @session))
-        changes (query/query-changes session :agent agent)
+        changes (history/query-changes session :agent agent)
         others  (into #{}
                       (mapcat history/delta-fids)
-                      (filter #(and (contains? query/content-ops (:op %))
+                      (filter #(and (contains? history/content-ops (:op %))
                                     (not= agent (:agent %)))
-                              (query/episode-span (:store @session) agent)))
+                              (history/episode-span (:store @session) agent)))
         {:keys [steps shared]} (history/revert-steps changes others)]
     (cond
       (empty? (:forms changes))
@@ -2121,22 +2121,42 @@ recompiled (session/after-write! session ns-sym)]
             rows     (map (fn [r]
                             (assoc r :to-export
                                    (if (= (symbol (str to-ns)) (:to r))
-                                     export   ; true = world, string = subtree
+                                     ;; ALL-OR-NOTHING for the moved set, and it
+                                     ;; cannot yet be per-var: a row targeting the
+                                     ;; destination records only that
+                                     ;; :from-ns/:from-var calls `to-ns`, never
+                                     ;; WHICH moved var — move-plan's :module-rows
+                                     ;; carries :to-name for moved→stay rows only.
+                                     ;; So a var that is ALREADY ^:export still
+                                     ;; needs the flag passed again (the node keeps
+                                     ;; its own metadata, so this understates what
+                                     ;; the move writes), and passing it exports
+                                     ;; every moved var alike. Widening ext-usages
+                                     ;; to carry the callee is what fixes it.
+                                     export
                                      (edit.modules/export-level st (:to r) (:name r)))))
                           (:module-rows plan))
             ;; edges the move's rewires necessitate are part of its intent
-            edges    (when manifest
-                       (->> rows
-                            (map (fn [r] [(edit.modules/module-of (:from-ns r))
-                                          (edit.modules/module-of (:to r))]))
-                            (remove (fn [[a b]] (= a b)))
-                            (remove (fn [[a b]] (contains? (get manifest a #{}) b)))
-                            distinct vec))
+            tmanif   (edit.modules/module-test-manifest st)
+            ;; WHICH crossings still need declaring is asked of the canonical
+            ;; rule, not re-derived here. The re-derivation this replaces read
+            ;; the PRODUCTION manifest alone, so a crossing declared
+            ;; {test-only true} looked undeclared, was charged to the move, and
+            ;; refused as a cycle — module_dep's own docstring says a test-only
+            ;; edge "is NOT a production edge, so no cycle question applies to
+            ;; it". It fired hardest on the move that cannot possibly need an
+            ;; edge: a WITHIN-module one, where source and target share a module
+            ;; and every crossing is exactly what it was before.
+            edges    (->> (edit.modules/module-violations manifest tmanif rows)
+                          (filter #(= :undeclared-edge (:rule %)))
+                          (map (fn [v] [(edit.modules/module-of (:from-ns v))
+                                        (edit.modules/module-of (:target-ns v))]))
+                          distinct vec)
             cyclic   (seq (filter (fn [[a b]] (store/module-path manifest b a))
                                   edges))
             manifest' (reduce (fn [m [a b]] (update m a (fnil conj #{}) b))
                               manifest edges)
-            viols    (edit.modules/module-violations manifest' rows)
+            viols    (edit.modules/module-violations manifest' tmanif rows)
             refusal  (cond
                        cyclic
                        (str "the move would close a module dependency cycle ("

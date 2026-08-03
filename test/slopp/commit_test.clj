@@ -7,7 +7,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.mcp]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (def seed
   (str "(ns cm.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -29,7 +29,7 @@
         (is (some? (:commit r)))
         (testing "a commit point IMPLIES a done (episode closed)"
           (is (some? (:done r)))
-          (is (empty? (:forms (query/query-changes sess :agent "alice")))))
+          (is (empty? (:forms (history/query-changes sess :agent "alice")))))
         (testing "the marker delta is real provenance"
           (let [d (first (filter #(= :commit (:op %))
                                  (store/deltas (:store @sess))))]
@@ -48,14 +48,14 @@
           (is (re-matches #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}" (str (:at c2))))))
       (testing "commit targets anchor query-changes spans (diff between milestones)"
         (let [[c2 c1] (api/query-commits sess)
-              c (query/query-changes sess :from (:target c1) :to (:target c2))]
+              c (history/query-changes sess :from (:target c1) :to (:target c2))]
           (is (some #(= 'cm.core/g (:form %)) (:forms c)))))
       (testing "the collapsed history shows the milestone; contains finds it"
-        (let [rows (query/query-history sess :collapse true :contains "plus-ten shipped")]
+        (let [rows (history/query-history sess :collapse true :contains "plus-ten shipped")]
           (is (= "v1: plus-ten shipped"
                  (get-in (first rows) [:commit :description]))))
         (is (re-find #"COMMIT \"v2: minus-two\""
-                     (query/query-history sess :collapse true :format "text"))))
+                     (history/query-history sess :collapse true :format "text"))))
       (finally (api/close! sess)))))
 
 (deftest ^:external commit-point-green-gate

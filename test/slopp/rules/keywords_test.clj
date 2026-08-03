@@ -1,7 +1,7 @@
 (ns slopp.rules.keywords-test
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.rules.keywords :as attrs]
-            [slopp.store :as store] [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (deftest keyword-inventory-collects-namespaced-domain-keys
   (let [s (store/ingest (store/empty-store) 'app.core
@@ -97,7 +97,7 @@
                         "(defn literal [m] (:kb/conn m))\n\n"
                         "(defn destructured [{:kb/keys [conn]}] conn)\n\n"
                         "(defn bare [{:keys [plain]}] plain)\n"))
-      (let [forms (set (map :form (:rows (query/query-depends sess ":kb/conn"))))]
+      (let [forms (set (map :form (:rows (graph/query-depends sess ":kb/conn"))))]
         (testing "literal readers are found, as before"
           (is (contains? forms 'literal) (pr-str forms)))
         (testing "and so is the destructuring consumer"
@@ -106,6 +106,6 @@
         (testing "an unrelated key's destructuring is not swept in"
           (is (not (contains? forms 'bare)) (pr-str forms))))
       (testing "unqualified keys resolve too"
-        (let [forms (set (map :form (:rows (query/query-depends sess ":plain"))))]
+        (let [forms (set (map :form (:rows (graph/query-depends sess ":plain"))))]
           (is (contains? forms 'bare) (pr-str forms))))
       (finally (api/close! sess)))))

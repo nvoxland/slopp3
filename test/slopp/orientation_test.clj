@@ -12,7 +12,7 @@
   claim being one the brief actually checked rather than one it assumed at
   startup and never revisited."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external]))
+            [slopp.ops :as api] [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (external/open!)]
@@ -133,12 +133,12 @@
                         "(deftest ship-t (is (= 2 (ship (a/mk true)))))\n"))
       (api/test-run! sess 'fl.b)
       (testing "query-flow threads a keyword across namespaces"
-        (let [r (query/query-flow sess ":rush?")]
+        (let [r (graph/query-flow sess ":rush?")]
           (is (= #{['fl.a 'mk] ['fl.b 'ship]}
                  (into #{} (map (juxt :ns :form)) r))
               (pr-str r))))
       (testing "query-impact reads the blast radius"
-        (let [r (query/query-impact sess 'fl.b 'ship)]
+        (let [r (graph/query-impact sess 'fl.b 'ship)]
           (is (= {:count 1 :tests ['fl.b/ship-t]} (:covered-by r)) (pr-str r))
           (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
@@ -279,25 +279,25 @@
                    (str "(ns dp.app (:require [dp.base :as base]))\n"
                         "(defn total [o] (+ 100 (base/fee (:dest-zone o))))\n"))
       (testing "a NAMESPACE answer: who requires it + what it requires"
-        (let [r (query/query-depends sess "dp.base")]
+        (let [r (graph/query-depends sess "dp.base")]
           (is (= :namespace (:kind r)) (pr-str r))
           (is (= '[dp.app] (:required-by r)) (pr-str r))))
       (testing "a VAR answer delegates to the blast radius"
-        (let [r (query/query-depends sess "dp.base/fee")]
+        (let [r (graph/query-depends sess "dp.base/fee")]
           (is (= :var (:kind r)) (pr-str r))
           (is (some #(= 'total (:form %)) (:callers r)) (pr-str r))))
       (testing "a KEYWORD answer delegates to the flow"
-        (let [r (query/query-depends sess ":dest-zone")]
+        (let [r (graph/query-depends sess ":dest-zone")]
           (is (= :keyword (:kind r)) (pr-str r))
           (is (some #(= 'dp.app (:ns %)) (:rows r)) (pr-str r))))
       (testing "an unknown thing teaches the kinds"
-        (is (re-find #"namespace, var" (str (:error (query/query-depends sess "nope.zip"))))))
+        (is (re-find #"namespace, var" (str (:error (graph/query-depends sess "nope.zip"))))))
       (testing "direction :dependencies gives the callee tree (absorbs query_deps)"
-        (let [r (query/query-depends sess "dp.app/total" :direction :dependencies)]
+        (let [r (graph/query-depends sess "dp.app/total" :direction :dependencies)]
           (is (= :var (:kind r)) (pr-str r))
           (is (contains? (:calls r) 'dp.base/fee) (pr-str r))))
       (testing "a namespace's :dependencies are its requires"
-        (let [r (query/query-depends sess "dp.app" :direction :dependencies)]
+        (let [r (graph/query-depends sess "dp.app" :direction :dependencies)]
           (is (some #{'dp.base} (:requires r)) (pr-str r))))
       (finally (api/close! sess)))))
 
@@ -489,7 +489,7 @@
                         "(defn stale [] (consume {:alpha 1}))\n"
                         "(defn dynamic [m] (consume m))\n"
                         "(defn no-arg [] (consume))\n"))
-      (let [sh      (:shape (query/query-impact sess 'sh.core 'consume))
+      (let [sh      (:shape (graph/query-impact sess 'sh.core 'consume))
             by-keys (into {} (map (juxt :keys identity)) (:producers sh))]
         (testing "the keys the target itself reads"
           (is (= #{:sh/alpha} (:destructured (:reads sh))) (pr-str sh)))

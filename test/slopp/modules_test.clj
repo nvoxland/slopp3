@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [slopp.read.query :as query] [clojure.java.io] [clojure.edn] [slopp.store.render :as render]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -799,7 +799,7 @@
       (api/create-ns! sess 'plat.shared :source "(ns plat.shared)\n"
                       :platform :cljc :prompt "portable")
       (api/create-ns! sess 'plat.server :source "(ns plat.server)\n(defn ^:unused-ok f [] 1)\n")
-      (let [r (query/query-depends sess "" :modules true)]
+      (let [r (graph/query-depends sess "" :modules true)]
         (testing "declared platforms surface in the module graph"
           (is (= :cljs (get (:platforms r) "plat.client")) (pr-str (:platforms r)))
           (is (= :cljc (get (:platforms r) "plat.shared")) (pr-str (:platforms r))))

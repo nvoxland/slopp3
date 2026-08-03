@@ -19,7 +19,7 @@
   a rename rebuilds the image, so it needs a real session."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external])
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -58,7 +58,7 @@
           (is (= [nil] (api/query-eval sess "(resolve 'rdemo/helper)")))
           (is (= [10] (api/query-eval sess "(rdemo/trap (fn [x] 10))"))))
         (testing "lineage of the new name includes the rename delta"
-          (is (contains? (set (map :op (query/query-lineage sess 'rdemo 'doubler)))
+          (is (contains? (set (map :op (history/query-lineage sess 'rdemo 'doubler)))
                          :rename))))
       (finally (api/close! sess)))))
 

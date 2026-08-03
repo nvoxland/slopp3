@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.ops :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client] [slopp.read.history :as history]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -210,7 +210,7 @@
                     (filter #(= :ingest (:op %)))
                     first :agent))))
       (testing "the turn carries the verbatim prompt"
-        (is (seq (query/query-search-history sess "add a widget feature"))))
+        (is (seq (history/query-search-history sess "add a widget feature"))))
       (testing "with no pending intent and no turn, the gate still refuses"
         (call! sess "turn_end" {})
         (let [r (call! sess "edit_add_form" {:ns "pi.core"
@@ -1478,8 +1478,8 @@
         (is (= 2 (count (turns :turn-begin))) "two asks, two turns")
         (is (= 1 (count (turns :turn-end))) "and the first one was closed"))
       (testing "the journal carries BOTH asks, not just the first"
-        (is (seq (query/query-search-history sess "first ask")))
-        (is (seq (query/query-search-history sess "second ask"))))
+        (is (seq (history/query-search-history sess "first ask")))
+        (is (seq (history/query-search-history sess "second ask"))))
       (testing "the closed turn carries where its wall clock went"
         (let [t (:timing (first (turns :turn-end)))]
           (is (some? t) "timing rides turn-end, which is why it never landed")
