@@ -15,7 +15,7 @@
 
   `slopp.image.currency` is a single process-global registry answering \"does
   the image hold this form's current source\", and the image it means is THE
-  oracle. `api.devserver` boots a second image on purpose (the oracle is
+  oracle. `webdev.live` boots a second image on purpose (the oracle is
   cycled by ordinary editing, so it cannot host a running app), and stamping
   that image's loads would file them as the oracle's: every currency surface
   would then report forms as current in a process that never saw them.

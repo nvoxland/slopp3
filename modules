@@ -1,5 +1,4 @@
 slopp.addelete: slopp.read slopp.store slopp.ops (test)
-slopp.api: slopp.build slopp.edit slopp.image slopp.ops slopp.project slopp.rules slopp.store slopp.web slopp.read (test)
 slopp.branch: slopp.read slopp.store slopp.ops (test)
 slopp.build-native: slopp.build slopp.ops (test)
 slopp.chsig: slopp.edit slopp.store slopp.ops (test)
@@ -22,14 +21,14 @@ slopp.git-concurrency: slopp.git slopp.ops (test)
 slopp.git-projection: slopp.git slopp.read slopp.store slopp.ops (test)
 slopp.gitauthor: slopp.git
 slopp.history: slopp.mcp slopp.read slopp.store slopp.ops (test)
-slopp.http-api: slopp.edit slopp.index slopp.project slopp.read slopp.store slopp.web slopp.api (test) slopp.ops (test)
+slopp.http-api: slopp.edit slopp.index slopp.project slopp.read slopp.store slopp.web slopp.ops (test) slopp.webdev (test)
 slopp.hub: slopp.project slopp.web slopp.store (test)
 slopp.image: slopp.boot slopp.rt slopp.store
-slopp.index: slopp.cache slopp.image slopp.store slopp.api (test) slopp.build (test) slopp.mcp (test) slopp.ops (test) slopp.read (test) slopp.rules (test)
+slopp.index: slopp.cache slopp.image slopp.store slopp.build (test) slopp.mcp (test) slopp.ops (test) slopp.read (test) slopp.rules (test)
 slopp.integration-tier: slopp.ops (test)
 slopp.lab: slopp.mcp slopp.ops slopp.read slopp.store
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.http-api slopp.hub slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.web (test)
+slopp.mcp: slopp.http-api slopp.hub slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.webdev slopp.web (test)
 slopp.merge: slopp.store
 slopp.modules: slopp.edit slopp.read slopp.store slopp.ops (test)
 slopp.multiproc: slopp.read slopp.store slopp.ops (test)
@@ -38,10 +37,10 @@ slopp.ops: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.proje
 slopp.orientation: slopp.edit slopp.read slopp.ops (test)
 slopp.phase4: slopp.read slopp.store slopp.ops (test)
 slopp.project: slopp.index slopp.store
-slopp.read: slopp.edit slopp.index slopp.project slopp.rules slopp.store slopp.api (test) slopp.ops (test)
+slopp.read: slopp.edit slopp.index slopp.project slopp.rules slopp.store slopp.ops (test)
 slopp.rename: slopp.read slopp.store slopp.ops (test)
-slopp.rules: slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web slopp.api (test) slopp.ops (test) slopp.read (test)
-slopp.store: slopp.cache slopp.api (test) slopp.ops (test) slopp.read (test)
+slopp.rules: slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web slopp.ops (test) slopp.read (test)
+slopp.store: slopp.cache slopp.ops (test) slopp.read (test)
 slopp.subform: slopp.read slopp.ops (test)
 slopp.subform-plan: slopp.edit slopp.store
 slopp.surgeon: slopp.read slopp.ops (test)
@@ -51,3 +50,4 @@ slopp.trace: slopp.ops (test)
 slopp.unsafe: slopp.edit slopp.read slopp.store slopp.ops (test)
 slopp.verification: slopp.image slopp.read slopp.rt slopp.store slopp.ops (test)
 slopp.warm-spare: slopp.ops (test)
+slopp.webdev: slopp.build slopp.edit slopp.image slopp.ops slopp.project slopp.rules slopp.store slopp.web slopp.read (test)

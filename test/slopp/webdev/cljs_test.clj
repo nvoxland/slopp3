@@ -1,4 +1,4 @@
-(ns slopp.api.cljs-test
+(ns slopp.webdev.cljs-test
   "Tests for the ClojureScript path — the one place slopp's oracle cannot
   reach.
 
@@ -14,7 +14,7 @@
   a real compile. That cost is the point. A faked compiler would leave the
   only unverifiable layer in slopp verified by something that cannot fail."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.cljs :as cljs]
+            [slopp.webdev.cljs :as cljs]
             [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.store.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str] [slopp.web.client :as client]))
 
 (deftest parse-result-extracts-the-marked-edn

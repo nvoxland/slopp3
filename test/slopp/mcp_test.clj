@@ -1900,7 +1900,7 @@
                                     "(defn ^{:web/method :get :web/path \"/api/x\"\n"
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} x \"X.\" [req] {:ok true})\n")))
-        ;; no :image on the handle — devserver/stop! tolerates a handle with
+        ;; no :image on the handle — live/stop! tolerates a handle with
         ;; no process, which is what keeps this test in-image instead of
         ;; costing a JVM to assert bookkeeping
         sess (atom {:store off :dir "/tmp/slopp-no-such-dir"

@@ -41,7 +41,7 @@
 
 (deftest ^:external a-second-image-loads-without-claiming-the-oracle-holds-it
   ;; `currency/stamps` is ONE global atom, and `load-ns!` stamps into it
-  ;; unconditionally. `api.devserver` boots a SECOND image on purpose — the
+  ;; unconditionally. `webdev.live` boots a SECOND image on purpose — the
   ;; oracle is cycled by ordinary editing (fresh-image! is on the path of
   ;; edit-replace!, rename!, move-forms!, deps-add!, merge-into-session!) and
   ;; so cannot host a running app. Loading that image through the stamping

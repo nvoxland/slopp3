@@ -1,4 +1,4 @@
-(ns slopp.api.devserver
+(ns slopp.webdev.live
   "The app server slopp runs FOR you, so a project under development always
   has a live version up.
 
@@ -193,7 +193,7 @@
   call deliberately does NOT carry, and why each is missing.
 
   This exists so the gap is CLASSIFIED rather than merely absent, and
-  `devserver-test/the-generated-serve-call-accounts-for-every-option-it-could-carry`
+  `live-test/the-generated-serve-call-accounts-for-every-option-it-could-carry`
   holds the classification total: a new option on either function fails that
   test until it is generated or listed here. Without it `serve-code` was four
   of eight, and the four it dropped were every option describing the APP —

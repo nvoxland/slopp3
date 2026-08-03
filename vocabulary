@@ -5,6 +5,7 @@ auth.providers: web.auth.providers
 auth.proxy.: web.auth.proxy.
 auth.session.ttl-seconds: web.auth.session.ttl-seconds
 auth.static.: web.auth.static.
+devserver: webdev.live
 effects: external
 groups.*.members: web.auth.groups.*.members
 http.adapter: web.adapter
@@ -17,8 +18,10 @@ reads: internal
 slopp.api.attrs: slopp.rules.keywords
 slopp.api.branch: slopp.ops.branch
 slopp.api.breakage: slopp.rules.breakage
+slopp.api.cljs: slopp.webdev.cljs
 slopp.api.crossings: slopp.index.crossings
 slopp.api.currency: slopp.rules.currency
+slopp.api.devserver: slopp.webdev.live
 slopp.api.doctor: slopp.rules.doctor
 slopp.api.done: slopp.ops.done
 slopp.api.external: slopp.ops.external

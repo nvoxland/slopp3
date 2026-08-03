@@ -65,7 +65,7 @@
   log. Every caller in this store wants something different from a non-2xx —
   the heartbeat treats a 400 as a drift alarm and a connection failure as the
   ordinary case, `slopp.web.jwks/fetch-jwks!` throws on both,
-  `slopp.api.cljs/fetch-contract` throws and then reads EDN. Push any one of
+  `slopp.webdev.cljs/fetch-contract` throws and then reads EDN. Push any one of
   those in here and the other two have to unpick it.
 
   So: **an answered request RETURNS, whatever the status; an unanswered one

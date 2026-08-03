@@ -961,31 +961,33 @@
 
 (deftest ^:external the-whole-store-check-names-no-app-type
   ;; R6 (no `slopp.*` surface may assume a project is a web project), and the
-  ;; sibling of `api.session-test/the-write-engine-names-no-app-type` — same
+  ;; sibling of `ops.engine-test/the-write-engine-names-no-app-type` — same
   ;; rule, the other generic surface. `full_check` answers "is the STORE good",
   ;; which is a question every project has, and it reached into the WEB tooling
   ;; for one part of the answer: how far behind the served app image is.
   ;;
-  ;; **It is a CYCLE before it is anything else.** Once the seven operation
-  ;; namespaces leave for `slopp.ops`, module `slopp.api` is {cljs, devserver}
-  ;; and the edges run BOTH ways: five the right way (tooling calls the
-  ;; operation surface — that is what tooling does) and this ONE back.
-  ;; `module_dep` cycle-checks adds, so a single edge blocks the whole regroup,
-  ;; and moving the tooling to `slopp.webdev` only renames the cycle.
+  ;; **It was a CYCLE before it was anything else.** With the tooling in
+  ;; `slopp.webdev`, the edges run BOTH ways: several the right way (tooling
+  ;; calls the operation surface — that is what tooling does) and this ONE
+  ;; back. `module_dep` cycle-checks adds, so the single edge blocked the whole
+  ;; regroup, and the move to `slopp.webdev` would only have renamed the cycle.
   ;;
-  ;; And it never needed to be there. `behind` is `(store running)` delegating
+  ;; And it never needed to be there. `behind` was `(store running)` delegating
   ;; the count to `read.orient/code-deltas-since`, and `running` is the
   ;; app-server map already on the session — nothing in it knows the app serves
-  ;; HTTP. So the R6 violation and the cycle have one fix.
+  ;; HTTP. So the R6 violation and the cycle had one fix.
   ;;
-  ;; Why a named test rather than a layering rule: the same answer its sibling
-  ;; gives. Layering is a MODULE-grain question and both namespaces are in
-  ;; module `slopp.api`, so the drawer hides the violation from the check built
-  ;; to find it. That is the third time in this restructure. When the tooling
-  ;; leaves, this becomes an ordinary layering finding and this test survives
-  ;; the move as the specific statement of it.
+  ;; Why a named test rather than a layering rule: while both namespaces sat in
+  ;; module `slopp.api`, layering could not see this at all — it is a
+  ;; MODULE-grain question, so the drawer hid the violation from the check
+  ;; built to find it, the third time in this restructure. Now that the tooling
+  ;; has its own module the layering check CAN see it, and this test survives
+  ;; the move as the specific statement of what layering states generically.
+  ;; Its sibling `web-tooling-is-reached-only-by-the-transport` states it over
+  ;; the whole image; this one states it about the surface that broke.
   (let [st  (external/built-store)
-        src (render/render-ns st 'slopp.ops.external)]
+        src (render/render-ns st 'slopp.ops.external)
+        pat #"slopp\.webdev"]
     (testing "there is a population — the vacuity that ate a sibling guard"
       ;; and it doubles as the guard on the quoted symbol above: a namespace
       ;; name in a test body is DATA, so a rename walks straight past it and
@@ -993,9 +995,19 @@
       (is (< 50 (count (:namespaces st))))
       (is (re-find #"full-check!" src)
           "rendered the wrong namespace, or rendered nothing"))
+    (testing "the search pattern still matches something, somewhere"
+      ;; The SAME guard, one level down, and the level this test was missing:
+      ;; the pattern is data too. Phase 3 renamed the web tooling out of
+      ;; `slopp.api`, and the previous pattern — `slopp\.api\.(?:cljs|devserver)`
+      ;; — went on matching nothing, forever, silently. `slopp.mcp` names the
+      ;; tooling on purpose (it is the transport, the one declared exception),
+      ;; so if the pattern stops matching THERE it has stopped matching
+      ;; anywhere and the assertion below is measuring an empty search.
+      (is (seq (re-seq pat (render/render-ns st 'slopp.mcp)))
+          "the pattern no longer matches the tooling's own consumer — retarget it"))
     (testing "the whole-store check names no web-tooling namespace, by any path"
       ;; require, qualified ref and prose all read the same here on purpose
-      (is (= [] (vec (re-seq #"slopp\.api\.(?:cljs|devserver)" src)))
+      (is (= [] (vec (re-seq pat src)))
           "the offending mentions are the failure value"))))
 
 (deftest the-web-framework-never-reaches-back-into-slopp
@@ -1704,3 +1716,48 @@
                       :to 'vz.b.deep :to-export nil}]))]
       (is (= :visibility (:rule v)) (pr-str v))
       (is (not (re-find #"/nil" (str (:error v)))) (pr-str v)))))
+
+(deftest web-tooling-is-reached-only-by-the-transport
+  ;; R6: no slopp.* surface may assume a project is a WEB project. Support for
+  ;; an app TYPE lives in a module named for that type — slopp.webdev — and the
+  ;; pattern has to be replicable for app type #2 without renaming type #1.
+  ;; The generic surfaces must therefore not reach into it.
+  ;;
+  ;; slopp.mcp is the one exception, BY ROLE rather than by convenience: it is
+  ;; the tool transport, so it wires every module's operations to a tool name
+  ;; and necessarily touches all of them. Spelled at module grain because that
+  ;; is the grain the exception is true at — the transport, not one namespace.
+  ;;
+  ;; Asserted rather than left to the module gate, which states a weaker thing.
+  ;; slopp.read -> slopp.webdev is not a CYCLE, so the gate would only ask for
+  ;; the edge to be DECLARED — and declaring it is exactly what a future agent
+  ;; would reach for when the gate complains. This says the edge is wrong
+  ;; however it is spelled.
+  ;;
+  ;; Not hypothetical: slopp.ops.external/full-check! called devserver/behind —
+  ;; the generic whole-store check reaching into web tooling for an answer that
+  ;; is not web-specific — and nothing complained, because both ends were in
+  ;; one module and layering is a MODULE-grain question. The drawer hid the
+  ;; violation from the check built to find it, which is the third time that
+  ;; shape has been recorded in this restructure.
+  (let [webdev?  #(boolean (re-matches #"slopp\.webdev(\..*)?" (str %)))
+        exempt?  #(boolean (or (re-matches #"slopp\.mcp(\..*)?" (str %))
+                               (re-find #"-test$" (str %))))
+        reaching (for [n    (all-ns)
+                       :let [nm (ns-name n)]
+                       :when (and (re-find #"^slopp\." (str nm))
+                                  (not (webdev? nm))
+                                  (not (exempt? nm)))
+                       [_ dep] (ns-aliases n)
+                       :when (webdev? (ns-name dep))]
+                   [nm (ns-name dep)])]
+    ;; guard the guard: with no slopp.webdev.* loaded at all, "nothing reaches
+    ;; it" is vacuously true — the could-not-check / checked-and-none
+    ;; conflation this codebase refuses everywhere else.
+    (is (seq (filter #(webdev? (ns-name %)) (all-ns)))
+        "slopp.webdev.* must be loaded before anything can be said about it")
+    (is (empty? reaching)
+        (str "these generic namespaces reach app-type-specific web tooling; "
+             "the question being asked is almost certainly not web-specific, "
+             "so the answer is to move it, not to declare the edge: "
+             (vec reaching)))))

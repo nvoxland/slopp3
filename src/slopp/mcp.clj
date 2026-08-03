@@ -1,5 +1,5 @@
 (ns slopp.mcp
-  "Minimal MCP transport (JSON-RPC 2.0 over stdio) exposing `slopp.api` as tools.
+  "Minimal MCP transport (JSON-RPC 2.0 over stdio) exposing `slopp.ops` as tools.
   The pure `handle` dispatch is the core (fully testable with plain maps);
   `serve!`/`-main` are the thin newline-delimited-JSON stdio loop.
 
@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.ops :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver] [slopp.read.history :as history] [slopp.read.graph :as graph]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -354,18 +354,18 @@
 "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)
-              (api.cljs/compile-client! session :output (:output a))
-              (api.cljs/compile-client! session))))
+              (cljs/compile-client! session :output (:output a))
+              (cljs/compile-client! session))))
    "generate_client"
    (fn [session a _sym]
      (text! (cond
               ;; a contract URL generates against an API this store CONSUMES —
               ;; two namespaces, and nothing reads the producer's store
               (:from a) (if (:ns a)
-                          (api.cljs/generate-client-from! session (:from a) :ns (symbol (:ns a)))
-                          (api.cljs/generate-client-from! session (:from a)))
-              (:ns a)   (api.cljs/generate-client! session :ns (symbol (:ns a)))
-              :else     (api.cljs/generate-client! session))))
+                          (cljs/generate-client-from! session (:from a) :ns (symbol (:ns a)))
+                          (cljs/generate-client-from! session (:from a)))
+              (:ns a)   (cljs/generate-client! session :ns (symbol (:ns a)))
+              :else     (cljs/generate-client! session))))
    "deps_pure"
    (fn [session a sym]
      (text! (if (false? (:pure a))
@@ -804,7 +804,7 @@
 
   **Opting out is an ACTION, not the absence of one.** The first cut gated on
   `managed?` and returned, which stops RE-SERVING and never stops SERVING —
-  so after `dev.server false` the old image kept answering and
+  so after `web.enabled false` the old image kept answering and
   `session_brief` kept advertising its url, while the config said no managed
   server existed. Found by slopp-ui, who checked the surface against the
   config rather than against the page.
@@ -824,14 +824,14 @@
   at its own speed."
   [session]
   (let [dir (:dir @session)]
-    (if (and dir (devserver/managed? (:store @session) ui/served-namespaces))
+    (if (and dir (live/managed? (:store @session) ui/served-namespaces))
       (locking session
-        (try (devserver/refresh! session (:store @session) dir)
+        (try (live/refresh! session (:store @session) dir)
              (catch Throwable t
                {:serving? false :reason (or (.getMessage t) (str t))})))
       (when-let [running (:app-server @session)]
         (locking session
-          (try (devserver/stop! running) (catch Throwable _))
+          (try (live/stop! running) (catch Throwable _))
           (swap! session dissoc :app-server))
         {:serving? false
          ;; STOPPED ON PURPOSE, and that has to be legible to the caller:
@@ -842,7 +842,7 @@
          ;; `managed?` is false for two different reasons now, and a stopped
          ;; server that names the wrong one sends someone to change the
          ;; wrong thing
-         :reason (if (devserver/self-served? (:store @session) ui/served-namespaces)
+         :reason (if (live/self-served? (:store @session) ui/served-namespaces)
                    (str "this session already serves this store's surface — the"
                         " managed app server was stopped, because a second one"
                         " would serve a staler copy of the same pages")
@@ -1436,7 +1436,7 @@
   about a page in a browser should be able to stop the thing the editor is
   talking to.
 
-  It goes through `refresh-app!` rather than `devserver/start!`, so the
+  It goes through `refresh-app!` rather than `live/start!`, so the
   first serve and every later one are the same code path. A start that
   differed from a swap would be a second lifecycle, and the two would drift
   exactly where nobody looks — the first boot of a session is the one nobody
@@ -1509,5 +1509,5 @@
         ;; die anyway, but leaving that to a watchdog means the port stays
         ;; bound for as long as the reap takes — and the next server to start
         ;; here wants exactly that port.
-        (devserver/stop! (:app-server @session))
+        (live/stop! (:app-server @session))
         (api/close! session)))))

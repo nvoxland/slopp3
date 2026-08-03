@@ -1,4 +1,4 @@
-(ns slopp.api.cljs
+(ns slopp.webdev.cljs
   "The client build: ClojureScript compiled ON THE JVM, and the typed client
   generated from the endpoints' own contracts.
 
