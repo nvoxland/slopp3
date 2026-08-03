@@ -595,3 +595,49 @@
            clojure.lang.ExceptionInfo #"404"
            (cljs/fetch-contract "http://pub.test/contract"
                                 (client/fake-requester "http://pub.test/" {})))))))
+
+(deftest ^:external a-bare-generate-client-targets-THIS-stores-family
+  ;; Reported by slopp-ui. Their store's entire family is `slopp-ui.*` — 22
+  ;; namespaces — and it already had a generated client at
+  ;; `slopp-ui.client.api`. A bare `generate_client {from …}` wrote a SECOND
+  ;; one under a literal `app.client.*`, reported success, and said nothing
+  ;; about the client that already existed.
+  ;;
+  ;; Not cosmetic downstream: the new namespace is marked `:cljs`, so
+  ;; `compile_client` would have compiled a duplicate contracts namespace into
+  ;; the browser bundle. Cost to undo: 19 calls. `ns_delete` refuses a
+  ;; non-empty namespace, there is no bulk delete, and `undo` — the tool you
+  ;; would reach for — was friction #28's own bug.
+  ;;
+  ;; `app.client.api` is only ever right for a store whose family is literally
+  ;; `app`. It is a placeholder that shipped as a default.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'shopf.contracts
+                   "(ns shopf.contracts)\n\n(def order [:map [:item :string]])\n")
+      (api/module-platform! sess "shopf.contracts" "cljc" :prompt "shared contract")
+      (api/ingest! sess 'shopf.api
+                   (str "(ns shopf.api)\n\n"
+                        "(defn ^{:web/method :post :web/path \"/api/orders\""
+                        " :web/request shopf.contracts/order"
+                        " :web/response shopf.contracts/order}"
+                        " create-order \"Create an order.\" [req] req)\n"))
+      (testing "the default is derived from the store, not a placeholder"
+        (let [r (cljs/generate-client! sess)]
+          (is (= 'shopf.client.api (:generated r)) (pr-str r))
+          (is (= 1 (:endpoints r)) (pr-str r))))
+      (testing "an explicit :ns still wins — the default is a default"
+        (let [r (cljs/generate-client! sess :ns 'shopf.elsewhere.api)]
+          (is (= 'shopf.elsewhere.api (:generated r)) (pr-str r))
+          (testing "and it says which OTHER generated client now stands"
+            ;; the case this change itself creates: a store generated under
+            ;; the old placeholder default keeps that namespace, marked :cljs,
+            ;; and compile_client will keep bundling it. Silence here is how
+            ;; someone ends up shipping two clients.
+            (is (= ['shopf.client.api] (:other-clients r)) (pr-str r))
+            (is (re-find #"shopf\.client\.api" (str (:note r))) (pr-str r)))))
+      (testing "and regenerating in place says nothing — it is not an other client"
+        (let [r (cljs/generate-client! sess :ns 'shopf.elsewhere.api)]
+          (is (not (contains? (set (:other-clients r)) 'shopf.elsewhere.api))
+              (pr-str r))))
+      (finally (api/close! sess)))))

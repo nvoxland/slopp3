@@ -1741,7 +1741,30 @@ recompiled (session/after-write! session ns-sym)]
   are SKIPPED and reported in `:skipped-shared`, never stomped, which is what
   makes this safe to reach for while others are working.
 
-  Returns `{:reverted n :undid [delta-ids] :skipped-shared [...]}`."
+  **`:deltas n` counts over the LOG, and REFUSES rather than reaching past.**
+  Markers are transparent, but a delta whose op undo cannot invert
+  (`:rename-ns`, `:move-forms`, `:ns-delete`, `:config-put`, a `module_*`
+  declaration, anything that changes more than form sources) stops it, named
+  in `:blocked` with nothing reverted. It used to count over the FILTERED
+  sequence, so *the last one* meant *the last one that passed the filter*: it
+  stepped over the head and reverted an older write while returning
+  `:reverted 1` and `:skipped-shared []`. Reported by a consumer whose
+  already-shipped CSS fix was rolled back underneath them and reached their
+  user as a screenshot of a bug that had been fixed. Measured afterwards: 20
+  op types and 1218 deltas in slopp's own store were steppable, so an
+  ordinary `ns_rename` was enough to arm it.
+
+  The conservative op set is not the bug and is unchanged: undo inverts form
+  SOURCES, and a `:rename-ns` also re-keys the namespace, so inverting it here
+  would restore the text under the new name. Not being able to undo something
+  is fine; reaching past it is not.
+
+  `:to` still walks forward from an anchor the caller named explicitly, which
+  is a different request: there the address is right and the coverage may be
+  partial.
+
+  Returns `{:reverted n :undid [delta-ids] :skipped-shared [...]}`, or
+  `{:reverted 0 :blocked [{:delta :op :why}] :note ...}`."
   [session & {:keys [deltas to agent prompt]}]
   (let [st       (:store @session)
         ;; undo means "walk back MY writes"; with no explicit agent that is the
@@ -1764,14 +1787,54 @@ recompiled (session/after-write! session ns-sym)]
                    :else to)
         mine?    (fn [d] (and (contains? query/content-ops (:op d))
                               (= agent (:agent d))))
+        ;; POSITIONAL addressing counts over the LOG. `(take-last n (filter
+        ;; mine? all))` counted over the SURVIVORS, so "the last one" meant
+        ;; "the last one that passed the filter" — a different delta, chosen
+        ;; silently, then reverted while reporting `:reverted 1` and
+        ;; `:skipped-shared []`. Markers are transparent, because nobody means
+        ;; "undo my :verify"; a marker that also carries content — :merge — is
+        ;; not.
+        transparent? (fn [d] (and (contains? fields/markers (:op d))
+                                  (not (contains? query/content-ops (:op d)))))
+        recent   (when-not to
+                   (take-last (max 1 (or deltas 1)) (remove transparent? all)))
+        blocked  (vec (for [d recent :when (not (mine? d))]
+                        {:delta (:id d) :op (:op d)
+                         :why (if (= agent (:agent d))
+                                (str "undo inverts form SOURCES, and " (:op d)
+                                     " changes more than sources — reverting it"
+                                     " here would half-undo it")
+                                (str "written by "
+                                     (or (:agent d) "another agent")))}))
         target   (if to
                    (first (filter mine? (rest (drop-while #(not= to (:id %)) all))))
-                   (first (take-last (max 1 (or deltas 1)) (filter mine? all))))]
+                   (first recent))]
     (cond
       (and (or commit-anchor? done-anchor?) (nil? to))
       {:reverted 0
        :note (str "no " (if commit-anchor? "commit" "done")
                   " to roll back to")}
+
+      ;; BEFORE the not-target case: a blocked head is not "nothing to undo",
+      ;; it is "the thing you named cannot be undone". Reported as a refusal
+      ;; because the ADDRESS is what is wrong — you asked for the last n
+      ;; writes, and reaching past them to revert something OLDER is doing
+      ;; something adjacent to what was asked. `undo` is the tool an agent
+      ;; reaches for at the moment it knows it made a mistake; that is the one
+      ;; behaviour it must never have.
+      (seq blocked)
+      {:reverted 0
+       :blocked blocked
+       :note (str "refused, nothing was reverted: the last "
+                  (count recent) " delta(s) include "
+                  (count blocked) " that undo cannot invert — "
+                  (str/join ", " (map #(str (:delta %) " (" (name (:op %)) ")")
+                                      blocked))
+                  ". Reverting past them would have restored an OLDER write"
+                  " while reporting success, which is what this refusal"
+                  " exists to prevent. To reach the earlier work anyway,"
+                  " name the span explicitly with :to <delta>; to address one"
+                  " form, edit_revert it by name.")}
 
       (not target)
       {:reverted 0

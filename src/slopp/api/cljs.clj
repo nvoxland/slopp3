@@ -698,6 +698,33 @@
         (cond-> {:client-recompiling true}
           prev (assoc :client-recompile-prev prev))))))
 
+(defn- default-client-ns
+  "Where a generated client goes when the caller does not name one: the
+  `client` / `generated-ns` config, else `<this store's family>.client.api`.
+
+  The literal `app.client.api` this used to fall back to is only ever right
+  for a store whose family is literally `app` — it was a placeholder that
+  shipped as a default. Reported by a consumer whose 22-namespace `slopp-ui.*`
+  store got a SECOND generated client under `app.client.*`, marked `:cljs`, so
+  `compile_client` would have bundled a duplicate contracts namespace into the
+  browser. Undoing it cost 19 calls: `ns_delete` refuses a non-empty
+  namespace, there is no bulk delete, and `undo` was its own bug at the time.
+
+  The family is the first segment the most namespaces share, ties broken
+  alphabetically so it is deterministic. `-test` siblings are left in: they
+  share their subject's first segment, so they can only reinforce the answer.
+  A store with no namespaces at all has nothing to generate from, so the
+  literal fallback survives only for that unreachable case."
+  [store]
+  (or (get-in store [:config "client" :values "generated-ns"])
+      (when-let [fam (->> (keys (:namespaces store))
+                          (map #(first (str/split (str %) #"\.")))
+                          frequencies
+                          (sort-by (juxt (comp - val) key))
+                          ffirst)]
+        (str fam ".client.api"))
+      'app.client.api))
+
 (defn ^:export generate-client-from!
   "Generate a typed client for an API this app CONSUMES, from the contract
    published at `url` — the cross-store twin of [[generate-client!]].
@@ -715,9 +742,7 @@
    `:problems` when the contract could not be used at all."
   [session url & {:keys [ns]}]
   (let [st0      (:store @session)
-        target   (symbol (str (or ns
-                                  (get-in st0 [:config "client" :values "generated-ns"])
-                                  'app.client.api)))
+        target   (symbol (str (or ns (default-client-ns st0))))
         cns      (symbol (str/replace (str target) #"[^.]+$" "contracts"))
         document (fetch-contract url)
         {:keys [defs wrappers problems]} (contract->plan document cns)]
@@ -746,13 +771,39 @@
             (seq problems) (assoc :problems problems)
             recompiled     (merge recompiled)))))))
 
+(defn- other-generated-clients
+  "Namespaces OTHER than `target` that already hold generated client forms.
+
+  Named on the result rather than refused, because moving a client is a real
+  thing to do and a refusal would block it. What must not happen is SILENCE: a
+  stray generated namespace stays marked `:cljs`, so `compile_client` keeps
+  bundling it, and nothing else in the system mentions it.
+
+  This change is itself the main way one appears — a store generated under the
+  old `app.client.api` placeholder keeps that namespace when the default moves
+  to its own family."
+  [store target]
+  (vec (sort (for [n (keys (:namespaces store))
+                   :when (and (not= n target)
+                              (some (fn [f]
+                                      (let [s (store/form-sexpr (:node f))]
+                                        (and (seq? s)
+                                             (:generated (meta (second s))))))
+                                    (store/forms store n)))]
+               n))))
+
 (defn ^:export generate-client!
   "Generate the typed client (D-web-contracts part 2): read every web endpoint's
    contract (client-wrapper-specs) and write a stored, edit-PROTECTED :cljs
    namespace of typed fetch wrappers — one per endpoint, validating the request
    out and the response in against the SAME shared :cljc schema the server
    enforces. The target namespace defaults to the `client`/`generated-ns` config,
-   else app.client.api; `:ns` overrides. The write goes through store/ingest
+   else `<this store's family>.client.api` (see `default-client-ns` — the old
+   literal `app.client.api` was a placeholder that shipped as a default, and
+   put a second client in a consumer's store); `:ns` overrides. Any OTHER
+   namespace already holding generated forms comes back in `:other-clients`
+   with a note, because a stray one stays marked `:cljs` and keeps being
+   bundled. The write goes through store/ingest
    (BELOW the per-form gates — so regeneration overwrites wholesale and is the
    only writer) and marks the module :cljs, so `compile_client` picks it up; when
    `client`/`auto-compile` is on the write schedules a background recompile.
@@ -765,9 +816,7 @@
    recompile keys) — or a :note when there is nothing to generate."
   [session & {:keys [ns]}]
   (let [st0    (:store @session)
-        target (symbol (str (or ns
-                                (get-in st0 [:config "client" :values "generated-ns"])
-                                'app.client.api)))
+        target (symbol (str (or ns (default-client-ns st0))))
         {:keys [wrappers problems]} (client-wrapper-specs st0)]
     (if (empty? wrappers)
       (cond-> {:generated target :wrappers [] :endpoints 0
@@ -784,13 +833,22 @@
              (first (store/record-config-put s2 "client" :manifest "generated-sig"
                                              (edit.modules/client-signature st0)))))
          [target])
-        (let [recompiled (maybe-recompile-client! session target)]
+        (let [recompiled (maybe-recompile-client! session target)
+              others     (other-generated-clients (:store @session) target)]
           (cond-> {:generated target
                    :wrappers  (mapv (comp str :fn-name) wrappers)
                    :endpoints (count wrappers)
                    :platform  :cljs
                    :delta     (:id (last (:deltas (:store @session))))}
             (seq problems) (assoc :problems problems)
+            (seq others)
+            (assoc :other-clients others
+                   :note (str "this store also holds generated client form(s)"
+                              " in " (str/join ", " others)
+                              ". Those namespaces are still marked :cljs, so"
+                              " compile_client keeps bundling them — retire"
+                              " them, or pass :ns to regenerate over the one"
+                              " you mean to keep."))
             recompiled     (merge recompiled)))))))
 
 (defmethod session/after-write! :cljs [session ns-sym]

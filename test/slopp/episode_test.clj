@@ -1010,3 +1010,56 @@
             (is (not= (:done first-done) (:done third)) (pr-str third))
             (is (nil? (:note third)) (pr-str third)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external undo-refuses-rather-than-reaching-past-what-it-cannot-invert
+  ;; Reported by slopp-ui, refuse-grade, and the worst class this project
+  ;; files: `undo {deltas 1}` reverted `d1072` when the head was `d1098`, and
+  ;; returned `{:reverted 1 :skipped-shared []}` — an ACTIVE claim that
+  ;; nothing was skipped. A CSS fix from an hour and one restart earlier was
+  ;; silently rolled back and reached their user's screen as a screenshot of a
+  ;; bug that had been fixed.
+  ;;
+  ;; The cause is positional addressing over a FILTERED sequence:
+  ;; `(take-last n (filter mine? all))`. Filtering before counting means "the
+  ;; last one" is the last one THAT SURVIVED THE FILTER, which is a different
+  ;; delta and says nothing about it.
+  ;;
+  ;; Their instance was `generate_client`. Measured over slopp's own store,
+  ;; the population is 20 op types and 1218 deltas — `:rename-ns` (116),
+  ;; `:move-forms` (36), `:ns-delete` (25), `:config-put` (68), `:deps-add`,
+  ;; `:module-*` (598), `:file-put`. So this fires after an ordinary rename,
+  ;; which is exactly when an agent reaches for undo.
+  ;;
+  ;; The conservative op set is RIGHT and is not the bug: undo inverts form
+  ;; sources, and a `:rename-ns` also re-keys the namespace, so reverting it
+  ;; at form grain would restore the text under the new name. Not being able
+  ;; to invert something is fine. Reaching past it is not.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'un2.core "(ns un2.core)\n(defn a \"A.\" [] 1)\n")
+      (api/edit-replace! sess 'un2.core 'a "(defn a \"A.\" [] 99)"
+                         :prompt "the work that must survive" :agent "u")
+      (is (nil? (:error (api/ns-rename! sess 'un2.core 'un2.renamed
+                                        :prompt "regroup" :agent "u"))))
+      (testing "undo does not silently revert the edit BEHIND the rename"
+        (let [r (api/undo! sess :agent "u" :prompt "undo the last thing")]
+          (is (zero? (:reverted r))
+              (str "it reverted something — and whatever it was, it was not"
+                   " the last delta: " (pr-str r)))
+          (testing "and it names what stopped it, with the op, so this is actionable"
+            (is (seq (:blocked r)) (pr-str r))
+            (is (= :rename-ns (:op (first (:blocked r)))) (pr-str r))
+            (is (re-find #"(?i)rename-ns" (str (:note r))) (pr-str r)))))
+      (testing "the protected work is still there — the half that actually hurt"
+        (is (re-find #"99" (query/query-source sess 'un2.renamed))
+            "the edit two deltas back must be untouched"))
+      (testing "and once the un-invertible delta is no longer the head, undo works"
+        ;; must-not-over-refuse: the fix is about REACHING PAST, not about
+        ;; refusing whenever such a delta exists anywhere in the log
+        (api/edit-replace! sess 'un2.renamed 'a "(defn a \"A.\" [] 7)"
+                           :prompt "a fresh mistake" :agent "u")
+        (let [r (api/undo! sess :agent "u" :prompt "undo that")]
+          (is (= 1 (:reverted r)) (pr-str r))
+          (is (re-find #"99" (query/query-source sess 'un2.renamed))
+              "back to the protected version, not further")))
+      (finally (api/close! sess)))))
