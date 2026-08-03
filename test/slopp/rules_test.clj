@@ -606,6 +606,186 @@
           (str "every advisory claims " vs " — a dimension with one value is"
                " not carrying information")))))
 
+(deftest every-done-advisory-declares-whether-a-whole-store-sweep-MEANS-anything
+  ;; `done` is episode-scoped, so a `:grain :done` rule can only ever see forms
+  ;; an episode CHANGED. A violation that predates the rule is therefore
+  ;; permanently invisible — slopp-ui carried two `direct-http` violations
+  ;; through a green `full_check` for exactly this reason (friction #27).
+  ;;
+  ;; The fix is a whole-store sweep, and the thing that makes it honest is this
+  ;; declaration. Roughly a third of these checks compare against the last-done
+  ;; BASELINE or read the episode's DELTAS, and running one of those over every
+  ;; form does not report "clean" — it reports NOTHING, in the same shape.
+  ;; `key-typos` is the sharpest: an established key is one that >= 2 UNCHANGED
+  ;; forms use, so a sweep in which every form is changed establishes nothing
+  ;; and is vacuously green forever.
+  ;;
+  ;; So `:sweep` is `true`, or a STRING saying why the sweep answers nothing —
+  ;; and the string is what the sweep REPORTS, so a green whole-store verdict
+  ;; states the population it did not cover instead of implying it covered all.
+  (doseq [{:keys [key sweep]} rules/done-advisories]
+    (is (or (true? sweep) (and (string? sweep) (seq sweep)))
+        (str key " does not declare :sweep — `true` when running it over every"
+             " form in the store is meaningful, or a string saying why it is"
+             " not. Undeclared is the worst of the three, because the sweep"
+             " then either drops it silently or runs it vacuously, and both"
+             " read as a clean store")))
+  (testing "both values are used, or the dimension is decorative"
+    (let [vs (group-by #(true? (:sweep %)) rules/done-advisories)]
+      (is (seq (get vs true))
+          "no advisory sweeps — then the whole-store sweep checks nothing")
+      (is (seq (get vs false))
+          (str "every advisory claims to sweep — but a check that reads the"
+               " episode's deltas cannot, and claiming otherwise is how a"
+               " vacuous green gets mistaken for a clean store")))))
+
+(deftest ^:external a-violation-older-than-the-episode-is-invisible-to-done-and-the-sweep-sees-it
+  ;; Friction #27, filed by slopp-ui with the regression case attached: their
+  ;; store holds exactly two `direct-http` violations, both predating the rule,
+  ;; and `full_check` reported ZERO rule findings of any kind. Two violations,
+  ;; three tools, no report.
+  ;;
+  ;; The cause is structural rather than a bug in any rule: `:grain :done`
+  ;; means "runs over what the episode CHANGED", so a form nobody has touched
+  ;; since the rule was written can never be judged by it. Every episode is
+  ;; honestly clean and the store is not.
+  ;;
+  ;; This is `module-violations-standing-in-the-store-are-reported-by-full-check`
+  ;; one layer over, and the same fix: the per-write and per-episode checks see
+  ;; only what passes through them, so something has to ask again.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'sw.core
+                   (str "(ns sw.core \"Reaches the network by hand.\")\n\n"
+                        "(defn ^{:unused-ok \"fixture: the standing violation\"} fetch\n"
+                        "  \"Fetches.\"\n"
+                        "  [u]\n"
+                        "  (.send (java.net.http.HttpClient/newHttpClient) u nil))\n"))
+      (testing "POSITIVE CONTROL — the episode that WROTE it is told"
+        ;; without this half, everything below is equally consistent with
+        ;; \"the rule never fires at all\", which is the failure this whole
+        ;; friction is made of
+        (is (= '[sw.core/fetch]
+               (mapv :form (get-in (external/done! sess :label "wrote it")
+                                   [:findings :direct-http])))))
+      (api/add-form! sess 'sw.core
+                     "(defn ^{:unused-ok \"fixture: unrelated work\"} tag \"Tags.\" [x] x)"
+                     :prompt "an episode that touches something else")
+      (testing "a LATER episode is not told — the violation is now permanently invisible"
+        (is (empty? (get-in (external/done! sess :label "elsewhere")
+                            [:findings :direct-http]))
+            (str "if this ever fires, done stopped being episode-scoped and the"
+                 " sweep below is no longer the thing under test")))
+      (let [sw (rules/sweep-store! sess (:store @sess))]
+        (testing "the whole-store sweep finds it — same rule, same finding, no second derivation"
+          (is (= '[sw.core/fetch] (mapv :form (get-in sw [:findings :direct-http])))
+              (pr-str (:findings sw))))
+        (testing "and it grades on the SAME bar done uses, so there is one bar"
+          (is (rules/status-affecting-fired? (:store @sess) (:findings sw))
+              ":direct-http is an :error rule — a standing finding must be able to flip red"))
+        (testing "it reports the population it swept"
+          (is (pos? (:forms sw)) (pr-str sw))
+          (is (contains? (set (:swept sw)) :direct-http) (pr-str (:swept sw))))
+        (testing "and NAMES what it could not sweep, rather than implying it covered everything"
+          ;; the Core 9 sharpening: a count is a check, and it reports on the
+          ;; population it counted. key-typos is the worked example — over a
+          ;; whole store nothing is "established", so it is green vacuously
+          (let [scoped (into {} (map (juxt :rule :why)) (:not-swept sw))]
+            (is (contains? scoped :key-typos) (pr-str (keys scoped)))
+            (is (re-find #"UNCHANGED" (str (:key-typos scoped))) (pr-str scoped))
+            (is (every? #(seq (str (:why %))) (:not-swept sw))
+                "a rule named as unswept without a reason is just a hole")))
+        (testing "the two lists are TOTAL — no advisory falls out of both unnoticed"
+          ;; the shape that makes the report trustworthy rather than merely
+          ;; present: a rule can be reported as passed or reported as unasked,
+          ;; and there is no third state where it silently vanishes
+          (is (= (set (map :key rules/done-advisories))
+                 (into (set (:swept sw)) (map :rule) (:not-swept sw)))
+              (pr-str {:swept (:swept sw) :not-swept (mapv :rule (:not-swept sw))}))
+          (is (empty? (filter (set (:swept sw)) (map :rule (:not-swept sw))))
+              "a rule cannot be both swept and named as unsweepable")))
+      (finally (api/close! sess)))))
+
+(deftest ^:external standing-rule-violations-are-reported-by-full-check
+  ;; The wiring half of friction #27. `sweep-store!` existing is not the fix:
+  ;; `module-debt` also existed — its own docstring said it "shows what already
+  ;; stands" — and was wired into the module graph view and into `module_dep`
+  ;; and not into the whole-store gate, which is how four real violations stood
+  ;; through a green check. A check that exists and is never asked reads exactly
+  ;; like a check that passes.
+  ;;
+  ;; Deliberately split from the sweep's own spec above so a future failure
+  ;; localizes: that one is the rule, this one is the wiring, and they break for
+  ;; opposite reasons.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'fs.core
+                   (str "(ns fs.core \"A clean namespace.\")\n\n"
+                        "(defn ^{:unused-ok \"fixture: nothing calls it\"} tag\n"
+                        "  \"Tags.\"\n"
+                        "  [x]\n"
+                        "  x)\n"))
+      (testing "the must-NOT-flag half — same fixture, two forms earlier"
+        (let [r (external/full-check! sess)]
+          (is (empty? (get-in r [:rules :findings])) (pr-str (:rules r)))
+          (is (= :green (:status r)) (pr-str (select-keys r [:status :rules])))
+          (testing "and it states its population even when clean"
+            ;; `:app {:behind 0}` is the precedent: silence on "yes" sends the
+            ;; reader back to checking by hand, which was the original friction
+            (is (pos? (:forms (:rules r))) (pr-str (:rules r)))
+            (is (contains? (set (:swept (:rules r))) :direct-http)
+                (pr-str (:swept (:rules r))))
+            (is (seq (:not-swept (:rules r)))
+                "a sweep that names nothing unswept is claiming coverage it does not have"))))
+      (testing "an ADVISORY finding is reported and does NOT flip"
+        ;; the other side of the one bar, and it has to come BEFORE the :error
+        ;; rule below or it asserts nothing: in a store that is already red,
+        ;; "advisory did not flip it" is indistinguishable from "advisory
+        ;; flipped it too".
+        ;;
+        ;; The namespace carries a form on purpose. `namespace-purpose` exempts
+        ;; EMPTY namespaces — there is no author to ask — so an ns form alone
+        ;; exercises the exemption and not the rule.
+        (api/ingest! sess 'fs.quiet
+                     (str "(ns fs.quiet)\n\n"
+                          "(defn ^{:unused-ok \"fixture: nothing calls it\"} hush\n"
+                          "  \"Hushes.\"\n"
+                          "  [x]\n"
+                          "  x)\n"))
+        (let [r (external/full-check! sess)]
+          (is (= '[fs.quiet] (mapv :ns (get-in r [:rules :findings :namespace-purpose])))
+              (pr-str (get-in r [:rules :findings])))
+          (is (= :green (:status r))
+              (str "an :advisory rule must be REPORTED without flipping — a"
+                   " heuristic that goes red is a heuristic people dial off: "
+                   (pr-str (select-keys r [:status :rules]))))))
+      (api/add-form! sess 'fs.core
+                     (str "(defn ^{:unused-ok \"fixture: the standing violation\"} fetch\n"
+                          "  \"Fetches.\"\n"
+                          "  [u]\n"
+                          "  (.send (java.net.http.HttpClient/newHttpClient) u nil))")
+                     :prompt "the violation, written once and never touched again")
+      (external/done! sess :label "the last episode that will ever see it")
+      (testing "full_check names it, red"
+        (let [r (external/full-check! sess)]
+          (is (= '[fs.core/fetch] (mapv :form (get-in r [:rules :findings :direct-http])))
+              (pr-str (:rules r)))
+          ;; discriminating: red proves nothing unless every OTHER red-maker is
+          ;; clean — the lesson `tier-layering-is-reported-by-full-check`
+          ;; records, where the first version passed while the finding it named
+          ;; was still purely advisory
+          (is (zero? (:lint-errors r)) (pr-str (:lint r)))
+          (is (nil? (:module-violations r)) (pr-str (:module-violations r)))
+          (is (empty? (:tier-layering r)) (pr-str (:tier-layering r)))
+          (is (empty? (:unused-public r)) (pr-str (:unused-public r)))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))
+          (is (= :red (:status r))
+              (str "an :error rule standing in the store must FLIP the check red —"
+                   " done and full_check grade on ONE bar, and a finding the agent"
+                   " can scroll past is not a rule: "
+                   (pr-str (select-keys r [:status :rules]))))))
+      (finally (api/close! sess)))))
+
 (deftest applies-to-actually-filters-and-never-silently-drops
   ;; Declaring the dimension is half of ask #5; the runner acting on it is the
   ;; half that makes it a guarantee. Without this test `:applies-to` is an

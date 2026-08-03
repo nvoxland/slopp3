@@ -917,14 +917,14 @@
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
-   :applies-to :check :fires-on} entries. `:check` is `(session store changed) ->
-   findings-seq` (empty when clean); `:severity` is `:error` (its findings flip
-   `test-status` red — a real failure) or `:advisory` (a heuristic that never
-   does). A NEW done-time finding registers HERE, in ONE entry, instead of
-   hand-wiring a binding, a cond-> clause, and a status term into `done!`.
-   Checks are held as VARS so a hot-reload is picked up and the reference graph
-   sees them — and a carried `#'var` is NOT a call, so the analyzer no longer
-   taints this data def effectful.
+   :applies-to :sweep :check :fires-on} entries. `:check` is `(session store
+   changed) -> findings-seq` (empty when clean); `:severity` is `:error` (its
+   findings flip `test-status` red — a real failure) or `:advisory` (a heuristic
+   that never does). A NEW done-time finding registers HERE, in ONE entry,
+   instead of hand-wiring a binding, a cond-> clause, and a status term into
+   `done!`. Checks are held as VARS so a hot-reload is picked up and the
+   reference graph sees them — and a carried `#'var` is NOT a call, so the
+   analyzer no longer taints this data def effectful.
 
    `:applies-to` is `:production`, `:tests` or `:both`, and `run-done-advisories!`
    ENFORCES it. Standing structural ask #5: tests are subject to different rules
@@ -936,6 +936,21 @@
    (`^{:rule/applies-to :production}`); severity lives here rather than on the
    var for advisories, and so does this.
 
+   `:sweep` is the OTHER scope axis, and it exists because `done` is
+   episode-scoped: a rule here sees only forms an episode CHANGED, so a
+   violation that predates the rule is invisible to it forever. `sweep-store!`
+   answers the whole-store question, and this declares which checks it may ask.
+   `true` means running the check over every form is meaningful; a STRING says
+   why it is not, and the string is REPORTED so a green sweep states the
+   population it did not cover.
+
+   The distinction is not fastidiousness. About a third of these compare
+   against the last-done BASELINE or read the episode's DELTAS, and a
+   whole-store run of one of those does not report clean — it reports NOTHING,
+   in the same shape. `key-typos` is the sharpest: an ESTABLISHED key is one
+   that >= 2 UNCHANGED forms use, so a sweep in which every form is changed
+   establishes nothing and is vacuously green for as long as it exists.
+
    `:fires-on` is a source string the check MUST report a finding for, enforced
    by `rules-test/every-advisory-fires-on-its-own-fixture`. A rule that stops
    firing is otherwise indistinguishable from a clean codebase: `ambient-state`
@@ -944,8 +959,16 @@
    nine of them accumulated. A rule with no automatic fixture must say why in
    `:selftest-note` rather than silently omitting one."
   [{:key :schema-drift     :severity :error    :applies-to :production :check #'schema-drift-check!
+    ;; a schema that lies about its implementation lies whether or not the
+    ;; episode touched it, and the generative oracle does not care where the
+    ;; candidates came from
+    :sweep true
     :selftest-note "generative mg/check against a live impl — needs a booted image, covered by api.schema-test/drift-flags-a-lying-schema"}
    {:key :key-typos        :severity :advisory :applies-to :both :check #'key-typos-check
+    :sweep (str "an ESTABLISHED key is one that >= 2 UNCHANGED forms use, so a"
+                " sweep in which every form is changed establishes nothing and"
+                " reports clean vacuously — the one shape worse than not"
+                " running")
     ;; an ESTABLISHED key must be used by >= 2 unchanged forms before a
     ;; near-duplicate counts as a typo rather than a new coinage
     :fires-on (str "(ns rf.core)\n"
@@ -953,8 +976,12 @@
                    "(defn two [] {:rf/status 2})\n"
                    "(defn typo [] {:rf/staus 3})\n")}
    {:key :breaking-changes :severity :advisory :applies-to :production :check #'breaking-check
+    :sweep (str "narrowing is measured against the last-done BASELINE, and every"
+                " unchanged form equals its own baseline — a sweep can only ever"
+                " report nothing")
     :selftest-note "compares against the last-done BASELINE, so a fixture needs two done-points — covered by api.breakage-test"}
    {:key :ambient-state :severity :advisory :applies-to :both :check #'ambient-state-check
+    :sweep true
     ;; a global atom in a test is exactly as invisible to a slice as one in
     ;; production, and test fixtures are where they breed
     :fires-on "(ns rf.core)\n(def cache (atom {}))\n"}
@@ -962,11 +989,15 @@
    ;; provenance the moment it carries a reason — ^{:covers "ns/name — why"}
    ;; already works this way and is the worked example.
    {:key :marker-why :severity :advisory :applies-to :both :check #'marker-why-check
+    :sweep true
     :fires-on "(ns rf.core)\n(defn ^:unused-ok spare \"S.\" [x] x)\n"}
    ;; the single biggest behavioural consequence available in one piece of
    ;; metadata, and nothing said it: declaring :web/spa turns every path under
    ;; the prefix from 404 into 200 and moves not-found into the client.
    {:key :spa-consequences :severity :advisory :applies-to :production :check #'spa-consequences-check
+    :sweep (str "states a consequence ONCE, for the episode that declared the"
+                " prefix — there is nobody to tell about a declaration that"
+                " predates the sweep")
     :selftest-note (str "fires only when the declaration is NEW vs the last-done"
                         " baseline, so a source-only fixture (which has no"
                         " baseline) cannot show the transition; covered by"
@@ -976,6 +1007,7 @@
    ;; position whose MEANING depends on an optional earlier element, in code
    ;; that is demonstrably reading store forms.
    {:key :ambiguous-index :severity :advisory :applies-to :both :check #'ambiguous-index-check
+    :sweep true
     ;; self-contained on purpose: an earlier fixture used `n/sexpr` and
     ;; `rf.core` requires no such alias, so it never loaded and the rule
     ;; "did not fire". The self-test caught it, which is the whole point of
@@ -984,11 +1016,13 @@
                    "(defn ^:unused-ok doc-of \"D.\" [e]\n"
                    "  (let [sx (:node e)] (nth sx 2 nil)))\n")}
    {:key :namespace-purpose :severity :advisory :applies-to :both :check #'namespace-purpose-check
+    :sweep true
     ;; the fixture's ns form deliberately carries NO docstring — that is the
     ;; whole finding, and it is what 100 of slopp's own 177 namespaces looked
     ;; like when this rule was written
     :fires-on "(ns rf.core)\n(defn f [] 1)\n"}
    {:key :key-not-returned :severity :advisory :applies-to :both :check #'key-not-returned-check
+    :sweep true
     ;; explicitly BOTH: a vacuous assertion does its worst damage in a test,
     ;; because a test is the only code whose job is to fail
     :fires-on (str "(ns rf.core)\n"
@@ -1000,11 +1034,15 @@
    ;; `assertions-that-cannot-fail` were assertions ADDED to an already-green
    ;; test, which is the one path red-first does not cover by construction.
    {:key :assertions-never-red :severity :advisory :applies-to :tests :check #'assertions-never-red-check
+    :sweep (str "reads the :verify deltas SINCE the last done to learn what went"
+                " red — an unchanged test gained no assertions and has no"
+                " episode to have gone red in")
     :selftest-note (str "needs a prior done to have a baseline AND :verify deltas"
                         " to read red from — a source-only fixture has neither;"
                         " covered by rules-test/"
                         "done-asks-about-assertions-that-were-never-watched-fail")}
    {:key :bare-throw       :severity :error :applies-to :both :check #'bare-throw-check
+    :sweep true
     ;; RATCHETED 2026-07-31. It was :advisory/:production on the argument that
     ;; this is a boundary-contract rule and a test helper is nobody's API. That
     ;; argument was too narrow: a bare throw's cost is that it can only be
@@ -1019,6 +1057,7 @@
    ;; and it ships as confident wrong guidance (d9077 shipped
    ;; slopp.index/analyze in two places after the form moved).
    {:key :stale-reference :severity :advisory :applies-to :both :check #'stale-reference-check
+    :sweep true
     :fires-on (str "(ns rf.core)\n"
                    "(defn live [x] x)\n"
                    "(defn teach \"see rf.core/gone for details\" [x] x)\n")}
@@ -1026,6 +1065,10 @@
    ;; a live NPE (a rank table still spelling the old tiers) and that made
    ;; shell-widening silently dead (a match set nothing could satisfy).
    {:key :retired-vocabulary :severity :advisory :applies-to :both :check #'retired-vocabulary-check
+    ;; a rename declares its retirement ONCE and the second copy can be
+    ;; anywhere, including a form the renaming episode never touched — which
+    ;; is the case this rule exists for
+    :sweep true
     :selftest-note (str "needs a store-level `vocabulary` config to have anything"
                         " retired — a source-only fixture cannot carry one;"
                         " covered by rules-test/"
@@ -1036,6 +1079,10 @@
    ;; nothing and would carve out exactly the place where seven copies of
    ;; build-a-client-send-a-request had already bred.
    {:key :direct-http :severity :error :applies-to :both :check #'direct-http-check
+    ;; the rule that made the sweep exist: slopp-ui carried two of these
+    ;; through a green full_check because both forms predate the rule and no
+    ;; episode has touched them since (friction #27)
+    :sweep true
     :fires-on (str "(ns rf.core)\n"
                    "(defn fetch [u]\n"
                    "  (.send (java.net.http.HttpClient/newHttpClient) u nil))\n")}
@@ -1045,11 +1092,17 @@
    ;; it can. It fires ONLY for the episode that declared the tier, so it asks
    ;; once and cannot become a standing warning to scroll past.
    {:key :shell-widening  :severity :advisory :applies-to :production :check #'shell-widening-check
+    :sweep (str "fires on a :module-tier DELTA, and it is a QUESTION for the"
+                " agent who widened the shell — a standing declaration has"
+                " nobody left to ask")
     :selftest-note "fires on a :module-tier DELTA, not on source — a fixture would need a tier declaration, covered by rules-test/done-asks-about-a-newly-widened-shell"}
    ;; the OTHER half of the same pair. shell-widening asks when the
    ;; DECLARATION moves; this fires when the POPULATION does — a rename or a
    ;; relocation folds existing code under a tier no write will ever re-check.
       {:key :tier-governance :severity :error :applies-to :production :check #'tier-governance-check
+    :sweep (str "fires on a :rename-ns/:move-forms DELTA; the standing"
+                " whole-store question it protects is tier LAYERING, which"
+                " full_check already folds separately")
     :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus an inherited"
                         " tier — a source-only fixture can carry neither; covered"
                         " by rules-test/"
@@ -1060,6 +1113,9 @@
    ;; package-private, so the namespace that violates is the CALLER, which did
    ;; not move.
    {:key :module-governance :severity :error :applies-to :both :check #'module-governance-check
+    :sweep (str "fires on a :rename-ns/:move-forms DELTA; the standing"
+                " whole-store question it protects is modules/module-debt,"
+                " which full_check already folds separately (friction #19)")
     :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus a module"
                         " manifest — a source-only fixture carries neither;"
                         " covered by modules-test/"
@@ -1069,20 +1125,29 @@
    ;; compared them until build.clj drifted far enough to reintroduce a fixed
    ;; jar-corruption bug for anyone building from a published checkout.
    {:key :tracked-file-drift :severity :advisory :applies-to :production :check #'tracked-file-drift-check!
+    ;; already ignores `changed` — it walks the whole manifest either way, so
+    ;; the sweep asks it the same question done does
+    :sweep true
     :selftest-note (str "compares the manifest against the WORKING TREE, which a"
                         " source-only fixture has no copy of — covered by"
                         " rules-test/tracked-file-drift-reports-a-second-copy-that-moved")}
    ;; a publicly-writable endpoint should be a decision, not an omission —
    ;; the question grade, like shell-widening: only the author knows
    {:key :web-public-mutation :severity :advisory :applies-to :production :check #'web-public-mutation-check
+    :sweep true
     :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
    {:key :web-dangling-route-refs :severity :error :applies-to :production :check #'dangling-route-refs-check
+    ;; already store-wide by construction — deleting a route dangles an
+    ;; UNCHANGED form's link, which is this same friction one rule over
+    :sweep true
     :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
    {:key :stale-client :severity :advisory :applies-to :production :check #'client-stale-check
+    :sweep true
     :selftest-note (str "needs a recorded client/generated-sig config (a source-only"
                         " fixture cannot carry one) — covered by rules-test/"
                         "client-stale-advisory-fires-on-endpoint-drift")}
    {:key :inline-schema-dup :severity :advisory :applies-to :production :check #'inline-schema-dup-check
+    :sweep true
     :fires-on (str "(ns ds.api)\n"
                    "(defn ^{:web/method :post :web/path \"/a\" :web/request [:map [:x :int]]"
                    " :web/response :map} a [r] r)\n"
@@ -1090,12 +1155,46 @@
                    " :web/response :map} b [r] r)\n")}
    ])
 
+(defn- enabled?
+  "True when this store has not dialed advisory `e` `:off`
+  (`edit.modules/rule-severity` — the per-store override, else the registry
+  default).
+
+  Its own form because BOTH runners ask it, and a second copy of \"is this rule
+  on\" is a second answer waiting to happen: the whole-store sweep reports which
+  rules it ran, and that list has to be the same list the runner actually ran."
+  [st* {:keys [key severity]}]
+  (not= :off (edit.modules/rule-severity st* key severity)))
+
+(defn- run-checks
+  "Run `entries`' `:check`s over `changed` and return `{:key findings}` for the
+  ones that FIRED (non-empty), each filtered through its declared `:applies-to`
+  (`in-scope`).
+
+  The whole difference between the episode run and the whole-store sweep is
+  WHICH entries and WHICH form ids; every other decision — scope filtering,
+  dropping the clean ones, the shape of the result — is here once so the two
+  cannot answer differently. Callers select their own entries (`enabled?`, plus
+  `:sweep` for the sweep), because which rules ran is something each of them
+  has to REPORT and not merely apply."
+  [session st* changed entries]
+  (into {}
+        (keep (fn [{:keys [key check applies-to]}]
+                (let [r (in-scope (or applies-to :both) (check session st* changed))]
+                  (when (seq r) [key r]))))
+        entries))
+
 (defn run-done-advisories!
   "Run every registered done-advisory `:check` over the episode's changes —
-   EXCEPT those a project dialed `:off` (`edit.modules/rule-severity`) — and
-   return `{:key findings}` for the checks that FIRED (non-empty result), ready
-   to merge into `done!`'s findings. `!` — `schema-drift-check!` evals in the
-   image.
+   EXCEPT those a project dialed `:off` (`enabled?`) — and return `{:key
+   findings}` for the checks that FIRED (non-empty result), ready to merge into
+   `done!`'s findings. `!` — `schema-drift-check!` evals in the image.
+
+   EPISODE-SCOPED, and that is a real limit rather than an implementation
+   detail: `changed` is what this episode wrote, so a violation older than the
+   rule is invisible here and will stay invisible, because no future episode
+   changes it either. `sweep-store!` is the whole-store question; `full_check`
+   asks it.
 
    Findings are filtered through each advisory's declared `:applies-to`
    (`in-scope`). Standing structural ask #5: tests are subject to different
@@ -1106,12 +1205,55 @@
    done-advisories now do too, and the runner is what makes the declaration
    mean something rather than document an intention."
   [session st* changed]
-  (into {}
-        (keep (fn [{:keys [key severity check applies-to]}]
-                (when (not= :off (edit.modules/rule-severity st* key severity))
-                  (let [r (in-scope (or applies-to :both) (check session st* changed))]
-                    (when (seq r) [key r])))))
-        done-advisories))
+  (run-checks session st* changed (filter #(enabled? st* %) done-advisories)))
+
+(defn sweep-store!
+  "Every SWEEPABLE done-advisory (`:sweep true`, not dialed `:off`) run over
+  EVERY form in the store. `!` — same checks as `run-done-advisories!`, so it
+  evals in the image and reads the working tree.
+
+  Returns `{:forms n :swept [key …] :not-swept [{:rule :why} …] :findings {key
+  findings}}`, where `:findings` has exactly the shape `done` reports and grades
+  through the same `status-affecting-fired?`. One rule, one check, one bar — the
+  sweep is a different POPULATION, never a different standard.
+
+  **Why this exists.** `done` is episode-scoped: a `:grain :done` rule sees only
+  forms the episode CHANGED, so a violation older than the rule is invisible to
+  it — and stays invisible, because no later episode changes that form either.
+  slopp-ui carried two `direct-http` violations through a green `full_check` for
+  exactly this reason (friction #27). It is the sibling of `module-debt`, which
+  was wired into `full_check` on the identical argument one layer down: the
+  per-write gates see only code written THROUGH them.
+
+  **`:not-swept` is the load-bearing half.** Roughly a third of the registry
+  compares against the last-done BASELINE or reads the episode's DELTAS, and
+  running one of those over every form does not report clean — it reports
+  NOTHING, in the same shape. So each is named with WHY, and every advisory
+  appears in exactly one of the two lists: a reader can tell a rule that passed
+  from a rule that was never asked, which is the distinction a bare green
+  destroys."
+  [session st*]
+  (let [swept (filterv #(and (true? (:sweep %)) (enabled? st* %)) done-advisories)
+        kept  (set (map :key swept))
+        ids   (into []
+                    (comp (mapcat #(store/forms st* %)) (map :id))
+                    (sort (keys (:namespaces st*))))]
+    {:forms      (count ids)
+     :swept      (mapv :key swept)
+     :not-swept  (into []
+                       (comp (remove #(kept (:key %)))
+                             (map (fn [{:keys [key sweep] :as e}]
+                                    {:rule key
+                                     :why  (if (true? sweep)
+                                             (str "dialed :off for this store —"
+                                                  " config_file {path \"rules\" key \""
+                                                  (name key) "\" value \"advisory\"}"
+                                                  " asks it again")
+                                             (str sweep))
+                                     :severity (edit.modules/rule-severity
+                                                st* key (:severity e))})))
+                       done-advisories)
+     :findings   (run-checks session st* ids swept)}))
 
 (defn status-affecting-fired?
   "True when an advisory whose EFFECTIVE severity is `:error` produced a

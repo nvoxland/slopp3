@@ -842,8 +842,9 @@ client-deps (merge (:client-deps st) (:client provided))
 (defn ^:export full-check!
   "The WHOLE-STORE check, on demand: kondo over every namespace, the
   dead-public-surface report over every namespace, BOTH layering graphs —
-  purity tiers and the module architecture — and every test in every tier:
-  the in-image suite, `^:integration`, and the external `^:external` tier.
+  purity tiers and the module architecture — the RULE CATALOG swept over every
+  form, and every test in every tier: the in-image suite, `^:integration`, and
+  the external `^:external` tier.
 
   Deliberately NOT forced anywhere, not by `done` and not by `commit_point`.
   `done` is episode-scoped: it answers whether the work you just did is good,
@@ -856,8 +857,13 @@ client-deps (merge (:client-deps st) (:client provided))
   call, everything, no tier flags to get wrong.
 
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
-  [...] :tier-layering [...] :module-violations {...} :test {...}
+  [...] :tier-layering [...] :module-violations {...} :rules {...} :test {...}
   :external {...} :status :green|:red}.
+
+  `:rules` is ALWAYS present and carries `:swept` / `:not-swept` beside its
+  `:findings`, because roughly a third of the advisory registry compares
+  against the episode's baseline and cannot answer a whole-store question at
+  all — naming them is what stops a green from claiming coverage it never had.
 
   Plus, when this project has a managed app server up, `:app {:behind n
   :url}` — how many code changes the SERVED image is behind the store it just
@@ -902,6 +908,17 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; wired in (friction #19); `module-debt` itself already existed and
         ;; was asked only by the graph view and by `module_dep`.
         mods  (modules/module-debt st)
+        ;; the RULE CATALOG, and the identical argument one layer up. A
+        ;; `:grain :done` rule fires over forms an EPISODE changed, so a
+        ;; violation older than the rule is invisible to `done` — and stays
+        ;; invisible, because no later episode changes that form either.
+        ;; slopp-ui carried two `direct-http` violations through a green check
+        ;; here for exactly that reason (friction #27): two violations, three
+        ;; tools, no report. `sweep-store!` names what it could NOT ask as well
+        ;; as what it did, since a third of the registry compares against the
+        ;; episode's baseline and running one of those over every form reports
+        ;; nothing in the same shape as clean.
+        sweep (rules/sweep-store! session st)
         ;; the app image is rebuilt at DONE grain, so between done points the
         ;; browser is looking at an older store than the one this check just
         ;; called green. Sibling of `host-warning-now` below — same question,
@@ -932,15 +949,23 @@ client-deps (merge (:client-deps st) (:client provided))
                                              ; write gate the stricter of the
                                              ; two, which is backwards for a
                                              ; whole-store check
+                  ;; and the rule catalog grades through the SAME predicate
+                  ;; `done` uses, so a rule dialed :error is :error in both
+                  ;; places and an :advisory is reported in both without
+                  ;; flipping. One rule, one check, one bar; the sweep is a
+                  ;; different POPULATION, never a different standard.
+                  (rules/status-affecting-fired? st (:findings sweep))
                   (pos? (+ (:fail tests 0) (:error tests 0)))
                   (contains? #{:red :error} (:status iso)))]
     (cond-> {:namespaces (count nses)
              :lint-errors (count errs)
              :lint-warnings (count warns)
+             :rules sweep
              :test tests
              :status (if red? :red :green)}
       affected (assoc :scope (str "lint, dead surface, tier layering, module"
-                                  " layering and the in-image suite covered ALL "
+                                  " layering, the rule sweep and the in-image"
+                                  " suite covered ALL "
                                   (count nses) " namespaces;"
                                   " the ^:external tier was narrowed to the tests"
                                   " that changes since the last milestone can"
@@ -964,6 +989,15 @@ client-deps (merge (:client-deps st) (:client provided))
                                       " own callers. Declare the edge"
                                       " (module_dep), hoist the target"
                                       " (^:export), or restructure the call"))
+      (seq (:findings sweep))
+      (assoc :rules-note
+             (str (count (:findings sweep)) " rule(s) with standing findings over "
+                  (:forms sweep) " form(s). `done` is EPISODE-scoped, so any of"
+                  " these older than the rule itself is invisible to every done"
+                  " there will ever be — this sweep is the only thing that asks"
+                  " again. :error-severity findings flipped this check red;"
+                  " :advisory ones are reported and did not. query_rules names"
+                  " each rule's escape"))
       (seq (:unused rep)) (assoc :unused-public (:unused rep))
       (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
       iso                 (assoc :external iso)
