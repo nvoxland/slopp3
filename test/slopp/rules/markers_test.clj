@@ -13,7 +13,7 @@
   through `built-store`."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.rules.markers :as markers] [slopp.api.external :as external]))
+            [slopp.rules.markers :as markers] [slopp.ops.external :as external]))
 
 (deftest the-marker-registry-is-coherent
   (testing "every entry is well-formed — a registry with holes teaches wrong"

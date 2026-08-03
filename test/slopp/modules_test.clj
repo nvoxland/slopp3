@@ -4,8 +4,8 @@
   edges (default-deny once a `modules` manifest exists), acyclic graph,
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.read.query :as query] [clojure.java.io] [clojure.edn] [slopp.store.render :as render]))
+            [slopp.ops :as api]
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [slopp.read.query :as query] [clojure.java.io] [clojure.edn] [slopp.store.render :as render]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -985,7 +985,7 @@
   ;; leaves, this becomes an ordinary layering finding and this test survives
   ;; the move as the specific statement of it.
   (let [st  (external/built-store)
-        src (render/render-ns st 'slopp.api.external)]
+        src (render/render-ns st 'slopp.ops.external)]
     (testing "there is a population — the vacuity that ate a sibling guard"
       ;; and it doubles as the guard on the quoted symbol above: a namespace
       ;; name in a test body is DATA, so a rename walks straight past it and

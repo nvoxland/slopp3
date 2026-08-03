@@ -1,4 +1,4 @@
-(ns slopp.api.review
+(ns slopp.ops.review
   "Whole-codebase TRIAGE: which forms should a reviewer read first, and why.
 
   It exists because the obvious reading order is the wrong one. A reviewer
@@ -18,14 +18,14 @@
   signal, the question to answer first is what its absence could innocently mean.
 
   Read-only over the store value plus the session's trace map; the done-point's
-  own findings live in `slopp.api.done`."
+  own findings live in `slopp.ops.done`."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]
             [slopp.index :as index]
             [slopp.store.render :as render]
-            [slopp.store :as store] [slopp.api.done :as done]))
+            [slopp.store :as store] [slopp.ops.done :as done]))
 
 ^:reads (defn ^:export review-scan
   "Whole-codebase (or one-ns) REVIEW TRIAGE — the fileless store's answer

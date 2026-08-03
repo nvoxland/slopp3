@@ -364,7 +364,7 @@
   DIFFERENT reasons and saying so matters. Telling an agent that `api/open!`
   \"would recurse\" is false, and reasoning from it makes the process boundary
   look more fundamental than it is."
-  '#{slopp.api/external-test-run!
+  '#{slopp.ops/external-test-run!
      slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
      slopp.boot/-main slopp.lab.benchmark/-main})
 
@@ -384,7 +384,7 @@
   the process boundary look load-bearing in ways it is not — the isolation a
   session needs is a clean NAMESPACE SPACE, which is why an image can be
   recycled (`repl/reset-to-baseline!`) rather than respawned."
-  '#{slopp.api/open! slopp.api/restart! slopp.image.repl/start!
+  '#{slopp.ops/open! slopp.ops/restart! slopp.image.repl/start!
      slopp.sync/clone! slopp.sync/import! slopp.sync/pull!
      slopp.sync/maybe-auto-import!})
 

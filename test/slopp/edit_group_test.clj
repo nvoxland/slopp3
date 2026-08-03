@@ -1,7 +1,7 @@
 (ns slopp.edit-group-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (def buggy
   (str "(ns gdemo\n  (:require [clojure.test :refer [deftest is]]))\n"

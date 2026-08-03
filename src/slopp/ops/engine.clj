@@ -1,4 +1,4 @@
-(ns slopp.api.session
+(ns slopp.ops.engine
   "The write ENGINE — image lifecycle, the rebasing commit, and verification.
 
   Every operation in `slopp.api` is a pure transform handed to `rebased-write!`
@@ -149,8 +149,7 @@
              (future (repl/start! (cond-> {}
                                     dir (assoc :slopp.image.repl/dir dir))))))))
 
-(defn ^{:breaking-ok "never legitimately module-external: ^:export was copied from the forms this replaced, and every caller is inside slopp.api.*. Created and un-exported inside one unreleased wave, so there is no downstream to tell."}
-  start-image!
+(defn ^:export start-image!
   "THE door: every owned image is launched here, for `store`.
 
   It exists because there was no such door, and that cost three rounds. Four
@@ -162,7 +161,7 @@
   the four; the branch-line path had it missing for a week and nobody noticed,
   because nothing exercises branches and web code together.
 
-  `slopp.api.session`'s own docstring already names this class for WRITES —
+  This namespace's own docstring already names that class for WRITES —
   four gates hand-pasted at four write sites because the chokepoint was not
   used, and every later fix applied four times. `rebased-write!` is that
   chokepoint. This is its counterpart for images, and the lesson was available
@@ -380,7 +379,7 @@
   (when-let [conn (:db @session)]
     (db/set-meta! conn "trace-map" (pr-str (:test-map @session)))))
 
-(defn commit-appended!
+(defn ^:export commit-appended!
   "Commit a pure APPEND `f` (store → store', deltas only unless `nses`),
   retrying across journal/cache races. Returns the committed store'."
   [session f nses]
@@ -987,7 +986,7 @@
   coverage gap the agent should close). D-web-cljs."
   {:test 0 :pass 0 :status :unverified :reason :cljs-deferred-to-compile})
 
-(defmulti after-write!
+(defmulti ^:export after-write!
   "Follow-up once a write to `ns-sym` has LANDED, dispatched on that
   namespace's platform (`:jvm` / `:cljc` / `:cljs`). Whatever a method returns
   is merged into the write's result map; nil adds nothing, and `:default` is

@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.session :as session] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (def seed
   (str "(ns cc.core)\n"

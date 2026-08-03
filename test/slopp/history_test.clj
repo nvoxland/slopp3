@@ -5,9 +5,9 @@
   roadmap calls 'the moat'."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.mcp]
-            [slopp.store :as store] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (deftest ^:external form-history-is-reconstructible
   (let [sess (external/open!)]

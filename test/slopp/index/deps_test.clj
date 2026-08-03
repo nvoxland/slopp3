@@ -4,12 +4,12 @@
   the owned image's classpath and the generated deps.edn."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.build :as build]
             [slopp.index.deps :as deps]
             [slopp.mcp]
             [slopp.store :as store]
-            [slopp.store.db :as db] [slopp.store.merge :as merge] [slopp.api.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.api.external :as external])
+            [slopp.store.db :as db] [slopp.store.merge :as merge] [slopp.ops.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

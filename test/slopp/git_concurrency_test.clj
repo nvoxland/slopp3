@@ -6,9 +6,9 @@
   contexts over one store dir stand in for two server processes."
   (:require [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.git :as git]
-            [slopp.api.external :as external])
+            [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

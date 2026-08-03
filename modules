@@ -1,52 +1,53 @@
-slopp.addelete: slopp.api slopp.read slopp.store
-slopp.api: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.project slopp.read slopp.rules slopp.store slopp.web
-slopp.branch: slopp.api slopp.read slopp.store
-slopp.build-native: slopp.api slopp.build
-slopp.chsig: slopp.api slopp.edit slopp.store
+slopp.addelete: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.api: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.web
+slopp.branch: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.build-native: slopp.api slopp.build slopp.ops (test)
+slopp.chsig: slopp.api slopp.edit slopp.store slopp.ops (test)
 slopp.coldload: slopp.index
-slopp.coldload-gate: slopp.api slopp.edit slopp.read slopp.store
-slopp.commit: slopp.api slopp.mcp slopp.read slopp.store
-slopp.concurrency: slopp.api slopp.read slopp.store
+slopp.coldload-gate: slopp.api slopp.edit slopp.read slopp.store slopp.ops (test)
+slopp.commit: slopp.api slopp.mcp slopp.read slopp.store slopp.ops (test)
+slopp.concurrency: slopp.api slopp.read slopp.store slopp.ops (test)
 slopp.edit: slopp.image slopp.index slopp.store
-slopp.edit-group: slopp.api slopp.read slopp.store
-slopp.effect-boundary: slopp.api slopp.edit slopp.read
-slopp.episode: slopp.api slopp.mcp slopp.read slopp.store
-slopp.ergonomics: slopp.api slopp.edit slopp.read slopp.store
-slopp.eval-findings: slopp.api slopp.read slopp.store
-slopp.extract: slopp.api slopp.read
-slopp.f3c: slopp.api slopp.read
-slopp.files: slopp.api slopp.store
+slopp.edit-group: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.effect-boundary: slopp.api slopp.edit slopp.read slopp.ops (test)
+slopp.episode: slopp.api slopp.mcp slopp.read slopp.store slopp.ops (test)
+slopp.ergonomics: slopp.api slopp.edit slopp.read slopp.store slopp.ops (test)
+slopp.eval-findings: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.extract: slopp.api slopp.read slopp.ops (test)
+slopp.f3c: slopp.api slopp.read slopp.ops (test)
+slopp.files: slopp.api slopp.store slopp.ops (test)
 slopp.git: slopp.build slopp.store
-slopp.git-client: slopp.api slopp.git slopp.read
-slopp.git-concurrency: slopp.api slopp.git
-slopp.git-projection: slopp.api slopp.git slopp.read slopp.store
+slopp.git-client: slopp.api slopp.git slopp.read slopp.ops (test)
+slopp.git-concurrency: slopp.api slopp.git slopp.ops (test)
+slopp.git-projection: slopp.api slopp.git slopp.read slopp.store slopp.ops (test)
 slopp.gitauthor: slopp.git
-slopp.history: slopp.api slopp.mcp slopp.read slopp.store
-slopp.http-api: slopp.edit slopp.index slopp.project slopp.read slopp.store slopp.web slopp.api (test)
+slopp.history: slopp.api slopp.mcp slopp.read slopp.store slopp.ops (test)
+slopp.http-api: slopp.edit slopp.index slopp.project slopp.read slopp.store slopp.web slopp.api (test) slopp.ops (test)
 slopp.hub: slopp.project slopp.web slopp.store (test)
 slopp.image: slopp.boot slopp.rt slopp.store
-slopp.index: slopp.cache slopp.image slopp.store slopp.api (test) slopp.build (test) slopp.mcp (test) slopp.read (test) slopp.rules (test)
-slopp.integration-tier: slopp.api
-slopp.lab: slopp.api slopp.mcp slopp.read slopp.store
+slopp.index: slopp.cache slopp.image slopp.store slopp.api (test) slopp.build (test) slopp.mcp (test) slopp.ops (test) slopp.read (test) slopp.rules (test)
+slopp.integration-tier: slopp.api slopp.ops (test)
+slopp.lab: slopp.api slopp.mcp slopp.ops slopp.read slopp.store
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.http-api slopp.hub slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.web (test)
+slopp.mcp: slopp.api slopp.http-api slopp.hub slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.web (test)
 slopp.merge: slopp.store
-slopp.modules: slopp.api slopp.edit slopp.read slopp.store
-slopp.multiproc: slopp.api slopp.read slopp.store
-slopp.observe: slopp.api
-slopp.orientation: slopp.api slopp.edit slopp.read
-slopp.phase4: slopp.api slopp.read slopp.store
+slopp.modules: slopp.api slopp.edit slopp.read slopp.store slopp.ops (test)
+slopp.multiproc: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.observe: slopp.api slopp.ops (test)
+slopp.ops: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.project slopp.read slopp.rules slopp.store slopp.store (test)
+slopp.orientation: slopp.api slopp.edit slopp.read slopp.ops (test)
+slopp.phase4: slopp.api slopp.read slopp.store slopp.ops (test)
 slopp.project: slopp.index slopp.store
-slopp.read: slopp.edit slopp.index slopp.project slopp.rules slopp.store slopp.api (test)
-slopp.rename: slopp.api slopp.read slopp.store
-slopp.rules: slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web slopp.api (test) slopp.read (test)
-slopp.store: slopp.cache slopp.api (test) slopp.read (test)
-slopp.subform: slopp.api slopp.read
+slopp.read: slopp.edit slopp.index slopp.project slopp.rules slopp.store slopp.api (test) slopp.ops (test)
+slopp.rename: slopp.api slopp.read slopp.store slopp.ops (test)
+slopp.rules: slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web slopp.api (test) slopp.ops (test) slopp.read (test)
+slopp.store: slopp.cache slopp.api (test) slopp.ops (test) slopp.read (test)
+slopp.subform: slopp.api slopp.read slopp.ops (test)
 slopp.subform-plan: slopp.edit slopp.store
-slopp.surgeon: slopp.api slopp.read
-slopp.sync: slopp.api slopp.boot slopp.git slopp.read slopp.store
+slopp.surgeon: slopp.api slopp.read slopp.ops (test)
+slopp.sync: slopp.api slopp.boot slopp.git slopp.ops slopp.read slopp.store
 slopp.sync-plan: slopp.sync
-slopp.trace: slopp.api
-slopp.unsafe: slopp.api slopp.edit slopp.read slopp.store
-slopp.verification: slopp.api slopp.image slopp.read slopp.rt slopp.store
-slopp.warm-spare: slopp.api
+slopp.trace: slopp.api slopp.ops (test)
+slopp.unsafe: slopp.api slopp.edit slopp.read slopp.store slopp.ops (test)
+slopp.verification: slopp.api slopp.image slopp.read slopp.rt slopp.store slopp.ops (test)
+slopp.warm-spare: slopp.api slopp.ops (test)

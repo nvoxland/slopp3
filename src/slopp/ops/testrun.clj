@@ -1,4 +1,4 @@
-(ns slopp.api.testrun
+(ns slopp.ops.testrun
   "Running the store's tests in processes OUTSIDE this one.
 
   The `^:external` tier exists because those tests spawn their own images, so
@@ -162,7 +162,7 @@
               (catch java.lang.IllegalStateException _ nil))))))  ; not a child of ours
     nil))
 
-(defn ^{:export "slopp.verification"} run-cmd!
+(defn ^:export run-cmd!
   "Run `cmd` (a seq of strings) in `dir`, sh-shaped {:exit :out :err}, killed
   at `timeout-ms` WITH EVERYTHING IT SPAWNED (`reap!`): :exit 124 and no
   parseable summary, which the shard-death retry treats honestly as a dead
@@ -213,8 +213,8 @@
   between runs would make a flake unreproducible."
   [store nses n]
   (let [w    (frequencies (map :from-ns
-                               (concat (refs/refs-to store 'slopp.api.external/open!)
-                                       (refs/refs-to store 'slopp.api/open!))))
+                               (concat (refs/refs-to store 'slopp.ops.external/open!)
+                                       (refs/refs-to store 'slopp.ops/open!))))
         cost (fn [grp] (reduce + 0 (map #(get w % 0) grp)))]
     (reduce (fn [shards x]
               (let [i (apply min-key #(cost (nth shards %)) (range (count shards)))]

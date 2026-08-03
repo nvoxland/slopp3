@@ -5,8 +5,8 @@
   the REMOTE only; the local side never materializes a working tree."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
-            [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.api.external :as external])
+            [slopp.ops :as api]
+            [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]

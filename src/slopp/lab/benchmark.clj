@@ -15,8 +15,8 @@
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.api :as api]
-            [slopp.mcp :as mcp] [slopp.api.external :as external])
+            [slopp.ops :as api]
+            [slopp.mcp :as mcp] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [java.time LocalDate]))

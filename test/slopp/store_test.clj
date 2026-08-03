@@ -399,7 +399,7 @@
   ;;
   ;; This also normalizes. `place-form` gave a tail-appended form a SINGLE
   ;; newline, so slopp's own output had most forms jammed together —
-  ;; slopp.api.session alone holds 33 single-newline separators against 11
+  ;; slopp.ops.engine alone holds 33 single-newline separators against 11
   ;; blank-line ones. One rule everywhere is worth the 345 bytes it adds
   ;; across the whole store.
   (let [st  (store/ingest (store/empty-store) 'rs.core

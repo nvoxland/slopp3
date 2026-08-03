@@ -1,4 +1,4 @@
-(ns slopp.api.selfcheck-test
+(ns slopp.ops.selfcheck-test
   "Invariants about slopp's OWN store — the questions that can only be asked
   of the whole codebase at once.
 
@@ -11,7 +11,7 @@
   **Their characteristic failure is passing on NOTHING**, and it is not
   hypothetical: the first such guard scanned an empty store for its entire
   life, because `open!` in the external tier's build dir hands back a store
-  with no code in it. `slopp.api.external/built-store` is the seam that fixed
+  with no code in it. `slopp.ops.external/built-store` is the seam that fixed
   that. Every test here asserts its own POPULATION first, and asserts that its
   detector still fires — a whole-store check that has only ever been observed
   green is indistinguishable from one that cannot fail."
@@ -19,7 +19,7 @@
             [clojure.string :as str]
             [slopp.store :as store]
             [slopp.index.refs :as refs]
-            [slopp.api.external :as external]))
+            [slopp.ops.external :as external]))
 
 (deftest ^:external every-public-write-verb-is-reachable-from-the-wire
   ;; "The API gained something the wire did not" — a public `!` verb on
@@ -38,7 +38,7 @@
         prod    (set (remove #(str/ends-with? (str %) "-test")
                              (keys (:namespaces st))))
         ;; THE WRITE SURFACE: public, bang-named defns on the two api faces
-        surface (vec (for [nsx  '[slopp.api slopp.api.external]
+        surface (vec (for [nsx  '[slopp.ops slopp.ops.external]
                            e    (store/forms st nsx)
                            :let [s  (store/form-sexpr (:node e))
                                  nm (store/form-symbol (:node e))]
@@ -84,9 +84,9 @@
           (str "expected the api write surface, got " (count surface)))
       (is (< 1 (count roots)) (str "expected the wire plus the mains, got " roots)))
     (testing "the reachability actually traverses — a check that cannot fail is not a check"
-      (is (contains? reached 'slopp.api/add-form!)
+      (is (contains? reached 'slopp.ops/add-form!)
           "the wire dispatch reaches the base write, or the graph is not being walked")
-      (is (not (contains? reached 'slopp.api/definitely-not-a-real-verb!))))
+      (is (not (contains? reached 'slopp.ops/definitely-not-a-real-verb!))))
     (is (empty? unreached)
         (str "public write verb(s) no wire or CLI entrypoint can reach: "
              (pr-str unreached)

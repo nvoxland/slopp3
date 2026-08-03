@@ -1,4 +1,4 @@
-(ns slopp.api.branch
+(ns slopp.ops.branch
   "BRANCHES as slopp has them: one store, many lines, each with its own image.
 
   A branch here is not a checkout. The store is a delta log, so a line is a
@@ -17,7 +17,7 @@
   Lines are reaped on idle (the session's timer), because an abandoned branch
   should not hold a JVM open indefinitely."
   (:require [clojure.java.io :as io]
-            [slopp.api.session :as session]
+            [slopp.ops.engine :as session]
             [slopp.store.db :as db]
             [slopp.edit :as edit]
             [slopp.image :as image]

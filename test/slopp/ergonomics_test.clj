@@ -15,7 +15,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -135,17 +135,23 @@
       (finally (api/close! sess)))))
 
 (deftest spawning-tests-must-be-external
+  ;; The fixture's require is a SOURCE STRING, so `ns_rename` cannot reach it —
+  ;; when slopp.api became slopp.ops the gate's quoted var set was rewritten
+  ;; and this was not, and every assertion here went red at once. That is the
+  ;; right outcome: a fixture naming a namespace that no longer defines these
+  ;; vars is testing nothing, and it said so immediately rather than passing
+  ;; vacuously.
   (let [store (store/ingest (store/empty-store) 'iso.demo-test
-                            (str "(ns iso.demo-test (:require [clojure.test :refer [deftest is]] [slopp.api :as api]))\n"
+                            (str "(ns iso.demo-test (:require [clojure.test :refer [deftest is]] [slopp.ops :as ops]))\n"
                                  "(defn setup [] 1)\n"))]
-    (testing "an untagged deftest calling api/open! is refused, fix named (Q7)"
+    (testing "an untagged deftest calling ops/open! is refused, fix named (Q7)"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
-                                 "(deftest t (is (some? (api/open!))))")]
+                                 "(deftest t (is (some? (ops/open!))))")]
         (is (:error r) (pr-str r))
         (is (re-find #"\^:external" (str (:error r))) (pr-str r))))
     (testing "the ^:external tag admits it"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
-                                 "(deftest ^:external t (is (some? (api/open!))))")]
+                                 "(deftest ^:external t (is (some? (ops/open!))))")]
         (is (nil? (:error r)) (pr-str r))))
     ;; The refusal used to tell every caller its test "would recurse". That is
     ;; true of the vars that run the WHOLE suite or server — those really do
@@ -155,7 +161,7 @@
     ;; investigation toward an in-process image that solves nothing.
     (testing "a one-image spawn is refused for its COST, and says so"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
-                                 "(deftest t (is (some? (api/open!))))")]
+                                 "(deftest t (is (some? (ops/open!))))")]
         (is (not (re-find #"(?i)recurse" (str (:error r))))
             (str "open! terminates at depth two — claiming recursion is false: "
                  (pr-str (:error r))))
@@ -163,7 +169,7 @@
             (pr-str (:error r)))))
     (testing "a var that re-enters the whole suite still says RECURSE"
       (let [r (edit/replace-form store 'iso.demo-test 'setup
-                                 "(deftest t (is (some? (api/external-test-run! nil))))")]
+                                 "(deftest t (is (some? (ops/external-test-run! nil))))")]
         (is (:error r) (pr-str r))
         (is (re-find #"(?i)recurse|re-enter" (str (:error r)))
             (str "this one genuinely does: "  (pr-str (:error r))))))))

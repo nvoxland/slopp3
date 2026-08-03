@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.store.render :as render]
             [slopp.store.db :as db]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n])
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

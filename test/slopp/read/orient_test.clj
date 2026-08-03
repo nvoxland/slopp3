@@ -11,7 +11,7 @@
   Mostly in-image, because the assembly is pure. The external ones are the
   cases that need a real session to have a real history to be oriented in."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.read.orient :as orient] [slopp.api.external :as external] [clojure.string :as str] [slopp.store :as store]))
+            [slopp.ops :as api] [slopp.read.orient :as orient] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store :as store]))
 
 (deftest fit-report-keeps-reports-under-the-gate
   (let [fat {:milestones [{:commit "d9" :description "m"}]

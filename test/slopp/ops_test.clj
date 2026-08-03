@@ -1,4 +1,4 @@
-(ns slopp.api-test
+(ns slopp.ops-test
   "Tests for the operation surface as a SESSION sees it, rather than for any
   one function.
 
@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.api.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.api.session :as session] [slopp.project.capabilities :as caps])
+            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

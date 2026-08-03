@@ -4,7 +4,7 @@
   Everything here takes stores and returns stores. No image, no loading, no
   verification, no I/O: `merge-logs` computes what the merged log WOULD be
   and hands the caller a store plus conflicts, notes and the ids it applied.
-  `slopp.api.branch` owns the consequences. That split is what lets the
+  `slopp.ops.branch` owns the consequences. That split is what lets the
   merge be tested against synthetic stores built from `empty-store`.
 
   It also bounds what merging may JUDGE. At this layer a store is a delta

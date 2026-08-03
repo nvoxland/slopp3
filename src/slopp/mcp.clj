@@ -8,8 +8,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.ops :as api]
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -1466,7 +1466,7 @@
   Serving a dir that is NOT slopp-managed writes NOTHING there: the server
   is launched in whatever directory the editor has open, so adoption has to
   be something you do, not something that happens to you. The store is
-  created by the first real write (`slopp.api.session/ensure-db!`).
+  created by the first real write (`slopp.ops.engine/ensure-db!`).
 
   Git is push/pull to a remote slopp does not own: `git_push` publishes the
   projection, `git_clone` rebuilds a fileless store from one (slopp.sync).

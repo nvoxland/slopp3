@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.external :as external] [slopp.rules.catalog :as catalog]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"

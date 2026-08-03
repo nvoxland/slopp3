@@ -3,7 +3,7 @@
   F-3c2 query-eval surfaces exceptions, F-3c3 cross-namespace references,
   F-3c5 trace-less group verification covers ALL touched namespaces."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (defn- seed! [sess]
   (api/ingest! sess 'ta.a

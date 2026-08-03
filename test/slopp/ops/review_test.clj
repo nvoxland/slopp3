@@ -1,4 +1,4 @@
-(ns slopp.api.review-test
+(ns slopp.ops.review-test
   "Cover for what a triage flag is allowed to CLAIM.
 
   These are not tests that the ranking arithmetic adds up — they are tests that
@@ -15,7 +15,7 @@
   `slopp.orientation-test`, with the other orientation surfaces."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.review :as review] [slopp.read.modules :as modules]))
+            [slopp.ops.review :as review] [slopp.read.modules :as modules]))
 
 (deftest review-scan-surfaces-ns-form-lint
   ;; Lint findings INSIDE the (ns …) form — dead imports, unused requires — have

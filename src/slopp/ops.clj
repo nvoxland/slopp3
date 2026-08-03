@@ -1,4 +1,4 @@
-(ns slopp.api
+(ns slopp.ops
   "The agent-facing operation surface (the tools an MCP adapter exposes). A
   session is an atom holding the evolving store + the owned image. Everything is
   form-addressed (ns/name), never file+line: the agent *sees* code via
@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.api.session :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.api.done :as done] [slopp.rules.shape :as shape] [slopp.read.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.read.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -3585,7 +3585,7 @@ recompiled (session/after-write! session ns-sym)]
   A call site counts only when its head RESOLVES to the target: the defining
   ns's own name, the caller's alias for it, or the fully-qualified symbol.
   Matching by bare name instead silently included `slopp.db/open!` alongside
-  `slopp.api.external/open!` — caught by a dry-run reporting 62 forms and 24 unknowns
+  `slopp.ops.external/open!` — caught by a dry-run reporting 62 forms and 24 unknowns
   where the caller graph said 60 and 4.
 
   Reports `:unknown-shape`: callers passing a non-literal (`(open! opts)`),

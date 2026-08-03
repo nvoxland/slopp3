@@ -1,6 +1,6 @@
 (ns slopp.trace-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.ops.external :as external]))
 
 (def catch-frames
   "(try (tr.core/outer) (catch Exception e (mapv str (take 4 (.getStackTrace e)))))")

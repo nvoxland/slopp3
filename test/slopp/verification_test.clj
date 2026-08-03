@@ -15,7 +15,7 @@
   worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.api.external :as external] [slopp.image :as image]))
+            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -724,9 +724,9 @@
     (testing "it is slopp's own code, not an empty shell"
       (is (< 100 (count (:namespaces st)))
           (str "expected slopp's namespaces, got " (count (:namespaces st))))
-      (is (contains? (:namespaces st) 'slopp.api))
+      (is (contains? (:namespaces st) 'slopp.ops))
       (is (contains? (:namespaces st) 'slopp.store))
-      (is (seq (store/forms st 'slopp.api))))
+      (is (seq (store/forms st 'slopp.ops))))
     (testing "test namespaces come too — guards care about prose in both"
       (is (contains? (:namespaces st) 'slopp.verification-test)))
     (testing "and this very form is in it — the build is current, not stale"

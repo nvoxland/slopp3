@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.api.branch :as branch] [clojure.java.io :as io] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.ops.branch :as branch] [clojure.java.io :as io] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -151,8 +151,9 @@
 
 (deftest require-cycles-are-a-cold-load-failure
   ;; The gap that let a move_forms group commit a store no fresh JVM could
-  ;; load: slopp.api required slopp.api.external while referencing nothing in
-  ;; it, and slopp.api.external required slopp.api.
+  ;; load: the operation surface required its own IO face while referencing
+  ;; nothing in it, and the IO face required the surface back. (Named
+  ;; slopp.api / slopp.api.external then; slopp.ops / slopp.ops.external now.)
   ;;
   ;;   Cyclic load dependency: [slopp/api] -> slopp/api/external -> [slopp/api]
   ;;

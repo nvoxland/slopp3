@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.build :as build] [slopp.api.external :as external] [slopp.api.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.api.session :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
+            [slopp.store.render :as render] [slopp.build :as build] [slopp.ops.external :as external] [slopp.ops.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.ops.engine :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -681,8 +681,8 @@
   on the client platforms — so an ordinary `:jvm` write never arrives here at
   all, and the write engine does not name this namespace (R6). This used to run
   IN the engine and reach back for `compile-client!` through
-  `store/late-ref`, because `slopp.api.cljs` requires `slopp.api.external` →
-  `slopp.api`, so a static require would have cycled. The escape hatch was
+  `store/late-ref`, because `slopp.api.cljs` requires `slopp.ops.external` →
+  `slopp.ops`, so a static require would have cycled. The escape hatch was
   holding up the misplacement, not the load order: registering points the edge
   the one way that never cycles, and the call below is now ordinary.
 

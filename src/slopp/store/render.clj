@@ -23,7 +23,7 @@
 
   It also normalizes. `place-form` gave a tail-appended form a single
   newline, so most of slopp's own forms rendered jammed together;
-  `slopp.api.session` alone held 33 single-newline separators against 11
+  `slopp.ops.engine` alone held 33 single-newline separators against 11
   blank-line ones. One rule everywhere costs 345 bytes across the whole
   store."
   [store ns-sym]

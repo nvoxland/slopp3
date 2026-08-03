@@ -5,7 +5,7 @@
   Plan tests are pure (ingest stores); the api op is exercised external."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.edit.refactor :as refactor]
-            [slopp.store :as store] [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external]))
 
 (defn- st2 []
   (-> (store/empty-store)

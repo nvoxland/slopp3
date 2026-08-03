@@ -1,10 +1,10 @@
-(ns slopp.api.done-test
+(ns slopp.ops.done-test
   "The done-point require-prune candidate logic — pure over the store, so it
    runs in-image. The effectful try-remove-verify-restore loop is exercised
-   through a real session in slopp.api-test."
+   through a real session in slopp.ops-test."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.done :as done] [slopp.api.external :as external] [slopp.boot :as boot] [slopp.api :as api]))
+            [slopp.ops.done :as done] [slopp.ops.external :as external] [slopp.boot :as boot] [slopp.ops :as api]))
 
 (defn- store-with-requires []
   (store/ingest (store/empty-store) 'du.core

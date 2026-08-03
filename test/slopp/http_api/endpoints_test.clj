@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.http-api.endpoints]
             [slopp.http-api.contracts :as contracts]
-            [slopp.web :as web] [slopp.http-api.server :as server] [slopp.api.external :as external] [slopp.api :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
+            [slopp.web :as web] [slopp.http-api.server :as server] [slopp.ops.external :as external] [slopp.ops :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.api.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a

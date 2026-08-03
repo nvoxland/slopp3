@@ -4,7 +4,7 @@
   shouldn't fire on every edit); explicit test_run / done / commit_point
   include them."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.ops.external :as external]))
 
 (def seed
   (str "(ns it.core (:require [clojure.test :refer [deftest is]]))\n\n"

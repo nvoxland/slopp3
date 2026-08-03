@@ -14,7 +14,7 @@
   discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.rules.web :as web] [slopp.api :as api] [slopp.api.external :as external] [slopp.web-test :as web-test]))
+            [slopp.rules.web :as web] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.web-test :as web-test]))
 
 (deftest routes-derive-from-stored-nodes
   (let [src (str "(ns shop.api)\n\n"

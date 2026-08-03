@@ -13,10 +13,10 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.store.db :as db]
             [slopp.git :as git]
-            [slopp.store :as store] [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.external :as external])
+            [slopp.store :as store] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.lib ObjectId Repository]

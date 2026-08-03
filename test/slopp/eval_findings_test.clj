@@ -2,7 +2,7 @@
   "Fixes for what the symmetric eval surfaced (S-series)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (deftest ^:external s1-non-compiling-forms-are-rejected-not-silently-committed
   (let [sess (external/open!)]

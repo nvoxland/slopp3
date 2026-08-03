@@ -16,8 +16,8 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.edn :as edn]
             [cheshire.core :as json]
-            [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
+            [slopp.ops :as api]
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1161,7 +1161,7 @@
         ;; explaining that the seam is off-wire refers to `edit-group!`, which
         ;; this pattern does not match and should not. Only the form arguing
         ;; what the TOOL would be needs to spell it with an underscore.
-        off-wire {"edit_group" 'slopp.api/edit-group!}
+        off-wire {"edit_group" 'slopp.ops/edit-group!}
         pat    #"\b((?:query|edit|ns|module|deps|branch|git|turn|config|file)_[a-z0-9_]+)"
         prod   (remove #(str/ends-with? (str %) "-test") (keys (:namespaces st)))
         bad    (vec (distinct

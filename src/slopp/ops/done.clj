@@ -1,4 +1,4 @@
-(ns slopp.api.done
+(ns slopp.ops.done
   "The done point's PURE half: what closing a unit of work would FIND, and
   what it would rewrite.
 
@@ -30,7 +30,7 @@
   Lint here is EPISODE-scoped on purpose. Re-judging code this episode never
   touched is `full_check`'s job — done names it rather than doing it unasked."
   (:require [clojure.string :as str]
-            [slopp.api.session :as session]
+            [slopp.ops.engine :as session]
             [slopp.index :as index]
             [slopp.index.normalize :as normalize]
             [slopp.store.render :as render]

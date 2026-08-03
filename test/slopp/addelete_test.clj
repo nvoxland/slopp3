@@ -10,8 +10,8 @@
   next reload down with it. Each of those was a real failure before it was a
   test here."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
-            [slopp.api.external :as external]
+            [slopp.ops :as api]
+            [slopp.ops.external :as external]
             [slopp.read.query :as query]
             [slopp.store :as store]))
 

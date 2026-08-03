@@ -8,9 +8,9 @@
   however they connected."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.store :as store]
-            [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.external :as external])
+            [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external])
 )
 
 (deftest ^:external attribution-flows-through-every-write-kind

@@ -1,7 +1,7 @@
 (ns slopp.rules.breakage-test
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.rules.breakage :as breakage]
-            [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.ops.external :as external]))
 
 (deftest fixed-arities-and-removed
   (testing "single and multi fixed arities"

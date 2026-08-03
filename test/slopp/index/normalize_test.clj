@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.normalize :as norm]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 

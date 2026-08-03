@@ -1,4 +1,4 @@
-(ns slopp.api.session-test
+(ns slopp.ops.engine-test
   "The write engine's JUDGEMENTS, not its writing.
 
   `rebased-write!` is exercised everywhere — every edit test in the store runs
@@ -15,9 +15,9 @@
   Also here: the engine's R6 guard, which is about what the engine may KNOW
   rather than about what it does."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api]
+            [slopp.ops :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.session :as session] [slopp.api.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
+            [slopp.store :as store] [slopp.ops.engine :as session] [slopp.ops.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
 
 (deftest ^:external heal-replays-a-new-namespace-this-call-did-not-touch
   ;; The MERGE shape, and the gap the sibling test below does not cover.
@@ -404,7 +404,7 @@
   ;; finding — which is the point of the split, and this test survives the move
   ;; as the specific statement of it.
   (let [st  (external/built-store)
-        src (render/render-ns st 'slopp.api.session)]
+        src (render/render-ns st 'slopp.ops.engine)]
     (testing "there is a population — the vacuity that ate a sibling guard"
       (is (< 50 (count (:namespaces st))))
       (is (re-find #"rebased-write!" src)

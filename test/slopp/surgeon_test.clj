@@ -2,7 +2,7 @@
   "clj-surgeon-inspired structural ops, slopp-grade: gated, verified,
   recorded. query_deps / fix_declares / ns_rename / edit_move_forms."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (def core-src
   (str "(ns sg.core (:require [clojure.test :refer [deftest is]]))\n"

@@ -1,6 +1,6 @@
 (ns slopp.warm-spare-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.external :as external]))
+            [slopp.ops :as api] [slopp.ops.external :as external]))
 
 (deftest ^:external warm-spare-makes-restart-cheap
   (let [sess (external/open! {:slopp.api/warm-spare? true})]
