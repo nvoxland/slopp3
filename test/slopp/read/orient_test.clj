@@ -1,5 +1,5 @@
-(ns slopp.api.orient-test
-  "Cover for `slopp.api.orient` — the first thing a session reads.
+(ns slopp.read.orient-test
+  "Cover for `slopp.read.orient` — the first thing a session reads.
 
   Unusually for this codebase, the subject's output is largely PROSE, and the
   prose is the product: an agent acts on \"this verdict was produced by a host
@@ -11,7 +11,7 @@
   Mostly in-image, because the assembly is pure. The external ones are the
   cases that need a real session to have a real history to be oriented in."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.orient :as orient] [slopp.api.external :as external] [clojure.string :as str] [slopp.store :as store]))
+            [slopp.api :as api] [slopp.read.orient :as orient] [slopp.api.external :as external] [clojure.string :as str] [slopp.store :as store]))
 
 (deftest fit-report-keeps-reports-under-the-gate
   (let [fat {:milestones [{:commit "d9" :description "m"}]

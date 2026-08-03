@@ -1,4 +1,4 @@
-(ns slopp.api.orient
+(ns slopp.read.orient
   "What a session needs to know before it does anything — assembled purely.
 
   `session_brief` is the one call a fresh context is told to make, so this is
@@ -18,7 +18,7 @@
             [rewrite-clj.node :as n]
             [slopp.store :as store] [slopp.store.fields :as fields]))
 
-(defn snip
+(defn ^:export snip
   "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
   MANY prose fields and must never give back the tokens they save; the
   full text stays one query away (report {contains}, query_history)."
@@ -117,7 +117,7 @@
         teach (assoc :teach teach)
         examples (assoc :examples examples)))))
 
-(defn fit-report
+(defn ^:export fit-report
   "G13 at the gate boundary — by AGGREGATION, never amputation: an
   over-budget report first trims asks to 1/row, then ROLLS CHANGES UP by
   namespace ({:ns :forms :ops :asks}) — the information survives at a

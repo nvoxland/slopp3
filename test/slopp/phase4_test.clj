@@ -10,7 +10,7 @@
             [clojure.java.shell]
             [slopp.api :as api]
             [slopp.store :as store]
-            [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.external :as external])
 )
 
 (deftest ^:external attribution-flows-through-every-write-kind

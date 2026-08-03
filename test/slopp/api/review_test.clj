@@ -15,7 +15,7 @@
   `slopp.orientation-test`, with the other orientation surfaces."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.review :as review] [slopp.api.modules :as modules]))
+            [slopp.api.review :as review] [slopp.read.modules :as modules]))
 
 (deftest review-scan-surfaces-ns-form-lint
   ;; Lint findings INSIDE the (ns …) form — dead imports, unused requires — have

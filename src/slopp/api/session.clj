@@ -230,7 +230,7 @@
   the sibling of `load-trace`. Observations are durable (written by
   `remember-observation!`) but READ constantly by the card view, so they load
   once into session state rather than making every card a db query. That is
-  what lets `slopp.api.orient` stay off `slopp.db`."
+  what lets `slopp.read.orient` stay off `slopp.db`."
   [conn]
   (if conn
     (or (db/meta-with-prefix conn "observed/") {})

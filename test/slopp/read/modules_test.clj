@@ -1,4 +1,4 @@
-(ns slopp.api.modules-test
+(ns slopp.read.modules-test
   "Cover for the module-level answers: what is dead, what is visible, and
   whether an operation's declared intent actually landed.
 
@@ -11,7 +11,7 @@
   asserts the unexempted case alongside it: a report that had simply stopped
   finding anything would satisfy the first half on its own."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.modules :as modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.edit.modules :as edit.modules]))
+            [slopp.api :as api] [slopp.read.modules :as modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.read.query :as query] [slopp.api.external :as external] [slopp.edit.modules :as edit.modules]))
 
 (deftest ^:external the-module-surface-is-browsable
   (let [sess (external/open!)]

@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]

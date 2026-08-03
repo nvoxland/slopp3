@@ -19,9 +19,9 @@
   slopp.api. Reaching for `slopp.api` itself — which opens the db — is a
   core→shell dependency full_check's tier-layering check refuses."
   (:require [slopp.store :as store]
-            [slopp.api.query :as query]
-            [slopp.api.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.api.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
-            [slopp.api.modules :as api.modules]))
+            [slopp.read.query :as query]
+            [slopp.read.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
+            [slopp.read.modules :as api.modules]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form

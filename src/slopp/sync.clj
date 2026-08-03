@@ -18,7 +18,7 @@
             [slopp.api :as api]
             [slopp.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.store.kernel :as kernel]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.api.external :as external] [slopp.store.kernel :as kernel]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source

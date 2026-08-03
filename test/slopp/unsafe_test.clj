@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 ;; ---------------------------------------------------------------------------
 ;; form-symbol must see through ^:unsafe (else the form is un-addressable)

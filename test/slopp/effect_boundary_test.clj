@@ -5,7 +5,7 @@
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.read.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 

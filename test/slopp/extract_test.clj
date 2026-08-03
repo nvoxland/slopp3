@@ -1,6 +1,6 @@
 (ns slopp.extract-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external extract-subform-to-function
   (let [sess (external/open!)]

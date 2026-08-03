@@ -1,4 +1,4 @@
-(ns slopp.api.modules
+(ns slopp.read.modules
   "The MODULE system's read side: what the architecture IS, derived rather
   than declared.
 
@@ -22,9 +22,9 @@
   crossed back."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.api.orient :as orient] [clojure.set :as set]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [clojure.set :as set]))
 
-(def tiers-resource-path
+(def ^:export tiers-resource-path
   "Where a build writes its purity tiers and where `deps_add` looks for them.
 
   A classpath resource, under the source root, so it rides into a published
@@ -33,7 +33,7 @@
   Named once because two sides have to agree on it."
   "META-INF/slopp/tiers.edn")
 
-(defn tiers-resource
+(defn ^:export tiers-resource
   "The purity register projected for PUBLICATION — `{path tier}`, sorted, or
   nil when nothing is declared.
 
@@ -46,7 +46,7 @@
   (when (seq (:module-tiers store))
     (into (sorted-map) (:module-tiers store))))
 
-(defn modules-config-entry
+(defn ^:export modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
   edge fold becomes a `modules` file in git commits and builds (read-only
   transparency; writes go through module_dep).
@@ -66,7 +66,7 @@
                                                  (sort (get test-edges m)))))]))
                      (distinct (concat (keys (:modules store)) (keys test-edges))))})))
 
-(defn ^{:export "slopp.http-api"} production-manifest
+(defn ^:export production-manifest
   "Module dependency edges from PRODUCTION namespaces only — the
   architecture VIEW's graph. A `-test` namespace folds into its subject
   module (module-of strips `-test`), so its fixture deps would manufacture
@@ -75,8 +75,10 @@
   manifest still carries the test edges — this derivation is for
   layers/cycles, not for enforcement.
 
-  Exported to the `slopp.http-api` subtree because that is the architecture view:
-  the Code screen draws this graph. Not public — no other caller has asked."
+  Module surface. It was scoped to the `slopp.http-api` subtree — the Code
+  screen draws this graph — back when the operation surface lived in this same
+  module and needed no marker to reach it. The regroup put the two callers in
+  different subtrees, and a scoped export names exactly one."
   ([store] (production-manifest store (modules/module-usage-rows store)))
   ([store rows]
    (let [prod? #(not (str/ends-with? (str %) "-test"))
@@ -89,7 +91,7 @@
                  m))
              base rows))))
 
-(defn module-debt
+(defn ^:export module-debt
   "Whole-store module violations under the store's CURRENT declarations —
   compact rows, G13-capped — the debt a manifest change reveals (per-write
   gates block NEW violations; this shows what already stands).
@@ -164,7 +166,7 @@
         (not module?) (assoc :tier   (modules/tier-for st (symbol m))
                              :within (modules/module-of (symbol m)))))))
 
-(defn unused-report
+(defn ^:export unused-report
   "PUBLIC defn/def vars in `nses` with NO references in THE graph
   (edit.refs — static, carrier, and declared records all count):
   {:unused [q ...]   ; nothing references it and no marker declares why —
@@ -294,7 +296,7 @@
                                (every? banded (deps-of m))))]
     (set/union banded (into #{} (filter hub?) nodes))))
 
-(defn merge-production-cycle
+(defn ^:export merge-production-cycle
   "The PRODUCTION module cycle a merge CREATED, or nil.
 
   `before`/`after` are the store either side of the merge. Reported only

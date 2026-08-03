@@ -1,4 +1,4 @@
-(ns slopp.api.query
+(ns slopp.read.query
   "Every READ in the operation API — the implementations behind the `query_*`
   tools.
 
@@ -26,11 +26,11 @@
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.rules.keywords :as attrs]
-            [slopp.api.history :as history]
-            [slopp.api.modules :as modules]
-            [slopp.api.orient :as orient]
+            [slopp.read.history :as history]
+            [slopp.read.modules :as modules]
+            [slopp.read.orient :as orient]
             [slopp.rules.shape :as shape]
-            [slopp.api.telemetry :as telemetry]
+            [slopp.read.telemetry :as telemetry]
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]

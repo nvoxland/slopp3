@@ -10,7 +10,7 @@
             [slopp.store.db :as db]
             [slopp.git :as git]
             [slopp.store :as store]
-            [slopp.sync :as sync] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.sync :as sync] [slopp.read.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]

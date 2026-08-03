@@ -15,7 +15,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
+            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"

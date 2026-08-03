@@ -12,7 +12,7 @@
   claim being one the brief actually checked rather than one it assumed at
   startup and never revisited."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.edit :as edit] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.edit :as edit] [slopp.read.query :as query] [slopp.api.review :as review] [slopp.api.external :as external]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (external/open!)]

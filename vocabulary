@@ -19,9 +19,14 @@ slopp.api.breakage: slopp.rules.breakage
 slopp.api.crossings: slopp.index.crossings
 slopp.api.currency: slopp.rules.currency
 slopp.api.doctor: slopp.rules.doctor
+slopp.api.history: slopp.read.history
+slopp.api.modules: slopp.read.modules
+slopp.api.orient: slopp.read.orient
+slopp.api.query: slopp.read.query
 slopp.api.rules: slopp.rules
 slopp.api.schema: slopp.rules.schema
 slopp.api.shape: slopp.rules.shape
+slopp.api.telemetry: slopp.read.telemetry
 slopp.api.web: slopp.rules.web
 slopp.bench: slopp.lab
 slopp.bench.benchmark: slopp.lab.benchmark

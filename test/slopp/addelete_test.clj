@@ -12,7 +12,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.api.external :as external]
-            [slopp.api.query :as query]
+            [slopp.read.query :as query]
             [slopp.store :as store]))
 
 (def target

@@ -1,6 +1,6 @@
-(ns slopp.api.history-test
+(ns slopp.read.history-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api.history :as history]
+            [slopp.read.history :as history]
             [slopp.store :as store]))
 
 (deftest milestone-rows-is-the-pure-fold-behind-query-commits

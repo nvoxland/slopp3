@@ -7,7 +7,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.mcp]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 (def seed
   (str "(ns cm.core (:require [clojure.test :refer [deftest is]]))\n"

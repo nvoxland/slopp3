@@ -7,7 +7,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
             [slopp.mcp]
-            [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.store :as store] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external form-history-is-reconstructible
   (let [sess (external/open!)]

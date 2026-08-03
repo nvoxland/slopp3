@@ -1,4 +1,4 @@
-(ns slopp.api.history
+(ns slopp.read.history
   "Package-private history/status helpers for the slopp.api module: delta
   timeline readings (status-at/after, resolve-at, verify-at) and the human
   renderings (line diffs, change/form-history stories, timestamps). Deep ns
@@ -32,7 +32,7 @@
     (if (zero? (+ (:fail r 0) (:error r 0))) :green :red)
     :unknown))
 
-(defn human-time
+(defn ^:export human-time
   "Epoch ms → \"2026-07-04 09:15\" in the local zone (the human rendering of
   a delta's `:at`; agents keep the raw ms in the store)."
   [ms]
@@ -138,7 +138,7 @@
           (cons nil versions)
           versions))))
 
-(defn status-at
+(defn ^:export status-at
   "Verification status as of delta `at-id`: the last `:verify` delta at or
   before it — :green / :red / :unknown (no verification on record)."
   [store at-id]
@@ -174,7 +174,7 @@
                      [] (store/deltas store))]
     (last (filter #(= :verify (:op %)) upto))))
 
-(defn revert-steps
+(defn ^:export revert-steps
   "Pure: turn a `query-changes` result into the edit-group steps that put every
   form back the way it was, holding back any form another agent also touched.
   `others` is the set of form-ids those agents wrote in the span — those are

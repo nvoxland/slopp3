@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.api :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.review :as review] [slopp.api.external :as external] [slopp.api.cljs :as api.cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.api.devserver :as devserver]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -1395,7 +1395,7 @@
           why (refusal-text r)]
       ;; after the call, so a tool that reads the ring (turn_end) never sees
       ;; its own half-finished entry
-      (swap! session update :slopp.api.telemetry/calls (fnil conj [])
+      (swap! session update :slopp.read.telemetry/calls (fnil conj [])
              {:tool (:name params) :start t0 :end (System/currentTimeMillis)
               ;; A REFUSAL and the reason it gave, from ONE derivation — see
               ;; `refusal-text` for the two shapes it arrives in and for the

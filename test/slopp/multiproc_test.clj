@@ -8,7 +8,7 @@
             [rewrite-clj.parser]
             [slopp.store :as store]
             [slopp.store.render]
-            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.api.branch :as branch] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 (deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")

@@ -2,7 +2,7 @@
   "Item 5: paredit's valid-tree→valid-tree invariant as ONE content-addressed
   primitive — sub-form edits that never re-transcribe sibling code."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
+            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external]))
 
 (def target
   (str "(ns sf.core (:require [clojure.test :refer [deftest is]]))\n"

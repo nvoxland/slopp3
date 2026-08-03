@@ -22,7 +22,7 @@
             [slopp.edit :as edit]
             [slopp.image :as image]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str] [slopp.api.modules :as modules]))
+            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str] [slopp.read.modules :as modules]))
 
 (defn merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the

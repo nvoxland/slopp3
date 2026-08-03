@@ -15,7 +15,7 @@
   worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.api.query :as query] [slopp.api.external :as external] [slopp.image :as image]))
+            [slopp.api :as api] [slopp.api.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.api.external :as external] [slopp.image :as image]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"

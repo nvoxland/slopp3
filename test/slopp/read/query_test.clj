@@ -1,11 +1,11 @@
-(ns slopp.api.query-test
+(ns slopp.read.query-test
   "query-brief / query-impact honour declared (^{:covers}) coverage — the
    dispatch/data path the trace and static reach can't see — the same way
    review-scan and affected-tests do. In-image because declared coverage is
    static (no live trace needed)."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.query :as query]))
+            [slopp.read.query :as query]))
 
 (defn- covers-store []
   (-> (store/empty-store)

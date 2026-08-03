@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.api.history :as history] [slopp.project.deps :as api.deps] [slopp.api.session :as session] [slopp.api.modules :as modules] [slopp.api.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.api.done :as done] [slopp.rules.shape :as shape] [slopp.api.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.api.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.api.session :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.api.done :as done] [slopp.rules.shape :as shape] [slopp.read.query :as query] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -263,14 +263,14 @@
   intent also stays on the session (:last-intent) — orientation mines it so
   the brief arrives task-shaped.
 
-  Also resets the wall-clock ring (`:slopp.api.telemetry/calls`) so this ask
+  Also resets the wall-clock ring (`:slopp.read.telemetry/calls`) so this ask
   measures only itself. The wire records a call AFTER it returns — otherwise
   `turn_end` would read a half-finished entry for itself — which leaves the
   previous turn's closing bracket in the ring. Clearing here is what keeps one
   ask's cost from bleeding into the next."
   [session & {:keys [agent intent user]}]
   (when intent (swap! session assoc :last-intent intent))
-  (swap! session dissoc :slopp.api.telemetry/calls)
+  (swap! session dissoc :slopp.read.telemetry/calls)
   (session/commit-appended! session
                     #(first (store/record-turn % :turn-begin
                                                :agent agent :intent intent
@@ -283,7 +283,7 @@
   record where the turn's WALL CLOCK went.
 
   The wire accumulates one `{:tool :start :end}` per call into the session
-  (`:slopp.api.telemetry/calls`); this folds it with
+  (`:slopp.read.telemetry/calls`); this folds it with
   `telemetry/call-timing` onto the `:turn-end` delta and clears the ring, so
   each ask measures only itself. Nothing called → no `:timing` key, rather
   than a zeroed record that would read as measured.
@@ -294,13 +294,13 @@
   producer at all. This call's own time is not in its own total — it is still
   in flight."
   [session & {:keys [agent note]}]
-  (let [timing (telemetry/call-timing (:slopp.api.telemetry/calls @session))]
+  (let [timing (telemetry/call-timing (:slopp.read.telemetry/calls @session))]
     (session/commit-appended! session
                       #(first (store/record-turn % :turn-end
                                                  :agent agent :note note
                                                  :timing timing))
                       [])
-    (swap! session dissoc :slopp.api.telemetry/calls)
+    (swap! session dissoc :slopp.read.telemetry/calls)
     (cond-> {:turn :closed :agent agent}
       timing (assoc :timing timing))))
 

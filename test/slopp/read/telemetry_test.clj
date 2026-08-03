@@ -1,5 +1,5 @@
-(ns slopp.api.telemetry-test
-  "Cover for `slopp.api.telemetry` — the folds slopp uses to measure itself.
+(ns slopp.read.telemetry-test
+  "Cover for `slopp.read.telemetry` — the folds slopp uses to measure itself.
 
   Every subject here is pure, so the tests hand it a synthetic journal or call
   ring and assert on data: no session, no image, in-image and sub-millisecond.
@@ -8,7 +8,7 @@
   the first nine records), because a measurement whose motivating observation
   is lost is one nobody can tell is still worth taking."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.telemetry :as telemetry]
+            [slopp.read.telemetry :as telemetry]
             [slopp.store :as store]))
 
 (deftest rule-telemetry-fire-rate-and-persistence

@@ -1,4 +1,4 @@
-(ns slopp.api.telemetry
+(ns slopp.read.telemetry
   "slopp measuring ITSELF, by reading its own journal back.
 
   Everything here is a PURE FOLD over facts already recorded — rule firings

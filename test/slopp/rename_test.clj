@@ -1,7 +1,7 @@
 (ns slopp.rename-test
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external])
+            [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
