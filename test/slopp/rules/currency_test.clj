@@ -1,4 +1,4 @@
-(ns slopp.api.currency-test
+(ns slopp.rules.currency-test
   "Does the drift analysis see each way an image can diverge from its store?
 
   Every case here is staged as DATA — a store value plus a stamp map — rather
@@ -14,7 +14,7 @@
   and a `defn` whose callee moved (that one resolves through the var and needs
   no reload)."
   (:require [clojure.test :refer [deftest is]]
-            [slopp.api.currency :as currency]
+            [slopp.rules.currency :as currency]
             [slopp.image.currency :as reg]
             [slopp.store :as store]
             [rewrite-clj.node :as n]))

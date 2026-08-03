@@ -1,4 +1,4 @@
-(ns slopp.api.shape
+(ns slopp.rules.shape
   "What a form's SHAPE says — arities, the keys it reads, the keys it can
   return, the assertions it makes, the positions it indexes.
 
@@ -13,7 +13,7 @@
   dischargeable. A shape answer that guesses produces findings nobody can act
   on, and this codebase has already withdrawn one advisory for exactly that."
   (:require [slopp.store :as store]
-            [slopp.api.breakage :as breakage]))
+            [slopp.rules.breakage :as breakage]))
 
 (defn arities
   "`([arglist & body] ...)` for a `defn`/`defn-` sexpr — docstring and attr-map
@@ -82,7 +82,7 @@
   (let [sym->key (binding-keys bnd)]
     (into #{} (keep sym->key) (keys (when (map? bnd) (:or bnd))))))
 
-(defn read-keys
+(defn ^:export read-keys
   "What a form is read for through its FIRST parameter, by source:
    `:destructured` (keys its arglist binds), `:body` (`(:k p)` reads off a plain
    or `:as`-named param), `:schema` (keys its `:=>` schema DECLARES). Sources
@@ -214,7 +214,7 @@
      {:key (first rd) :local (second rd)
       :callee (:callee info) :returns (:returns info)})))
 
-(defn shape-of
+(defn ^:export shape-of
   "The map SHAPE flowing into `ns-sym/nm`: what the form READS off its first
    argument (`:reads`, by source), the literal keys each CALLER passes
    (`:producers`, grouped by key-set — *58 callers pass exactly `#{:dir}`* is the

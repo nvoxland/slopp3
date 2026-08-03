@@ -165,7 +165,7 @@
   pure assembly over the kernel's boot-info record (`info`), the count of
   CODE-affecting deltas landed after the host booted, whether the session is
   on a branch line, and the measured `drift` between the image and the store
-  (`slopp.api.currency/drift`, or nil when it was not computed). Nil `info`
+  (`slopp.rules.currency/drift`, or nil when it was not computed). Nil `info`
   (a process that didn't boot from a store) → nil, the section simply absent.
 
   The stances it teaches: a :snapshot host serves LAUNCH-time code, so

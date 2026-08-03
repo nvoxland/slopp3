@@ -1,4 +1,4 @@
-(ns slopp.api.attrs
+(ns slopp.rules.keywords
   "The store's domain-keyword VOCABULARY, and the typo advisory built on it.
 
   Open maps are the guardrail slopp cannot otherwise offer: a misspelled
@@ -118,7 +118,7 @@
                :when nbr]
            {:used k :suggest nbr :seen (get established nbr)}))))
 
-(defn vocabulary
+(defn ^:export vocabulary
   "The store's domain-keyword vocabulary, most-used first: `[{:kw :uses} …]`. The
    discoverability surface behind key hygiene — an agent browses the established
    vocabulary and REUSES `:user/email` instead of inventing a near-duplicate.

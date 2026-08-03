@@ -1,4 +1,4 @@
-(ns slopp.api.rules
+(ns slopp.rules
   "The checks that need an EPISODE, and the registry that runs them.
 
   A write gate sees one form and must decide immediately, so it can only ask
@@ -19,9 +19,9 @@
   rule that silently stops firing is indistinguishable from a clean codebase,
   which is exactly what `ambient-state` did for its entire life."
   (:require [slopp.store :as store]
-            [slopp.api.schema :as schema]
-            [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers]))
+            [slopp.rules.schema :as schema]
+            [slopp.rules.keywords :as attrs]
+            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as api.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."

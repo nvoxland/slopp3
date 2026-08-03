@@ -1,7 +1,7 @@
-(ns slopp.api.schema-test
+(ns slopp.rules.schema-test
   (:require [clojure.test :refer [deftest testing is]]
             [clojure.string :as str]
-            [slopp.api.schema :as schema]
+            [slopp.rules.schema :as schema]
             [slopp.store :as store]
             [slopp.image.repl :as repl] [slopp.api :as api] [slopp.api.external :as external]))
 

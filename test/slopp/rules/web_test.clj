@@ -1,4 +1,4 @@
-(ns slopp.api.web-test
+(ns slopp.rules.web-test
   "Cover for the web surface's DERIVATIONS — what slopp reads off endpoint
   metadata, as opposed to what happens when a request arrives.
 
@@ -14,7 +14,7 @@
   discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.web :as web] [slopp.api :as api] [slopp.api.external :as external] [slopp.web-test :as web-test]))
+            [slopp.rules.web :as web] [slopp.api :as api] [slopp.api.external :as external] [slopp.web-test :as web-test]))
 
 (deftest routes-derive-from-stored-nodes
   (let [src (str "(ns shop.api)\n\n"

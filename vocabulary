@@ -14,7 +14,15 @@ http.max-body-bytes: web.max-body-bytes
 http.port: web.port
 http.static: web.static
 reads: internal
+slopp.api.attrs: slopp.rules.keywords
+slopp.api.breakage: slopp.rules.breakage
 slopp.api.crossings: slopp.index.crossings
+slopp.api.currency: slopp.rules.currency
+slopp.api.doctor: slopp.rules.doctor
+slopp.api.rules: slopp.rules
+slopp.api.schema: slopp.rules.schema
+slopp.api.shape: slopp.rules.shape
+slopp.api.web: slopp.rules.web
 slopp.bench: slopp.lab
 slopp.bench.benchmark: slopp.lab.benchmark
 slopp.bench.evalseed: slopp.lab.evalseed

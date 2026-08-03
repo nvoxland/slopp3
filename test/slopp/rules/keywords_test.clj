@@ -1,6 +1,6 @@
-(ns slopp.api.attrs-test
+(ns slopp.rules.keywords-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.attrs :as attrs]
+            [slopp.rules.keywords :as attrs]
             [slopp.store :as store] [slopp.api :as api] [slopp.api.query :as query] [slopp.api.external :as external]))
 
 (deftest keyword-inventory-collects-namespaced-domain-keys

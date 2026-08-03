@@ -56,7 +56,7 @@
   `{:key :type :default :doc}`. THE single source the validator
   (`check-value`), the effective-value read (`effective`), and
   `query_capabilities` all derive from, the same declare-once shape as
-  `slopp.api.rules.catalog/rule-catalog`.
+  `slopp.rules.catalog/rule-catalog`.
 
   **A key's FIRST SEGMENT names its owner**, and the vocabulary is
   `owners` — that is R1 generalized and R6 satisfied for this registry, so

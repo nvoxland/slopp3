@@ -162,7 +162,7 @@
   someone else. When you add a `:web/*` marker, add it here in the same write;
   nothing will remind you.
 
-  **Scope: NAMESPACED keys only, and the split from `slopp.api.rules.markers`
+  **Scope: NAMESPACED keys only, and the split from `slopp.rules.markers`
   is deliberate rather than an oversight.** The two registries ask different
   questions about disjoint key spaces:
 

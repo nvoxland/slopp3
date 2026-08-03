@@ -10,7 +10,7 @@
   Pure over a store value, so in-image and sub-millisecond."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.index.crossings :as crossings] [slopp.api.external :as external] [slopp.api.rules.markers :as markers]))
+            [slopp.index.crossings :as crossings] [slopp.api.external :as external] [slopp.rules.markers :as markers]))
 
 (deftest the-inventory-reports-holes-and-refuses-to-miss-a-new-one
   ;; Core 6: slopp models edges INSIDE the store — the reference graph — and
@@ -121,7 +121,7 @@
 
 (deftest ^:external the-two-marker-registries-COVER-the-vocabulary
   ;; Two registries describe slopp's markers: this one asks whether a key
-  ;; carries data ACROSS the store's edge, `slopp.api.rules.markers` asks
+  ;; carries data ACROSS the store's edge, `slopp.rules.markers` asks
   ;; whether a dial waives a rule and should say why. Splitting them is
   ;; correct — merging would report every escape dial as an unclassified
   ;; crossing — but a split needs something checking the seam.

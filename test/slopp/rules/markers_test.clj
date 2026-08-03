@@ -1,4 +1,4 @@
-(ns slopp.api.rules.markers-test
+(ns slopp.rules.markers-test
   "Cover for the marker registry.
 
   Testing a registry is mostly testing that it still describes reality, so the
@@ -13,7 +13,7 @@
   through `built-store`."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.api.rules.markers :as markers] [slopp.api.external :as external]))
+            [slopp.rules.markers :as markers] [slopp.api.external :as external]))
 
 (deftest the-marker-registry-is-coherent
   (testing "every entry is well-formed — a registry with holes teaches wrong"

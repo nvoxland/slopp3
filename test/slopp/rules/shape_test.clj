@@ -1,4 +1,4 @@
-(ns slopp.api.shape-test
+(ns slopp.rules.shape-test
   "Cover for the shape answers the done-advisories are built on.
 
   Pure sexpr in, answer out, so every test here is in-image and instant. The
@@ -9,7 +9,7 @@
   because the predicate's whole job is telling those apart, and the version
   that could not was withdrawn."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.api.shape :as shape]))
+            [slopp.rules.shape :as shape]))
 
 (deftest return-keys-enumerates-a-statically-known-result-map
   (testing "a bare map literal in return position"

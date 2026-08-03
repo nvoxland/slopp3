@@ -14,8 +14,8 @@
   gate THERE, not at the N call sites — and `gate-refusal` is the entry point.
 
   Its neighbours: `slopp.index.*` derives the reference graph this reads,
-  `slopp.api.rules` joins these gates with the done-time advisories into the
-  one catalog `query_rules` reports, and `slopp.api.web` consumes the same
+  `slopp.rules` joins these gates with the done-time advisories into the
+  one catalog `query_rules` reports, and `slopp.rules.web` consumes the same
   web primitives to answer questions rather than to refuse."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
@@ -770,7 +770,7 @@
     []
     (let [cand (assoc-in store [:module-tiers (str module)] tier)
           ;; `module` may be a namespace path, so scope by PREFIX: declaring
-          ;; slopp.api.shape covers that namespace and anything under it,
+          ;; slopp.rules.shape covers that namespace and anything under it,
           ;; not the whole slopp.api module.
           pfx  (str module)
           nses (->> (keys (:namespaces store))
@@ -800,7 +800,7 @@
 (defn ^:export web-name-meta
   "The metadata on a stored form's NAME symbol, read off the node — no eval
   (D3 keeps metadata source-only truth). nil for unnamed/unparseable forms.
-  THE reader for the `:web/*` declaration vocabulary; `slopp.api.web` and
+  THE reader for the `:web/*` declaration vocabulary; `slopp.rules.web` and
   the web gates both consume it."
   [e]
   (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
@@ -809,7 +809,7 @@
 
 (defn ^:export web-endpoint-rows
   "Every `:web/path` form in `store`: `{:ns :name :form-id :meta}` rows —
-  the single route traversal; the collision gate and `slopp.api.web` both
+  the single route traversal; the collision gate and `slopp.rules.web` both
   build on it. TEST namespaces are excluded: their endpoint-shaped forms
   are fixtures, not servable surface, and a fixture must neither report in
   query_routes nor claim a path against a production endpoint. A pure
@@ -828,7 +828,7 @@
   "The app-declared performer vocabulary for `marker-key` (`:web/effect` or
   `:web/read`): {kind → performer qsym}. slopp interprets no domain
   vocabulary of its own — the store declares it, so this registry is a pure
-  function of the forms; the undeclared-effect gate and `slopp.api.web`
+  function of the forms; the undeclared-effect gate and `slopp.rules.web`
   both consume it."
   [store marker-key]
   (into {}
@@ -889,7 +889,7 @@
   PLURAL although exactly one is legal, because the SCAN and the singleton
   POLICY are different jobs and the two callers ask different questions: the
   `web-undeclared-context` write gate asks whether ANY exists,
-  `slopp.api.web/context-builder` asks for THE one and refuses two. Splitting
+  `slopp.rules.web/context-builder` asks for THE one and refuses two. Splitting
   them keeps a single definition of who builds the context — the alternative
   is two scans that agree until one gains a case."
   [store]
@@ -1099,7 +1099,7 @@
   - **\"it cannot be a performer\"** — the right sentence in the wrong room. It
     answers a DESIGN question to a reader in fix-it mode who has already been
     handed the form, and it is the only clause that requires knowing what a
-    performer is. It lives in `slopp.api.web/context-builder`'s docstring and
+    performer is. It lives in `slopp.rules.web/context-builder`'s docstring and
     the SKILL, where someone deciding meets it.
   - **the lifecycle framed around done points and the managed server** — this
     gate fires on any `web.enabled` store, including one with `dev.server`

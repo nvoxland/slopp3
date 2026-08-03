@@ -1,4 +1,4 @@
-(ns slopp.api.rules.catalog
+(ns slopp.rules.catalog
   "The PROSE half of every rule: what it means, and how to discharge it.
 
   Deliberately nothing else. Severity lives where the rule is implemented and

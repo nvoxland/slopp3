@@ -1,6 +1,6 @@
-(ns slopp.api.breakage-test
+(ns slopp.rules.breakage-test
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.breakage :as breakage]
+            [slopp.rules.breakage :as breakage]
             [slopp.api :as api] [slopp.api.external :as external]))
 
 (deftest fixed-arities-and-removed

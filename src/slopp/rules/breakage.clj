@@ -1,4 +1,4 @@
-(ns slopp.api.breakage
+(ns slopp.rules.breakage
   "Did this episode BREAK a contract that something outside the module depends
   on?
 

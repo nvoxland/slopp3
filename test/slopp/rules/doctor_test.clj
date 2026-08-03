@@ -1,4 +1,4 @@
-(ns slopp.api.doctor-test
+(ns slopp.rules.doctor-test
   "Cover for the legacy sweep — and the fixtures are the whole validation.
 
   The subject's population is an ADOPTED store, and slopp's own store is clean
@@ -13,7 +13,7 @@
   codebase has had to learn to refuse."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.store :as store]
-            [slopp.api.doctor :as doctor]))
+            [slopp.rules.doctor :as doctor]))
 
 (deftest every-detector-fires-on-the-legacy-shape-it-is-for
   ;; Measured before building: slopp's own store has ZERO unmanaged declares,

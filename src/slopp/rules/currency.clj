@@ -1,4 +1,4 @@
-(ns slopp.api.currency
+(ns slopp.rules.currency
   "Is the running image the code the store describes? — answered by COMPARISON.
 
   `slopp.image.currency` records what each door into the image actually

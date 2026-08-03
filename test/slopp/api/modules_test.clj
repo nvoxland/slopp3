@@ -211,7 +211,7 @@
 (deftest ^:external the-surface-answers-at-namespace-grain
   ;; Tiers became namespace-grained (a pure core one level below an effectful
   ;; module), so "what does this offer?" has to be answerable there too.
-  ;; Asking about slopp.api.shape used to error with "no namespaces in module".
+  ;; Asking about slopp.rules.shape used to error with "no namespaces in module".
   (let [sess (external/open!)]
     (try
       (api/ingest! sess 'sg.core

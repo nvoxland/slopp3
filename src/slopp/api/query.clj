@@ -25,17 +25,17 @@
   a driver read is BUILT from, not what an agent should normally reach for."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.api.attrs :as attrs]
+            [slopp.rules.keywords :as attrs]
             [slopp.api.history :as history]
             [slopp.api.modules :as modules]
             [slopp.api.orient :as orient]
-            [slopp.api.shape :as shape]
+            [slopp.rules.shape :as shape]
             [slopp.api.telemetry :as telemetry]
             [slopp.edit :as edit]
             [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]
             [slopp.store.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.api.web :as web]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.rules.web :as web]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of

@@ -1,4 +1,4 @@
-(ns slopp.api.rules-test
+(ns slopp.rules-test
   "Cover for the done-advisories — and, as much, for the REGISTRY they live in.
 
   Two genres here, and the second is easy to overlook. Per-rule tests ask
@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.api.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.external :as external] [slopp.api.rules.catalog :as catalog]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.api :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.api.external :as external] [slopp.rules.catalog :as catalog]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"

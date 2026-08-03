@@ -26,7 +26,7 @@
   - `:seq` is a monotonic stamp counter answering *what was evaluated AFTER
     what*. Source hashes cannot see the worst class: a form whose own source
     never changed, whose VALUE was captured at load time from a form that has
-    since been re-evaluated. `slopp.api.currency` reads the order.
+    since been re-evaluated. `slopp.rules.currency` reads the order.
 
   In-process bookkeeping only — no store, no IO, and deliberately no analysis,
   so the write paths can stamp without taking on a dependency.")

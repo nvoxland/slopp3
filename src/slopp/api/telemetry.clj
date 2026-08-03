@@ -12,7 +12,7 @@
   zero\" with \"never measured\". So folds return nil rather than a zeroed
   record, and a clean result still carries its empty buckets."
   (:require [rewrite-clj.node :as n]
-            [slopp.api.rules.catalog :as catalog]))
+            [slopp.rules.catalog :as catalog]))
 
 (defn- escape-markers
   "Store-wide counts of the discharge markers agents add to opt OUT of the

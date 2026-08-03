@@ -22,7 +22,7 @@
     different fact from absent, and a handler must be able to tell them apart."
   (:require [clojure.string :as str]))
 
-(defn ^{:export "slopp.api"
+(defn ^{:export "slopp.rules"
         :teach "matches :uri ALONE — :query-string is a separate request key. A \"/x?y=z\" put in :uri matches no route and 404s, which looks exactly like the 404 you were testing for."}
   match
   "Match `method` + `uri` against `routes` (rows carrying :method :path

@@ -1,4 +1,4 @@
-(ns slopp.api.web
+(ns slopp.rules.web
   "What the store can SAY about its own web surface, derived from the forms.
 
   `slopp.web` is the framework an app runs on and knows nothing about stores.
@@ -172,7 +172,7 @@
          ref (link-refs sx)]
      (assoc ref :form (symbol (str nsx) (str (:name e)))))))
 
-(defn routes-report
+(defn ^:export routes-report
   "The `query_routes` payload. `web.enabled` false → `{:enabled false
   :routes [] :note …}` — a store that never opted into HTTP has no web
   surface and no web rules (the adoption story). Enabled → every endpoint
@@ -297,7 +297,7 @@
            :when sx]
        [(symbol (str nsx) (str (:name e))) (request-literals sx)]))))
 
-(defn context-builder
+(defn ^:export context-builder
   "The qsym of this store's `^{:web/context true}` fn — the zero-arg builder
   of `:web/perform-ctx` — or nil when the app declares none.
 
@@ -340,7 +340,7 @@
                         {:web/context-builders (vec found)})))
       (first found))))
 
-(defn serving-namespaces
+(defn ^:export serving-namespaces
   "Every namespace that must be scanned to serve this store's web surface —
   the derived answer to `serve!`'s `:web/namespaces`, sorted.
 

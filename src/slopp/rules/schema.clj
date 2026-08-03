@@ -1,4 +1,4 @@
-(ns slopp.api.schema
+(ns slopp.rules.schema
   "The generative schema check: does a form's declared `:=>` `:malli/schema`
   actually hold when the function is CALLED?
 

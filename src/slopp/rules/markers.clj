@@ -1,4 +1,4 @@
-(ns slopp.api.rules.markers
+(ns slopp.rules.markers
   "The marker VOCABULARY — every dial slopp gives meaning to, declared once.
 
   Deliberately not the detection. Whether a `^:unused-ok` is stale is a

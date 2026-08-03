@@ -1,4 +1,4 @@
-(ns slopp.api.doctor
+(ns slopp.rules.doctor
   "The LEGACY sweep — what is in this store that the current rules would never
   have let in.
 
@@ -17,7 +17,7 @@
   Pure, so it runs over any store value. Every finding carries the call that
   fixes it — a finding without one is a complaint."
   (:require [slopp.store :as store]
-            [slopp.api.rules.markers :as markers]))
+            [slopp.rules.markers :as markers]))
 
 (defn ^:export diagnose
   "Scan `st` for elements that predate a rule slopp now enforces and that no

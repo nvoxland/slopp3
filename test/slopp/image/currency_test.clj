@@ -8,7 +8,7 @@
   order counter really is monotonic (it is the only thing that can see a value
   captured before its input moved), and that forgetting actually forgets.
 
-  The analysis over these stamps lives in `slopp.api.currency-test`."
+  The analysis over these stamps lives in `slopp.rules.currency-test`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.currency :as currency]))
 
