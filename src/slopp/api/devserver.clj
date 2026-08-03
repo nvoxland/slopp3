@@ -27,7 +27,7 @@
   incomplete, and reloading a browser into a red half-written state trains
   the author to ignore it."
   (:require [slopp.project.capabilities :as capabilities]
-            [slopp.rules.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts] [slopp.web :as framework]))
+            [slopp.rules.web :as web] [slopp.store :as store] [slopp.api.session :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts] [slopp.web :as framework] [slopp.read.orient :as orient]))
 
 (defn ^:export self-served?
   "Whether the calling process ALREADY serves everything `store` would —
@@ -377,7 +377,11 @@
         ;; mid-episode would otherwise serve stale from a dir nobody rewrote.
         {:image img
          :plan  (assoc plan :static-dir (materialize-static! store (:static plan) (:dir @session)))
-         :boot-ms (quot (- (System/nanoTime) t0) 1000000)})
+         :boot-ms (quot (- (System/nanoTime) t0) 1000000)
+         ;; the HEAD DELTA's timestamp, not the wall clock: a boot takes
+         ;; seconds, and anything written during it is not in this image —
+         ;; stamping "now" would count those as already served
+         :served-at (:at (last (store/deltas store)))})
       (catch Throwable t
         (repl/stop! img)
         {:reason (str "the app image did not come up: " (ex-message t))}))))
@@ -431,7 +435,7 @@
   A failure here is a BIND failure, and by construction it is the only kind
   left: `boot!` already proved the code loads. So the reason it reports is
   narrow enough to act on — something else holds the port."
-  [{:keys [image plan boot-ms]}]
+  [{:keys [image plan boot-ms served-at]}]
   ;; `:boot-ms` rides through rather than being measured here: hot-loading a
   ;; refresh would remove the BOOT and not the bind, so folding the two into
   ;; one number would make a contended port read as a slow image.
@@ -439,6 +443,7 @@
     (let [[v] (repl/eval! image (serve-code plan))]
       (if (integer? v)
         {:serving? true :image image :plan plan :port v :boot-ms boot-ms
+         :served-at served-at
          :url (str "http://" (:host plan) ":" v "/")}
         (do (repl/stop! image)
             {:serving? false :plan plan
@@ -491,6 +496,45 @@
   (when-let [img (:image running)]
     (repl/stop! img))
   nil)
+
+(defn ^:export behind
+  "How many CODE changes the SERVED app image is behind the store — `0` when
+  it is current, `nil` when there is no answer.
+
+  This is the HOST-CURRENCY question one image over, so it is deliberately
+  the same count: [[slopp.read.orient/code-deltas-since]], whose docstring
+  calls itself \"the ONLY spelling of it\". Delegating rather than filtering
+  here is the whole point — this store already carries four near-copies of
+  the no-content op set, and a fifth that drifted by one op would report a
+  different number for the same staleness.
+
+  The filtering is not a nicety. Markers are 8383 of this store's ~17400
+  deltas and `:verify` alone is 6441, because every write appends one. A raw
+  delta count would report roughly twice the changes anyone actually made,
+  and a number that overstates is a number people stop reading.
+
+  **`0` is an answer and must be reported.** The question this exists for is
+  \"is the page I am about to look at built from what I just wrote?\", and
+  staying silent when the answer is yes puts the reader back where they
+  started — hand-checking something the system knows. Silence is reserved for
+  \"nothing is serving\", which is most stores.
+
+  **A running map with no `:served-at` answers nil, and that is the opposite
+  default from `code-deltas-since`.** There, a missing boot stamp counts
+  everything, because a host that cannot say when it booted must not read as
+  current. Here the caller has already established something IS serving, so
+  an absent stamp is a slopp bug rather than a stale app — and reporting a
+  freshly-served app as maximally behind would send someone to re-serve a
+  thing that is already right.
+
+  Reported by slopp-ui, twice, and the second bite is the expensive one: a
+  restyled page passed `full_check`, `compile_client` and a bundle copy, and
+  the served stylesheet was still the old one. Markup that has moved on from
+  its stylesheet does not render as an old page — it renders as a broken one."
+  [store running]
+  (when (:serving? running)
+    (when-let [at (:served-at running)]
+      (orient/code-deltas-since store at))))
 
 (defn ^:export refresh!
   "Re-serve `store` on this session's app server and return the running map.

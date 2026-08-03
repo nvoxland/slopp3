@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.project.deps :as api.deps] [slopp.api.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.read.query :as query] [slopp.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.project.deps :as api.deps] [slopp.api.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.read.query :as query] [slopp.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.api.devserver :as devserver]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -857,7 +857,13 @@ client-deps (merge (:client-deps st) (:client provided))
 
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
   [...] :tier-layering [...] :module-violations {...} :test {...}
-  :external {...} :status :green|:red}."
+  :external {...} :status :green|:red}.
+
+  Plus, when this project has a managed app server up, `:app {:behind n
+  :url}` — how many code changes the SERVED image is behind the store it just
+  called green. `0` is reported rather than omitted: the question is \"is the
+  page I am about to look at built from what I just wrote?\", and staying
+  silent on yes leaves the reader curling the endpoint by hand."
   [session & {:keys [affected]}]
   (let [t0    (System/currentTimeMillis)
         st    (:store @session)
@@ -896,6 +902,12 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; wired in (friction #19); `module-debt` itself already existed and
         ;; was asked only by the graph view and by `module_dep`.
         mods  (modules/module-debt st)
+        ;; the app image is rebuilt at DONE grain, so between done points the
+        ;; browser is looking at an older store than the one this check just
+        ;; called green. Sibling of `host-warning-now` below — same question,
+        ;; different image — and reported for the same reason: a whole-store
+        ;; green is exactly the verdict someone acts on.
+        app   (devserver/behind st (:app-server @session))
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (session/run-verification! session (vec nses) nil
@@ -958,6 +970,24 @@ client-deps (merge (:client-deps st) (:client provided))
       ;; friction #10: a whole-store green is exactly the verdict an agent
       ;; commits on, so a host running superseded code has to say so HERE.
       (host-warning-now st) (assoc :host-stale (host-warning-now st))
+      ;; slopp-ui friction #5, bitten twice: a restyled page passed
+      ;; full_check, compile_client and a bundle copy, and the SERVED
+      ;; stylesheet was still the old one. Markup that has moved on from its
+      ;; stylesheet does not render as an old page, it renders as a broken
+      ;; one — and nothing said so, because `done` fixes it silently. `app` is
+      ;; 0 rather than nil when current, deliberately: silence would put the
+      ;; reader back to curling the endpoint, which is the friction.
+      app                   (assoc :app
+                                   (cond-> {:behind app
+                                            :url (:url (:app-server @session))}
+                                     (pos? app)
+                                     (assoc :note
+                                            (str app " code change(s) since the app"
+                                                 " image was built. It is rebuilt at"
+                                                 " DONE grain, so call done to"
+                                                 " re-serve — until then the browser"
+                                                 " is showing an older store than"
+                                                 " this verdict describes"))))
       ;; Core 6: everything above is an edge INSIDE the store. A green here
       ;; says nothing about what LEAVES it, and reads as though it did — so
       ;; name the exits nothing checks, right where the green is about to be

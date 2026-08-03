@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts]))
+            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.api.external :as external] [slopp.api :as api]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -398,6 +398,16 @@
         ;; if this ever measured the bind too, a slow port would read as a
         ;; slow image and the comparison hot-load exists to inform is wrong
         (is (< (:boot-ms r) 120000) r))
+      (testing "the running map records WHICH store version it is serving"
+        ;; without this nothing downstream can answer "is what I am looking
+        ;; at current?" — the whole of slopp-ui's friction #5
+        (is (integer? (:served-at r)) r)
+        (is (= 0 (devserver/behind s r))
+            "freshly served from this very store — behind by nothing"))
+      (testing "and a change after the boot makes it say so"
+        (let [s' (store/ingest s 'demo.later "(ns demo.later)\n(defn l \"L.\" [] 1)\n")]
+          (is (= 1 (devserver/behind s' r))
+              "one code delta landed since the image was built")))
       (finally (devserver/stop! r)))))
 
 (deftest the-generated-serve-call-accounts-for-every-option-it-could-carry
@@ -639,3 +649,88 @@
     (let [m (#'devserver/bind-failure 7999 "Permission denied")]
       (is (str/includes? m "Permission denied") m)
       (is (str/includes? m "7999") m))))
+
+(deftest how-far-behind-the-served-app-is-is-a-number-the-system-already-has
+  ;; slopp-ui, twice. They restyled a served page: `full_check` GREEN,
+  ;; `compile_client` clean, bundle copied to disk. Every signal said done.
+  ;; Then they curled `/css/style.css` on a hunch and got the OLD sheet — the
+  ;; app image is rebuilt at DONE grain, so a browser would have loaded a page
+  ;; whose markup had changed and whose stylesheet had not. That does not
+  ;; render as an old page, it renders as a broken one.
+  ;;
+  ;; Nothing anywhere hinted at it, and `done` then fixed it silently, which
+  ;; is correct behaviour and is also why they would never have known there
+  ;; had been anything to fix. Their own framing: "me hand-checking something
+  ;; the system knows and does not say." The gap is REPORTING, so the fix is a
+  ;; number where they were already looking, not a verb to remember to run.
+  ;;
+  ;; This is the HOST-currency question one image over, so it is the same
+  ;; count: `read.orient/code-deltas-since`, whose docstring calls itself "the
+  ;; ONLY spelling of it". Measured before deciding that — markers are 8383 of
+  ;; this store's ~17400 deltas, and `:verify` alone is 6441 because every
+  ;; write appends one. A count of raw deltas would have reported roughly
+  ;; twice the work anyone did, which is how a number stops being read.
+  (let [s    (-> (store/empty-store)
+                 (store/ingest 'bh.core "(ns bh.core)\n(defn a \"A.\" [] 1)\n")
+                 (store/ingest 'bh.more "(ns bh.more)\n(defn b \"B.\" [] 2)\n"))
+        head (:at (last (store/deltas s)))]
+    (testing "served at the head — zero, and ZERO IS THE ANSWER, not silence"
+      ;; the question is "is what I am looking at current?", so the current
+      ;; case has to be reported. Omitting it puts the reader back to not
+      ;; knowing whether it was checked.
+      (is (= 0 (devserver/behind s {:serving? true :served-at head}))))
+    (testing "served before any of it — every code delta counts"
+      (is (= 2 (devserver/behind s {:serving? true :served-at 0}))))
+    (testing "bookkeeping is not code — a verify is not something to re-serve for"
+      (let [s' (store/record-verification s ['bh.core] {:test 1 :pass 1})]
+        (is (= 2 (devserver/behind s' {:serving? true :served-at 0}))
+            "the marker filter is inherited, not re-derived")))
+    (testing "nothing is serving — nothing to say"
+      (is (nil? (devserver/behind s {:serving? false :served-at 0})))
+      (is (nil? (devserver/behind s nil))))
+    (testing "a running map that never recorded WHEN it served cannot answer"
+      ;; nil means no evidence. Note this is the OPPOSITE default from
+      ;; `code-deltas-since`, which counts everything for a nil `at` so a
+      ;; missing boot stamp cannot read as a clean bill of health. Here the
+      ;; caller has already established something IS serving, so an absent
+      ;; stamp is a slopp bug rather than a stale app, and reporting a
+      ;; freshly-served app as maximally behind would send the reader to
+      ;; re-serve a thing that is current.
+      (is (nil? (devserver/behind s {:serving? true}))))))
+
+(deftest ^:external full-check-says-how-far-behind-the-served-app-is
+  ;; The REPORTING half of slopp-ui's friction #5. `behind` answers the
+  ;; question; this puts the answer where they were already looking, which is
+  ;; the whole argument for choosing it over the `serve` verb they also asked
+  ;; for. A gap in reporting is not closed by adding a second thing to
+  ;; remember to run — that is the same hand-checking habit with more steps.
+  ;;
+  ;; The running map's SHAPE is devserver's business and a real boot is
+  ;; exercised by `a-refresh-reports-what-it-cost`; what is under test here is
+  ;; that the whole-store check asks for it at all. Friction #19 is the
+  ;; standing lesson: `module-debt` existed, was correct, and was never asked
+  ;; by `full_check` — and a check that is never asked reads exactly like a
+  ;; check that passes.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'fb.core "(ns fb.core)\n(defn ^:unused-ok a \"A.\" [] 1)\n")
+      (testing "no app server — nothing to say, and that is most stores"
+        (is (nil? (:app (external/full-check! sess)))))
+      (testing "serving and behind — the number, and where to look"
+        (swap! sess assoc :app-server
+               {:serving? true :served-at 0 :url "http://127.0.0.1:9999/"})
+        (let [a (:app (external/full-check! sess))]
+          (is (pos? (:behind a)) (pr-str a))
+          (is (= "http://127.0.0.1:9999/" (:url a))
+              (str "a count with no address makes the reader go looking: "
+                   (pr-str a)))))
+      (testing "serving and current — ZERO is reported, never omitted"
+        ;; the question is "is the page I am about to look at built from what
+        ;; I just wrote?". Silence when the answer is YES puts the reader back
+        ;; to curling the endpoint, which is the friction itself.
+        (swap! sess assoc :app-server
+               {:serving? true :url "http://127.0.0.1:9999/"
+                :served-at (:at (last (store/deltas (:store @sess))))})
+        (let [a (:app (external/full-check! sess))]
+          (is (= 0 (:behind a)) (pr-str a))))
+      (finally (api/close! sess)))))
