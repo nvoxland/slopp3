@@ -56,12 +56,37 @@ and not there is how a rename keeps its blind spot.
 | `slopp.api.branch` | `slopp.ops.branch` | ditto — a line is a view of the delta log, and branch orchestrates store + image + engine to make it one |
 | `slopp.api.done` | `slopp.ops.done` | ditto — the episode boundary is an operation |
 | `slopp.api.review` | `slopp.ops.review` | ditto — whole-codebase triage off the done-point's signals |
+| `slopp.api.devserver` | `slopp.webdev.live` | **phase 3 (2026-08-03).** Web tooling gets its own module, named for the app TYPE so type #2 needs no rename (R6). `live` because R4 retires "dev server" — and the module keeps the `web` qualifier because a bare `slopp.live` would collide with slopp's own `--live` mode (the MCP server watching the store), which is a different thing from keeping a user's app up |
+| `slopp.api.cljs` | `slopp.webdev.cljs` | ditto. The tail stays `cljs` on collision evidence, not taste: this namespace requires `slopp.web.client :as client` and `slopp.build :as build`, so `webdev.client` and `webdev.build` would each shadow a require it already holds. Platform is also what it IS — its own docstring says this is where `:cljs` code gets its only verification |
 | `slopp.read.query/{query-history,query-changes,query-lineage,query-form-history,query-search-history,query-status-at,query-form-at,turn-intents,episode-boundary,episode-span,span-anchor,content-ops,fid-ns-at,label-ancestors}` | `slopp.read.history/*` | **phase 1b, the query split (2026-08-03).** The store over TIME was half in `history` (pure folds over the delta log) and half in `query` (the reads built on them). One subject, one namespace |
 | `slopp.edit.modules/{per-form-write-gates,write-gate-names,write-gate-severities,rule-applies-to-platform?,gate-check,gate-refusal,rule-severity}` | `slopp.edit.gates/*` | **phase 1b, the gate split (2026-08-03).** The write-gate CHASSIS is not the module system — holding the registry inside one of the families it dispatches to is what made `slopp.edit.modules` a misnomer at 45 forms |
 | `slopp.edit.modules/{canonical-tier,tier-declared?,tier-for,tier-report,tier-refusal,tier-order,late-ref-target-nses,layering-violations,tier-violations}` | `slopp.edit.tiers/*` | ditto — purity tiers and the layering they imply |
 | `slopp.edit.modules/{web-*,generated-ns,client-signature}` | `slopp.edit.web/*` | ditto — the D-web write gates and their primitives. **Not `slopp.web`**, which is the layer-0 framework a user's app runs on and knows nothing about stores; these read a CANDIDATE store at write time. `module-of` being the first two segments is what makes that mechanical rather than a preference |
 | `slopp.read.query/{query-references,query-deps,query-depends,query-impact,query-flow,callee-adjacency,coverage-view}` | `slopp.read.graph/*` | ditto — how forms REACH each other. The relationships live lower (`slopp.index.refs` IS the graph); this is the reading layer over them. Not a judgement call: partition `slopp.read.query` by the four kinds its own docstring named and every internal call falls INSIDE a cluster, with only the composite driver reads crossing — take those away and it is three disconnected components |
-| `:slopp.api/dir`, `/keys`, `/agent-id`, `/warm-spare?`, `/async-image?`, `/branch-image-ttl-ms` | `:slopp.ops/*` | ditto, the tail — `open!`'s option keys, 71 uses. They named module `slopp.api`, which after module 4 is the WEB TOOLING module, so the keys pointed at code with nothing to do with opening a session. NOT dangling, which is why nothing complained: the module still exists. Same class as `:slopp.api.telemetry/calls` above, and the second time a rename's KEYWORD tail outlived its namespace |
+| `:slopp.api/dir`, `/keys`, `/agent-id`, `/warm-spare?`, `/async-image?`, `/branch-image-ttl-ms` | `:slopp.ops/*` | ditto, the tail — `open!`'s option keys, 71 uses. They named module `slopp.api`, which after module 4 held only the WEB TOOLING namespaces, so the keys pointed at code with nothing to do with opening a session. NOT dangling, which is why nothing complained: the module still existed. Same class as `:slopp.api.telemetry/calls` above, and the second time a rename's KEYWORD tail outlived its namespace. (Phase 3 emptied `slopp.api` entirely; phase 2 gives the name to the external API.) |
+
+**R6, the rule the `slopp.webdev` rows follow:** no `slopp.*` surface may
+assume a project is a WEB project. Support for an app TYPE lives in a module
+named for that type, and the pattern must be replicable for type #2 **without
+renaming type #1** — which is the whole reason the tooling module carries a
+`web` qualifier instead of taking the generic name.
+
+Two consequences worth stating, because both were learned the expensive way:
+
+- **A generic surface reaching into an app-type module is a bug, not an edge
+  to declare.** `slopp.ops.external/full-check!` called `devserver/behind` —
+  the whole-store check asking a question that is not web-specific — and
+  nothing complained, because both ends were in one module and layering is a
+  MODULE-grain question. Now pinned twice:
+  `slopp.modules-test/web-tooling-is-reached-only-by-the-transport` over the
+  whole image, and `…/the-whole-store-check-names-no-app-type` over the
+  surface that broke. `slopp.mcp` is the ONE exception, by role: it is the
+  transport, so it reaches every module by construction.
+- **The module boundary is what makes the rule checkable at all.** Three times
+  in this restructure a drawer hid a violation from the check built to find
+  it — the write engine's cljs coupling, this one, and the capability
+  registry. The split is not tidiness; it is what turns an invisible R6
+  violation into an ordinary layering finding.
 
 ## Removed — what an old record refers to that no longer exists
 

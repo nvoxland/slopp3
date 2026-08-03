@@ -48,7 +48,7 @@ name makes child images inherit mise's pinned clojure.
 
 The MCP server is the development surface, and "mcp" is what to call it. It is
 NOT "the dev server": since 2026-08-01 that phrase means the APP server slopp
-runs for a web project under development (`slopp.api.devserver`, and whether it
+runs for a web project under development (`slopp.webdev.live`, and whether it
 runs is derived, not configured), which mcp is what STARTS. Two servers, one of them serving your
 code and the other serving you.
 

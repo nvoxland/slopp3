@@ -185,19 +185,20 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.edit.gates` | the write-gate CHASSIS: `per-form-write-gates` (the registry every write site consults — register there, never at the N call sites), dispatch, `rule-severity` (the per-store dial), `gate-refusal` (the entry point). Knows all three gate families; none of them knows it |
 | `slopp.edit.tiers` | purity TIERS and the layering they imply: `tier-refusal` per form, `layering-violations`/`tier-violations` for the whole-graph question the per-form gate deliberately skips. UNDECLARED is `:external`, by absence of a claim |
 | `slopp.edit.web` | the D-web write gates + the store-value primitives they judge against (auth, routes, effect/context vocabulary, endpoint contracts, generated-client surface). Store-analysis of `:web/*` metadata, NOT the framework — `slopp.web` is layer 0 and knows nothing about stores. `slopp.rules.web` shares these primitives on purpose: a gate that refuses and a report that lists must be one derivation |
-| `slopp.api` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
+| `slopp.ops` | operations + verification orchestration; session atom = cache of one line (store, image, db conn, lines, trace map) |
+| `slopp.webdev` | tooling for building a WEB project — app type #1, and named so type #2 needs no rename (R6): `webdev.live` (the server slopp runs for you so a project under development is always up) and `webdev.cljs` (the client build — ClojureScript on the JVM, plus the typed client generated from the endpoints' own contracts). Consumed ONLY by `slopp.mcp`, which is the transport and reaches every module; a generic surface reaching in here is the R6 violation `slopp.modules-test/web-tooling-is-reached-only-by-the-transport` exists to catch. NOT `slopp.web` — that is the layer-0 framework a user's app runs on, and mixing tooling under the prefix would make one mixed-layer module, since `module-of` is the first two segments |
 | `slopp.read` | every question asked OF the store, one layer BELOW the operations that answer with it: `read.query` (the `query_*` front door), `read.history` (the store over time — status-at/after, resolve-at, verify-at, plus the human renderings), `read.orient` (`session_brief`, form cards, host warnings), `read.modules` (the module system's read side, against `slopp.edit.modules`'s write side), `read.telemetry` (the folds slopp measures itself with) |
 | `slopp.mcp` | MCP over stdio; dispatch (`call-tool`/`handle`), the serve loop (+ tools/list_changed), wire shaping (spool/told/hints), turn gate |
 | `slopp.mcp.tools` | the tool REGISTRY (deep): six descriptor groups, `read-only-tools` → readOnlyHint annotations, write-tool sets, the composed wire list, the cheat sheet |
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
 | `slopp.mcp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
-| `slopp.build` | explicit build: files + GraalVM native-image recipe (O4). Pure generators, zero internal requires — layer 0, because its three callers (`slopp.git`, `slopp.api.external`, `slopp.api.cljs`) sit in different modules |
+| `slopp.build` | explicit build: files + GraalVM native-image recipe (O4). Pure generators, zero internal requires — layer 0, because its three callers (`slopp.git`, `slopp.ops.external`, `slopp.webdev.cljs`) sit in different modules |
 | `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
 | `slopp.index.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.store.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
 | `slopp.git` | P4-m8 git compatibility: the PROJECTION over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, journal→commit projection, grafting onto `git-base-sha`). Exists to be PUSHED — serving it to a git client as a remote was removed |
 | `slopp.git.client` | CLIENT face (deep): push the projection to a normal external remote / fetch a remote's objects; credentials; 30s transport timeouts |
-| `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.api`): `push!` store→remote (saves `git-remote` meta; refused while conflicts stand), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored, `git-base-sha` recorded), `pull!` 3-way form-granular absorb (remote wins where we're clean; both-touched → off-log `quarantine` conflict; ends with a `:git-sha` chain marker); CLI `-main clone|push|pull` |
+| `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.ops`): `push!` store→remote (saves `git-remote` meta; refused while conflicts stand), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored, `git-base-sha` recorded), `pull!` 3-way form-granular absorb (remote wins where we're clean; both-touched → off-log `quarantine` conflict; ends with a `:git-sha` chain marker); CLI `-main clone|push|pull` |
 | `slopp.lab` | the instruments a HUMAN runs (R5), never the system: `lab.benchmark` (scripted sample-app wire-cost meter), `lab.evalseed` (seeds eval-round template codebases), `lab.mine` (demand mining over provenance journals), plus reference-query-cost on the root. None has a caller or a test, and that is the shared property rather than rot |
 
 ## Cross-cutting gotchas
@@ -290,7 +291,7 @@ and unchecked. Layering *within* a component is no longer a gate.
   edge — would have broken that test. **`slopp.store.merge` cannot ask the
   question at all**: at that layer a store is a delta log and some maps,
   with no notion of which namespaces are tests, so the check moved UP to
-  `slopp.api.branch`, which takes `production-manifest` of the store the
+  `slopp.ops.branch`, which takes `production-manifest` of the store the
   merge produced. It fires only when the merge actually GAINED an edge — a
   standing cycle re-announced on every unrelated merge is noise, not news.
   Reads go through `query_depends {modules true}` (manifest +
@@ -344,9 +345,23 @@ and unchecked. Layering *within* a component is no longer a gate.
   operation surface that calls the rules — so phase 1b's `slopp.rules` and
   `slopp.read` had no other way out: 41 deftests / 243 call sites would
   otherwise have become permanent violations. The two edges slopp already
-  carried (`slopp.index → slopp.api`, `slopp.store → slopp.api`, both with
+  carried (`slopp.index → slopp.ops`, `slopp.store → slopp.ops`, both with
   ZERO production callers) were the same rule failing to be expressible,
   written down twice; they are now declared test-only and the store has **no
   declared-manifest cycles at all**, which makes gating on that possible for
   the first time. `ns_rename`'s manifest re-key still does no cycle check —
   the remaining half of `ideas/restructure-wave-frictions.md` #20.
+
+  **A test-only edge is re-keyed by NOTHING, which is its own hazard.** When a
+  rename empties a module, `ns_rename` relocates the PRODUCTION manifest entry
+  (measured: `slopp.api`'s eight deps arrived at `slopp.webdev` already
+  declared, and `slopp.mcp → slopp.api` re-keyed to `slopp.mcp →
+  slopp.webdev`) — and leaves every test-only edge spelled the old way, in
+  both directions. Phase 3 found six: `slopp.api → slopp.read`, which had to
+  be re-declared by hand as `slopp.webdev → slopp.read` while the original sat
+  beside it, and four `X → slopp.api` survivors of module 4's rename. Nothing
+  reports them, because an edge naming a module with no namespaces is merely
+  unused. That is harmless right up until the NAME IS REUSED — phase 2 gives
+  `slopp.api` to the external API — at which point six dead entries silently
+  become live permissions for something they were never about. Retired in
+  phase 3; the general fix belongs with #20.

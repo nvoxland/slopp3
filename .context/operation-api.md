@@ -540,7 +540,7 @@ CRDT (G9) — the new thing is the DECLARED registry: one entry per key
 the server/boot JVM (kernel deps only; the two-process split). Extending the
 vocabulary = a case in `check-value` + the parser in `effective`, in one ns.
 
-## The app server slopp runs for you (`slopp.api.devserver`)
+## The app server slopp runs for you (`slopp.webdev.live`)
 
 A web project under development should always have a live version up, and the
 app should hold no `serve!` call, no namespace list and no port to get it.
