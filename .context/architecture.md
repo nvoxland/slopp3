@@ -294,3 +294,31 @@ and unchecked. Layering *within* a component is no longer a gate.
   module's last ns renames away. Public-surface defns without docstrings
   get a per-form advisory on the WRITE result (only on the has-doc→no-doc
   transition or brand-new forms — never a ns-wide nag).
+- **The gates are not the whole enforcement, because a RELOCATION never
+  passes one.** A rename rewrites its own callers, so the rewritten callers
+  are never written through a gate — and the module rules are inherited from
+  the NAME, so the drift is silent. Two folds close it, both over
+  `api.modules/module-debt` (whole-graph, ~0.9s on 188 nses; the per-ns
+  `module-scan` × 188 is 4.9s for the same answer): `full_check` reports
+  `:module-violations` store-wide, and `done` reports `:module-governance`
+  scoped to the episode's relocation deltas. Both error-grade — a violation
+  still standing is one a write gate would have REFUSED, so advisory would
+  make the write gate the stricter of the two. `tier-governance` is the same
+  fix one system over and predates it; see the discipline in
+  `design-disciplines.md`. **On the module side the reported namespace is the
+  CALLER, which did not move** — two segments to three makes the TARGET
+  package-private — so unlike the tier check this one selects violations from
+  EITHER end of the episode's moves.
+- **Known gap: a TEST-ONLY edge cannot be expressed.** `module-of` folds a
+  trailing `-test` off each segment, so a fixture shares its subject's module
+  key and any edge declared for it licenses production too. Measured
+  2026-08-02: `slopp.api ↔ slopp.index` and `slopp.api ↔ slopp.store` are the
+  store's only declared-manifest cycles, both back-edges have ZERO production
+  callers, and both exist purely so a `-test` namespace can drive the
+  operation surface. So "the declared manifest is acyclic" cannot be gated
+  until this is decided. `module_dep`'s cycle refusal now at least DIAGNOSES
+  it — when every namespace crossing is a test it names them and says why no
+  edge helps, rather than advising an extraction nobody can perform on a
+  fixture. Open as `ideas/restructure-wave-frictions.md` #20, which also
+  records that `ns_rename`'s re-key installs such an edge with no cycle check
+  at all.

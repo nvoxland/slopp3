@@ -343,7 +343,7 @@ cover, so drifting either way turns the suite red.
 |---|---|
 | Effectful fn is `!`-named | **Yes** (D6, write warning + `:suggest`) |
 | No macros / eval / dynamic-var action-at-a-distance | **Yes** (dialect gate) |
-| Cross-module edge declared; no cycles; cohesion vs export | **Yes** (module gate) |
+| Cross-module edge declared; no cycles; cohesion vs export | **Yes** (module gate at write) — plus `done`'s `:module-governance` and `full_check`'s `:module-violations`, both error-grade, because a RELOCATION rewrites callers without writing them through the gate |
 | Public surface documented | **Yes** (write advisory) |
 | Dead public surface removed | **Yes** (`done`/`commit_point` gate) |
 | Pure core / IO at the edge (locale) | **Yes, when a namespace declares a tier** — `module_purity {module tier :pure/:internal/:external}` hard-refuses a form exceeding it; **`:pure` also forbids non-determinism** (`rand`/`slurp` — referential transparency). Declaring verifies the existing code, so a tier cannot claim more than it earns |

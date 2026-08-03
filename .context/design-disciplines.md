@@ -594,6 +594,31 @@ second copy.
 - **Measure MECHANICAL changes on the deterministic wire-cost meter; reserve
   lifetime evals for BEHAVIORAL questions at n≥3.** A per-step delta off ONE
   lifetime run is noise (steps you never touched swung ±30%). (P10.)
+- **A rule INHERITED FROM A NAME and enforced AT WRITE needs a done-time
+  relocation check — a relocation changes the name without writing the forms,
+  and it is the one path around every write gate.** Earned twice, in two
+  systems, before it was named. Purity tiers: folding `slopp.mine` under
+  `slopp.store` made it `:pure` along with the SQLite layer, and `full_check`
+  stayed green for weeks until a docstring typo-fix happened to touch one of
+  the forms (`tier-governance`). Module rules: regrouping into `slopp.project`
+  took a namespace from two segments to three, making it package-private while
+  four callers kept reaching in — again green (`module-governance`, 2026-08-02).
+  **`ns_rename` makes it worse than it looks: it rewrites its own callers, and
+  a caller a rename rewrote never passes a gate either.** So the operation most
+  likely to drift the architecture is the one operation the architecture's own
+  check structurally cannot see. Fire the check on `:rename-ns` / `:move-forms`
+  / `:extract-ns` / `:module-extract` deltas since the last done. **And do not
+  assume the moved namespace is the one to report** — for the module rules it
+  is the CALLER that violates, and the caller did not move, so scoping to
+  "what moved" (correct for tiers) finds nothing.
+- **A check that is never ASKED reads exactly like a check that passes.** Core
+  1 one level out: not a surface reporting success without checking, but a
+  correct checker with no caller. `module-debt` computed whole-store module
+  violations, and was wired into the graph view and into `module_dep`'s
+  response — never into `full_check`, which meanwhile advertised
+  "lint/dead-surface/layering/in-image cover every namespace". Before adding a
+  detector, grep for one: the second-cheapest fix in the codebase is a
+  call site.
 
 ## Core 7 — the edit surface is positional; the agent's intent is transformational
 

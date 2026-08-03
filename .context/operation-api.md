@@ -208,7 +208,9 @@ write time, instead of a fresh JVM catching it later.
   declare/retract (edge-grain CRDT — concurrent declarations union in
   merges; the why rides the delta). Adds are cycle-checked against the
   resulting graph; results carry the module's folded dep set plus any
-  standing `:violations` debt. `config_file "modules"` is refused and
+  standing `:violations` debt. A cycle refusal whose only crossing
+  namespaces are `-test` says so and names them — the generic "extract the
+  shared piece" cannot be done to a fixture (friction 19b). `config_file "modules"` is refused and
   teaches this verb; the manifest reads via `query_depends {modules
   true}` — which also carries the GRAPH: `:layers` (topological, SCC-
   condensed via `store/module-layers`), `:cycles`, `:unused-edges`

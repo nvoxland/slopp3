@@ -211,10 +211,29 @@ one that was never made. An undeclared namespace is `:external` only because
 nothing more specific claims it, so moving it under a prefix that DOES claim
 something silently re-tiers it: move an undeclared IO namespace into a module
 declared `:pure` and it inherits `:pure`, which is a tightening nobody wrote
-and nobody reviewed. Since `module_purity` does not check layering, the
-contradiction surfaces later, at `full_check`, far from the move that caused
-it. One `module_purity` call before the rename costs nothing and makes the
-tier survive the move by being stated rather than inherited.
+and nobody reviewed. The next `done` names it (`:tier-governance`), but as a
+finding to clean up rather than a decision you made. One `module_purity` call
+before the rename costs nothing and makes the tier survive the move by being
+stated rather than inherited.
+
+**A relocation is the one path around every write gate — so expect the next
+`done` to have opinions.** Both the purity tiers and the module rules are
+inherited from a namespace's NAME and enforced when a form is WRITTEN; a
+rename or a move changes the name without writing the forms, and `ns_rename`
+rewrites its own callers, which then never pass a gate either. `done` closes
+that hole from both sides — `:tier-governance` for a namespace whose new
+prefix it cannot satisfy, `:module-governance` for a call a relocation put
+outside a module rule — and `full_check` reports whatever stands store-wide
+(`:tier-layering`, `:module-violations`). Both are error-grade: they are what
+a write gate would have refused outright.
+
+**On the module side the namespace that MOVED is usually not the one
+reported.** Taking a target from two segments to three makes it
+package-private to its parent subtree, so it is the CALLER — which did not
+move — that is suddenly reaching in. Fix it at the target (`^:export` on the
+defn name hoists it into the module's surface; `^{:export "prefix"}` exposes
+it to one subtree) or at the call. `module_extract` does this hoisting for you
+and reports which caller forces each export; `ns_rename` does not.
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.

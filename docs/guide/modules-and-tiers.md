@@ -23,6 +23,14 @@ Declare, then use. The refusal on an undeclared call names the exact
 `module_dep` call to make, and an edge that would close a cycle is refused with
 the cycle named. `remove: true` retracts an edge.
 
+When the only namespaces crossing that edge are `-test` ones, the refusal says
+so and names them, because the usual advice -- extract the shared piece into a
+module both sides may depend on -- is not something you can do to a fixture. A
+test folds into its subject's module, so an edge declared for it would license
+production too. Move the test to the target's own test namespace if what it
+asserts belongs there, or leave the edge undeclared and let `full_check` report
+the violation.
+
 The manifest is not a file -- it is the fold of `:module-edge` deltas, at edge
 grain, so two agents declaring concurrently union without conflict.
 
@@ -124,6 +132,27 @@ declaration is not a clean bill of health.
 Every memo must go through `slopp.cache`. That is what keeps `:internal`
 checkable -- an ad-hoc atom is indistinguishable from arbitrary mutation, and
 `without-caching!` is how you test around one.
+
+### Renaming is the one thing the write gates cannot see
+
+Both of these rules -- the module a namespace belongs to, and the tier it is
+governed by -- are inherited from its **name**, and both are enforced when a
+form is **written**. A rename changes the name without writing the forms, and
+`ns_rename` rewrites its own callers, so those callers do not pass a gate
+either. Nothing about the rename looks wrong afterwards.
+
+So `done` asks again for you, scoped to what the episode actually moved:
+`:tier-governance` when a namespace landed under a tier its forms cannot
+satisfy, `:module-governance` when a relocation put a call outside a module
+rule. `full_check` reports whatever stands across the whole store
+(`:tier-layering`, `:module-violations`). Both are errors, not notes -- each
+one is something a write gate would have refused outright.
+
+One thing to expect on the module side: **the namespace reported is usually not
+the one that moved.** Taking a namespace from two segments to three makes it
+package-private, so it is the unmoved *caller* that is suddenly reaching in.
+`module_extract` handles the hoisting for you and tells you which caller forces
+each `^:export`; `ns_rename` does not, which is what these checks are for.
 
 ### Why this axis
 

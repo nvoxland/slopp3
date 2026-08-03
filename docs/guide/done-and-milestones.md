@@ -46,14 +46,19 @@ response.
 
 ## `full_check` is the whole store
 
-Every namespace linted, dead surface store-wide, every test in every tier.
-Nothing forces it -- not `done`, not `commit_point`.
+Every namespace linted, dead surface store-wide, both layering graphs -- purity
+tiers and module rules -- and every test in every tier. Nothing forces it --
+not `done`, not `commit_point`.
 
 Reach for it when:
 
 - the change was broad
 - **you deleted a caller** -- dead surface appears in namespaces you never
   touched, which is the one thing episode scope structurally cannot see
+- **you renamed or moved a namespace** -- the module and tier rules are
+  inherited from the name and enforced at write, so a relocation slips past
+  every gate. `done` catches the ones your episode caused; this catches
+  whatever is standing
 - you are about to make a commit you want to stand behind
 
 There is a middle gear too: `full_check {affected: true}` widens past the

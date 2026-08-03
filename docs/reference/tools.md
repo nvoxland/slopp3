@@ -234,7 +234,7 @@ Three things worth knowing:
 | Tool | What it does |
 |---|---|
 | `done {label}` | Close a unit of work. Episode-scoped; reports rather than refuses. |
-| `full_check` | The whole store: every namespace linted, dead surface everywhere, every test in every tier. `affected: true` is the middle gear. |
+| `full_check` | The whole store: every namespace linted, dead surface everywhere, both layering graphs (purity tiers and module rules), every test in every tier. `affected: true` is the middle gear. |
 | `commit_point {description}` | Record a milestone. Green-gated; `force: true` records a red honestly. `target` marks an earlier spot. |
 | `test_run` | Spot-check specific tests. `{external true}` for the external tier, `{all true}` for the whole in-image suite. |
 | `draft_test {ns name code?}` | Draft a `deftest` from observed calls. Writes nothing. |
