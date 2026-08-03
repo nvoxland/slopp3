@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -639,7 +639,7 @@ recompiled (session/after-write! session ns-sym)]
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     (if-let [merr (when nm (edit.modules/gate-refusal st' ns-sym nm))]
+                     (if-let [merr (when nm (gates/gate-refusal st' ns-sym nm))]
                        {:error merr}
                        {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
@@ -657,7 +657,7 @@ recompiled (session/after-write! session ns-sym)]
                              session/cljs-deferred-summary)
                 all-w      (edit/ns-warnings (:store @session) ns-sym)
                 existing   (count (filter (comp pre-warned :var) all-w))
-                advisories (when nm (:advisories (edit.modules/gate-check
+                advisories (when nm (:advisories (gates/gate-check
                                                   (:store @session) ns-sym nm)))
 recompiled (session/after-write! session ns-sym)]
             (session/commit-appended! session
@@ -795,7 +795,7 @@ recompiled (session/after-write! session ns-sym)]
                  (if-let [[st' d] (store/replace-node st ns name node
                                                       :prompt prompt :group gid
                                                       :agent agent)]
-                   (if-let [merr (edit.modules/gate-refusal st' ns (or nm' name))]
+                   (if-let [merr (gates/gate-refusal st' ns (or nm' name))]
                      {:error merr}
                      {:store st' :delta d
                       :hot (if (and nm' (not= nm' name))
@@ -817,7 +817,7 @@ recompiled (session/after-write! session ns-sym)]
                  (if-let [[st' d] (store/append-form st ns node
                                                      :prompt prompt :group gid
                                                      :agent agent :before before)]
-                   (if-let [merr (when nm (edit.modules/gate-refusal st' ns nm))]
+                   (if-let [merr (when nm (gates/gate-refusal st' ns nm))]
                      {:error merr}
                      {:store st' :delta d :hot [:load (:form-id d)]})
                    {:error (str "no namespace " ns " (ingest it first)")})))
@@ -1043,11 +1043,11 @@ recompiled (session/after-write! session ns-sym)]
                        (catch Exception _ nil))
               note (when (and (nil? (:error res)) lib
                               (contains? (:namespaces st) lib)
-                              (edit.modules/tier-declared? st ns-sym)
+                              (tiers/tier-declared? st ns-sym)
                               (contains? #{:pure :internal}
-                                         (edit.modules/tier-for st ns-sym))
-                              (not (edit.modules/tier-declared? st lib)))
-                     (str ns-sym " is declared " (edit.modules/tier-for st ns-sym)
+                                         (tiers/tier-for st ns-sym))
+                              (not (tiers/tier-declared? st lib)))
+                     (str ns-sym " is declared " (tiers/tier-for st ns-sym)
                           " and now depends on UNDECLARED " lib " (defaults"
                           " :external — full_check's tier-layering will flag"
                           " this). Declare it while the context is loaded:"
@@ -1310,7 +1310,7 @@ recompiled (session/after-write! session ns-sym)]
                  :normalized (count rewrites)
                  :rewrites   (mapv #(select-keys % [:form :applied]) rewrites)
                  :declares   (:removed d 0)
-                 :purity     (edit.modules/tier-report (:store @session) ns-sym)
+                 :purity     (tiers/tier-report (:store @session) ns-sym)
                  ;; the done-time advisories, re-run over the WHOLE namespace.
                  ;; They already fired for anything written through slopp since
                  ;; the rule existed — what they have never seen is code that
@@ -1338,7 +1338,7 @@ recompiled (session/after-write! session ns-sym)]
                  (let [st* (:store @session)]
                    (vec (for [f (store/forms st* ns-sym)
                               :when (:name f)
-                              :let [g (edit.modules/gate-check st* ns-sym (:name f))
+                              :let [g (gates/gate-check st* ns-sym (:name f))
                                     hits (remove nil? (cons (:refuse g) (:advisories g)))]
                               :when (seq hits)]
                           {:form (symbol (str ns-sym) (str (:name f)))
@@ -3269,7 +3269,7 @@ recompiled (session/after-write! session ns-sym)]
         ;; every surface — this docstring, the tool description, query_depends'
         ;; output — spells tiers WITH the colon, so accept that spelling too
         ;; rather than turning ":pure" into ::pure and refusing it
-        tier   (edit.modules/canonical-tier
+        tier   (tiers/canonical-tier
                 (keyword (str/replace (name (or tier "")) #"^:" "")))
         ;; namespace grain, not just module grain: a pure CORE routinely lives
         ;; one level below an effectful module (slopp.api holds seven fully-pure
@@ -3312,7 +3312,7 @@ recompiled (session/after-write! session ns-sym)]
       ;; code. Gating only future writes let :pure land on a module full of
       ;; effects — a marker that lies, which is worse than no marker.
       :else
-      (let [bad (edit.modules/tier-violations (:store @session) module tier)]
+      (let [bad (tiers/tier-violations (:store @session) module tier)]
         (if (seq bad)
           {:error (str "cannot declare " module " :" (name tier) " — "
                        (count bad) " existing form(s) already exceed it: "

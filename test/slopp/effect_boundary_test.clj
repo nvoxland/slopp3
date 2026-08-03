@@ -5,7 +5,7 @@
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as api]
-            [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.read.query :as query] [slopp.ops.external :as external])
+            [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.edit.tiers :as tiers])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -230,8 +230,8 @@
         (api/ingest! sess 'lz.mid
                      (str "(ns lz.mid (:require [lz.pure :as p]))\n"
                           "(defn ^:unused-ok twice \"P.\" [x] (p/calc (p/calc x)))\n"))
-        (is (empty? (edit.modules/layering-violations (:store @sess) 'lz.mid :reads)))
-        (is (seq (edit.modules/layering-violations (:store @sess) 'ly.core :pure))))
+        (is (empty? (tiers/layering-violations (:store @sess) 'lz.mid :reads)))
+        (is (seq (tiers/layering-violations (:store @sess) 'ly.core :pure))))
       (finally (api/close! sess)))))
 
 (deftest ^:external full-check-layer-loop-exempts-test-namespaces

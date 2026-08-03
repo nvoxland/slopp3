@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as api] [slopp.project.deps :as api.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as api] [slopp.project.deps :as api.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -894,8 +894,8 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; effect only when the callee is `!`-named.
         layer (vec (for [n nses
                          :when (not (str/ends-with? (str n) "-test"))
-                         :let [t (edit.modules/tier-for st n)]
-                         v (edit.modules/layering-violations st n t)]
+                         :let [t (tiers/tier-for st n)]
+                         v (tiers/layering-violations st n t)]
                      {:ns n :tier t :requires (:requires v) :requires-tier (:tier v)}))
         ;; MODULE layering — the architecture graph, and a DIFFERENT graph
         ;; from the tiers above, so a green there says nothing about this.

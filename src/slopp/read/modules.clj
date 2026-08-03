@@ -22,7 +22,7 @@
   crossed back."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [clojure.set :as set]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [clojure.set :as set] [slopp.edit.tiers :as tiers]))
 
 (def ^:export tiers-resource-path
   "Where a build writes its purity tiers and where `deps_add` looks for them.
@@ -171,7 +171,7 @@
                              :consumers (vec (sort (keep (fn [[k deps]]
                                                            (when (contains? deps m) k))
                                                          manifest))))
-        (not module?) (assoc :tier   (modules/tier-for st (symbol m))
+        (not module?) (assoc :tier   (tiers/tier-for st (symbol m))
                              :within (modules/module-of (symbol m)))))))
 
 (defn ^:export unused-report
@@ -230,21 +230,21 @@
   Test namespaces are excluded: they exercise effects on purpose and would
   veto every module."
   [store]
-  (let [rank   modules/tier-order
+  (let [rank   tiers/tier-order
         prod   (remove #(str/ends-with? (str %) "-test")
                        (keys (:namespaces store)))
         tiers  (:module-tiers store)
         by-mod (group-by modules/module-of prod)]
     {:declared (into (sorted-map)
-                     (map (fn [[m t]] [m (modules/canonical-tier t)]))
+                     (map (fn [[m t]] [m (tiers/canonical-tier t)]))
                      tiers)
      :could-tighten
      (into (sorted-map)
            (keep (fn [[m ns-list]]
-                   (let [declared (modules/canonical-tier (get tiers m :external))
+                   (let [declared (tiers/canonical-tier (get tiers m :external))
                          supports (last (sort-by rank
                                                  (map #(:supports
-                                                        (modules/tier-report store %))
+                                                        (tiers/tier-report store %))
                                                       ns-list)))]
                      (when (< (rank supports) (rank declared))
                        [m {:declared declared :supports supports}]))))

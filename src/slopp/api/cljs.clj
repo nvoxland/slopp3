@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.build :as build] [slopp.ops.external :as external] [slopp.ops.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.ops.engine :as session] [clojure.java.io :as io] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client]))
+            [slopp.store.render :as render] [slopp.build :as build] [slopp.ops.external :as external] [slopp.ops.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.ops.engine :as session] [clojure.java.io :as io] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client] [slopp.edit.web :as web]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -248,7 +248,7 @@
                     :request  (if (#{:post :put :patch} method) req {:kind :none})
                     :response resp})))))
    {:wrappers [] :problems []}
-   (edit.modules/web-endpoint-rows store)))
+   (web/web-endpoint-rows store)))
 
 (defn ^:private schema-form
   "The cljs code for a resolved schema ref: the fully-qualified var symbol (a
@@ -831,7 +831,7 @@
              ;; record the contract fingerprint so the done-advisory can detect
              ;; endpoint drift and nudge a regenerate (the "explicit" safety net)
              (first (store/record-config-put s2 "client" :manifest "generated-sig"
-                                             (edit.modules/client-signature st0)))))
+                                             (web/client-signature st0)))))
          [target])
         (let [recompiled (maybe-recompile-client! session target)
               others     (other-generated-clients (:store @session) target)]

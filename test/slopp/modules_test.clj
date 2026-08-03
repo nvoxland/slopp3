@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -327,27 +327,27 @@
                            "app.core" tier)))]
     (testing "an undeclared namespace (:external default) gates nothing"
       (let [cand (store/ingest (store/empty-store) 'app.core eff-src)]
-        (is (nil? (modules/tier-refusal cand 'app.core 'tick!)))))
+        (is (nil? (tiers/tier-refusal cand 'app.core 'tick!)))))
     (testing ":pure refuses a form that reaches a mutation, with teaching"
       (let [t (at eff-src :pure)]
-        (is (re-find #":pure" (str (modules/tier-refusal t 'app.core 'tick!))))
+        (is (re-find #":pure" (str (tiers/tier-refusal t 'app.core 'tick!))))
         (is (re-find #"functional-core"
-                     (str (modules/tier-refusal t 'app.core 'tick!))))))
+                     (str (tiers/tier-refusal t 'app.core 'tick!))))))
     (testing ":pure allows a pure form"
-      (is (nil? (modules/tier-refusal (at pure-src :pure) 'app.core 'add))))
+      (is (nil? (tiers/tier-refusal (at pure-src :pure) 'app.core 'add))))
     (testing ":external is unrestricted"
-      (is (nil? (modules/tier-refusal (at eff-src :external) 'app.core 'tick!))))
+      (is (nil? (tiers/tier-refusal (at eff-src :external) 'app.core 'tick!))))
     (testing ":internal ALLOWS in-process mutation — a memo is not an effect
               on the world, and treating it as one is what put a memoized
               projection in the same class as a subprocess spawn"
-      (is (nil? (modules/tier-refusal (at eff-src :internal) 'app.core 'tick!))))
+      (is (nil? (tiers/tier-refusal (at eff-src :internal) 'app.core 'tick!))))
     (testing ":internal REFUSES what leaves the process"
-      (let [msg (str (modules/tier-refusal (at io-src :internal) 'app.core 'grab!))]
+      (let [msg (str (tiers/tier-refusal (at io-src :internal) 'app.core 'grab!))]
         (is (re-find #":internal" msg) msg)
         (is (re-find #"(?i)outside this process" msg) msg)))
     (testing "legacy spellings still resolve: :reads => :internal, :effects => :external"
-      (is (nil? (modules/tier-refusal (at eff-src :reads) 'app.core 'tick!)))
-      (is (nil? (modules/tier-refusal (at eff-src :effects) 'app.core 'tick!))))))
+      (is (nil? (tiers/tier-refusal (at eff-src :reads) 'app.core 'tick!)))
+      (is (nil? (tiers/tier-refusal (at eff-src :effects) 'app.core 'tick!))))))
 
 (deftest ^:external module-purity-verb
   (let [sess (external/open!)]
@@ -395,17 +395,17 @@
                  (store/ingest (store/empty-store) 'app.core
                                "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n")
                  "app.core" :pure)]
-      (is (re-find #"functional-core" (str (modules/gate-refusal t 'app.core 'tick!))))))
+      (is (re-find #"functional-core" (str (gates/gate-refusal t 'app.core 'tick!))))))
   (testing "it catches a module-visibility violation (module gate is registered)"
     (let [base (store/ingest (store/empty-store) 'a.b.impl
                              "(ns a.b.impl)\n\n(defn hidden \"H.\" [x] x)\n")
           cand (store/ingest base 'x.y
                              "(ns x.y)\n\n(defn f \"F.\" [v] (a.b.impl/hidden v))\n")]
-      (is (re-find #"package-private" (str (modules/gate-refusal cand 'x.y 'f))))))
+      (is (re-find #"package-private" (str (gates/gate-refusal cand 'x.y 'f))))))
   (testing "clean form → nil"
     (let [cand (store/ingest (store/empty-store) 'app.core
                              "(ns app.core)\n\n(defn add \"A.\" [x y] (+ x y))\n")]
-      (is (nil? (modules/gate-refusal cand 'app.core 'add))))))
+      (is (nil? (gates/gate-refusal cand 'app.core 'add))))))
 
 (deftest schema-required-gate
   (let [ext-noschema  "(ns app.core)\n\n(defn handle \"H.\" [{:keys [x]}] x)\n"
@@ -487,15 +487,15 @@
 (deftest rule-severity-reads-per-store-config
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
     (testing "no override → the passed default"
-      (is (= :refuse (modules/rule-severity s0 'module-refusal :refuse)))
-      (is (= :advisory (modules/rule-severity s0 :key-typos :advisory))))
+      (is (= :refuse (gates/rule-severity s0 'module-refusal :refuse)))
+      (is (= :advisory (gates/rule-severity s0 :key-typos :advisory))))
     (testing "the rules config file overrides per rule; the key coerces symbol/keyword/string"
       (let [s (first (store/record-config-put s0 "rules" :manifest "schema-refusal" "off"))]
-        (is (= :off (modules/rule-severity s 'schema-refusal :refuse)))
-        (is (= :off (modules/rule-severity s :schema-refusal :refuse)))
-        (is (= :off (modules/rule-severity s "schema-refusal" :refuse)))
+        (is (= :off (gates/rule-severity s 'schema-refusal :refuse)))
+        (is (= :off (gates/rule-severity s :schema-refusal :refuse)))
+        (is (= :off (gates/rule-severity s "schema-refusal" :refuse)))
         (testing "an un-overridden rule keeps its default"
-          (is (= :refuse (modules/rule-severity s 'module-refusal :refuse))))))))
+          (is (= :refuse (gates/rule-severity s 'module-refusal :refuse))))))))
 
 (deftest gate-refusal-honors-off-severity
   (let [[t _] (store/record-module-tier
@@ -503,13 +503,13 @@
                              "(ns app.core)\n\n(defn tick! \"T.\" [a] (swap! a inc))\n")
                "app.core" :pure)]
     (testing "the tier gate fires by default"
-      (is (re-find #"functional-core" (str (modules/gate-refusal t 'app.core 'tick!)))))
+      (is (re-find #"functional-core" (str (gates/gate-refusal t 'app.core 'tick!)))))
     (testing "dialing tier-refusal :off in the rules config skips it (per-store severity)"
       (let [off (first (store/record-config-put t "rules" :manifest "tier-refusal" "off"))]
-        (is (nil? (modules/gate-refusal off 'app.core 'tick!)))))
+        (is (nil? (gates/gate-refusal off 'app.core 'tick!)))))
     (testing "an unrelated rule dialed :off leaves the tier gate firing"
       (let [other (first (store/record-config-put t "rules" :manifest "schema-refusal" "off"))]
-        (is (re-find #"functional-core" (str (modules/gate-refusal other 'app.core 'tick!))))))))
+        (is (re-find #"functional-core" (str (gates/gate-refusal other 'app.core 'tick!))))))))
 
 (deftest namespaced-keys-gate
   (let [bare      "(ns app.core)\n\n(defn handle \"H.\" [{:keys [id]}] id)\n"
@@ -560,27 +560,27 @@
       (let [[t _] (store/record-module-tier
                    (store/ingest (store/empty-store) 'app.core rand-src)
                    "app.core" :pure)]
-        (is (re-find #"(?i)determinis" (str (modules/tier-refusal t 'app.core 'roll))))))
+        (is (re-find #"(?i)determinis" (str (tiers/tier-refusal t 'app.core 'roll))))))
     (testing ":pure still allows a referentially-transparent form"
       (let [[t _] (store/record-module-tier
                    (store/ingest (store/empty-store) 'app.core pure-src)
                    "app.core" :pure)]
-        (is (nil? (modules/tier-refusal t 'app.core 'add)))))
+        (is (nil? (tiers/tier-refusal t 'app.core 'add)))))
     (testing ":reads tolerates non-determinism (rand is not a mutation)"
       (let [[t _] (store/record-module-tier
                    (store/ingest (store/empty-store) 'app.core rand-src)
                    "app.core" :reads)]
-        (is (nil? (modules/tier-refusal t 'app.core 'roll)))))))
+        (is (nil? (tiers/tier-refusal t 'app.core 'roll)))))))
 
 (deftest rule-severity-coerces-and-validates
   (let [s0   (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
         with (fn [v] (first (store/record-config-put s0 "rules" :manifest "schema-refusal" v)))]
     (testing "a leading colon is tolerated — ':off' and 'off' both disable"
-      (is (= :off (modules/rule-severity (with ":off") 'schema-refusal :refuse)))
-      (is (= :off (modules/rule-severity (with "off") 'schema-refusal :refuse))))
+      (is (= :off (gates/rule-severity (with ":off") 'schema-refusal :refuse)))
+      (is (= :off (gates/rule-severity (with "off") 'schema-refusal :refuse))))
     (testing "an unknown/empty severity falls back to the default, not a junk keyword"
-      (is (= :refuse (modules/rule-severity (with "garbage") 'schema-refusal :refuse)))
-      (is (= :refuse (modules/rule-severity (with "") 'schema-refusal :refuse))))))
+      (is (= :refuse (gates/rule-severity (with "garbage") 'schema-refusal :refuse)))
+      (is (= :refuse (gates/rule-severity (with "") 'schema-refusal :refuse))))))
 
 (deftest gates-inspect-all-arities
   (let [multi "(ns app.core)\n\n(defn handle \"H.\" ([x] x) ([{:keys [id]} y] id))\n"
@@ -604,13 +604,13 @@
                "app.core" :pure)
         adv (first (store/record-config-put t "rules" :manifest "tier-refusal" "advisory"))]
     (testing "an :advisory-dialed write gate does NOT block"
-      (is (nil? (modules/gate-refusal adv 'app.core 'tick!)))
-      (is (nil? (:refuse (modules/gate-check adv 'app.core 'tick!)))))
+      (is (nil? (gates/gate-refusal adv 'app.core 'tick!)))
+      (is (nil? (:refuse (gates/gate-check adv 'app.core 'tick!)))))
     (testing "but its teaching surfaces via gate-check :advisories (warn-but-proceed)"
       (is (re-find #"functional-core"
-                   (str (first (:advisories (modules/gate-check adv 'app.core 'tick!)))))))
+                   (str (first (:advisories (gates/gate-check adv 'app.core 'tick!)))))))
     (testing "a refuse-grade gate blocks and is not an advisory"
-      (let [gc (modules/gate-check t 'app.core 'tick!)]
+      (let [gc (gates/gate-check t 'app.core 'tick!)]
         (is (re-find #"functional-core" (str (:refuse gc))))
         (is (empty? (:advisories gc)))))))
 
@@ -694,19 +694,19 @@
   ;; It is now declared on the gate itself via ^{:rule/applies-to :production},
   ;; so there is ONE answer and both surfaces read it.
   (testing "every write gate declares its applicability"
-    (doseq [g modules/per-form-write-gates]
+    (doseq [g gates/per-form-write-gates]
       (is (contains? #{:all :production} (:rule/applies-to (meta g) :all))
           (str (:name (meta g)) " must declare :rule/applies-to :all or"
                " :production — leaving it implicit is how two surfaces"
                " disagreed about tests"))))
   (testing "the purity gate is production-only, and says so in one place"
-    (is (= :production (:rule/applies-to (meta #'modules/tier-refusal)))))
+    (is (= :production (:rule/applies-to (meta #'tiers/tier-refusal)))))
   (testing "and the report agrees with the gate by construction"
     (let [sess (external/open!)]
       (try
         (api/ingest! sess 'ra.core "(ns ra.core)\n(defn add [x y] (+ x y))\n")
         (api/ingest! sess 'ra.core-test "(ns ra.core-test)\n(defn setup! [f] (slurp f))\n")
-        (is (= :pure (:supports (modules/tier-report (:store @sess) 'ra.core)))
+        (is (= :pure (:supports (tiers/tier-report (:store @sess) 'ra.core)))
             "the effectful TEST namespace must not veto the module's tier")
         (finally (api/close! sess))))))
 
@@ -759,15 +759,15 @@
                      "app.core" tier)))]
     (testing ":pure refuses a form that reaches console IO (println is an effect)"
       (let [t (at "(ns app.core)\n\n(defn shout \"S.\" [x] (println x))\n" :pure)]
-        (is (modules/tier-refusal t 'app.core 'shout)
+        (is (tiers/tier-refusal t 'app.core 'shout)
             "println breaks referential transparency but entered :pure")))
     (testing ":pure refuses a form that reaches add-watch (registry mutation)"
       (let [t (at "(ns app.core)\n\n(defn spy \"S.\" [a] (add-watch a :k identity))\n" :pure)]
-        (is (modules/tier-refusal t 'app.core 'spy)
+        (is (tiers/tier-refusal t 'app.core 'spy)
             "add-watch mutates the watch registry but entered :pure")))
     (testing ":internal STILL allows println (in-process, capturable)"
       (let [tp (at "(ns app.core)\n\n(defn shout \"S.\" [x] (println x))\n" :internal)]
-        (is (nil? (modules/tier-refusal tp 'app.core 'shout)))))))
+        (is (nil? (tiers/tier-refusal tp 'app.core 'shout)))))))
 
 (deftest late-ref-into-the-shell-is-a-layering-violation
   ;; the dialect gate ROUTES agents to (store/late-ref 'ns/name) to break a
@@ -784,12 +784,12 @@
                (store/record-module-tier "app.io" :external) first
                (store/record-module-tier "app.core" :pure) first)]
     (testing "layering flags a late-ref from a non-external ns into an :external one"
-      (let [v (modules/layering-violations st 'app.core :pure)]
+      (let [v (tiers/layering-violations st 'app.core :pure)]
         (is (some #(= 'app.io (:requires %)) v)
             (str "late-ref into the shell slipped past layering: " (pr-str v)))))
     (testing "a late-ref BETWEEN external namespaces is fine (both shell)"
       (let [st2 (first (store/record-module-tier st "app.core" :external))]
-        (is (empty? (modules/layering-violations st2 'app.core :external)))))))
+        (is (empty? (tiers/layering-violations st2 'app.core :external)))))))
 
 (deftest ^:external module-platforms-surface-in-query-depends
   (let [sess (external/open!)]
@@ -827,20 +827,20 @@
 
 (deftest rule-applies-to-platform?-scopes-by-target
   (testing ":everywhere fires on every platform"
-    (is (modules/rule-applies-to-platform? :everywhere :jvm))
-    (is (modules/rule-applies-to-platform? :everywhere :cljs))
-    (is (modules/rule-applies-to-platform? :everywhere :cljc)))
+    (is (gates/rule-applies-to-platform? :everywhere :jvm))
+    (is (gates/rule-applies-to-platform? :everywhere :cljs))
+    (is (gates/rule-applies-to-platform? :everywhere :cljc)))
   (testing ":clojure fires on :jvm and :cljc, not :cljs"
-    (is (modules/rule-applies-to-platform? :clojure :jvm))
-    (is (modules/rule-applies-to-platform? :clojure :cljc))
-    (is (not (modules/rule-applies-to-platform? :clojure :cljs))))
+    (is (gates/rule-applies-to-platform? :clojure :jvm))
+    (is (gates/rule-applies-to-platform? :clojure :cljc))
+    (is (not (gates/rule-applies-to-platform? :clojure :cljs))))
   (testing ":clojurescript fires on :cljs and :cljc, not :jvm"
-    (is (modules/rule-applies-to-platform? :clojurescript :cljs))
-    (is (modules/rule-applies-to-platform? :clojurescript :cljc))
-    (is (not (modules/rule-applies-to-platform? :clojurescript :jvm))))
+    (is (gates/rule-applies-to-platform? :clojurescript :cljs))
+    (is (gates/rule-applies-to-platform? :clojurescript :cljc))
+    (is (not (gates/rule-applies-to-platform? :clojurescript :jvm))))
   (testing "the load-bearing case: a :cljc form is checked by BOTH worlds"
-    (is (modules/rule-applies-to-platform? :clojure :cljc))
-    (is (modules/rule-applies-to-platform? :clojurescript :cljc))))
+    (is (gates/rule-applies-to-platform? :clojure :cljc))
+    (is (gates/rule-applies-to-platform? :clojurescript :cljc))))
 
 (defn ^{:rule/severity :advisory} fixture-advisory-gate
   "Test fixture: a write gate that declares its OWN default severity as
@@ -863,9 +863,9 @@
 (deftest write-gate-declares-its-own-default-severity
   (let [t (store/ingest (store/empty-store) 'app.core
                         "(ns app.core)\n\n(defn f \"D.\" [x] x)\n")]
-    (with-redefs [modules/per-form-write-gates [#'fixture-advisory-gate
+    (with-redefs [gates/per-form-write-gates [#'fixture-advisory-gate
                                                 #'fixture-refuse-gate-a]]
-      (let [gc (modules/gate-check t 'app.core 'f)]
+      (let [gc (gates/gate-check t 'app.core 'f)]
         (testing "the gate's own :rule/severity is the default — no dial needed"
           (is (= ["fixture-advisory teaching"] (:advisories gc))))
         (testing "an undeclared gate still defaults to :refuse"
@@ -873,29 +873,29 @@
     (testing "a per-store dial still WINS over the declared default"
       (let [up (first (store/record-config-put
                        t "rules" :manifest "fixture-advisory-gate" "refuse"))]
-        (with-redefs [modules/per-form-write-gates [#'fixture-advisory-gate]]
+        (with-redefs [gates/per-form-write-gates [#'fixture-advisory-gate]]
           (is (= "fixture-advisory teaching"
-                 (:refuse (modules/gate-check up 'app.core 'f)))))))))
+                 (:refuse (gates/gate-check up 'app.core 'f)))))))))
 
 (deftest stacked-gates-teach-every-refusal-at-once
   (let [t (store/ingest (store/empty-store) 'app.core
                         "(ns app.core)\n\n(defn f \"D.\" [x] x)\n")]
-    (with-redefs [modules/per-form-write-gates [#'fixture-refuse-gate-a
+    (with-redefs [gates/per-form-write-gates [#'fixture-refuse-gate-a
                                                 #'fixture-refuse-gate-b]]
       (testing "gate-check keeps EVERY refuse-grade teaching, not just the first"
         (is (= ["fixture-refuse-a teaching" "fixture-refuse-b teaching"]
-               (:refusals (modules/gate-check t 'app.core 'f)))))
+               (:refusals (gates/gate-check t 'app.core 'f)))))
       (testing ":refuse stays the first teaching (the existing shape)"
         (is (= "fixture-refuse-a teaching"
-               (:refuse (modules/gate-check t 'app.core 'f)))))
+               (:refuse (gates/gate-check t 'app.core 'f)))))
       (testing "the blocking message carries the others so ONE resend satisfies both"
-        (let [msg (modules/gate-refusal t 'app.core 'f)]
+        (let [msg (gates/gate-refusal t 'app.core 'f)]
           (is (re-find #"fixture-refuse-a teaching" msg))
           (is (re-find #"fixture-refuse-b teaching" msg))
           (is (re-find #"(?i)also pending" msg)))))
     (testing "a lone refusal reads exactly as before — no 'also pending' noise"
-      (with-redefs [modules/per-form-write-gates [#'fixture-refuse-gate-a]]
-        (is (= "fixture-refuse-a teaching" (modules/gate-refusal t 'app.core 'f)))))))
+      (with-redefs [gates/per-form-write-gates [#'fixture-refuse-gate-a]]
+        (is (= "fixture-refuse-a teaching" (gates/gate-refusal t 'app.core 'f)))))))
 
 (deftest ^:external module-extract-lands-exports-renames-and-edges-as-one-intent
   ;; The regroup a component restructure repeats per component. me.helper goes
@@ -1126,11 +1126,11 @@
                (store/ingest 'tg.core.deep "(ns tg.core.deep)\n(defn g \"G.\" [] 2)\n")
                (as-> s (first (store/record-module-tier s "tg.core" :external)))
                (as-> s (first (store/record-module-tier s "tg.core.deep" :pure))))]
-    (is (= :pure (modules/tier-for st 'tg.core.deep))
+    (is (= :pure (tiers/tier-for st 'tg.core.deep))
         "the deep namespace's own declaration is the most specific")
-    (is (= :pure (:tier (modules/tier-report st 'tg.core.deep)))
+    (is (= :pure (:tier (tiers/tier-report st 'tg.core.deep)))
         "the report must name the tier that GOVERNS, from the one producer")
-    (is (= :external (:tier (modules/tier-report st 'tg.core)))
+    (is (= :external (:tier (tiers/tier-report st 'tg.core)))
         "and the module's own declaration still governs the module namespace")))
 
 (deftest ^:external a-tier-or-platform-declaration-can-be-RETIRED

@@ -12,7 +12,7 @@
 (defn ^:export ^:legacy-ok canonical-tier
   "Canonical spelling of a purity tier: the retired :reads/:effects map to
   :internal/:external (D-tiers); canonical spellings pass through. THE one
-  mapping — slopp.edit.modules/canonical-tier delegates here, and the
+  mapping — slopp.edit.tiers/canonical-tier delegates here, and the
   :module-tier fold plus the db load normalize through it, so fold STATE can
   no longer carry retired vocabulary."
   [tier]

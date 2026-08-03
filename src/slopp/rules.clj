@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.rules.schema :as schema]
             [slopp.rules.keywords :as attrs]
-            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as api.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers]))
+            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as api.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.web :as web] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -188,12 +188,12 @@
                              (filter #(and (= :module-tier (:op %))
                                            (= m (:module %))))
                              last :tier))
-        looser? (fn [t was] (> (get edit.modules/tier-order t 2)
-                               (get edit.modules/tier-order (or was t) 2)))]
+        looser? (fn [t was] (> (get tiers/tier-order t 2)
+                               (get tiers/tier-order (or was t) 2)))]
     (vec (for [d recent
                :when (= :module-tier (:op d))
-               :let [t   (edit.modules/canonical-tier (:tier d))
-                     was (edit.modules/canonical-tier (prior (:module d)))]
+               :let [t   (tiers/canonical-tier (:tier d))
+                     was (tiers/canonical-tier (prior (:module d)))]
                ;; a FIRST declaration fires too. An undeclared namespace is already
                ;; effectively :external, so this is not a loosening — but writing
                ;; the declaration down IS the decision, and the decision is what
@@ -362,7 +362,7 @@
   (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
     (vec (keep (fn [fid]
                  (when-let [e (store/form-by-id st* fid)]
-                   (let [m (edit.modules/web-name-meta e)]
+                   (let [m (web/web-name-meta e)]
                      (when (and (:web/path m)
                                 (= :public (:web/auth m))
                                 (seq (:web/effects m)))
@@ -397,7 +397,7 @@
    signature and clears it."
   [_session store _changed]
   (let [recorded (get-in store [:config "client" :values "generated-sig"])]
-    (when (and recorded (not= recorded (edit.modules/client-signature store)))
+    (when (and recorded (not= recorded (web/client-signature store)))
       [{:stale-client true
         :teach (str "the generated typed client is out of date — an endpoint or its"
                     " :web/request/:web/response changed since generate_client last"
@@ -411,7 +411,7 @@
    structured (vector) inline schemas count — a bare keyword like :map is too
    trivial to extract. Fires once per duplicated shape."
   [_session store _changed]
-  (let [inlines (for [{:keys [ns name meta]} (edit.modules/web-endpoint-rows store)
+  (let [inlines (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
                       k     [:web/request :web/response]
                       :let  [v (get meta k)]
                       :when (vector? v)]
@@ -530,11 +530,11 @@
                                      (contains? (:namespaces store) %)
                                      (not (str/ends-with? (str %) "-test")))
                                moved))
-               :let [t (edit.modules/tier-for store n)]
+               :let [t (tiers/tier-for store n)]
                :when (not= :external t)
-               :let [r (edit.modules/tier-report store n)]
-               :when (> (get edit.modules/tier-order (:supports r) 2)
-                        (get edit.modules/tier-order t 2))]
+               :let [r (tiers/tier-report store n)]
+               :when (> (get tiers/tier-order (:supports r) 2)
+                        (get tiers/tier-order t 2))]
            {:ns n :tier t :supports (:supports r) :blocking (:blocking r)
             :why (str n " moved under a :" (name t) " prefix this episode and its"
                       " forms only support :" (name (:supports r))
@@ -1164,7 +1164,7 @@
   on\" is a second answer waiting to happen: the whole-store sweep reports which
   rules it ran, and that list has to be the same list the runner actually ran."
   [st* {:keys [key severity]}]
-  (not= :off (edit.modules/rule-severity st* key severity)))
+  (not= :off (gates/rule-severity st* key severity)))
 
 (defn- run-checks
   "Run `entries`' `:check`s over `changed` and return `{:key findings}` for the
@@ -1250,7 +1250,7 @@
                                                   (name key) "\" value \"advisory\"}"
                                                   " asks it again")
                                              (str sweep))
-                                     :severity (edit.modules/rule-severity
+                                     :severity (gates/rule-severity
                                                 st* key (:severity e))})))
                        done-advisories)
      :findings   (run-checks session st* ids swept)}))
@@ -1274,7 +1274,7 @@
    `run-done-advisories!`."
   [store advisories]
   (boolean (some (fn [{:keys [key severity]}]
-                   (and (= :error (edit.modules/rule-severity store key severity))
+                   (and (= :error (gates/rule-severity store key severity))
                         (some #(not= :info (:severity %)) (get advisories key))))
                  done-advisories)))
 
@@ -1289,7 +1289,7 @@
    namespace is `:external`: the data flows out to the leaf, the leaf never
    reaches into the shell."
   []
-  (merge (edit.modules/write-gate-severities)
+  (merge (gates/write-gate-severities)
          (into {} (map (juxt :key :severity)) done-advisories)))
 
 (defn ^:export query-rules
@@ -1313,7 +1313,7 @@
   [session]
   (let [st (:store @session)]
     (mapv (fn [{:keys [rule grain severity] :as r}]
-            (let [eff (edit.modules/rule-severity st rule severity)]
+            (let [eff (gates/rule-severity st rule severity)]
               (assoc r :severity
                      (if (= grain :form)
                        (case eff (:off :advisory) eff :refuse)

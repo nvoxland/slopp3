@@ -20,7 +20,7 @@
   keep those apart, and each distinction was added because collapsing it made a
   report state something false. Prefer adding a category over widening one."
   (:require [slopp.project.capabilities :as capabilities]
-            [slopp.edit.modules :as modules] [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n]))
+            [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.edit.web :as web]))
 
 (defn endpoints
   "Every declared endpoint in the store — a `:web/path` form's route row:
@@ -53,14 +53,14 @@
            :web/spa   (:web/spa meta)
            :schema?   (contains? meta :web/response)
            :effectful? (boolean (:web/effectful meta))})
-        (modules/web-endpoint-rows store)))
+        (web/web-endpoint-rows store)))
 
 (defn performers
   "The app-defined performer vocabulary for `marker-key` (`:web/effect` or
   `:web/read`): {kind → performer qsym}. Delegates to the SAME derivation
   the undeclared-effect gate checks (`modules/web-performers`)."
   [store marker-key]
-  (modules/web-performers store marker-key))
+  (web/web-performers store marker-key))
 
 (def ^:private url-attrs
   "Hiccup tag → the attributes that name a URL ON THAT ELEMENT, per HTML.
@@ -312,12 +312,12 @@
   destructuring `:web/deps`, and whether anything claims to build it — so
   \"this store takes `:web/deps` and declares no builder\" refuses at the WRITE
   rather than 500ing in a browser. That gate is
-  `slopp.edit.modules/web-undeclared-context`, and it is why this is a marker;
+  `slopp.edit.web/web-undeclared-context`, and it is why this is a marker;
   a capability is a string in config, checkable for resolvability at boot,
   which is later and weaker, and it splits the declaration from the thing
   declared.
 
-  The SCAN lives in `slopp.edit.modules/web-context-builders` — shared with
+  The SCAN lives in `slopp.edit.web/web-context-builders` — shared with
   the gate, which asks whether ANY builder exists where this asks for THE one.
   What is here is the singleton POLICY, and only that.
 
@@ -331,7 +331,7 @@
   silently is how an app ends up running on deps it did not mean, and the
   failure would surface as a missing key three layers away."
   [store]
-  (let [found (modules/web-context-builders store)]
+  (let [found (web/web-context-builders store)]
     (when (seq found)
       (when (next found)
         (throw (ex-info (str "a store declares exactly ONE ^{:web/context true}"

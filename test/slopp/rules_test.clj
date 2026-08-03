@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as api] [slopp.edit.modules :as edit.modules] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as api] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -67,7 +67,7 @@
 
 (deftest catalog-covers-every-registered-rule
   (let [cataloged   (set (map :rule catalog/rule-catalog))
-        write-gates (set (edit.modules/write-gate-names))
+        write-gates (set (gates/write-gate-names))
         done-keys   (set (map :key rules/done-advisories))]
     (testing "every entry carries the declarative shape (severity joined in by rule-rows)"
       (is (every? (fn [r] (and (:rule r) (:grain r) (:severity r) (:escape r) (:teach r)))
@@ -388,7 +388,7 @@
                                         (str "(ns st.api)\n\n"
                                              "(defn ^{:web/method :post :web/path \"/o\""
                                              " :web/request st.c/a :web/response " resp "} make [r] r)\n"))))
-        old-sig (edit.modules/client-signature (mk "st.c/a"))]
+        old-sig (web/client-signature (mk "st.c/a"))]
     (testing "a recorded sig that no longer matches the current endpoints fires the advisory"
       (let [drifted (first (store/record-config-put (mk "st.c/b") "client" :manifest
                                                     "generated-sig" old-sig))]
@@ -396,7 +396,7 @@
     (testing "a matching sig is quiet"
       (let [fresh-store (mk "st.c/b")
             fresh (first (store/record-config-put fresh-store "client" :manifest
-                                                  "generated-sig" (edit.modules/client-signature fresh-store)))]
+                                                  "generated-sig" (web/client-signature fresh-store)))]
         (is (empty? (rules/client-stale-check nil fresh nil)))))
     (testing "never generated (no recorded sig) → never nags"
       (is (empty? (rules/client-stale-check nil (mk "st.c/a") nil))))))
@@ -436,7 +436,7 @@
       (is (every? :severity rows)
           (str "rules with no declared default: " (mapv :rule (remove :severity rows)))))
     (testing "a write gate's declared default IS the one gate-check enforces"
-      (let [gates (edit.modules/write-gate-severities)]
+      (let [gates (gates/write-gate-severities)]
         (is (= gates (select-keys declared (keys gates))))))
     (testing "a done advisory's declared default IS the one status-flipping reads"
       (is (every? (fn [{:keys [key severity]}] (= severity (get declared key)))

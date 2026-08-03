@@ -9,7 +9,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.store.render :as render]
-            [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
+            [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.edit.gates :as gates]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -1056,7 +1056,7 @@
         (if-let [[store' delta] (store/replace-node store ns-sym form-name node
                                                     :prompt prompt :agent agent)]
           (let [{:keys [refuse advisories]}
-                (modules/gate-check store' ns-sym (or (store/form-symbol node) form-name))
+                (gates/gate-check store' ns-sym (or (store/form-symbol node) form-name))
                 drift (when old (contract-drift old node))]
             (if refuse
               {:error refuse}
