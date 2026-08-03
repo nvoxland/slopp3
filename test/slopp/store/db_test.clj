@@ -53,14 +53,14 @@
         target (str "(ns demo\n  (:require [clojure.test :refer [deftest is]]))\n"
                     "(defn add [x y] (+ x y))\n"
                     "(deftest t (is (= 6 (add 2 3))))\n")
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'demo target)
       (api/edit-replace! sess 'demo 'add "(defn add [x y] (+ x y 1))" :prompt "off-by-one")
       (api/test-run! sess 'demo)
       (finally (api/close! sess)))
     ;; process "restarts": a brand-new session over the same dir
-    (let [sess2 (external/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "source is reconstructed from the db"
           (is (re-find #"\(\+ x y 1\)" (query/query-source sess2 'demo))))
@@ -98,7 +98,7 @@
   ;; which is what the slopp-setup skill has always promised.
   (let [dir  (temp-dir)
         sdir (io/file dir ".slopp")
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (testing "opening a session on a storeless dir writes nothing to disk"
         (is (not (.exists sdir))
@@ -108,7 +108,7 @@
         (is (.exists (io/file sdir "store.db"))))
       (finally (api/close! sess)))
     (testing "and that write is durable — a fresh session reads it back"
-      (let [sess2 (external/open! {:slopp.api/dir dir})]
+      (let [sess2 (external/open! {:slopp.ops/dir dir})]
         (try
           (is (re-find #"\(\+ x y\)" (query/query-source sess2 'demo)))
           (finally (api/close! sess2)))))))

@@ -279,7 +279,7 @@
             "external libs are not store namespaces — zero false positives")))
     (testing "a qualified KEYWORD is not a var reference and must not fire"
       ;; measured on slopp's own store: 4 of the first 10 hits were prose
-      ;; naming :slopp.api/dir-style option keys. A rule that cries wolf is a
+      ;; naming :slopp.ops/dir-style option keys. A rule that cries wolf is a
       ;; rule nobody reads.
       (let [st4 (-> (store/empty-store)
                     (store/ingest 'sr.kw

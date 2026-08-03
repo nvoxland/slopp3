@@ -232,7 +232,7 @@
   (let [nses (:namespaces st*)
         ;; a qualified symbol: at least one dot in the namespace, so bare
         ;; `foo/bar` aliases and prose like `and/or` never match
-        ;; the lookbehind excludes a qualified KEYWORD (:slopp.api/dir) — prose
+        ;; the lookbehind excludes a qualified KEYWORD (:slopp.ops/dir) — prose
         ;; names those constantly and they are not vars. A rule that cries wolf
         ;; is a rule nobody reads, so precision comes before reach here.
         pat  #"(?<![:\w.-])([a-z][a-zA-Z0-9.-]*\.[a-zA-Z0-9.-]+)/([a-zA-Z0-9*+!?<>=_-]+)"]

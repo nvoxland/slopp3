@@ -166,7 +166,7 @@
   ;; OUT-OF-BAND; the agent's server absorbs it via journal sync (m5b)
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-turn-" (System/nanoTime))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'ep.core seed)
       ;; simulate the UserPromptSubmit hook (separate process in production)
@@ -225,7 +225,7 @@
 (deftest ^:external hook-json-mode-records-the-exact-user-words    ; the real hook shape
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-hook-" (System/nanoTime))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'ep.core seed)
       ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
@@ -354,7 +354,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-findings"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'fr.core
                    (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -366,7 +366,7 @@
       (let [r (external/done! sess :label "left red")]
         (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str r)))
       (finally (api/close! sess)))
-    (let [sess2 (external/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (let [b (api/session-brief sess2)]
           (is (= "left red" (get-in b [:last-done :label])) (pr-str (:last-done b)))

@@ -65,7 +65,7 @@
 (deftest ^:external rename-across-namespaces-and-restart
   (let [dir  (str (Files/createTempDirectory "slopp-rename-test"
                                              (make-array FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'liba "(ns liba)\n(defn helper [x] (* x 2))\n")
       (api/module-dep! sess "libb" "liba" :prompt "fixture edge")
@@ -80,7 +80,7 @@
           (is (= [10] (api/query-eval sess "(libb/use-it 5)")))))
       (finally (api/close! sess)))
     ;; a fresh session over the same dir: the rename persisted in both nses
-    (let [sess2 (external/open! {:slopp.api/dir dir})]
+    (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (is (re-find #"defn twice" (query/query-source sess2 'liba)))
         (is (re-find #"la/twice" (query/query-source sess2 'libb)))
@@ -104,13 +104,13 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-nsren"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        s1  (external/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! s1 'nr.old "(ns nr.old)\n(defn f [x] x)\n")
       (let [r (api/ns-rename! s1 "nr.old" "nr.new")]
         (is (nil? (:error r)) (pr-str r)))
       (finally (api/close! s1)))
-    (let [s2 (external/open! {:slopp.api/dir dir})]
+    (let [s2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "the rename PERSISTED — the old ns does not resurrect (eval9 sweep found both alive)"
           (is (nil? (get-in (:store @s2) [:namespaces 'nr.old]))

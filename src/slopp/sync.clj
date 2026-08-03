@@ -139,7 +139,7 @@
               (if (empty? sources)
                 {:error (str "nothing to ingest at " url
                              " — no src/**.clj or test/**.clj on " used)}
-                (let [sess (external/open! {:slopp.api/dir dir})]
+                (let [sess (external/open! {:slopp.ops/dir dir})]
                   (try
                     (doseq [[lib coord] (sort-by (comp str key) deps)]
                       (let [r (api/deps-add! sess lib coord :agent agent
@@ -650,10 +650,10 @@
             "clone"  (clone! a b)
             "import" (import! (or a "."))
             "push"   (push! a :url b)
-            "pull"   (let [sess (external/open! {:slopp.api/dir a})]
+            "pull"   (let [sess (external/open! {:slopp.ops/dir a})]
                        (try (pull! sess)
                             (finally (api/close! sess))))
-            "test"   (let [sess (external/open! {:slopp.api/dir a})]
+            "test"   (let [sess (external/open! {:slopp.ops/dir a})]
                        (try (external/external-test-run! sess)
                             (finally (api/close! sess))))
             ;; The kernel exists as a hand-maintained file AND as a store

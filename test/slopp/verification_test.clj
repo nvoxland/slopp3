@@ -154,13 +154,13 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-trace"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        s1  (external/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! s1 'vdemo target)
       (api/test-run! s1 'vdemo)
       (is (seq (:test-map @s1)))
       (finally (api/close! s1)))
-    (let [s2 (external/open! {:slopp.api/dir dir})]
+    (let [s2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "a fresh session on the same store starts with the trace warm (Q3)"
           (is (= #{'vdemo/add} (get (:test-map @s2) 'vdemo/add-t))
@@ -190,7 +190,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-affected"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'ia.core "(ns ia.core)\n(defn f \"F.\" [x] (inc x))\n")
       (api/ingest! sess 'ia.core-test

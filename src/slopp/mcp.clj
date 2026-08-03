@@ -1335,7 +1335,7 @@
   file:line coordinate, so emitting frames replaced the real diagnostic with a
   guard exception."
   [dir tool arguments]
-  (let [session (external/open! {:slopp.api/dir (str dir)})]
+  (let [session (external/open! {:slopp.ops/dir (str dir)})]
     (swap! session assoc :require-turns? true)
     (try
       (try (call-tool! session {:name tool :arguments arguments})
@@ -1478,13 +1478,13 @@
       (binding [*out* *err*]
         (println (str "slopp: auto-imported " (:namespaces r)
                       " namespaces from the repo's slopp branch")))))
-  (let [session (external/open! (cond-> {:slopp.api/warm-spare? true
+  (let [session (external/open! (cond-> {:slopp.ops/warm-spare? true
                                       ;; boot the image on a background thread
                                       ;; so the MCP handshake completes as soon
                                       ;; as the store loads — a slow/contended
                                       ;; boot no longer races the connect timeout
-                                      :slopp.api/async-image? true}
-                             dir (assoc :slopp.api/dir dir)))]
+                                      :slopp.ops/async-image? true}
+                             dir (assoc :slopp.ops/dir dir)))]
     (swap! session assoc :require-turns? true)   ; real servers enforce turns
     ;; the reviewer UI comes up with the server, always. It serves the LIVE
     ;; session and therefore dies with it — that is the trade that keeps its

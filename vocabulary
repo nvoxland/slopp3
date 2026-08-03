@@ -34,6 +34,12 @@ slopp.api.shape: slopp.rules.shape
 slopp.api.telemetry: slopp.read.telemetry
 slopp.api.testrun: slopp.ops.testrun
 slopp.api.web: slopp.rules.web
+slopp.api/agent-id: slopp.ops/agent-id
+slopp.api/async-image?: slopp.ops/async-image?
+slopp.api/branch-image-ttl-ms: slopp.ops/branch-image-ttl-ms
+slopp.api/dir: slopp.ops/dir
+slopp.api/keys: slopp.ops/keys
+slopp.api/warm-spare?: slopp.ops/warm-spare?
 slopp.bench: slopp.lab
 slopp.bench.benchmark: slopp.lab.benchmark
 slopp.bench.evalseed: slopp.lab.evalseed

@@ -188,7 +188,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-turnhook"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (swap! sess assoc :require-turns? true)
       ;; open! no longer creates .slopp/ just by serving — the store is
@@ -225,8 +225,8 @@
   (let [dir (str (java.nio.file.Files/createTempDirectory
                   "slopp-iso"
                   (make-array java.nio.file.attribute.FileAttribute 0)))
-        sa  (external/open! {:slopp.api/dir dir})
-        sb  (external/open! {:slopp.api/dir dir})]
+        sa  (external/open! {:slopp.ops/dir dir})
+        sb  (external/open! {:slopp.ops/dir dir})]
     (try
       (is (not= (:agent-id @sa) (:agent-id @sb)))
       (call! sa "ns_create" {:ns "iso.a" :source "(ns iso.a)\n(defn fa [] 1)\n"})
@@ -326,7 +326,7 @@
         _    (sh/sh "git" "init" dir)
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (call! sess "ns_create" {:ns "pub.core" :source "(ns pub.core)\n(defn ^:unused-ok f [x] x)\n"})
       (testing "a milestone mirrors into LOCAL git as slopp/<store-branch> (user decision 2026-07-14)"
@@ -345,7 +345,7 @@
         _    (sh/sh "git" "init" dir)
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (call! sess "ns_create" {:ns "al.core" :source "(ns al.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call! sess "commit_point" {:description "first"})
@@ -448,7 +448,7 @@
                     "slopp-oop-b" (make-array java.nio.file.attribute.FileAttribute 0)))
         _     (sh/sh "git" "init" "--bare" barea)
         _     (sh/sh "git" "init" "--bare" bareb)
-        sess  (external/open! {:slopp.api/dir dir})]
+        sess  (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/commit-point! sess "seed" :agent "t")
@@ -471,7 +471,7 @@
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
         _    (sh/sh "git" "init" "--bare" bare)
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (call! sess "ns_create" {:ns "mr.core" :source "(ns mr.core)\n(defn ^:unused-ok f [x] x)\n"})
       (call! sess "commit_point" {:description "first"})
@@ -487,7 +487,7 @@
           (sh/sh "git" "clone" bare dir2)
           (sh/sh "git" "-C" dir2 "checkout" "-q" "-b" "work")
           (is (some? (sync/maybe-auto-import! dir2)) "marker must accept slopp/main")
-          (let [s2 (external/open! {:slopp.api/dir dir2})]
+          (let [s2 (external/open! {:slopp.ops/dir dir2})]
             (try
               (call! s2 "ns_create" {:ns "mr.extra" :source "(ns mr.extra)\n(defn ^:unused-ok g [x] x)\n"})
               (let [r (call! s2 "git_pull" {:branches ["main"] :url bare})]
@@ -501,7 +501,7 @@
             bare2 (str (java.nio.file.Files/createTempDirectory
                         "slopp-nogit-remote" (make-array java.nio.file.attribute.FileAttribute 0)))
             _    (sh/sh "git" "init" "--bare" bare2)
-            s3   (external/open! {:slopp.api/dir d2})]
+            s3   (external/open! {:slopp.ops/dir d2})]
         (try
           (call! s3 "ns_create" {:ns "ng.core" :source "(ns ng.core)\n(defn ^:unused-ok f [x] x)\n"})
           (let [r (call! s3 "commit_point" {:description "no git here"})]
@@ -1024,7 +1024,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-isogreen"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       ;; MIXED tiers: a fast test runs, an external one defers
       (call! sess "ns_create" {:ns "iso.core" :source "(ns iso.core)\n(defn f [] 1)\n"})
@@ -1224,7 +1224,7 @@
         _    (sh/sh "git" "init" dir)
         _    (sh/sh "git" "-C" dir "-c" "user.name=t" "-c" "user.email=t@t"
                     "commit" "--allow-empty" "-m" "root")
-        sess (external/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.ops/dir dir})
         rev  (fn [ref] (clojure.string/trim (:out (sh/sh "git" "-C" dir "rev-parse" ref))))]
     (try
       (call! sess "ns_create" {:ns "bp.core" :source "(ns bp.core)\n(defn ^:unused-ok f [x] x)\n"})
@@ -1461,7 +1461,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-turnrotate"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.ops/dir dir})
         ask! (fn [prompt]
                (spit (io/file dir ".slopp" "pending-intent")
                      (str "{\"session-id\":\"sess-rot\",\"prompt\":\"" prompt "\"}")))
@@ -1684,7 +1684,7 @@
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-retell"
                    (make-array java.nio.file.attribute.FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})
+        sess (external/open! {:slopp.ops/dir dir})
         ask! (fn [prompt]
                (spit (io/file dir ".slopp" "pending-intent")
                      (str "{\"session-id\":\"sess-retell\",\"prompt\":\"" prompt "\"}")))]

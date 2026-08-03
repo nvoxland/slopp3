@@ -102,7 +102,7 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5a-" (System/nanoTime))]
     (try
-      (let [sess (external/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
           (api/ingest! sess 'cc.core seed)
           (let [results (doall
@@ -116,7 +116,7 @@
                 (pr-str (mapv #(select-keys % [:error :conflict]) results))))
           (finally (api/close! sess))))
       ;; the journal is the record: a fresh session sees all four writes
-      (let [sess (external/open! {:slopp.api/dir dir})]
+      (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
           (let [src (query/query-source sess 'cc.core)]
             (doseq [nm '[a b c d]]
@@ -134,11 +134,11 @@
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-heal-" (System/nanoTime))]
     (try
-      (let [a (external/open! {:slopp.api/dir dir})]
+      (let [a (external/open! {:slopp.ops/dir dir})]
         (try
           (api/ingest! a 'ch.core
                        "(ns ch.core)\n(defn ^:unused-ok f \"D.\" [x] :original)\n")
-          (let [b (external/open! {:slopp.api/dir dir})]
+          (let [b (external/open! {:slopp.ops/dir dir})]
             (try
               (let [fired (atom false)
                     r (binding [session/*pre-commit-hook*

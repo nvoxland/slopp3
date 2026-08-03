@@ -129,7 +129,7 @@
 
 (deftest ^:external deps-durable-round-trip-and-branch-inherit
   (let [dir (temp-dir)]
-    (let [sess (external/open! {:slopp.api/dir dir})]
+    (let [sess (external/open! {:slopp.ops/dir dir})]
       (try
         (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
@@ -139,7 +139,7 @@
                  (get (api/deps-list sess) 'org.clojure/data.json))))
         (finally (api/close! sess))))
     (testing "a fresh session over the same dir reloads deps AND its image can use them"
-      (let [sess2 (external/open! {:slopp.api/dir dir})]
+      (let [sess2 (external/open! {:slopp.ops/dir dir})]
         (try
           (is (= {:mvn/version "2.5.0"}
                  (get (api/deps-list sess2) 'org.clojure/data.json)))
@@ -231,7 +231,7 @@
 
 (deftest ^:external build-native-warns-on-missing-metadata
   (let [dir  (temp-dir)
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
@@ -339,7 +339,7 @@
   ;; other code and tests build on, and the host's classpath is not the
   ;; store's data. The WRAPPING is what the agent-facing surface returns.
   (let [dir (temp-dir)
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")

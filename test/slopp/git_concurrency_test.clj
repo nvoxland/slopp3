@@ -24,7 +24,7 @@
 
 (deftest ^:external concurrent-projection-converges
   (let [dir  (temp-dir "slopp-git-conc")
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! sess 'gc.core seed)
       (external/commit-point! sess "v1" :agent "alice")
@@ -72,7 +72,7 @@
   ;; stronger check than the old commit-message prefix — it compares the
   ;; long-lived context to ground truth rather than to a string.
   (let [dir   (temp-dir "slopp-git-foreign")
-        sess1 (external/open! {:slopp.api/dir dir})
+        sess1 (external/open! {:slopp.ops/dir dir})
         ctx   (git/open-ctx! dir)
         tip   (fn [c] (get-in (git/ensure-projected! c) [:refs "main"]))]
     (try
@@ -81,7 +81,7 @@
       (let [tip1 (tip ctx)]
         (is (some? tip1))
         ;; a SECOND session on the same dir — a foreign writer
-        (let [sess2 (external/open! {:slopp.api/dir dir})]
+        (let [sess2 (external/open! {:slopp.ops/dir dir})]
           (try
             (api/edit-replace! sess2 'gc.core 'f "(defn f [x] (+ 10 x))"
                                :prompt "foreign work" :agent "bob")

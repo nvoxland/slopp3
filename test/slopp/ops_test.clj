@@ -277,10 +277,10 @@
   ;; is awaited on first use. Modelled as the real concurrent scenario: a
   ;; second session opens async onto a first session's live store.
   (let [dir (str (System/getProperty "java.io.tmpdir") "/slopp-async-" (System/nanoTime))
-        s1  (external/open! {:slopp.api/dir dir})]
+        s1  (external/open! {:slopp.ops/dir dir})]
     (try
       (api/ingest! s1 'async.core "(ns async.core)\n(defn twice [x] (* 2 x))\n")
-      (let [s (external/open! {:slopp.api/dir dir :slopp.api/async-image? true})]
+      (let [s (external/open! {:slopp.ops/dir dir :slopp.ops/async-image? true})]
         (try
           (testing "async mode arms a ready-promise; the store reads immediately"
             (is (some? (:image-ready @s)) "async mode set a ready-promise")
@@ -421,7 +421,7 @@
   ;; better hiding place.
   (let [dir  (str (Files/createTempDirectory
                    "slopp-health" (make-array FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/create-ns! sess 'health.core :source "(ns health.core)\n\n(defn f \"F.\" [x] x)\n")
       (let [kept   (artifacts/put! dir (.getBytes "referenced\n" "UTF-8")
@@ -453,7 +453,7 @@
                    "slopp-build-miss" (make-array FileAttribute 0)))
         out  (str (Files/createTempDirectory
                    "slopp-build-out" (make-array FileAttribute 0)))
-        sess (external/open! {:slopp.api/dir dir})]
+        sess (external/open! {:slopp.ops/dir dir})]
     (try
       (api/create-ns! sess 'miss.core :source "(ns miss.core)\n\n(defn f \"F.\" [x] x)\n")
       (let [entry (artifacts/put! dir (.getBytes "compiled bytes\n" "UTF-8")
@@ -812,7 +812,7 @@
                 (constantly {"slopp/web.clj"
                              "(ns slopp.web)\n(defn handle! \"H.\" [r] r)\n"})
                 boot/framework-deps (constantly nil)]
-    (let [sess (external/open! {:slopp.api/warm-spare? true})]
+    (let [sess (external/open! {:slopp.ops/warm-spare? true})]
       (try
         (swap! sess update :store store/ingest 'sp.app
                (str "(ns sp.app (:require [slopp.web :as web]))\n"

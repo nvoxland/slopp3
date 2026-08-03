@@ -1272,7 +1272,7 @@ client-deps (merge (:client-deps st) (:client provided))
   whole store — no prose naming a tool that does not exist, every form
   certifying or marked fallback — cannot reach one. The `^:external` tier runs
   in a temp dir that `build!` filled with SOURCE and no `.slopp/store.db`, so
-  `(open! {:slopp.api/dir \".\"})` hands back an EMPTY store, the scan finds
+  `(open! {:slopp.ops/dir \".\"})` hands back an EMPTY store, the scan finds
   nothing, and the guard passes on nothing. `slopp-prose-never-names-a-tool-
   that-does-not-exist` has been green that way since it was written, and
   `root-cause-fix-plan` item 2 has been blocked on exactly this.
@@ -1320,21 +1320,22 @@ client-deps (merge (:client-deps st) (:client provided))
 
 (defn ^:export ^{:live-handle true
         :malli/schema
-        [:=> [:cat [:? [:map
-                        [:slopp.api/dir {:optional true} [:maybe :some]]
-                        [:slopp.api/warm-spare? {:optional true} [:maybe :boolean]]
-                        [:slopp.api/async-image? {:optional true} [:maybe :boolean]]
-                        [:slopp.api/branch-image-ttl-ms {:optional true} [:maybe :int]]
-                        [:slopp.api/agent-id {:optional true} [:maybe :string]]]]]
+        [:=> {:throws [[:map]]}
+         [:cat [:? [:map
+                    [:slopp.ops/dir {:optional true} [:maybe :some]]
+                    [:slopp.ops/warm-spare? {:optional true} [:maybe :boolean]]
+                    [:slopp.ops/async-image? {:optional true} [:maybe :boolean]]
+                    [:slopp.ops/branch-image-ttl-ms {:optional true} [:maybe :int]]
+                    [:slopp.ops/agent-id {:optional true} [:maybe :string]]]]]
          :any]}
   open!
   "Start a session: the owned image + the store — loaded from `<dir>/.slopp/`
-  when `:slopp.api/dir` is given and it has history, empty otherwise.
-  `:slopp.api/warm-spare? true` keeps a spare image warming in the background
-  so restarts are near-instant. `:slopp.api/agent-id` (default:
+  when `:slopp.ops/dir` is given and it has history, empty otherwise.
+  `:slopp.ops/warm-spare? true` keeps a spare image warming in the background
+  so restarts are near-instant. `:slopp.ops/agent-id` (default:
   session-identity) keys every delta/turn/episode this session writes.
 
-  `:slopp.api/async-image? true` returns as soon as the store VALUE is
+  `:slopp.ops/async-image? true` returns as soon as the store VALUE is
   loaded (fast) and boots the image on a BACKGROUND thread — the MCP server
   uses this so its `initialize` handshake completes without waiting for N
   namespaces to load into a child JVM (which, under load, raced the client's
@@ -1343,7 +1344,7 @@ client-deps (merge (:client-deps st) (:client provided))
   boot. The DEFAULT stays synchronous — every existing caller gets a
   fully-loaded image on return, unchanged.
 
-  The option keys are QUALIFIED — `{:slopp.api/dir …}` — and the schema, the
+  The option keys are QUALIFIED — `{:slopp.ops/dir …}` — and the schema, the
   destructure, and every call site agree. (The schema once documented bare
   `:dir` while the destructure required the qualified key, so a caller
   trusting it silently opened an EMPTY store — on the busiest entry point in
@@ -1352,13 +1353,21 @@ client-deps (merge (:client-deps st) (:client provided))
   The `:=>` schema is DOCUMENTATION, not a verified claim: this fn boots a
   JVM, so `analyzer-pure?` excludes it from the generative oracle-check.
 
+  `:throws` is non-empty but SHAPELESS, and both halves are the honest claim.
+  Non-empty because a failed SQLite open or image boot propagates — the catch
+  below releases what came up and rethrows, so a caller must handle it. Shapeless
+  because this fn MINTS no ex-data: what arrives is whatever `db/open!` or
+  `boot-image!` raised, and naming a map of keys here would invent a contract
+  no code upholds. `[]` would be the worse lie of the two — it declares that
+  nothing is signalled by throwing, and nothing checks that here.
+
   The session atom is built FIRST and every resource lands in it as it comes
   up, so the single failure path is `close!` — which is per-resource safe.
   Before this, a throw during the image-load loop abandoned the booted image,
   the warming spare, the reaper timer, and the SQLite connection: the atom
   never reached the caller, so nothing could ever release them."
   ([] (open! {}))
-  ([{:slopp.api/keys [agent-id branch-image-ttl-ms dir warm-spare? async-image?]}]
+  ([{:slopp.ops/keys [agent-id branch-image-ttl-ms dir warm-spare? async-image?]}]
    (let [conn    (when dir (db/open! dir {:create? false}))
          session (atom {:db conn :dir dir :branch "main" :lines {}})]
      (try
