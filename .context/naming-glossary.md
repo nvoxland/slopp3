@@ -56,6 +56,7 @@ and not there is how a rename keeps its blind spot.
 | `slopp.api.branch` | `slopp.ops.branch` | ditto — a line is a view of the delta log, and branch orchestrates store + image + engine to make it one |
 | `slopp.api.done` | `slopp.ops.done` | ditto — the episode boundary is an operation |
 | `slopp.api.review` | `slopp.ops.review` | ditto — whole-codebase triage off the done-point's signals |
+| `:slopp.api/dir`, `/keys`, `/agent-id`, `/warm-spare?`, `/async-image?`, `/branch-image-ttl-ms` | `:slopp.ops/*` | ditto, the tail — `open!`'s option keys, 71 uses. They named module `slopp.api`, which after module 4 is the WEB TOOLING module, so the keys pointed at code with nothing to do with opening a session. NOT dangling, which is why nothing complained: the module still exists. Same class as `:slopp.api.telemetry/calls` above, and the second time a rename's KEYWORD tail outlived its namespace |
 
 ## Removed — what an old record refers to that no longer exists
 
