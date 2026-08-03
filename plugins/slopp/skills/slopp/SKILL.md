@@ -155,6 +155,14 @@ measurably bleed tokens.
    regressions. It is there so a whole-store green is not read as ruling out
    what it never examined; if your change crossed one of those edges, that
    edge is yours to test.
+   **`:app {:behind n}` is the browser's view, not the store's.** If slopp
+   runs an app server for this project, this says how many code changes the
+   SERVED image is behind the store you just called green — it is rebuilt at
+   DONE grain, so between done points a browser is looking at an older store.
+   `0` is reported too, so the current case is an answer rather than a gap.
+   Any `n > 0` means the page you are about to screenshot is not the code you
+   just wrote, and a partly-updated page renders BROKEN rather than merely
+   old. `done` re-serves.
 7. **Close ONCE.** Exactly ONE `commit_point {description}` at the end
    (it runs `done` and gates on that verdict — it has no checks of its own)
    unless the user asks for more.

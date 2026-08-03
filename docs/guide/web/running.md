@@ -10,6 +10,22 @@ to get one: slopp boots a dedicated image for the app, loads the web surface
 into it, and re-serves at every `done` point. `session_brief` reports the url
 as `:app`.
 
+!!! warning "Between done points, the browser is behind — and `full_check` says how far"
+    Re-serving at `done` grain is deliberate: mid-episode the store is
+    intentionally incomplete, and reloading a browser into a half-written red
+    state teaches you to ignore it. The cost is that a page you look at
+    between done points is built from an older store.
+
+    That is worse than it sounds, because staleness is not uniform. A change
+    to a handler and a change to the stylesheet land in the same episode; if
+    only some of it is served, the page does not render as an OLD page, it
+    renders as a BROKEN one.
+
+    So `full_check` reports `:app {:behind n :url}` -- how many code changes
+    the served image lags the store it just called green. `0` is reported too,
+    so "current" is an answer rather than a silence you have to interpret.
+    Anything above zero: call `done` before you trust the screen.
+
 **There is nothing to turn on, and nothing to turn off.** Whether slopp manages
 your server is derived: it does, unless the calling process already serves
 every namespace your store would. That is true of exactly one store -- slopp's
