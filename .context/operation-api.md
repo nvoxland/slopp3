@@ -1,4 +1,4 @@
-# Operation API (`slopp.api` + `slopp.mcp`)
+# Operation API (`slopp.ops` + `slopp.mcp`)
 
 ## Session
 
@@ -475,7 +475,7 @@ its store-backed static reader moved to `api.web/store-reader`.
   unset or "<git>" defers to `git config` in the project dir. Determinism:
   identity lives on the marker, never read from config at projection time.
 
-## The capability registry (`slopp.api.capabilities`, D-web wave 0)
+## The capability registry (`slopp.project.capabilities`, D-web wave 0)
 
 The `capabilities` config file is the store's APP MANIFEST + opt-in surface
 (what kind of application this is: name/version/entry point, whether it

@@ -173,9 +173,9 @@ the backlog for attention.
 | `.context/decisions.md` | any design-level change — DECISIONS only |
 | `.context/findings-log.md` | what past user tests / evals actually observed |
 | `.context/store-and-persistence.md` | `slopp.store`, `slopp.store.db`, `slopp.store.render` |
-| `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.api` |
+| `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.ops.engine` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
-| `.context/operation-api.md` | `slopp.api`, `slopp.mcp`, `slopp.edit.refactor` |
+| `.context/operation-api.md` | `slopp.ops`, `slopp.mcp`, `slopp.edit.refactor` |
 | `.context/naming-glossary.md` | reading any OLD record — old→new for renamed namespaces, keys and retired phrases |
 | `.context/dogfooding.md` | user tests, benchmark suite, findings backlog |
 | `.context/working-in-this-repo.md` | dev workflow, REPL, tests, commits |

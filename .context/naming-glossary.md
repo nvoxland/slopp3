@@ -49,6 +49,13 @@ and not there is how a rename keeps its blind spot.
 | `slopp.api.orient` | `slopp.read.orient` | ditto — `session_brief`, form cards, host warnings. The first thing a session reads |
 | `slopp.api.telemetry` | `slopp.read.telemetry` | ditto, and it renames a live SESSION KEY with it: `:slopp.api.telemetry/calls` → `:slopp.read.telemetry/calls`, written by `slopp.mcp/handle!` and folded by `slopp.api/turn-end!`. `ns_rename` rewrites requires and qualified refs, not qualified KEYWORDS — this was the only stale one in the store, and it was stale for about four minutes |
 | `slopp.api.modules` | `slopp.read.modules` | ditto — the module system's read side, against `slopp.edit.modules`'s write side. `production-manifest`'s scoped `^{:export "slopp.http-api"}` widened to `^:export` here: the regroup put its two callers in different subtrees, and a scoped export names exactly one |
+| `slopp.api` | `slopp.ops` | **phase 1b, module 4 of 4 (2026-08-03).** 74 forms, 72 public — the plan called this a facade that would dissolve, on the measurement "0 exports, 13 out-edges". Both were wrong: `^:export` means nothing on a TWO-segment namespace, so "0 exports" is trivially true of any module root and was never evidence of delegation. It IS the agent-facing operation surface, and it becomes the root of the module its operations already belonged to |
+| `slopp.api.session` | `slopp.ops.engine` | ditto — the WRITE ENGINE: image lifecycle, the rebasing commit, verification. Every operation hands it a pure transform. "session" reads as request state, which is why nobody would have found it; highest in-degree in the module |
+| `slopp.api.external` | `slopp.ops.external` | ditto — the operation surface's IO face. Moved LAST of the seven, because it depends on all six others and moving it earlier would have pointed `slopp.ops → slopp.api` while `slopp.api → slopp.ops` already existed |
+| `slopp.api.testrun` | `slopp.ops.testrun` | ditto — running the store's tests in processes outside this one |
+| `slopp.api.branch` | `slopp.ops.branch` | ditto — a line is a view of the delta log, and branch orchestrates store + image + engine to make it one |
+| `slopp.api.done` | `slopp.ops.done` | ditto — the episode boundary is an operation |
+| `slopp.api.review` | `slopp.ops.review` | ditto — whole-codebase triage off the done-point's signals |
 
 ## Removed — what an old record refers to that no longer exists
 
