@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.project.deps :as api.deps] [slopp.api.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.read.query :as query] [slopp.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.api.devserver :as devserver]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.api :as api] [slopp.project.deps :as api.deps] [slopp.api.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.read.query :as query] [slopp.rules :as rules] [slopp.api.session :as session] [slopp.api.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.api.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -924,7 +924,7 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; called green. Sibling of `host-warning-now` below — same question,
         ;; different image — and reported for the same reason: a whole-store
         ;; green is exactly the verdict someone acts on.
-        app   (devserver/behind st (:app-server @session))
+        app   (orient/behind st (:app-server @session))
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (session/run-verification! session (vec nses) nil

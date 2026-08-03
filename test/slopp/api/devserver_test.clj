@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.api.external :as external] [slopp.api :as api]))
+            [slopp.api.devserver :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.api.external :as external] [slopp.api :as api] [slopp.read.orient :as orient]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -402,11 +402,11 @@
         ;; without this nothing downstream can answer "is what I am looking
         ;; at current?" — the whole of slopp-ui's friction #5
         (is (integer? (:served-at r)) r)
-        (is (= 0 (devserver/behind s r))
+        (is (= 0 (orient/behind s r))
             "freshly served from this very store — behind by nothing"))
       (testing "and a change after the boot makes it say so"
         (let [s' (store/ingest s 'demo.later "(ns demo.later)\n(defn l \"L.\" [] 1)\n")]
-          (is (= 1 (devserver/behind s' r))
+          (is (= 1 (orient/behind s' r))
               "one code delta landed since the image was built")))
       (finally (devserver/stop! r)))))
 
@@ -678,16 +678,16 @@
       ;; the question is "is what I am looking at current?", so the current
       ;; case has to be reported. Omitting it puts the reader back to not
       ;; knowing whether it was checked.
-      (is (= 0 (devserver/behind s {:serving? true :served-at head}))))
+      (is (= 0 (orient/behind s {:serving? true :served-at head}))))
     (testing "served before any of it — every code delta counts"
-      (is (= 2 (devserver/behind s {:serving? true :served-at 0}))))
+      (is (= 2 (orient/behind s {:serving? true :served-at 0}))))
     (testing "bookkeeping is not code — a verify is not something to re-serve for"
       (let [s' (store/record-verification s ['bh.core] {:test 1 :pass 1})]
-        (is (= 2 (devserver/behind s' {:serving? true :served-at 0}))
+        (is (= 2 (orient/behind s' {:serving? true :served-at 0}))
             "the marker filter is inherited, not re-derived")))
     (testing "nothing is serving — nothing to say"
-      (is (nil? (devserver/behind s {:serving? false :served-at 0})))
-      (is (nil? (devserver/behind s nil))))
+      (is (nil? (orient/behind s {:serving? false :served-at 0})))
+      (is (nil? (orient/behind s nil))))
     (testing "a running map that never recorded WHEN it served cannot answer"
       ;; nil means no evidence. Note this is the OPPOSITE default from
       ;; `code-deltas-since`, which counts everything for a nil `at` so a
@@ -696,7 +696,7 @@
       ;; stamp is a slopp bug rather than a stale app, and reporting a
       ;; freshly-served app as maximally behind would send the reader to
       ;; re-serve a thing that is current.
-      (is (nil? (devserver/behind s {:serving? true}))))))
+      (is (nil? (orient/behind s {:serving? true}))))))
 
 (deftest ^:external full-check-says-how-far-behind-the-served-app-is
   ;; The REPORTING half of slopp-ui's friction #5. `behind` answers the

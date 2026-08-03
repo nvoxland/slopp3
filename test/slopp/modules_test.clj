@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api :as api]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.read.query :as query] [clojure.java.io] [clojure.edn]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.api.external :as external] [slopp.read.query :as query] [clojure.java.io] [clojure.edn] [slopp.store.render :as render]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -958,6 +958,45 @@
         (is (= :cljc (get-in @sess [:store :module-platforms "tr.hub"])))
         (is (nil? (get-in @sess [:store :module-platforms "tr.core"]))))
       (finally (api/close! sess)))))
+
+(deftest ^:external the-whole-store-check-names-no-app-type
+  ;; R6 (no `slopp.*` surface may assume a project is a web project), and the
+  ;; sibling of `api.session-test/the-write-engine-names-no-app-type` — same
+  ;; rule, the other generic surface. `full_check` answers "is the STORE good",
+  ;; which is a question every project has, and it reached into the WEB tooling
+  ;; for one part of the answer: how far behind the served app image is.
+  ;;
+  ;; **It is a CYCLE before it is anything else.** Once the seven operation
+  ;; namespaces leave for `slopp.ops`, module `slopp.api` is {cljs, devserver}
+  ;; and the edges run BOTH ways: five the right way (tooling calls the
+  ;; operation surface — that is what tooling does) and this ONE back.
+  ;; `module_dep` cycle-checks adds, so a single edge blocks the whole regroup,
+  ;; and moving the tooling to `slopp.webdev` only renames the cycle.
+  ;;
+  ;; And it never needed to be there. `behind` is `(store running)` delegating
+  ;; the count to `read.orient/code-deltas-since`, and `running` is the
+  ;; app-server map already on the session — nothing in it knows the app serves
+  ;; HTTP. So the R6 violation and the cycle have one fix.
+  ;;
+  ;; Why a named test rather than a layering rule: the same answer its sibling
+  ;; gives. Layering is a MODULE-grain question and both namespaces are in
+  ;; module `slopp.api`, so the drawer hides the violation from the check built
+  ;; to find it. That is the third time in this restructure. When the tooling
+  ;; leaves, this becomes an ordinary layering finding and this test survives
+  ;; the move as the specific statement of it.
+  (let [st  (external/built-store)
+        src (render/render-ns st 'slopp.api.external)]
+    (testing "there is a population — the vacuity that ate a sibling guard"
+      ;; and it doubles as the guard on the quoted symbol above: a namespace
+      ;; name in a test body is DATA, so a rename walks straight past it and
+      ;; the check silently starts reading nothing
+      (is (< 50 (count (:namespaces st))))
+      (is (re-find #"full-check!" src)
+          "rendered the wrong namespace, or rendered nothing"))
+    (testing "the whole-store check names no web-tooling namespace, by any path"
+      ;; require, qualified ref and prose all read the same here on purpose
+      (is (= [] (vec (re-seq #"slopp\.api\.(?:cljs|devserver)" src)))
+          "the offending mentions are the failure value"))))
 
 (deftest the-web-framework-never-reaches-back-into-slopp
   ;; slopp.web.* is the FRAMEWORK slopp ships to users: build.clj's slim
