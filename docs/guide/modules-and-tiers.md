@@ -23,13 +23,24 @@ Declare, then use. The refusal on an undeclared call names the exact
 `module_dep` call to make, and an edge that would close a cycle is refused with
 the cycle named. `remove: true` retracts an edge.
 
-When the only namespaces crossing that edge are `-test` ones, the refusal says
-so and names them, because the usual advice -- extract the shared piece into a
-module both sides may depend on -- is not something you can do to a fixture. A
-test folds into its subject's module, so an edge declared for it would license
-production too. Move the test to the target's own test namespace if what it
-asserts belongs there, or leave the edge undeclared and let `full_check` report
-the violation.
+**A test may need to cross where production must not.**
+
+```clj
+module_dep {from "shop.rules" to "shop.ops"
+            test_only true
+            prompt "advisory tests must write code and call done"}
+```
+
+A `-test` namespace folds into its subject's module, so an ordinary edge
+declared for a fixture would license production too. `test_only` declares a
+separate relation: the module's tests may cross, its production code is still
+refused, and because a test edge is not a production edge it can never close a
+cycle. Reach for it when a fixture has to drive a surface that calls back into
+its own module -- testing a done-time advisory means writing code and calling
+`done`, so the fixture necessarily touches the operation surface.
+
+The cycle refusal offers this itself when it can see that every namespace
+crossing is a test, and names them.
 
 The manifest is not a file -- it is the fold of `:module-edge` deltas, at edge
 grain, so two agents declaring concurrently union without conflict.

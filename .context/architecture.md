@@ -309,16 +309,28 @@ and unchecked. Layering *within* a component is no longer a gate.
   CALLER, which did not move** — two segments to three makes the TARGET
   package-private — so unlike the tier check this one selects violations from
   EITHER end of the episode's moves.
-- **Known gap: a TEST-ONLY edge cannot be expressed.** `module-of` folds a
+- **A TEST-ONLY edge is its own relation** (`:module-test-edges`, op
+  `:module-test-edge`, `module_dep {test-only true}`). `module-of` folds a
   trailing `-test` off each segment, so a fixture shares its subject's module
-  key and any edge declared for it licenses production too. Measured
-  2026-08-02: `slopp.api ↔ slopp.index` and `slopp.api ↔ slopp.store` are the
-  store's only declared-manifest cycles, both back-edges have ZERO production
-  callers, and both exist purely so a `-test` namespace can drive the
-  operation surface. So "the declared manifest is acyclic" cannot be gated
-  until this is decided. `module_dep`'s cycle refusal now at least DIAGNOSES
-  it — when every namespace crossing is a test it names them and says why no
-  edge helps, rather than advising an extraction nobody can perform on a
-  fixture. Open as `ideas/restructure-wave-frictions.md` #20, which also
-  records that `ns_rename`'s re-key installs such an edge with no cycle check
-  at all.
+  key — one edge would license production too. It is separate rather than
+  nested inside `:modules` precisely so `:modules` keeps meaning PRODUCTION
+  edges: the cycle check, `query_depends`' layers, `store/module-path` and the
+  projected `modules` file are all that graph and are untouched. A test edge
+  is therefore not a production edge, is never a cycle, and
+  `module-violations` honours it only when the caller is a test —
+  **production under that module is still refused, which is the guarantee the
+  old shape never gave.** `derive-module-edges` classifies, so adoption and
+  `module_extract` stop writing a fixture's crossing as a dependency the
+  project does not have.
+
+  Settled 2026-08-02 (user) because a done-time advisory can ONLY be tested by
+  writing code and calling `done!` — the fixture necessarily calls the
+  operation surface that calls the rules — so phase 1b's `slopp.rules` and
+  `slopp.read` had no other way out: 41 deftests / 243 call sites would
+  otherwise have become permanent violations. The two edges slopp already
+  carried (`slopp.index → slopp.api`, `slopp.store → slopp.api`, both with
+  ZERO production callers) were the same rule failing to be expressible,
+  written down twice; they are now declared test-only and the store has **no
+  declared-manifest cycles at all**, which makes gating on that possible for
+  the first time. `ns_rename`'s manifest re-key still does no cycle check —
+  the remaining half of `ideas/restructure-wave-frictions.md` #20.

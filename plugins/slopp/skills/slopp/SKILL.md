@@ -202,7 +202,14 @@ not a clean bill of health:**
 - `module_platform` verifies NOTHING about the code; `compile_client` is what
   proves a `:cljc`/`:cljs` namespace actually compiles.
 - `module_dep` checks cycles over PRODUCTION edges; whether anything uses the
-  edge is `query_depends {modules true}`'s `:unused-edges`.
+  edge is `query_depends {modules true}`'s `:unused-edges`. `test_only: true`
+  declares an edge for the module's `-test` namespaces alone — production
+  under that module is still refused, and a test-only edge is not a production
+  edge so it is never a cycle. **Reach for it when a fixture must drive a
+  surface that calls back into its own module** — a done-time advisory can
+  only be tested by writing code and calling `done`, so the fixture
+  necessarily calls the operation surface. The cycle refusal offers this
+  itself when every namespace crossing is a test.
 
 **Declare a tier BEFORE you move a namespace, or its destination declares it
 for you.** `ns_rename` carries an EXPLICIT tier along with the namespace — the

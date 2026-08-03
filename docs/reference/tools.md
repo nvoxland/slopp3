@@ -245,7 +245,7 @@ Three things worth knowing:
 
 | Tool | What it does |
 |---|---|
-| `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked over production edges. `remove: true` retracts. |
+| `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked over production edges. `remove: true` retracts. `test_only: true` binds the module's `-test` namespaces alone -- production stays refused, and a test edge is never a cycle. |
 | `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the FORMS already there; `:unverified` names what it did not check. `remove: true` retires the declaration. |
 | `module_platform {module platform}` | Declare a namespace's target platform. Records only — `:verified []`. `remove: true` retires it. See [web apps](#web-applications). |
 
