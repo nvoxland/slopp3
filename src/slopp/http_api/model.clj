@@ -375,3 +375,81 @@
          (map str)
          sort
          vec)))
+
+(defn outline-metrics
+  "The per-form facts a consumer needs to RANK a namespace's definitions,
+  keyed by form name: `{:mass :calls :callers-out :callers-out-test
+  :effectful? :exported?}`.
+
+  Facts, not a score. slopp-ui asked for exactly this split and it is the
+  same one `module-index` already makes by shipping layers and not a
+  drawn `:picture`: the call graph and the size of a form have one right
+  answer and only the store can see them; how to weight them into
+  `importance` and how many perceptible steps that becomes is drawing,
+  and a consumer must be able to tune it without a slopp release.
+
+  **`:mass` is a node count over the SEXPR, never the CST.** rewrite-clj
+  nodes carry whitespace and comments, so counting them would put
+  formatting straight back into the metric that node-counting exists to
+  escape — and lines and characters have the same bug, only louder: a
+  40-line docstring over a 30-line body makes the documentation win. Over
+  the sexpr a docstring is ONE node and the body's structure dominates.
+
+  **`:calls` is same-namespace direct EDGES**, from THE reference graph,
+  so a form reached through a carrier position counts as called — a
+  `:calls` built from resolved calls alone draws dispatch targets as
+  leaves, and those are the forms that matter most. Edges rather than
+  the transitive closure because the walk is cheap and reusable, while a
+  closure cannot be taken apart again. Empty rather than absent: a leaf
+  is an answer.
+
+  **Callers outside the namespace are TWO numbers, and this was measured
+  rather than reasoned.** `:callers-out` counts production namespaces and
+  `:callers-out-test` counts test ones. Run against `slopp-ui.views` while
+  it was still a single integer, it was ranking by TEST COUNT: ten of the
+  twelve cross-namespace callers were deftests, the top-ranked form held
+  first place on four of them, and the entry point that IS the render sat
+  fourth on its one production caller. The two add back up; one integer
+  cannot be taken apart again. Outbound fan-in is the half that
+  fan-in-alone gets wrong either way — an entry point is the most
+  important form in its namespace and nothing there calls it.
+
+  `:declared` edges are excluded from both directions. A `^{:covers}`
+  marker is a declaration ABOUT a form, not a call to it, and counting it
+  would make a well-marked helper look load-bearing."
+  [store nsx]
+  (let [sym      (symbol (str nsx))
+        eff      (query/ns-effectful-vars store sym)
+        inward   (refs/refs-by-target store)
+        call?    #(not= :declared (:via %))
+        test-ns? #(not= (str %) (str (modules/fold-test-ns %)))
+        outside  (fn [q from-ns?]
+                   (into #{}
+                         (comp (filter call?)
+                               (filter :from-var)
+                               (remove #(= sym (:from-ns %)))
+                               (filter #(from-ns? (:from-ns %)))
+                               (map (juxt :from-ns :from-var)))
+                         (get inward q)))
+        mass     (fn [node]
+                   (if-some [s (store/form-sexpr node)]
+                     (count (tree-seq coll? seq s))
+                     0))
+        calls    (reduce (fn [m r]
+                           (if (and (call? r) (:from-var r) (= sym (:to-ns r)))
+                             (update m (:from-var r) (fnil conj #{}) (str (:to-name r)))
+                             m))
+                         {}
+                         (refs/ns-refs store sym))]
+    (into {}
+          (for [e (store/forms store sym)
+                :when (:name e)
+                :let [nm (:name e)
+                      q  (symbol (str sym) (str nm))]]
+            [(str nm)
+             {:mass             (mass (:node e))
+              :calls            (vec (sort (get calls nm)))
+              :callers-out      (count (outside q (complement test-ns?)))
+              :callers-out-test (count (outside q test-ns?))
+              :effectful?       (contains? eff q)
+              :exported?        (boolean (modules/export-level store sym nm))}]))))

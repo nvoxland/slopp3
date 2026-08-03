@@ -32,9 +32,10 @@
 
 (def form-row
   "One form in an outline: what it is called, what KIND of form it is, what it
-  takes, whether it is private, its docstring's first line, and any schema it
-  declares. Enough for a consumer to render the namespace INSTEAD of the
-  source, which is the job this row exists for.
+  takes, whether it is private, its docstring's first line, any schema it
+  declares, and the facts a consumer needs to RANK it against its neighbours.
+  Enough to render the namespace INSTEAD of the source, which is the job this
+  row exists for.
 
   `:maybe` on `:doc`, `:sig` and `:schema` because plenty of forms have none —
   a `def` has no signature at all — and a contract that could not say so would
@@ -44,14 +45,35 @@
 
   `:sig` is a SEQUENTIAL, one string per arity, so a consumer can stack a
   multi-arity the way source stacks it. Joining them is something the reader
-  can do and cannot undo, so the wire carries the separable form."
+  can do and cannot undo, so the wire carries the separable form.
+
+  The ranking half — `:mass`, `:calls`, `:callers-out`, `:effectful?`,
+  `:exported?` — is FACTS and deliberately not a score. Weighting them into
+  an importance number, and bucketing that number into perceptible steps, is
+  drawing, and a consumer has to be able to tune it without a slopp release.
+  Same split `module-index` makes by shipping layers rather than a laid-out
+  picture.
+
+  All five are required for the same reason `:private?` is. A `:calls` that
+  is absent and a form that calls nothing draw identically; so do a missing
+  `:callers-out` and a form nothing outside uses. Required is also what makes
+  a field that stops being sent a red test here rather than a nil in someone
+  else's pane — this contract is what the typed client is generated from, and
+  `m/validate` passes an OPEN map, so a key the schema does not name is a key
+  nothing checks."
   [:map
    [:name :string]
    [:kind :string]
    [:sig [:maybe [:sequential :string]]]
    [:private? :boolean]
    [:doc [:maybe :string]]
-   [:schema [:maybe :string]]])
+   [:schema [:maybe :string]]
+   [:mass :int]
+   [:calls [:sequential :string]]
+   [:callers-out :int]
+   [:callers-out-test :int]
+   [:effectful? :boolean]
+   [:exported? :boolean]])
 
 (def ns-outline
   "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.

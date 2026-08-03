@@ -63,12 +63,29 @@
   [session ns-sym]
   (render/render-ns (:store @session) ns-sym))
 
+(defn ^:export ns-effectful-vars
+  "The set of `ns/name` symbols in `ns-sym` that reach an effect (D6) — THE
+  one spelling of a namespace's effect set, so every surface that badges it,
+  reports it or refuses on it reads the same answer.
+
+  Effectfulness is a per-FORM property and it is DERIVED, never declared:
+  the `!` convention seeds the fixpoint and reachability carries it, so a
+  form with no `!` in its name that calls one is in this set. That is the
+  distinction consumers keep getting wrong — a purity TIER is a NAMESPACE
+  declaration, identical for every form in it, which makes it useless as a
+  per-form mark however much it sounds like one.
+
+  Members are qualified by the full namespace, so a caller looks up
+  `(symbol (str ns-sym) (str nm))` rather than reconstructing an alias."
+  [st ns-sym]
+  (derive/effectful-vars (analyze/analyze (render/render-ns st ns-sym))))
+
 (defn ^:export query-symbol
   "Describe the form defining `nm`: id, name, effectfulness (D6), source."
   [session ns-sym nm]
   (let [st  (:store @session)
         f   (store/form-named st ns-sym nm)
-        eff (derive/effectful-vars (analyze/analyze (render/render-ns st ns-sym)))]
+        eff (ns-effectful-vars st ns-sym)]
     (when f
       (cond-> {:id         (:id f)
                :name       (:name f)
@@ -268,7 +285,7 @@
   [session ns-sym & {:keys [detail]}]
   (let [st  (:store @session)
         an  (analyze/analyze (render/render-ns st ns-sym))
-        eff (derive/effectful-vars an)]
+        eff (ns-effectful-vars st ns-sym)]
     {:ns ns-sym
      :forms
      (vec (for [d (:var-definitions an)

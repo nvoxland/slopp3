@@ -53,9 +53,16 @@
         (is (= 200 (:status r)))
         (is (= {:ns "demo.core"
                 :forms [{:name "demo.core" :kind "ns" :sig nil
-                         :private? false :doc nil :schema nil}
+                         :private? false :doc nil :schema nil
+                         :mass 3 :calls [] :callers-out 0 :callers-out-test 0
+                         :effectful? false :exported? false}
                         {:name "hello" :kind "defn" :sig ["[x]"]
-                         :private? false :doc "Says hi." :schema nil}]
+                         :private? false :doc "Says hi." :schema nil
+                         ;; (defn hello "Says hi." [x] x) — seven sexpr nodes,
+                         ;; and the docstring is ONE of them however long it
+                         ;; grows. That is the whole reason mass is not lines.
+                         :mass 7 :calls [] :callers-out 0 :callers-out-test 0
+                         :effectful? false :exported? false}]
                 :tested-by []}
                (:body r))
             "nothing tests this fixture, and that reports as an empty list rather
@@ -66,9 +73,13 @@
       (let [r (GET "/api/ns/demo.util")]
         (is (= {:ns "demo.util"
                 :forms [{:name "demo.util" :kind "ns" :sig nil
-                         :private? false :doc nil :schema nil}
+                         :private? false :doc nil :schema nil
+                         :mass 3 :calls [] :callers-out 0 :callers-out-test 0
+                         :effectful? false :exported? false}
                         {:name "undocumented" :kind "defn" :sig ["[x]"]
-                         :private? false :doc nil :schema nil}]
+                         :private? false :doc nil :schema nil
+                         :mass 6 :calls [] :callers-out 0 :callers-out-test 0
+                         :effectful? false :exported? false}]
                 :tested-by []}
                (:body r)))
         (is (m/validate contracts/ns-outline (:body r)))))
@@ -349,3 +360,61 @@
     (testing "the ns form itself is a row like any other, and claims nothing"
       (is (= "ns" (:kind (rows "demo.shape"))))
       (is (nil? (:sig (rows "demo.shape")))))))
+
+(deftest the-outline-carries-what-a-consumer-needs-to-RANK-a-namespace
+  ;; slopp-ui, 2026-08-03: the namespace pane colours a definition by category
+  ;; and badges its modifiers; the third channel — lightness — is meant to
+  ;; carry how IMPORTANT a form is within its namespace.
+  ;;
+  ;; They asked for the FACTS and explicitly not an `:importance 0.82`, on the
+  ;; argument D-ui-hub part 5 already made about the laid-out `:picture`:
+  ;; the call graph and the size of a form have one right answer and only the
+  ;; store can see them; weighting them into a score, and bucketing that score
+  ;; into perceptible steps, is drawing.
+  ;;
+  ;; `:callers-out` is the half that decides the shape. Fan-in alone ranks an
+  ;; entry point LAST — nothing inside a view namespace calls its own
+  ;; app-view — so the outbound count has to cross the namespace boundary.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.rank
+                              (str "(ns demo.rank)\n\n"
+                                   "(defn plural [n w] (if (= 1 n) w (str w \"s\")))\n\n"
+                                   "(defn ^:export app-view [xs] (plural (count xs) \"row\"))\n"))
+                (store/ingest 'demo.client
+                              (str "(ns demo.client (:require [demo.rank :as rank]))\n\n"
+                                   "(defn main [] (rank/app-view []))\n"))
+(store/ingest 'demo.rank-test
+                              (str "(ns demo.rank-test\n"
+                                   "  (:require [clojure.test :refer [deftest is]]\n"
+                                   "            [demo.rank :as rank]))\n\n"
+                                   "(deftest pluralises (is (= \"rows\" (rank/plural 2 \"row\"))))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.rank"})
+        rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
+    (is (= 200 (:status r)))
+    (is (m/validate contracts/ns-outline (:body r))
+        "the five ranking fields have to satisfy the contract the typed client
+         is generated from — that is what makes a missing one a red test here
+         rather than a nil in someone else's pane")
+    (testing "the graph, as edges, so the consumer owns the closure"
+      (is (= ["plural"] (:calls (rows "app-view"))))
+      (is (= [] (:calls (rows "plural")))))
+    (testing "callers-out crosses the namespace, which is why an entry point ranks"
+      (is (= 1 (:callers-out (rows "app-view"))) "demo.client/main")
+      (is (= 0 (:callers-out (rows "plural")))
+          "called here and from its own test, and neither is a production
+           caller — carries the namespace, fans in at zero"))
+    (testing "and a test caller is counted SEPARATELY, not folded in"
+      ;; the number this split cost: run against slopp-ui.views while
+      ;; callers-out was one integer, ten of the twelve cross-namespace
+      ;; callers were deftests, so the field was ranking by test count.
+      (is (= 1 (:callers-out-test (rows "plural"))) "demo.rank-test/pluralises")
+      (is (= 0 (:callers-out-test (rows "app-view")))))
+    (testing "mass is a positive node count, and the ns form is a row like any other"
+      (is (pos? (:mass (rows "app-view"))))
+      (is (pos? (:mass (rows "demo.rank")))))
+    (testing "two badges, two facts"
+      (is (true? (:exported? (rows "app-view"))))
+      (is (false? (:exported? (rows "plural"))))
+      (is (false? (:effectful? (rows "plural")))))))

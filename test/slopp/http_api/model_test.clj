@@ -373,3 +373,77 @@
       (is (not-any? #{"demo.b.util"} (model/tests-covering st 'demo.a.core))))
     (testing "a namespace nothing tests says so with an empty list, not a lie"
       (is (= [] (model/tests-covering st 'demo.b.util))))))
+
+(deftest outline-metrics-are-the-FACTS-a-ranking-needs-and-not-the-ranking
+  ;; slopp-ui, 2026-08-03: "ship the graph, not the verdict". They want to
+  ;; weight a form's importance themselves and tune it against real
+  ;; namespaces without waiting on a slopp release — the same split
+  ;; D-ui-hub part 5 made when it took the laid-out `:picture` out of
+  ;; /api/modules. Layering is analysis and only the store can do it;
+  ;; weighting is drawing and only a consumer should.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'imp.core
+                             (str "(ns imp.core)\n\n"
+                                  "(defn tiny\n"
+                                  "  \"A docstring long enough that counting LINES, or counting\n"
+                                  "   CHARACTERS, would rank this form well above the one below it —\n"
+                                  "   which is the exact confusion node-counting exists to avoid, and\n"
+                                  "   the reason slopp-ui asked for nodes by name.\"\n"
+                                  "  [x] x)\n\n"
+                                  "(defn busy [x] (let [a (inc x) b (dec x)] (+ a b (* a b))))\n\n"
+                                  "(defn plural [n w] (if (= 1 n) w (str w \"s\")))\n\n"
+                                  "(defn row [x] (plural x \"item\"))\n\n"
+                                  ;; `!` in the name is a CLAIM, and `:effectful?` is not reading it — the
+                                  ;; set is reachability to an anchor, so this has to actually mutate.
+                                  ;; A `(println :drawn)` here left view! FALSE, which is the right
+                                  ;; answer and was not the one this fixture first asserted.
+                                  "(defn ^:export view! [a xs] (swap! a into (mapv row xs)))\n"))
+               (store/ingest 'imp.app
+                             (str "(ns imp.app (:require [imp.core :as core]))\n\n"
+                                  "(defn main [] (core/view! (atom []) []))\n"))
+;; a test caller, because on a REAL store almost every caller is one:
+               ;; measured against slopp-ui.views, ten of the twelve
+               ;; cross-namespace callers were tests, and module-graph took the
+               ;; top rank on four of them.
+               (store/ingest 'imp.core-test
+                             (str "(ns imp.core-test\n"
+                                  "  (:require [clojure.test :refer [deftest is]]\n"
+                                  "            [imp.core :as core]))\n\n"
+                                  "(deftest pluralises (is (= \"items\" (core/plural 2 \"item\"))))\n")))
+        m  (model/outline-metrics st 'imp.core)]
+    (testing "mass is nodes over the SEXPR, so a docstring is one node"
+      (is (< (:mass (m "tiny")) (:mass (m "busy")))
+          "the whole point: tiny's SOURCE is far longer and its structure is not")
+      (is (pos? (:mass (m "tiny"))))
+      (is (pos? (:mass (m "busy")))))
+    (testing "calls are same-namespace direct EDGES, so the consumer owns the closure"
+      (is (= ["plural"] (:calls (m "row"))))
+      (is (= ["row"] (:calls (m "view!"))))
+      (is (= [] (:calls (m "plural")))
+          "empty rather than absent — a leaf is an answer, not a missing one"))
+    (testing "callers-out crosses the namespace, which is what fan-in alone misses"
+      (is (= 1 (:callers-out (m "view!"))) "imp.app/main")
+      (is (= 0 (:callers-out (m "plural")))
+          "called in-namespace and from a TEST, and a test is not a production
+           caller — a form whose only outside caller is its own test is not
+           load-bearing, and one integer covering both would say it is"))
+    (testing "test callers are a SECOND number, not the same one"
+      ;; This is the split slopp-ui's acceptance test bought. Run against
+      ;; slopp-ui.views before it existed, `callers-out` was ranking by TEST
+      ;; COUNT: module-graph took first place on four callers, all four of
+      ;; them deftests, while app-view — the entire render, and the form
+      ;; their test named first — sat fourth on one production caller.
+      ;;
+      ;; Two integers add back up to the old one. One integer cannot be
+      ;; taken apart again, and choosing the weighting for them is exactly
+      ;; the drawing this API refuses to do.
+      (is (= 1 (:callers-out-test (m "plural"))) "imp.core-test/pluralises")
+      (is (= 0 (:callers-out-test (m "view!")))))
+    (testing "the two badges are two facts, not one"
+      (is (true? (:effectful? (m "view!"))))
+      (is (false? (:effectful? (m "plural"))))
+      (is (true? (:exported? (m "view!"))))
+      (is (false? (:exported? (m "row")))))
+    (testing "every value survives a JSON round trip"
+      (is (every? json-shaped? (vals m)))
+      (is (every? string? (keys m))))))

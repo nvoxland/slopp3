@@ -35,3 +35,27 @@
     (testing "the declaring test is reported in :reached-by via :declared"
       (is (= [{:test 'qi.core-test/cover-t :via #{:declared}}] (:reached-by b))
           (pr-str b)))))
+
+(deftest the-effectful-set-of-a-namespace-has-ONE-spelling
+  ;; slopp-ui, 2026-08-03: they asked for a per-form effect badge on the HTTP
+  ;; ns-outline. That would have been the THIRD place spelling
+  ;; `(effectful-vars (analyze (render-ns st ns)))` — query-outline,
+  ;; query-symbol, and the new one. Three spellings of one fact is how the
+  ;; fact starts differing, so it gets a producer before it gets a caller.
+  ;;
+  ;; The transitive case is the reason the badge cannot be a name check:
+  ;; `report` carries no `!` and reaches one, and that is precisely the form
+  ;; a reader needs marked.
+  (let [st  (store/ingest (store/empty-store) 'eff.demo
+                          (str "(ns eff.demo)\n"
+                               "(defn pure [x] (inc x))\n"
+                               "(defn save! [a] (swap! a inc))\n"
+                               "(defn report [a] (save! a))\n"))
+        eff (query/ns-effectful-vars st 'eff.demo)]
+    (is (contains? eff 'eff.demo/save!))
+    (is (contains? eff 'eff.demo/report)
+        "reaching an effect IS being effectful — the ! convention seeds the
+         fixpoint, it is not the test")
+    (is (not (contains? eff 'eff.demo/pure)))
+    (testing "qualified by the full namespace, which is what a caller looks up by"
+      (is (every? #(= "eff.demo" (namespace %)) eff)))))

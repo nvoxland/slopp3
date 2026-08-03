@@ -121,18 +121,26 @@
      :schema   (some-> (:malli/schema (meta nm)) pr-str)}))
 
 (defn ^{:web/read :browse/ns-outline} ns-outline-read
-  "Read performer: one namespace's `{:name :doc}` form rows in store order
-  plus the test namespaces covering it, or nil for an unknown namespace."
+  "Read performer: one namespace's form rows in store order — name, doc,
+  shape, and the facts a consumer needs to rank them — plus the test
+  namespaces covering it, or nil for an unknown namespace.
+
+  `outline-metrics` is called ONCE for the namespace and looked up per row.
+  The reverse reference index it reads is a whole-store grouping; asking it
+  per form would be quadratic in a namespace's size, which is exactly the
+  shape `refs-by-target` was introduced to retire."
   [{:keys [session]} nsx]
   (let [st  (:store @session)
         sym (symbol (str nsx))]
     (when (contains? (:namespaces st) sym)
-      {:ns sym
-       :forms (into []
-                    (keep (fn [e]
-                            (when (:name e)
-                              (assoc (form-shape e)
-                                     :name (:name e)
-                                     :doc  (form-doc e)))))
-                    (store/forms st sym))
-       :tested-by (model/tests-covering st sym)})))
+      (let [metrics (model/outline-metrics st sym)]
+        {:ns sym
+         :forms (into []
+                      (keep (fn [e]
+                              (when (:name e)
+                                (merge (form-shape e)
+                                       (get metrics (str (:name e)))
+                                       {:name (:name e)
+                                        :doc  (form-doc e)}))))
+                      (store/forms st sym))
+         :tested-by (model/tests-covering st sym)}))))
