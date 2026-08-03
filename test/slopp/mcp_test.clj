@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.ops :as api]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.http-api.server :as ui-server] [slopp.web.client :as client] [slopp.read.history :as history]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.api.server :as ui-server] [slopp.web.client :as client] [slopp.read.history :as history]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1864,8 +1864,8 @@
       ;; should answer — and the one adopter that answered it did so to work
       ;; around 404ing assets, which the switch then hid.
       (let [off (atom {:store (store/ingest
-                               web 'slopp.http-api.reads
-                               (str "(ns slopp.http-api.reads)\n\n"
+                               web 'slopp.api.reads
+                               (str "(ns slopp.api.reads)\n\n"
                                     "(defn ^{:web/method :get :web/path \"/api/x\"\n"
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} x \"X.\" [req] {:ok true})\n"))
@@ -1895,8 +1895,8 @@
                                                           :manifest k v)))
         off  (-> (store/empty-store)
                  (put "web.enabled" "true")
-                 (store/ingest 'slopp.http-api.reads
-                               (str "(ns slopp.http-api.reads)\n\n"
+                 (store/ingest 'slopp.api.reads
+                               (str "(ns slopp.api.reads)\n\n"
                                     "(defn ^{:web/method :get :web/path \"/api/x\"\n"
                                     "        :malli/schema [:=> [:cat :map] :map]\n"
                                     "        :web/response :map} x \"X.\" [req] {:ok true})\n")))

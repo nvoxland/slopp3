@@ -373,7 +373,7 @@
   ;;
   ;; A clash is an ERROR here and stays one — never a hunt for a free port.
   ;; The url an operator was handed must not quietly stop being the url that
-  ;; works, which is the same stance http-api/serve! takes.
+  ;; works, which is the same stance api.server/serve! takes.
   (let [held (web/serve! {:web/namespaces [] :web/port 0})
         port (:port held)]
     (try

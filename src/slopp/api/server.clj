@@ -1,4 +1,4 @@
-(ns slopp.http-api.server
+(ns slopp.api.server
   "The listener a project serves its OWN reviewer UI on.
 
   One per MCP process, over the live session — which is the whole reason this
@@ -8,14 +8,17 @@
   than what the agent is working against right now, and it would boot a second
   image to see even that.
 
-  Its address is derived rather than configured (D-hub). The fixed
-  `slopp.api.port` default worked for one project on a machine and collided for the
-  second; now nobody needs to know this port at all, because the address a
-  human remembers belongs to the HUB, which is its own project (`slopp-ui`)
-  and proxies here."
-  (:require [slopp.project.capabilities :as caps]
-            [slopp.web :as web]
-            [slopp.http-api.reads] [slopp.http-api.endpoints]))
+  Its address is derived, and as of phase 2 (2026-08-03) it is not
+  CONFIGURABLE either — `slopp.api.port` was a capability and is retired
+  (D-hub). The story ran in two steps: a fixed default worked for one project
+  on a machine and collided for the second, so the number became derived from
+  the store dir; and once every honest answer came from the derivation, a
+  knob for a number nobody chooses was just a way to disagree with it. Nobody
+  needs to know this port at all, because the address a human remembers
+  belongs to the HUB, which is its own project (`slopp-ui`) and proxies here.
+  `ui_serve {port}` is still an explicit override for one run."
+  (:require [slopp.web :as web]
+            [slopp.api.reads] [slopp.api.endpoints]))
 
 (defonce ^:private current
   ;; defonce, not def: under --live this namespace reloads on every edit,
@@ -52,8 +55,8 @@
   and one exported list is what makes a second mount a visible choice rather
   than a copied literal.
 
-  Both halves of a request live here. `slopp.http-api.api` declares the `/api/*`
-  routes; `slopp.http-api.reads` declares the `:web/read` performers they resolve
+  Both halves of a request live here. `slopp.api.endpoints` declares the
+  `/api/*` routes; `slopp.api.reads` declares the `:web/read` performers they resolve
   through. Reads are addressed by VOCABULARY rather than by var, so an
   endpoint names a KIND and the performer for it is found — but that also
   means a list carrying only one of the two namespaces answers 500 rather
@@ -62,7 +65,7 @@
   It is a short list now and stays that way: a project serves JSON and the
   EDN contract, nothing else. The pages a human looks at belong to the hub,
   which is a separate application (D-hub part 4)."
-  ['slopp.http-api.reads 'slopp.http-api.endpoints])
+  ['slopp.api.reads 'slopp.api.endpoints])
 
 (defn ^:export derived-port
   "A localhost port DERIVED from the store dir for this project's own UI
@@ -89,16 +92,26 @@
   (+ 49152 (mod (hash (str "slopp-ui:" dir)) 16384)))
 
 (defn ^:export preferred-port
-  "Which port this project's UI listener should try: an explicit request
-  first, then the configured `slopp.api.port`, then [[derived-port]] for `dir`, then
-  0 (ephemeral) when there is no dir to derive from.
+  "Which port this project's API listener should try: an explicit request
+  first, then [[derived-port]] for `dir`, then 0 (ephemeral) when there is no
+  dir to derive from.
+
+  There is no configured step, and that is the point rather than an omission.
+  `slopp.api.port` was a capability until phase 2 (2026-08-03); the number is
+  an OUTPUT — the listener reports where it bound and nobody sets it. Which
+  is not the same as unpredictable: [[derived-port]] gives the same answer on
+  every restart for the same dir, because the formula IS the address (D-hub).
+  Unconfigured, not unstable.
+
+  It takes no `store`, and that is worth more than the tidiness: reaching into
+  a PROJECT's configuration for a generic listener's own address was the last
+  thing making module `slopp.api` depend on `slopp.project` at all.
 
   ONE resolution, because two callers ask — the autostart in `slopp.mcp` and
-  the `ui_serve` tool. Two copies of this ladder disagreeing would put the UI
+  the `ui_serve` tool. Two copies of this ladder disagreeing would put the API
   on an address neither of them reported."
-  [store dir explicit]
+  [dir explicit]
   (or explicit
-      (caps/effective store "slopp.api.port")
       (some-> dir derived-port)
       0))
 

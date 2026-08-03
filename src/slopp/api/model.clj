@@ -1,4 +1,4 @@
-(ns slopp.http-api.model
+(ns slopp.api.model
   "The reviewer UI's READ MODELS: JSON-shaped data assembled from the
   operation API's pure surfaces. No hiccup, no HTTP, no writes.
 

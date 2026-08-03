@@ -87,8 +87,6 @@
    {:key "web.max-body-bytes" :type [:int {:min 1}] :default 1048576
     :doc "Largest accepted request body, bytes."}
 
-   {:key "slopp.api.port" :type [:int {:min 1 :max 65535}] :default nil
-    :doc "Port this project's own UI/API listener binds. Unset = DERIVED from the store dir — stable across restarts and collision-free, which a fixed default cannot be on a machine running several projects. Set it only to pin a fixed address."}
    {:key "slopp.hub.port" :type [:int {:min 0 :max 65535}] :default 7359
     :doc "The hub this project registers with. The hub is a SEPARATE application (it never opens a store), so this is the one number both sides have to agree on by configuration rather than by sharing code — the project beats to it, the hub binds it. Everything else about the beat, including how often, comes back on the registration response. 0 = register with no hub."}
    {:key "web.static.*" :type [:string] :default nil
@@ -206,7 +204,7 @@
   nil-puns. Some callers need it back: the dev server binds an explicitly
   pinned `web.port` but DERIVES one when nobody pinned it, because a fixed
   default collides between two projects on one machine (the reasoning
-  `http-api.server/derived-port` records). \"8080\" typed by hand and 8080
+  `api.server/derived-port` records). \"8080\" typed by hand and 8080
   arriving from the registry have to be told apart to do that.
 
   Exported for the same reason `effective` is: the config path is this

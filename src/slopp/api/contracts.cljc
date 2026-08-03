@@ -1,4 +1,4 @@
-(ns slopp.http-api.contracts
+(ns slopp.api.contracts
   "Wire contracts for the reviewer UI's JSON API — the shapes `/api/*`
   promises and the generated client validates against.
 
@@ -110,7 +110,7 @@
   "`GET /api/form/:id` — one form's permalink model.
 
   OPEN (malli maps are, by default) and deliberately so: this names the keys
-  the client renders and lets `slopp.http-api.model/form-view` carry the rest of
+  the client renders and lets `slopp.api.model/form-view` carry the rest of
   its card. A closed schema over a model this rich would be a contract that
   refuses valid data every time the model grew a field — the failure mode
   where the contract becomes the thing you route around."

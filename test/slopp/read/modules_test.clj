@@ -463,7 +463,15 @@
 
 (def slopp-production
   "slopp's own production module manifest as of 2026-07-26 — 14 modules,
-   33 edges, 9 layers, no cycles. Small enough to check the answer by hand."
+   33 edges, 9 layers, no cycles. Small enough to check the answer by hand.
+
+   A DATED snapshot, deliberately not maintained: it is an input to the
+   layering algorithm, not a claim about today. Read the two `api` keys with
+   that in mind, because both names were later REUSED and a glossary keyed by
+   spelling cannot say so — `slopp.api` here is the 322-form operation drawer
+   (today's `slopp.ops`), and `slopp.http-api` is what today's `slopp.api`
+   was called. Nothing about this fixture is stale; the names simply moved
+   underneath it."
   {"slopp.api"   ["slopp.boot" "slopp.edit" "slopp.image" "slopp.index" "slopp.store" "slopp.web"]
    "slopp.bench" ["slopp.api" "slopp.mcp" "slopp.store"]
    "slopp.boot"  []

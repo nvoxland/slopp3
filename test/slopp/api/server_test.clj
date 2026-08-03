@@ -1,9 +1,9 @@
-(ns slopp.http-api.server-test
+(ns slopp.api.server-test
   "The project listener's two promises: it serves the CALLER's session (the
   reason it is not the MCP transport), and its address is derived rather than
   fixed, so two projects on one machine never fight for a port."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.http-api.server :as server]
+            [slopp.api.server :as server]
             [slopp.store :as store]
             [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client] [clojure.set :as set] [clojure.string :as str]))
 
@@ -82,7 +82,8 @@
   (testing "inside the private range"
     (is (<= 49152 (server/derived-port "/w/a") 65535)))
   (testing "two projects on one machine get two ports — the collision a fixed
-            default guaranteed, and the reason slopp.api.port now defaults to unset"
+            default guaranteed, and the reason there is no port setting here
+            at all any more"
     (is (not= (server/derived-port "/w/a") (server/derived-port "/w/b"))))
   ;; The salt was originally to dodge the git listener's port for the same
   ;; dir. That listener is gone, so this no longer separates it from
@@ -93,20 +94,31 @@
     (is (not= (server/derived-port "/w/a")
               (+ 49152 (mod (hash "/w/a") 16384))))))
 
-(deftest the-preferred-port-resolves-explicit-then-configured-then-derived
-  (let [pinned (assoc-in (store/empty-store) [:config "capabilities" :values]
-                         {"slopp.api.port" "7400"})]
-    (testing "an explicit request wins — ui_serve {port} still means that port"
-      (is (= 9000 (server/preferred-port pinned "/w/a" 9000))))
-    (testing "then the configured value, for someone who wants a fixed address"
-      (is (= 7400 (server/preferred-port pinned "/w/a" nil))))
-    (testing "then the derivation, which is the ordinary case: nothing is
-              configured and nothing collides"
-      (is (= (server/derived-port "/w/a")
-             (server/preferred-port (store/empty-store) "/w/a" nil))))
-    (testing "an ephemeral session has no dir to derive from, so it takes
-              whatever port is free rather than refusing to serve"
-      (is (= 0 (server/preferred-port (store/empty-store) nil nil))))))
+(deftest the-preferred-port-is-derived-and-never-configured
+  ;; `slopp.api.port` was a CAPABILITY until phase 2 (2026-08-03). The knob
+  ;; went; the derivation stayed. That combination is easy to state backwards,
+  ;; so: the number is an OUTPUT — nobody sets it — but it is the SAME output
+  ;; on every restart, because the formula IS the address and a port that
+  ;; moves strands whatever held the url (D-hub). Unconfigured, not unstable.
+  ;;
+  ;; The knob was removable because nothing used it: the one external adopter
+  ;; sets three capability values and this was not among them, and
+  ;; `ui_serve {port}` already covers what a pin was for — wanting a specific
+  ;; address for one run.
+  ;;
+  ;; There is no "a stale value is ignored" case to assert here any more, and
+  ;; that is the strongest form of the guarantee rather than a gap in it: the
+  ;; fn takes no store, so no reader can be left behind for one caller. What
+  ;; a removed capability still owes is that the REGISTRY stopped governing
+  ;; the key, which `slopp.project.capabilities-test` asserts.
+  (testing "an explicit request wins — ui_serve {port} still means that port"
+    (is (= 9000 (server/preferred-port "/w/a" 9000))))
+  (testing "otherwise the derivation, which is now the only ordinary case"
+    (is (= (server/derived-port "/w/a")
+           (server/preferred-port "/w/a" nil))))
+  (testing "an ephemeral session has no dir to derive from, so it takes
+            whatever port is free rather than refusing to serve"
+    (is (= 0 (server/preferred-port nil nil)))))
 
 (deftest ^:external a-real-server-publishes-its-own-contract
   ;; serve! is the only thing that knows which namespaces it serves, so that
@@ -152,7 +164,13 @@
                                      (or (:web/path m) (:web/read m)))
                                   (vals (ns-publics nsx))))
         candidates (->> (all-ns) (map ns-name)
-                        (filter #(str/starts-with? (str %) "slopp.http-api."))
+                        ;; the prefix is DATA — a rename rewrites code and
+                        ;; walks straight past a string, so this scan can come
+                        ;; to match nothing. That is why the liveness check
+                        ;; below is not decoration: phase 2 broke this literal
+                        ;; and the check turned it red. A sibling guard without
+                        ;; one shipped green against an empty search.
+                        (filter #(str/starts-with? (str %) "slopp.api."))
                         ;; endpoint-shaped forms in tests are fixtures and
                         ;; claim no route — query_routes scopes the same way
                         (remove #(str/ends-with? (str %) "-test")))

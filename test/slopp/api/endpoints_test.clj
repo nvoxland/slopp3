@@ -1,10 +1,10 @@
-(ns slopp.http-api.endpoints-test
+(ns slopp.api.endpoints-test
   "Tests for the JSON boundary, run through the REAL dispatcher.
 
   Two disciplines, both learned from failures. First, build the context from
   `server/served-namespaces` rather than a hand-picked subset: endpoints and
   their read performers live in different namespaces, so a context holding
-  only `slopp.http-api.api` answers 500 and tests nothing — and a bundle served by
+  only `slopp.api.endpoints` answers 500 and tests nothing — and a bundle served by
   nothing once 404'd for two waves behind a 200 for the page.
 
   Second, validate every response against the SAME contract var the typed
@@ -14,9 +14,9 @@
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.http-api.endpoints]
-            [slopp.http-api.contracts :as contracts]
-            [slopp.web :as web] [slopp.http-api.server :as server] [slopp.ops.external :as external] [slopp.ops :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs]))
+            [slopp.api.endpoints]
+            [slopp.api.contracts :as contracts]
+            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -29,8 +29,8 @@
                               "(ns demo.core)\n\n(defn hello \"Says hi.\" [x] x)\n")
                 (store/ingest 'demo.util "(ns demo.util)\n\n(defn undocumented [x] x)\n"))
                 ;; the served list, not a hand-picked subset: the reads these
-        ;; endpoints declare are performed by slopp.http-api.reads, so a context
-        ;; holding only slopp.http-api.api answers 500 and tests nothing real
+        ;; endpoints declare are performed by slopp.api.reads, so a context
+        ;; holding only slopp.api.endpoints answers 500 and tests nothing real
         ctx (web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
         GET (fn [uri] (web/handle! ctx {:request-method :get :uri uri}))]
@@ -273,7 +273,7 @@
 
 (deftest ^:external a-consumer-generates-an-equivalent-client-from-the-published-contract
   ;; The fixed point the whole split rests on. A store that has never seen
-  ;; slopp.http-api.contracts generates, from HTTP alone, a client equivalent to the
+  ;; slopp.api.contracts generates, from HTTP alone, a client equivalent to the
   ;; one local generation produces from the store. If this holds, the reviewer
   ;; UI can live in its own project; if it does not, the wire format is lossy
   ;; and nothing downstream is worth building.

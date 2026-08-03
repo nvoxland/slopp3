@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.ops :as api]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.http-api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -348,9 +348,7 @@
    (fn [session a _sym]
      (text! (if (:stop a)
               {:stopped (boolean (ui/stop!))}
-              (ui/serve! session (ui/preferred-port (:store @session)
-                                                    (:dir @session)
-                                                    (:port a))))))
+              (ui/serve! session (ui/preferred-port (:dir @session) (:port a))))))
 "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)
@@ -744,7 +742,7 @@
   ([session] (start-ui! session nil))
   ([session explicit-port]
    (let [dir  (:dir @session)
-         want (ui/preferred-port (:store @session) dir explicit-port)
+         want (ui/preferred-port dir explicit-port)
          try! (fn [p] (try (ui/serve! session p)
                            (catch Throwable t {:error (or (.getMessage t) (str t))})))
          r0   (try! want)

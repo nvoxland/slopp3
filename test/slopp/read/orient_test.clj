@@ -422,7 +422,7 @@
   ;; reported the same class against the ns-outline the same day; this is
   ;; where it also lived.
   ;;
-  ;; `form-doc` in slopp.http-api.reads carries the identical scar — it read
+  ;; `form-doc` in slopp.api.reads carries the identical scar — it read
   ;; index 2 and took any string, so `(def greeting "hello")` documented
   ;; itself as "hello". Wrong-index reads do not throw. They return something
   ;; plausible, which is why one fix never closes the class.

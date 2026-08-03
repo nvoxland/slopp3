@@ -118,22 +118,29 @@
     (is (re-find #"is not a capability"
                  (str (caps/config-refusal "auth.oidc.client-secret" "abc123"))))))
 
-(deftest ui-ports-are-two-settings-and-the-project-one-defaults-to-derived
-  ;; D-hub. A machine runs many slopp projects, so the port a project's own
-  ;; UI listener binds cannot have a fixed default — that is a guaranteed
-  ;; collision. Unset means DERIVED from the store dir: stable across
-  ;; restarts, conflict-free, and nobody has to know it, because the address a
-  ;; human remembers is the hub's.
-  (let [entry (caps/find-entry "slopp.api.port")]
-    (is (= "slopp.api.port" (:key entry)))
-    (is (nil? (caps/effective (store/empty-store) "slopp.api.port"))
-        "unset = derive from the dir; an explicit value is for someone who wants a fixed address")
-    (is (nil? (caps/check-value entry "7400")))
-    (is (string? (caps/check-value entry "not-a-port"))
-        "a bad port is refused at the config write, not at bind time"))
-  ;; The well-known port belongs to the HUB now, and the hub is started by a
+(deftest the-hub-port-is-the-only-port-setting-slopp-itself-owns
+  ;; D-hub, then phase 2 (2026-08-03). There used to be two `slopp.*` port
+  ;; keys and the pair was the point: one for the project's own API listener,
+  ;; one for the hub it registers with. Only the second survives, and the
+  ;; asymmetry is the lesson rather than an accident.
+  ;;
+  ;; `slopp.api.port` was RETIRED. A machine runs many slopp projects, so
+  ;; that listener could never have a fixed default — it is derived from the
+  ;; store dir, stable across restarts, and nobody has to know it because the
+  ;; address a human remembers is the hub's. Once every honest answer came
+  ;; from the derivation, the knob was a knob for a number nobody chooses:
+  ;; the one external adopter never set it, and `ui_serve {port}` already
+  ;; covers wanting a specific address for one run. See
+  ;; `slopp.api.server-test/the-preferred-port-is-derived-and-never-configured`.
+  (testing "the retired key is governed by nothing — not by a lingering entry"
+    ;; a removed capability that still resolves is worse than one that never
+    ;; left: `config_file` would go on accepting writes to a key no code reads
+    (is (nil? (caps/find-entry "slopp.api.port"))))
+  ;; The well-known port belongs to the HUB, and the hub is started by a
   ;; human. This default is the one number both halves read: the project uses
-  ;; it to find a hub, the hub CLI uses it to bind.
+  ;; it to find a hub, the hub CLI uses it to bind. It is configurable
+  ;; precisely because it is an INPUT — an address to reach out to, chosen by
+  ;; whoever runs the hub — which is the distinction the retired key failed.
   (let [entry (caps/find-entry "slopp.hub.port")]
     (is (= "slopp.hub.port" (:key entry)))
     (is (= 7359 (caps/effective (store/empty-store) "slopp.hub.port")))
@@ -146,10 +153,15 @@
   ;;   actual bind                     51614
   ;;   curl 8080                       not listening
   ;;
-  ;; `slopp.api.port` gets this exactly right — `:effective nil`, and its doc says
-  ;; "Unset = DERIVED from the store dir". web.port said 8080 and derived
+  ;; `slopp.api.port` got this exactly right — `:effective nil`, and its doc
+  ;; said "Unset = DERIVED from the store dir". web.port said 8080 and derived
   ;; anyway, so the one surface whose job is to report configuration reported
-  ;; a port nothing was listening on.
+  ;; a port nothing was listening on. (That key was RETIRED in phase 2,
+  ;; 2026-08-03 — the exemplar is history, the rule it demonstrated is not.
+  ;; There was an assertion here comparing web.port against it; it went with
+  ;; the key rather than being retargeted, because `caps/effective` on a key
+  ;; no registry governs returns nil for the trivial reason and would have
+  ;; gone on passing forever while measuring nothing.)
   ;;
   ;; The registry default was the duplicate: `slopp.web/serve!` ALREADY
   ;; defaults `:web/port` to 8080, so declaring it again here resolved
@@ -159,8 +171,6 @@
     (testing "unset reports UNSET, so nothing downstream is bound by it"
       (is (nil? (caps/effective s0 "web.port")))
       (is (not (caps/stored? s0 "web.port"))))
-    (testing "and the same shape slopp.api.port already had"
-      (is (nil? (caps/effective s0 "slopp.api.port"))))
     (testing "a pin still wins, and is reported as pinned"
       (let [s (first (store/record-config-put s0 "capabilities" :manifest
                                               "web.port" "9000"))]

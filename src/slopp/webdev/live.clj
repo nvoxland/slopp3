@@ -88,7 +88,7 @@
 
   SALTED, and here the salt is still load-bearing. There were three
   derivations of this shape; the git listener's went with the listener, so
-  this and `http-api.server/derived-port` are what remain — and one MCP
+  this and `api.server/derived-port` are what remain — and one MCP
   process binds both, so a shared formula would have every project
   \"reliably colliding with itself\".
 
@@ -126,7 +126,8 @@
   registry default of 8080 stands for production, where a known number is the
   point; a dev session wants collision-freedom instead, because two projects
   on one machine both taking the default is not a rare case — it is the
-  second project. Same conclusion `slopp.api.port` reached, phrased in its own doc
+  second project. Same conclusion the API listener reached — see
+  `slopp.api.server/derived-port`, which puts it
   as a fixed default having \"worked for exactly one project and collided for
   the second\".
 

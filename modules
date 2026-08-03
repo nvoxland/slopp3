@@ -1,4 +1,5 @@
 slopp.addelete: slopp.read slopp.store slopp.ops (test)
+slopp.api: slopp.edit slopp.index slopp.read slopp.store slopp.web slopp.ops (test) slopp.webdev (test)
 slopp.branch: slopp.read slopp.store slopp.ops (test)
 slopp.build-native: slopp.build slopp.ops (test)
 slopp.chsig: slopp.edit slopp.store slopp.ops (test)
@@ -21,14 +22,13 @@ slopp.git-concurrency: slopp.git slopp.ops (test)
 slopp.git-projection: slopp.git slopp.read slopp.store slopp.ops (test)
 slopp.gitauthor: slopp.git
 slopp.history: slopp.mcp slopp.read slopp.store slopp.ops (test)
-slopp.http-api: slopp.edit slopp.index slopp.project slopp.read slopp.store slopp.web slopp.ops (test) slopp.webdev (test)
 slopp.hub: slopp.project slopp.web slopp.store (test)
 slopp.image: slopp.boot slopp.rt slopp.store
 slopp.index: slopp.cache slopp.image slopp.store slopp.build (test) slopp.mcp (test) slopp.ops (test) slopp.read (test) slopp.rules (test)
 slopp.integration-tier: slopp.ops (test)
 slopp.lab: slopp.mcp slopp.ops slopp.read slopp.store
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.http-api slopp.hub slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.webdev slopp.web (test)
+slopp.mcp: slopp.api slopp.hub slopp.ops slopp.project slopp.read slopp.rules slopp.store slopp.sync slopp.webdev slopp.web (test)
 slopp.merge: slopp.store
 slopp.modules: slopp.edit slopp.read slopp.store slopp.ops (test)
 slopp.multiproc: slopp.read slopp.store slopp.ops (test)

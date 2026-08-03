@@ -1013,7 +1013,7 @@
 (deftest the-web-framework-never-reaches-back-into-slopp
   ;; slopp.web.* is the FRAMEWORK slopp ships to users: build.clj's slim
   ;; io.github.nvoxland/slopp-web jar is exactly slopp/web.clj + slopp/web/**.
-  ;; slopp.http-api.* is slopp's OWN webapp built on that framework — a peer of any
+  ;; slopp.api.* is slopp's OWN webapp built on that framework — a peer of any
   ;; user's app. The dependency runs ui -> web and NEVER the reverse, because a
   ;; framework namespace that reaches back into slopp's core makes that jar
   ;; unloadable, and it breaks at the USER's require time rather than ours.

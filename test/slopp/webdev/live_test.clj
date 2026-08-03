@@ -36,7 +36,7 @@
                                                "/tmp/shop")))))
     (testing "unset, the port DERIVES from the store dir"
       ;; web.port's registry DEFAULT is 8080, and a fixed default is exactly
-      ;; what http-api.server/derived-port exists to refuse: it "worked for
+      ;; what api.server/derived-port exists to refuse: it "worked for
       ;; exactly one project and collided for the second". Production wants a
       ;; known number, so the default still stands there — but two dev
       ;; sessions on one machine must not fight, so an UNSET port derives.
