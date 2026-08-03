@@ -245,13 +245,26 @@ and unchecked. Layering *within* a component is no longer a gate.
   sig/doc, deps, consumers): `query_depends {modules true, on "x.y"}`;
   the bare `{modules true}` view carries the GRAPH: topological `:layers`
   (cycles condensed via SCC so they share a layer instead of poisoning
-  the picture), the `:cycles` themselves, and `:unused-edges` (declared
+  the picture), the `:cycles` themselves, `:unused-edges` (declared
   but no call uses them — the retire-direction drift the debt view can't
-  see). One kondo pass feeds debt and drift both. **`:layers`/`:cycles`
-  compute over PRODUCTION edges only** (`api/production-manifest`): a
-  `-test` namespace folds into its subject module, so its fixture deps
-  would manufacture cycles that don't exist in production; `:manifest`
-  (declared/enforced) still carries them.
+  see) and `:overstated-edges`. One kondo pass feeds debt and drift both.
+  **`:layers`/`:cycles` compute over PRODUCTION edges only**
+  (`api/production-manifest`): a `-test` namespace folds into its subject
+  module, so its fixture deps would manufacture cycles that don't exist in
+  production; `:manifest` (declared/enforced) still carries them.
+- **`:overstated-edges` is what the unused report structurally cannot see.**
+  A production edge only `-test` namespaces cross: something DOES cross it,
+  so "declared but no call uses it" is false, yet the manifest asserts a
+  dependency production doesn't have. `api.modules/overstated-edges` is the
+  unused report's sibling, and it reuses `production-manifest` rather than
+  spelling a second is-this-a-test predicate — which also gives it the
+  restriction for free, since that map keys exactly the modules WITH
+  production code (an all-test module can only ever be crossed by tests, so
+  asking there produced 80 rows against 4 real ones). It reports rather than
+  gates, same genre as unused; what makes it more than tidiness is that the
+  CYCLE check reads declared edges, so an overstated one refuses a legitimate
+  declaration in an unrelated module. Four stood here on 2026-08-02 and
+  `slopp.index → slopp.mcp` blocked the `slopp.rules` regroup.
 - **Cross-module calls need a DECLARED edge.** The manifest is NOT a file:
   it is the fold of `:module-edge` deltas — edge-grain CRDT (concurrent
   declarations union; `merge-logs` folds them without conflict, and

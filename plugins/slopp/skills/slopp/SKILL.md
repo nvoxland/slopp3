@@ -202,7 +202,11 @@ not a clean bill of health:**
 - `module_platform` verifies NOTHING about the code; `compile_client` is what
   proves a `:cljc`/`:cljs` namespace actually compiles.
 - `module_dep` checks cycles over PRODUCTION edges; whether anything uses the
-  edge is `query_depends {modules true}`'s `:unused-edges`. `test_only: true`
+  edge is `query_depends {modules true}`'s `:unused-edges`, and whether only
+  TESTS use it is the same call's `:overstated-edges` — a production edge no
+  production code crosses. Fix those when you see them: the cycle check reads
+  declared edges, so an overstated one can refuse a legitimate declaration in
+  a module that has nothing to do with it. `test_only: true`
   declares an edge for the module's `-test` namespaces alone — production
   under that module is still refused, and a test-only edge is not a production
   edge so it is never a cycle. **Reach for it when a fixture must drive a
@@ -426,7 +430,8 @@ visibility gate before its stubs can land, and the escape it teaches
 (mark the target `^:export`) is impossible for a var that doesn't exist
 yet. Read the whole architecture in one call: `query_depends {modules
 true}` — manifest, topological :layers, :cycles, :unused-edges (dead
-declarations), standing debt; browse what a module OFFERS (public fns +
+declarations), :overstated-edges (production edges only tests cross),
+standing debt; browse what a module OFFERS (public fns +
 exports, deps, consumers) before calling into it: `query_depends
 {modules true, on "x.y"}`. Public-surface fns warn once when a
 write leaves them undocumented — add the docstring.

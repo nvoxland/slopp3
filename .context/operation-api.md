@@ -214,7 +214,10 @@ write time, instead of a fresh JVM catching it later.
   teaches this verb; the manifest reads via `query_depends {modules
   true}` — which also carries the GRAPH: `:layers` (topological, SCC-
   condensed via `store/module-layers`), `:cycles`, `:unused-edges`
-  (declared-but-unused drift) — (add `on <module>` for that module's
+  (declared-but-unused drift), `:overstated-edges` (declared for production
+  but only `-test` namespaces cross — invisible to the unused report because
+  something DOES cross, and load-bearing because the cycle check believes the
+  declaration) — (add `on <module>` for that module's
   SURFACE — public fns + exported deep vars with sig/doc/level, deps,
   consumers; `api/module-surface`)
   and projects into commits/builds as a `modules` file. The `:export`

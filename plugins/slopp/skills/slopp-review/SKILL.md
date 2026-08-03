@@ -77,8 +77,11 @@ conclusions, so the review reasons about findings, not source dumps.
   — the gate refuses new ones; an ADOPTED cycle from an import surfaces here.
   Both `:layers` and `:cycles` read production edges only, so a `-test`
   namespace's fixture require never shows up as one),
-  `:unused-edges` (declared deps nothing uses — retire them), `:layers` (is the
-  dependency direction sane?). Boundary violations and visibility are already
+  `:unused-edges` (declared deps nothing uses — retire them),
+  `:overstated-edges` (declared for production but only a `-test` namespace
+  crosses — the manifest claiming a dependency the production code does not
+  have; `test_only true` then `remove true` states it honestly), `:layers` (is
+  the dependency direction sane?). Boundary violations and visibility are already
   gated, so a *standing* one is debt worth naming. `query_depends {on X}` traces
   who a form/keyword touches before you judge a change's blast radius.
 - **Effect honesty → `!` and the boundary.** Is an effectful fn `!`-named? Does a

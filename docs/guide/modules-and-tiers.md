@@ -74,11 +74,24 @@ query_depends {modules true}
 One call returns the manifest, topological `:layers` (cycles condensed so they
 share a layer instead of poisoning the picture), the `:cycles` themselves,
 `:unused-edges` (declared but never called -- the retire-direction drift a debt
-view cannot see), and standing debt.
+view cannot see), `:overstated-edges`, and standing debt.
 
 Layers and cycles are computed over production edges only. A `-test` namespace
 folds into its subject module, so its fixture dependencies would otherwise
 manufacture cycles that do not exist in production.
+
+**`:overstated-edges` is the drift `:unused-edges` structurally cannot see.**
+An edge declared for production that only a `-test` namespace crosses: the
+manifest asserts a dependency the production code does not have. Something
+*does* cross it, so an unused check will never mention it. It is worth fixing
+rather than filing as tidiness, because declared edges are what the cycle check
+reads -- an overstated edge is a real production edge to `module_dep`, so one
+can refuse a legitimate declaration in a module that has nothing to do with it.
+Declare it `test_only true`, then `remove true` the production edge.
+
+The question is only asked of modules that have production code. A module made
+entirely of tests can only ever be crossed by tests, so every edge it declares
+would answer yes.
 
 Before calling into a module, browse what it offers:
 

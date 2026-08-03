@@ -206,6 +206,40 @@ The good-input probe caught a second bug within a minute of existing: a
 bracket expression in the escaping that BSD `sed` rejected while looking
 correct.
 
+**And a third probe the day after (2026-08-02), which only MEASUREMENT asked
+for.** `overstated-edges` — declared production module edges only `-test`
+namespaces cross — shipped with both probes green and returned **80 rows** on
+its first run over the real store. Roughly forty of slopp's modules are made
+entirely of tests, where "only tests cross it" is true by construction and
+carries no information. Four real findings under seventy-six non-findings is a
+list nobody reads, which is the failure the rule-precision discipline already
+names. Both probes were correct; neither was drawn from the actual population.
+
+> Both probes prove the detector DISCRIMINATES. Only running it over the real
+> population tells you whether the distinction is worth reporting.
+
+### The instances you found came through a FILTER, and the filter is not the class
+
+2026-08-02, two units apart, the same shape. A class was named and fixed — the
+manifest was recording fixture crossings as production dependencies — and the
+fix was applied to the instances in hand: the two edges that formed declared
+CYCLES, because a cycle is what made me look. The general question, *which
+declared production edges have no production caller?*, was never asked. It had
+four answers, and the two I missed sat there until one of them refused a
+legitimate declaration in an unrelated module a day later.
+
+> When you fix a class, the instances you have came from whatever made you
+> notice. Before calling it closed, run the NEW distinction over the whole
+> population — the fix has just given you a predicate you did not have when
+> you were collecting.
+
+This is Core 1 pointed at the author rather than the tool. "I fixed the class"
+and "I fixed every instance of the class" read identically in a commit message,
+and only one of them is checkable. The cheap discharge is a one-line
+`query_store` fold over the real store the moment the predicate exists; here it
+turned a two-instance anecdote into a four-instance measurement and a reported
+`:overstated-edges` key, at a cost of about a minute.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by
