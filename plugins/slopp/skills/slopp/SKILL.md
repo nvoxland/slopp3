@@ -399,6 +399,28 @@ The general form is worth memorizing, because it costs one line and it catches
 a class you cannot otherwise see: **an empty result standing in for a verified
 one.** Ask it of any check whose pass is a silence.
 
+**A metric and its test, written in the same session, cannot validate each
+other.** The fixture gets derived from the metric's own definition, so it can
+only ever confirm that definition — including the part that is wrong. A layout
+tool grew a `crossings` count with an adversarial 3-crossings-→-0 test beside
+it; the count was textbook and it only counted crossings between ADJACENT
+layers, so on the real graph — where every crossing came from a layer-SKIPPING
+edge — it reported 1 where 8 were on the screen. The fixture could not have
+caught it. What did was asserting the property a reader actually cares about
+(*no drawn edge passes through any box*) against REAL data, which fails
+immediately and cannot be satisfied by a wrong metric because it does not go
+through the metric. So: whatever you measure with, assert the user-visible
+property against the real store at least once, even when it is harder to
+phrase.
+
+**And a measurement that reports "no change" is a suspect, not a result.** The
+failure mode is not that an instrument lies — it is that it answers a narrower
+question in the wider question's voice, and the tell is a suspiciously boring
+answer. Before believing "correct, tested, no improvement here", check the
+instrument. This is the same class one level up: *"none"* and *"none that I
+looked at"* are different claims that share a spelling, and here the thing with
+the two meanings is your own yardstick.
+
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote
 2× the commentary plain-file agents did, and it was ALL of the remaining
