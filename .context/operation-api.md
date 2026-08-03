@@ -388,7 +388,7 @@ its store-backed static reader moved to `api.web/store-reader`.
   `refs/heads/wip/<branch>` mirror of un-milestone'd state) is gone. It forced
   exact-project handling that got complex for what it bought, and it carried
   the third `derived-port` implementation — the salt in
-  `http-api.server/derived-port` exists to dodge a port nothing binds now.
+  `api.server/derived-port` exists to dodge a port nothing binds now.
   Git as slopp supports it is **push/pull to a repo slopp does not own**:
   `git_push`, `git_pull`, `git_clone` (`slopp.git` projects, `slopp.git.client`
   transports, `slopp.sync` orchestrates).

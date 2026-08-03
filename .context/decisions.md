@@ -3394,13 +3394,32 @@ rather than the dir) loses its second entry: `mcp/-main` no longer starts a git
 listener at all, so it cannot recreate the store that serving-without-adopting
 exists to avoid.
 
-**`D-hub`'s salt.** `http-api.server/derived-port` is salted specifically to
+**`D-hub`'s salt.** `api.server/derived-port` is salted specifically to
 avoid landing on the git listener's port for the same dir. That listener is
 gone and the salt now distinguishes it from nothing. **It stays anyway**, for a
 reason that has nothing to do with git: the derivation IS the address, so
 changing it relocates every project's UI and strands every saved url.
-`api.devserver/derived-port`'s salt is still genuinely load-bearing — one MCP
-process still binds both it and the UI listener.
+`webdev.live/derived-port`'s salt is still genuinely load-bearing — one MCP
+process still binds both it and the API listener.
+
+**`D-hub` amended 2026-08-03 (phase 2): `slopp.api.port` is RETIRED, and the
+derivation is not.** The restructure plan had these as one move — "becomes an
+output: bind an OS-assigned free port, report the number" — and they are not
+one move. The paragraph above was written after that plan and argues the
+formula must not change; going ephemeral changes it in the strongest way, so
+only the KNOB went. The capability is gone from the registry (19 entries → 18)
+and `preferred-port` is `explicit → derived → 0`.
+
+The distinction worth keeping, because it is easy to state backwards: this
+port is an OUTPUT in the sense of *unconfigured*, not *unpredictable*. Nobody
+sets it; it is nonetheless the same number every restart.
+
+What made the knob removable was measurement, not principle: slopp-ui, the only
+external consumer, sets three capability values and this was never among them,
+and `ui_serve {port}` already covers the case a pin was for. What it BOUGHT is
+larger than one registry row — `slopp.api → slopp.project` left the module
+graph with it, because that key was the only reason a generic listener read a
+project's configuration at all.
 
 ### Three things fell out that the plan did not anticipate
 

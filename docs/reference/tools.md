@@ -87,12 +87,17 @@ dropdown, so you switch without going back to the picker.
     published API over HTTP without opening its store, and packaging is a
     separate problem that can wait.
 
-Two capabilities configure it:
+One capability configures it:
 
 | Key | Default | Meaning |
 |---|---|---|
 | `slopp.hub.port` | `7359` | The hub this project registers with. `0` = register with no hub. |
-| `slopp.api.port` | *unset* | The port this project's own listener binds. Unset = derived from the store dir. Set it only to pin a fixed address. |
+
+The port the listener itself binds is **not** configurable. It is derived from
+the store dir — the same number on every restart, and a different one for
+every project on the machine, so several can run without colliding. The
+listener reports where it bound; `ui_serve {port}` pins an address for one run
+if you need a specific one.
 
 ### Serving a slopp app under a path prefix
 

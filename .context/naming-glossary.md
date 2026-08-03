@@ -11,6 +11,30 @@ was learned. This table is what keeps them readable instead.
 place. Past-tense records of what happened keep their original names, and
 resolve here.
 
+**Two limits on that rule, both found by hitting them.**
+
+**A REUSED name cannot resolve here, and the table cannot tell you so.** This
+is a lookup keyed by spelling, so it can hold `slopp.api → slopp.ops` or it
+can describe today's `slopp.api`, not both. Phase 2 created exactly that: the
+name meant the 322-form operation drawer until 2026-08-03 and means the
+external API after it, so "resolve through the glossary" would send a reader
+from a correct old record to the wrong current module. **When a name is
+reused, its past-tense mentions must be disambiguated IN PLACE** — that is the
+one case where a dated record gets edited, and what it gets is a parenthetical
+("the module then called `slopp.api`, today's `slopp.ops`"), never a rewrite.
+Three were fixed in `architecture.md` when the name came free; assume more
+turn up, because nothing detects this.
+
+**A vocabulary VALUE goes stale the same way its keys do.** Every row's
+right-hand side is itself a name, and a later rename can retire it while the
+row goes on pointing there. Two live instances the day phase 2 landed:
+`slopp.ui-api → slopp.http-api` (retired three days after it was minted) and
+`ui.port → slopp.api.port` (retired outright), each sending a reader from one
+dead spelling to another. Nothing compares the two halves — a table whose job
+is resolving names has no check that its own answers still resolve. Both
+collapsed onto live names; when a rename retires something that appears as a
+VALUE here, follow the chain.
+
 **This file has a machine-readable twin: the store's `vocabulary` config.**
 Every row below should also be `config_file {path "vocabulary" key <old> value
 <new>}`, because two checks read that and nothing reads this. The
@@ -24,7 +48,8 @@ and not there is how a rename keeps its blind spot.
 
 | Old | New | When / why |
 |---|---|---|
-| `slopp.ui-api.*` | `slopp.http-api.*` | named for its consumer (a UI); the consumer changed and the name was stranded. **Intermediate** — phase 2 renames it again to `slopp.api.*` once the current occupant moves |
+| `slopp.ui-api.*` | `slopp.http-api.*` | named for its consumer (a UI); the consumer changed and the name was stranded. **Intermediate**, and it lived about three days — see the next row |
+| `slopp.http-api.*` | `slopp.api.*` | **phase 2, 2026-08-03.** The external API takes the name it was always meant to have; `http-api` only ever existed because `slopp.api` was occupied by the 28-namespace drawer, and phase 1b emptied it. All five namespaces (`contracts`, `endpoints`, `model`, `reads`, `server`) plus their `-test` siblings, module and layer unchanged (7, beside `slopp.ops`). The transport protocol was never the subject: HTTP is how this API is reached, not what it is, and naming a piece for its transport is the same error as naming it for its consumer — R3, twice over |
 | `slopp.api.artifacts` | `slopp.store.artifacts` | bytes live on disk, the store holds the sha and the recipe — that is the store's subject |
 | `slopp.edit.refs` | `slopp.index.refs` | THE reference graph is derived, content-memoized and never stored: `slopp.index`'s genre, not the edit pipeline's. Side effect: the edit pipeline no longer touches `slopp.cache` at all |
 | `slopp.api.crossings` | `slopp.index.crossings` | its pair — `refs` answers every edge INSIDE the store, `crossings` the edges that LEAVE it. Landed together so the pair is one module |
@@ -101,7 +126,7 @@ Two consequences worth stating, because both were learned the expensive way:
 
 | Old | New | When / why |
 |---|---|---|
-| `ui.port` | `slopp.api.port` | named for its consumer. Becomes an **output** in phase 2 — bind a free port, report the number |
+| `ui.port` | *(retired — `slopp.api.server/derived-port`)* | named for its consumer, renamed to `slopp.api.port`, and then **RETIRED entirely in phase 2 (2026-08-03)**. The plan said "becomes an output — bind a free port, report the number", and that was half right in a way worth keeping straight: the key went, the derivation did not. `D-hub` records why the formula stays (it IS the address; a port that moves strands every saved url), so the port is unconfigured without being unpredictable. What made the knob removable is that nothing set it — the one external adopter never did, and `ui_serve {port}` already covers pinning one run. Retiring it also took `slopp.api → slopp.project` off the module graph: that key was the only reason a generic listener read a project's config |
 | `ui.hub-port` | `slopp.hub.port` | the port slopp reaches OUT to, not one it serves |
 | `http.enabled` | `web.enabled` | **the whole `http.*` family became `web.*` (2026-08-02, user decision).** `http` names the PROTOCOL; what a project opts into is the WEB feature — routing, auth, static mounts, the client build, ten of the thirty-four rules. A browser session TTL and an OIDC redirect are not HTTP-the-protocol. R6: an app type's support lives under that type's name, so app type #2 gets its own `<type>.enabled` without renaming this one |
 | `http.port` | `web.port` | ditto — and `web.port` was already the name the plan and the docs used |

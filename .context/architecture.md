@@ -112,7 +112,9 @@ Namespaces are grouped so that **a component IS a module** — modules are the
 first two ns segments, so `slopp.store.db` is part of module `slopp.store`,
 and a cross-component call needs a declared edge while an intra-component one
 does not. Before this, 28 flat modules sat with no coarser grouping and sizes
-160× apart; `slopp.lab` (2 forms) had the same standing as `slopp.api` (322).
+160× apart; `slopp.lab` (2 forms) had the same standing as the module then
+called `slopp.api` (322 forms — today's `slopp.ops`; the name has since been
+reused, see the glossary).
 
 The resulting graph is acyclic and nearly linear:
 
@@ -141,7 +143,7 @@ scripts to buy taxonomy.
 `slopp.web.*` is what users depend on — `build.clj`'s slim `slopp-web` jar ships
 exactly `slopp/web.clj` + `slopp/web/**`, and the `slopp.web` module declares
 ZERO outgoing edges, so the gate refuses any call from the framework into
-slopp's core. slopp's own webapp (`slopp.http-api`) depends on the framework the
+slopp's core. slopp's own webapp (`slopp.api`) depends on the framework the
 way a user's app would, never the reverse.
 
 **And since 2026-07-28 there is a stronger test of that boundary than a gate.**
@@ -154,9 +156,12 @@ all. What remains here is the API and its read performers — a project serves
 to say so, since a module named for a UI it no longer contains is exactly the
 kind of claim a reader trusts. That rename overshot: `review` is what
 `slopp.api.review` (review_scan, risk triage) already meant, so one word named
-two unrelated things across two modules. It is **`slopp.http-api`** since
+two unrelated things across two modules. It became **`slopp.http-api`** on
 2026-08-01 — not the UI, the API *for* it, which is what the first rename was
-reaching for. A gate says the framework may not call into the
+reaching for — and **`slopp.api`** on 2026-08-03, once phase 1b emptied that
+name. `http-api` was only ever a placeholder for an occupied name: HTTP is how
+this API is REACHED, not what it is, and naming a piece for its transport
+repeats the error of naming it for its consumer. A gate says the framework may not call into the
 core; a separate process that cannot even load it says so louder, and it found
 four real bugs in the first session (`ideas/ui-split-frictions.md`).
 
@@ -286,8 +291,8 @@ and unchecked. Layering *within* a component is no longer a gate.
   DAG. `module_extract` already judged on production edges; `module_dep`
   now matches (`slopp.modules-test/cycle-refusal-judges-production-edges-not-test-fixtures`);
   and the MERGE note was the last holdout, warning on every merge into
-  main about `api → edit → image → store → api`, a cycle owed entirely to
-  `slopp.store.db-test` requiring `slopp.api`. Its advice — retract an
+  main about `ops → edit → image → store → ops`, a cycle owed entirely to
+  `slopp.store.db-test` requiring `slopp.ops`. Its advice — retract an
   edge — would have broken that test. **`slopp.store.merge` cannot ask the
   question at all**: at that layer a store is a delta log and some maps,
   with no notion of which namespaces are tests, so the check moved UP to
@@ -354,14 +359,20 @@ and unchecked. Layering *within* a component is no longer a gate.
 
   **A test-only edge is re-keyed by NOTHING, which is its own hazard.** When a
   rename empties a module, `ns_rename` relocates the PRODUCTION manifest entry
-  (measured: `slopp.api`'s eight deps arrived at `slopp.webdev` already
-  declared, and `slopp.mcp → slopp.api` re-keyed to `slopp.mcp →
-  slopp.webdev`) — and leaves every test-only edge spelled the old way, in
-  both directions. Phase 3 found six: `slopp.api → slopp.read`, which had to
-  be re-declared by hand as `slopp.webdev → slopp.read` while the original sat
-  beside it, and four `X → slopp.api` survivors of module 4's rename. Nothing
-  reports them, because an edge naming a module with no namespaces is merely
-  unused. That is harmless right up until the NAME IS REUSED — phase 2 gives
-  `slopp.api` to the external API — at which point six dead entries silently
-  become live permissions for something they were never about. Retired in
-  phase 3; the general fix belongs with #20.
+  — measured twice, and the second time is the one that matters. Phase 3: the
+  old `slopp.api`'s eight deps arrived at `slopp.webdev` already declared and
+  `slopp.mcp → slopp.api` re-keyed itself, while six test-only edges kept the
+  old spelling in both directions. Those six were merely DEAD — an edge naming
+  a module with no namespaces is unused, and nothing reports unused. Retired
+  ahead of the reuse.
+
+  Phase 2 then measured the same gap with the dead entries cleared, and the
+  answer was worse: `slopp.http-api`'s six production deps, its purity tiers,
+  its `:cljc` platform register and `slopp.mcp`'s consumer edge ALL followed
+  the rename to `slopp.api`, and its two test-only edges (`→ slopp.ops`,
+  `→ slopp.webdev`) did not. Not dead this time — *needed*, by tests that had
+  just moved. Six `:undeclared-edge` debt rows stood in the manifest against
+  namespaces that had never done anything wrong. So the hazard is not "stale
+  entries accumulate"; it is that the register a rename carries and the
+  register it drops are decided by nothing a reader can see. The general fix
+  belongs with #20.
