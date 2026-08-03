@@ -245,6 +245,12 @@ move — that is suddenly reaching in. Fix it at the target (`^:export` on the
 defn name hoists it into the module's surface; `^{:export "prefix"}` exposes
 it to one subtree) or at the call. `module_extract` does this hoisting for you
 and reports which caller forces each export; `ns_rename` does not.
+
+**And a scoped `^{:export "prefix"}` breaks from the OTHER end.** The string
+names the CALLER's subtree, so relocating the caller invalidates an export in
+a namespace nothing touched — often in a module you are not working on. Same
+blind spot, mirrored: re-point the string, or widen it to plain `^:export` if
+the var really is module surface.
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.

@@ -178,6 +178,12 @@ package-private, so it is the unmoved *caller* that is suddenly reaching in.
 `module_extract` handles the hoisting for you and tells you which caller forces
 each `^:export`; `ns_rename` does not, which is what these checks are for.
 
+A scoped export breaks from the other end. `^{:export "billing.invoice"}` names
+the *caller's* subtree, so moving the caller invalidates an export in a
+namespace nothing touched -- possibly in a module you are not working on.
+Re-point the string, or widen it to `^:export` if the var really is module
+surface.
+
 ### Why this axis
 
 The tier is not an aesthetic judgement about functional style. It decides how a

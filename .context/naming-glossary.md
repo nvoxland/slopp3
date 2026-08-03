@@ -34,6 +34,16 @@ and not there is how a rename keeps its blind spot.
 | `slopp.bench.evalseed` | `slopp.lab.evalseed` | ditto — 15 KB seeding slopp's own eval rounds, downloaded by every user and usable by none |
 | `slopp.store.mine` | `slopp.lab.mine` | ditto, and it changes MODULE: a demand-mining CLI over provenance journals is an instrument, not storage |
 | `slopp.http-api.heartbeat` | `slopp.hub` | registering and beating is HUB INTEGRATION, not part of the generic external API — every project on slopp talks to a hub, slopp itself included. `slopp.http-api.contracts/project-beat` came with it (→ `slopp.hub/project-beat`): the beat's shape describes the HUB's `POST /api/register`, so it was the one non-API contract in the API's registry |
+| `slopp.api.rules` | `slopp.rules` | **phase 1b, module 2 of 4 (2026-08-02).** The CHECKS are their own module — the episode-scoped advisories, the registry that runs them, and the analysis they judge against. Not part of the operation surface that calls them; `slopp.api.shape`'s own docstring already said it (*"everything here answers a question some rule needs"*) |
+| `slopp.api.rules.catalog` | `slopp.rules.catalog` | ditto — the catalog is prose for the registry |
+| `slopp.api.rules.markers` | `slopp.rules.markers` | ditto — what the checks ask about a form |
+| `slopp.api.breakage` | `slopp.rules.breakage` | ditto — "did this episode break a contract" is a question a rule asks |
+| `slopp.api.schema` | `slopp.rules.schema` | ditto — the generative schema check |
+| `slopp.api.shape` | `slopp.rules.shape` | ditto |
+| `slopp.api.doctor` | `slopp.rules.doctor` | ditto — the legacy sweep asks every current rule of code that predates it |
+| `slopp.api.currency` | `slopp.rules.currency` | ditto — "is the running image the code the store describes" is a check by comparison. This is the one 1a could never land in `slopp.image`: it reads the reference graph, which is above `image` no matter which module owns it |
+| `slopp.api.attrs` | `slopp.rules.keywords` | ditto, and it changes the WORD. All five forms are the store's namespaced-keyword vocabulary plus the typo advisory built on it — nothing about "attributes". Coherent namespace, wrong name (1a′ finding) |
+| `slopp.api.web` | `slopp.rules.web` | ditto, and the checks module is its ONLY legal home: its docstring argues a rule that refuses at the write and a report that lists the surface *"must agree, and they only can if they are one derivation"*, and it cannot join `slopp.webdev` without cycling against the write engine that requires it |
 
 ## Removed — what an old record refers to that no longer exists
 

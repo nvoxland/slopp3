@@ -302,7 +302,7 @@ no effect (`schema/analyzer-pure?`, the same predicate as `tier-refusal`'s
 with generated inputs, so an effectful fn is never invoked with random data. A
 non-`:=>` schema (a plain `:map`, …) is not a candidate — `mg/check` needs a
 function schema to generate args and check the return. Impl: the deep intra-module
-ns `slopp.api.schema`, called once from `api/done!`.
+ns `slopp.rules.schema`, called once from `api/done!`.
 
 **Requiring the schema (opt-in) — `edit.modules/schema-refusal`.** A store may
 *require* boundary schemas: a per-form WRITE gate (registered in
@@ -329,7 +329,7 @@ nil-pun**: a typo'd or synonym key (`:user/emial` for `:user/email`) doesn't err
 it reads `nil` — the one failure a slice-limited agent can't see. The guardrail is
 a domain-keyword **inventory** and a done-time **advisory**.
 
-- **`slopp.api.attrs/keyword-inventory`** — a DERIVED index `{namespaced-kw ->
+- **`slopp.rules.keywords/keyword-inventory`** — a DERIVED index `{namespaced-kw ->
   #{form-ids}}` over all forms (`form-keywords` collects NAMESPACED keywords per
   form, excluding unqualified keys and destructuring directives `:keys`/`:as`/`:or`;
   malli schemas in name-metadata aren't traversed, so they don't pollute the
@@ -366,7 +366,7 @@ sees the in-store callers (the tests re-run and turn red) but NOT the external
 callers — CLI, wire, another repo — so a narrowing of a **module-external** fn is
 exactly the breakage it can't observe.
 
-- **`slopp.api.breakage`** — at `done`, a CHANGED module-external `defn` whose
+- **`slopp.rules.breakage`** — at `done`, a CHANGED module-external `defn` whose
   **fixed-arity surface shrank** vs its state at the last-done baseline
   (`store/sources-at` the prior `:done` delta) is surfaced as a `:breaking-changes`
   finding `{:form :removed-arities}`. `fixed-arities` returns nil for variadic or
