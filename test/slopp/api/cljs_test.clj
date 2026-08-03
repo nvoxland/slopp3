@@ -641,3 +641,29 @@
           (is (not (contains? (set (:other-clients r)) 'shopf.elsewhere.api))
               (pr-str r))))
       (finally (api/close! sess)))))
+
+(deftest a-generated-client-namespace-states-its-own-purpose
+  ;; slopp-ui, 2026-08-03: `namespace-purpose` fires on their generated client
+  ;; namespace and they CANNOT discharge it. Hand-editing is overwritten by the
+  ;; next generate_client, so the advisory returns on every contract change —
+  ;; a permanent finding a consumer cannot clear, which trains the reader to
+  ;; skim the whole list.
+  ;;
+  ;; It is an inconsistency between the generator's two outputs rather than a
+  ;; missing feature: `render-contracts-ns` has written a purpose since it
+  ;; existed. A generator emitting code subject to a rule has to emit code
+  ;; that SATISFIES it, or it manufactures debt its user has no way to pay.
+  (let [src (cljs/render-client-ns
+             'app.client
+             [{:name "get-thing" :method :get :path "/api/thing"
+               :response {:ns 'app.contracts :sym 'thing}}])]
+    (testing "the ns form opens with a docstring, before the requires"
+      (is (re-find #"\(ns app\.client\n\s+\"" src) src))
+    (testing "and it says what the namespace IS, plus the one rule for generated code"
+      ;; the advisory's own teaching: not a list of contents, which
+      ;; query_project already derives — why it exists, and for generated
+      ;; source the instruction that keeps a reader from editing it
+      (is (re-find #"generate_client" src) src)
+      (is (re-find #"(?i)regenerate|never hand-edit" src) src))
+    (testing "the requires still follow, so the docstring did not displace them"
+      (is (re-find #"\(:require \[malli\.core :as m\]" src) src))))

@@ -58,9 +58,10 @@
   that a new key on the read must be named here too; the contract check is
   what makes that a red test rather than a silently missing field."
   [req]
-  (if-let [{:keys [ns forms tested-by]} (:outline (:web/reads req))]
+  (if-let [{:keys [ns tier forms tested-by]} (:outline (:web/reads req))]
     {:status 200
      :body {:ns (str ns)
+            :tier tier
             :forms (mapv (fn [{:keys [name kind sig private? doc schema mass calls
                                       callers-out callers-out-test
                                       effectful? exported?]}]

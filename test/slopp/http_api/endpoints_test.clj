@@ -52,6 +52,9 @@
       (let [r (GET "/api/ns/demo.core")]
         (is (= 200 (:status r)))
         (is (= {:ns "demo.core"
+                ;; nobody declared one, and undeclared IS external — so the
+                ;; badge has three states, never four
+                :tier "external"
                 :forms [{:name "demo.core" :kind "ns" :sig nil
                          :private? false :doc nil :schema nil
                          :mass 3 :calls [] :callers-out 0 :callers-out-test 0
@@ -72,6 +75,7 @@
       ;; :maybe in the contract is the promise; this is the promise being kept
       (let [r (GET "/api/ns/demo.util")]
         (is (= {:ns "demo.util"
+                :tier "external"
                 :forms [{:name "demo.util" :kind "ns" :sig nil
                          :private? false :doc nil :schema nil
                          :mass 3 :calls [] :callers-out 0 :callers-out-test 0
@@ -418,3 +422,41 @@
       (is (true? (:exported? (rows "app-view"))))
       (is (false? (:exported? (rows "plural"))))
       (is (false? (:effectful? (rows "plural")))))))
+
+(deftest the-outline-says-what-the-NAMESPACE-is-allowed-to-do
+  ;; slopp-ui's ask, and the GRAIN is the whole point. `:effectful?` is a FORM
+  ;; fact — what this definition actually does — and their user asked the right
+  ;; question looking at a ⚡ badge: a tier is a claim about the NAMESPACE, so
+  ;; it belongs beside :ns rather than repeated on every row.
+  ;;
+  ;; Both are worth showing because they disagree constantly: a namespace with
+  ;; permission to do IO is mostly pure functions. `slopp-ui.hub` is their
+  ;; worked case — tier :external, and 5 of its 23 forms effectful.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.core
+                              (str "(ns demo.core)\n\n"
+                                   "(defn calc [x] (inc x))\n"))
+                (store/ingest 'demo.quiet
+                              (str "(ns demo.quiet)\n\n"
+                                   "(defn hush [x] x)\n"))
+                (store/record-module-tier "demo.core" :pure)
+                first)
+        ask (fn [nsx]
+              (web/handle! (web/context
+                            {:web/namespaces server/served-namespaces
+                             :web/perform-ctx {:session (atom {:store st})}})
+                           {:request-method :get :uri (str "/api/ns/" nsx)}))]
+    (testing "a declared tier rides at the top level, as a string like :ns"
+      (let [r (ask "demo.core")]
+        (is (= 200 (:status r)))
+        (is (= "pure" (:tier (:body r))) (pr-str (:body r)))
+        (is (m/validate contracts/ns-outline (:body r))
+            (pr-str (m/explain contracts/ns-outline (:body r))))))
+    (testing "an UNDECLARED namespace resolves to external — never absent"
+      ;; the consumer BADGES on this. An absent key would have to mean "nobody
+      ;; said", and the tier vocabulary has no such value: undeclared IS
+      ;; :external. Absence here would invent a fourth state in a UI.
+      (let [r (ask "demo.quiet")]
+        (is (= "external" (:tier (:body r))) (pr-str (:body r)))
+        (is (m/validate contracts/ns-outline (:body r))
+            (pr-str (m/explain contracts/ns-outline (:body r))))))))

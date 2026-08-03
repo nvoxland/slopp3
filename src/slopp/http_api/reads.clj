@@ -13,7 +13,7 @@
   slopp.http-api.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.http-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract] [slopp.edit.modules :as modules]))
+            [slopp.http-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract] [slopp.edit.modules :as modules] [slopp.edit.tiers :as tiers]))
 
 (defn ^{:web/read :browse/namespaces} namespaces-read
   "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."
@@ -143,4 +143,13 @@
                                        {:name (:name e)
                                         :doc  (form-doc e)}))))
                       (store/forms st sym))
-         :tested-by (model/tests-covering st sym)}))))
+         :tested-by (model/tests-covering st sym)
+         ;; NAMESPACE grain, deliberately not a row field. A row's
+         ;; `:effectful?` says what THAT form does; the tier says what this
+         ;; namespace is ALLOWED to do, and the two disagree constantly — a
+         ;; namespace with permission to do IO is mostly pure functions.
+         ;; Repeated per row it would state one fact N times and read as a
+         ;; form fact, which is the mistake it exists to prevent.
+         ;; Always present: undeclared resolves to :external, so there is no
+         ;; "nobody said" for an absent key to mean.
+         :tier (name (tiers/tier-for st sym))}))))

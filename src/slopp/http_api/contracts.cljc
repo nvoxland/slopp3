@@ -80,9 +80,17 @@
 
   `:tested-by` is always present and empty rather than absent when nothing
   covers the namespace: an absent key and an untested namespace would render
-  identically, and the second is a finding worth showing."
+  identically, and the second is a finding worth showing.
+
+  `:tier` is the NAMESPACE's effective purity tier, most-specific declaration
+  winning — a claim about what this namespace is ALLOWED to do, which is a
+  different grain from a row's `:effectful?` (what that form actually does).
+  Always present for the same reason `:tested-by` is: undeclared resolves to
+  `\"external\"`, so there is no \"nobody said\" for an absent key to mean, and a
+  consumer badging on it would otherwise have to invent a fourth state."
   [:map
    [:ns :string]
+   [:tier [:enum "pure" "internal" "external"]]
    [:forms [:sequential form-row]]
    [:tested-by [:sequential :string]]])
 
