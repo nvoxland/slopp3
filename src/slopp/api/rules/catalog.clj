@@ -162,6 +162,9 @@
    {:rule :tier-governance :grain :done
     :escape "declare the moved namespace's OWN tier (module_purity, namespace path — most specific wins), or move the effects out of it"
     :teach "a namespace this episode RENAMED or relocated now sits under a stricter tier by prefix, and its forms exceed it. Tiers are inherited, so the move — not any write — put this code under a rule it cannot satisfy, and the write-time gate only ever sees forms a write touches: nothing would re-check it until someone happened to edit one"}
+      {:rule :module-governance :grain :done
+    :escape "declare the edge (module_dep), hoist the target into its module's surface (^:export on the defn name, or ^{:export \"prefix\"} for a subtree), or restructure the call"
+    :teach "a relocation this episode made left a call that breaks a module rule — usually a rename taking a namespace from two segments to three, which makes it package-private while its callers stay outside. The namespace that MOVED is not the one reported: the caller is, and the caller never moved. Module rules are inherited from the NAME and enforced at write time, and ns_rename rewrites its own callers, so nothing re-checks them — the operation most likely to drift the architecture is the one the architecture's check cannot see"}
    {:rule :tracked-file-drift :grain :done
     :escape "file_put the working-tree copy if a human edited it, or project/pull if the store's copy is the newer — reconcile deliberately, in one direction"
     :teach "a tracked manifest file differs from the real file the human branch carries at the same path — the one fact this system keeps two copies of, and nothing compared them until build.clj drifted far enough to reintroduce a fixed jar-corruption bug downstream"}])

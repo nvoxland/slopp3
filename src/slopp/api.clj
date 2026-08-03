@@ -3273,8 +3273,38 @@ recompiled (session/after-write! session ns-sym)]
                           to from))]
         {:error (str "that edge CLOSES a dependency cycle: "
                      (clojure.string/join " → " (conj back to))
-                     " — point the dependency one way (usually by extracting"
-                     " the shared piece into a module both sides may depend on)")}
+                     ;; The generic advice — extract the shared piece — cannot be
+                     ;; followed when the only thing reaching across is a TEST,
+                     ;; and that case is common enough to name: a regroup moves a
+                     ;; `-test` namespace into a new module while its fixture
+                     ;; still drives the operation surface. Say what is actually
+                     ;; in the way, computed rather than guessed.
+                     (let [reachers
+                           (sort (distinct
+                                  (for [r (modules/module-usage-rows (:store @session))
+                                        :when (and (= from (edit.modules/module-of (:from-ns r)))
+                                                   (= to (edit.modules/module-of (:to r))))]
+                                    (:from-ns r))))]
+                       (if (and (seq reachers)
+                                (every? #(clojure.string/ends-with? (str %) "-test")
+                                        reachers))
+                         (str " — and every namespace under " from " that reaches "
+                              to " is a TEST ("
+                              (clojure.string/join ", " reachers) "). The manifest"
+                              " is MODULE-GRAINED and module-of folds a trailing"
+                              " -test off each segment, so a fixture shares its"
+                              " subject's module key: there is no edge that"
+                              " permits the test without also permitting"
+                              " production, and declaring one would license the"
+                              " very cycle it refuses. Move the test to " to "'s"
+                              " own test namespace if what it asserts belongs"
+                              " there — a fixture that drives the operation"
+                              " surface usually does — or leave the edge"
+                              " undeclared and carry the violation knowingly,"
+                              " which full_check reports rather than hides.")
+                         (str " — point the dependency one way (usually by"
+                              " extracting the shared piece into a module both"
+                              " sides may depend on)"))))}
         (let [st'  (session/commit-appended!
                     session
                     #(first (store/record-module-edge % from to action

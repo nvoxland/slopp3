@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.api.schema :as schema]
             [slopp.api.attrs :as attrs]
-            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers]))
+            [slopp.api.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.api.web :as api.web] [slopp.api.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.api.shape :as shape] [rewrite-clj.parser :as p] [slopp.api.rules.markers :as markers] [slopp.api.modules :as api.modules]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -860,6 +860,61 @@
                              " makes no direct call — remove the flag")}))))
         changed)))
 
+(defn module-governance-check
+  "Module rule violations this EPISODE'S RELOCATIONS created.
+
+  The exact sibling of [[tier-governance-check]], one system over and for the
+  same reason: a purity tier and a module rule are BOTH inherited from a
+  namespace's NAME, both enforced by gates that fire on WRITE, and a
+  relocation changes the name without writing the forms. `ns_rename` even
+  rewrites its own callers — and a caller a rename rewrote never passes a
+  gate, so the operation most likely to drift the architecture is the one
+  operation the architecture's own check cannot see.
+
+  Measured in anger, the same way its sibling was: regrouping four namespaces
+  into `slopp.project` and `slopp.lab` left four package-private violations
+  standing, and every `done` in that episode was green.
+
+  Scoped to the episode's relocations from EITHER END of the edge, which is
+  where this differs from the tier check. The namespace that MOVED is usually
+  not the one violating: taking a target from two segments to three makes it
+  package-private, and it is the unmoved CALLER that is suddenly reaching in.
+  Selecting only what moved would report nothing at all.
+
+  Error-grade, and not a judgement call: every finding here is one a write
+  gate would have REFUSED outright. Anything softer would make the
+  whole-episode check the more permissive of the two, which is backwards."
+  [_session store _changed]
+  (let [ds     (store/deltas store)
+        since  (->> ds (keep-indexed #(when (= :done (:op %2)) %1)) last)
+        recent (if since (drop (inc since) ds) ds)
+        moved  (into #{}
+                     (mapcat (fn [d]
+                               (case (:op d)
+                                 :rename-ns [(:new d)]
+                                 ;; every changeset op that RELOCATES; the
+                                 ;; other changeset ops (:replace, :rename,
+                                 ;; :normalize) are ordinary writes and the
+                                 ;; gates already saw them
+                                 (:move-forms :extract-ns :module-extract)
+                                 (keys (:sources d))
+                                 nil)))
+                     recent)]
+    (when (seq moved)
+      (vec (for [v (edit.modules/module-violations
+                    (edit.modules/modules-manifest store)
+                    (api.modules/module-usage-rows store))
+                 :when (or (contains? moved (:from-ns v))
+                           (contains? moved (:target-ns v)))]
+             {:ns (:from-ns v) :from-var (:from-var v)
+              :target-ns (:target-ns v) :rule (:rule v)
+              :why (str (:error v) ". This appeared without any write: a module"
+                        " rule is inherited from the NAME, and a relocation"
+                        " this episode moved one end of this call. No gate"
+                        " re-checks a caller a rename rewrote, so nothing"
+                        " would have asked again until someone happened to"
+                        " edit one of these forms.")})))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -995,11 +1050,21 @@
    ;; the OTHER half of the same pair. shell-widening asks when the
    ;; DECLARATION moves; this fires when the POPULATION does — a rename or a
    ;; relocation folds existing code under a tier no write will ever re-check.
-   {:key :tier-governance :severity :error :applies-to :production :check #'tier-governance-check
+      {:key :tier-governance :severity :error :applies-to :production :check #'tier-governance-check
     :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus an inherited"
                         " tier — a source-only fixture can carry neither; covered"
                         " by rules-test/"
                         "a-namespace-that-MOVES-under-a-stricter-tier-is-caught-at-done")}
+   ;; the MODULE system's copy of that same pair, for the same reason: a
+   ;; relocation is the one path around every write gate. It differs in which
+   ;; end it watches — going two segments to three makes the TARGET
+   ;; package-private, so the namespace that violates is the CALLER, which did
+   ;; not move.
+   {:key :module-governance :severity :error :applies-to :both :check #'module-governance-check
+    :selftest-note (str "fires on a :rename-ns/:move-forms DELTA plus a module"
+                        " manifest — a source-only fixture carries neither;"
+                        " covered by modules-test/"
+                        "a-rename-that-strands-a-caller-is-caught-at-done")}
    ;; the only two copies of one fact this system keeps: a tracked manifest file
    ;; and the real file the human branch carries at the same path. Nothing
    ;; compared them until build.clj drifted far enough to reintroduce a fixed

@@ -1290,3 +1290,174 @@
           (doseq [f (concat (reverse (file-seq (clojure.java.io/file d1)))
                             (reverse (file-seq (clojure.java.io/file d2))))]
             (.delete f)))))))
+
+(deftest ^:external module-violations-standing-in-the-store-are-reported-by-full-check
+  ;; Friction #19. The module rules are WRITE gates — `module-scan` on
+  ;; ingest, `module-refusal` per form — so they only ever see code being
+  ;; written THROUGH them. A rename rewrites its own callers, and those
+  ;; rewritten callers never pass a gate: the violation lands, and nothing
+  ;; asks again. Four real ones stood through a GREEN `full_check` on slopp's
+  ;; own store — the operation most likely to drift the architecture being the
+  ;; one operation the architecture check cannot see.
+  ;;
+  ;; The whole-store fold was not missing. `modules/module-debt` — whose own
+  ;; docstring says it "shows what already stands" — was wired into the module
+  ;; graph view and into `module_dep`'s response, and not into the whole-store
+  ;; gate. A check that exists and is never asked reads exactly like a check
+  ;; that passes.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn shared \"Public.\" [x] x)\n")
+      (api/module-dep! sess "mo.app" "mo.core" :prompt "app uses core")
+      (api/ingest! sess 'mo.app
+                   (str "(ns mo.app (:require [mo.core :as core]))\n"
+                        "(defn ^:unused-ok use-it \"Uses core.\" [x] (core/shared x))\n"))
+      (testing "the must-NOT-flag half — same fixture, one rename earlier"
+        (let [r (external/full-check! sess)]
+          (is (nil? (:module-violations r)) (pr-str (:module-violations r)))
+          (is (= :green (:status r)) (pr-str r))))
+      (testing "the rename that CREATES the violation is not refused"
+        ;; 2 segments → 3 makes the target package-private to `mo.core.*`, and
+        ;; the caller is outside that subtree. The declared EDGE survives —
+        ;; `module-of` is still "mo.core" — so visibility alone is what breaks,
+        ;; which is why nothing about the manifest looks wrong afterwards.
+        (is (nil? (:error (api/ns-rename! sess 'mo.core 'mo.core.impl
+                                          :prompt "regroup")))))
+      (testing "the RULES see it — so a green whole-store check is the check not asking"
+        ;; localizes a future failure: this half is the rule, the next is the
+        ;; wiring, and they fail for opposite reasons.
+        (is (re-find #"package-private"
+                     (str (modules/module-scan (:store @sess) 'mo.app)))))
+      (testing "and full_check names it, red"
+        (let [r (external/full-check! sess)]
+          (is (= 1 (:count (:module-violations r)))
+              (pr-str (:module-violations r)))
+          (is (= [{:from-ns 'mo.app :from-var 'use-it
+                   :target-ns 'mo.core.impl :rule :visibility}]
+                 (:rows (:module-violations r)))
+              (pr-str (:module-violations r)))
+          ;; discriminating: red proves nothing unless every OTHER red-maker is
+          ;; clean — the lesson `tier-layering-is-reported-by-full-check`
+          ;; records, where the first version passed while the finding it named
+          ;; was still purely advisory.
+          (is (zero? (:lint-errors r)) (pr-str (:lint r)))
+          (is (empty? (:unused-public r)) (pr-str (:unused-public r)))
+          (is (empty? (:stale-unused-ok r)) (pr-str (:stale-unused-ok r)))
+          (is (empty? (:tier-layering r)) (pr-str (:tier-layering r)))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              (pr-str (:test r)))
+          (is (= :red (:status r))
+              (str "a standing module violation must FLIP the check red — a"
+                   " finding the agent can scroll past is not a rule: "
+                   (pr-str (select-keys r [:status :module-violations]))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-rename-that-strands-a-caller-is-caught-at-done
+  ;; The MODULE sibling of
+  ;; `rules-test/a-namespace-that-MOVES-under-a-stricter-tier-is-caught-at-done`,
+  ;; and the same class exactly: a purity tier and a module rule are both
+  ;; inherited from a namespace's NAME, both enforced by gates that fire on
+  ;; WRITE, and a relocation changes the name without writing the forms. The
+  ;; tier half was found in anger and fixed at done. The module half went on
+  ;; standing, and produced four real violations on slopp's own store that a
+  ;; green `full_check` reported as clean.
+  ;;
+  ;; One asymmetry worth the fixture: the namespace that MOVED is not the one
+  ;; that violates. `md.core` going three segments deep is legal; it is the
+  ;; unmoved CALLER that is suddenly reaching into a package-private
+  ;; namespace. So scoping this to "what moved" the way the tier check does
+  ;; would find nothing — the episode's moves select which violations to
+  ;; report, from either end of the edge.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'md.core "(ns md.core)\n(defn shared \"Public.\" [x] x)\n")
+      (api/module-dep! sess "md.app" "md.core" :prompt "app uses core")
+      (api/ingest! sess 'md.app
+                   (str "(ns md.app (:require [md.core :as core]))\n"
+                        "(defn ^:unused-ok use-it \"Uses core.\" [x] (core/shared x))\n"))
+      (testing "the must-NOT-flag half: a done with no relocation in it"
+        (let [r (external/done! sess :label "baseline")]
+          (is (nil? (get-in r [:findings :module-governance]))
+              (pr-str (get-in r [:findings :module-governance])))
+          (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))))
+      (testing "the rename itself is allowed — nothing about it is wrong"
+        (is (nil? (:error (api/ns-rename! sess 'md.core 'md.core.impl
+                                          :prompt "regroup")))))
+      (testing "and done names the caller the rename stranded"
+        (let [r (external/done! sess :label "after the rename")
+              f (get-in r [:findings :module-governance])]
+          (is (seq f) (str "findings: " (pr-str (keys (:findings r)))))
+          (is (= 'md.app (:ns (first f))) (pr-str f))
+          (is (= 'use-it (:from-var (first f))) (pr-str f))
+          (is (= 'md.core.impl (:target-ns (first f))) (pr-str f))
+          (is (= :visibility (:rule (first f))) (pr-str f))
+          (is (= :red (get-in r [:findings :test-status]))
+              (str "a module rule the code no longer satisfies is the same"
+                   " failure a write gate refuses: " (pr-str (:findings r))))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-cycle-refusal-names-a-test-only-crossing-as-what-it-is
+  ;; Friction 19b, with its filed diagnosis CORRECTED by measurement. The claim
+  ;; was that `module_dep` lacked a rule `module_extract` has — that a `-test`
+  ;; back-edge is not a cycle. Both already judge cycles over PRODUCTION edges;
+  ;; the refusal was right.
+  ;;
+  ;; What is actually in the way is narrower and worse: the manifest is
+  ;; MODULE-grained, and `module-of` folds a trailing `-test` off each segment,
+  ;; so a fixture shares its subject's module key. An edge that permits the
+  ;; test permits production too. There is no declaration for "only my tests
+  ;; cross here". Measured on slopp's own store: `slopp.store → slopp.api` and
+  ;; `slopp.index → slopp.api` are both declared and both used by test
+  ;; namespaces ONLY — zero production callers. Two standing edges that say
+  ;; more than they mean.
+  ;;
+  ;; So the fix is not to relax the refusal. It is to stop giving advice the
+  ;; agent cannot follow: "extract the shared piece into a module both sides
+  ;; may depend on" is unactionable when the thing reaching across is a
+  ;; fixture. Name the real obstruction, and name who is causing it.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mq.helper "(ns mq.helper)\n(defn h \"H.\" [x] x)\n")
+      (api/module-dep! sess "mq.core" "mq.helper" :prompt "core uses helper")
+      (api/ingest! sess 'mq.core
+                   (str "(ns mq.core (:require [mq.helper :as hp]))\n"
+                        "(defn op \"O.\" [x] (hp/h x))\n"))
+      ;; The fixture starts INSIDE its subject's module, where no edge is
+      ;; needed — which is why nothing exists that a rename could carry along.
+      ;; (An earlier version started it in a module of its own with a declared
+      ;; edge, and `ns_rename` RE-KEYED that edge onto the new module, quietly
+      ;; installing the very cycle this refusal exists to prevent. Logged
+      ;; separately as its own friction; here it would hide the case under
+      ;; test.)
+      (is (nil? (:error (api/ingest! sess 'mq.core.spec-test
+                                     (str "(ns mq.core.spec-test (:require [mq.core :as core]))\n"
+                                          "(defn ^:unused-ok probe \"P.\" [x] (core/op x))\n")))))
+      ;; …and a regroup moves it under a DIFFERENT module, which is the
+      ;; sequence that produces this every time.
+      (is (nil? (:error (api/ns-rename! sess 'mq.core.spec-test 'mq.helper.spec-test
+                                        :prompt "regroup the fixture"))))
+      (testing "the edge is still refused — the cycle is real"
+        (let [r (api/module-dep! sess "mq.helper" "mq.core" :prompt "the fixture needs it")]
+          (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
+      (testing "but the refusal names the test, and why no edge can help it"
+        (let [e (str (:error (api/module-dep! sess "mq.helper" "mq.core"
+                                              :prompt "the fixture needs it")))]
+          (is (re-find #"mq\.helper\.spec-test" e) e)
+          (is (re-find #"(?i)test" e) e)
+          (is (re-find #"(?i)module-grained" e) e)
+          (is (not (re-find #"extracting the shared piece" e))
+              (str "the generic advice cannot be followed when a fixture is"
+                   " what reaches across: " e))))
+      (testing "and a cycle with a PRODUCTION caller keeps the generic advice"
+        ;; the must-not-flag half: the new branch must not swallow the case it
+        ;; was carved out of.
+        (api/module-dep! sess "mr.core" "mr.helper" :prompt "core uses helper")
+        (api/ingest! sess 'mr.helper "(ns mr.helper)\n(defn h \"H.\" [x] x)\n")
+        (api/ingest! sess 'mr.core
+                     (str "(ns mr.core (:require [mr.helper :as hp]))\n"
+                          "(defn ^:unused-ok op \"O.\" [x] (hp/h x))\n"))
+        (let [e (str (:error (api/module-dep! sess "mr.helper" "mr.core"
+                                              :prompt "the other way too")))]
+          (is (re-find #"CLOSES a dependency cycle" e) e)
+          (is (re-find #"extracting the shared piece" e) e)))
+      (finally (api/close! sess)))))

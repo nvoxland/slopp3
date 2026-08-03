@@ -1532,10 +1532,26 @@
               (is (not= busy (:port r)) (pr-str r)))
             (finally (.close sock) (ui-server/stop!)))))
       (testing "a free port comes up and reports where it is"
-        (let [free (let [s (java.net.ServerSocket. 0)
-                         p (.getLocalPort s)]
-                     (.close s) p)
-              r    (mcp/start-ui! sess free)]
+        ;; The port is picked by opening an ephemeral socket and CLOSING it, so
+        ;; between that close and start-ui!'s bind anything on the machine may
+        ;; take it — and under the 4-shard external run something regularly
+        ;; does (observed 2026-08-02: asked 52361, bound 52363, so both
+        ;; intervening ports went in the window too). That race is in the
+        ;; SETUP, not in the behaviour under test, so it is RETRIED rather
+        ;; than asserted around: relaxing this to "some port came up" would
+        ;; pass just as well on a start-ui! that ignored its argument
+        ;; entirely, which is the one thing this block exists to rule out.
+        (let [attempt (fn []
+                        (let [p (let [s (java.net.ServerSocket. 0)
+                                      p (.getLocalPort s)]
+                                  (.close s) p)]
+                          [p (mcp/start-ui! sess p)]))
+              [free r] (loop [tries 4
+                              [p res] (attempt)]
+                         (if (or (= p (:port res)) (zero? tries))
+                           [p res]
+                           (do (ui-server/stop!)
+                               (recur (dec tries) (attempt)))))]
           (is (= free (:port r)) (pr-str r))
           (is (re-find (re-pattern (str ":" free "/")) (str (:url r))) (pr-str r))
           (testing "and the url reaches the HUMAN, not just the server's log"

@@ -841,9 +841,9 @@ client-deps (merge (:client-deps st) (:client provided))
 
 (defn ^:export full-check!
   "The WHOLE-STORE check, on demand: kondo over every namespace, the
-  dead-public-surface report over every namespace, and every test in every
-  tier — the in-image suite, `^:integration`, and the external `^:external`
-  tier.
+  dead-public-surface report over every namespace, BOTH layering graphs —
+  purity tiers and the module architecture — and every test in every tier:
+  the in-image suite, `^:integration`, and the external `^:external` tier.
 
   Deliberately NOT forced anywhere, not by `done` and not by `commit_point`.
   `done` is episode-scoped: it answers whether the work you just did is good,
@@ -856,7 +856,8 @@ client-deps (merge (:client-deps st) (:client provided))
   call, everything, no tier flags to get wrong.
 
   Returns {:lint [...] :lint-errors n :lint-warnings n :unused [...] :stale
-  [...] :test {...} :external {...} :status :green|:red}."
+  [...] :tier-layering [...] :module-violations {...} :test {...}
+  :external {...} :status :green|:red}."
   [session & {:keys [affected]}]
   (let [t0    (System/currentTimeMillis)
         st    (:store @session)
@@ -884,6 +885,17 @@ client-deps (merge (:client-deps st) (:client provided))
                          :let [t (edit.modules/tier-for st n)]
                          v (edit.modules/layering-violations st n t)]
                      {:ns n :tier t :requires (:requires v) :requires-tier (:tier v)}))
+        ;; MODULE layering — the architecture graph, and a DIFFERENT graph
+        ;; from the tiers above, so a green there says nothing about this.
+        ;; The module rules are WRITE gates: they see only code written
+        ;; THROUGH them, and a rename rewrites its own callers, which never
+        ;; pass a gate. This fold is the only thing that asks again — the
+        ;; operation most likely to drift the architecture being exactly the
+        ;; one the per-write check cannot see. Four real visibility
+        ;; violations stood on this store through a green check before it was
+        ;; wired in (friction #19); `module-debt` itself already existed and
+        ;; was asked only by the graph view and by `module_dep`.
+        mods  (modules/module-debt st)
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (session/run-verification! session (vec nses) nil
@@ -899,6 +911,15 @@ client-deps (merge (:client-deps st) (:client provided))
                 (external-test-run! session :affected affected))
         red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
                   (seq layer)                ; core→shell is a failure, not a note
+                  mods                       ; and so is a standing module
+                                             ; violation: the per-write gates
+                                             ; REFUSE these, so one still
+                                             ; standing got in by a path around
+                                             ; the gate. Same rule, one bar —
+                                             ; advisory here would make the
+                                             ; write gate the stricter of the
+                                             ; two, which is backwards for a
+                                             ; whole-store check
                   (pos? (+ (:fail tests 0) (:error tests 0)))
                   (contains? #{:red :error} (:status iso)))]
     (cond-> {:namespaces (count nses)
@@ -906,20 +927,31 @@ client-deps (merge (:client-deps st) (:client provided))
              :lint-warnings (count warns)
              :test tests
              :status (if red? :red :green)}
-      affected (assoc :scope (str "lint, dead surface, layering and the in-image"
-                                  " suite covered ALL " (count nses) " namespaces;"
+      affected (assoc :scope (str "lint, dead surface, tier layering, module"
+                                  " layering and the in-image suite covered ALL "
+                                  (count nses) " namespaces;"
                                   " the ^:external tier was narrowed to the tests"
                                   " that changes since the last milestone can"
                                   " reach. Drop :affected for the whole tier"))
       (seq errs)          (assoc :lint errs)
       (seq warns)         (assoc :warnings warns)
-            (seq layer)         (assoc :tier-layering layer
+      (seq layer)         (assoc :tier-layering layer
                                  :tier-layering-note
                                  (str (count layer) " core→shell dependency(ies):"
                                       " a namespace depends on one at a LOOSER"
                                       " tier. Either move what it needs into a"
                                       " core namespace, or its own tier is a"
                                       " claim it does not earn"))
+      mods                (assoc :module-violations mods
+                                 :module-violations-note
+                                 (str (:count mods) " module rule violation(s)"
+                                      " standing in the store. Each is what a"
+                                      " write gate would REFUSE, so each got"
+                                      " here by a path around the gate —"
+                                      " usually a rename, which rewrites its"
+                                      " own callers. Declare the edge"
+                                      " (module_dep), hoist the target"
+                                      " (^:export), or restructure the call"))
       (seq (:unused rep)) (assoc :unused-public (:unused rep))
       (seq (:stale rep))  (assoc :stale-unused-ok (:stale rep))
       iso                 (assoc :external iso)
