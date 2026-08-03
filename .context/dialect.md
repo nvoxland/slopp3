@@ -250,7 +250,7 @@ Three tiers:
   feature breaks nothing and there is NO adoption step (unlike the module
   manifest, which is on-from-birth and must derive from reality).
 
-**The gate** (`edit.modules/tier-refusal`) rides the per-form write path exactly
+**The gate** (`edit.tiers/tier-refusal`) rides the per-form write path exactly
 where `module-refusal` does — `edit/replace-form`, `api/add-form!`, and the two
 `api/apply-group-step` branches — and HARD-REFUSES a form whose effect-
 reachability exceeds its module's tier, with a teaching refusal naming the fix.
@@ -385,7 +385,7 @@ exactly the breakage it can't observe.
 
 Every D9 rule has a per-store **severity** a project can dial via a `rules` config
 file: `config_file {path "rules" key <rule> value <severity>}` (git-projecting
-like the `gates` flag). `edit.modules/rule-severity` returns the override, else
+like the `gates` flag). `edit.gates/rule-severity` returns the override, else
 the rule's default; `<rule>` is a write-gate var name (`schema-refusal`,
 `tier-refusal`, …) or a done-advisory key (`key-typos`, `breaking-changes`,
 `schema-drift`). Severities:
@@ -402,7 +402,7 @@ the rule's default; `<rule>` is a write-gate var name (`schema-refusal`,
 This is what makes the hard-refuse program **adoptable**: opinions become
 project-tunable, not universal walls (watch force-rate + marker-density — climbing
 means agents are fighting a gate that should be softened here). A write gate
-dialed **`:advisory` warns-but-proceeds** — `edit.modules/gate-check` buckets fired
+dialed **`:advisory` warns-but-proceeds** — `edit.gates/gate-check` buckets fired
 gates into `{:refuse :advisories}`, and an `:advisory` teaching rides the write
 result's `:advisories` (surfaced by `edit_replace_form`/`edit_add_form`). So a
 write gate is fully dial-able
