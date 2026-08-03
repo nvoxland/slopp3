@@ -437,6 +437,24 @@ The general form is worth memorizing, because it costs one line and it catches
 a class you cannot otherwise see: **an empty result standing in for a verified
 one.** Ask it of any check whose pass is a silence.
 
+**The mirror image, and the more tempting one: a check that PASSES while
+answering a narrower question than the one you asked.** The cheap check and the
+expensive check are not the same check, and the cheap one is the one that gets
+run. Worked example: a fix was reported as shipped on the evidence
+`slopp/rules/catalog.clj  direct-http  1` — a grep of the built artifact,
+returning a true fact. It proves the rule is DEFINED. It does not prove the
+sweep RUNS, and the rule had been defined all along; the wiring was the entire
+bug. The one artifact fact that distinguishes a shipped fix from an unshipped
+one was the only one the grep could not see.
+
+So when you verify that a change reached an artifact, **grep for the CALL SITE,
+not the definition.** `sweep-store!` appearing in `rules.clj` says someone wrote
+a function; `rules/sweep-store!` appearing in `external.clj` says something
+calls it. The second is one character longer to type and it is the claim you
+are actually making. The same asymmetry runs through this whole section: "the
+symbol is in the jar" and "the code path runs" are different claims, and the
+first is much easier to check, which is exactly why it gets checked.
+
 **A metric and its test, written in the same session, cannot validate each
 other.** The fixture gets derived from the metric's own definition, so it can
 only ever confirm that definition — including the part that is wrong. A layout
