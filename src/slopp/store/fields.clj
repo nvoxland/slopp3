@@ -71,6 +71,13 @@
                   :doc "#{qualified syms} the user asserted pure (narrows M3)"}
    :modules      {:init {} :meta-key "modules" :absent-nil? true
                   :doc "module → #{declared dep modules}; nil only when loaded from a pre-module db (open! adopts)"}
+   ;; NOT :absent-nil? — an empty test-edge relation is a real answer (no
+   ;; module has asked for one), unlike :modules, whose absence is the
+   ;; pre-module adoption marker. A store that predates this field simply has
+   ;; no test-only edges, which is exactly {}.
+   :module-test-edges
+                 {:init {} :meta-key "module-test-edges"
+                  :doc "module → #{dep modules its -test namespaces may cross}; production may not, and a test edge is never a production edge (so never a cycle)"}
    :module-tiers {:init {} :meta-key "module-tiers"
                   :normalize (fn [tiers]
                                (into {} (map (fn [[m t]] [m (canonical-tier t)])) tiers))
@@ -92,7 +99,8 @@
    :blobs        {:init {} :storage :table
                   :doc "sha256 → bytes, content-addressed (assets); merge = union, cleanup prunes"}})
 
-(def ^:legacy-ok op-registry
+(def ^{:legacy-ok "the :module-tier SAMPLE deliberately spells a retired tier — canonicalization on load is exactly what that round-trip must prove crosses a merge, so the sample has to carry the old spelling"}
+  op-registry
   "Field-carrying delta op → {:field :fold :merge :sample :crossed}. :fold is
   THE fold — record-* (in-memory), replay-delta (foreign sync) and
   merge-logs' :replay strategy all call it, so the three can never drift.
@@ -155,6 +163,28 @@
                            :action :add}
                   :crossed (fn [st] (contains? (get-in st [:modules "sample.app"] #{})
                                                "sample.lib"))}
+   ;; the TEST-ONLY twin, a separate relation rather than a flag inside
+   ;; :modules — a module may declare that its fixtures cross an edge its
+   ;; production code may not, and :modules must keep meaning production
+   ;; edges alone because the cycle check, the layer view, store/module-path
+   ;; and the projected `modules` file are all that graph. Identical
+   ;; edge-grain CRDT, so it merges by the same union and needs no new
+   ;; conflict story.
+   :module-test-edge
+   {:field :module-test-edges :merge :bespoke
+    :fold (fn [st d]
+            (if (= :remove (:action d))
+              (let [deps (disj (get-in st [:module-test-edges (:from d)] #{})
+                               (:to d))]
+                (if (empty? deps)
+                  (update st :module-test-edges dissoc (:from d))
+                  (assoc-in st [:module-test-edges (:from d)] deps)))
+              (update-in st [:module-test-edges (:from d)]
+                         (fnil conj #{}) (:to d))))
+    :sample {:op :module-test-edge :from "sample.app" :to "sample.lib"
+             :action :add}
+    :crossed (fn [st] (contains? (get-in st [:module-test-edges "sample.app"] #{})
+                                 "sample.lib"))}
    :file-put     {:field :files :merge :replay
                   ;; the entry derives from the DELTA (sha/bytes/content-type
                   ;; or :content) — blob BYTES never ride deltas; record-*

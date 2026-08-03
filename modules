@@ -25,7 +25,7 @@ slopp.history: slopp.api slopp.mcp slopp.store
 slopp.http-api: slopp.api slopp.edit slopp.index slopp.project slopp.store slopp.web
 slopp.hub: slopp.api slopp.project slopp.store slopp.web
 slopp.image: slopp.boot slopp.rt slopp.store
-slopp.index: slopp.api slopp.build slopp.cache slopp.image slopp.mcp slopp.store
+slopp.index: slopp.build slopp.cache slopp.image slopp.mcp slopp.store slopp.api (test)
 slopp.integration-tier: slopp.api
 slopp.lab: slopp.api slopp.mcp slopp.store
 slopp.lintgate: slopp.edit slopp.index slopp.store
@@ -39,7 +39,7 @@ slopp.phase4: slopp.api slopp.store
 slopp.project: slopp.index slopp.store
 slopp.rename: slopp.api slopp.store
 slopp.rules: slopp.edit slopp.store
-slopp.store: slopp.api slopp.cache
+slopp.store: slopp.cache slopp.api (test)
 slopp.subform: slopp.api
 slopp.subform-plan: slopp.edit slopp.store
 slopp.surgeon: slopp.api

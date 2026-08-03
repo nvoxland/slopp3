@@ -888,11 +888,18 @@
   module manifest: concurrent edge declarations touch disjoint state and
   merge as a set union, and each edge carries its own why (:prompt) in the
   journal instead of vanishing into a file diff. `action` is :add or
-  :remove. Returns [store' delta]."
-  [store from to action & {:keys [prompt agent]}]
+  :remove. Returns [store' delta].
+
+  `test-only` records the edge in the TEST relation (`:module-test-edges`,
+  op `:module-test-edge`) instead: a module's `-test` namespaces may cross
+  it, its production code may not. Two ops rather than one op with a flag,
+  so `:field` stays a fact about the op and the merge machinery needs no
+  special case."
+  [store from to action & {:keys [prompt agent test-only]}]
   (let [[did store'] (gen-id store "d")
         delta (cond-> {:id did :parent (:id (last (:deltas store)))
-                       :op :module-edge :ns '*session* :at (now-ms)
+                       :op (if test-only :module-test-edge :module-edge)
+                       :ns '*session* :at (now-ms)
                        :from (str from) :to (str to) :action action}
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]

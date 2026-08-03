@@ -454,10 +454,12 @@
                                :prompt {:type "string"}}
                   :required ["path"]}}
    {:name "module_dep"
-    :description "Declare (or retract with remove=true) ONE module dependency edge — modules are the first two ns segments (\"logi.parcel\"). Each call is one journaled delta; say WHY in prompt. Adds are cycle-checked. Read the manifest: query_depends {modules true}."
+    :description "Declare (or retract with remove=true) ONE module dependency edge — modules are the first two ns segments (\"logi.parcel\"). Each call is one journaled delta; say WHY in prompt. Adds are cycle-checked over PRODUCTION edges. `test_only: true` declares the edge for the module's -test namespaces ONLY — production code under `from` is still refused, and a test-only edge is not a production edge so it is never a cycle. Reach for it when a fixture must drive a surface that calls back into this module (a done-time advisory can only be tested by writing code and calling done): the alternative is moving the test away from its subject. The cycle refusal names this option itself when every namespace crossing is a test. Read the manifest: query_depends {modules true}."
     :inputSchema {:type "object"
                   :properties {:from {:type "string"} :to {:type "string"}
                                :remove {:type "boolean"}
+                               :test_only {:type "boolean"
+                                           :description "bind the module's -test namespaces only; production stays refused"}
                                :prompt {:type "string"}}
                   :required ["from" "to"]}}
    {:name "module_purity"

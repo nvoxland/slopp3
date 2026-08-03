@@ -1439,12 +1439,12 @@
       (testing "the edge is still refused — the cycle is real"
         (let [r (api/module-dep! sess "mq.helper" "mq.core" :prompt "the fixture needs it")]
           (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
-      (testing "but the refusal names the test, and why no edge can help it"
+      (testing "but the refusal names the test and offers the declaration that fits"
         (let [e (str (:error (api/module-dep! sess "mq.helper" "mq.core"
                                               :prompt "the fixture needs it")))]
           (is (re-find #"mq\.helper\.spec-test" e) e)
-          (is (re-find #"(?i)test" e) e)
-          (is (re-find #"(?i)module-grained" e) e)
+          (is (re-find #"(?i)is a TEST" e) e)
+          (is (re-find #"test-only true" e) e)
           (is (not (re-find #"extracting the shared piece" e))
               (str "the generic advice cannot be followed when a fixture is"
                    " what reaches across: " e))))
@@ -1460,4 +1460,70 @@
                                               :prompt "the other way too")))]
           (is (re-find #"CLOSES a dependency cycle" e) e)
           (is (re-find #"extracting the shared piece" e) e)))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-test-only-edge-is-declarable-and-binds-only-tests
+  ;; Friction #20, settled 2026-08-02 (user). A done-time advisory can only be
+  ;; tested by WRITING code and calling `done!`, so the fixture necessarily
+  ;; calls the operation surface — while the operation surface calls the rules.
+  ;; Once the rules become their own module that pair is a cycle, and the
+  ;; manifest could not say "my tests cross here, my production code does not":
+  ;; `module-of` folds a trailing `-test` off each segment, so a fixture shares
+  ;; its subject's module key and one edge would license both.
+  ;;
+  ;; slopp already carried two edges of exactly this shape —
+  ;; `slopp.index → slopp.api` and `slopp.store → slopp.api`, zero production
+  ;; callers each — declared before the cycle check existed. They were not
+  ;; grandfathered exceptions to a rule; they were the rule failing to be
+  ;; expressible, written down twice.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'tz.helper "(ns tz.helper)\n(defn h \"H.\" [x] x)\n")
+      (api/module-dep! sess "tz.core" "tz.helper" :prompt "core uses helper")
+      (api/ingest! sess 'tz.core
+                   (str "(ns tz.core (:require [tz.helper :as hp]))\n"
+                        "(defn ^:unused-ok op \"O.\" [x] x)\n"
+                        "(defn ^:unused-ok use-h \"U.\" [x] (hp/h x))\n"))
+      (testing "the production edge back is refused — the cycle is real"
+        (let [r (api/module-dep! sess "tz.helper" "tz.core" :prompt "no")]
+          (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
+      (testing "the SAME edge declared test-only is not a cycle — it is not a production edge"
+        (let [r (api/module-dep! sess "tz.helper" "tz.core"
+                                 :test-only true
+                                 :prompt "advisory tests must produce a done point")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (true? (:test-only r)) (pr-str r))))
+      (testing "`:modules` is untouched, so every production reader sees no new edge"
+        (let [st (:store @sess)]
+          (is (not (contains? (get (modules/modules-manifest st) "tz.helper" #{})
+                              "tz.core"))
+              (pr-str (modules/modules-manifest st)))
+          (is (contains? (get (modules/module-test-manifest st) "tz.helper" #{})
+                         "tz.core")
+              (pr-str (modules/module-test-manifest st)))))
+      (testing "a -test namespace under tz.helper may now cross"
+        (is (nil? (:error (api/ingest! sess 'tz.helper.spec-test
+                                       (str "(ns tz.helper.spec-test (:require [tz.core :as core]))\n"
+                                            "(defn ^:unused-ok probe \"P.\" [x] (core/op x))\n"))))))
+      (testing "and PRODUCTION under tz.helper still may not — the guarantee the old edge never gave"
+        (let [r (api/ingest! sess 'tz.helper.impl
+                             (str "(ns tz.helper.impl (:require [tz.core :as core]))\n"
+                                  "(defn ^:unused-ok sneak \"S.\" [x] (core/op x))\n"))]
+          (is (re-find #"does not declare tz\.core" (str (:error r))) (pr-str r))))
+      (testing "the whole-store fold agrees with the write gate, in both directions"
+        (let [debt (fn [] (let [st (:store @sess)]
+                            (modules/module-violations (modules/modules-manifest st)
+                                                       (modules/module-test-manifest st)
+                                                       (modules/module-usage-rows st))))]
+          ;; must-NOT-flag: nothing stands while only the test crosses…
+          (is (nil? (debt)) (pr-str (debt)))
+          ;; …and retracting the test edge makes that same crossing a violation,
+          ;; which is what proves the fold CONSULTS the test manifest rather
+          ;; than exempting test namespaces wholesale.
+          (is (nil? (:error (api/module-dep! sess "tz.helper" "tz.core"
+                                             :test-only true :remove true
+                                             :prompt "retract"))))
+          (let [vs (debt)]
+            (is (= 1 (count vs)) (pr-str vs))
+            (is (= 'tz.helper.spec-test (:from-ns (first vs))) (pr-str vs)))))
       (finally (api/close! sess)))))

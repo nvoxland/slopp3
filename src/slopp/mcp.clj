@@ -453,6 +453,7 @@
    (fn [session a _sym]
      (text! (api/module-dep! session (:from a) (:to a)
                              :remove (:remove a)
+                             :test-only (:test_only a)
                              :prompt (:prompt a) :agent (:agent a))))
    "module_purity"
    (fn [session a _sym]

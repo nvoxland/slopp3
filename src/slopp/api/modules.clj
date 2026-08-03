@@ -49,26 +49,22 @@
 (defn modules-config-entry
   "The module manifest PROJECTED as a structured-config entry — how the
   edge fold becomes a `modules` file in git commits and builds (read-only
-  transparency; writes go through module_dep)."
-  [store]
-  (when (seq (:modules store))
-    {:format :manifest
-     :values (into (sorted-map)
-                   (map (fn [[m ds]] [m (clojure.string/join " " (sort ds))]))
-                   (:modules store))}))
+  transparency; writes go through module_dep).
 
-(defn module-usage-rows
-  "Every store-internal usage row ({:from-ns :from-var :to :to-export}) for
-  the debt view and the drift (declared-but-unused) view — consumed from
-  THE reference graph (edit.refs), so carrier references count as usage
-  exactly like resolved calls; declarations don't (they aren't calls)."
+  Test-only edges project too, suffixed `(test)`, because a projection that
+  showed only production would read as the whole manifest and quietly hide
+  the declarations that permit a fixture to cross."
   [store]
-  (vec (for [r (refs/refs store)
-             :when (not= :declared (:via r))]
-         {:from-ns   (:from-ns r)
-          :from-var  (:from-var r)
-          :to        (:to-ns r)
-          :to-export (modules/export-level store (:to-ns r) (:to-name r))})))
+  (let [test-edges (modules/module-test-manifest store)]
+    (when (or (seq (:modules store)) (seq test-edges))
+      {:format :manifest
+       :values (into (sorted-map)
+                     (map (fn [m]
+                            [m (clojure.string/join
+                                " " (concat (sort (get (:modules store) m))
+                                            (map #(str % " (test)")
+                                                 (sort (get test-edges m)))))]))
+                     (distinct (concat (keys (:modules store)) (keys test-edges))))})))
 
 (defn ^{:export "slopp.http-api"} production-manifest
   "Module dependency edges from PRODUCTION namespaces only — the
@@ -81,7 +77,7 @@
 
   Exported to the `slopp.http-api` subtree because that is the architecture view:
   the Code screen draws this graph. Not public — no other caller has asked."
-  ([store] (production-manifest store (module-usage-rows store)))
+  ([store] (production-manifest store (modules/module-usage-rows store)))
   ([store rows]
    (let [prod? #(not (str/ends-with? (str %) "-test"))
          base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
@@ -94,17 +90,20 @@
              base rows))))
 
 (defn module-debt
-  "Whole-store module violations under the store's CURRENT manifest —
+  "Whole-store module violations under the store's CURRENT declarations —
   compact rows, G13-capped — the debt a manifest change reveals (per-write
-  gates block NEW violations; the advisory shows what already stands).
-  Pass precomputed `rows` (module-usage-rows) to share the kondo pass."
-  ([store] (module-debt store (module-usage-rows store)))
+  gates block NEW violations; this shows what already stands).
+  Pass precomputed `rows` (module-usage-rows) to share the kondo pass.
+
+  nil for a pre-adoption store, which is the one case where the rules are
+  off entirely — [[modules/store-violations]] answers that from `:modules`
+  being nil, so this asks about the store rather than holding a manifest of
+  its own."
+  ([store] (module-debt store (modules/module-usage-rows store)))
   ([store rows]
-   (when-let [manifest (modules/modules-manifest store)]
-     (let [vs (modules/module-violations manifest rows)]
-       (when vs
-         {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
-          :count (count vs)})))))
+   (when-let [vs (modules/store-violations store rows)]
+     {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
+      :count (count vs)})))
 
 (defn module-surface
   "What `m` OFFERS, where `m` is a MODULE (`logi.parcel`) or any NAMESPACE

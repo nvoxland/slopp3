@@ -63,10 +63,16 @@
 
 (deftest ^:external module-graph-views-use-production-edges
   ;; -test namespaces fold into the subject module, so their fixture deps
-  ;; pollute the graph and manufacture cycles that don't exist in
-  ;; production. The DECLARED manifest keeps them (enforcement); the
-  ;; layers/cycles VIEW must reflect production only. Mirrors slopp's own
-  ;; adopted-store situation.
+  ;; would pollute the graph and manufacture cycles that don't exist in
+  ;; production. Two things keep the views honest, and this pins both:
+  ;; adoption CLASSIFIES a fixture-only crossing as a test edge rather than
+  ;; deriving a dependency the project does not have, and the layers/cycles
+  ;; view is computed over production edges regardless.
+  ;;
+  ;; Until 2026-08-02 only the second held: adoption wrote the fixture's
+  ;; crossing straight into `:modules`, which is how slopp's own manifest came
+  ;; to assert `slopp.index` and `slopp.store` depend on `slopp.api`. The view
+  ;; hid it; the enforcement graph believed it.
   (let [sess (external/open!)]
     (try
       ;; adoption-style setup (gate off) so we can land the cyclic fixture edge
@@ -80,11 +86,18 @@
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest go-t (is (= 1 (app/go 1))))\n"))
       (swap! sess dissoc :adopting?)
-      (api/adopt-modules! sess)   ; records pb.app→pa.core AND (test) pa.core→pb.app
+      (api/adopt-modules! sess)   ; production pb.app→pa.core; the back-edge is TEST-only
       (let [r (query/query-depends sess nil :modules true)]
-        (testing "the DECLARED manifest still carries the test-fixture back-edge"
-          (is (contains? (set (get-in r [:manifest "pa.core"])) "pb.app")
-              (pr-str (:manifest r))))
+        (testing "adoption declares the fixture's crossing WITHOUT claiming a dependency"
+          (is (not (contains? (set (get-in r [:manifest "pa.core"])) "pb.app"))
+              (str "pa.core does not depend on pb.app — only its test does: "
+                   (pr-str (:manifest r))))
+          (is (contains? (set (get-in r [:test-edges "pa.core"])) "pb.app")
+              (pr-str (:test-edges r))))
+        (testing "and it is DECLARED, so the fixture's call is not standing debt"
+          ;; the must-not-flag half: classifying must permit, not merely relabel
+          (is (nil? (modules/module-debt (:store @sess)))
+              (pr-str (modules/module-debt (:store @sess)))))
         (testing "the production graph is acyclic — no false cycle in the view"
           (is (nil? (:cycles r)) (pr-str (:cycles r))))
         (testing "layers reflect production: pa.core sits below pb.app"
@@ -498,7 +511,13 @@
                         "(deftest go-t (is (= 1 (app/go 1))))\n"))
       (swap! sess dissoc :adopting?)
       (api/adopt-modules! sess)
-      (let [st (:store @sess)
+      (let [;; Adoption no longer derives a fixture's crossing as a production
+            ;; edge (it lands in :module-test-edges), so the polluted declared
+            ;; manifest is now BUILT here rather than inherited. Building it is
+            ;; the honest fixture anyway: a declared-only cycle still arises —
+            ;; a merge unions two manifests that are each acyclic, which is
+            ;; precisely what merge-production-cycle guards.
+            st     (assoc-in (:store @sess) [:modules "pa.core"] #{"pb.app"})
             ;; `before` lacking the edge is what makes this a merge that
             ;; GAINED one — the check is scoped to that, so a standing
             ;; cycle is not re-reported on every unrelated merge.
@@ -511,7 +530,16 @@
           (is (nil? (modules/merge-production-cycle before st))
               (pr-str (:modules st))))
         (testing "a merge that gained NO module edge reports nothing"
-          (is (nil? (modules/merge-production-cycle st st)))))
+          (is (nil? (modules/merge-production-cycle st st))))
+        (testing "and adoption did not put it there in the first place"
+          ;; the same fact from the other side: what the fixture crosses is
+          ;; declared, but as a TEST edge, so :modules never carried a
+          ;; dependency pa.core does not have
+          (is (empty? (get-in (:store @sess) [:modules "pa.core"]))
+              (pr-str (:modules (:store @sess))))
+          (is (contains? (get-in (:store @sess) [:module-test-edges "pa.core"] #{})
+                         "pb.app")
+              (pr-str (:module-test-edges (:store @sess))))))
       ;; now a REAL production cycle: pa.core.impl reaches pb.app in
       ;; production code. Module edges are first-two-segments, so this
       ;; closes pa.core ⇄ pb.app without an ns-level require cycle.

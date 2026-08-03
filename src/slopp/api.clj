@@ -45,28 +45,40 @@
 (defn adopt-modules!
   "ADOPTION (internal — never a tool, never explicit): derive the module
   manifest from the CURRENT actual dependency graph — kondo-resolved, so
-  :refer'd calls count — and record it as one :module-edge delta per edge.
-  Called once by open! for a populated store whose db predates the module
-  system (:modules nil); by construction the result is acyclic with zero
-  violations, so adoption never breaks working code — the gate then blocks
-  DRIFT until the agent declares new edges (module_dep)."
+  :refer'd calls count — and record it as one delta per edge. Called once by
+  open! for a populated store whose db predates the module system (:modules
+  nil); by construction the result is acyclic with zero violations, so
+  adoption never breaks working code — the gate then blocks DRIFT until the
+  agent declares new edges (module_dep).
+
+  An edge only `-test` namespaces cross is adopted as a TEST-ONLY edge, so
+  the manifest a project inherits does not open its production graph on a
+  fixture's behalf. Adopting those as ordinary edges is how slopp's own
+  manifest came to claim `slopp.index` and `slopp.store` depend on
+  `slopp.api`."
   [session & {:keys [agent]}]
-  (let [edges (edit.modules/derive-module-edges (:store @session))]
-    (session/commit-appended!
-     session
-     (fn [base]
-       (reduce (fn [s [m deps]]
+  (let [{:keys [production test]} (edit.modules/derive-module-edges (:store @session))
+        record (fn [s [m deps] test-only]
                  (reduce (fn [s2 dep]
                            (first (store/record-module-edge
                                    s2 m dep :add
-                                   :prompt "module adoption: edge derived from the actual dependency graph"
+                                   :test-only test-only
+                                   :prompt (str "module adoption: "
+                                                (if test-only
+                                                  "edge crossed by -test namespaces ONLY"
+                                                  "edge derived from the actual dependency graph"))
                                    :agent agent)))
-                         s (sort deps)))
-               (update base :modules #(or % {}))
-               (sort edges)))
+                         s (sort deps)))]
+    (session/commit-appended!
+     session
+     (fn [base]
+       (as-> (update base :modules #(or % {})) $
+         (reduce #(record %1 %2 nil) $ (sort production))
+         (reduce #(record %1 %2 true) $ (sort test))))
      [])
-    {:modules (count edges)
-     :edges   (reduce + 0 (map count (vals edges)))}))
+    {:modules (count production)
+     :edges   (reduce + 0 (map count (vals production)))
+     :test-edges (reduce + 0 (map count (vals test)))}))
 
 (defn await-image!
   "Block until the session's background image boot has finished, then return
@@ -3235,9 +3247,21 @@ recompiled (session/after-write! session ns-sym)]
   query_depends draws its layers from. A `-test` namespace folds into its
   subject's module, so a fixture require manufactures an edge no production
   namespace has, and judging against those refused architecture that is
-  genuinely acyclic while the architecture view showed a clean DAG."
-  [session from to & {:keys [remove prompt agent]}]
-  (let [manifest (or (edit.modules/modules-manifest (:store @session)) {})
+  genuinely acyclic while the architecture view showed a clean DAG.
+
+  `test-only` declares the edge for the module's `-test` namespaces ONLY —
+  a separate relation, so production code under `from` is still refused. It
+  is not a production edge, so it is not cycle-checked: an advisory's test
+  has to write code and call `done!` to see the advisory fire, which means
+  the fixture necessarily calls the operation surface that calls the rules.
+  Without this the only options were to move the test away from its subject
+  or to carry a violation forever."
+  [session from to & {:keys [remove prompt agent test-only]}]
+  (let [st       (:store @session)
+        manifest (or (if test-only
+                       (edit.modules/module-test-manifest st)
+                       (edit.modules/modules-manifest st))
+                     {})
         from     (str from)
         to       (str to)
         modish   #(re-matches #"[^.\s]+(\.[^.\s]+)?" %)
@@ -3252,14 +3276,22 @@ recompiled (session/after-write! session ns-sym)]
       {:error "a module never declares itself"}
 
       (and remove (not (contains? (get manifest from #{}) to)))
-      {:error (str from " does not declare " to " — nothing to remove")}
+      {:error (str from " does not declare " to
+                   (when test-only " as a test-only edge")
+                   " — nothing to remove")}
 
       (and (not remove) (contains? (get manifest from #{}) to))
-      {:from from :to to :action action :already-declared true
-       :deps (vec (sort (get manifest from)))}
+      (cond-> {:from from :to to :action action :already-declared true
+               :deps (vec (sort (get manifest from)))}
+        test-only (assoc :test-only true))
 
       :else
       (if-let [back (and (not remove)
+                         (not test-only)     ; a test edge is not a production
+                                             ; edge, so it cannot close a
+                                             ; production cycle — that is the
+                                             ; whole reason the relation is
+                                             ; separate
                          ;; PRODUCTION edges — the same graph query_depends draws
                          ;; its layers from. A `-test` namespace folds into its
                          ;; subject's module, so a fixture require manufactures an
@@ -3269,7 +3301,7 @@ recompiled (session/after-write! session ns-sym)]
                          (store/module-path
                           (modules/production-manifest
                            (:store @session)
-                           (modules/module-usage-rows (:store @session)))
+                           (edit.modules/module-usage-rows (:store @session)))
                           to from))]
         {:error (str "that edge CLOSES a dependency cycle: "
                      (clojure.string/join " → " (conj back to))
@@ -3281,27 +3313,20 @@ recompiled (session/after-write! session ns-sym)]
                      ;; in the way, computed rather than guessed.
                      (let [reachers
                            (sort (distinct
-                                  (for [r (modules/module-usage-rows (:store @session))
+                                  (for [r (edit.modules/module-usage-rows (:store @session))
                                         :when (and (= from (edit.modules/module-of (:from-ns r)))
                                                    (= to (edit.modules/module-of (:to r))))]
                                     (:from-ns r))))]
                        (if (and (seq reachers)
                                 (every? #(clojure.string/ends-with? (str %) "-test")
                                         reachers))
-                         (str " — and every namespace under " from " that reaches "
+                         (str " — but every namespace under " from " that reaches "
                               to " is a TEST ("
-                              (clojure.string/join ", " reachers) "). The manifest"
-                              " is MODULE-GRAINED and module-of folds a trailing"
-                              " -test off each segment, so a fixture shares its"
-                              " subject's module key: there is no edge that"
-                              " permits the test without also permitting"
-                              " production, and declaring one would license the"
-                              " very cycle it refuses. Move the test to " to "'s"
-                              " own test namespace if what it asserts belongs"
-                              " there — a fixture that drives the operation"
-                              " surface usually does — or leave the edge"
-                              " undeclared and carry the violation knowingly,"
-                              " which full_check reports rather than hides.")
+                              (clojure.string/join ", " reachers) "), so declare"
+                              " it {test-only true}: that binds the fixtures"
+                              " WITHOUT licensing production code under " from
+                              " to cross, and a test-only edge is not a"
+                              " production edge, so it closes no cycle")
                          (str " — point the dependency one way (usually by"
                               " extracting the shared piece into a module both"
                               " sides may depend on)"))))}
@@ -3309,18 +3334,28 @@ recompiled (session/after-write! session ns-sym)]
                     session
                     #(first (store/record-module-edge % from to action
                                                       :prompt prompt
-                                                      :agent agent))
+                                                      :agent agent
+                                                      :test-only test-only))
                     [])
               debt (modules/module-debt st')
               ;; what this call checked, and what it did not: the cycle
               ;; question is real and was asked, but whether anything USES the
               ;; edge is a different question with a different owner.
-              axes (str "cycles were judged over PRODUCTION edges. Whether"
-                        " anything USES this edge is not checked here —"
+              axes (str (if test-only
+                          (str "a test-only edge is NOT a production edge, so no"
+                               " cycle question applies to it — and production"
+                               " code under " from " is still refused. ")
+                          "cycles were judged over PRODUCTION edges. ")
+                        "Whether anything USES this edge is not checked here —"
                         " query_depends {modules true} reports :unused-edges.")]
           (cond-> {:from from :to to :action action
-                   :verified [:cycles] :unverified [:usage] :note axes
-                   :deps (vec (sort (get-in st' [:modules from])))}
+                   :verified (if test-only [] [:cycles])
+                   :unverified [:usage] :note axes
+                   :deps (vec (sort (get-in st' [(if test-only
+                                                   :module-test-edges
+                                                   :modules)
+                                                 from])))}
+            test-only (assoc :test-only true)
             debt
             (assoc :violations debt
                    :note (str "existing debt under this manifest — writes"
@@ -3674,18 +3709,32 @@ recompiled (session/after-write! session ns-sym)]
             ;; 3. the edges reality now requires, derived from the moved store
             (let [st'      (:store @session)
                   manifest (or (edit.modules/modules-manifest st') {})
-                  missing  (vec (sort (for [[m deps] (edit.modules/derive-module-edges st')
-                                            d deps
-                                            :when (not (contains? (get manifest m #{}) d))]
-                                        [m d])))]
-              (when (seq missing)
+                  tmanif   (edit.modules/module-test-manifest st')
+                  derived  (edit.modules/derive-module-edges st')
+                  ;; a fixture's crossing gets declared FOR FIXTURES — deriving
+                  ;; it as a production edge is how a regroup silently widens
+                  ;; the graph it was meant to tidy
+                  gap      (fn [kind have]
+                             (vec (sort (for [[m deps] (get derived kind)
+                                              d deps
+                                              :when (not (contains? (get have m #{}) d))]
+                                          [m d]))))
+                  missing   (gap :production manifest)
+                  missing-t (gap :test tmanif)]
+              (when (or (seq missing) (seq missing-t))
                 (session/commit-appended!
                  session
                  (fn [base]
-                   (reduce (fn [s [a b]]
-                             (first (store/record-module-edge s a b :add
-                                                              :prompt why :agent agent)))
-                           base missing))
+                   (as-> base $
+                     (reduce (fn [s [a b]]
+                               (first (store/record-module-edge s a b :add
+                                                                :prompt why :agent agent)))
+                             $ missing)
+                     (reduce (fn [s [a b]]
+                               (first (store/record-module-edge s a b :add
+                                                                :test-only true
+                                                                :prompt why :agent agent)))
+                             $ missing-t)))
                  []))
               ;; 4. ONE verification, strictly after the whole set has landed
               ;; AND after the edges are declared — verifying earlier would
@@ -3700,6 +3749,8 @@ recompiled (session/after-write! session ns-sym)]
                                      :exported (count cs)
                                      :edges-declared missing}
                          :test summary}
+                  (seq missing-t)
+                  (assoc-in [:extracted :test-edges-declared] missing-t)
                   (seq (:left-behind done))
                   (assoc :left-behind (:left-behind done)
                          :note (str (count (:left-behind done)) " of the renamed"

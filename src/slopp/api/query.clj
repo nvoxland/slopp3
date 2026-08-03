@@ -726,7 +726,7 @@
       (if (seq (str on))
         (assoc (modules/module-surface session on) :kind :module-surface)
         (let [manifest (or (edit.modules/modules-manifest st) {})
-              rows     (modules/module-usage-rows st)
+              rows     (edit.modules/module-usage-rows st)
               actual   (into #{}
                              (comp (map (fn [{:keys [from-ns to]}]
                                           [(edit.modules/module-of from-ns)
@@ -767,6 +767,19 @@
 
             (seq (:cycles graph))
             (assoc :cycles (:cycles graph))
+
+            (seq (edit.modules/module-test-manifest st))
+            ;; a SEPARATE relation, so a reader who saw only :modules would
+            ;; conclude these crossings are undeclared debt when they are
+            ;; declared and deliberate
+            (assoc :test-edges (into (sorted-map)
+                                     (map (fn [[m ds]] [m (vec (sort ds))]))
+                                     (edit.modules/module-test-manifest st))
+                   :test-edges-note (str "edges a module's -test namespaces may"
+                                         " cross and its production code may"
+                                         " NOT — not production edges, so they"
+                                         " are absent from :layers and :cycles"
+                                         " by construction"))
 
             (seq unused)
             (assoc :unused-edges unused

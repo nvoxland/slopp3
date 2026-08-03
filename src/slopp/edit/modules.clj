@@ -63,25 +63,6 @@
               (symbol? x) (str x)          ; ^{:export a.pub} — unquoted, forgiven
               :else       (when x true))))))
 
-(defn ^:export derive-module-edges
-  "The ACTUAL cross-module dependency edges of a store — kondo-resolved
-  var usages grouped by module — as {module #{dep-modules}}, dep-less
-  modules absent. Adoption uses this: a manifest derived from reality is
-  acyclic with zero violations by construction."
-  [store]
-  (let [nses (set (keys (:namespaces store)))]
-    (reduce (fn [acc nsx]
-              (let [cmod  (module-of nsx)
-                    tmods (into #{}
-                                (comp (filter #(contains? nses (:to %)))
-                                      (map #(module-of (:to %)))
-                                      (remove #{cmod}))
-                                (:var-usages
-                                 (analyze/analyze (render/render-ns store nsx))))]
-                (if (seq tmods) (merge-with into acc {cmod tmods}) acc)))
-            {}
-            (sort nses))))
-
 (defn ^:export fold-test-ns
   "The namespace with a trailing `-test` stripped from EACH segment. A test
   namespace folds into the package it tests — for recursive VISIBILITY as
@@ -93,6 +74,71 @@
        (map #(clojure.string/replace % #"-test$" ""))
        (clojure.string/join ".")))
 
+(defn ^:export derive-module-edges
+  "The ACTUAL cross-module dependency edges of a store — kondo-resolved var
+  usages grouped by module — CLASSIFIED by who needs them:
+  `{:production {module #{deps}} :test {module #{deps}}}`, dep-less modules
+  absent from each.
+
+  An edge lands in `:test` when only `-test` namespaces cross it. That
+  distinction is not cosmetic and not optional: a derived manifest is how
+  adoption and `module_extract` write edges nobody typed, and deriving a
+  fixture's crossing as a PRODUCTION edge is how slopp's own manifest came
+  to assert that `slopp.index` and `slopp.store` depend on `slopp.api` —
+  two cycles in the graph enforcement reads, zero production callers behind
+  either. Classifying here means a derived manifest says only what is true.
+
+  An edge with any production caller is production, whatever its tests also
+  do — so `:test` is exactly the set nothing but a fixture needs."
+  [store]
+  (let [nses (set (keys (:namespaces store)))
+        deps-of (fn [nsx]
+                  (let [cmod (module-of nsx)]
+                    (into #{}
+                          (comp (filter #(contains? nses (:to %)))
+                                (map #(module-of (:to %)))
+                                (remove #{cmod}))
+                          (:var-usages
+                           (analyze/analyze (render/render-ns store nsx))))))
+        collect (fn [pred]
+                  (reduce (fn [acc nsx]
+                            (let [tmods (deps-of nsx)]
+                              (if (seq tmods)
+                                (merge-with into acc {(module-of nsx) tmods})
+                                acc)))
+                          {}
+                          (sort (filter pred nses))))
+        prod (collect #(= (str %) (fold-test-ns %)))
+        test (collect #(not= (str %) (fold-test-ns %)))]
+    {:production prod
+     ;; only what NOTHING but a fixture needs
+     :test (into {}
+                 (keep (fn [[m deps]]
+                         (let [only (apply disj deps (get prod m #{}))]
+                           (when (seq only) [m only]))))
+                 test)}))
+
+(defn ^:export module-test-manifest
+  "The TEST-ONLY module edges — `{module-string #{dep-module-strings}}`, the
+  fold of the store's `:module-test-edge` deltas, same edge-grain CRDT as
+  [[modules-manifest]] and deliberately a SEPARATE relation from it.
+
+  A module may declare that its `-test` namespaces cross an edge its
+  production code may not. That distinction cannot be made in `:modules`,
+  because `module-of` folds a trailing `-test` off each segment — a fixture
+  shares its subject's module key, so one edge would license both.
+
+  Separate rather than nested so `:modules` keeps meaning exactly PRODUCTION
+  edges: the cycle check, the layer view, `store/module-path` and the
+  projected `modules` file all want that graph and are unchanged by this. A
+  test edge is not a production edge, so it is not a cycle — which is the
+  whole point, and why `module_dep {test-only true}` does not consult the
+  cycle check.
+
+  `{}` when nothing has declared one."
+  [store]
+  (or (:module-test-edges store) {}))
+
 (defn ^:export module-violations
   "The module system's pure RULES over resolved usage rows (kondo
   var-usages shape: {:from-ns :from-var :to :to-export}) — nil `manifest`
@@ -103,57 +149,77 @@
   — a cross-module call requires the caller's module to list the target
   module in the manifest. Rows must already be filtered to store-internal
   targets. Returns violation maps ({:from-ns :from-var :target-ns :rule
-  :error}), nil when clean."
-  [manifest rows]
-  (when manifest
-    (->> (distinct rows)
-         (keep (fn [{:keys [from-ns from-var to to-export]}]
-                 (let [caller-mod (module-of from-ns)
-                       ;; fold -test so a spec shares its subject package's prefix (deep helpers
-                       ;; stay testable); edges already fold via module-of
-                       caller-str (fold-test-ns from-ns)
-                       tsegs      (str/split (str to) #"\.")
-                       tmod       (module-of to)
-                       parent     (str/join "." (butlast tsegs))
-                       under?     (fn [prefix]
-                                    (or (= caller-str prefix)
-                                        (str/starts-with? caller-str (str prefix "."))))
-                       visible?   (or (under? parent)
-                                      (true? to-export)
-                                      (and (string? to-export) (under? to-export)))]
-                   (cond
-                     (= (str from-ns) (str to)) nil
+  :error}), nil when clean.
 
-                     (and (> (count tsegs) 2) (not visible?))
-                     {:from-ns from-ns :from-var from-var :target-ns to
-                      :rule :visibility
-                      :error (if (string? to-export)
-                               (str from-ns "/" from-var " calls " to " which is"
-                                    " exported only within " to-export ".* — call"
-                                    " it from inside that subtree, raise its"
-                                    " :export level, or use " tmod "'s public"
-                                    " surface")
-                               (str from-ns "/" from-var " calls " to " which is"
-                                    " package-private to " parent ".* (recursive"
-                                    " visibility) — call " tmod "'s public"
-                                    " surface, mark the target ^:export in its"
-                                    " defn to hoist it into that surface"
-                                    " (^{:export \"prefix\"} exposes it to a"
-                                    " subtree only), or move the definition up"
-                                    " a level"))}
+  `test-manifest` ([[module-test-manifest]]) satisfies rule 2 for a TEST
+  caller only — a module may declare that its fixtures cross an edge its
+  production code may not. Which namespaces count as tests is asked of
+  [[fold-test-ns]] rather than a fresh suffix check, so `a.b-test` and
+  `a-test.b` answer the same way the rest of the module system answers them.
+  The 2-arity is the production-only reading."
+  ([manifest rows] (module-violations manifest nil rows))
+  ([manifest test-manifest rows]
+   (when manifest
+     (->> (distinct rows)
+          (keep (fn [{:keys [from-ns from-var to to-export]}]
+                  (let [caller-mod (module-of from-ns)
+                        ;; fold -test so a spec shares its subject package's prefix (deep helpers
+                        ;; stay testable); edges already fold via module-of
+                        caller-str (fold-test-ns from-ns)
+                        test?      (not= (str from-ns) caller-str)
+                        tsegs      (str/split (str to) #"\.")
+                        tmod       (module-of to)
+                        parent     (str/join "." (butlast tsegs))
+                        under?     (fn [prefix]
+                                     (or (= caller-str prefix)
+                                         (str/starts-with? caller-str (str prefix "."))))
+                        visible?   (or (under? parent)
+                                       (true? to-export)
+                                       (and (string? to-export) (under? to-export)))
+                        declared?  (or (contains? (get manifest caller-mod #{}) tmod)
+                                       (and test?
+                                            (contains? (get test-manifest caller-mod #{})
+                                                       tmod)))]
+                    (cond
+                      (= (str from-ns) (str to)) nil
 
-                     (and (not= tmod caller-mod)
-                          (not (contains? (get manifest caller-mod #{}) tmod)))
-                     {:from-ns from-ns :from-var from-var :target-ns to
-                      :rule :undeclared-edge
-                      :error (str from-ns "/" from-var " uses " to " but module "
-                                  caller-mod " does not declare " tmod
-                                  " — declare the edge: module_dep {from \""
-                                  caller-mod "\" to \"" tmod "\"} (say why in"
-                                  " prompt), or restructure the call")}
+                      (and (> (count tsegs) 2) (not visible?))
+                      {:from-ns from-ns :from-var from-var :target-ns to
+                       :rule :visibility
+                       :error (if (string? to-export)
+                                (str from-ns "/" from-var " calls " to " which is"
+                                     " exported only within " to-export ".* — call"
+                                     " it from inside that subtree, raise its"
+                                     " :export level, or use " tmod "'s public"
+                                     " surface")
+                                (str from-ns "/" from-var " calls " to " which is"
+                                     " package-private to " parent ".* (recursive"
+                                     " visibility) — call " tmod "'s public"
+                                     " surface, mark the target ^:export in its"
+                                     " defn to hoist it into that surface"
+                                     " (^{:export \"prefix\"} exposes it to a"
+                                     " subtree only), or move the definition up"
+                                     " a level"))}
 
-                     :else nil))))
-         seq)))
+                      (and (not= tmod caller-mod) (not declared?))
+                      {:from-ns from-ns :from-var from-var :target-ns to
+                       :rule :undeclared-edge
+                       :error (str from-ns "/" from-var " uses " to " but module "
+                                   caller-mod " does not declare " tmod
+                                   " — declare the edge: module_dep {from \""
+                                   caller-mod "\" to \"" tmod "\"} (say why in"
+                                   " prompt), or restructure the call"
+                                   (when test?
+                                     (str ". This caller is a TEST, so"
+                                          " {test-only true} declares it for"
+                                          " fixtures WITHOUT licensing production"
+                                          " code under " caller-mod " to cross —"
+                                          " and a test-only edge is not a"
+                                          " production edge, so it cannot close a"
+                                          " cycle")))}
+
+                      :else nil))))
+          seq))))
 
 (defn ^:export module-external?
   "The single boundary predicate the write gates and the breakage classifier
@@ -180,20 +246,39 @@
       [(first body)]
       (vec (keep #(when (and (seq? %) (vector? (first %))) (first %)) body)))))
 
+(defn ^:export store-violations
+  "[[module-violations]] applied to `store`'s declared relations — the
+  reading every real caller wants, and the one place that knows WHICH
+  relations the rules consult.
+
+  It exists because that knowledge was about to be spelled out at six call
+  sites (both write gates, the whole-store debt fold, the done-time
+  relocation check, the move planner, the extract planner). Six copies of
+  \"fetch the manifests, apply the rules\" is how one of them comes to fetch
+  fewer than the others — and the failure is silent, because consulting one
+  relation too few reports MORE violations than exist, which reads exactly
+  like a strict gate rather than a broken one.
+
+  `rows` stays a parameter: the write gates pass one namespace's slice, the
+  whole-store folds pass every row. Scoping is the caller's business; which
+  declarations count is not."
+  [store rows]
+  (module-violations (modules-manifest store) (module-test-manifest store) rows))
+
 (defn ^:export module-refusal
   "The per-form module gate over the CANDIDATE store (post-edit value):
   applies the module rules to `form-name`'s outbound references from THE
-  graph (edit.refs — resolved statics, un-required qualified calls, and
-  carrier positions all count; declarations aren't calls). nil when clean
+  graph (`slopp.index.refs` — resolved statics, un-required qualified calls,
+  and carrier positions all count; declarations aren't calls). nil when clean
   or pre-adoption."
   [candidate ns-sym form-name]
-  (when-let [manifest (modules-manifest candidate)]
+  (when-let [_ (modules-manifest candidate)]
     (let [rows (for [r (refs/ns-refs candidate ns-sym)
                      :when (and (= form-name (:from-var r))
                                 (not= :declared (:via r)))]
                  {:from-ns ns-sym :from-var (:from-var r) :to (:to-ns r)
                   :to-export (export-level candidate (:to-ns r) (:to-name r))})]
-      (when-let [vs (module-violations manifest rows)]
+      (when-let [vs (store-violations candidate rows)]
         (str/join "; " (map :error vs))))))
 
 (defn ^:export module-scan
@@ -201,12 +286,12 @@
   dialect-scan) over a candidate store value, judged from THE graph's
   slice for the namespace: nil when clean, else every violation joined."
   [candidate ns-sym]
-  (when-let [manifest (modules-manifest candidate)]
+  (when-let [_ (modules-manifest candidate)]
     (let [rows (for [r (refs/ns-refs candidate ns-sym)
                      :when (not= :declared (:via r))]
                  {:from-ns ns-sym :from-var (:from-var r) :to (:to-ns r)
                   :to-export (export-level candidate (:to-ns r) (:to-name r))})]
-      (when-let [vs (module-violations manifest rows)]
+      (when-let [vs (store-violations candidate rows)]
         (str/join "; " (map :error vs))))))
 
 (defn ^:export namespace-purpose-warning
@@ -1154,3 +1239,24 @@
       (if (seq more)
         (str t "\nALSO PENDING: " (str/join "\nALSO PENDING: " more))
         t))))
+
+(defn ^:export module-usage-rows
+  "Every store-internal usage row ({:from-ns :from-var :to :to-export}) —
+  consumed from THE reference graph (`slopp.index.refs`), so carrier
+  references count as usage exactly like resolved calls; declarations don't
+  (they aren't calls).
+
+  This is the module rules' INPUT VOCABULARY, which is why it lives beside
+  them rather than with the reports that read them: [[module-violations]]'s
+  docstring specifies this exact shape, and both the debt view and the
+  done-time drift check have to produce it. It sat on the read side until
+  2026-08-02, when the done-time check needed it and the resulting checks→reads
+  reference turned out to be the ONE edge making phase 1b's four-way cut of
+  `slopp.api` cyclic."
+  [store]
+  (vec (for [r (refs/refs store)
+             :when (not= :declared (:via r))]
+         {:from-ns   (:from-ns r)
+          :from-var  (:from-var r)
+          :to        (:to-ns r)
+          :to-export (export-level store (:to-ns r) (:to-name r))})))

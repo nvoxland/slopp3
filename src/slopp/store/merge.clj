@@ -431,15 +431,17 @@
                   ;; reported a cycle on every merge into slopp's own main
                   ;; which no production code had. The caller judges
                   ;; production edges — api.modules/merge-production-cycle.
-                  :module-edge
-                  (let [st' (if (= :remove (:action d))
-                              (let [deps (disj (get-in st [:modules (:from d)] #{})
-                                               (:to d))]
-                                (if (empty? deps)
-                                  (update st :modules dissoc (:from d))
-                                  (assoc-in st [:modules (:from d)] deps)))
-                              (update-in st [:modules (:from d)]
-                                         (fnil conj #{}) (:to d)))]
+                  ;; …and the test-only twin folds identically, which is the point of
+                  ;; making it a separate relation rather than a flag: same
+                  ;; edge grain, same union, no new conflict story.
+                  ;;
+                  ;; Both go through `fields/fold` rather than re-deriving the
+                  ;; update here. The registry's own docstring says that fold is
+                  ;; THE fold precisely so record-*, replay-delta and this can
+                  ;; never drift — and this arm had quietly become a second copy
+                  ;; of it.
+                  (:module-edge :module-test-edge)
+                  (let [st' (fields/fold st d)]
                     (done st' idmap (inc merged) conflicts notes
                           changed new-nses (conj applied (:id d))))
 
