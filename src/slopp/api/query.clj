@@ -737,6 +737,7 @@
                                   d      (sort ds)
                                   :when  (not (contains? actual [m d]))]
                               [m d]))
+              over     (modules/overstated-edges st rows)
               ;; layers/cycles reflect PRODUCTION architecture (test fixtures excluded);
               ;; :manifest below stays the DECLARED/enforced set
               graph    (store/module-layers (modules/production-manifest st rows))]
@@ -785,7 +786,21 @@
             (assoc :unused-edges unused
                    :unused-note (str "declared but no call uses them —"
                                      " module_dep {from .. to .. remove true}"
-                                     " retires an edge")))))
+                                     " retires an edge"))
+
+            (seq over)
+            ;; the unused report's sibling, and invisible to it: something DOES
+            ;; cross these, just never production code. Worth a line because a
+            ;; declared edge is what the CYCLE check reads, so one of these can
+            ;; refuse a legitimate declaration in an unrelated module.
+            (assoc :overstated-edges over
+                   :overstated-note (str "declared as PRODUCTION but only -test"
+                                         " namespaces cross them — the manifest"
+                                         " claims a dependency the production"
+                                         " code does not have, and the cycle"
+                                         " check believes it. module_dep"
+                                         " {from .. to .. test_only true} then"
+                                         " {.. remove true} says it honestly")))))
       (let [on (str/trim (str on))]
         (cond
           (str/starts-with? on ":")

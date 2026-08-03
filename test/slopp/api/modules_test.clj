@@ -554,3 +554,56 @@
           (is (some? (modules/merge-production-cycle (assoc st :modules {}) st))
               (pr-str (:modules st)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external an-edge-no-production-code-crosses-is-reported-as-overstated
+  ;; A declared production edge that only `-test` namespaces cross OVERSTATES
+  ;; the architecture: the manifest asserts a dependency the production code
+  ;; does not have. That is not cosmetic — DECLARED edges are what the cycle
+  ;; check reads, so an overstated one can refuse a legitimate declaration
+  ;; somewhere else entirely. Which is how these were found: four stood in
+  ;; slopp's own manifest and one of them blocked a regroup.
+  ;;
+  ;; `:unused-edges` structurally cannot see them — something DOES cross.
+  (let [sess (external/open!)]
+    (try
+      ;; gate off, so the fixture's undeclared crossings can land at all
+      (swap! sess assoc :adopting? true)
+      (api/ingest! sess 'oa.core "(ns oa.core)\n(defn base \"B.\" [x] x)\n")
+      (api/ingest! sess 'ob.app
+                   (str "(ns ob.app (:require [oa.core :as c]))\n"
+                        "(defn go \"G.\" [x] (c/base x))\n"))
+      (api/ingest! sess 'oc.util "(ns oc.util)\n(defn helper \"H.\" [x] x)\n")
+      ;; a module that is ALL test — od.probe has no production namespace, so
+      ;; "only tests cross it" is true of every edge it could ever declare
+      (api/ingest! sess 'od.probe-test
+                   (str "(ns od.probe-test (:require [oa.core :as c]\n"
+                        "                            [clojure.test :refer [deftest is]]))\n"
+                        "(deftest c-t (is (= 1 (c/base 1))))\n"))
+      (api/ingest! sess 'ob.app-test
+                   (str "(ns ob.app-test (:require [oc.util :as u]\n"
+                        "                          [clojure.test :refer [deftest is]]))\n"
+                        "(deftest h-t (is (= 1 (u/helper 1))))\n"))
+      (swap! sess dissoc :adopting?)
+      (api/module-dep! sess "ob.app" "oa.core"
+                       :prompt "production: the app calls the core")
+      (api/module-dep! sess "ob.app" "oc.util"
+                       :prompt "declared for production, but only the -test crosses it")
+      (api/module-dep! sess "od.probe" "oa.core"
+                       :prompt "an all-test module's edge — no production code exists to cross it")
+      (let [r    (query/query-depends sess nil :modules true)
+            over (set (:overstated-edges r))]
+        (testing "the edge only a -test namespace crosses is flagged"
+          (is (contains? over ["ob.app" "oc.util"]) (pr-str r)))
+        (testing "the edge production code crosses is NOT flagged"
+          ;; the must-not-flag half — without it this passes by flagging everything
+          (is (not (contains? over ["ob.app" "oa.core"])) (pr-str r)))
+        (testing "a module with no production code at all is NOT flagged"
+          ;; every edge such a module declares is crossed only by tests, by
+          ;; construction — flagging it is noise, not a finding. Measured on
+          ;; slopp's own store: 80 rows without this, 4 with it.
+          (is (not (contains? over ["od.probe" "oa.core"])) (pr-str r)))
+        (testing "and neither reads as unused — something crosses both"
+          (is (empty? (filter #{["ob.app" "oc.util"] ["ob.app" "oa.core"]}
+                              (:unused-edges r)))
+              (pr-str (:unused-edges r)))))
+      (finally (api/close! sess)))))

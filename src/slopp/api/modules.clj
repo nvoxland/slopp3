@@ -322,3 +322,38 @@
                 (seq (remove (get (:modules before) m #{}) deps)))
               (:modules after))
     (store/modules-cycle (production-manifest after))))
+
+(defn overstated-edges
+  "Declared PRODUCTION edges that only `-test` namespaces cross — the manifest
+  asserting a dependency the production code does not have.
+
+  Sibling of the unused-edge report, and a DIFFERENT question: unused means
+  nothing crosses at all, so an unused check structurally cannot see these.
+  What makes them worth reporting rather than filing as tidiness is that
+  declared edges are what the CYCLE check reads — an overstated edge is a
+  production edge as far as `module_dep` is concerned, so it can refuse a
+  legitimate declaration in a module that has nothing to do with it. Four
+  stood in slopp's own manifest on 2026-08-02 and one of them blocked a
+  regroup that had no relationship to it.
+
+  Asked only of modules that HAVE production code: a module made entirely of
+  tests can only ever be crossed by tests, so every edge it declares would
+  answer yes and the finding would be noise — 80 rows over slopp's own store
+  against 4 real ones. `production-manifest` already keys exactly the modules
+  with a production namespace, so the restriction costs no second predicate.
+
+  `module_dep {.. test_only true}` then `{.. remove true}` states it honestly.
+  Rows are sorted `[module dep]` pairs."
+  ([store] (overstated-edges store (modules/module-usage-rows store)))
+  ([store rows]
+   (let [prod   (production-manifest store rows)
+         actual (into #{}
+                      (map (fn [{:keys [from-ns to]}]
+                             [(modules/module-of from-ns) (modules/module-of to)]))
+                      rows)]
+     (vec (for [[m ds] (sort (modules/modules-manifest store))
+                d      (sort ds)
+                :when  (and (contains? prod m)
+                            (contains? actual [m d])
+                            (not (contains? (get prod m #{}) d)))]
+            [m d])))))
