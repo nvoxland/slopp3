@@ -229,6 +229,18 @@ write time, instead of a fresh JVM catching it later.
   manifest entries when a module's last ns renames away; adoption
   (pre-module dbs at `open!`, `clone!` after ingest) derives the
   manifest from the actual graph. See `architecture.md` § module system.
+  **A RELOCATION is the one write the gate cannot see** — `ns-rename!`
+  rewrites its callers through `store/apply-changeset`, one coordinated
+  delta running no gates, so a crossing that would be refused if typed is
+  created silently. Two things answer for that, at different grains:
+  `rules/module-governance-check` catches it at done (scoped to the
+  episode's relocations, from either end of the edge), and
+  `edit.modules/relocation-debt` reports it at the rename itself, as
+  `ns-rename!`'s `:module-debt` — `:edges-needed` grouped to the
+  `module_dep` calls to make with `:test-only` derived from who actually
+  crosses, `:visibility`, and `:cycles` that declaring would close. It
+  reads `store-violations`, so the two can never disagree; simulating the
+  rename instead would be a second derivation of an existing rule.
 - `move-forms!` / MCP `edit_move_forms {ns forms to [export]}` — the
   general relocation refactor (v2, replacing `extract-ns!`): move forms to
   a NEW or EXISTING namespace; callers EVERYWHERE (production + tests) are

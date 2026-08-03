@@ -240,6 +240,40 @@ and only one of them is checkable. The cheap discharge is a one-line
 turned a two-instance anecdote into a four-instance measurement and a reported
 `:overstated-edges` key, at a cost of about a minute.
 
+### A measurement whose success condition is an ABSENCE proves nothing on its own
+
+2026-08-02. Module 3's regroup was preceded by hand-simulating the rename and
+pre-declaring all 38 module edges, and the record of it reads:
+
+> **Payoff, measured: ten renames, ZERO refusals.**
+
+Zero refusals is equally consistent with *"pre-declaring prevented them"* and
+*"there would have been none anyway."* The second turned out to be true.
+`ns_rename` never refuses on an undeclared edge — its rewrites go through
+`store/apply-changeset`, one coordinated delta running no write gates, which is
+the entire reason `rules/module-governance-check` exists and says so in its own
+docstring. The real failure mode was never a refusal storm; it was SILENT debt,
+which is worse, and which the practice did nothing about.
+
+The number was real. The causal claim attached to it was never tested, and it
+survived into a filed friction, a task description, a shipped skill paragraph
+and a docs section before anyone pulled on it.
+
+> A measurement that succeeds by observing NOTHING needs the something
+> demonstrated at least once — deliberately, under conditions you control.
+> Otherwise "my precaution worked" and "the hazard does not exist" produce
+> identical evidence, and only one of them is a reason to keep paying for the
+> precaution.
+
+This is the positive-control discipline (from slopp-ui, via
+`assertions-never-red`) pointed at a RECORD rather than a test — and it was
+violated one wave after being written into the shipped skill, by its own
+author, in the record of the measurement that was supposed to demonstrate it.
+Which is the argument for it being a system property rather than a habit: the
+discharge is one deliberate observation of the hazard, and the cost of skipping
+it is a false premise that reads like evidence for as long as nobody happens to
+read the implementation.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by

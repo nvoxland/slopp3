@@ -209,7 +209,7 @@ Three things worth knowing:
 | Tool | What it does |
 |---|---|
 | `ns_create {ns requires\|source}` | A brand-new namespace. Never overwrites. |
-| `ns_rename {old new}` | Rename a whole namespace everywhere. |
+| `ns_rename {old new}` | Rename a whole namespace everywhere. Returns `:left-behind` (what no rewrite reaches) and `:module-debt` (edges to declare, cycles `module_dep` will refuse) — a relocation runs no write gates, so the result is the only notice. |
 | `ns_delete {ns}` | Retire an empty namespace. Refuses while any form remains or anything still requires it. |
 | `ns_add_require` / `ns_remove_require` | One require clause. Never hand-edit an `ns` form. |
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |

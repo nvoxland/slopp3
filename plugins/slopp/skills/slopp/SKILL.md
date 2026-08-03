@@ -255,20 +255,34 @@ quietly: a scoped export names exactly ONE subtree, so a var reached by two
 callers that used to share a module needs plain `^:export` the moment the
 regroup separates them.
 
-**Declare the module edges BEFORE a cross-module rename, not during it.**
-`ns_rename` rewrites every caller's require and qualified refs, and each of
-those rewrites goes through the write gate — so an undeclared crossing is
-refused mid-rename, one edge at a time, and each refusal names only the edge
-that just blocked. `ns_rename` neither declares them nor reports which will be
-needed. Work the whole set out first, from THE reference graph, by simulating
-the rename: map old namespace names to new, re-derive the module on both ends
-of every reference, keep the crossings that touch the new module, and diff
-against `query_depends {modules true}`. A `query_store` of about a dozen lines
-answers it in one call. Then `module_dep` them all and rename with nothing in
-the way. **Both halves matter**: the count is usually larger than it looks
-(every CALLER's module needs an edge, not just the one you are moving), and a
-crossing that only `-test` namespaces make wants `test_only true` rather than a
-production edge that overstates the architecture.
+**A cross-module rename creates architecture debt NO GATE CAN SEE — so read
+the `:module-debt` it hands back.** `ns_rename` rewrites every caller's require
+and qualified refs through a path that runs no write gates at all. A crossing
+that would be refused outright if you typed it is therefore created without a
+murmur: nothing turns red, and the first thing to mention it is a `done` some
+time later, reported against the unmoved CALLER — which never moved and does
+not name the rename. So the rename reports it itself:
+
+- **`:edges-needed`** — grouped to the `module_dep` calls you have to make, not
+  to the hundreds of call sites the rule speaks in. Two things the count gets
+  wrong by hand: every CALLER's module needs an edge, not just the module you
+  are moving; and `:test-only` is read off who ACTUALLY crosses, so a crossing
+  only `-test` namespaces make comes back `test_only true` even if the old edge
+  was declared production. Declaring the production version there would
+  overstate the architecture — the same judgement `:overstated-edges` makes
+  after the fact, offered before it instead.
+- **`:visibility`** — calls that now reach a package-private namespace, because
+  going from two segments to three makes one. Each row's `:error` names the
+  options.
+- **`:cycles`** — the edges `module_dep` is about to REFUSE. This is the one
+  worth reacting to immediately: it means the regroup as drawn cannot be
+  declared, and finding out at rename ten instead of rename one is the
+  difference between a rethink and an unpick.
+
+The loop is rename → read `:module-debt` → `module_dep` what it names → next
+rename. Do not carry the debt across several renames: the reports stay
+correct, but you lose which rename caused what. If `:cycles` fires, stop and
+`undo` rather than declaring around it.
 - `config_file` validates only the `capabilities` path (against the capability
   registry). Every other path — `rules`, `gates`, `client` — is recorded as
   given, key and value unchecked.
@@ -284,15 +298,15 @@ reads wrong. `:test-sibling` means the `-test` namespace still carries the old
 name, which files its tests under the old module. Absence of `:left-behind`
 means checked-and-none, not unchecked.
 
-**It does not rewrite qualified KEYWORDS either, and that one is silent.**
-`:acme.billing/customer-id` survives `acme.billing` → `acme.invoice` intact,
-because a keyword is not a reference — nothing breaks, no test turns red, and
-the name simply starts lying. If a namespace owns keys named after it (an
-options map, a context map, a session key — a common and good habit), sweep
-them yourself with `query_search {pattern ":acme\\.billing/"}`. Whether to
-rewrite each one is a JUDGEMENT: a qualified keyword can be a wire or storage
-key that something outside your store already holds, and re-spelling it there
-breaks a consumer slopp cannot see.
+**Qualified KEYWORDS come back under `:keyword`, and they are the silent
+class.** `:acme.billing/customer-id` survives `acme.billing` → `acme.invoice`
+intact, because a keyword is not a reference — nothing breaks, no test turns
+red, and the name simply starts lying. A broken token string at least turns
+something red; this one has no second chance, which is why it is listed with
+the keyword text spelled out. Whether to rewrite each is a JUDGEMENT, and that
+is exactly why the rename does not: a qualified keyword can be a wire or
+storage key that something outside your store already holds, and re-spelling
+it there breaks a consumer slopp cannot see.
 
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the
@@ -420,6 +434,16 @@ answer. Before believing "correct, tested, no improvement here", check the
 instrument. This is the same class one level up: *"none"* and *"none that I
 looked at"* are different claims that share a spelling, and here the thing with
 the two meanings is your own yardstick.
+
+**And the version with a precaution attached: "I did X and the problem never
+appeared" is not evidence that X worked.** It is equally evidence that the
+problem does not exist. Those two produce identical observations, and only one
+of them is a reason to keep paying for X. If a practice earns its keep by
+making something NOT happen, watch it happen once without the practice —
+deliberately, under conditions you control. A causal claim nobody tested reads
+exactly like a measurement for as long as nobody checks the implementation, and
+it propagates: into a backlog item, into a docs page, into the next agent's
+habits.
 
 **Say less between calls.** Results are structured and self-describing —
 never restate a result's contents in prose (eval9 measured: agents wrote

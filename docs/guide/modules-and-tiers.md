@@ -186,28 +186,43 @@ surface. Moving the *callee* breaks it too, more quietly: a scoped export names
 exactly one subtree, so a var reached by two callers that used to share a
 module needs a plain `^:export` the moment a regroup separates them.
 
-### Declare the edges before the rename, not during it
+### A rename reports the debt it leaves, because no gate can see it
 
-`ns_rename` rewrites every caller's require and qualified references, and each
-of those rewrites goes through the write gate. So an undeclared crossing is
-refused *mid-rename*, one edge at a time, and each refusal names only the edge
-that just blocked. The tool declares none of them and pre-reports none of them.
+`ns_rename` rewrites every caller's require and qualified references, and those
+rewrites do **not** go through the write gate -- a coordinated changeset lands
+as one delta rather than as N writes. So a crossing that would be refused
+outright if you typed it is created silently instead. Nothing turns red, and
+the first thing to mention it is a `done` some time later, reported against the
+unmoved *caller* -- which never moved, and does not name the rename that
+stranded it.
 
-Work the whole set out first. Simulate the rename over the reference graph --
-map old namespace names to new, re-derive the module on both ends of every
-reference, keep the crossings that touch the new module, diff against
-`query_depends {modules true}` -- then declare them all and rename with nothing
-in the way. Two things the count usually gets wrong: every *caller's* module
-needs an edge, not just the module you are moving; and a crossing only `-test`
-namespaces make wants `test_only true`, not a production edge that overstates
-the architecture.
+So the rename hands back `:module-debt`:
 
-One more thing a rename leaves behind, and this one is silent: **qualified
-keywords**. `:billing.invoice/customer-id` survives `billing.invoice` →
-`billing.statement` intact, because a keyword is not a reference. Nothing
-breaks and nothing turns red -- the name just starts lying. Sweep them with
-`query_search`, and decide each one rather than rewriting in bulk: a qualified
-keyword can be a wire or storage key something outside the store already holds.
+| Key | What it is |
+|---|---|
+| `:edges-needed` | crossings now undeclared, grouped to the `module_dep` calls to make |
+| `:visibility` | calls that now reach a package-private namespace |
+| `:cycles` | the edges `module_dep` will **refuse** |
+
+Two things a hand count usually gets wrong, and this does not: every *caller's*
+module needs an edge, not just the module you are moving; and `test-only` is
+derived from who actually crosses, so a crossing only `-test` namespaces make
+comes back `test_only true` even when the old edge was declared for production.
+That is the same judgement `:overstated-edges` makes after the fact, offered
+before it instead.
+
+The loop is rename, read, declare, next rename. `:cycles` is the one to stop
+on: it means the regroup as drawn cannot be declared at all, and it is far
+cheaper to learn that at the first rename than at the tenth.
+
+One more thing a rename leaves behind, and this one is silent even afterwards:
+**qualified keywords**. `:billing.invoice/customer-id` survives
+`billing.invoice` → `billing.statement` intact, because a keyword is not a
+reference. Nothing breaks and nothing turns red -- the name just starts lying.
+They come back under `:keyword` in `:left-behind`, spelled out, and they are
+deliberately not rewritten: a qualified keyword can be a wire or storage key
+something outside the store already holds, so each one is a decision rather
+than a substitution.
 
 ### Why this axis
 
