@@ -1,4 +1,22 @@
 (ns slopp.rename-test
+  "The RE-ADDRESSING verbs — `edit_rename`, `ns_rename`, `rename_sweep`,
+  `edit_requalify` — held to one standard: a name that moves must move
+  everywhere it is a reference, and everywhere it is NOT a reference the verb
+  must SAY SO.
+
+  That second half is why these live together rather than beside each verb's
+  own subject. Symbols are rewritten perfectly by the CST pass and everything
+  else — a name inside a string, a `-test` sibling's own name, a qualified
+  keyword, a register key — is left alone, correctly and silently. Silence
+  reads as \"there was nothing to carry\", which is how a 16-namespace
+  restructure broke four tests on a generated `deps.edn` main-ns nobody was
+  told about. So the fixtures here deliberately plant the unrewritable cases,
+  and the assertions are about the REPORT as much as the rewrite.
+
+  `slopp.index.refs-test` owns the occurrence set itself
+  (`refs/occurrences-of`, the one producer these verbs all read); this
+  namespace owns what each verb does with it. Tier: `^:external` throughout —
+  a rename rebuilds the image, so it needs a real session."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.api :as api] [slopp.read.query :as query] [slopp.api.external :as external])
@@ -364,6 +382,12 @@
   ;; module_extract carries and ns_rename does not, so the two verbs disagree
   ;; about one relationship.
   ;;
+  ;; And the quiet one: a QUALIFIED KEYWORD. A broken token string turns
+  ;; something red; `:rn.core/mode` just starts naming a namespace that no
+  ;; longer exists, through a green suite. Measured during
+  ;; `slopp.api.telemetry` → `slopp.read.telemetry`, where
+  ;; `:slopp.api.telemetry/calls` stood in 3 forms across 5 sites.
+  ;;
   ;; The check runs AFTER the rename over the OLD name: whatever still names
   ;; it was, by construction, not rewritten. That is a reality check, not a
   ;; claim about what the changeset intended to do.
@@ -373,7 +397,8 @@
       (api/ingest! sess 'rn.core-test
                    (str "(ns rn.core-test (:require [rn.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
-                        "(deftest t (is (string? (c/f))))\n"))
+                        "(deftest t (is (string? (c/f))))\n"
+                        "(def opts \"Opts.\" {:rn.core/mode :fast})\n"))
       (let [r    (api/ns-rename! sess 'rn.core 'rn.renamed :prompt "regroup")
             left (:left-behind r)]
         (is (some? left) (str "the rename must say what it left: " (pr-str (keys r))))
@@ -381,8 +406,12 @@
           (is (some #(= 'f (:form %)) (:string left)) (pr-str left)))
         (testing "the -test sibling still carrying the old name"
           (is (some #(= 'rn.core-test (:ns %)) (:test-sibling left)) (pr-str left)))
+        (testing "the qualified keyword — intact, green, and now wrong"
+          (is (some #(= ":rn.core/mode" (:text %)) (:keyword left)) (pr-str left)))
         (testing "the note tells the reader these were NOT rewritten"
-          (is (re-find #"(?i)not rewritten" (str (:note r))) (pr-str (:note r)))))
+          (is (re-find #"(?i)not rewritten" (str (:note r))) (pr-str (:note r))))
+        (testing "and singles keywords out as the class nothing catches later"
+          (is (re-find #"(?i)keyword" (str (:note r))) (pr-str (:note r)))))
       (testing "a clean rename says nothing — absence means checked-and-none"
         (api/ingest! sess 'rn.clean "(ns rn.clean)\n(defn g \"G.\" [] 1)\n")
         (let [r (api/ns-rename! sess 'rn.clean 'rn.spotless :prompt "regroup")]

@@ -2386,10 +2386,15 @@ recompiled (session/after-write! session ns-sym)]
               ;; left, correctly and SILENTLY. Silence reads as "there was
               ;; nothing to carry". Scanned AFTER the write over the OLD name, so
               ;; whatever is still there was, by construction, not rewritten.
-              (let [left (group-by :via (refs/occurrences-of (:store @session) old))]
+              (let [left (group-by :via (refs/occurrences-of (:store @session) old))
+                    ;; same reality-check stance as `left`, one system over:
+                    ;; read the store the rename actually produced rather than
+                    ;; simulating what it meant to do
+                    debt (edit.modules/relocation-debt (:store @session) new)]
                 (cond-> {:renamed {:old old :new new :forms (count changeset)}
                          :delta (:id delta)}
                   summary      (assoc :test summary)
+                  debt         (assoc :module-debt debt)
                   ;; hand the scope UP: the owning transaction verifies this
                   ;; namespace set once, after the whole batch has landed
                   defer-verify (assoc :deferred-verification true
@@ -2406,8 +2411,17 @@ recompiled (session/after-write! session ns-sym)]
                               (when (:test-sibling left)
                                 (str "; the -test sibling still carries the old name,"
                                      " which files its tests under the old module"))
-                              ". Judge each: string rewriting is deliberately"
-                              " conservative, so this list is the whole signal.")))))))))))
+                              (when-let [kw (seq (:keyword left))]
+                                (str "; " (count kw) " qualified KEYWORD(s) ("
+                                     (str/join ", " (sort (distinct (map :text kw))))
+                                     ") — the silent class, and the only one with no"
+                                     " second chance: a broken token string turns"
+                                     " something red, while a keyword stays green and"
+                                     " merely starts naming a namespace that is gone"))
+                              ". Judge each: rewriting is deliberately conservative"
+                              " here — a qualified keyword can be a wire or storage"
+                              " key something outside the store already holds — so"
+                              " this list is the whole signal.")))))))))))
 
 (defn affected-test-nses
   "The PROVABLE verification slice: test namespaces (any ns holding a

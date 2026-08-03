@@ -279,12 +279,7 @@
     :inputSchema {:type "object"
                   :properties {:prompt {:type "string"}}}}
    
-   {:name "ns_rename"
-    :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified."
-    :inputSchema {:type "object"
-                  :properties {:old {:type "string"} :new {:type "string"}
-                               :prompt {:type "string"}}
-                  :required ["old" "new"]}}
+   {:description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified. READ THE RESULT: a relocation lands as one changeset and runs NO write gates, so nothing refuses what it breaks. :left-behind lists what no rewrite reaches (strings, qualified KEYWORDS, the -test sibling); :module-debt lists the module_dep edges its callers now need, calls that now reach a package-private ns, and cycles module_dep will refuse. Absence of either means checked-and-none.", :inputSchema {:properties {:new {:type "string"}, :prompt {:type "string"}, :old {:type "string"}}, :type "object", :required ["old" "new"]}, :name "ns_rename"}
    {:name "ns_delete"
     :description "Retire a namespace: refuses while any form remains (edit_delete_form them first — each deletion verified) or any other ns still requires it (ns_remove_require) — then removes the empty husk from store, image, and every projection. One :ns-delete delta; say WHY in prompt."
     :inputSchema {:type "object"

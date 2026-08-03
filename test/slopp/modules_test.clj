@@ -1527,3 +1527,116 @@
             (is (= 1 (count vs)) (pr-str vs))
             (is (= 'tz.helper.spec-test (:from-ns (first vs))) (pr-str vs)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-rename-REPORTS-the-module-debt-it-leaves-standing
+  ;; The sibling of `a-rename-that-strands-a-caller-is-caught-at-done`, one
+  ;; step earlier. That test pins that `done` CATCHES the drift; this one pins
+  ;; that the rename that caused it SAYS SO, at the moment the reader can act.
+  ;;
+  ;; Why it needs saying: the drift is silent by construction. `ns_rename`
+  ;; rewrites its own callers through `apply-changeset`, which runs no gates,
+  ;; so a crossing that would be REFUSED outright if you typed it is created
+  ;; without a murmur. Measured over slopp's own regroup: module 1 cost 5
+  ;; hand-declared edges, module 2 cost 8, module 3 cost 38 — every one worked
+  ;; out by hand-writing the same simulation over the reference graph, twice,
+  ;; because the tool that had all the information reported none of it.
+  ;;
+  ;; This state is ONLY reachable through a rename. `ingest!` gates, so the
+  ;; fixture cannot type the undeclared call directly — which is the finding
+  ;; in one sentence.
+  (let [sess (external/open!)]
+    (try
+      ;; module `mr.core` keeps a second member, so the manifest does NOT
+      ;; re-key. The re-key path (last namespace of a module leaves) already
+      ;; carries the edges over; the uncovered case is the ordinary one, where
+      ;; a module sheds ONE namespace and the callers are left pointing at a
+      ;; module nobody declared.
+      (api/ingest! sess 'mr.core.query
+                   "(ns mr.core.query)\n(defn ^:export read-it \"R.\" [] 2)\n")
+      (api/ingest! sess 'mr.core.history
+                   "(ns mr.core.history)\n(defn ^:unused-ok h \"H.\" [] 1)\n")
+      (api/module-dep! sess "mr.app" "mr.core" :prompt "app reads")
+      (api/ingest! sess 'mr.app
+                   (str "(ns mr.app (:require [mr.core.query :as q]))\n"
+                        "(defn ^:unused-ok uses \"U.\" [] (q/read-it))\n"))
+      ;; declared PRODUCTION, crossed only by a test — so the recommendation
+      ;; below cannot be inherited from the old declaration, only derived
+      (api/module-dep! sess "mr.tool" "mr.core" :prompt "tool reads")
+      (api/ingest! sess 'mr.tool.core-test
+                   (str "(ns mr.tool.core-test (:require [mr.core.query :as q]))\n"
+                        "(defn ^:unused-ok t \"T.\" [] (q/read-it))\n"))
+      (let [r    (api/ns-rename! sess 'mr.core.query 'mr.read.query
+                                 :prompt "the reads are their own module")
+            debt (:module-debt r)
+            edge (fn [to] (first (filter #(= to (:to %)) (:edges-needed debt))))]
+        (is (nil? (:error r)) (pr-str r))
+        (is (some? debt)
+            (str "the rename must say what it left undeclared: " (pr-str (keys r))))
+        (testing "every caller's module needs the edge, not just the one that moved"
+          (is (= #{"mr.app" "mr.tool"}
+                 (into #{} (map :from) (:edges-needed debt)))
+              (pr-str (:edges-needed debt))))
+        (testing "a production caller wants a production edge"
+          (is (false? (:test-only (edge "mr.read"))) (pr-str debt))
+          (is (= "mr.app" (:from (edge "mr.read"))) (pr-str debt)))
+        (testing "a crossing only tests make wants test_only, whatever the OLD edge said"
+          ;; mr.tool → mr.core was declared production; the recommendation is
+          ;; read off who actually crosses, which is the same judgement
+          ;; `:overstated-edges` makes after the fact, made before it instead
+          (let [e (first (filter #(= "mr.tool" (:from %)) (:edges-needed debt)))]
+            (is (true? (:test-only e)) (pr-str debt))
+            (is (= ['mr.tool.core-test] (:crossed-by e)) (pr-str debt))))
+        (testing "the note hands over the calls to make"
+          (is (re-find #"module_dep" (str (:note debt))) (pr-str debt))))
+      (testing "a rename that crosses nothing says nothing — absence means checked"
+        (api/ingest! sess 'mr.lone.thing
+                     "(ns mr.lone.thing)\n(defn ^:unused-ok x \"X.\" [] 1)\n")
+        (let [r (api/ns-rename! sess 'mr.lone.thing 'mr.solo.thing :prompt "regroup")]
+          (is (nil? (:module-debt r)) (pr-str r))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-rename-warns-when-DECLARING-its-edges-would-close-a-cycle
+  ;; The expensive half of the same report. An undeclared edge is a chore;
+  ;; an undeclared edge that CANNOT be declared is a redesign, and the regroup
+  ;; finds out only when `module_dep` refuses — which, in a wave of ten
+  ;; renames, can be nine renames after the one that caused it.
+  ;;
+  ;; `mc.util → mc.app` is declared and legal. Moving a namespace INTO
+  ;; `mc.util` that `mc.app` calls means `mc.app → mc.util` is now needed, and
+  ;; those two together are a cycle. Nothing about either rename looks wrong;
+  ;; the graph is what is wrong, and only the graph can say so.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'mc.app.thing
+                   "(ns mc.app.thing)\n(defn ^:export t \"T.\" [] 1)\n")
+      (api/module-dep! sess "mc.util" "mc.app" :prompt "util builds on app")
+      (api/ingest! sess 'mc.util.other
+                   (str "(ns mc.util.other (:require [mc.app.thing :as th]))\n"
+                        "(defn ^:unused-ok o \"O.\" [] (th/t))\n"))
+      (api/ingest! sess 'mc.core.query
+                   "(ns mc.core.query)\n(defn ^:export read-it \"R.\" [] 2)\n")
+      (api/ingest! sess 'mc.core.history
+                   "(ns mc.core.history)\n(defn ^:unused-ok h \"H.\" [] 1)\n")
+      (api/module-dep! sess "mc.app" "mc.core" :prompt "app reads core")
+      (api/ingest! sess 'mc.app.reader
+                   (str "(ns mc.app.reader (:require [mc.core.query :as q]))\n"
+                        "(defn ^:unused-ok r \"R.\" [] (q/read-it))\n"))
+      (testing "the graph is acyclic before the move — mc.util → mc.app → mc.core"
+        (is (empty? (:cycles (store/module-layers
+                              (modules/modules-manifest (:store @sess)))))
+            "fixture precondition"))
+      (let [r    (api/ns-rename! sess 'mc.core.query 'mc.util.query
+                                 :prompt "the reads join util")
+            debt (:module-debt r)]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the edge is reported as needed, exactly as any other would be"
+          (is (= [{:from "mc.app" :to "mc.util"}]
+                 (mapv #(select-keys % [:from :to]) (:edges-needed debt)))
+              (pr-str debt)))
+        (testing "and the report says declaring it is a cycle, before you try"
+          (is (= [["mc.app" "mc.util"]] (mapv vec (:cycles debt))) (pr-str debt))
+          (is (re-find #"(?i)cycle" (str (:note debt))) (pr-str debt))))
+      (testing "and module_dep does refuse it — the warning was not hypothetical"
+        (let [r (api/module-dep! sess "mc.app" "mc.util" :prompt "as advised")]
+          (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
+      (finally (api/close! sess)))))

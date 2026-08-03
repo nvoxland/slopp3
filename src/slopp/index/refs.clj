@@ -469,13 +469,14 @@
 
   THE reference graph is a graph of var/namespace references discovered by
   ANALYSIS. That is the right model for \"who calls this\", and the wrong one
-  for \"what would a rename miss\": a name also lives in strings, in a `-test`
-  sibling's own name, and in the register keys, none of which are references.
-  Each rename verb used to re-derive its own partial answer, so each had a
-  different blind spot and none reported what it left behind.
+  for \"what would a rename miss\": a name also lives in strings, in qualified
+  keywords, in a `-test` sibling's own name, and in the register keys, none of
+  which are references. Each rename verb used to re-derive its own partial
+  answer, so each had a different blind spot and none reported what it left
+  behind.
 
-  Rows are `{:ns :form :via :rewritable}` plus `:text`/`:prose` on strings.
-  `:via` is the provenance and the whole value:
+  Rows are `{:ns :form :via :rewritable}` plus `:text`/`:prose` on strings and
+  `:text` on keywords. `:via` is the provenance and the whole value:
 
   | `:via` | what it is | rewritable |
   |---|---|---|
@@ -483,6 +484,7 @@
   | `:require` | another namespace's require clause | yes |
   | `:symbol` | a symbol token — INCLUDING a quoted one, which the CST rewrite reaches like any other | yes |
   | `:string` | the name inside a string literal | **no** |
+  | `:keyword` | a qualified keyword whose namespace segment is the target | **no** |
   | `:test-sibling` | the `<target>-test` namespace | no (it is a NAME, not a reference) |
   | `:register` | a `:module-tiers` / `:module-platforms` / manifest key | no |
 
@@ -492,6 +494,16 @@
   slopp's own store: 145 prose to 13 load-bearing, and the 13 included the
   generated `deps.edn` main-ns that killed every external test during a
   restructure.
+
+  Keywords are the SILENT member of the set, and the reason they are worth a
+  `:via` of their own: a broken token string turns something red, while
+  `:billing.invoice/customer-id` survives `billing.invoice` → `billing.statement`
+  intact and merely starts lying. Measured in anger during
+  `slopp.api.telemetry` → `slopp.read.telemetry`, where
+  `:slopp.api.telemetry/calls` stood in 3 forms across 5 sites through a green
+  `full_check`. They stay non-rewritable on purpose: a qualified keyword can be
+  a wire or storage key something outside the store already holds, so each one
+  is a judgement rather than a substitution.
 
   This does not rewrite anything and takes no position on what should be.
   Conservative string handling is correct; being silent about it is not."
@@ -517,6 +529,17 @@
                                  :rewritable false
                                  :text s
                                  :prose (boolean (re-find #"\s" s))}]
+
+                               ;; both halves, matching the symbol branch: a
+                               ;; qualified `:t/x` is the measured case, and a
+                               ;; bare `:t` is how a config or registry key
+                               ;; names a namespace
+                               (and (keyword? s)
+                                    (or (and (namespace s) (under (namespace s)))
+                                        (under (name s))))
+                               [{:ns ns-sym :form form-name :via :keyword
+                                 :rewritable false
+                                 :text (str s)}]
 
                                :else [])]
                     (into here

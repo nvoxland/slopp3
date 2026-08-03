@@ -268,13 +268,13 @@
 (deftest occurrences-of-is-the-one-set-a-rename-must-answer-to
   ;; THE reference graph is a graph of var/namespace references DISCOVERED BY
   ;; ANALYSIS. Everything else that names a thing — a string, a quoted require
-  ;; symbol, a docstring mention, a -test sibling's own name, a register key —
-  ;; is not a "reference" under that model and had no home, so each rename
-  ;; verb wired up a different subset. Measured on slopp's own store before
-  ;; this landed: 158 string literals name a live namespace, 13 of them
-  ;; load-bearing token strings across 12 sites (a generated deps.edn main-ns,
-  ;; a child JVM's program text, a path assertion) — every one invisible to
-  ;; ns_rename and unreported by it.
+  ;; symbol, a docstring mention, a -test sibling's own name, a register key,
+  ;; a qualified KEYWORD — is not a "reference" under that model and had no
+  ;; home, so each rename verb wired up a different subset. Measured on
+  ;; slopp's own store before this landed: 158 string literals name a live
+  ;; namespace, 13 of them load-bearing token strings across 12 sites (a
+  ;; generated deps.edn main-ns, a child JVM's program text, a path assertion)
+  ;; — every one invisible to ns_rename and unreported by it.
   ;;
   ;; Conservative rewriting is RIGHT. Silent conservative rewriting is not.
   (let [st  (-> (store/empty-store)
@@ -285,7 +285,8 @@
                 (store/ingest 'oc.user
                               (str "(ns oc.user (:require [oc.helper :as h]))\n"
                                    "(defn u \"Calls oc.helper for real.\" [] (h/h))\n"
-                                   "(defn boot \"B.\" [] (require 'oc.helper) \"oc.helper\")\n"))
+                                   "(defn boot \"B.\" [] (require 'oc.helper) \"oc.helper\")\n"
+                                   "(defn cfg \"C.\" [] {:oc.helper/mode :fast})\n"))
                 (as-> s (first (store/record-module-tier s "oc.helper" :pure))))
         occ (refs/occurrences-of st 'oc.helper)
         by  (group-by :via occ)]
@@ -302,6 +303,21 @@
             "a token string — a path, a main-ns, a require target — is LOAD-BEARING")
         (is (some #(and (= 'u (:form %)) (true? (:prose %))) ss)
             "a docstring mention is prose: wrong after a rename, not broken")))
+    (testing "a QUALIFIED KEYWORD names the namespace and nothing rewrites it"
+      ;; The silent member of the set. A keyword is not a reference, so the
+      ;; symbol pass walks straight past `:oc.helper/mode` — and unlike a
+      ;; broken token string, nothing turns red afterwards. The name simply
+      ;; starts lying. Measured in anger during the slopp.api.telemetry →
+      ;; slopp.read.telemetry rename: `:slopp.api.telemetry/calls` survived
+      ;; intact in 3 forms across 5 sites, through a green full_check.
+      (let [ks (:keyword by)]
+        (is (seq ks) (pr-str occ))
+        (is (some #(= 'cfg (:form %)) ks) (pr-str ks))
+        (is (every? #(false? (:rewritable %)) ks)
+            "deliberately NOT rewritten: a qualified keyword can be a wire or
+             storage key an outside consumer already holds")
+        (is (some #(= ":oc.helper/mode" (:text %)) ks)
+            "the keyword itself, so the judgement can be made from the report")))
     (testing "the -test sibling names its subject — a convention, not a coincidence"
       (is (= 'oc.helper-test (:ns (first (:test-sibling by))))))
     (testing "a register key names the namespace too"

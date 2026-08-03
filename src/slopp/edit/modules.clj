@@ -1260,3 +1260,105 @@
           :from-var  (:from-var r)
           :to        (:to-ns r)
           :to-export (export-level store (:to-ns r) (:to-name r))})))
+
+(defn ^:export relocation-debt
+  "The module debt standing on `ns-sym` after a RELOCATION moved it — the
+  edges its callers now need, the visibility its callers now break, and the
+  cycles declaring those edges would close. `nil` when clean, so absence
+  means checked-and-none.
+
+  This exists because a relocation is the one write the gates cannot see.
+  A module rule is inherited from a NAME and enforced when a form is
+  WRITTEN; `ns_rename` changes the name and rewrites its own callers through
+  `store/apply-changeset`, which runs no gates at all. So a crossing that
+  would be refused outright if you typed it is created without a murmur, and
+  the first thing that mentions it is a `done` some time later — reported
+  against the unmoved CALLER, which never moved and does not name the rename.
+
+  Measured over slopp's own regroup, which is why the shape is what it is:
+  module 1 needed 5 undeclared edges worked out by hand, module 2 needed 8,
+  module 3 needed 38. Every one was derived by writing the same simulation
+  over the reference graph — twice — while the tool holding all of the
+  information reported none of it.
+
+  Three things it answers that the raw violation rows do not:
+
+  - **Edges are GROUPED to the declaration you have to make.** The rules
+    speak per call site; `module_dep` speaks per module pair. 38 edges came
+    out of a few hundred crossings.
+  - **`:test-only` is derived from who actually crosses**, never inherited
+    from whatever the old edge said. If every crossing namespace is a test,
+    `module_dep {test_only true}` is the honest declaration and a production
+    edge would overstate the architecture — the same judgement
+    `:overstated-edges` makes after the fact, offered before it instead.
+  - **`:cycles` is what `module_dep` is about to refuse.** Declaring these
+    edges is cycle-checked, so a regroup can be ten renames deep before the
+    graph says no. Pre-existing cycles are subtracted: this reports what
+    DECLARING would close, not what was already wrong.
+
+  Reads `store-violations`, so it can never disagree with the gate or with
+  `done` — the alternative, a hand-rolled simulation of the rename, is a
+  second derivation of a rule that already exists, and the two drift."
+  [store ns-sym]
+  (let [nsx      (str ns-sym)
+        touches? (fn [v] (or (= nsx (str (:from-ns v))) (= nsx (str (:target-ns v)))))
+        mine     (filter touches? (store-violations store (module-usage-rows store)))
+        test?    (fn [n] (not= (str n) (fold-test-ns n)))
+        edges    (vec (sort-by (juxt :from :to)
+                               (for [[[from to] g]
+                                     (group-by (juxt #(module-of (:from-ns %))
+                                                     #(module-of (:target-ns %)))
+                                               (filter #(= :undeclared-edge (:rule %)) mine))
+                                     :let [callers (vec (sort (distinct (map :from-ns g))))]]
+                                 {:from from :to to
+                                  :test-only (every? test? callers)
+                                  :crossed-by callers
+                                  :sites (count g)})))
+        vis      (vec (for [v mine :when (= :visibility (:rule v))]
+                        (select-keys v [:from-ns :from-var :target-ns :error])))
+        manifest (modules-manifest store)
+        with-new (reduce (fn [m {:keys [from to]}] (update m from (fnil conj #{}) to))
+                         manifest (remove :test-only edges))
+        already  (into #{} (map set) (:cycles (store/module-layers manifest)))
+        cycles   (vec (remove #(contains? already (set %))
+                              (:cycles (store/module-layers with-new))))]
+    (when (or (seq edges) (seq vis) (seq cycles))
+      (cond-> {}
+        (seq edges)
+        (assoc :edges-needed edges)
+
+        (seq vis)
+        (assoc :visibility vis)
+
+        (seq cycles)
+        (assoc :cycles cycles)
+
+        :always
+        (assoc :note
+               (str/join
+                " "
+                (remove
+                 nil?
+                 [(when (seq edges)
+                    (str (count edges) " module edge(s) are crossed and not"
+                         " declared: module_dep {from \"<from>\" to \"<to>\""
+                         " test_only true|omitted} for each, saying why in"
+                         " prompt. Nothing refused these — a relocation rewrites"
+                         " its callers through a path that runs no gates, so this"
+                         " is the only notice before done reports them as errors"
+                         " against callers that never moved."))
+                  (when (seq vis)
+                    (str (count vis) " call(s) now reach a package-private"
+                         " namespace: going from two segments to three makes a"
+                         " namespace visible only under its own parent prefix."
+                         " Each :error names the options — ^:export the target,"
+                         " scope it to a subtree, or call the module's public"
+                         " surface."))
+                  (when (seq cycles)
+                    (str "DECLARING those edges would close "
+                         (count cycles) " dependency cycle(s) "
+                         (pr-str cycles)
+                         ", and module_dep refuses a cycle — so decide the"
+                         " direction before renaming anything else. A crossing"
+                         " only tests make is not a cycle; {test_only true} may"
+                         " be the answer."))])))))))
