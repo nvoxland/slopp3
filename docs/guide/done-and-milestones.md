@@ -47,8 +47,8 @@ response.
 ## `full_check` is the whole store
 
 Every namespace linted, dead surface store-wide, both layering graphs -- purity
-tiers and module rules -- and every test in every tier. Nothing forces it --
-not `done`, not `commit_point`.
+tiers and module rules -- the rule catalog swept over every form, and every
+test in every tier. Nothing forces it -- not `done`, not `commit_point`.
 
 Reach for it when:
 
@@ -59,7 +59,31 @@ Reach for it when:
   inherited from the name and enforced at write, so a relocation slips past
   every gate. `done` catches the ones your episode caused; this catches
   whatever is standing
+- **you turned a rule on, or dialed one up** -- see below
 - you are about to make a commit you want to stand behind
+
+### Turning a rule on does not check the code already there
+
+A `done`-grain rule fires over the forms an episode CHANGED. So a violation
+older than the rule is invisible to `done`, and stays invisible -- no later
+episode changes that form either. Every episode is honestly clean, and the
+store is not.
+
+That makes "we have never seen a finding from this rule" worth nothing on its
+own. `full_check`'s `:rules` is the whole-store question, and it is the only
+thing that asks it.
+
+It also says what it could NOT ask. About a third of the advisory registry
+compares against the last done's BASELINE -- `key-typos` calls a key
+"established" only when unchanged forms already use it, so a sweep in which
+every form is in scope establishes nothing and is green for a reason that has
+nothing to do with the code. Those rules are listed under `:not-swept` with
+the reason, rather than padding the count under `:swept`.
+
+`:error`-grade findings flip the status; `:advisory` ones are reported and do
+not. That is the same bar `done` grades on, deliberately: a rule means one
+thing, and the sweep is a different population rather than a different
+standard.
 
 There is a middle gear too: `full_check {affected: true}` widens past the
 episode without paying for the entire store.

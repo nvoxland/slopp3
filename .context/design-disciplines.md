@@ -687,6 +687,35 @@ second copy.
   "lint/dead-surface/layering/in-image cover every namespace". Before adding a
   detector, grep for one: the second-cheapest fix in the codebase is a
   call site.
+- **A check's GRAIN is a scope claim, and turning a rule on does not check the
+  code already there.** The sharper sibling of the bullet above, found
+  2026-08-03: not a checker with no caller, but a checker called correctly over
+  the wrong POPULATION. A `:grain :done` rule fires over the forms an episode
+  CHANGED, so a violation older than the rule is invisible to `done` — and
+  stays invisible, because no later episode changes that form either. Every
+  episode is honestly clean and the store is not. slopp-ui reported it from
+  outside: two known `direct-http` violations, `full_check` reporting zero rule
+  findings of any kind, three tools consulted. **So "this rule has never fired"
+  is worth nothing on its own** — it is equally consistent with a clean store
+  and with a rule that has never once been asked about the code it governs.
+  The fix is `slopp.rules/sweep-store!`, folded into `full_check` beside
+  `module-debt` on the identical argument one layer up.
+  **The load-bearing half is `:not-swept`.** About a third of the advisory
+  registry compares against the last-done BASELINE or reads the episode's
+  DELTAS, and running one of THOSE over every form does not report clean — it
+  reports nothing, in the same shape. `key-typos` is the worked example: an
+  "established" key is one that ≥2 UNCHANGED forms use, so a sweep in which
+  every form is in scope establishes nothing and would have been green forever
+  for a reason having nothing to do with the code. That is Core 1's
+  representation collapse exactly, so the registry DECLARES `:sweep` — `true`,
+  or a string saying why not — and the sweep reports both lists, total by
+  construction. A rule can be reported as passed or reported as unasked; there
+  is no third state where it silently vanishes.
+  **Measured on landing:** 2342 forms, ~6s of a ~196s `full_check`, zero
+  `:error`-grade findings, and 34 standing `:advisory` ones (17 `marker-why`,
+  17 `namespace-purpose`) that no `done` could ever have seen. The
+  `namespace-purpose` half independently reproduced phase 0b's hand census,
+  which is a decent cross-check on both.
 
 ## Core 7 — the edit surface is positional; the agent's intent is transformational
 

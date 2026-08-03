@@ -147,6 +147,22 @@ measurably bleed tokens.
    change was broad, when you DELETED A CALLER (dead surface appears in
    namespaces you never touched — the one thing episode scope structurally
    cannot see), or before a commit you want to stand behind.
+   **`:rules` is the rule catalog asked about the WHOLE store, and it is the
+   only thing that ever asks.** A `:grain :done` rule fires over the forms an
+   episode CHANGED, so a violation older than the rule is invisible to `done`
+   — and stays invisible, because no later episode changes that form either.
+   Every episode is honestly clean and the store is not. This is why a store
+   that has never once seen a rule finding is not evidence the rules are
+   holding: **turning a rule on does not check the code already there.** Run
+   `full_check` after adding or dialing up a rule, or you have gated the
+   future and left the past.
+   `:error`-grade findings flip the status; `:advisory` ones are reported and
+   do not — the same bar `done` grades on, so a rule means one thing in both
+   places. `:swept` and `:not-swept` name the rules it ran and the ones it
+   could not: about a third of the registry compares against the episode's
+   BASELINE (`key-typos`, `breaking-changes`, `assertions-never-red` …), and
+   running one of those over every form reports nothing in the same shape as
+   clean, so they say so instead of quietly padding the green.
    **`:crossings` is the one section a green does NOT cover.** Everything else
    full_check reports is an edge inside the store; this names the exits — a
    contract becoming JSON, form metadata becoming a route table, `.cljc` going

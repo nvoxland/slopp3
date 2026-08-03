@@ -355,6 +355,14 @@ cover, so drifting either way turns the suite red.
 | No ambient global mutable state | **Advisory** — `done` flags a global `(def _ (atom/ref/agent …))` (`:ambient-state`) |
 | `?` / `*earmuffs*` predicate / dynamic-var naming | Judgment (no gate yet) |
 
+**Every "`done` flags" row above is EPISODE-scoped, and that is a real limit
+rather than an implementation detail.** Such a rule fires over the forms your
+episode CHANGED, so a violation older than the rule is invisible to it — and
+stays invisible, because no later episode changes that form either. Turning a
+rule on does not check the code already there. `full_check`'s `:rules` sweeps
+the catalog over every form in the store and is the only thing that asks;
+reach for it after adding a rule or dialing one up, not just after broad edits.
+
 The judgment rows are yours to hold. Where a rule IS gated, the code that reached
 you already passed it — so spend your attention on the judgment rows and on
 whether a *could-be-pure* function actually was made pure.
