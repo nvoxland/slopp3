@@ -973,6 +973,40 @@ failure at all — a dependency-free fake has no way to have a bad transitive
 dep, so its green was never evidence. Both need a reader to already suspect
 something, which is why neither caught any of the six above.
 
+### Sharpening (2026-08-03): a COUNT is a check, and it reports on the population it counted
+
+The table above is checks, errors, fixtures and catch clauses. A **metric** is
+the same class and reaches further, because a number carries no hedge: nothing
+about `:callers-out 4` says which population it counted.
+
+`/api/ns/:ns` shipped `:callers-out` — "how many forms outside this namespace
+call it" — for slopp-ui's importance ranking. Measured against
+`slopp-ui.views` before anyone drew with it: **ten of the twelve
+cross-namespace callers were deftests.** The top-ranked form held first place
+on four callers, all four of them tests, while the form that IS the render sat
+fourth on its single production caller. The field was ranking by test count and
+saying "importance".
+
+The boundary the cheapness bought is **test code vs production code** — which
+is the FIRST row of the table above, hit a second time by a different surface.
+That boundary is now the one to check first: it is invisible in the reference
+graph (a `-test` namespace is an ordinary namespace with an ordinary require),
+so every whole-store count crosses it by default and none of them mention it.
+
+Two things follow, and the second is the reusable one:
+
+- **Ship both numbers, not the sum.** `:callers-out` and `:callers-out-test`
+  add back up; one integer cannot be taken apart again. Where a mixed
+  population is the honest input, the fix is to stop mixing it, not to
+  document the mix — a docstring saying "includes tests" is Core 4 territory.
+- **What caught it was an acceptance test written before any numbers
+  existed.** slopp-ui named the five forms that should rank darkest in
+  `slopp-ui.views` and the four that should rank lightest, sight unseen, and
+  sent them with the request. The fixture that shipped alongside the metric —
+  written by the same hand, in the same hour — was green throughout. A metric
+  and its fixture written together cannot validate each other; that rule was
+  already in the shipped skill, and this is the first time it paid.
+
 ### Sharpening (2026-08-01): a teach string is a check that SPEAKS, and Core 9 applies to what it asserts
 
 Found on `web-undeclared-context`'s refusal, in a cold read by slopp-ui:
