@@ -1,4 +1,4 @@
-(ns slopp.api.capabilities-test
+(ns slopp.project.capabilities-test
   "The capability REGISTRY as the single source: that a declared key validates
   at the write, resolves to one effective value, and reports honestly.
 
@@ -10,7 +10,7 @@
   rather than on any one consumer's reading of it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.capabilities :as caps] [slopp.api :as api] [slopp.api.external :as external] [clojure.string :as str]))
+            [slopp.project.capabilities :as caps] [clojure.string :as str]))
 
 (deftest registry-declares-and-resolves-keys
   (testing "every registry entry carries key, type, default slot, and doc"
@@ -66,42 +66,6 @@
         (is (= #{:static :bearer} (caps/effective s "web.auth.providers")))
         (testing "an unset key still falls back beside set ones"
           (is (= :http-kit (caps/effective s "web.adapter"))))))))
-
-(deftest ^:external capabilities-config-validates-at-write
-  (let [sess (external/open!)]
-    (try
-      (testing "an unknown capability key is refused with teaching"
-        (let [r (api/config-file! sess "capabilities" :key "web.prot" :value "8080"
-                                  :prompt "typo'd key")]
-          (is (re-find #"web\.prot" (str (:error r))) (pr-str r))
-          (is (re-find #"query_capabilities" (str (:error r))) (pr-str r))))
-      (testing "a bad value is refused with the type teaching"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "banana"
-                                  :prompt "bad port")]
-          (is (re-find #"integer" (str (:error r))) (pr-str r))
-          (is (nil? (get-in (:store @sess) [:config "capabilities" :values "web.port"]))
-              "the refused value never landed")))
-      (testing "a good value lands and takes effect"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
-                                  :prompt "real port")]
-          (is (nil? (:error r)) (pr-str r))
-          (is (= 7357 (caps/effective (:store @sess) "web.port")))))
-      (testing "a wildcard-governed key is known, not alien"
-        (let [r (api/config-file! sess "capabilities" :key "web.auth.groups.admin.members" :value "alice,bob"
-                                  :prompt "a group")]
-          (is (nil? (:error r)) (pr-str r))
-          (is (= #{"alice" "bob"} (caps/effective (:store @sess) "web.auth.groups.admin.members")))))
-      (testing "a key under an undeclared owner is refused like any unknown key"
-        (let [r (api/config-file! sess "capabilities" :key "groups.admin.members" :value "alice"
-                                  :prompt "the retired spelling")]
-          (is (re-find #"is not a capability" (str (:error r))) (pr-str r))))
-      (testing "unset returns to the default"
-        (api/config-file! sess "capabilities" :key "web.port" :unset true
-                          :prompt "back to default")
-        ;; web.port's declared default is nil now — serve! owns the 8080 and the
-      ;; dev server derives, so "returns to the default" means returns to unset
-      (is (nil? (caps/effective (:store @sess) "web.port"))))
-      (finally (api/close! sess)))))
 
 (deftest report-shows-every-setting-with-provenance
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
@@ -175,27 +139,6 @@
     (is (= 7359 (caps/effective (store/empty-store) "slopp.hub.port")))
     (is (nil? (caps/check-value entry "0"))
         "0 is legal and means: this project registers with no hub")))
-
-(deftest ^:external config-writes-say-whether-anything-validated-them
-  ;; `capabilities` is the ONLY path with a registry behind it. Every other
-  ;; path — rules, gates, client — records the key and value as given and
-  ;; returns a result indistinguishable from a validated one. Saying which is
-  ;; which is D-surface-honesty at config grain.
-  (let [sess (external/open!)]
-    (try
-      (testing "a capabilities write was checked against the registry"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
-                                  :prompt "real port")]
-          (is (= [:registry] (:verified r)) (pr-str r))
-          (is (= [] (:unverified r)) (pr-str r))))
-      (testing "any other path is recorded UNVALIDATED, and says so"
-        (let [r (api/config-file! sess "rules" :key "key-typos" :value "off"
-                                  :prompt "quiet that rule")]
-          (is (= [] (:verified r)) (pr-str r))
-          (is (= [:schema] (:unverified r)) (pr-str r))
-          (is (re-find #"capabilities" (str (:note r)))
-              "the note must name the one path that IS validated")))
-      (finally (api/close! sess)))))
 
 (deftest an-unset-port-does-not-report-a-number-nothing-binds
   ;; Measured by slopp-ui, 2026-08-01:

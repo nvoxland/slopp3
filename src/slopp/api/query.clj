@@ -35,7 +35,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]
             [slopp.store.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.api.capabilities :as capabilities] [slopp.api.web :as web]))
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.api.web :as web]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of

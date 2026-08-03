@@ -21,7 +21,7 @@
   is where drift between the two copies surfaces."
   (:require [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.api.capabilities :as caps] [slopp.web.client :as client]))
+            [slopp.project.capabilities :as caps] [slopp.web.client :as client]))
 
 (def default-beat-ms
   "How often to check in when the hub has not said otherwise.

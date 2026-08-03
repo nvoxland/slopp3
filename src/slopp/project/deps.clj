@@ -1,4 +1,4 @@
-(ns slopp.api.deps
+(ns slopp.project.deps
   "What a DEPENDENCY brings, cached: its public API surface, and its GraalVM
   native-image verdict.
 
@@ -17,7 +17,7 @@
   (:require [slopp.store.db :as db]
             [slopp.index.deps :as deps]))
 
-(defn analyze-dep!
+(defn ^:export analyze-dep!
   "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —
   best-effort: surface analysis must never fail a deps-add. Persists to the
   durable `dep_surface` cache when the session has a db; the process-level
@@ -36,7 +36,7 @@
           surf)))
     (catch Throwable _ nil)))
 
-(defn dep-native-verdict
+(defn ^:export dep-native-verdict
   "The cached (or freshly-computed) GraalVM native-image verdict for a
   dependency (M6). Best-effort; nil on failure."
   [session lib coord]
@@ -46,7 +46,7 @@
         (try (deps/native-verdict (deps/dep-jars lib coord))
              (catch Throwable _ nil)))))
 
-(def native-incompatible-deps
+(def ^:export native-incompatible-deps
   "Dependencies KNOWN to break GraalVM native-image (extensible, deliberately
   tiny — a build refuses these without `:force`). Empty for now; a missing
   reachability manifest is only a WARN, not a hard incompatibility."

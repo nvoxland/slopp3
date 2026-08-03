@@ -13,7 +13,7 @@
   second; now nobody needs to know this port at all, because the address a
   human remembers belongs to the HUB, which is its own project (`slopp-ui`)
   and proxies here."
-  (:require [slopp.api.capabilities :as caps]
+  (:require [slopp.project.capabilities :as caps]
             [slopp.web :as web]
             [slopp.http-api.reads] [slopp.http-api.endpoints]))
 

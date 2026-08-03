@@ -141,7 +141,7 @@
   file). Entry values are EDN, read with the SAFE reader; unparseable
   entries are skipped rather than thrown.
 
-  Keys are the `web.auth.*` family (`slopp.api.capabilities/registry` is
+  Keys are the `web.auth.*` family (`slopp.project.capabilities/registry` is
   where they are declared and typed). A per-provider name is the tail AFTER
   the prefix, taken from the prefix itself — the counted offset it replaces
   was the same defect as matching by one spelling and trimming by another's

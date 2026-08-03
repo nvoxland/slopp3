@@ -1,4 +1,4 @@
-(ns slopp.api.capabilities
+(ns slopp.project.capabilities
   "The capability REGISTRY and the readers for it — what a store may declare
   about itself, and what those declarations currently say.
 
@@ -216,7 +216,7 @@
   [store k]
   (some? (get-in store [:config "capabilities" :values (str k)])))
 
-(defn config-refusal
+(defn ^:export config-refusal
   "The `capabilities` config write gate: a teaching error for an unknown
   key, a value that fails its registry type, or a CREDENTIAL-shaped literal
   — nil when the write may land. An unknown key MUST refuse (a typo'd
@@ -250,7 +250,7 @@
            " with its type, default, and effective value; known keys/patterns: "
            (str/join ", " (map :key registry))))))
 
-(defn report
+(defn ^:export report
   "The `query_capabilities` payload: `{:settings [...] :patterns [...]
   :owners {...}}`, plus `:orphaned` when the store has stored keys this build
   does not recognise. `:settings` = one row per CONCRETE registry key

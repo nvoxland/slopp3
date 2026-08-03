@@ -1,5 +1,5 @@
 slopp.addelete: slopp.api slopp.store
-slopp.api: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.store slopp.web
+slopp.api: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web
 slopp.branch: slopp.api slopp.store
 slopp.build-native: slopp.api slopp.build
 slopp.chsig: slopp.api slopp.edit slopp.store
@@ -22,21 +22,23 @@ slopp.git-concurrency: slopp.api slopp.git
 slopp.git-projection: slopp.api slopp.git slopp.store
 slopp.gitauthor: slopp.git
 slopp.history: slopp.api slopp.mcp slopp.store
-slopp.http-api: slopp.api slopp.edit slopp.index slopp.store slopp.web
-slopp.hub: slopp.api slopp.store slopp.web
+slopp.http-api: slopp.api slopp.edit slopp.index slopp.project slopp.store slopp.web
+slopp.hub: slopp.api slopp.project slopp.store slopp.web
 slopp.image: slopp.boot slopp.rt slopp.store
 slopp.index: slopp.api slopp.build slopp.cache slopp.image slopp.mcp slopp.store
 slopp.integration-tier: slopp.api
 slopp.lab: slopp.api slopp.mcp slopp.store
 slopp.lintgate: slopp.edit slopp.index slopp.store
-slopp.mcp: slopp.api slopp.http-api slopp.hub slopp.store slopp.sync slopp.web
+slopp.mcp: slopp.api slopp.http-api slopp.hub slopp.project slopp.store slopp.sync slopp.web
 slopp.merge: slopp.store
 slopp.modules: slopp.api slopp.edit slopp.store
 slopp.multiproc: slopp.api slopp.store
 slopp.observe: slopp.api
 slopp.orientation: slopp.api slopp.edit
 slopp.phase4: slopp.api slopp.store
+slopp.project: slopp.index slopp.store
 slopp.rename: slopp.api slopp.store
+slopp.rules: slopp.edit slopp.store
 slopp.store: slopp.api slopp.cache
 slopp.subform: slopp.api
 slopp.subform-plan: slopp.edit slopp.store

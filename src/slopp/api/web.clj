@@ -19,7 +19,7 @@
   and the `:web/external-path` vs `:web/client-path` split — is an attempt to
   keep those apart, and each distinction was added because collapsing it made a
   report state something false. Prefer adding a category over widening one."
-  (:require [slopp.api.capabilities :as capabilities]
+  (:require [slopp.project.capabilities :as capabilities]
             [slopp.edit.modules :as modules] [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n]))
 
 (defn endpoints
