@@ -407,3 +407,40 @@
   (testing "a failed reload with NO host measurement still warns — cautious by default"
     (is (some? (orient/host-warning {:mode :live :booted-at 1 :failed '[a.core]}
                                     0 nil)))))
+
+(deftest ^:external a-defs-VALUE-is-not-a-signature
+  ;; `sig` was "the first vector anywhere after the head", which is a
+  ;; wrong-index read wearing a heuristic's clothes: in `(def rates [1 2 3])`
+  ;; the first vector is the VALUE. Measured over this store on 2026-08-02,
+  ;; THIRTY-TWO defs would have reported one, `slopp.project.capabilities/
+  ;; registry` among them — its entire 19-entry vector drawn as a parameter
+  ;; list.
+  ;;
+  ;; The card is ^:export'ed precisely so a consumer can inline a callee
+  ;; instead of linking to it, so a card that says a value takes arguments is
+  ;; a false statement in the shape most likely to be believed. slopp-ui
+  ;; reported the same class against the ns-outline the same day; this is
+  ;; where it also lived.
+  ;;
+  ;; `form-doc` in slopp.http-api.reads carries the identical scar — it read
+  ;; index 2 and took any string, so `(def greeting "hello")` documented
+  ;; itself as "hello". Wrong-index reads do not throw. They return something
+  ;; plausible, which is why one fix never closes the class.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'sg.core
+                   (str "(ns sg.core)\n"
+                        "(def rates \"Known rates.\" [0.07 0.20])\n"
+                        "(def lookup {:a 1})\n"
+                        "(defn scale [cents rate] (* cents rate))\n"
+                        "(defn multi ([a] a) ([a b] [a b]))\n"))
+      (testing "a def reports no signature at all, whatever its value is"
+        (let [c (orient/form-card sess 'sg.core 'rates)]
+          (is (nil? (:sig c)) (str "a def's value vector is not a sig: " (pr-str c)))
+          (is (re-find #"Known rates" (str (:doc c)))
+              (str "and its docstring still reads correctly: " (pr-str c)))))
+      (testing "a defn still reports its arguments"
+        (is (= '[cents rate] (:sig (orient/form-card sess 'sg.core 'scale)))))
+      (testing "and every arity of a multi-arity, which is why sig is nested"
+        (is (= '[[a] [a b]] (:sig (orient/form-card sess 'sg.core 'multi)))))
+      (finally (api/close! sess)))))

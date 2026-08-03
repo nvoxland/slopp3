@@ -31,12 +31,27 @@
   [:sequential namespace-row])
 
 (def form-row
-  "One form in an outline: its name, and its docstring's first line if it has
-  one. `:maybe` because plenty of forms have no doc, and a contract that
-  cannot say so would refuse legitimate data."
+  "One form in an outline: what it is called, what KIND of form it is, what it
+  takes, whether it is private, its docstring's first line, and any schema it
+  declares. Enough for a consumer to render the namespace INSTEAD of the
+  source, which is the job this row exists for.
+
+  `:maybe` on `:doc`, `:sig` and `:schema` because plenty of forms have none —
+  a `def` has no signature at all — and a contract that could not say so would
+  refuse legitimate data. `:private?` is a plain boolean rather than `:maybe`:
+  an absent key and a public var render identically, and only one of them is a
+  finding.
+
+  `:sig` is a SEQUENTIAL, one string per arity, so a consumer can stack a
+  multi-arity the way source stacks it. Joining them is something the reader
+  can do and cannot undo, so the wire carries the separable form."
   [:map
    [:name :string]
-   [:doc [:maybe :string]]])
+   [:kind :string]
+   [:sig [:maybe [:sequential :string]]]
+   [:private? :boolean]
+   [:doc [:maybe :string]]
+   [:schema [:maybe :string]]])
 
 (def ns-outline
   "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.

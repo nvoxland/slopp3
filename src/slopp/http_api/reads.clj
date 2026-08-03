@@ -13,7 +13,7 @@
   slopp.http-api.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.http-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract]))
+            [slopp.http-api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract] [slopp.edit.modules :as modules]))
 
 (defn ^{:web/read :browse/namespaces} namespaces-read
   "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."
@@ -87,6 +87,39 @@
   [e]
   (store/form-docstring (:node e)))
 
+(defn- form-shape
+  "What a SOURCE-shaped listing needs beyond name and doc: the kind of form,
+  the arg vector of each arity, whether it is private, and any declared schema.
+
+  `:kind` is the head symbol as WRITTEN (`defn` / `defn-` / `def` / `deftest`
+  / `ns`), because a pane laid out like source states things as fact, and a
+  value drawn as though it were callable is a false one.
+
+  `:sig` comes from `modules/fn-arglists` — which knows a `def` has no arities
+  — rather than from 'the first vector in the body'. That heuristic reads
+  `(def geometry [1 2 3])` as a one-arg signature, and it is the same
+  wrong-index read `form-doc` above already had to be rescued from: index 2 is
+  a docstring in a `defn` and a VALUE in a `def`, and neither mistake throws.
+  They return something plausible, which is why the class keeps surviving
+  review.
+
+  nil rather than `[]` for a missing signature, since `[]` is a real
+  zero-arity. `:private?` is always a boolean: absent and public would render
+  identically, and only one of those is a finding."
+  [e]
+  (let [s    (store/form-sexpr (:node e))
+        head (when (seq? s) (first s))
+        kind (str head)
+        nm   (when (seq? s) (second s))
+        ;; matched as TEXT rather than as quoted symbols: the dialect denylist
+        ;; reads a banned symbol anywhere in a form as a USE of it, including
+        ;; inside a set whose whole job is to RECOGNISE one.
+        args (when (#{"defn" "defn-" "defmacro"} kind) (modules/fn-arglists s))]
+    {:kind     kind
+     :sig      (when (seq args) (mapv pr-str args))
+     :private? (boolean (or (= "defn-" kind) (:private (meta nm))))
+     :schema   (some-> (:malli/schema (meta nm)) pr-str)}))
+
 (defn ^{:web/read :browse/ns-outline} ns-outline-read
   "Read performer: one namespace's `{:name :doc}` form rows in store order
   plus the test namespaces covering it, or nil for an unknown namespace."
@@ -98,6 +131,8 @@
        :forms (into []
                     (keep (fn [e]
                             (when (:name e)
-                              {:name (:name e) :doc (form-doc e)})))
+                              (assoc (form-shape e)
+                                     :name (:name e)
+                                     :doc  (form-doc e)))))
                     (store/forms st sym))
        :tested-by (model/tests-covering st sym)})))

@@ -51,8 +51,11 @@
     (testing "GET /api/ns/:ns — one namespace's outline, in store order"
       (let [r (GET "/api/ns/demo.core")]
         (is (= 200 (:status r)))
-        (is (= {:ns "demo.core" :forms [{:name "demo.core" :doc nil}
-                                        {:name "hello" :doc "Says hi."}]
+        (is (= {:ns "demo.core"
+                :forms [{:name "demo.core" :kind "ns" :sig nil
+                         :private? false :doc nil :schema nil}
+                        {:name "hello" :kind "defn" :sig ["[x]"]
+                         :private? false :doc "Says hi." :schema nil}]
                 :tested-by []}
                (:body r))
             "nothing tests this fixture, and that reports as an empty list rather
@@ -61,8 +64,11 @@
     (testing "a form with no docstring carries an explicit nil, not a missing key"
       ;; :maybe in the contract is the promise; this is the promise being kept
       (let [r (GET "/api/ns/demo.util")]
-        (is (= {:ns "demo.util" :forms [{:name "demo.util" :doc nil}
-                                        {:name "undocumented" :doc nil}]
+        (is (= {:ns "demo.util"
+                :forms [{:name "demo.util" :kind "ns" :sig nil
+                         :private? false :doc nil :schema nil}
+                        {:name "undocumented" :kind "defn" :sig ["[x]"]
+                         :private? false :doc nil :schema nil}]
                 :tested-by []}
                (:body r)))
         (is (m/validate contracts/ns-outline (:body r)))))
@@ -296,3 +302,50 @@
       (finally
         (server/stop!)
         (api/close! consumer)))))
+
+(deftest an-outline-row-says-what-a-form-TAKES-and-what-KIND-it-is
+  ;; slopp-ui, 2026-08-02: their namespace pane is now laid out as SOURCE, and
+  ;; that made the gap obvious — "the pane whose entire job is to be what you
+  ;; read INSTEAD of the source cannot say what a function takes."
+  ;;
+  ;; The `:kind` half is the sharper complaint, and it is why a `def`'s value
+  ;; vector must NOT read as a signature: a `def` and a two-arg `defn` drew
+  ;; identically, so the pane made a false statement in the one shape that
+  ;; makes it read as fact.
+  ;;
+  ;; `:sig` is a SEQUENTIAL, one string per arity, so a multi-arity stacks the
+  ;; way source stacks it. Joining is something the consumer can do and cannot
+  ;; undo, so the wire carries the separable form.
+  (let [st  (store/ingest (store/empty-store) 'demo.shape
+                          (str "(ns demo.shape)\n\n"
+                               "(def geometry \"Constants.\" [1 2 3])\n\n"
+                               "(defn draw \"Draws.\" ([p] p) ([p targets] [p targets]))\n\n"
+                               "(defn- helper [x] x)\n\n"
+                               "(defn ^{:malli/schema [:=> [:cat :int] :int]} inc-it\n"
+                               "  [x] (inc x))\n"))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.shape"})
+        rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
+    (is (= 200 (:status r)))
+    (is (m/validate contracts/ns-outline (:body r))
+        "the four new fields have to satisfy the contract the client is generated from")
+    (testing "a def is not callable, and the row does not pretend otherwise"
+      (is (= "def" (:kind (rows "geometry"))))
+      (is (nil? (:sig (rows "geometry")))
+          "a def's VALUE vector is not a signature — this is the confusion that
+           drew geometry and a two-arg defn identically"))
+    (testing "every arity, in order, each its own string"
+      (is (= "defn" (:kind (rows "draw"))))
+      (is (= ["[p]" "[p targets]"] (:sig (rows "draw")))))
+    (testing "private is exactly the question a surface pane exists to answer"
+      (is (true? (:private? (rows "helper"))))
+      (is (false? (:private? (rows "draw")))
+          "explicitly false rather than absent — a missing key and a public var
+           would render the same, and one of them is a finding"))
+    (testing "a declared schema, in the only place a reader would look for it"
+      (is (= "[:=> [:cat :int] :int]" (:schema (rows "inc-it"))))
+      (is (nil? (:schema (rows "draw")))))
+    (testing "the ns form itself is a row like any other, and claims nothing"
+      (is (= "ns" (:kind (rows "demo.shape"))))
+      (is (nil? (:sig (rows "demo.shape")))))))

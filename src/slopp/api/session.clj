@@ -1011,7 +1011,10 @@
 
 (defn run-verification!
   "Diagnosed run of `affected` tests (grouped by their namespace), or of all of
-  `default-ns`'s tests when there's no trace information. `:edited` (the
+  `default-ns`'s tests when there's no trace information — and of `default-ns`
+  ANYWAY when a non-empty `affected` resolves to no tests at all, because a
+  scope that names tests which no longer exist is a stale scope, not an answer.
+  `affected` = `[]` is exempt: that is a deliberate verify-nothing, not a gap. `:edited` (the
   just-changed form qsyms) powers the D5.1 genuine-vs-suspicious call and the
   red-result :implicated correlation (Rock 2). Results pass through the
   episode-red shaper (direction over repetition); `:boundary? true` (the
@@ -1032,17 +1035,37 @@
                      (if (nil? affected)
                        (diagnosed-run! session default-ns nil :edited edited :fresh fresh
                                        :include-integration? include-integration?)
-                       (reduce (fn [acc [tns tsyms]]
-                                 (merge-with (fn [a b]
-                                               (cond (number? a) (+ a b)
-                                                     (and (sequential? a) (sequential? b)) (into (vec a) b)
-                                                     :else (or b a)))
-                                             acc
-                                             (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
-                                                             :edited edited :fresh fresh
-                                                             :include-integration? include-integration?)))
-                               {}
-                               (group-by (comp symbol namespace) affected)))
+                       (let [by-affected
+                             (reduce (fn [acc [tns tsyms]]
+                                       (merge-with (fn [a b]
+                                                     (cond (number? a) (+ a b)
+                                                           (and (sequential? a) (sequential? b)) (into (vec a) b)
+                                                           :else (or b a)))
+                                                   acc
+                                                   (diagnosed-run! session tns (mapv (comp symbol name) tsyms)
+                                                                   :edited edited :fresh fresh
+                                                                   :include-integration? include-integration?)))
+                                     {}
+                                     (group-by (comp symbol namespace) affected))]
+                         ;; The affected set can name tests that no longer RESOLVE —
+                         ;; a renamed deftest, a deleted one, a stale trace entry.
+                         ;; Then this runs zero and reports :scope-ran-nothing, which
+                         ;; `slopp.mcp/summarize` already classifies as a slopp bug:
+                         ;; honest, and useless, because the write IS verifiable —
+                         ;; just not by this scope. Fall back to the namespace, the
+                         ;; same rule `done` uses per form when trace evidence is
+                         ;; missing.
+                         ;;
+                         ;; Only when something WAS named. `affected` = [] is a
+                         ;; DELIBERATE verify-nothing (an alias-only require change
+                         ;; is semantically inert), so a blanket retry would overturn
+                         ;; a considered decision instead of recovering from a stale
+                         ;; one. nil means no evidence, [] means evidence of nothing
+                         ;; to do, and only the first two warrant a second look.
+                         (if (and (seq affected) (zero? (:test by-affected 0)))
+                           (diagnosed-run! session default-ns nil :edited edited :fresh fresh
+                                           :include-integration? include-integration?)
+                           by-affected)))
                      (:test-map @session)
                      edited)
                     affected default-ns boundary?)

@@ -148,7 +148,15 @@
                                   (or (not deep?)
                                       (:export (meta (second s)))))
                        :let [doc (first (filter string? (take 2 (drop 2 s))))
-                             sig (first (filter vector? s))
+                             ;; the SHARED all-arities extraction, gated to forms
+                             ;; that have arities. This was "the first vector in
+                             ;; the form", so `(def rates [0.07 0.20])` offered
+                             ;; itself as taking two arguments — on the very view
+                             ;; whose job is the cheap browse before calling in.
+                             sig (let [as (when (#{"defn" "defn-" "defmacro"} (str (first s)))
+                                            (modules/fn-arglists s))]
+                                   (cond (= 1 (count as)) (first as)
+                                         (seq as)         (vec as)))
                              ex  (:export (meta (second s)))]]
                    (cond-> {:ns nsx :name (second s)}
                      sig             (assoc :sig sig)

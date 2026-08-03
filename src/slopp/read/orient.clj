@@ -16,7 +16,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.store.fields :as fields]))
+            [slopp.store :as store] [slopp.store.fields :as fields] [slopp.edit.modules :as modules]))
 
 (defn ^:export snip
   "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
@@ -77,11 +77,21 @@
           s       (try (n/sexpr (:node e)) (catch Exception _ nil))
           body    (when (seq? s) s)
           doc     (some #(when (string? %) %) (take 3 (drop 2 (or body ()))))
-          sig     (or (some #(when (vector? %) %) (drop 1 (or body ())))
-                      (let [arities (keep #(when (and (seq? %) (vector? (first %)))
-                                             (first %))
-                                          (drop 2 (or body ())))]
-                        (when (seq arities) (vec arities))))
+          ;; through the SHARED all-arities extraction, and only for forms that
+          ;; have arities at all. This was "the first vector anywhere after the
+          ;; head", which reads `(def rates [0.07 0.20])` as a parameter list —
+          ;; 32 defs in this store would have reported one, including
+          ;; `capabilities/registry`, whose whole 19-entry vector drew as a
+          ;; signature. A card is ^:export'ed so a consumer can inline a callee
+          ;; INSTEAD of reading it, which makes a confident wrong sig the worst
+          ;; kind of wrong here.
+          ;;
+          ;; Single arity stays unwrapped (`[cents rate]`, not `[[cents rate]]`)
+          ;; because that is what every reader of this key already renders.
+          sig     (let [as (when (#{"defn" "defn-" "defmacro"} (str (first (or body ()))))
+                             (modules/fn-arglists body))]
+                    (cond (= 1 (count as)) (first as)
+                          (seq as)         (vec as)))
           why     (get (store/prompt-by-form (:store @session)) (:id e))
           ;; the TRAP, if the author declared one. Separate from :doc on
           ;; purpose: a doc's first line says what the form does, and the

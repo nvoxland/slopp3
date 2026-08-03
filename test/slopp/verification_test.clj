@@ -815,3 +815,44 @@
                 (str "and it must carry what was thrown, or the next cause is"
                      " undiagnosable: " (pr-str r))))))
       (finally (api/close! sess)))))
+
+(deftest ^:external a-renamed-deftest-verifies-under-its-NEW-name
+  ;; slopp-ui, 2026-08-02: replacing a deftest whose NAME changes reported
+  ;;   {:ran 0 :status :unverified :coverage :none :reason :scope-ran-nothing}
+  ;; Both of theirs were RED at that moment and neither surfaced; they found
+  ;; out when a later unrelated write happened to run the whole namespace.
+  ;;
+  ;; The cause is two bindings in one `let` in `edit-replace!`: `edited` is
+  ;; re-pointed through the rename and `affected` is not, so the affected set
+  ;; names the deftest this very write retired and the run resolves to
+  ;; nothing. Only a renamed TEST can hit it — renaming an implementation form
+  ;; leaves its covering tests' names alone.
+  ;;
+  ;; The second case is the one that matters: an empty run is reported as
+  ;; :unverified, which is honest, but it sits in the same slot every other
+  ;; write puts a colour in. A red hidden behind a word that is not a colour
+  ;; is a red nobody reads.
+  (let [sess (external/open!)]
+    (try
+      (is (nil? (:error (api/ingest! sess 'rn.core
+                                     "(ns rn.core)\n(defn f [] 41)\n"))))
+      (is (nil? (:error (api/ingest!
+                         sess 'rn.core-test
+                         (str "(ns rn.core-test\n"
+                              "  (:require [clojure.test :refer [deftest is]]\n"
+                              "            [rn.core :as c]))\n\n"
+                              "(deftest f-is-41 (is (= 41 (c/f))))\n")))))
+      (testing "a renamed deftest runs under the name it now has"
+        (let [r (api/edit-replace! sess 'rn.core-test 'f-is-41
+                                   "(deftest f-returns-41 (is (= 41 (c/f))))"
+                                   :prompt "rename the deftest")]
+          (is (pos? (:test (:test r) 0))
+              (str "the rename must not empty the scope: " (pr-str (:test r))))))
+      (testing "and a rename that also goes RED reports the red"
+        (let [r (api/edit-replace! sess 'rn.core-test 'f-returns-41
+                                   "(deftest f-returns-42 (is (= 42 (c/f))))"
+                                   :prompt "rename and break in one write")]
+          (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              (str "a red must survive a rename in the same write: "
+                   (pr-str (:test r))))))
+      (finally (api/close! sess)))))

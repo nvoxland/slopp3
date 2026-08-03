@@ -19,7 +19,8 @@
       (api/ingest! sess 'ma.core
                    (str "(ns ma.core)\n"
                         "(defn shared \"Public.\" [x] x)\n"
-                        "(defn- internal [x] x)\n"))
+                        "(defn- internal [x] x)\n"
+                        "(def rates \"Known rates.\" [0.07 0.20])\n"))
       (api/ingest! sess 'ma.core.impl
                    (str "(ns ma.core.impl)\n"
                         "(defn hidden \"Package.\" [x] x)\n"
@@ -44,6 +45,15 @@
             (is (= "World." (:doc hoisted)))
             (is (true? (:export hoisted)))
             (is (= "ma.core" (:export scoped)))))
+        (testing "a def rides the surface, and does NOT claim to take arguments"
+          ;; `sig` was the first vector in the WHOLE form, so a def's value read
+          ;; as a parameter list. This is the cheap-browse-before-calling-in
+          ;; view, which makes a fabricated arity the most expensive kind of
+          ;; wrong it could carry.
+          (let [rates (first (filter #(= 'rates (:name %)) (:surface r)))]
+            (is (some? rates) "a public def is part of what a module offers")
+            (is (nil? (:sig rates)) (pr-str rates))
+            (is (= "Known rates." (:doc rates)) "the docstring still reads")))
         (testing "deps and consumers come from the manifest"
           (is (= ["ma.core"] (:deps (modules/module-surface sess "mb.app")))
               "mb.app declares ma.core")

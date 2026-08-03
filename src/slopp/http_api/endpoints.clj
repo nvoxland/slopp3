@@ -61,8 +61,9 @@
   (if-let [{:keys [ns forms tested-by]} (:outline (:web/reads req))]
     {:status 200
      :body {:ns (str ns)
-            :forms (mapv (fn [{:keys [name doc]}]
-                           {:name (str name) :doc doc})
+            :forms (mapv (fn [{:keys [name kind sig private? doc schema]}]
+                           {:name (str name) :kind kind :sig sig
+                            :private? private? :doc doc :schema schema})
                          forms)
             :tested-by (vec tested-by)}}
     {:status 404 :body {:error "no such namespace"}}))

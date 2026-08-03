@@ -451,14 +451,29 @@ load? (store/jvm-loadable? (:store @session) ns-sym)
                                                   (:form-id (:delta r))))
                 edited   (into #{qform}
                                (when new-nm [(symbol (str ns-sym) (str new-nm))]))
-                affected (or (session/affected-tests session ns-sym nm)
-                             ;; an alias-only require addition is semantically
-                             ;; inert — verify NOTHING rather than the whole
-                             ;; namespace reach (frictions #2); [] is honest
-                             ;; (:coverage :none), never a claimed green
-                             (when (session/inert-ns-require-change?
-                                    (:store @session) (:form-id (:delta r)))
-                               []))
+                affected (let [a (or (session/affected-tests session ns-sym nm)
+                                     ;; an alias-only require addition is semantically
+                                     ;; inert — verify NOTHING rather than the whole
+                                     ;; namespace reach (frictions #2); [] is honest
+                                     ;; (:coverage :none), never a claimed green
+                                     (when (session/inert-ns-require-change?
+                                            (:store @session) (:form-id (:delta r)))
+                                       []))]
+                             ;; …and re-point it through the rename, exactly as
+                             ;; `edited` is one binding above. The affected set was
+                             ;; asked for under the OLD name, so when this write
+                             ;; renames the form it comes back naming something the
+                             ;; same write just retired, and the run resolves to
+                             ;; nothing. Only a renamed TEST notices: renaming an
+                             ;; implementation form leaves its covering tests' names
+                             ;; alone. Reported by slopp-ui 2026-08-02, where two
+                             ;; renamed deftests were red and neither said so.
+                             (if (and a new-nm (not= new-nm nm))
+                               (mapv #(if (= % qform)
+                                        (symbol (str ns-sym) (str new-nm))
+                                        %)
+                                     a)
+                               a))
                 untested (and (nil? affected) (seq (:test-map @session))
                                (not (re-find #"^\(\s*(?:clojure\.test/)?deftest\b"
                                              (str/triml new-source))))
