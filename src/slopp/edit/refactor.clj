@@ -1622,6 +1622,66 @@
        distinct
        vec))
 
+(defn ^:export stranded-aliases
+  "The callers whose require alias for `new` is still spelled from `old` — the
+  residue an ns rename leaves, and the one relationship none of its rewrites
+  can reach.
+
+  A rename rewrites the LIB in every require clause and walks straight past the
+  `:as` beside it, so `[old.thing :as thing]` becomes `[new.other :as thing]`:
+  syntactically perfect, and every call site in that namespace goes on reading
+  `thing/f` for a namespace called `other`. Harmless while the old name means
+  nothing — and when it is REUSED, as `slopp.api` was, the alias starts naming a
+  real and different module, which is both the worse failure and the quiet one.
+
+  An alias is DERIVED from a name when its dot-separated segments are a
+  contiguous run of that name's. A row is reported when the alias is derived
+  from `old` and not from `new`, and that second half is what keeps an ordinary
+  rename quiet: a namespace moving between modules under the same last segment
+  (`x.api.query` → `x.read.query`, aliased `query`) is derived from both and
+  says nothing false. Measured over slopp's own store — 52 rows for
+  `slopp.api` → `slopp.ops`, and zero across four real renames of that shape,
+  each of which has callers that do alias it.
+
+  `:suggest` is the same-length SUFFIX of the new name, the alias the convention
+  would have produced, and is OMITTED when that spelling is already taken in
+  that caller: [[realias-plan]] refuses a taken alias, and a remedy the reader
+  cannot run costs exactly what no remedy costs.
+
+  An abbreviation (`caps` for `…capabilities`) is derived from nothing readable
+  and is invisible here. Stated rather than papered over — this reports the
+  aliases it can prove stale, not every alias a rename made questionable.
+
+  Not folded into [[slopp.index.refs/occurrences-of]] with the other
+  unrewritable residue, because it is the one member of that set needing BOTH
+  names: an alias is stale relative to what replaced it, and the one-sided
+  version — any alias spelled from `old` pointing elsewhere — fires on every
+  unrelated lib that happens to share a segment."
+  [store old new]
+  (let [segs (fn [s] (vec (str/split (str s) #"\.")))
+        o    (segs old)
+        w    (segs new)
+        run? (fn [a b] (boolean (some #(= a (subvec b % (+ % (count a))))
+                                      (range 0 (inc (- (count b) (count a)))))))
+        drv? (fn [alias name-segs]
+               (let [a (segs alias)]
+                 (and (<= (count a) (count name-segs)) (run? a name-segs))))]
+    (vec
+     (for [ns-sym (sort (keys (:namespaces store)))
+           :let   [specs (require-specs store ns-sym)]
+           s      specs
+           :when  (and (:alias s)
+                       (= (str new) (str (:lib s)))
+                       (drv? (:alias s) o)
+                       (not (drv? (:alias s) w)))
+           :let   [n     (count (segs (:alias s)))
+                   sugg  (when (<= n (count w))
+                           (symbol (str/join "." (subvec w (- (count w) n)))))
+                   taken (some #(= sugg (:alias %)) specs)]]
+       (cond-> {:ns ns-sym :form ns-sym :via :alias :rewritable false
+                :alias (:alias s)}
+         (and sugg (not taken)) (assoc :suggest sugg))))))
+
 (defn ^:export realias-plan
   "Plan renaming ONE namespace's require alias `old` → `new`: the `:as` in its
   `ns` form and every `old/…` in its bodies, as one step list for `edit-group!`.

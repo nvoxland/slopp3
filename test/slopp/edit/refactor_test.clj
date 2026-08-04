@@ -580,3 +580,60 @@
     (is (some #(re-find #"dep/f" (str (:text %))) (:left-behind p)))
     (is (some #(= 'three (:name %)) (:left-behind p))
         "and it says WHICH form, so the caller can go look")))
+
+(defn- stranded-store
+  "The store as it stands AFTER `w.old.thing` was renamed `w.new.other` — four
+  callers, one per outcome the report has to distinguish."
+  []
+  (-> (store/empty-store)
+      (store/ingest 'w.new.other "(ns w.new.other)\n\n(defn f \"F.\" [x] x)\n")
+      ;; derived from the OLD name and from nothing in the new one
+      (store/ingest 'w.a "(ns w.a (:require [w.new.other :as thing]))\n\n(defn a \"A.\" [x] (thing/f x))\n")
+      ;; the alias the rename did NOT strand: still a suffix of the new name
+      (store/ingest 'w.b "(ns w.b (:require [w.new.other :as other]))\n\n(defn b \"B.\" [x] (other/f x))\n")
+      ;; stranded, but the alias it would suggest is already spoken for here
+      (store/ingest 'w.c (str "(ns w.c (:require [w.new.other :as thing] [clojure.string :as other]))\n\n"
+                              "(defn c \"C.\" [x] (other/join \",\" [(thing/f x)]))\n"))
+      ;; an abbreviation: derived from nothing the store can see
+      (store/ingest 'w.d "(ns w.d (:require [w.new.other :as ot]))\n\n(defn d \"D.\" [x] (ot/f x))\n")))
+
+(deftest stranded-aliases-name-the-callers-still-spelling-the-old-name
+  (testing "an alias derived from the OLD name and from nothing in the new one is
+            reported, with the alias the naming convention would have produced"
+    (let [rows (refactor/stranded-aliases (stranded-store) 'w.old.thing 'w.new.other)
+          by-ns (into {} (map (juxt :ns identity)) rows)]
+      ;; population first: every assertion below is about membership, and a
+      ;; finder that found nothing agrees with all of them
+      (is (seq rows) (pr-str rows))
+      (is (= 'thing (:alias (by-ns 'w.a))))
+      (is (= 'other (:suggest (by-ns 'w.a))))
+      (is (= :alias (:via (by-ns 'w.a))))))
+  (testing "an alias that is a suffix of BOTH names survived the rename intact —
+            reporting it would make the common case (a namespace moving between
+            modules under the same last segment) noise on every single rename"
+    (let [rows (refactor/stranded-aliases (stranded-store) 'w.old.thing 'w.new.other)]
+      (is (some #(= 'w.a (:ns %)) rows) "control: the finder can see this store")
+      (is (not-any? #(= 'w.b (:ns %)) rows) (pr-str rows))))
+  (testing "an ABBREVIATION is derived from nothing the store can read, so it is
+            invisible here and the report says as much rather than guessing"
+    (let [rows (refactor/stranded-aliases (stranded-store) 'w.old.thing 'w.new.other)]
+      (is (some #(= 'w.a (:ns %)) rows) "control: the finder can see this store")
+      (is (not-any? #(= 'w.d (:ns %)) rows) (pr-str rows)))))
+
+(deftest a-suggested-alias-the-caller-already-uses-is-withheld
+  (testing "`w.c` is stranded exactly as `w.a` is, and differs only in already
+            calling something else `other` — so the suggestion that is right for
+            one would be REFUSED for the other. Both rows come from one call, so
+            neither absence can be the finder missing the store"
+    (let [rows  (refactor/stranded-aliases (stranded-store) 'w.old.thing 'w.new.other)
+          by-ns (into {} (map (juxt :ns identity)) rows)]
+      (is (contains? by-ns 'w.a))
+      (is (contains? by-ns 'w.c))
+      (is (= 'thing (:alias (by-ns 'w.c))) "reported, and reported the same way")
+      (is (= 'other (:suggest (by-ns 'w.a))) "free here — suggested")
+      (is (nil? (:suggest (by-ns 'w.c))) "taken here — withheld")))
+  (testing "and the withheld suggestion is withheld because realias-plan would
+            in fact refuse it — the two agree by measurement, not by intent"
+    (let [p (refactor/realias-plan (stranded-store) 'w.c 'thing 'other)]
+      (is (:error p))
+      (is (re-find #"clojure\.string" (:error p))))))

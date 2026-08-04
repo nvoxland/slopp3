@@ -2499,7 +2499,14 @@ recompiled (session/after-write! session ns-sym)]
               ;; left, correctly and SILENTLY. Silence reads as "there was
               ;; nothing to carry". Scanned AFTER the write over the OLD name, so
               ;; whatever is still there was, by construction, not rewritten.
-              (let [left (group-by :via (refs/occurrences-of (:store @session) old))
+              (let [occ (group-by :via (refs/occurrences-of (:store @session) old))
+                    ;; the residue with no occurrence to find: the rename
+                    ;; rewrote the lib symbol beside the `:as` and left the
+                    ;; alias, so nothing spelling `old` remains for the scan
+                    ;; above to catch. It takes BOTH names because an alias is
+                    ;; stale only relative to what replaced the old one
+                    aliases (refactor/stranded-aliases (:store @session) old new)
+                    left (cond-> occ (seq aliases) (assoc :alias aliases))
                     ;; same reality-check stance as `left`, one system over:
                     ;; read the store the rename actually produced rather than
                     ;; simulating what it meant to do
@@ -2512,29 +2519,50 @@ recompiled (session/after-write! session ns-sym)]
                   ;; namespace set once, after the whole batch has landed
                   defer-verify (assoc :deferred-verification true
                                       :verify-nses verify-nses)
-                  (seq left)
+                  ;; a rename can strand an alias while leaving NO occurrence to
+                  ;; find: the lib symbol beside the `:as` is exactly what it
+                  ;; rewrote. Gating this on the occurrence scan would mean the
+                  ;; cleanest renames report nothing and are the ones that strand
+                  (or (seq occ) (seq aliases))
                   (assoc :left-behind left
                          :note
-                         (str (count (apply concat (vals left))) " occurrence(s) of "
-                              old " were NOT rewritten"
-                              (when-let [ss (seq (remove :prose (:string left)))]
-                                (str " — " (count ss) " in TOKEN strings (a path, a"
-                                     " main-ns, a require target: these BREAK, they do"
-                                     " not merely read wrong)"))
-                              (when (:test-sibling left)
-                                (str "; the -test sibling still carries the old name,"
-                                     " which files its tests under the old module"))
-                              (when-let [kw (seq (:keyword left))]
-                                (str "; " (count kw) " qualified KEYWORD(s) ("
-                                     (str/join ", " (sort (distinct (map :text kw))))
-                                     ") — the silent class, and the only one with no"
-                                     " second chance: a broken token string turns"
-                                     " something red, while a keyword stays green and"
-                                     " merely starts naming a namespace that is gone"))
-                              ". Judge each: rewriting is deliberately conservative"
-                              " here — a qualified keyword can be a wire or storage"
-                              " key something outside the store already holds — so"
-                              " this list is the whole signal.")))))))))))
+                         (str
+                          (when (seq occ)
+                            (str (count (apply concat (vals occ))) " occurrence(s) of "
+                                 old " were NOT rewritten"
+                                 (when-let [ss (seq (remove :prose (:string left)))]
+                                   (str " — " (count ss) " in TOKEN strings (a path, a"
+                                        " main-ns, a require target: these BREAK, they do"
+                                        " not merely read wrong)"))
+                                 (when (:test-sibling left)
+                                   (str "; the -test sibling still carries the old name,"
+                                        " which files its tests under the old module"))
+                                 (when-let [kw (seq (:keyword left))]
+                                   (str "; " (count kw) " qualified KEYWORD(s) ("
+                                        (str/join ", " (sort (distinct (map :text kw))))
+                                        ") — the silent class, and the only one with no"
+                                        " second chance: a broken token string turns"
+                                        " something red, while a keyword stays green and"
+                                        " merely starts naming a namespace that is gone"))
+                                 ". Judge each: rewriting is deliberately conservative"
+                                 " here — a qualified keyword can be a wire or storage"
+                                 " key something outside the store already holds — so"
+                                 " this list is the whole signal."))
+                          (when (seq aliases)
+                            (str (when (seq occ) " ")
+                                 (count aliases) " caller(s) still ALIAS this namespace"
+                                 " by a spelling taken from " old " ("
+                                 (str/join ", " (sort (distinct (map #(str (:alias %))
+                                                                     aliases))))
+                                 ") — a rename rewrites the lib in a require clause and"
+                                 " never the `:as` beside it, so their call sites go on"
+                                 " reading the old module's name for code that has left"
+                                 " it. Harmless only until that name is REUSED, after"
+                                 " which the alias points at something real and"
+                                 " different. ns_realias fixes each; :suggest carries"
+                                 " the alias the convention would produce, and is"
+                                 " absent where that caller already spells another lib"
+                                 " that way.")))))))))))))
 
 (defn affected-test-nses
   "The PROVABLE verification slice: test namespaces (any ns holding a

@@ -511,3 +511,48 @@
           (is (= [{:ns 'lb.clean :form 'read-it}] (:requalified r)) (pr-str r))
           (is (= [5] (api/query-eval sess "(lb.clean/read-it (lb.clean/mk))")))))
       (finally (api/close! sess)))))
+
+(deftest ^:external ns-rename-names-the-aliases-it-stranded
+  ;; The relationship no rewrite in this verb can reach. A rename rewrites the
+  ;; lib symbol in every require clause and walks straight past the `:as` beside
+  ;; it, so the caller keeps calling the moved code by its old module's name.
+  ;; Twice in this restructure that alias then pointed at a name that had been
+  ;; REUSED — `[slopp.webdev.cljs :as api.cljs]` while `slopp.api` was about to
+  ;; mean something else entirely — which is worse than an alias naming nothing
+  ;; and reads exactly the same in the source.
+  ;;
+  ;; Two renames of ONE fixture, because each is the other's control: the first
+  ;; is the shape that must stay quiet (a namespace changing modules under the
+  ;; same last segment — the ordinary case, and if it reported, every rename in
+  ;; the restructure would have), and the second is the shape that must not.
+  ;;
+  ;; Both namespaces sit in module `ra.core` deliberately: `ingest!` runs the
+  ;; module gate, so a caller one module over is REFUSED — and a fixture that
+  ;; failed to build looks exactly like a report with nothing to say, which is
+  ;; how the quiet half of this test first passed on a store of one namespace.
+  ;; Hence the `:forms` assertions: they are the fixture's own control.
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'ra.core.thing "(ns ra.core.thing)\n(defn f \"F.\" [] 1)\n")
+      (api/ingest! sess 'ra.core.caller
+                   (str "(ns ra.core.caller (:require [ra.core.thing :as thing]))\n"
+                        "(defn c \"C.\" [] (thing/f))\n"))
+      (testing "changing MODULES under the same last segment strands nothing —
+                `thing` still names what it calls"
+        (let [r (api/ns-rename! sess 'ra.core.thing 'ra.moved.thing :prompt "regroup")]
+          (is (= 2 (:forms (:renamed r))) (pr-str r))
+          (is (nil? (:alias (:left-behind r))) (pr-str r))))
+      (testing "changing the last segment does strand it — and NOTHING else is
+                left behind here, so the report exists only if the alias makes
+                it exist"
+        (let [r    (api/ns-rename! sess 'ra.moved.thing 'ra.moved.other :prompt "regroup")
+              rows (:alias (:left-behind r))]
+          (is (= 2 (:forms (:renamed r))) (pr-str r))
+          (is (seq rows) (pr-str r))
+          (is (= 'ra.core.caller (:ns (first rows))))
+          (is (= 'thing (:alias (first rows))))
+          (is (= 'other (:suggest (first rows)))
+              "the alias the convention would have produced")
+          (testing "and the note names the verb that fixes it, not just the fact"
+            (is (re-find #"ns_realias" (str (:note r))) (pr-str (:note r))))))
+      (finally (api/close! sess)))))
