@@ -948,6 +948,7 @@
       (api/ingest! sess 'tr.core "(ns tr.core)\n(defn f \"F.\" [x] x)\n")
       (api/module-tier! sess "tr.core" :pure :prompt "a pure core")
       (api/module-platform! sess "tr.core" "cljc" :prompt "shared with the client")
+(api/module-role! sess "tr.core" :instrument :prompt "a hand-run probe")
       (is (= :pure (get-in @sess [:store :module-tiers "tr.core"])))
       (is (nil? (:error (api/ns-rename! sess 'tr.core 'tr.hub :prompt "rebrand"))))
       (testing "the tier follows the name it describes"
@@ -957,6 +958,9 @@
       (testing "so does the platform"
         (is (= :cljc (get-in @sess [:store :module-platforms "tr.hub"])))
         (is (nil? (get-in @sess [:store :module-platforms "tr.core"]))))
+(testing "and so does the ROLE — three registers, one rule"
+        (is (= :instrument (get-in @sess [:store :module-roles "tr.hub"])))
+        (is (nil? (get-in @sess [:store :module-roles "tr.core"]))))
       (finally (api/close! sess)))))
 
 (deftest ^:external the-whole-store-check-names-no-app-type
@@ -1217,13 +1221,16 @@
         (api/ingest! sess 'dg.gone "(ns dg.gone)\n")
         (api/module-tier! sess "dg.gone" :pure :prompt "leaf, pure")
         (api/module-platform! sess "dg.gone" :cljc :prompt "shared")
+(api/module-role! sess "dg.gone" :instrument :prompt "hand-run")
         (is (= :pure (get-in @sess [:store :module-tiers "dg.gone"])))
         (let [r (api/delete-ns! sess 'dg.gone :prompt "retire the scaffold")]
           (is (nil? (:error r)) (pr-str r)))
         (is (nil? (get-in @sess [:store :module-tiers "dg.gone"]))
             "the tier went with the namespace it named")
         (is (nil? (get-in @sess [:store :module-platforms "dg.gone"]))
-            "and so did the platform"))
+            "and so did the platform")
+(is (nil? (get-in @sess [:store :module-roles "dg.gone"]))
+            "and so did the role — three registers, one rule"))
       (testing "a declaration still governing live code SURVIVES the husk's deletion"
         (api/ingest! sess 'dg.keep "(ns dg.keep)\n")
         (api/ingest! sess 'dg.keep.deep "(ns dg.keep.deep)\n(defn ^:unused-ok f [x] x)\n")
@@ -1761,3 +1768,102 @@
              "the question being asked is almost certainly not web-specific, "
              "so the answer is to move it, not to declare the edge: "
              (vec reaching)))))
+
+(deftest ^:external module-role-verb
+  (let [sess (external/open!)]
+    (try
+      (api/ingest! sess 'rv.core "(ns rv.core)\n(defn ^:unused-ok f [] 1)\n")
+      (api/ingest! sess 'rv.lab "(ns rv.lab)\n(defn ^:unused-ok -main [] 1)\n")
+      (testing "undeclared is :product, and the register is empty"
+        (is (= {} (:module-roles (:store @sess))))
+        (is (= :product (store/role-for (:store @sess) 'rv.lab))))
+      (testing "declaring records one canonical entry"
+        (let [r (api/module-role! sess "rv.lab" :instrument :prompt "run by hand")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :instrument (:role r)))
+          (is (= {"rv.lab" :instrument} (:roles r)))
+          (is (= :instrument (store/role-for (:store @sess) 'rv.lab)))))
+      (testing "a JSON string spelling round-trips to the keyword"
+        (is (= :instrument (:role (api/module-role! sess "rv.lab" ":instrument")))))
+      (testing "an unknown role is refused by name"
+        (let [r (api/module-role! sess "rv.lab" :scratch)]
+          (is (:error r))
+          (is (re-find #":product" (:error r)) (pr-str r))))
+      (testing "and it can be RETIRED — absent is not the same claim as :product"
+        (let [r (api/module-role! sess "rv.lab" nil :remove true)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= {} (:roles r))))
+        (is (:error (api/module-role! sess "rv.lab" nil :remove true))
+            "removing a declaration that is not there is an error, not a silent no-op"))
+      (finally (api/close! sess)))))
+
+(deftest ^:external declaring-an-instrument-checks-nothing-product-needs-it
+  ;; :instrument is not a label, it MOVES the code out of src/ — so the one
+  ;; thing that must not be true is that product code requires it. Unchecked,
+  ;; the failure lands at a consumer's load time naming a namespace the store
+  ;; plainly has, which is the worst possible place to learn it.
+  ;;
+  ;; The `is` on each ingest is not ceremony. Written without them this test
+  ;; PASSED against a store where `ri.app` had been refused for crossing an
+  ;; undeclared module edge — so the refusal assertions were satisfied by there
+  ;; being no caller at all (Correction 7: a fixture that failed to build
+  ;; satisfies every absence assertion downstream of it).
+  (let [sess (external/open!)]
+    (try
+      (is (pos? (:forms (api/ingest! sess 'ri.lab
+                                     "(ns ri.lab)\n(defn ^:unused-ok probe [] 1)\n"))))
+      (api/module-dep! sess "ri.app" "ri.lab")
+      (is (pos? (:forms (api/ingest! sess 'ri.app
+                                     (str "(ns ri.app (:require [ri.lab :as lab]))\n"
+                                          "(defn ^:unused-ok go [] (lab/probe))\n"))))
+          "the CALLER has to exist for its absence to mean anything")
+      (testing "product code requires it → refused, and the refusal NAMES the caller"
+        (let [r (api/module-role! sess "ri.lab" :instrument)]
+          (is (:error r) (pr-str r))
+          (is (re-find #"ri\.app" (:error r)) (pr-str r))
+          (is (= ["ri.app"] (:required-by r)) (pr-str r))
+          (is (= {} (:module-roles (:store @sess)))
+              "and nothing was recorded")))
+      (testing "a TEST requiring it is fine — a test does not ship either"
+        (is (pos? (:forms (api/ingest! sess 'ri.lab-test
+                                       (str "(ns ri.lab-test (:require [ri.lab :as lab]\n"
+                                            "                          [clojure.test :refer [deftest is]]))\n"
+                                            "(deftest probe-t (is (= 1 (lab/probe))))\n")))))
+        (api/edit-replace! sess 'ri.app 'go "(defn ^:unused-ok go [] 1)")
+        (api/remove-require! sess 'ri.app 'ri.lab)
+        (let [r (api/module-role! sess "ri.lab" :instrument)]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= :instrument (store/role-for (:store @sess) 'ri.lab)))))
+      (finally (api/close! sess)))))
+
+(deftest ^:external a-build-leaves-an-instrument-out-of-src
+  ;; R5's second clause, made mechanical. What ships is decided at
+  ;; MATERIALIZATION, because the build script copies `src` by name and knows
+  ;; nothing about roles — so the role has to move the file, not label it.
+  (let [sess (external/open!)
+        dir  (str (System/getProperty "java.io.tmpdir")
+                  "/slopp-role-" (System/nanoTime))]
+    (try
+      (is (pos? (:forms (api/ingest! sess 'rb.core
+                                     "(ns rb.core)\n(defn ^:unused-ok f [] 1)\n"))))
+      (is (pos? (:forms (api/ingest! sess 'rb.lab
+                                     "(ns rb.lab)\n(defn ^:unused-ok -main [] 1)\n"))))
+      (is (nil? (:error (api/module-role! sess "rb.lab" :instrument))))
+      (let [r (external/build! sess dir)]
+        (is (nil? (:error r)) (pr-str r)))
+      (testing "product code is under src/, exactly as before"
+        (is (.exists (clojure.java.io/file dir "src" "rb" "core.clj"))))
+      (testing "the instrument is materialized — but NOT under src/"
+        ;; both halves: absent-from-src is also what a namespace that failed
+        ;; to materialize at all would look like
+        (is (.exists (clojure.java.io/file dir "instruments" "rb" "lab.clj"))
+            "the code still exists — an instrument is materialized, not dropped")
+        (is (not (.exists (clojure.java.io/file dir "src" "rb" "lab.clj")))
+            "and a build that copies src/ therefore cannot pick it up"))
+      (testing "the generated deps.edn declares the path that RUNS it"
+        (is (= ["src" "instruments"]
+               (:paths (clojure.edn/read-string
+                        (slurp (clojure.java.io/file dir "deps.edn")))))))
+      (finally
+        (api/close! sess)
+        (doseq [f (reverse (file-seq (clojure.java.io/file dir)))] (.delete f))))))

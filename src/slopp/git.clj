@@ -126,28 +126,40 @@
 ;; ---------------------------------------------------------------------------
 ;; trees
 (defn- commit-paths
-  "{path content} for a milestone's tree: every namespace under src/ (test
-  namespaces under test/ — same layout as build!), the generated deps.edn
-  (carrying the store's Tier-1 manifest `deps` and, when the project has tests,
-  a :test alias, so a clone is runnable), every non-code file from the
-  `files` manifest — BINARY entries ({:sha …}) resolved to real bytes via
-  `blob-of` (sha → bytes; a missing blob projects its entry EDN, visible
-  rather than silent) — and every structured CONFIG entry rendered to its
-  format (they all ride EVERY projected tree, so a slopp push never deletes
-  them)."
-  [tree-map deps files configs blob-of]
-  (into (sorted-map)
-        (concat [["deps.edn" (build/deps-edn false deps
-                                             (boolean (some render/test-ns? (keys tree-map))))]]
-                (map (fn [[ns-sym src]]
-                       [(render/source-path ns-sym) src])
-                     tree-map)
-                (map (fn [[p entry]]
-                       [p (if (map? entry)
-                            (or (blob-of (:sha entry)) (pr-str entry))
-                            entry)])
-                     files)
-                (map (fn [[p entry]] [p (store/render-config entry)]) configs))))
+  "{path content} for a milestone's tree: the rendered namespaces at the paths
+  the CALLER resolved (`render/source-path` over the store as it stood — so
+  production under `src/`, tests under `test/`, instruments under
+  `instruments/`, cljs under `cljs-src/`, same layout as build!), the
+  generated deps.edn, every non-code file from the `files` manifest — BINARY
+  entries ({:sha …}) resolved to real bytes via `blob-of` (sha → bytes; a
+  missing blob projects its entry EDN, visible rather than silent) — and every
+  structured CONFIG entry rendered to its format (they all ride EVERY projected
+  tree, so a slopp push never deletes them).
+
+  The layout matching build! is load-bearing rather than tidy: build.clj's CI
+  flow is `clojure -T:build uber :src src` against a CHECKOUT of the published
+  repo, so a projection that roots a namespace differently produces a different
+  jar from the same store.
+
+  deps.edn's `test?` and `instruments?` are read off the TREE, not off the
+  store, so the file cannot describe a layout other than the one it ships
+  beside."
+  [path-map deps files configs blob-of]
+  (let [under? (fn [& prefixes]
+                 (boolean (some (fn [p] (some #(str/starts-with? p %) prefixes))
+                                (keys path-map))))]
+    (into (sorted-map)
+          (concat [["deps.edn" (build/deps-edn false deps
+                                               (under? "test/" "cljs-test/")
+                                               false {}
+                                               (under? "instruments/"))]]
+                  path-map
+                  (map (fn [[p entry]]
+                         [p (if (map? entry)
+                              (or (blob-of (:sha entry)) (pr-str entry))
+                              entry)])
+                       files)
+                  (map (fn [[p entry]] [p (store/render-config entry)]) configs)))))
 
 ;; ---------------------------------------------------------------------------
 ;; commits + refs
@@ -283,9 +295,16 @@
                                                   (:id (get dv (dec i)))))
                                    (:target d)))))
                        (range (count dv)))
+        ;; PATHS, not namespace names. The fold holds the store as it stood at
+        ;; this milestone, which is the only point where a namespace's platform
+        ;; and role are both known — and the projection has to root them the
+        ;; way build! does, because CI jars a checkout of this tree.
         tree-of  (fn [st]
                    (into (sorted-map)
-                         (map (fn [n] [n (render/render-ns st n)]))
+                         (map (fn [n] [(render/source-path n
+                                                           (store/platform-for st n)
+                                                           (store/role-for st n))
+                                       (render/render-ns st n)]))
                          (keys (:namespaces st))))]
     (:parent
      (reduce

@@ -513,6 +513,14 @@
                                :remove {:type "boolean"}
                                :prompt {:type "string"}}
                   :required ["module"]}}
+{:name "module_role"
+    :description "Declare what KIND of code a MODULE is, which decides whether it SHIPS — :product (the default: the system runs it, materialized under src/, carried into the jar) or :instrument (a HUMAN runs it by hand — a benchmark, a seeding script, a data-mining CLI). An :instrument is materialized under `instruments/` instead of `src/`, so any build that jars src/ leaves it out with no knowledge of roles, and it is dropped from the architecture view so a harness cannot sit on top of what it measures. Declaring :instrument is REFUSED while product code requires the module, naming the callers — otherwise the jar would carry a require to a namespace it does not contain, and you would learn that at a consumer's load time. A -test namespace requiring it is fine: a test does not ship either. Namespace grain, most-specific declaration wins (like module_purity). `remove: true` retires a declaration — absent is not the same claim as :product. Say WHY in prompt. Read roles: query_depends {modules true}."
+    :inputSchema {:type "object"
+                  :properties {:module {:type "string"}
+                               :role {:type "string"}
+                               :remove {:type "boolean"}
+                               :prompt {:type "string"}}
+                  :required ["module"]}}
    {:name "deps_pure"
     :description "Assert a dep target is PURE so callers aren't !-flagged: a var (\"ns/f\"), a namespace, or a whole lib. pure=false undoes."
     :inputSchema {:type "object"

@@ -30,6 +30,20 @@
         s (if (= \: (first s)) (subs s 1) s)]
     (keyword s)))
 
+(defn ^:export canonical-role
+  "Canonical spelling of a module's ROLE — :product (the default: the system
+  runs this code and it ships) or :instrument (a HUMAN runs it by hand — a
+  benchmark, a migration script, a mining CLI — so it is materialized outside
+  `src/` and never reaches the jar, R5). Coerces a string or colon-prefixed
+  spelling to the keyword so an MCP/JSON value round-trips, the same way
+  `canonical-tier` and `canonical-platform` do. The two-value validation
+  happens at the api boundary (module-role!), so this stays total for the
+  fold/replay path."
+  [role]
+  (let [s (name role)
+        s (if (= \: (first s)) (subs s 1) s)]
+    (keyword s)))
+
 (def ^:private symbol-coord-fields
   "Coord fields tools.deps requires to hold SYMBOLS. JSON has no symbol type,
    so an MCP-supplied coord spells them as strings. Grow this list rather than
@@ -86,6 +100,10 @@
                       :normalize (fn [pfs]
                                    (into {} (map (fn [[m p]] [m (canonical-platform p)])) pfs))
                       :doc "module → target platform :jvm/:cljc/:cljs (default :jvm, D-web-cljs)"}
+:module-roles {:init {} :meta-key "module-roles"
+                  :normalize (fn [rs]
+                               (into {} (map (fn [[m r]] [m (canonical-role r)])) rs))
+                  :doc "module → :product (default — the system runs it, and it ships) or :instrument (a HUMAN runs it by hand: materialized OUTSIDE src/, so it never reaches the jar — R5)"}
 :client-deps {:init {} :meta-key "client-deps"
                       :doc "lib → coord for BUILD-ONLY deps (the cljs compiler): routed to the :cljs alias, never hot-loaded into the oracle or shipped in the jar (D-web-cljs)"}
 :js-deps {:init {} :meta-key "js-deps"
@@ -211,6 +229,14 @@
                                       (canonical-platform (:platform d)))))
                   :sample {:op :module-platform :module "sample.mod" :platform :cljs}
                   :crossed (fn [st] (= :cljs (get-in st [:module-platforms "sample.mod"])))}
+:module-role {:field :module-roles :merge :replay
+                 :fold (fn [st d]
+                         (if (= :remove (:action d))
+                           (update st :module-roles dissoc (:module d))
+                           (assoc-in st [:module-roles (:module d)]
+                                     (canonical-role (:role d)))))
+                 :sample {:op :module-role :module "sample.mod" :role :instrument}
+                 :crossed (fn [st] (= :instrument (get-in st [:module-roles "sample.mod"])))}
 :client-dep-add {:field :client-deps :merge :replay
                   :fold (fn [st d]
                           (assoc-in st [:client-deps (:lib d)] (:coord d)))

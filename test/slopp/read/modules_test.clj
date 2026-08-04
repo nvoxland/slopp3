@@ -641,3 +641,21 @@
                               (:unused-edges r)))
               (pr-str (:unused-edges r)))))
       (finally (api/close! sess)))))
+
+(deftest an-instrument-module-is-not-on-the-architecture-view
+  (let [st   (-> (store/ingest (store/empty-store) 'pv.core "(ns pv.core)\n(defn f [] 1)\n")
+                 (store/ingest 'pv.lab (str "(ns pv.lab (:require [pv.core :as core]))\n"
+                                            "(defn -main [] (core/f))\n")))
+        with (first (store/record-module-role st "pv.lab" :instrument))]
+    (testing "the fixture is real — undeclared, pv.lab IS on the view and depends on pv.core"
+      (let [m (modules/production-manifest st)]
+        (is (contains? m "pv.lab") (pr-str m))
+        (is (= #{"pv.core"} (get m "pv.lab")) (pr-str m))))
+    (testing "declared :instrument, the module leaves the view entirely"
+      (let [m (modules/production-manifest with)]
+        (is (not (contains? m "pv.lab")) (pr-str m))
+        (is (contains? m "pv.core") "the module it MEASURED is still product code")))
+    (testing "and it stops contributing edges, so it cannot sit above what it measures"
+      (is (= [["pv.core"]]
+             (:layers (store/module-layers (modules/production-manifest with))))
+          "one layer, not two — the harness was the apex"))))

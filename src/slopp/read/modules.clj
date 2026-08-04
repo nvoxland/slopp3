@@ -68,11 +68,20 @@
 
 (defn ^:export production-manifest
   "Module dependency edges from PRODUCTION namespaces only — the
-  architecture VIEW's graph. A `-test` namespace folds into its subject
-  module (module-of strips `-test`), so its fixture deps would manufacture
-  cycles that don't exist in production; excluding them tells the truth.
-  Every production module is a key (external ones → layer 0). The stored
-  manifest still carries the test edges — this derivation is for
+  architecture VIEW's graph. Two kinds of namespace are excluded, and they
+  are one idea rather than two:
+
+  - a `-test` namespace folds into its subject module (module-of strips
+    `-test`), so its fixture deps would manufacture cycles that don't exist
+    in production;
+  - an `:instrument` namespace (`store/role-for`) is code a HUMAN runs by
+    hand, so counting it stands a harness on top of the thing it measures.
+    Measured on slopp's own store: `slopp.lab` sat at layer 8, the APEX of
+    the product layer map, which made every layering statement about slopp
+    read as though a benchmark harness were its highest concern.
+
+  Every remaining production module is a key (external ones → layer 0). The
+  stored manifest still carries the test edges — this derivation is for
   layers/cycles, not for enforcement.
 
   Module surface. It was scoped to the `slopp.http-api` subtree — the Code
@@ -81,7 +90,8 @@
   different subtrees, and a scoped export names exactly one."
   ([store] (production-manifest store (modules/module-usage-rows store)))
   ([store rows]
-   (let [prod? #(not (str/ends-with? (str %) "-test"))
+   (let [prod? #(and (not (str/ends-with? (str %) "-test"))
+                     (not= :instrument (store/role-for store %)))
          base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
                      (filter prod? (keys (:namespaces store))))]
      (reduce (fn [m {:keys [from-ns to]}]

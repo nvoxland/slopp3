@@ -258,6 +258,47 @@
           (is (= {"app.client" :cljc} (:module-platforms s2)))
           (is (= {"app.client" :cljc} (:module-platforms (store/replay-delta s1 d2)))))))))
 
+(deftest module-role-delta-model
+  (let [s0 (store/empty-store)]
+    (testing "a fresh store declares no module roles"
+      (is (= {} (:module-roles s0))))
+    (let [[s1 d1] (store/record-module-role s0 "app.lab" :instrument
+                                            :agent "a" :prompt "run by hand")]
+      (testing "record-module-role appends a :module-role delta and folds it"
+        (is (= :module-role (:op d1)))
+        (is (= "app.lab" (:module d1)))
+        (is (= :instrument (:role d1)))
+        (is (= '*session* (:ns d1)))
+        (is (= "run by hand" (:prompt d1)))
+        (is (= {"app.lab" :instrument} (:module-roles s1))))
+      (testing "replay reconstructs :module-roles (foreign-sync stays cheap)"
+        (let [replayed (store/replay-delta s0 d1)]
+          (is (some? replayed))
+          (is (= {"app.lab" :instrument} (:module-roles replayed)))))
+      (testing "re-declaring overwrites, and :action :remove retires"
+        (let [[s2 d2] (store/record-module-role s1 "app.lab" :product)]
+          (is (= :product (:role d2)))
+          (is (= {"app.lab" :product} (:module-roles s2))))
+        (let [[s3 _] (store/record-module-role s1 "app.lab" nil :action :remove)]
+          (is (= {} (:module-roles s3))
+              "a retired declaration is ABSENT, which is not the same claim as :product"))))))
+
+(deftest role-for-most-specific-wins
+  (let [s0     (store/empty-store)
+        [s1 _] (store/record-module-role s0 "app.lab" :instrument)
+        [s2 _] (store/record-module-role s1 "app.lab.shipped" :product)]
+    (testing "an undeclared namespace defaults to :product"
+      (is (= :product (store/role-for s0 'other.thing)))
+      (is (= :product (store/role-for s2 'app.core))))
+    (testing "a module declaration governs its namespaces"
+      (is (= :instrument (store/role-for s2 'app.lab.benchmark)))
+      (is (= :instrument (store/role-for s2 'app.lab))))
+    (testing "the MOST SPECIFIC declaration wins — a subtree overrides its module"
+      (is (= :product (store/role-for s2 'app.lab.shipped.thing))))
+    (testing "a -test namespace is NOT governed by prefix: `app.lab-test` is not under `app.lab`"
+      (is (= :product (store/role-for s2 'app.lab-test))
+          "routing a test is test-ns?'s job, and an instrument's test is still a test"))))
+
 (deftest platform-for-most-specific-wins
   (let [s0 (store/empty-store)
         [s1 _] (store/record-module-platform s0 "app.client" :cljs)

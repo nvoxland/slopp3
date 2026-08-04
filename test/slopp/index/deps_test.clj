@@ -362,3 +362,24 @@
           ;; caller has to distinguish two spellings of nothing
           (is (not (contains? m :host-override)) (pr-str m))))
       (finally (api/close! sess)))))
+
+(deftest build-deps-edn-instruments-path
+  (testing "no instruments → byte-identical output (the ours? guard depends on it)"
+    (is (= (build/deps-edn false {} false false {})
+           (build/deps-edn false {} false false {} false)))
+    (is (= "{:paths [\"src\"]}\n" (build/deps-edn false {} false false {} false))))
+  (testing "instruments → a second RUN path, so a materialized tree can run them"
+    (let [edn (edn/read-string (build/deps-edn false {} false false {} true))]
+      (is (= ["src" "instruments"] (:paths edn)))))
+  (testing "the jar is unaffected BY CONSTRUCTION — build.clj copies `src` by name"
+    ;; the reason this is a :paths entry and not an alias: nothing about the
+    ;; exclusion asks the build script to know what a role is.
+    (let [edn (edn/read-string (build/deps-edn false {} true false {} true))]
+      (is (= ["src" "instruments"] (:paths edn)))
+      (is (= ["test"] (get-in edn [:aliases :test :extra-paths]))
+          "an instrument is not a test root — it is on :paths, which the test alias inherits")))
+  (testing "and the test runner still scans only test/ and src/"
+    (let [edn (edn/read-string (build/deps-edn false {} true false {} true))]
+      (is (= ["-m" "cognitect.test-runner" "-d" "test" "-d" "src" "-r" ".*"]
+             (get-in edn [:aliases :test :main-opts]))
+          "instruments hold no deftests; scanning them would invent tests"))))

@@ -790,6 +790,50 @@
                   :else cur))
               nil upto))))
 
+(defn record-module-role
+  "Declare a module's ROLE — :product (the default; a module absent from
+  :module-roles) is code the SYSTEM runs, and it ships; :instrument is code a
+  HUMAN runs by hand — a benchmark, a seeding script, a mining CLI — which R5
+  says lives in one module and does not ship. The role decides where `build!`
+  materializes the code (`instruments/` rather than `src/`, so any build that
+  jars `src` excludes it) and whether the architecture VIEW counts it, since an
+  instrument on the layer map puts a harness at the apex of the product.
+  One :module-role delta carrying its why (:prompt); last write per module
+  wins; the registry fold canonicalizes state.
+
+  `:action :remove` RETIRES the declaration instead of setting it — an absent
+  declaration is not the same claim as :product, and the rename and delete
+  paths both need the difference. Returns [store' delta]."
+  [store module role & {:keys [prompt agent action]}]
+  (let [[did store'] (gen-id store "d")
+        module (str module)
+        delta  (cond-> {:id did :parent (:id (last (:deltas store)))
+                        :op :module-role :ns '*session* :at (now-ms)
+                        :module module :role role}
+                 action (assoc :action action)
+                 prompt (assoc :prompt prompt)
+                 agent  (assoc :agent agent))]
+    [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
+(defn role-for
+  "The ROLE governing `ns-sym` — the MOST SPECIFIC :module-role declaration wins
+  (the namespace itself, then each enclosing prefix, then its module), else
+  :product (undeclared = ordinary product code). Mirrors `platform-for` and
+  edit.modules/tier-for, so one declaration on a module governs its whole
+  subtree.
+
+  Note what this deliberately does NOT reach: a `-test` namespace is not a
+  prefix match for the module it tests (`app.lab-test` is not under `app.lab`),
+  so an instrument's tests stay ordinary tests, routed by `test-ns?` like every
+  other. That is correct — a test does not ship whatever it covers."
+  [store ns-sym]
+  (let [roles (:module-roles store)
+        segs  (str/split (str ns-sym) #"\.")]
+    (fields/canonical-role
+     (or (some #(get roles (str/join "." (take % segs)))
+               (range (count segs) 0 -1))
+         :product))))
+
 (defn platform-for
   "The target PLATFORM governing `ns-sym` — the MOST SPECIFIC :module-platform
   declaration wins (the namespace itself, then each enclosing prefix, then its
@@ -882,6 +926,26 @@
                  prompt (assoc :prompt prompt)
                  agent  (assoc :agent agent))]
     [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
+(def ns-grained-registers
+  "The registers keyed by NAMESPACE rather than by form — field → the `record-*`
+  fn that writes it. A declaration here describes a NAME, so it has to follow a
+  rename and retire with a delete; both paths iterate this map rather than
+  naming the registers one at a time.
+
+  That is the whole point of it being data. `ns-rename!` and `delete-ns!` each
+  hand-enumerated the set, two arms apiece, and the failure mode of missing one
+  is SILENT: the declaration is left naming a namespace that no longer exists
+  while the code that moved goes ungated, which is how slopp's own store
+  accumulated fifteen orphans in one wave of deletions. A fourth register joins
+  by adding a row.
+
+  Every value takes `[store module value & {:keys [prompt agent action]}]` and
+  returns `[store' delta]`, with `:action :remove` retiring the declaration —
+  absent is not the same claim as the default."
+  {:module-tiers     record-module-tier
+   :module-platforms record-module-platform
+   :module-roles     record-module-role})
 
 (defn record-module-edge
   "Declare (or retract) ONE module dependency edge — the CRDT grain of the

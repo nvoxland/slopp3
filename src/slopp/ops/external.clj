@@ -134,8 +134,14 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
         traced?  (boolean (and has-tests?
                                (get-in st [:namespaces 'slopp.image.testmain])))
-        ours?    #(contains? #{(build/deps-edn false deps has-tests? traced? client-deps)
-                               (build/deps-edn true deps has-tests? traced? client-deps)}
+;; NAMESPACES, not the register: a declaration on a module that holds
+        ;; nothing would otherwise put a `:paths` entry in deps.edn with no
+        ;; directory under it. The tree describes what was materialized.
+        instr?   (boolean (some #(and (= :instrument (store/role-for st %))
+                                      (not (render/test-ns? %)))
+                                (keys (:namespaces st))))
+        ours?    #(contains? #{(build/deps-edn false deps has-tests? traced? client-deps instr?)
+                               (build/deps-edn true deps has-tests? traced? client-deps instr?)}
                              (slurp de))
         entry-ns (some-> main namespace symbol)]
     (cond
@@ -167,7 +173,9 @@ client-deps (merge (:client-deps st) (:client provided))
 
       :else
       (do (doseq [ns-sym (keys (:namespaces st))]
-    (let [file (io/file target (render/source-path ns-sym (store/platform-for st ns-sym)))]
+    (let [file (io/file target (render/source-path ns-sym
+                                                   (store/platform-for st ns-sym)
+                                                   (store/role-for st ns-sym)))]
       (io/make-parents file)
       (spit file (render/render-ns st ns-sym))))
   (doseq [[path entry] (:files st)]
@@ -214,7 +222,7 @@ client-deps (merge (:client-deps st) (:client provided))
           (session/vendor-framework! st target)
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
-            (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps)))
+            (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps instr?)))
           (cond-> (let [missing (materialize-artifacts! session st target)]
                         (cond-> {:built (str target)}
                           (seq missing) (assoc :missing-artifacts missing)))

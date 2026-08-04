@@ -2452,25 +2452,28 @@ recompiled (session/after-write! session ns-sym)]
                                        :when (or (= k (str old))
                                                  (str/starts-with? k (str old ".")))]
                                    [k (str new (subs k (count (str old)))) v])))
-                  tiers   (moved :module-tiers)
-                  plats   (moved :module-platforms)]
-              (when (or (seq tiers) (seq plats))
+                  ;; every ns-grained register, from the ONE list of them —
+                  ;; these arms were hand-written per register and identical
+                  ;; apart from the record fn, so a new register was forgotten
+                  ;; by construction rather than by oversight
+                  by-reg  (into {} (for [[reg _] store/ns-grained-registers
+                                         :let [rows (moved reg)]
+                                         :when (seq rows)]
+                                     [reg rows]))]
+              (when (seq by-reg)
                 (session/commit-appended!
                  session
                  (fn [base]
-                   (as-> base $
-                     (reduce (fn [s [k k' v]]
-                               (-> s
-                                   (store/record-module-tier k' v :prompt why :agent agent) first
-                                   (store/record-module-tier k nil :action :remove
-                                                             :prompt why :agent agent) first))
-                             $ tiers)
-                     (reduce (fn [s [k k' v]]
-                               (-> s
-                                   (store/record-module-platform k' v :prompt why :agent agent) first
-                                   (store/record-module-platform k nil :action :remove
-                                                                 :prompt why :agent agent) first))
-                             $ plats)))
+                   (reduce-kv
+                    (fn [s reg rows]
+                      (let [record (get store/ns-grained-registers reg)]
+                        (reduce (fn [s [k k' v]]
+                                  (-> s
+                                      (record k' v :prompt why :agent agent) first
+                                      (record k nil :action :remove
+                                              :prompt why :agent agent) first))
+                                s rows)))
+                    base by-reg))
                  [])))
             (session/fresh-image! session)          ; the old ns must NOT linger
             (let [verify-nses (vec (remove #{old} touched))
@@ -3167,6 +3170,96 @@ recompiled (session/after-write! session ns-sym)]
        (seq intents) (assoc :intents intents)
        (seq dead)    (assoc :dead-ends dead)))))
 
+(defn module-role!
+  "Declare a module's ROLE — what KIND of code this is, which decides whether
+  it ships: :product (the default) is code the system runs, materialized under
+  `src/` and carried into the jar; :instrument is code a HUMAN runs by hand — a
+  benchmark, a seeding script, a mining CLI — materialized under `instruments/`
+  instead, so any build that jars `src` leaves it out, and excluded from the
+  architecture view so a harness cannot sit at the apex of what it measures
+  (R5). One :module-role delta carrying its why (:prompt); last write per
+  module wins. Namespace grain, like module_purity — the most-specific
+  declaration governs. Read roles via query_depends {modules true}.
+
+  `remove: true` RETIRES a declaration: absent is not the same claim as
+  :product, and the rename and delete paths both need the difference."
+  [session module role & {:keys [prompt agent remove]}]
+  (let [module (str module)
+        ;; every surface spells roles WITH the colon, and MCP/JSON carries a
+        ;; string, so accept both rather than minting a bad keyword
+        role   (fields/canonical-role (or role "product"))
+        modish (re-matches #"[^.\s]+(\.[^.\s]+)*" module)]
+    (cond
+      (not modish)
+      {:error (str "modules are the first TWO segments of a namespace"
+                   " (\"logi.parcel\", not \"logi.parcel.impl\") — got "
+                   (pr-str module))}
+
+      remove
+      (if (contains? (:module-roles (:store @session)) module)
+        (let [st' (session/commit-appended!
+                   session
+                   #(first (store/record-module-role % module nil :action :remove
+                                                    :prompt prompt :agent agent))
+                   [])]
+          {:module module :action :removed :roles (:module-roles st')})
+        {:error (str module " has no role declaration — nothing to remove."
+                     " Undeclared already means :product.")})
+
+      (not (#{:product :instrument} role))
+      {:error (str "role must be :product or :instrument — got " (pr-str role)
+                   ". :product = the system runs it and it ships (the default);"
+                   " :instrument = a HUMAN runs it by hand, so it is"
+                   " materialized outside src/ and never reaches the jar.")}
+
+      :else
+      ;; a role is an ASSERTION ABOUT THE CODE, so check it against the code —
+      ;; the same bar module_purity meets. :instrument MOVES the namespaces out
+      ;; of src/, so the one thing that must not be true is that product code
+      ;; requires them. Unchecked, the break surfaces at a CONSUMER's load
+      ;; time, naming a namespace this store plainly has.
+      (let [st      (:store @session)
+            members (filter #(or (= module (str %))
+                                 (str/starts-with? (str %) (str module ".")))
+                            (keys (:namespaces st)))
+            needed  (when (= :instrument role)
+                      (vec (sort (distinct
+                                  (for [other (keys (:namespaces st))
+                                        :when (and (not (render/test-ns? other))
+                                                   (not= :instrument
+                                                         (store/role-for st other))
+                                                   (not (some #{other} members)))
+                                        :when (some (set members)
+                                                    (store/ns-requires st other))]
+                                    (str other))))))]
+        (if (seq needed)
+          {:error (str "cannot declare " module " :instrument — "
+                       (str/join ", " needed)
+                       (if (= 1 (count needed)) " requires" " require")
+                       " it, and product code cannot depend on code that does"
+                       " not ship. Move what they need into a product module,"
+                       " or declare those callers :instrument too."
+                       " (A -test requirer would be fine: a test does not ship"
+                       " either.)")
+           :required-by needed}
+          (let [st' (session/commit-appended!
+                     session
+                     #(first (store/record-module-role % module role
+                                                       :prompt prompt :agent agent))
+                     [])]
+            {:module module :role role
+             :roles (:module-roles st')
+             :verified (if (= :instrument role) [:no-product-requirer] [])
+             :unverified [:human-runs-it]
+             :note (if (= :instrument role)
+                     (str "no product namespace requires " module
+                          ", so moving it out of src/ breaks no load. That a"
+                          " HUMAN rather than the system runs it is the part"
+                          " nothing here can check — it is your claim.")
+                     (str module " is :product, which is also what an absent"
+                          " declaration means. Declare it only to overrule a"
+                          " broader :instrument above it."))}))))))
+
 (defn module-platform!
   "Declare a module's target PLATFORM — the client wave's router (D-web-cljs):
   :jvm (Clojure on the JVM, the default), :cljc (portable — loads on the JVM AND
@@ -3849,8 +3942,7 @@ recompiled (session/after-write! session ns-sym)]
                 governs (some #(str/starts-with? (str %) (str path "."))
                               (keys (:namespaces st')))
                 orphans (when-not governs
-                          (vec (for [[reg record] [[:module-tiers store/record-module-tier]
-                                                   [:module-platforms store/record-module-platform]]
+                          (vec (for [[reg record] store/ns-grained-registers
                                      :when (contains? (get st' reg) path)]
                                  [reg record])))]
             (when (seq orphans)

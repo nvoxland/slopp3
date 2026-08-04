@@ -99,14 +99,23 @@
   and they NEVER enter the runtime `:deps` that ships. Absent client-deps the
   alias is omitted, so output is unchanged.
 
-  With an EMPTY manifest and no test/native/cljs aliases the output is
-  byte-identical to the pre-manifest version (the build! `ours?` byte-identity
-  guard relies on this)."
+  With `instruments?` (the store declares a module `:instrument`, R5), adds
+  `instruments` to `:paths` — a RUN path, not an alias, because an instrument
+  is code a human runs. What keeps it OUT of the jar is that our build script
+  copies `src` by name: the exclusion needs no build script that knows what a
+  role is, which is the same property that makes `test/` a separate root
+  rather than a marker inside `src/`.
+
+  With an EMPTY manifest and no test/native/cljs aliases and no instruments the
+  output is byte-identical to the pre-manifest version (the build! `ours?`
+  byte-identity guard relies on this)."
   ([native?] (deps-edn native? {}))
   ([native? deps] (deps-edn native? deps false))
   ([native? deps test?] (deps-edn native? deps test? false))
   ([native? deps test? trace?] (deps-edn native? deps test? trace? {}))
   ([native? deps test? trace? client-deps]
+   (deps-edn native? deps test? trace? client-deps false))
+  ([native? deps test? trace? client-deps instruments?]
    ;; bind *print-namespace-maps* OFF: it defaults true at a REPL, false in a
    ;; script — leaving it would make output non-deterministic (the git
    ;; projection + build! ours? guard both depend on byte-stable output).
@@ -114,6 +123,7 @@
                     (str " :deps " (binding [*print-namespace-maps* false]
                                      (pr-str (coerce-exclusions deps))))
                     "")
+         paths    (if instruments? "[\"src\" \"instruments\"]" "[\"src\"]")
          main-ns  (if trace? "slopp.image.testmain" "cognitect.test-runner")
          ;; each alias entry is "KEY\n  {VALUE}"; the first sits right after the
          ;; aliases-map `{` (matching the historical single-:native layout), the
@@ -146,8 +156,8 @@
                                  (pr-str (coerce-exclusions client-deps)))
                                "}")))]
      (if (empty? aliases)
-       (str "{:paths [\"src\"]" deps-str "}\n")
-       (str "{:paths [\"src\"]" deps-str "\n"
+       (str "{:paths " paths deps-str "}\n")
+       (str "{:paths " paths deps-str "\n"
             " :aliases\n"
             " {" (str/join "\n  " aliases) "}}\n")))))
 

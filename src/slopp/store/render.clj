@@ -67,13 +67,27 @@
   The arity-2 form takes the namespace's PLATFORM (:jvm/:cljc/:cljs): :cljs roots
   under a separate `cljs-src/` (`cljs-test/`) tree the JVM classpath excludes,
   with a `.cljs` extension; :cljc/:jvm stay under `src/`/`test/` with
-  `.cljc`/`.clj` (D-web-cljs)."
+  `.cljc`/`.clj` (D-web-cljs).
+
+  The arity-3 form takes the namespace's ROLE (`store/role-for`). An
+  `:instrument` — code a HUMAN runs by hand — roots under `instruments/`, which
+  is R5's \"and that module does not ship\" made mechanical: the exclusion has to
+  survive a CONVENTIONAL build script (ours jars `src`, and knows nothing about
+  roles), so it is a separate ROOT rather than a marker inside `src/`, exactly
+  as `test/` is and for the same reason.
+
+  `test?` is asked FIRST. An instrument's test is an ordinary test: it does not
+  ship whatever it covers, and splitting one module's code across two
+  non-shipping roots would buy nothing while costing the test runner a path."
   ([ns-sym] (source-path ns-sym :jvm))
-  ([ns-sym platform]
+  ([ns-sym platform] (source-path ns-sym platform :product))
+  ([ns-sym platform role]
    (let [test? (test-ns? ns-sym)
-         root  (if (= :cljs platform)
-                 (if test? "cljs-test/" "cljs-src/")
-                 (if test? "test/" "src/"))]
+         root  (cond
+                 test?                  (if (= :cljs platform) "cljs-test/" "test/")
+                 (= :instrument role)   "instruments/"
+                 (= :cljs platform)     "cljs-src/"
+                 :else                  "src/")]
      (str root (ns-path ns-sym platform)))))
 
 (defn ^:export element-offsets

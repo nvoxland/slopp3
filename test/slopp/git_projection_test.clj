@@ -244,3 +244,39 @@
                                  "Slopp-Status: red")))
             (finally (git/close-ctx! ctx)))))
       (finally (api/close! sess)))))
+
+(deftest ^:external the-projected-tree-is-laid-out-like-a-build
+  ;; The mirror is not decoration: build.clj's CI flow is
+  ;; `clojure -T:build uber :src src` against a CHECKOUT of the published
+  ;; repo. So if the projection roots a namespace differently from `build!`,
+  ;; the jar CI produces differs from the jar built here — and an instrument
+  ;; routed out of src/ locally ships anyway.
+  (let [dir  (temp-dir)
+        sess (external/open! {:slopp.ops/dir dir})]
+    (try
+      (is (pos? (:forms (api/ingest! sess 'gl.core "(ns gl.core)\n(defn ^:unused-ok f [] 1)\n"))))
+      (is (pos? (:forms (api/ingest! sess 'gl.lab "(ns gl.lab)\n(defn ^:unused-ok -main [] 1)\n"))))
+      (is (pos? (:forms (api/ingest! sess 'gl.shared "(ns gl.shared)\n(defn ^:unused-ok s [] 1)\n"))))
+      (is (nil? (:error (api/module-role! sess "gl.lab" :instrument))))
+      (is (nil? (:error (api/module-platform! sess "gl.shared" :cljc))))
+      (let [r (external/commit-point! sess "v1" :agent "alice")]
+        (is (nil? (:error r)) (pr-str r)))
+      (let [ctx (git/open-ctx! dir)]
+        (try
+          (let [tip  (get-in (git/ensure-projected! ctx) [:refs "main"])
+                repo (:slopp.git/repo ctx)
+                at   #(blob-text repo tip %)]
+            (testing "product code is under src/ — the control, so the absences below mean something"
+              (is (some? (at "src/gl/core.clj"))))
+            (testing "an instrument is projected OUTSIDE src/, exactly where build! puts it"
+              (is (some? (at "instruments/gl/lab.clj")))
+              (is (nil? (at "src/gl/lab.clj"))))
+            (testing "and the PLATFORM decides the extension here too"
+              ;; the projection ignored platform entirely: a :cljc namespace
+              ;; landed at .clj, so CI compiled a file the store does not
+              ;; describe. Benign for :cljc, which loads on the JVM either
+              ;; way; a :cljs namespace under src/ would break the build.
+              (is (some? (at "src/gl/shared.cljc")))
+              (is (nil? (at "src/gl/shared.clj")))))
+          (finally (git/close-ctx! ctx))))
+      (finally (api/close! sess)))))
