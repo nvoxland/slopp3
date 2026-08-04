@@ -808,3 +808,35 @@
       ;; could not be classified would be the worse error, and silent
       (is (= [wide] (f :production [wide])))
       (is (= [wide] (f :tests [wide]))))))
+
+(deftest a-stored-name-that-disagrees-with-its-source-is-reported
+  ;; The store keeps a form's NAME on the element and its source in the node.
+  ;; When those disagree, every name-addressed surface silently loses the form:
+  ;; `rename_sweep` skips it (and its dry-run does not list it either, so the
+  ;; preview agrees with the write about a form neither can see), `edit_subform
+  ;; {form "x"}` refuses it as "no form named x", and `:left-behind` prints
+  ;; `:form nil`. Meanwhile ID-addressed passes reach it perfectly — which is
+  ;; why this survived: half the rename machinery works.
+  ;;
+  ;; Measured on slopp's own store the day this landed: 11 nameless forms, 6
+  ;; correctly so (defmethod, use-fixtures) and 5 where `form-symbol` on the
+  ;; STORED node returns a name the element does not carry.
+  ;;
+  ;; The fixture corrupts the element directly, and it has to: ingesting source
+  ;; recomputes `:name`, so no source string can express this state. That is
+  ;; also why the registry entry carries a `:selftest-note` instead of
+  ;; `:fires-on` — a `:fires-on` fixture for this rule would be a fixture that
+  ;; cannot fail.
+  (let [st  (store/ingest (store/empty-store) 'rn.core
+                          "(ns rn.core)\n(defn f \"F.\" [] 1)\n")
+        fid (:id (store/form-named st 'rn.core 'f))
+        bad (update-in st [:namespaces 'rn.core :elements]
+                       (fn [es] (mapv #(cond-> % (= fid (:id %)) (assoc :name nil)) es)))]
+    (testing "a healthy store reports nothing — the control, without which the
+              finding below is equally consistent with firing on everything"
+      (is (empty? (#'rules/stored-name-check nil st [fid]))))
+    (testing "the disagreement is reported, and says what the SOURCE calls it,
+              since that is the name the reader was looking for"
+      (let [found (#'rules/stored-name-check nil bad [fid])]
+        (is (= 1 (count found)) (pr-str found))
+        (is (re-find #"\bf\b" (str (:teach (first found)))) (pr-str found))))))

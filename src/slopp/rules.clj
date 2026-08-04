@@ -630,6 +630,59 @@
                                      " theatre that reads as verification")})))))
               changed))))))
 
+(defn stored-name-check
+  "Done-advisory: a form's STORED `:name` disagrees with the name its own
+   source defines.
+
+   The store keeps both — `:name` on the element, the source in `:node` — and
+   `store/form-symbol` derives one from the other at every write. When they
+   drift apart the form becomes addressable by ID and not by name, and **every
+   name-addressed surface loses it silently**: `rename_sweep` skips it and
+   reports its own form count as though complete, `edit_subform {form \"x\"}`
+   refuses with `no form named x` (which reads as the caller's mistake), and
+   `:left-behind` prints `:form nil` for the one field a reader navigates by.
+
+   **Why it survived long enough to need a rule.** The rename verbs are split:
+   `ns-rename-changeset` and `qualified-mention-changeset` both produce
+   `{form-id node}` and are applied by ID, so they rewrite these forms
+   correctly, while the prose sweep addresses forms by name and does not. Half
+   the machinery works, the half that does not reports success, and the
+   difference is invisible from either result.
+
+   Measured on slopp's own store the day this landed: 11 forms with no `:name`,
+   6 of them correctly (a `defmethod` has a dispatch value rather than a name,
+   `use-fixtures` defines nothing) and 5 where `form-symbol` on the stored node
+   returns a name the element does not carry.
+
+   **The cause is not yet known, and that is the argument FOR the check rather
+   than against it.** `form-symbol` has one version, ingested with its
+   metadata-wrapper branch already present; `apply-changeset` recomputes both
+   `:name` and `:names` on every entry. Three plausible causes were measured and
+   falsified. So this fires on the state rather than on a suspected writer,
+   which is what a check should do when the invariant is clear and the breach is
+   not: whatever produces the next one, this names it in the act.
+
+   Compares against `form-symbol` and nothing else, deliberately — a second
+   derivation of \"what is this form called\" is how the last one of these
+   started."
+  [_session st* changed]
+  (vec (for [fid changed
+             :let [e (store/form-by-id st* fid)]
+             :when e
+             :let [actual (store/form-symbol (:node e))]
+             :when (not= (:name e) actual)]
+         {:form (symbol (str (store/ns-of-form-id st* fid))
+                        (str (or (:name e) actual fid)))
+          :teach (str "this form's stored :name is " (pr-str (:name e))
+                      " but its source defines " (pr-str actual)
+                      ". Every name-addressed surface — rename_sweep,"
+                      " edit_subform {form}, :left-behind's :form — reaches"
+                      " forms by the stored name, so a form the store cannot"
+                      " name is one they all skip WITHOUT SAYING SO, while"
+                      " id-addressed passes keep working. Rewrite the form"
+                      " (edit_replace_form, or edit_subform addressing it by"
+                      " its id " (pr-str fid) ") to restore agreement")})))
+
 (defn marker-why-check
   "Done-advisory: a changed form carries an escape marker as a BARE keyword,
    so the dial says that a rule was waived and nothing about why.
@@ -991,6 +1044,17 @@
    {:key :marker-why :severity :advisory :applies-to :both :check #'marker-why-check
     :sweep true
     :fires-on "(ns rf.core)\n(defn ^:unused-ok spare \"S.\" [x] x)\n"}
+;; the stored :name and the source's own name, which must agree. NOT
+   ;; :fires-on-able: ingesting source recomputes :name, so no fixture text
+   ;; can express the disagreement — which is exactly why nothing caught it.
+   {:key :stored-name :severity :error :applies-to :both :check #'stored-name-check
+    :sweep true
+    :selftest-note (str "the disagreement cannot be built from source — every"
+                        " ingest recomputes :name from the node, so a :fires-on"
+                        " fixture for this rule would be one that cannot fail."
+                        " Covered by rules-test/a-stored-name-that-disagrees-"
+                        "with-its-source-is-reported, which corrupts an element"
+                        " directly and carries a healthy-store control")}
    ;; the single biggest behavioural consequence available in one piece of
    ;; metadata, and nothing said it: declaring :web/spa turns every path under
    ;; the prefix from 404 into 200 and moves not-found into the client.
