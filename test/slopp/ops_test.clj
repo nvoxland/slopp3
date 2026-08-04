@@ -183,7 +183,7 @@
           (external/build! sess dir)
           (let [d (slurp (java.io.File. dir "deps.edn"))]
             (is (re-find #"\"-m\" \"cognitect\.test-runner\"" d))
-            (is (not (re-find #"slopp\.testmain" d))))))
+            (is (not (re-find #"slopp\.image\.testmain" d))))))
       (testing "the store provides one — both aliases route through it"
         (api/create-ns! sess 'slopp.image.testmain
                         :source (str "(ns slopp.image.testmain \"Stub: presence is"

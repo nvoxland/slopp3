@@ -413,5 +413,17 @@
       ;; require, qualified ref, late-ref target and prose all read the same
       ;; here on purpose: an engine whose DOCS explain bundle recompilation
       ;; still knows about clients.
-      (is (= [] (vec (re-seq #"slopp\.api\.cljs" src)))
+      ;; The pattern spelled `slopp.api.cljs` until the :stale-pattern rule
+      ;; found it: phase 3 renamed that namespace to slopp.webdev.cljs, and a
+      ;; search pattern is DATA, so no rename verb rewrote it and the prose
+      ;; sweep missed the escaped dots. The assertion went on passing against a
+      ;; string that could no longer occur.
+      ;;
+      ;; Which is why the control below exists. The two `is` forms above prove
+      ;; the HAYSTACK is real — a rendered namespace, over 50 namespaces in the
+      ;; store — and neither of them can prove the NEEDLE still matches
+      ;; anything. A population control is not a pattern control.
+      (is (seq (re-seq #"slopp\.webdev\.cljs" (render/render-ns st 'slopp.webdev.cljs)))
+          "the pattern no longer matches a namespace that names itself, so the absence below proves nothing")
+      (is (= [] (vec (re-seq #"slopp\.webdev\.cljs" src)))
           "the offending mentions are the failure value"))))

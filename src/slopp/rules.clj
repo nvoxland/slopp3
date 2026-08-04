@@ -967,6 +967,74 @@
                         " would have asked again until someone happened to"
                         " edit one of these forms.")})))))
 
+(defn stale-pattern-check
+  "Done-advisory: a REGEX literal in a changed form spells a name in this
+   store's OWN namespace family that is neither a namespace nor a prefix of
+   one — a search pattern that can no longer match what it was written to find.
+
+   **A pattern is data, so no rename verb reaches it.** `ns_rename` rewrites
+   requires, qualified references, quoted symbols and prose; `rename_sweep`
+   matches text — and a regex escapes its dots, so even the text pass misses
+   the spelling. The form goes on compiling and goes on passing while searching
+   for a string that can no longer occur. Both outcomes are bad and one is
+   worse: a presence assertion turns red, while an absence assertion —
+   `(is (not (re-find #\"ns.that.moved\" src)))` — becomes permanently true.
+
+   **The scope is the store's own ROOT SEGMENTS, and that is what makes it
+   usable.** Measured on slopp's store the day this landed: 1001 regex
+   literals, 110 carrying a dotted name. Reporting every one that does not
+   resolve gives 119 findings of which 2 are real — fixtures name `mv.core`,
+   libraries name `clojure.set`, config keys name `web.static`, assets name
+   `logo.png`, and a pattern spanning a whitespace class yields `assertions.s`.
+   Requiring the root segment to be one this store owns takes 119 to 3, with no
+   exemption list, and all three were bugs.
+
+   That restriction is the fixture rule read backwards: a fixture that names no
+   real production code is exactly a fixture this cannot see. Its corollary is
+   the one known false positive — a guard asserting a name is NEVER used, where
+   that name deliberately does not exist, has no spelling that satisfies this.
+   None exists in slopp today, which is why there is no escape yet.
+
+   `:suggest` names the namespace whose LAST SEGMENT matches, when exactly one
+   does — the derivation `stranded-aliases` uses, and it resolved all three."
+  [_session st* changed]
+  (let [nses  (set (map str (keys (:namespaces st*))))
+        root  (fn [m] (first (str/split m #"\.")))
+        tail  (fn [m] (last (str/split m #"\.")))
+        roots (set (map root nses))
+        cand  #"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+"
+        live? (fn [m] (or (contains? nses m)
+                          (some #(str/starts-with? % (str m ".")) nses)))
+        went  (fn [m] (let [hits (filter #(= (tail m) (tail %)) nses)]
+                        (when (= 1 (count hits)) (symbol (first hits)))))]
+    (vec (for [fid changed
+               :let [e (store/form-by-id st* fid)]
+               :when e
+               :let [sx   (store/form-sexpr (:node e))
+                     hits (distinct
+                           (for [n (when sx (tree-seq coll? seq sx))
+                                 :when (and (seq? n) (= 're-pattern (first n))
+                                            (string? (second n)))
+                                 m (re-seq cand (str/replace (second n) "\\" ""))
+                                 :when (and (contains? roots (root m)) (not (live? m)))]
+                             m))]
+               :when (seq hits)]
+           (let [sugg (went (first hits))]
+             (cond-> {:form  (symbol (str (store/ns-of-form-id st* fid))
+                                     (str (or (:name e) fid)))
+                      :teach (str (str/join ", " hits) " is spelled inside a regex"
+                                  " here, and this store owns the "
+                                  (pr-str (root (first hits))) " family without"
+                                  " having that namespace — so the pattern cannot"
+                                  " match what it was written to find. A pattern is"
+                                  " DATA: no rename verb rewrites it, and the prose"
+                                  " sweep misses the escaped dots, so an absence"
+                                  " assertion built on it is permanently true"
+                                  (when sugg
+                                    (str ". " sugg " is the only namespace with the"
+                                         " same last segment")))}
+               sugg (assoc :suggest sugg)))))))
+
 (def done-advisories
   "The done-time advisory registry (D9 rule-registry — the done-grain sibling of
    `edit.modules/per-form-write-gates`): an ordered list of {:key :severity
@@ -1055,6 +1123,16 @@
                         " Covered by rules-test/a-stored-name-that-disagrees-"
                         "with-its-source-is-reported, which corrupts an element"
                         " directly and carries a healthy-store control")}
+   ;; a search PATTERN is data: no rename verb rewrites it, and the prose sweep
+   ;; misses the escaped dots. Scoped to names whose ROOT SEGMENT this store
+   ;; owns — unrestricted that is 119 findings of which 2 are real, restricted
+   ;; it is 3 of which 3 are.
+   {:key :stale-pattern :severity :error :applies-to :both :check #'stale-pattern-check
+    ;; the form that goes stale is never the form the rename CHANGED, so an
+    ;; episode-scoped pass cannot reach it. This rule is the sweep or it is
+    ;; nothing.
+    :sweep true
+    :fires-on "(ns rf.core)\n(defn scan [s] (re-find #\"rf.gone\" s))\n"}
    ;; the single biggest behavioural consequence available in one piece of
    ;; metadata, and nothing said it: declaring :web/spa turns every path under
    ;; the prefix from 404 into 200 and moves not-found into the client.

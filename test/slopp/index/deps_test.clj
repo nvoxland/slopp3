@@ -269,7 +269,15 @@
   (testing "without the trace runner nothing changes — cognitect direct"
     (let [s (build/deps-edn false {} true false)]
       (is (re-find #"\"-m\" \"cognitect\.test-runner\"" s))
-      (is (not (re-find #"slopp\.testmain" s))))
+      ;; `slopp.image.testmain`, not `slopp.testmain` — the pattern was two
+      ;; segments short of the only name deps-edn can emit, so this absence
+      ;; assertion was true whatever the generator did. Found by the
+      ;; :stale-pattern rule, not by anyone reading it.
+      ;;
+      ;; Its control was already here and three lines down: the trace branch
+      ;; asserts the SAME spelling appears exactly twice, so the needle is
+      ;; known to match. The two halves were never compared.
+      (is (not (re-find #"slopp\.image\.testmain" s))))
     (testing "and the no-trace form is byte-identical to the 3-arg one"
       (is (= (build/deps-edn false {} true)
              (build/deps-edn false {} true false)))))

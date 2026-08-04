@@ -840,3 +840,44 @@
       (let [found (#'rules/stored-name-check nil bad [fid])]
         (is (= 1 (count found)) (pr-str found))
         (is (re-find #"\bf\b" (str (:teach (first found)))) (pr-str found))))))
+
+(deftest a-regex-that-names-a-namespace-this-store-does-not-have-is-reported
+  ;; A guard's search PATTERN is DATA, so a rename walks straight past it:
+  ;; `ns_rename` rewrites requires, qualified refs, quoted symbols and prose,
+  ;; and a regex spells its dots `\.`, so even the prose sweep's text match
+  ;; misses the escaped spelling. The form stays green while searching for a
+  ;; string that can no longer occur.
+  ;;
+  ;; Measured on slopp's own store before this rule existed: 1001 regex
+  ;; literals, 110 carrying a dotted name. A rule reporting every dotted name
+  ;; that does not resolve produced 119 findings of which 2 were real —
+  ;; fixtures name `mv.core`, libraries name `clojure.set`, config keys name
+  ;; `web.static`, assets name `logo.png`, and a pattern spanning `\s+` yields
+  ;; `assertions.s`. Restricting to names whose ROOT SEGMENT this store owns
+  ;; took 119 to 3, and all three were bugs.
+  ;;
+  ;; That restriction is not a heuristic, it is the fixture rule read from the
+  ;; other end: a fixture that names no real production code is precisely a
+  ;; fixture this check cannot see. The three quiet cases below are the three
+  ;; thirds of the noise, one control each.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'rp.image.testmain "(ns rp.image.testmain)\n(defn run [] 1)\n")
+                (store/ingest 'rp.core
+                              (str "(ns rp.core)\n"
+                                   "(defn stale [s] (re-find #\"rp\\.testmain\" s))\n"
+                                   "(defn ext [s] (re-find #\"clojure\\.string\" s))\n"
+                                   "(defn live [s] (re-find #\"rp\\.image\\.testmain\" s))\n"
+                                   "(defn pre [s] (re-find #\"rp\\.image\" s))\n")))
+        ids   (mapv #(:id (store/form-named st 'rp.core %)) '[stale ext live pre])
+        found (#'rules/stale-pattern-check nil st ids)]
+    (testing "the population is four forms — without this, one finding and
+              three silences are equally consistent with a rule that read
+              nothing at all"
+      (is (= 4 (count ids)) (pr-str ids))
+      (is (every? some? ids) (pr-str ids)))
+    (testing "exactly the stale one is reported"
+      (is (= 1 (count found)) (pr-str found))
+      (is (= 'rp.core/stale (:form (first found))) (pr-str found)))
+    (testing "and it says where the name went, derived by last segment the way
+              a stranded alias's :suggest is"
+      (is (= 'rp.image.testmain (:suggest (first found))) (pr-str found)))))

@@ -87,6 +87,21 @@
                 " skip the form and report their own counts as complete, while"
                 " id-addressed passes keep working, so half the rename"
                 " machinery succeeds and the other half says nothing")}
+   {:rule :stale-pattern :grain :done
+    :escape (str "rewrite the pattern to a name that exists — the finding's"
+                 " :suggest is the only namespace sharing its last segment."
+                 " There is deliberately no dial: a regex naming a name this"
+                 " store's own family does not have has never yet been"
+                 " intentional here, and an escape invented before its first"
+                 " real case is one nobody can evaluate")
+    :teach (str "a regex literal spells a name in this store's own namespace"
+                " family that is neither a namespace nor a prefix of one, so"
+                " the pattern cannot match what it was written to find. A"
+                " search pattern is DATA: ns_rename rewrites requires,"
+                " qualified refs, quoted symbols and prose but not patterns,"
+                " and rename_sweep's text pass misses the escaped dots. The"
+                " worst case is an absence assertion — (is (not (re-find …)))"
+                " over a name that moved is permanently, silently true")}
    {:rule :key-typos :grain :done
     :escape "reuse the established key (query_vocabulary), or accept the new one"
     :teach "a new namespaced key is one Damerau edit from an established same-namespace key"}
@@ -97,7 +112,13 @@
     :escape "pass state in as an arg, or accept it (a legit top-level cache — and a defonce that a ^{:web/context true} builder merely REFERENCES is one, since a builder allocating its own atom hands the app a fresh one per call)"
     :teach "a global (def _ (atom/ref/agent/volatile! …)) — ambient mutable state a slice can't track"}
    {:rule :assertions-never-red :grain :done
-    :escape "break the subject once and watch the new assertions go red (test_run on that one test), or accept it — advisory, because only you know whether you already did"
+    :escape (str "break the subject with a WRITE and watch the test bounce."
+                 " Red is read from :verify deltas, so a bare test_run does not"
+                 " clear this however red it was — and neither does a write"
+                 " whose verification DEFERS the test, which is every"
+                 " ^:external one. For those two paths there is nothing to run:"
+                 " accept it. Advisory precisely because only you know whether"
+                 " you already watched it fail")
     :teach (str "a changed deftest GAINED assertion forms and never went red this"
                 " episode, so the new ones have only ever been seen green. The"
                 " load-bearing half of red-first is not test-before-code, it is"
