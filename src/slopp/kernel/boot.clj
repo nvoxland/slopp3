@@ -141,6 +141,46 @@
   of the truth for slopp-web (D-framework-injection)."
   "META-INF/slopp/framework-version.edn")
 
+(def ^:export head-resource-path
+  "Resource naming the store head a materialization — and so a jar — was built
+  FROM.
+
+  Under the SOURCE ROOT rather than beside it, for the reason
+  [[slopp.read.modules/tiers-resource-path]] gives: a build jars `src`, so a
+  stamp outside it is read by whoever ran the build and by nobody afterwards.
+  Inside, the artifact itself can be asked — which is the whole point, because
+  the artifact is what actually runs.
+
+  Named in the KERNEL because the two sides that must agree sit at opposite
+  ends of the layer map: `ops.external/build!` writes it, and this namespace
+  reads it back with nothing beneath it to share a constant with. Same
+  arrangement as [[framework-version-path]]."
+  "META-INF/slopp/head.edn")
+
+(defn ^:export jar-head
+  "The store head THIS artifact was built from, or nil when it cannot say —
+  a `clojure -M` run, a checkout, an oracle image, a jar built before this
+  stamp existed.
+
+  nil is a real answer and every caller must stay silent on it, the same
+  discipline [[framework-version]] holds: a tree that was never materialized
+  has no head to be, and inventing one would be worse than the question going
+  unanswered.
+
+  **The head alone, deliberately — no comparison here.** The artifact knows
+  what it IS; whether that is BEHIND anything is a question about some
+  particular store, and the store a jar runs against is often not the store it
+  was built from (slopp's own jar serves other projects). That comparison is
+  [[slopp.read.orient/jar-currency]]'s, which has a store to make it against.
+
+  The loader arity is what makes this readable at all from outside the running
+  process's own classpath — and testable, which the resource read beside it
+  is not."
+  ([] (jar-head (clojure.lang.RT/baseLoader)))
+  ([^ClassLoader loader]
+   (when-let [r (io/resource head-resource-path loader)]
+     (:head (edn/read-string (slurp r))))))
+
 (defn ^:export framework-version
   "The `slopp-web` release THIS slopp corresponds to, or nil when the process
   cannot say — a `clojure -M` run, a checkout, the oracle image.
@@ -557,12 +597,19 @@
 
   `:host-drift` is ABSENT when nothing has measured, `[]` when a comparison
   found this process current, and a list when it is behind. Three claims, not
-  two, because \"I did not look\" must not read as \"I looked and it was fine\"."
+  two, because \\\"I did not look\\\" must not read as \\\"I looked and it was fine\\\".
+
+  `:jar-head` is a THIRD kind again: not what happened and not what is true of
+  this process's namespaces, but what the ARTIFACT under all of them IS. It is
+  the one fact here that survives a reload, and the one a reader cannot get any
+  other way without unzipping a file."
   []
   (when-let [info @boot-info]
-    (let [stale (host-drift)]
+    (let [stale (host-drift)
+          jh    (jar-head)]
       (cond-> info
-        (some? stale) (assoc :host-drift stale)))))
+        (some? stale) (assoc :host-drift stale)
+        (some? jh)    (assoc :jar-head jh)))))
 
 ^:unsafe (defn- departed-vars
   "The names in `interned` that `new-source` no longer defines — what a live

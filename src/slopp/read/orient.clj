@@ -226,6 +226,15 @@
   watcher retried a renamed-away namespace forever, but a namespace the store
   no longer has is simply absent from the comparison.
 
+  **`:jar` says which ARTIFACT is answering**, and arrives on `info` the same
+  way `:host-drift` does — both are facts about this process that only a
+  caller holding the store can finish. `slopp.kernel.boot/jar-head` supplies
+  the identity and `jar-currency` places it; absent means the process cannot
+  say, which is a checkout or a jar built before the stamp existed. Until it
+  existed, `:host` reported which MODE this process runs in and never which
+  CODE, so \"am I running the slopp that has the fix\" was not answerable from
+  the brief at all — it was answered six times by hand, once wrongly.
+
   (`host-warning` is a different reader and is correct using oracle drift: a
   VERDICT is produced by the oracle, so the oracle's currency is precisely
   what should qualify it.)"
@@ -323,6 +332,7 @@
         clean?                 (assoc :oracle-verified true)
         (seq hdrift)           (assoc :host-drift (vec hdrift))
         hclean                 (assoc :host-verified true)
+        (:jar info)            (assoc :jar (:jar info))
         note                   (assoc :note note)))))
 
 (defn ^:export code-deltas-since
@@ -429,6 +439,31 @@
                       " the host is current. That is the SERVING process, so the"
                       " `restart` tool does not settle it; the next poll retries"
                       " and the MCP server coming up again is the certain fix")))))))
+
+(defn ^:export jar-currency
+  "What the running ARTIFACT is, placed against `store` — `{:head id}` always,
+  plus `:behind n` when this store is the one it came from. Nil `head` → nil.
+
+  `head` is [[slopp.kernel.boot/jar-head]]'s answer: the store head the jar was
+  built from, or nil in a process that is not running one.
+
+  **`:behind` is ABSENT rather than 0 when the head is foreign**, and this is
+  the case the obvious version gets wrong. slopp's jar serves projects that are
+  not slopp, so a head from one store and a delta log from another share
+  nothing; counting deltas after that head's timestamp in THIS log would
+  measure how fast the reader has been writing and report it as the tool's age.
+  The identity still travels, because it is exactly what a human compares by
+  hand across two stores — which is how the six incidents behind this were
+  eventually solved, expensively.
+
+  The count is [[code-deltas-since]] and nothing else. Three artifacts now
+  report staleness — the host, the served app, this — and a fourth spelling
+  that drifted by one op would answer the same question three different ways."
+  [store head]
+  (when head
+    (let [d (first (filter #(= head (:id %)) (store/deltas store)))]
+      (cond-> {:head head}
+        d (assoc :behind (code-deltas-since store (:at d)))))))
 
 (defn ^:export behind
   "How many CODE changes the SERVED app image is behind the store — `0` when

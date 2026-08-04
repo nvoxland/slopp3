@@ -168,6 +168,17 @@
   ;; that has not "loaded" a :done delta is not stale. The set lives in
   ;; store.fields/markers and this is the only place that reads it for this
   ;; question, so the count cannot drift between session_brief and a verdict.
+  ;;
+  ;; That sentence was ASPIRATIONAL for a while and read as enforced.
+  ;; session_brief carried its own byte-identical copy of the expression below
+  ;; — the two agreed, so nothing was wrong and nothing could notice, which is
+  ;; the whole shape of a producer pair. Collapsed 2026-08-05; the claim is now
+  ;; true by construction rather than by comment.
+  ;;
+  ;; Note what would NOT have caught it: a check for a comment that names
+  ;; another form. This comment named none — it asserted UNIQUENESS, which is a
+  ;; claim about a form that does not exist yet, and no per-form check can see
+  ;; the absence of a second one.
   (let [st {:deltas [{:id "d1" :op :add     :at 50}
                      {:id "d2" :op :replace :at 150}
                      {:id "d3" :op :verify  :at 160}
@@ -508,3 +519,47 @@
     (is (re-find #"`restart`" (str line))
         (str "name the verb that builds a fresh verification image: "
              (pr-str line)))))
+
+(deftest the-currency-record-says-which-artifact-is-answering
+  ;; :host said which MODE this process runs in and never which CODE. "Am I
+  ;; running the slopp that has the fix" was therefore unanswerable from the
+  ;; brief, and six incidents answered it by hand — one of them wrongly,
+  ;; reading a jar mid-write.
+  ;;
+  ;; It rides on `info` the way :host-drift does, for the same reason: both are
+  ;; facts about THIS process that only a caller holding the store can finish.
+  (testing "absent when the process cannot say — a checkout, a bare -M run"
+    (is (not (contains? (orient/host-brief {:mode :live :booted-at 100} 0 false nil)
+                        :jar))
+        "no stamp is not a claim of currency"))
+  (testing "present, verbatim, when it is"
+    (let [h (orient/host-brief {:mode :live :booted-at 100
+                                :jar {:head "d23479" :behind 12}}
+                               0 false nil)]
+      (is (= {:head "d23479" :behind 12} (:jar h))))))
+
+(deftest jar-currency-compares-only-when-the-two-heads-share-a-store
+  ;; Three claims, not two — the same discipline current-boot-info holds for
+  ;; :host-drift. "I did not look" must not render as "I looked and it was
+  ;; fine", and here there is a third state the others do not have: a jar can
+  ;; be perfectly current and belong to a DIFFERENT store. slopp's own jar
+  ;; serves other projects, so counting deltas since its head against THEIR
+  ;; log would measure their writing speed and call it the tool's age.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'jc.a "(ns jc.a)\n\n(defn a \"A.\" [] 1)\n")
+               (store/ingest 'jc.b "(ns jc.b)\n\n(defn b \"B.\" [] 2)\n"))
+        ds (store/deltas st)
+        h1 (:id (first ds))]
+    (testing "no stamp — nothing to report, and no invented zero"
+      (is (nil? (orient/jar-currency st nil))))
+    (testing "a head this store has never seen is reported WITHOUT a count"
+      (let [r (orient/jar-currency st "d-from-another-store")]
+        (is (= "d-from-another-store" (:head r))
+            "the identity still travels — it is what a human compares by hand")
+        (is (not (contains? r :behind))
+            "and the count is absent, not zero: this store cannot place that head")))
+    (testing "a head this store HAS is placed, and counted the one way"
+      (let [r (orient/jar-currency st h1)]
+        (is (= h1 (:head r)))
+        (is (= (orient/code-deltas-since st (:at (first ds))) (:behind r))
+            "the same counter the host and the served app report, not a fourth spelling")))))

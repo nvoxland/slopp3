@@ -24,7 +24,7 @@
   do."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.kernel.boot :as boot]
-            [next.jdbc :as jdbc]))
+            [next.jdbc :as jdbc] [clojure.java.io :as io]))
 
 (deftest dependency-order-is-deps-first
   (let [sources {'app.a "(ns app.a)\n(defn f [] 1)\n"
@@ -461,3 +461,31 @@
       (finally
         (doseq [n [old-ns new-ns dep-ns]]
           (when (find-ns n) (remove-ns n)))))))
+
+(deftest a-jar-says-which-store-head-it-was-built-from
+  ;; "Which slopp am I running" cost two shell calls and got the WRONG answer
+  ;; once: an `ls -la` plus `unzip -p … | grep` read a jar while `uber` was
+  ;; still writing it, so mtime and size agreed with a build that had not
+  ;; happened yet. A head delta id cannot race like that — it either says
+  ;; d20977 or d21013.
+  ;;
+  ;; The loader arity is the point of the test and not a hook for it: a
+  ;; resource read that can only consult THIS process's classpath can only ever
+  ;; be exercised by shipping it, which is how framework-version stayed
+  ;; untested. Parent nil, so an absent stamp is absent for real rather than
+  ;; resolved off the running jar.
+  (let [dir  (.toFile (java.nio.file.Files/createTempDirectory
+                       "slopp-jarhead" (make-array java.nio.file.attribute.FileAttribute 0)))
+        urls (into-array java.net.URL [(.toURL (.toURI dir))])]
+    (try
+      (testing "a tree with no stamp says nothing rather than guessing"
+        (is (nil? (boot/jar-head (java.net.URLClassLoader. urls nil)))
+            "a checkout is not an artifact and has no head to be"))
+      (let [f (io/file dir boot/head-resource-path)]
+        (io/make-parents f)
+        (spit f (pr-str {:head "d23479"})))
+      (testing "the stamp a build wrote reads back as the head it was built from"
+        (is (= "d23479" (boot/jar-head (java.net.URLClassLoader. urls nil)))))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (rm! dir))))))

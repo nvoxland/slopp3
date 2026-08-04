@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers] [slopp.kernel.boot :as boot]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -201,7 +201,16 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; it should not — `uber` jarred a two-day-old materialization and
           ;; printed success. The head delta id makes the staleness check exact
           ;; instead of an mtime guess.
-          (spit (io/file target ".slopp-head") (str (:id (last (store/deltas st)))))
+          ;;
+          ;; UNDER src/, so the stamp goes where the code goes. It sat beside
+          ;; the tree at first, which meant the build could read it and nothing
+          ;; downstream ever could: six separate incidents came down to "which
+          ;; slopp am I running", answered by unzipping a jar and grepping for a
+          ;; symbol — a check a human can run and a tool cannot run on itself.
+          ;; `boot/jar-head` reads this back.
+          (let [hf (io/file target "src" boot/head-resource-path)]
+            (io/make-parents hf)
+            (spit hf (pr-str {:head (:id (last (store/deltas st)))})))
           ;; friction 2: the purity tiers, as a classpath RESOURCE under the
           ;; source root, so they ride into a published jar with the code they
           ;; describe. A tier is a declaration in this store, not anything in

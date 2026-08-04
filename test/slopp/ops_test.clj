@@ -342,16 +342,23 @@
   ;; files change, and a live session touches store.db constantly. slopp already
   ;; has the exact provenance token, the head delta id, so the materialization
   ;; states what it was built FROM and the check stops being a guess.
+  ;;
+  ;; It sits UNDER THE SOURCE ROOT, as a classpath resource, for the reason
+  ;; tiers-resource-path gives: a build jars `src`, so a stamp outside it is
+  ;; read by whoever ran the build and by nobody afterwards — which is exactly
+  ;; how six "which slopp am I running" incidents went. Inside, the ARTIFACT
+  ;; can be asked, and slopp.kernel.boot/jar-head is what asks it.
   (let [sess (external/open!)
         dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-stamp" (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try
       (ops/create-ns! sess 'stamp.core :source "(ns stamp.core)\n\n(defn f \"F.\" [x] x)\n")
       (external/build! sess dir)
-      (let [stamp (io/file dir ".slopp-head")
+      (let [stamp (io/file dir "src" boot/head-resource-path)
             head  (:id (last (store/deltas (:store @sess))))]
-        (is (.exists stamp) "the materialization records its provenance")
-        (is (= head (slurp stamp))
+        (is (.exists stamp)
+            "the materialization records its provenance ON THE CLASSPATH")
+        (is (= {:head head} (clojure.edn/read-string (slurp stamp)))
             "and it is exactly the head delta the store stood at"))
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]

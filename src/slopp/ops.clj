@@ -2978,16 +2978,27 @@ recompiled (session/after-write! session ns-sym)]
         ;; treat any failure as absence, never an error
         host     (when-let [info (try ((store/late-ref 'slopp.kernel.boot/current-boot-info))
                                       (catch Throwable _ nil))]
-                   (orient/host-brief info (count (filter #(and (> (:at % 0) (:booted-at info 0))
-                                        (not (contains? fields/markers (:op %))))
-                                   (store/deltas st))) (boolean (when-let [b (:branch @session)]
+                   (orient/host-brief
+                    ;; :jar-head is the ARTIFACT's identity; placing it against
+                    ;; THIS store is the caller's job, because the store a jar
+                    ;; runs against is often not the one it was built from.
+                    (cond-> info
+                      (:jar-head info)
+                      (assoc :jar (orient/jar-currency st (:jar-head info))))
+                    ;; ONE spelling of the code-delta count. This was a second
+                    ;; copy of code-deltas-since — identical today, and the
+                    ;; docstring one namespace over already called itself "the
+                    ;; ONLY spelling of it" while this stood beside it. Three
+                    ;; artifacts now report staleness with it.
+                    (orient/code-deltas-since st (:booted-at info))
+                    (boolean (when-let [b (:branch @session)]
                                (not= "main" (str b))))
-                                     ;; MEASURED, not inferred: without this the
-                                     ;; brief repeats whatever the reload counter
-                                     ;; believes, which is how it once announced
-                                     ;; five stale namespaces to a process that
-                                     ;; held every one of them current.
-                                     (currency/drift st)))
+                    ;; MEASURED, not inferred: without this the
+                    ;; brief repeats whatever the reload counter
+                    ;; believes, which is how it once announced
+                    ;; five stale namespaces to a process that
+                    ;; held every one of them current.
+                    (currency/drift st)))
         intent   (:last-intent @session)
         stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
                    "tell" "every" "should" "their" "them" "than" "then" "they"
