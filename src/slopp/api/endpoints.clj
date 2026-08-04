@@ -62,10 +62,11 @@
     {:status 200
      :body {:ns (str ns)
             :tier tier
-            :forms (mapv (fn [{:keys [name kind sig private? doc schema mass calls
+            :forms (mapv (fn [{:keys [name form-id kind sig private? doc schema mass calls
                                       callers-out callers-out-test
                                       effectful? exported?]}]
-                           {:name (str name) :kind kind :sig sig
+                           {:name (str name) :form-id form-id
+                            :kind kind :sig sig
                             :private? private? :doc doc :schema schema
                             :mass mass :calls calls
                             :callers-out callers-out
@@ -173,3 +174,22 @@
    :web/raw true
    :headers {"Content-Type" "application/edn"}
    :body (pr-str (:contract (:web/reads req)))})
+
+(defn ^{:web/method :get :web/path "/api/module/:m" :web/auth :public
+        :web/response contracts/module-detail
+        :web/reads {:detail [:browse/module [:path-params :m]]}}
+  module
+  "GET /api/module/:m — one module from the inside: its namespaces, the edges
+  among them, the layering, and what crosses its boundary.
+
+  The level below `/api/modules`, which ships module→module `:deps` and so
+  stops exactly where the next question starts — descending into a box on the
+  diagram had nothing behind it.
+
+  An unknown module is a 404, not an empty frame, on the same reasoning
+  `ns-outline` uses: `{:namespaces []}` would say the module exists and holds
+  nothing, which is a different statement and a false one."
+  [req]
+  (if-let [d (:detail (:web/reads req))]
+    {:status 200 :body d}
+    {:status 404 :body {:error "no such module"}}))

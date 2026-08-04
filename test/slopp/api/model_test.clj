@@ -163,13 +163,28 @@
       (is (= "Adds one." (:doc hello)))
       (is (re-find #"\(defn hello" (:source hello))))
     (testing "callers arrive as a CARD, categorized by how the edge was found"
-      (let [static (first (filter #(= :static (:via %)) (:callers hello)))]
+      ;; :via crosses as a STRING, not the keyword :static. It was a keyword
+      ;; until 2026-08-04 while `contracts/form-view` had always declared
+      ;; `[:via :string]` — so a consumer generating a client from the
+      ;; published schema would have rejected every response that HAD a caller.
+      ;;
+      ;; It survived because the two halves were split: this test has callers
+      ;; and never validates the contract, while the contract test validates
+      ;; and its fixture has no callers, leaving the branch that carries :via
+      ;; unreachable there. Either half alone would have caught it.
+      (let [static (first (filter #(= "static" (:via %)) (:callers hello)))]
         (is (= 1 (:count static)))
         (is (= ["demo.b.util/helper"] (mapv :form (:forms static))))
         (is (= "demo.b" (:module (first (:forms static))))
             "a caller row carries its module, so the card reads as a map")
         (is (= (fid 'demo.b.util 'helper) (:form-id (first (:forms static))))
-            "every edge links a permalink — names change, ids do not")))
+            "every edge links a permalink — names change, ids do not")
+        (is (= "[]" (:sig (first (:forms static))))
+            "and the caller carries its CARD, same as a callee row — the
+             argument for inlining rather than linking does not care which
+             way the edge points. `helper` has no docstring, so :sig and
+             :warranty are what prove the card arrived")
+        (is (= {:covered 0} (:warranty (first (:forms static)))))))
     (testing "the graph is never presented as complete"
       (is (string? (:note hello)) "a standing honesty line about what a syntactic reader misses"))
     (testing "callees are INLINED, with the callee's own signature and doc"
@@ -378,7 +393,7 @@
   ;; slopp-ui, 2026-08-03: "ship the graph, not the verdict". They want to
   ;; weight a form's importance themselves and tune it against real
   ;; namespaces without waiting on a slopp release — the same split
-  ;; D-ui-hub part 5 made when it took the laid-out `:picture` out of
+  ;; D-hub part 5 made when it took the laid-out `:picture` out of
   ;; /api/modules. Layering is analysis and only the store can do it;
   ;; weighting is drawing and only a consumer should.
   (let [st (-> (store/empty-store)
@@ -447,3 +462,58 @@
     (testing "every value survives a JSON round trip"
       (is (every? json-shaped? (vals m)))
       (is (every? string? (keys m))))))
+
+(deftest a-form-page-can-reach-PAST-its-neighbours
+  ;; slopp-ui, 2026-08-04 (blocking): "how is control getting from here to
+  ;; here" is the question the research says is both most asked and worst
+  ;; served — LaToza measured 82% of professional developers calling it hard
+  ;; and taking tens of minutes, and the tool built for it moved task success
+  ;; from 14% to 78%. None of that is reachable from a one-hop endpoint.
+  ;;
+  ;; Each node ONCE with an edge list, never a tree: they measured tree
+  ;; replication turning 8 rows into 97, because a frequently-called helper
+  ;; drags its whole subtree in at every occurrence. `tip` below is that
+  ;; helper in miniature — two paths reach it, and it appears once.
+  (let [st   (-> (store/empty-store)
+                 (store/ingest 'dp.leaf "(ns dp.leaf)\n\n(defn tip [x] x)\n")
+                 (store/ingest 'dp.mid
+                               (str "(ns dp.mid (:require [dp.leaf :as leaf]))\n\n"
+                                    "(defn a [x] (leaf/tip x))\n\n"
+                                    "(defn b [x] (leaf/tip x))\n"))
+                 (store/ingest 'dp.top
+                               (str "(ns dp.top (:require [dp.mid :as mid]))\n\n"
+                                    "(defn go [x] (+ (mid/a x) (mid/b x)))\n")))
+        sess (atom {:store st})
+        fid  (fn [ns- nm] (:id (store/form-named st ns- nm)))
+        one  (model/form-view sess (fid 'dp.top 'go))
+        two  (model/form-view sess (fid 'dp.top 'go) nil 2)]
+    (testing "depth 1 is unchanged — the graph is ADDITIVE, not a replacement"
+      (is (nil? (:graph one)))
+      (is (seq (:callees one)) "the one-hop cards are still there"))
+    (let [g   (:graph two)
+          nds (into {} (map (juxt :form-id identity)) (:nodes g))]
+      (testing "depth 2 reaches the leaf, which one hop cannot see"
+        (is (= 2 (:depth g)) (pr-str g))
+        (is (= #{"dp.top/go" "dp.mid/a" "dp.mid/b" "dp.leaf/tip"}
+               (set (map :form (:nodes g))))))
+      (testing "and tip appears ONCE, though two paths reach it"
+        (is (= 1 (count (filter #(= "dp.leaf/tip" (:form %)) (:nodes g))))
+            "the whole point — as a tree it would appear twice"))
+      (testing "the edges carry the repetition instead, which is the honest shape"
+        (is (= 2 (count (filter #(= (fid 'dp.leaf 'tip) (:to %)) (:edges g))))))
+      (testing "every edge says HOW it was found, at every depth"
+        ;; anti-goal #7: never present the reference graph as complete. A chain
+        ;; that is static end to end is a claim you can lean on; one observed
+        ;; rung is not, and only :via can say which you are holding.
+        (is (every? string? (map :via (:edges g))))
+        (is (= #{"static"} (set (map :via (:edges g))))))
+      (testing "a node carries enough to render a path without a second request"
+        (is (= "[x]" (:sig (nds (fid 'dp.leaf 'tip))))))
+      (testing "nothing was truncated at this size, and absence says so"
+        (is (nil? (:truncated g)))))
+    (testing "depth is CLAMPED, not trusted — 3 is the ceiling"
+      (is (= 3 (:depth (:graph (model/form-view sess (fid 'dp.top 'go) nil 9))))))
+    (testing "below 2 there is no graph — the one-hop cards ARE the answer"
+      (is (nil? (:graph (model/form-view sess (fid 'dp.top 'go) nil 1)))))
+    (testing "the whole thing still survives a JSON round trip"
+      (is (json-shaped? two) (pr-str two)))))

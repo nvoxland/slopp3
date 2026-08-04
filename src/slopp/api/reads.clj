@@ -45,15 +45,22 @@
       (model/change-view session from to))))
 
 (defn ^{:web/read :ui/form} form-view-read
-  "Read performer: one form's page model by ID at the requested rendering
-  FIDELITY. Addressed by BOTH halves of the URL — the id from the path,
-  `?view=` from the query — so it is declared over the whole request
-  rather than one segment.
+  "Read performer: one form's page model by ID, at the requested rendering
+  FIDELITY and call-graph DEPTH. Addressed by BOTH halves of the URL — the id
+  from the path, `?view=` and `?depth=` from the query — so it is declared
+  over the whole request rather than one segment.
 
-  nil when no form has that id, or when the fidelity does not exist. Both
-  are a 404, and neither is a reason to render the other thing."
+  nil when no form has that id, or when the fidelity does not exist. Both are
+  a 404, and neither is a reason to render the other thing.
+
+  An unreadable or absent `?depth=` is 1, NOT a 404, and the asymmetry with
+  `?view=` is deliberate: an unknown fidelity has no right answer, so serving
+  a different notation would be lying; depth has an obviously correct floor,
+  and 1 is exactly what every link written before the parameter existed
+  meant. The model clamps the ceiling."
   [{:keys [session]} {:keys [path-params query-params]}]
-  (model/form-view session (str (:id path-params)) (:view query-params)))
+  (model/form-view session (str (:id path-params)) (:view query-params)
+                   (or (parse-long (str (:depth query-params))) 1)))
 
 (defn ^{:web/read :browse/modules} modules-read
   "Read performer: the architecture as module rows plus a drawable canvas.
@@ -140,8 +147,11 @@
                               (when (:name e)
                                 (merge (form-shape e)
                                        (get metrics (str (:name e)))
-                                       {:name (:name e)
-                                        :doc  (form-doc e)}))))
+                                       {:name    (:name e)
+                                        :doc     (form-doc e)
+                                        ;; the ADDRESS, so a row can link to
+                                        ;; the form page rather than to source
+                                        :form-id (:id e)}))))
                       (store/forms st sym))
          :tested-by (model/tests-covering st sym)
          ;; NAMESPACE grain, deliberately not a row field. A row's
@@ -153,3 +163,14 @@
          ;; Always present: undeclared resolves to :external, so there is no
          ;; "nobody said" for an absent key to mean.
          :tier (name (tiers/tier-for st sym))}))))
+
+(defn ^{:web/read :browse/module} module-detail-read
+  "Read performer: one module from the inside — its production namespaces,
+  the ns→ns edges among them, the layering, and the boundary crossings; nil
+  for a module with no production namespaces.
+
+  `:browse/module` beside `:browse/modules`, singular against plural, because
+  they are the same subject at two grains and a reader following one to the
+  other should not have to learn a second vocabulary."
+  [{:keys [session]} m]
+  (model/module-detail session m))

@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.api.endpoints]
             [slopp.api.contracts :as contracts]
-            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs]))
+            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs] [slopp.api.model :as model] [slopp.read.orient :as orient]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -55,11 +55,19 @@
                 ;; nobody declared one, and undeclared IS external — so the
                 ;; badge has three states, never four
                 :tier "external"
-                :forms [{:name "demo.core" :kind "ns" :sig nil
+                ;; :form-id is the row's ADDRESS — the outline links to the form
+                ;; page with it, and that page is keyed by id because ids
+                ;; survive an edit and names do not. Asserted EXACTLY: over a
+                ;; fresh empty-store ingest the ids are deterministic, and they
+                ;; are zero-based and store-wide rather than per-namespace.
+                ;; Both facts were guessed wrong first and corrected by this
+                ;; assertion, which is the argument for pinning the value
+                ;; instead of checking that it is a string.
+                :forms [{:name "demo.core" :form-id "f0" :kind "ns" :sig nil
                          :private? false :doc nil :schema nil
                          :mass 3 :calls [] :callers-out 0 :callers-out-test 0
                          :effectful? false :exported? false}
-                        {:name "hello" :kind "defn" :sig ["[x]"]
+                        {:name "hello" :form-id "f1" :kind "defn" :sig ["[x]"]
                          :private? false :doc "Says hi." :schema nil
                          ;; (defn hello "Says hi." [x] x) — seven sexpr nodes,
                          ;; and the docstring is ONE of them however long it
@@ -76,11 +84,14 @@
       (let [r (GET "/api/ns/demo.util")]
         (is (= {:ns "demo.util"
                 :tier "external"
-                :forms [{:name "demo.util" :kind "ns" :sig nil
+                ;; ids continue across the second ingest rather than restarting per
+                ;; namespace — a form id is store-wide, which is what makes it
+                ;; a permalink
+                :forms [{:name "demo.util" :form-id "f3" :kind "ns" :sig nil
                          :private? false :doc nil :schema nil
                          :mass 3 :calls [] :callers-out 0 :callers-out-test 0
                          :effectful? false :exported? false}
-                        {:name "undocumented" :kind "defn" :sig ["[x]"]
+                        {:name "undocumented" :form-id "f4" :kind "defn" :sig ["[x]"]
                          :private? false :doc nil :schema nil
                          :mass 6 :calls [] :callers-out 0 :callers-out-test 0
                          :effectful? false :exported? false}]
@@ -254,8 +265,8 @@
 
     (testing "the document is versioned and lists the typed endpoints"
       (is (= 1 (:slopp/contract-version doc)))
-      (is (= #{"/api/namespaces" "/api/ns/:ns" "/api/timeline" "/api/change/:range"
-               "/api/form/:id" "/api/source/:ns/:name" "/api/modules"}
+      (is (= #{"/api/change/:range" "/api/namespaces" "/api/source/:ns/:name" "/api/ns/:ns"
+      "/api/timeline" "/api/modules" "/api/module/:m" "/api/form/:id"}
              (set (keys by-path)))))
 
     (testing "the published schema IS the var the endpoint declares"
@@ -291,7 +302,8 @@
             src (fn [ns- n] (str (store/form-named st ns- n)))]
 
         (testing "the same wrappers local generation produces, by name"
-          (is (= #{"namespaces" "ns-outline" "timeline" "change" "form" "source" "modules"}
+          (is (= #{"namespaces" "ns-outline" "timeline" "change" "form" "source"
+                   "modules" "module"}
                  (set (:wrappers out)))
               (pr-str out)))
 
@@ -371,7 +383,7 @@
   ;; carry how IMPORTANT a form is within its namespace.
   ;;
   ;; They asked for the FACTS and explicitly not an `:importance 0.82`, on the
-  ;; argument D-ui-hub part 5 already made about the laid-out `:picture`:
+  ;; argument D-hub part 5 already made about the laid-out `:picture`:
   ;; the call graph and the size of a form have one right answer and only the
   ;; store can see them; weighting them into a score, and bucketing that score
   ;; into perceptible steps, is drawing.
@@ -460,3 +472,191 @@
         (is (= "external" (:tier (:body r))) (pr-str (:body r)))
         (is (m/validate contracts/ns-outline (:body r))
             (pr-str (m/explain contracts/ns-outline (:body r))))))))
+
+(deftest an-outline-row-carries-the-ADDRESS-of-the-form-it-describes
+  ;; slopp-ui, 2026-08-04: the outline links to /store/source/<ns>/<name>
+  ;; "because that is the only address it can construct". Structure-first needs
+  ;; it to link to the FORM page, and the form page is keyed by id — which is
+  ;; right: an id is stable across edits and a name is not, which is the whole
+  ;; reason form-view is addressed by one.
+  ;;
+  ;; So the row a consumer renders and the page it links to have to agree on
+  ;; the address, and until now only one of them had one.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'demo.addr
+                              (str "(ns demo.addr)\n\n"
+                                   "(defn one [x] x)\n\n"
+                                   "(defn two [x] (one x))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.addr"})
+        rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
+    (is (= 200 (:status r)))
+    (is (m/validate contracts/ns-outline (:body r))
+        (pr-str (m/explain contracts/ns-outline (:body r))))
+    (testing "every row carries an id, the ns form included"
+      (is (= 3 (count rows)) (pr-str (keys rows)))
+      (is (every? string? (map :form-id (vals rows))) (pr-str rows)))
+    (testing "and the id ADDRESSES that form — the link resolves to the same name"
+      ;; the half that makes this more than a non-nil check: an id that is
+      ;; present but points at a sibling would satisfy every assertion above
+      (doseq [[nm row] rows]
+        (is (= nm (:name (model/form-view (atom {:store st}) (:form-id row))))
+            (str nm " should address itself, got "
+                 (pr-str (:form (model/form-view (atom {:store st}) (:form-id row))))))))))
+
+(deftest a-module-can-be-DESCENDED-into-its-namespaces
+  ;; slopp-ui, 2026-08-04 (blocking): /api/modules ships module→module :deps,
+  ;; so "what does slopp.edit look like inside" — the obvious next click on a
+  ;; box — had no data behind it at all.
+  ;;
+  ;; :boundary is the part they said they would not have thought to ask for a
+  ;; week ago, and it is the part that makes the level readable: a descended
+  ;; diagram that silently drops the edges LEAVING the module is context-free,
+  ;; because you cannot tell a namespace that is the module's front door from
+  ;; one nothing outside touches.
+  ;;
+  ;; THREE segments on purpose. `module-of` is the first two, so `sh.core`
+  ;; would be its OWN module and there would be nothing to descend into — the
+  ;; first spelling of this fixture 404'd for exactly that reason.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'sh.mod.core "(ns sh.mod.core)\n(defn base [x] x)\n")
+                (store/ingest 'sh.mod.impl
+                              (str "(ns sh.mod.impl (:require [sh.mod.core :as core]))\n"
+                                   "(defn helper [x] (core/base x))\n"))
+                (store/ingest 'sh.mod.door
+                              (str "(ns sh.mod.door (:require [sh.mod.impl :as impl]))\n"
+                                   "(defn ^:export enter [x] (impl/helper x))\n"))
+                (store/ingest 'out.app
+                              (str "(ns out.app (:require [sh.mod.door :as door]))\n"
+                                   "(defn go [x] (door/enter x))\n"))
+                (store/ingest 'sh.mod.core-test
+                              (str "(ns sh.mod.core-test\n"
+                                   "  (:require [clojure.test :refer [deftest is]]\n"
+                                   "            [sh.mod.core :as core]))\n"
+                                   "(deftest base-t (is (= 1 (core/base 1))))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r   (web/handle! ctx {:request-method :get :uri "/api/module/sh.mod"})
+        b   (:body r)
+        nss (into {} (map (juxt :ns identity)) (:namespaces b))]
+    (is (= 200 (:status r)) (pr-str r))
+    (is (m/validate contracts/module-detail b)
+        (pr-str (m/explain contracts/module-detail b)))
+    (testing "the production namespaces, and a -test one is not a peer of them"
+      (is (= ["sh.mod.core" "sh.mod.door" "sh.mod.impl"] (mapv :ns (:namespaces b))))
+      (is (nil? (nss "sh.mod.core-test"))
+          "a test folds into the module it covers; listing it puts two things
+           at the same rung that are not peers — module-index's own argument"))
+    (testing "ns→ns edges WITHIN the module — the thing /api/modules cannot say"
+      (is (= ["sh.mod.core"] (:deps (nss "sh.mod.impl"))))
+      (is (= ["sh.mod.impl"] (:deps (nss "sh.mod.door"))))
+      (is (= [] (:deps (nss "sh.mod.core")))))
+    (testing "layering INSIDE the module, because only the store can compute it"
+      (is (= [["sh.mod.core"] ["sh.mod.impl"] ["sh.mod.door"]] (:layers b)))
+      (is (= [] (:cycles b))))
+    (testing "the boundary: edges LEAVING, so a front door is distinguishable"
+      (is (= [] (:out (:boundary b)))
+          "nothing in module sh.mod reaches outside it — and sh.mod.impl→sh.mod.core,
+           which IS a real edge, is absent because an INTERNAL edge is already
+           in :deps and repeating it here would double every arrow"))
+    (testing "and edges ARRIVING, which is what names the front door"
+      (is (= [{:from "out.app" :from-module "out.app" :to "sh.mod.door"}]
+             (:in (:boundary b)))))
+    (testing "a module with no production namespaces is a 404, not an empty frame"
+      (let [r (web/handle! ctx {:request-method :get :uri "/api/module/no.such"})]
+        (is (= 404 (:status r)))
+        (is (not (m/validate contracts/module-detail (:body r))))))))
+
+(deftest a-caller-arrives-with-the-same-weight-as-a-callee
+  ;; slopp-ui, 2026-08-04: "a callee arrives with its card — sig, doc, why,
+  ;; warranty. A caller arrives as a name." The argument for inlining callee
+  ;; cards rather than linking them is that a cold-arrived page has to be
+  ;; answerable, and that argument is symmetric while the wire was not:
+  ;; rendering callers with the same weight meant one extra /api/form/:id per
+  ;; caller, which is exactly the N+1 the inlining exists to avoid.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'sym.core
+                              (str "(ns sym.core)\n"
+                                   "(defn ^{:why \"the shared spelling\"} base\n"
+                                   "  \"Base case.\" [x] x)\n"))
+                (store/ingest 'sym.caller
+                              (str "(ns sym.caller (:require [sym.core :as core]))\n"
+                                   "(defn ^{:why \"drives base\"} go \"Goes.\" [x] (core/base x))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        fid (:id (store/form-named st 'sym.core 'base))
+        r   (web/handle! ctx {:request-method :get :uri (str "/api/form/" fid)})
+        b   (:body r)
+        clr (first (:forms (first (:callers b))))]
+    (is (= 200 (:status r)) (pr-str r))
+    (is (m/validate contracts/form-view b)
+        (pr-str (m/explain contracts/form-view b)))
+    (testing "the caller is there at all — the control, so the fields below mean something"
+      (is (= "sym.caller/go" (:form clr)) (pr-str (:callers b))))
+    (testing "and it carries what a callee row carries, so no second request is needed"
+      ;; :sig is UNWRAPPED for a single arity — a string, not a one-element
+      ;; vector — which is the shape a callee row already has. Symmetry means
+      ;; matching that, not inventing a second one.
+      (is (= "[x]" (:sig clr)) (pr-str clr))
+      (is (= "Goes." (:doc clr)))
+      (is (map? (:warranty clr)) (pr-str clr))
+      (is (int? (:covered (:warranty clr)))))
+    (testing "the row IS the card, so the two cannot drift apart"
+      ;; the assertion that outlives a field list: whatever `form-card` grows,
+      ;; a caller row grows with it. `:why` in particular comes from the WRITE
+      ;; PROMPT (store/prompt-by-form) rather than from ^{:why} metadata, so a
+      ;; store/ingest fixture has none — listing fields would have pinned this
+      ;; fixture's shape instead of the property.
+      (let [card (dissoc (orient/form-card (atom {:store st}) 'sym.caller 'go) :form)]
+        ;; KEYS, not values. `json-card` — the one symbol→string conversion the
+        ;; whole model funnels through — is private to slopp.api.model, and
+        ;; redoing it here would be a second derivation of exactly the thing it
+        ;; exists to own. The values are spot-checked above; what this pins is
+        ;; that no field of the card is DROPPED on the way to the row, which is
+        ;; the part that would silently regress.
+        (is (seq card) "the card is not empty, or this proves nothing")
+        (is (every? #(contains? clr %) (keys card))
+            (str "the row drops " (pr-str (remove #(contains? clr %) (keys card)))))))
+    (testing "the id is still there — a card is added, nothing is traded for it"
+      (is (string? (:form-id clr)))
+      (is (= 1 (:calls clr)))
+      (is (= "sym.caller" (:ns clr))))))
+
+(deftest the-form-page-takes-a-DEPTH-off-the-query-string
+  ;; The model half is pinned in slopp.api.model-test; this is the wire: that
+  ;; ?depth= arrives, that its absence still means exactly what every link
+  ;; written before the parameter existed meant, and that garbage falls back
+  ;; instead of 404ing — an unknown FIDELITY has no right answer, a bad depth
+  ;; has an obvious floor.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'wd.leaf "(ns wd.leaf)\n\n(defn tip [x] x)\n")
+                (store/ingest 'wd.mid
+                              (str "(ns wd.mid (:require [wd.leaf :as leaf]))\n\n"
+                                   "(defn a [x] (leaf/tip x))\n"))
+                (store/ingest 'wd.top
+                              (str "(ns wd.top (:require [wd.mid :as mid]))\n\n"
+                                   "(defn go [x] (mid/a x))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        fid (:id (store/form-named st 'wd.top 'go))
+        GET (fn [q] (web/handle! ctx {:request-method :get
+                                      :uri (str "/api/form/" fid)
+                                      :query-string q}))]
+    (testing "no depth — unchanged, and that is the compatibility promise"
+      (let [b (:body (GET nil))]
+        (is (nil? (:graph b)))
+        (is (m/validate contracts/form-view b)
+            (pr-str (m/explain contracts/form-view b)))))
+    (testing "depth=2 reaches the leaf one hop cannot see"
+      (let [b (:body (GET "depth=2"))]
+        (is (= 2 (:depth (:graph b))) (pr-str (:graph b)))
+        (is (contains? (set (map :form (:nodes (:graph b)))) "wd.leaf/tip"))
+        (is (m/validate contracts/form-view b)
+            (pr-str (m/explain contracts/form-view b)))))
+    (testing "garbage is the floor, not a 404 — an unreadable depth has a right answer"
+      (let [r (GET "depth=banana")]
+        (is (= 200 (:status r)))
+        (is (nil? (:graph (:body r))))))
+    (testing "an unknown FIDELITY is still a 404, because that one does not"
+      (is (= 404 (:status (GET "view=nope&depth=2")))))))

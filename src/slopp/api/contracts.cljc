@@ -63,6 +63,7 @@
   nothing checks."
   [:map
    [:name :string]
+   [:form-id :string]
    [:kind :string]
    [:sig [:maybe [:sequential :string]]]
    [:private? :boolean]
@@ -195,6 +196,50 @@
    [:tier :string]
    [:foundation :boolean]
    [:deps [:sequential :string]]])
+
+(def module-detail
+  "`GET /api/module/:m` — one module from the inside: its namespaces, how they
+  depend on each other, and the edges that cross its boundary.
+
+  The level below `module-index`, and it exists because that one stops exactly
+  where a reader's question starts: `/api/modules` ships module→module `:deps`,
+  so descending into a box on the diagram had no data behind it at all.
+
+  Same split as the level above — ANALYSIS crosses, DRAWING does not.
+  `:layers` is here for the identical reason it is there: a topological
+  layering comes from the store's own graph and no consumer can recompute it,
+  while placing boxes on those rungs is drawing.
+
+  `:boundary` is the field this level cannot be read without. A descended
+  diagram that shows only internal edges is context-free — you cannot tell a
+  namespace that is the module's front door from one nothing outside touches,
+  and those are different things to a reader. `:out` and `:in` name the
+  OUTSIDE namespace and its module, so a consumer can draw them as labelled
+  stubs on the frame without a second request.
+
+  An internal edge appears in a namespace's `:deps` and NOT in `:boundary` —
+  one arrow, one place. `-test` namespaces are excluded exactly as
+  `module-index` excludes them: a test folds into the module it covers, so
+  listing it puts two things at the same rung that are not peers."
+  [:map
+   [:module :string]
+   [:tier [:enum "pure" "internal" "external"]]
+   [:namespaces [:sequential [:map
+                              [:ns :string]
+                              [:forms :int]
+                              [:tier [:enum "pure" "internal" "external"]]
+                              [:deps [:sequential :string]]]]]
+   [:boundary [:map
+               [:out [:sequential [:map
+                                   [:from :string]
+                                   [:to :string]
+                                   [:to-module :string]]]]
+               [:in [:sequential [:map
+                                  [:from :string]
+                                  [:from-module :string]
+                                  [:to :string]]]]]]
+   [:layers [:sequential [:sequential :string]]]
+   [:cycles [:sequential [:sequential :string]]]])
 
 (def module-index
   "`GET /api/modules` — the Code landing: one row per module, the layering,
