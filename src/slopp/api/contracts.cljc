@@ -107,6 +107,28 @@
   the source exactly, so a form renders from tokens alone."
   [:tuple :string :string])
 
+(def form-request
+  "`GET /api/form/:id` — what a caller SENDS.
+
+  `:id` is interpolated into the path; `:view` and `:depth` travel as query
+  parameters, and nothing here says so — the generated client reads the
+  METHOD. `:web/request` means what the caller sends, and a GET sends a query
+  string for the same reason a POST sends a body.
+
+  It exists because without it the generated wrapper takes a params map and
+  only the path ever reads from it, so `?depth=` answered correctly on the wire
+  and was unreachable through the client — which pushes a consumer toward
+  hand-rolling a fetch, the exact thing `direct-http` refuses and the typed
+  client exists to prevent.
+
+  Both modifiers are `:optional`, and that is the compatibility promise: a
+  wrapper called with only `:id` sends no query string at all, which is the
+  request every link written before these existed already made."
+  [:map
+   [:id :string]
+   [:view {:optional true} :string]
+   [:depth {:optional true} :int]])
+
 (def form-view
   "`GET /api/form/:id` — one form's permalink model.
 

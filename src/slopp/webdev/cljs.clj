@@ -245,7 +245,14 @@
                     :method   method
                     :path     (:web/path meta)
                     :endpoint endpoint
-                    :request  (if (#{:post :put :patch} method) req {:kind :none})
+                    ;; whatever the verb. WHETHER there is a request is the endpoint's
+                    ;; declaration; HOW it travels — body or query string — is
+                    ;; render-wrapper's decision from the method. Dropping it
+                    ;; here on a non-body verb removed the caller's only way to
+                    ;; say anything the PATH does not carry, which is how
+                    ;; `?depth=` came to answer on the wire while the generated
+                    ;; wrapper had nowhere to put it.
+                    :request  req
                     :response resp})))))
    {:wrappers [] :problems []}
    (web/web-endpoint-rows store)))
@@ -284,16 +291,48 @@
    spec: marked ^{:generated <endpoint>} (provenance + edit-protection) and
    ^:export (client-API surface), validating the request against its schema
    before send and the response after receive (malli + json-transformer at the
-   JSON boundary). A body verb takes/validates a params map; path :segments are
-   interpolated from that map."
+   JSON boundary). Path :segments are interpolated from the params map.
+
+   **How the request TRAVELS follows from the method, not from a second
+   declaration.** A body verb (POST/PUT/PATCH) JSON-encodes the params map into
+   the body; anything else sends it as a QUERY STRING. `:web/request` already
+   means \"what the caller sends\", and the contract already carries the method,
+   so a `?depth=`-style parameter needs no new vocabulary — it needs the
+   generator to stop assuming every declared request is a body.
+
+   The PATH params are dissoc'd from the query: a segment interpolated into the
+   url must not also arrive as a query key, and repeating it would make the url
+   depend on map ordering."
   [{:keys [fn-name method path endpoint request response]}]
   (let [verb      (str/upper-case (clojure.core/name method))
         req-code  (schema-form request)
         resp-code (schema-form response)
-        params?   (boolean (or req-code (some #(str/starts-with? % ":")
-                                              (str/split path #"/"))))
+        segs      (keep #(when (str/starts-with? % ":") (keyword (subs % 1)))
+                        (str/split path #"/" -1))
+        body?     (contains? #{:post :put :patch} method)
+        params?   (boolean (or req-code (seq segs)))
         arglist   (if params? "[params]" "[]")
-        opts      (if req-code
+        query     (when (and req-code (not body?))
+                    (str " (qs " (if (seq segs)
+                                   (str "(dissoc params "
+                                        (str/join " " (map pr-str segs)) ")")
+                                   "params")
+                         ")"))
+        ;; only wrap in (str …) when there is something to append. Otherwise
+        ;; every existing wrapper gains a pointless `(str "/api/timeline")` —
+        ;; a diff across all generated code for no behaviour, in a namespace
+        ;; whose contract is that it is regenerated wholesale and read by eye.
+        url-expr  (let [pe (path-expr path)]
+                    (cond
+                      (nil? query) pe
+                      ;; the path already IS a (str …) when it interpolates a
+                      ;; segment — splice into it rather than nesting, because
+                      ;; generated code is read by whoever consumes the API and
+                      ;; (str (str …) …) is a seam showing
+                      (str/starts-with? pe "(str ")
+                      (str (subs pe 0 (dec (count pe))) query ")")
+                      :else (str "(str " pe query ")")))
+        opts      (if (and req-code body?)
                     (str "(clj->js {:method \"" verb "\" "
                          ":headers {\"Content-Type\" \"application/json\"} "
                          ":body (js/JSON.stringify (clj->js (m/encode " req-code
@@ -316,7 +355,7 @@
          "  \"" verb " " path " — generated client wrapper (D-web-contracts).\"\n"
          "  " arglist "\n"
          (or validate "")
-         "  (-> (js/fetch (url " (path-expr path) ") " opts ")\n"
+         "  (-> (js/fetch (url " url-expr ") " opts ")\n"
          "      (.then (fn [resp] (.json resp)))\n"
          handle ")")))
 
@@ -361,6 +400,20 @@
          "(defonce ^:export base (atom \"\"))\n\n"
          "(defn ^:export set-base! [b] (reset! base b))\n\n"
          "(defn- url [p] (str @base p))\n\n"
+         ;; the query-string builder every non-body wrapper calls. reduce-kv
+         ;; and not str/join on purpose: this namespace requires malli and the
+         ;; schema namespaces and nothing else, and a generated ns that drags
+         ;; in a dependency is one that can fail to compile for a reason its
+         ;; author never wrote. A nil value is DROPPED rather than sent as
+         ;; "null" — an absent optional and an explicit nil mean the same
+         ;; thing to a query string, and only one of them is spellable.
+         "(defn- qs [m]\n"
+         "  (reduce-kv (fn [acc k v]\n"
+         "               (if (nil? v)\n"
+         "                 acc\n"
+         "                 (str acc (if (= \"\" acc) \"?\" \"&\")\n"
+         "                      (name k) \"=\" (js/encodeURIComponent (str v)))))\n"
+         "             \"\" m))\n\n"
          (str/join "\n\n" (map render-wrapper wrappers)))))
 
 (defn- served-by-a-mount?

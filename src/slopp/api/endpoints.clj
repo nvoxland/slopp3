@@ -103,16 +103,24 @@
     {:status 404 :body {:error "no such change range"}}))
 
 (defn ^{:web/method :get :web/path "/api/form/:id" :web/auth :public
+        :web/request contracts/form-request
         :web/response contracts/form-view
         :web/reads {:view [:ui/form []]}}
   form
-  "GET /api/form/:id — one form's permalink model, at the requested
-  rendering FIDELITY (`?view=`).
+  "GET /api/form/:id — one form's permalink model, at the requested rendering
+  FIDELITY (`?view=`) and call-graph DEPTH (`?depth=`).
 
   Declared over the WHOLE request rather than one segment, because it is
   addressed by both halves of the URL. An unknown id and an unknown fidelity
   are the same answer — 404 — and neither is a reason to quietly render the
-  other thing."
+  other thing. An unreadable depth is NOT one of those: it has an obvious
+  floor, and 1 is what every link written before the parameter existed meant.
+
+  `:web/request` is declared even though this is a GET with no body. It is
+  what a caller SENDS, and how that travels follows from the method — without
+  it the generated client takes a params map that only the path reads from, so
+  `?depth=` answers on the wire and is unreachable through the typed client,
+  which pushes a consumer toward the hand-rolled fetch `direct-http` refuses."
   [req]
   (if-let [v (:view (:web/reads req))]
     {:status 200 :body v}

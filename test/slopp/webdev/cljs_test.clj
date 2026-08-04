@@ -226,7 +226,31 @@
     (testing "schema refs resolve to fully-qualified vars in the :cljc contracts ns"
       (is (= 'shop.contracts/order (get-in (first wrappers) [:request :sym])))
       (is (= 'shop.contracts/order (get-in (first wrappers) [:response :sym])))
-      (is (= :none (get-in (second wrappers) [:request :kind])) "a GET has no request schema"))
+      (is (= :none (get-in (second wrappers) [:request :kind]))
+          "this GET DECLARES no :web/request — :none because there is none"))
+    (testing "a GET that DOES declare a request keeps it"
+      ;; The assertion above had the right value for the wrong reason, and the
+      ;; difference is what shipped a broken client: with no declaration on the
+      ;; fixture, `:none` was ambiguous between "the planner drops it" and
+      ;; "there was none", and the planner DID drop it —
+      ;; `(if (#{:post :put :patch} method) req {:kind :none})`.
+      ;;
+      ;; So `?depth=` on /api/form/:id answered on the wire and the generated
+      ;; wrapper had nowhere to put it, which pushes a consumer toward the
+      ;; hand-rolled fetch `direct-http` refuses.
+      (let [st3 (store/ingest st 'shop.api3
+                              (str "(ns shop.api3)\n\n"
+                                   "(defn ^{:web/method :get :web/path \"/api/search\""
+                                   " :web/request shop.contracts/order"
+                                   " :web/response shop.contracts/order}"
+                                   " search [req] req)\n"))
+            spec (first (filter #(= 'search (:fn-name %))
+                                (:wrappers (cljs/client-wrapper-specs st3))))]
+        (is (some? spec))
+        (is (= 'shop.contracts/order (get-in spec [:request :sym]))
+            "a GET sends its request as a QUERY STRING — how it travels follows
+             from the method, and dropping the schema removes the caller's only
+             way to say anything the path does not carry")))
     (testing "the source endpoint rides each spec as provenance"
       (is (= 'shop.api/create-order (:endpoint (first wrappers)))))
     (testing "a clean fixture yields no problems"
@@ -667,3 +691,54 @@
       (is (re-find #"(?i)regenerate|never hand-edit" src) src))
     (testing "the requires still follow, so the docstring did not displace them"
       (is (re-find #"\(:require \[malli\.core :as m\]" src) src))))
+
+(deftest a-GET-wrapper-sends-what-the-path-does-not-consume-as-a-QUERY
+  ;; slopp-ui, 2026-08-04: `?depth=N` answered correctly on the wire and was
+  ;; unreachable through the generated client, because a wrapper takes a params
+  ;; map and only the PATH ever reads from it. And `direct-http` is a swept
+  ;; rule, correctly — so hand-rolling a fetch past the generated client is
+  ;; precisely the workaround a typed client exists to prevent.
+  ;;
+  ;; No new declaration for this. `:web/request` already means "what the caller
+  ;; SENDS"; how it travels follows from the METHOD, which the contract already
+  ;; carries. A body verb keeps sending a body; a GET sends a query string.
+  (let [inline (fn [s] {:kind :inline :schema s})
+        wrap   (fn [method path request]
+                 (#'cljs/render-wrapper
+                  {:fn-name "form" :method method :path path
+                   :endpoint "demo/form" :request request :response nil}))
+        schema (inline '[:map [:id :string] [:depth {:optional true} :int]])
+        get-   (wrap :get "/api/form/:id" schema)
+        post   (wrap :post "/api/form/:id" schema)
+        bare   (wrap :get "/api/things" nil)]
+    (testing "the GET wrapper builds a query string, and never a body"
+      (is (re-find #"qs" get-) get-)
+      (is (not (re-find #"JSON.stringify" get-))
+          "a GET with a body is the bug being fixed, not a different spelling of it"))
+    (testing "the PATH params are not repeated in the query"
+      ;; :id is interpolated into the path; sending it twice would be wrong and
+      ;; would make every url depend on the map's ordering
+      (is (re-find #"dissoc params :id" get-) get-))
+    (testing "a body verb is untouched — it still sends a body"
+      (is (re-find #"JSON.stringify" post) post)
+      (is (not (re-find #"\(qs " post))))
+    (testing "a GET with NO request schema and no path params is what it was"
+      (is (not (re-find #"qs" bare)) bare)
+      (is (re-find #"\n  \[\]\n" bare) bare))
+    (testing "the url expression is ONE str, not a str inside a str"
+      ;; generated code is read by whoever consumes the API, so a nested
+      ;; (str (str …) …) is a seam showing. And an unchanged wrapper has to
+      ;; stay byte-identical: this namespace is regenerated wholesale and
+      ;; diffed by eye, so a cosmetic churn across every endpoint is noise
+      ;; that hides the one line that actually moved.
+      (is (re-find #"\(url \(str \"/api/form/\" \(:id params\) \(qs \(dissoc params :id\)\)\)\)" get-)
+          get-)
+      (is (re-find #"\(url \"/api/things\"\)" bare) bare))
+    (testing "and the runtime helper the wrapper calls actually exists"
+      ;; the half that would otherwise ship a wrapper calling nothing
+      (let [src (cljs/render-client-ns
+                 'demo.client.api
+                 [{:fn-name "form" :method :get :path "/api/form/:id"
+                   :endpoint "demo/form" :response nil :request schema}])]
+        (is (re-find #"\(defn- qs " src) src)
+        (is (re-find #"encodeURIComponent" src))))))
