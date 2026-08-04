@@ -474,8 +474,17 @@
              mutate? (contains? #{:post :put :patch :delete} method)
              ;; a body verb carries a request; every other verb declares none,
              ;; the same split client-wrapper-specs makes locally
-             req     (when (and request (contains? #{:post :put :patch} method))
-                       (symbol (str base "-request")))
+             ;; ANY verb that declares a request carries it — a body verb sends it
+             ;; as a body, everything else as a query string, and render-wrapper
+             ;; decides which from the method.
+             ;;
+             ;; This used to drop it on a non-body verb, matching a split
+             ;; client-wrapper-specs made locally — and a comment here SAID SO,
+             ;; which is how it survived being fixed there: the prose asserted a
+             ;; parity in the same commit that broke it, positioned exactly
+             ;; where a reader checks whether both paths were covered.
+             ;; The parity is a TEST now, over both producers.
+             req     (when request (symbol (str base "-request")))
              resp    (when response (symbol (str base "-response")))
              ref     (fn [sym] (if sym
                                  {:kind :var

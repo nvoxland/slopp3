@@ -742,3 +742,65 @@
                    :endpoint "demo/form" :response nil :request schema}])]
         (is (re-find #"\(defn- qs " src) src)
         (is (re-find #"encodeURIComponent" src))))))
+
+(deftest both-client-producers-agree-about-what-a-GET-SENDS
+  ;; There are TWO producers of a wrapper spec and they must agree:
+  ;; `client-wrapper-specs` reads the LOCAL store, `contract->plan` reads a
+  ;; PUBLISHED contract document. contract->plan's own docstring makes the
+  ;; claim — "generating against someone else's API and against your own
+  ;; produce the same kind of namespace".
+  ;;
+  ;; It was a COMMENT, and that is the finding. Fixing the local producer to
+  ;; keep a GET's request made the remote one wrong in the same commit, and the
+  ;; line above it read:
+  ;;
+  ;;   ;; a body verb carries a request; every other verb declares none,
+  ;;   ;; the same split client-wrapper-specs makes locally
+  ;;
+  ;; — prose asserting a parity that had just been broken, positioned exactly
+  ;; where the next reader checks whether both paths were covered. slopp-ui
+  ;; read it, believed it, and looked elsewhere first.
+  ;;
+  ;; Their rule, which is why this test exists in this shape: **a comment
+  ;; naming another function as the reason this code is correct is a candidate
+  ;; for being that function's test instead.**
+  (let [schema '[:map [:id :string] [:depth {:optional true} :int]]
+        url-of (fn [spec]
+                 (second (re-find #"js/fetch \((url .*?)\) \(clj->js"
+                                  (#'cljs/render-wrapper spec))))
+        ;; LOCAL: the store's own endpoint
+        st     (-> (store/empty-store)
+                   (store/ingest 'shop.contracts
+                                 (str "(ns shop.contracts)\n\n(def q " (pr-str schema) ")\n")))
+        st     (first (store/record-module-platform st "shop.contracts" :cljc))
+        st     (store/ingest st 'shop.api
+                             (str "(ns shop.api)\n\n"
+                                  "(defn ^{:web/method :get :web/path \"/api/form/:id\""
+                                  " :web/request shop.contracts/q"
+                                  " :web/response shop.contracts/q}"
+                                  " form [req] req)\n"))
+        local  (first (filter #(= 'form (:fn-name %))
+                              (:wrappers (cljs/client-wrapper-specs st))))
+        ;; REMOTE: the same endpoint as a published contract DOCUMENT. Built as
+        ;; data on purpose — that is exactly what crosses the wire, and a
+        ;; consumer has no store to read.
+        doc    {:slopp/contract-version 1
+                :endpoints [{:method :get :path "/api/form/:id" :name 'form
+                             :request schema :response schema}]}
+        remote (first (:wrappers (cljs/contract->plan doc 'demo.client.contracts)))]
+    (testing "both producers found the endpoint at all — the control"
+      (is (some? local))
+      (is (some? remote)))
+    (testing "both keep the request, so both can express what the path does not carry"
+      (is (not= :none (:kind (:request local))) (pr-str local))
+      (is (not= :none (:kind (:request remote))) (pr-str remote)))
+    (testing "and they render the SAME url expression, which is the parity itself"
+      ;; not the whole wrapper: the schema SYMBOL legitimately differs (a
+      ;; published contract lost the publisher's var names, so the remote path
+      ;; re-derives `form-request` from the endpoint). The url is the part that
+      ;; must not depend on which producer you came through.
+      (is (= "url (str \"/api/form/\" (:id params) (qs (dissoc params :id)))"
+             (url-of local))
+          (url-of local))
+      (is (= (url-of local) (url-of remote))
+          (str "local: " (url-of local) "\nremote: " (url-of remote))))))
