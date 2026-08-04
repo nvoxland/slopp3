@@ -214,7 +214,7 @@ Three things worth knowing:
 | Tool | What it does |
 |---|---|
 | `ns_create {ns requires\|source}` | A brand-new namespace. Never overwrites. |
-| `ns_rename {old new}` | Rename a whole namespace everywhere. Returns `:left-behind` (what no rewrite reaches) and `:module-debt` (edges to declare, cycles `module_dep` will refuse) — a relocation runs no write gates, so the result is the only notice. |
+| `ns_rename {old new}` | Rename a whole namespace everywhere. Returns `:left-behind` (what no rewrite reaches — strings, qualified keywords, the `-test` sibling, and under `:alias` the callers whose `:as` still spells the old name, each with the `:suggest` to hand `ns_realias`) and `:module-debt` (edges to declare, cycles `module_dep` will refuse) — a relocation runs no write gates, so the result is the only notice. |
 | `ns_delete {ns}` | Retire an empty namespace. Refuses while any form remains or anything still requires it. |
 | `ns_add_require` / `ns_remove_require` | One require clause. Never hand-edit an `ns` form. |
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |
@@ -226,7 +226,7 @@ Three things worth knowing:
 | `edit_revert {ns name to?}` | Revert one form to an earlier version. |
 | `change_signature {ns name source calls}` | New `defn` plus a `$1..$9` call-site template, as one intent. |
 | `edit_rename {ns old new}` | Rename a form and all its references, shadow-safe. |
-| `ns_realias {ns old new}` | Rename a namespace's require alias: the `:as` and every `old/sym` in that namespace, as one verified write. The two halves cannot be separate writes — between them the namespace does not load. Reach for it after `ns_rename`, which leaves the `:as` untouched. |
+| `ns_realias {ns old new}` | Rename a namespace's require alias: the `:as` and every `old/sym` in that namespace, as one verified write. The two halves cannot be separate writes — between them the namespace does not load. Reach for it after `ns_rename`, which leaves the `:as` untouched — and names each one it stranded under `:left-behind :alias`, with the alias to pass here. |
 | `rename_sweep {from to}` | A concept rename store-wide: namespaces, vars, keywords, prose. `dry-run` first. |
 | `edit_requalify {ns name}` | Namespace a function's option keys in its arglist and every caller's map literal together. |
 | `edit_extract {ns from name}` | Extract a subform into a new fn. Address it by `at` (an anchor) rather than quoting it whole. |

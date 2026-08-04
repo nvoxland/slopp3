@@ -201,7 +201,7 @@ measurably bleed tokens.
 | Change a fn's SIGNATURE | `change_signature {ns name source calls}` — new defn + `$1..$9` call-site template; never signature-change form-by-form |
 | Several changes, one reason | just make the writes one at a time — episodes group them for you; interim reds/`:carried-errors` are normal until `done` |
 | Rename ONE form | `edit_rename` (def + all references, shadow-safe); its result lists leftover prose `:mentions` |
-| Rename a namespace ALIAS (`[a.b :as old]` -> `:as new`) | `ns_realias {ns old new}` — the `:as` in the ns form AND every `old/sym` in that namespace's bodies, one verified write. **There is no hand route**, and that is why this is a tool rather than two edits: between the two writes the ns form and the bodies disagree about the qualifier and the namespace does not load, so the alternative is the add-both / migrate / drop dance. **Reach for it right after `ns_rename`**, which rewrites namespaces and walks straight past the `:as` — the moved code keeps being called by its old module's name, and the day that name gets REUSED the alias starts pointing at a real, different module, which is worse than one naming nothing. Scoped to one namespace by design: an alias is a name ONE namespace chose, so two namespaces calling a lib different things is not drift and there is no store-wide version. A BARE `old` is left alone — only `old/x` is the qualifier, and the same spelling is routinely a local or a parameter three tokens away. Read `:sites` (0 means the alias was unused, not that nothing happened) and `:left-behind` |
+| Rename a namespace ALIAS (`[a.b :as old]` -> `:as new`) | `ns_realias {ns old new}` — the `:as` in the ns form AND every `old/sym` in that namespace's bodies, one verified write. **There is no hand route**, and that is why this is a tool rather than two edits: between the two writes the ns form and the bodies disagree about the qualifier and the namespace does not load, so the alternative is the add-both / migrate / drop dance. **Reach for it right after `ns_rename`**, which rewrites namespaces and walks straight past the `:as` — the moved code keeps being called by its old module's name, and the day that name gets REUSED the alias starts pointing at a real, different module, which is worse than one naming nothing. You do not have to spot them: the rename lists them under `:left-behind :alias`, each with the `:suggest` to pass here. Scoped to one namespace by design: an alias is a name ONE namespace chose, so two namespaces calling a lib different things is not drift and there is no store-wide version. A BARE `old` is left alone — only `old/x` is the qualifier, and the same spelling is routinely a local or a parameter three tokens away. Read `:sites` (0 means the alias was unused, not that nothing happened) and `:left-behind` |
 | Rename a CONCEPT ("zone is now region") | `rename_sweep {from to}` — namespaces + vars + keywords + prose, store-wide, ONE call, one verification; never form-by-form. Whole-word only, so `region-ish` survives a `region` sweep. **`dry-run` first and check the count against what you expected** — a mismatch means your pattern is catching something else. Two gotchas: it rewrites prose DESCRIBING the rename (a comment explaining `a -> b` comes out saying `b -> b`), and if a live GATE enforces the thing you are renaming, you need two phases — teach the gate to accept BOTH spellings, sweep, then tighten. A gate runs from the old compiled code while the group rewrites it, so a one-shot sweep is refused at the first form it re-tags. **Pick the most QUALIFIED name that still covers the live references** — a broad name reaches backwards into HISTORY (incident records and frozen fixtures naming what a thing really was called; sweeping those forward invents a past) while a narrow one cannot, and it also misses the unqualified TAIL (`slopp.a.b` as a segment does not match prose writing `b/thing`), so sweep that separately and check user-facing strings — teach strings and error text — for it. If the qualified form leaves a real reference uncovered, that reference wanted naming precisely anyway |
 | Rename a QUALIFIED KEYWORD (`:a/x` -> `:b/x`) | `rename_sweep` — it moves the literals AND the `{:a/keys [x]}` destructuring, which names the key as a SYMBOL with the qualifier one position to the left and so is invisible to a text pass. The entry is matched on the FROM qualifier and only on it, so an unqualified `{:keys [x]}` — which names `:x` and has nothing to do with your rename — is left alone. **Read `:requalified` and `:left-behind`; absence of either means checked-and-none.** `:requalified` is the half of the diff that is not a text substitution, and worth an eye for that reason alone. `:left-behind` is the half the tool DECLINED: changing the key's NAME (`:a/x` -> `:a/y`) rather than its qualifier cannot be applied to a destructuring, because the symbol is a LOCAL BINDING the body reads — so sweep the qualifier and rename the name as two steps, or finish the named forms by hand. A stranded destructuring presents as nil arriving silently rather than as an error, so the only tests that can catch one are the ones exercising the value END-TO-END — which for a session, a projection or a subprocess means `^:external`, and those are exactly the ones a write DEFERS. Do not read the write's green as coverage here |
 | Rename a CONFIG KEY family (`a.b.*` -> `x.a.b.*`) | **Not `rename_sweep`** — a dotted key is a STRING, and the sweep's whole-word/segment matching is wrong for it in both directions: a segment of the key is usually also a segment of a NAMESPACE and of keys inside the config's own VALUES, so it rewrites things that are not the key, while missing the places the key really lives. Do it by hand and go looking for the three hiding places, none of which a text pass reports: **regex literals** (`#"a\\.b\\..+"` — the sweep silently declines these), **length constants** (`(subs k 19)` standing in for `(count "<the prefix>")` — take the tail from the prefix you matched, so the two cannot disagree), and **a second branch of the same `cond`** a few lines below the one you just fixed. Then `config_file {path "vocabulary" key <old> value <new>}` so the retired spelling is declared. Grep to check yourself with a pattern you did NOT use while editing — a verification grep written from the same assumption as the edit shares its blind spot — and if the new name CONTAINS the old one, anchor the search at a segment boundary or every corrected line reads as a violation |
@@ -341,6 +341,23 @@ is exactly why the rename does not: a qualified keyword can be a wire or
 storage key that something outside your store already holds, and re-spelling
 it there breaks a consumer slopp cannot see.
 
+**Stranded ALIASES come back under `:alias`, and each row carries the fix.** A
+rename rewrites the lib symbol in every caller's require clause and never the
+`:as` beside it, so `[acme.billing :as billing]` becomes `[acme.invoice :as
+billing]` — syntactically perfect, and every call site in that namespace goes on
+reading `billing/total` for a namespace called invoice. Harmless while the old
+name means nothing; the day it is REUSED for something else, the alias points at
+a real and different module, which reads identically and is the worse failure.
+`:suggest` is the alias to hand `ns_realias` — omitted where that caller already
+spells another lib that way, because then the realias would be refused.
+
+An alias that reads correctly for BOTH names is not reported: a namespace moving
+between modules under the same last segment (`acme.api.query` →
+`acme.read.query`, aliased `query`) strands nothing, and that is the ordinary
+rename. What the report cannot see is an ABBREVIATION — `caps` for
+`…capabilities` is derived from nothing readable, so a rename that makes it
+wrong makes it wrong silently. Prefer aliases spelled from the namespace.
+
 **Red-first is native:** a spec in a `-test` ns may reference store fns
 that don't exist yet — it lands as a REAL red (`:red-first` names the
 missing vars, stubbed in-image as failing); implement them to go green.
@@ -425,6 +442,26 @@ a scan that silently found nothing passes every comparison you make against it.
      would make the comparison below pass by being empty on both sides")
 (is (= expected (set (map :ns found))))
 ```
+
+**The population starts at the FIXTURE, and that is where this gets missed.** A
+setup step that failed builds an empty population, and an empty population
+satisfies every absence assertion below it — so the test is green, cheap, and
+about nothing. `ingest!` and every other write verb RETURN `{:error …}` rather
+than throwing, and a fixture is where a return value is least likely to be read.
+The specific trap in a store: `ingest!` runs the module gate, so a second
+namespace one module over from the first is refused, and the two-namespace
+fixture you thought you built is one namespace.
+
+```clj
+(api/ingest! sess 'acme.core.thing  "…")
+(api/ingest! sess 'acme.core.caller "…")   ; same module — or this is refused
+(let [r (api/ns-rename! sess 'acme.core.thing 'acme.moved.thing …)]
+  (is (= 2 (:forms (:renamed r))))         ; ← the fixture's own control
+  (is (nil? (:alias (:left-behind r)))))   ; ← meaningless without the line above
+```
+
+Assert the fixture, not your intention for it: something that counts what the
+setup actually produced, before anything is read off it.
 
 **And if you are building the FILTER, probe it both ways.** A detector needs an
 input it must flag and an input it must NOT — verify only that it can fire and
@@ -616,9 +653,11 @@ full map.
   uses); handle those with `edit_subform`.
 - `:dry-run` (rename_sweep) — `:in-code` / `:in-strings`, nothing written.
 - `:left-behind` (ns_rename, rename_sweep, ns_realias) — occurrences no rewrite
-  reaches. `:requalified` (rename_sweep) — destructurings it restructured, which
-  is the half of a keyword rename's diff that is not a text substitution.
-  Absence of either means checked-and-none, never unchecked.
+  reaches, grouped by how each was found. Under `ns_rename` the `:alias` rows
+  are the callers whose `:as` still spells the old name, each with a `:suggest`
+  to hand `ns_realias`. `:requalified` (rename_sweep) — destructurings it
+  restructured, which is the half of a keyword rename's diff that is not a text
+  substitution. Absence of either means checked-and-none, never unchecked.
 - `:sites` (ns_realias) — qualified references rewritten. Zero is a real
   answer: the alias was declared and never used.
 - `:conflicts` (merge) — ours kept, theirs surfaced; the payload IS current

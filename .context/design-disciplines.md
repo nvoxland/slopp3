@@ -274,6 +274,42 @@ discharge is one deliberate observation of the hazard, and the cost of skipping
 it is a false premise that reads like evidence for as long as nobody happens to
 read the implementation.
 
+#### Sharpening (2026-08-03): the population starts at the FIXTURE
+
+Every statement of this core, including the one in the shipped skill, points at
+the ASSERTION. One level lower is where it actually gets missed. The e2e for
+`ns_rename`'s stranded-alias report opened:
+
+```clj
+(api/ingest! sess 'ra.core.thing "…")
+(api/ingest! sess 'ra.caller     "… (:require [ra.core.thing :as thing]) …")
+(let [r (api/ns-rename! sess 'ra.core.thing 'ra.moved.thing …)]
+  (is (nil? (:alias (:left-behind r)))))          ; green, and about nothing
+```
+
+`ingest!` runs `edit.modules/module-scan`. `ra.caller` is one module over with
+no declared edge, so it was REFUSED — `{:error …}` returned into statement
+position — and the fixture was one namespace. The rename had no caller to
+strand, so "the report stays quiet" passed against a store in which quiet was
+the only reachable answer.
+
+It surfaced only because the sibling block asserting rows ARE present went red.
+Written alone, the quiet half would have shipped green and asserted nothing,
+permanently — and it is the half a reader trusts most, because a check that
+stays quiet on the common case is exactly what you want to believe.
+
+> A fixture that failed to build satisfies every absence assertion downstream of
+> it. So the control belongs on the SETUP, not only on the finder: assert what
+> the fixture actually produced — a count, a `:forms`, a membership — before
+> anything is read off it.
+
+The generalisation past slopp: this is what makes write verbs that RETURN
+`{:error …}` rather than throwing a sharp edge in test code specifically.
+Everywhere else a discarded return is a missed diagnostic; in a fixture it is a
+missing population, and the failure propagates as green. Filed as friction #53,
+whose remedy list starts with `done` deriving it — a test body calling a write
+verb in statement position is visible in the store.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by
