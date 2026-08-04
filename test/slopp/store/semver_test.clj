@@ -1,4 +1,13 @@
 (ns slopp.store.semver-test
+  "`slopp.store.semver` — comparing two version strings, used wherever a store
+  decides whether a dependency or a published contract version is newer than
+  the one it holds.
+
+  A generic utility rather than a store concept, and small enough to be
+  covered exhaustively on shape rather than illustratively: segments compare
+  numerically (so 10 beats 9), and `older?` is `newer?` flipped, asserted
+  rather than assumed because a comparator that is wrong only at the boundary
+  is a comparator that looks right."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store.semver :as semver]))
 

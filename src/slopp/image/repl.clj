@@ -412,6 +412,24 @@
     dependency. Those namespaces are the runtime's, not a tenant's, and
     leaking them between tenants leaks nothing a tenant wrote.
 
+  **Unmapping is only half of removing, and the missing half is invisible to
+  every check here.** `remove-ns` clears the namespace registry; it does NOT
+  retract the lib from `clojure.core/*loaded-libs*`, which is what `require`
+  consults before doing any work. Sweep without retracting and the image is
+  left CLAIMING a lib it no longer has: the next tenant's `require` is a
+  silent no-op, the namespace never comes back for the life of the image, and
+  `requiring-resolve` hands back nil instead of a fn. Nothing below catches
+  it, because the verification asks what SURVIVED and the answer is correct —
+  the namespace is genuinely gone. So the retraction rides the removal, one
+  transaction, keyed to exactly the names swept: unmapped must mean
+  reloadable.
+
+  This is the whole of an image-recycling bug that read as a code defect. The
+  schema oracle is a lazily-required lib (`malli.generator`), so whichever
+  `^:external` test used it SECOND drew a `check-threw` on every honest
+  schema in its episode. Either test alone was green, and `full_check` shards
+  across JVMs, so the narrower `done` saw it and the broader check did not.
+
   **The safety is the verification, not the removal.** `remove-ns` is not
   trusted: the image is asked what it has AFTERWARDS, and unless every
   survivor is either in the recorded baseline or runtime machinery, this
@@ -440,14 +458,18 @@
                  (str "(do (when-let [v (resolve 'slopp.kernel.rt/touched-sink)]"
                       "      (reset! (var-get v) nil))"
                       "    (let [runtime? (fn [n] (or (.startsWith (name n) \"clojure.\")"
-                      "                               (.startsWith (name n) \"nrepl.\")))]"
+                      "                               (.startsWith (name n) \"nrepl.\")))"
                       ;; QUOTED: the baseline is data. Unquoted, the image tries
                       ;; to resolve every namespace name in it as a var and the
                       ;; whole form throws — which this then correctly refuses
                       ;; on, but silently, since eval! surfaces values not errors.
-                      "      (doseq [n (map ns-name (all-ns))]"
-                      "        (when-not (or (contains? '" (pr-str b) " n) (runtime? n))"
-                      "          (remove-ns n))))"
+                      "          gone (remove #(or (contains? '" (pr-str b) " %) (runtime? %))"
+                      "                       (map ns-name (all-ns)))]"
+                      "      (doseq [n gone] (remove-ns n))"
+                      ;; the other half of removal — see the docstring. Outside
+                      ;; the doseq so no side effect sits inside the transaction.
+                      "      (dosync (alter @#'clojure.core/*loaded-libs*"
+                      "                     #(apply disj % gone))))"
                       "    (in-ns 'user) :reset)"))
           ;; ASK, do not assume: the image reports what it actually has left,
           ;; and every survivor must be baseline or runtime machinery

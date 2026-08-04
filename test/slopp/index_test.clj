@@ -1,4 +1,14 @@
 (ns slopp.index-test
+  "The static analysis under every purity claim slopp makes: what a form
+  REACHES, whether that reach is effectful, and how kondo's findings are
+  cached across namespaces.
+
+  Most of what is here is about PROPAGATION and its limits — an effect
+  originating in one var and only reaching the other, interop with the world
+  where there is no var to see, a carrier ref that must NOT propagate. That
+  emphasis is not taste: the tier gates refuse writes on these answers, so a
+  wrong one is a refusal the author cannot argue with and a missing one is a
+  shell that quietly widened."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index :as index] [slopp.index.derive :as derive] [slopp.cache :as cache] [slopp.index.analyze :as analyze]))
 

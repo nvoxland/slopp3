@@ -94,12 +94,31 @@
    the server runs on kernel deps) that runs malli.generator/check for each
    candidate against its LIVE var and returns a vector of drift findings
    [{:form <qsym> :counterexample <str>} …] — empty when every schema holds.
-   Empty candidates short-circuit to `[]` (nothing to resolve). Each check is
-   guarded so a single throw can't sink the whole set."
+   Empty candidates short-circuit to `[]` (nothing to resolve).
+
+   **Two failures, and they are not the same fact.** A single check throwing
+   is ABOUT that candidate, so it stays guarded per-form and names the form.
+   The CHECKER failing to resolve is about the image: it affects every
+   candidate equally and has found nothing about any of them. Reported
+   per-form it becomes N drift findings against N innocent schemas — an
+   infrastructure failure wearing the costume of a code defect, sending the
+   reader to hunt a lying schema in code that is fine. So the resolve is
+   hoisted out of the guard and its failure is ONE finding naming no form,
+   which `in-scope` keeps precisely because a formless finding is about the
+   store as a whole. `:schema-drift` is `:error`, so it still flips status
+   red — a verification that could not run must not read as green.
+
+   That is not hypothetical: `malli.generator` is lazily required, and a
+   recycled image used to hand the next tenant an unmapped-but-still-claimed
+   lib, so `requiring-resolve` returned nil for the life of the image. Fixed
+   in `repl/reset-to-baseline!`; this is the half that makes the symptom
+   legible if it ever returns by another route."
   [candidates]
   (if (empty? candidates)
     "[]"
-    (str "(let [check (requiring-resolve 'malli.generator/check)] (vec (remove nil? ["
+    (str "(if-let [check (try (requiring-resolve 'malli.generator/check)"
+         "                    (catch Throwable _ nil))]"
+         " (vec (remove nil? ["
          (str/join
           " "
           (for [{:keys [form schema]} candidates]
@@ -107,14 +126,21 @@
                          " {:form '%s :counterexample (pr-str (-> e :errors first :check :smallest))})"
                          " (catch Throwable t {:form '%s :error (str \"check-threw: \" (.getMessage t))}))")
                     (pr-str schema) form form form)))
-         "])))")))
+         "]))"
+         " [{:error \"schema oracle unavailable: malli.generator/check did not resolve in this image,"
+         " so NO schema was checked\"}])")))
 
 (defn drift!
   "Run the generative schema oracle-check over CHANGED `qsyms`, evaluating in the
    IMAGE (where malli is inherent — the server can't call it). Returns the drift
    findings [{:form <qsym> :counterexample <str>} …], empty when every schema
    holds and nil when there are no candidates to check. A schema that lies about
-   its implementation surfaces here instead of drifting silently (D2)."
+   its implementation surfaces here instead of drifting silently (D2).
+
+   A THIRD outcome, which a caller must not read as drift: one formless
+   `{:error \"schema oracle unavailable: …\"}` means the checker itself did not
+   resolve in the image, so nothing was checked and no form is implicated.
+   `check-string` carries the reasoning."
   [image store qsyms]
   (let [cands (schema-candidates store qsyms)]
     (when (seq cands)

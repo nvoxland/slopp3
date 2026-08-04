@@ -1,4 +1,14 @@
 (ns slopp.lab-test
+  "`slopp.lab` is the INSTRUMENT module — code whose caller is a human at the
+  REPL, kept out of the jar by materializing under `instruments/` rather than
+  `src/`. Instruments have no automatic cover by design; that is the property
+  that put them in one module (R5).
+
+  What is here is the exception worth making: the one claim an instrument
+  states about the SYSTEM rather than about itself — that answering a
+  reference question through the store is cheaper than grep-and-read — which a
+  reader would otherwise have to take on faith from the tool that benefits
+  from believing it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.lab :as bench]))

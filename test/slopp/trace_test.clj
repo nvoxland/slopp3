@@ -1,4 +1,12 @@
 (ns slopp.trace-test
+  "Mapping a JVM stack trace back onto the STORE.
+
+  The tree is fileless, so a frame's file and line name the VFS rendering
+  rather than anything on disk, and these tests hold that correspondence
+  (including through catch frames, where the interesting line is not the top
+  one). It matters more than its size suggests: a trace pointing at the wrong
+  line is the one diagnostic an agent cannot route around, because every other
+  read it would reach for starts from the name the trace gave it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops] [slopp.ops.external :as external]))
 

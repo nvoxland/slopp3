@@ -1,4 +1,13 @@
 (ns slopp.rules.schema-test
+  "`schema-drift`: a malli schema that LIES about the implementation it
+  describes, caught by generative check against the live var.
+
+  The one done-advisory whose input is a running IMAGE rather than a store
+  value, which shapes everything here — the fixtures boot one, and
+  `analyzer-pure?` (what may be checked generatively at all) is tested beside
+  the drift itself, because a nondeterministic fn under a generative oracle
+  produces a failure that is real and unreproducible, which is worse than the
+  drift it was looking for."
   (:require [clojure.test :refer [deftest testing is]]
             [clojure.string :as str]
             [slopp.rules.schema :as schema]
@@ -93,3 +102,35 @@
     (testing "so it is excluded from schema-candidates — the oracle-check can't flake on it"
       (is (= [{:form 'app.nd/pure1 :schema [:=> [:cat :int] :int]}]
              (schema/schema-candidates s '#{app.nd/roll app.nd/pure1}))))))
+
+(deftest ^:external an-unresolvable-oracle-is-one-finding-that-names-no-form
+  ;; `:schema-drift` means a schema LIES about its implementation. A checker
+  ;; that could not be resolved at all has found nothing about any form, and
+  ;; must not wear that costume: reported per-candidate it names every honest
+  ;; schema in the episode as drifting, which is a code defect the reader will
+  ;; go looking for in code that is fine.
+  ;;
+  ;; The state below is built by hand, and it is not hypothetical — it is what
+  ;; a recycled image handed the second tenant before `reset-to-baseline!`
+  ;; retracted the libs it unmapped. `require` consults `*loaded-libs*`, so an
+  ;; unmapped-but-still-claimed lib makes `requiring-resolve` return nil
+  ;; forever.
+  ;;
+  ;; The vars are DEFINED first, and that is the whole care in this fixture:
+  ;; `check-string` evaluates `(deref (resolve '<form>))` as an ARGUMENT, so a
+  ;; candidate naming a var the image does not have throws before the missing
+  ;; checker is ever reached — an NPE out of `deref-future`, per candidate,
+  ;; which looks exactly like the failure under test and is not it.
+  (let [h (repl/start!)]
+    (try
+      (repl/eval! h "(ns demo.sch) (defn honest [x] (inc x)) (defn also [x] (inc x)) (in-ns 'user)")
+      (repl/eval! h "(do (require 'malli.generator) (remove-ns 'malli.generator) :ok)")
+      (let [r (first (repl/eval! h (schema/check-string
+                                    [{:form 'demo.sch/honest :schema [:=> [:cat :int] :int]}
+                                     {:form 'demo.sch/also   :schema [:=> [:cat :int] :int]}])))]
+        (testing "one fact about the image, not one finding per candidate"
+          (is (= 1 (count r)) (pr-str r)))
+        (testing "and it names no form, so `in-scope` keeps it and no reader hunts a var"
+          (is (nil? (:form (first r))) (pr-str r))
+          (is (str/includes? (str (:error (first r))) "malli.generator/check") (pr-str r))))
+      (finally (repl/stop! h)))))

@@ -1,4 +1,13 @@
 (ns slopp.kernel.rt-test
+  "`slopp.kernel.rt` is the instrumentation seam: it records which forms a test
+  run touched, and the trace map that comes out is what every warranty in the
+  system is derived from.
+
+  So these are mostly about the seam RESTORING itself — nesting, multimethods,
+  rt observing its own calls. A sink left installed does not fail; it
+  attributes one run's touches to the next, and the coverage numbers stay
+  plausible while meaning something else. `slopp.image` and `slopp.ops.engine`
+  read the result and cannot tell."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.kernel.rt :as rt]))
 

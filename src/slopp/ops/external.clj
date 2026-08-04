@@ -772,7 +772,12 @@ client-deps (merge (:client-deps st) (:client provided))
                 " did not run. `full_check` does the whole store — every"
                 " namespace, every tier. Nothing forces it, including the"
                 " milestone; run it when the change is broad, when you deleted"
-                " a caller, or before a commit you want to stand behind")}
+                " a caller, or before a commit you want to stand behind."
+                " They also differ in ISOLATION, and that axis runs the OTHER"
+                " way: done puts every impacted ^:external test in ONE serial"
+                " JVM and full_check shards across four, so a pair that fails"
+                " only TOGETHER fails HERE and can pass there — a red done"
+                " beside a green full_check is not done being wrong")}
     ;; ADVISORY, and named as such: kondo findings slopp's config
     ;; deliberately does not block on, because each is routinely true of a
     ;; form mid-edit. Listed so the agent can judge them, never counted.

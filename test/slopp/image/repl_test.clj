@@ -310,3 +310,30 @@
       (is (clojure.string/includes? code "add-libs '") code))
     (testing "the dirty mark still brackets the add"
       (is (clojure.string/includes? code "slopp-image-dirty") code))))
+
+(deftest ^:external a-reset-image-can-reload-a-lib-a-previous-tenant-required
+  ;; `remove-ns` unmaps a namespace. It does NOT retract the lib from
+  ;; `clojure.core/*loaded-libs*` — so a sweep that only removes leaves the
+  ;; image still CLAIMING a lib it no longer has, and the next tenant's
+  ;; `require` is a silent no-op. The namespace never comes back, for the
+  ;; life of the image, and nothing reports it: `reset-to-baseline!`
+  ;; verifies that nothing SURVIVED, which this passes perfectly.
+  ;;
+  ;; Measured as a two-test interference. Whichever ^:external test used the
+  ;; schema oracle SECOND got a recycled image where
+  ;; `(requiring-resolve 'malli.generator/check)` returned nil, and every
+  ;; honest schema in that episode was reported as drift. Either test alone
+  ;; was green. `full_check` shards, so it put the pair in different JVMs and
+  ;; stayed green while the narrower `done` went red — the isolation axis
+  ;; running opposite to the coverage axis.
+  (let [img (repl/start! {})]
+    (try
+      (is (true? (first (repl/eval! img "(do (require 'malli.core) (some? (find-ns 'malli.core)))")))
+          "the tenant really did load a lib past baseline")
+      (is (some? (repl/reset-to-baseline! img))
+          "the reset verifies clean — no survivor outside baseline or runtime")
+      (is (nil? (first (repl/eval! img "(find-ns 'malli.core)")))
+          "the sweep unmapped it, like any other non-runtime namespace")
+      (is (true? (first (repl/eval! img "(do (require 'malli.core) (some? (find-ns 'malli.core)))")))
+          "and the NEXT tenant can load it again — unmapped must mean reloadable")
+      (finally (repl/stop! img)))))

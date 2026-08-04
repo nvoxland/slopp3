@@ -395,11 +395,29 @@
   ;; The :reuses assertion is the load-bearing one. Without it this test would
   ;; pass trivially the day recycling silently stopped happening, which is the
   ;; vacuous-guard failure this codebase has been bitten by before.
+  ;;
+  ;; ISOLATION HAS TWO DIRECTIONS, and only one of them was checked here for a
+  ;; long time. Nothing of the first tenant may leak INTO the second — and the
+  ;; second must also lose no CAPABILITY the first happened to use. The second
+  ;; half was the live bug: an episode that runs the schema oracle lazily
+  ;; requires `malli.generator`, `reset-to-baseline!` unmapped it with
+  ;; `remove-ns` without retracting it from `*loaded-libs*`, and the next
+  ;; tenant's `require` became a silent no-op — so every honest schema in ITS
+  ;; episode was reported as drift. A sweep that only removes leaves an image
+  ;; claiming a lib it no longer has.
   (repl/drain-parked!)
   (let [a (external/open!)]
-    (ops/ingest! a 'tenant.one "(ns tenant.one)\n(defn secret \"S.\" [] 42)\n")
+    (ops/ingest! a 'tenant.one
+                 (str "(ns tenant.one)\n(defn secret \"S.\" [] 42)\n"
+                      "(defn ^{:malli/schema [:=> [:cat :int] :string]} liar \"L.\" [x] (inc x))\n"))
     (is (= 42 (first (repl/eval! (:image @a) "(tenant.one/secret)")))
         "the first tenant really did load into its image")
+    ;; CONTROL for the verdict assertion far below: the first tenant's oracle
+    ;; must actually RUN, or it never loads the lib whose loss is under test
+    ;; and the second tenant passes for no reason.
+    (is (= '[tenant.one/liar]
+           (mapv :form (get-in (external/done! a :label "tenant one") [:findings :schema-drift])))
+        "the first tenant's schema oracle ran, which is what loads it")
     (ops/close! a))
   (let [b (external/open!)]
     (try
@@ -408,9 +426,25 @@
       (is (nil? (first (repl/eval! (:image @b) "(find-ns 'tenant.one)")))
           "and must not be able to see the previous tenant's namespaces")
       (is (nil? (first (repl/eval! (:image @b) "(resolve 'tenant.one/secret)"))))
-      (ops/ingest! b 'tenant.two "(ns tenant.two)\n(defn v \"V.\" [] 7)\n")
+      (ops/ingest! b 'tenant.two
+                   (str "(ns tenant.two)\n"
+                        ;; the tenant only needs these vars to EXIST — declared,
+                        ;; so the lint assertion below guards against a surprise
+                        ;; rather than against a known fixture smell
+                        "(defn ^{:unused-ok \"fixture surface\"} v \"V.\" [] 7)\n"))
       (is (= 7 (first (repl/eval! (:image @b) "(tenant.two/v)")))
           "a recycled image is fully WORKING, not merely empty")
+      (testing "and the recycled tenant's own VERDICT is unaffected"
+        (ops/add-form! b 'tenant.two
+                       (str "(defn ^{:malli/schema [:=> [:cat :int] :int]"
+                             " :unused-ok \"fixture surface\"}"
+                             " honest \"H.\" [x] (inc x))")
+                       :prompt "an honest schema the oracle must still be able to check")
+        (let [r (external/done! b :label "tenant two")]
+          (is (nil? (get-in r [:findings :schema-drift]))
+              (str "an honest schema must draw no finding — a checker that could not"
+                   " run reports here too: " (pr-str (:findings r))))
+          (is (empty? (:lint r)) (pr-str (:lint r)))))
       (finally (ops/close! b) (repl/drain-parked!)))))
 
 (deftest ^:external store-health-counts-the-artifact-cache

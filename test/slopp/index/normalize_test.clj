@@ -1,4 +1,11 @@
 (ns slopp.index.normalize-test
+  "`slopp.index.normalize` rewrites the working set at the done point, which
+  makes VALUE PRESERVATION the entire contract: a normalizer that improves
+  code and changes what it does is worse than no normalizer, because it
+  arrives attached to a green verdict. So each rule is paired here with a
+  proof that expanding it changes nothing observable, and the silent removals
+  (a stale auto-declare) are asserted to be silent on purpose rather than by
+  omission."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.normalize :as norm]
             [slopp.store :as store]

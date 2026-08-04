@@ -1,4 +1,9 @@
 (ns slopp.build-test
+  "Cover for `slopp.build`, the pure generators that emit a project's build
+  inputs — `deps.edn`, the native-image scripts. Checked by GENERATING and
+  reading the text, because a generator's only contract is what a build tool
+  later reads: nothing here mocks a build, and nothing here can, since the
+  failure these prevent happens on someone else's machine."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.build :as build]))
 

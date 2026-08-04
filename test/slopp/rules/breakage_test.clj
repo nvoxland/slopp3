@@ -1,4 +1,14 @@
 (ns slopp.rules.breakage-test
+  "`breaking-changes`: a module-external fn's contract NARROWING — arity,
+  schema key, visibility — measured against the last-done BASELINE.
+
+  Baseline-relative is what makes this awkward and what makes it worth
+  testing: a fixture needs two done points before the rule has anything to
+  compare, which is also why the whole-store sweep is declared meaningless for
+  it. Half of these are about the ESCAPE rather than the finding — a
+  `^:breaking-ok` marker added AFTER the fact still discharges, across an
+  intervening done, and one that narrows nothing is reported stale. A dial
+  that only works if you predicted the break is not a dial anyone reaches for."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.rules.breakage :as breakage]
             [slopp.ops :as ops] [slopp.ops.external :as external]))

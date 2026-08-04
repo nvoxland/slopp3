@@ -1,4 +1,11 @@
 (ns slopp.edit-group-test
+  "The GROUP write: several form edits landing as ONE intent — one gate pass,
+  one verification, all-or-nothing on error. The tests that earn their keep
+  are about the boundary rather than the edits inside it: a failing step
+  leaves the store untouched, a group inherits the same destructive-write
+  guards a single edit does, and contract drift is reported for the group as
+  it would be for one form. An edit that is correct alone and wrong in company
+  is the whole reason this verb exists."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external]))

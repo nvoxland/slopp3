@@ -1,4 +1,15 @@
 (ns slopp.rules.keywords-test
+  "The keyword VOCABULARY: which namespaced keys a store uses, which are
+  established enough that a near-duplicate reads as a typo rather than a new
+  coinage, and how far a key's blast radius reaches once destructuring is
+  counted.
+
+  A keyword is the relationship slopp learned to see late — it is not a var,
+  so no rename verb followed it for a long time — and these tests carry the
+  DEFINITIONS the `key-typos` advisory stands on. `established` meaning
+  \"used by >= 2 UNCHANGED forms\" is the load-bearing one: it is why the rule
+  declares a whole-store sweep vacuous for itself, and it lives here rather
+  than only in the registry's prose."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.rules.keywords :as attrs]
             [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.read.graph :as graph]))

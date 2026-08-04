@@ -1,4 +1,10 @@
 (ns slopp.extract-test
+  "`edit_extract`: lifting a SUBFORM into its own function, with the call site
+  rewritten in the same write. Two ways to name the subform — by its text and
+  by an anchor — and both are here because ADDRESSING is the hard half. The
+  extraction itself is a substitution; saying which nested expression you mean,
+  in a form where the same text may occur twice, is where this verb is easy to
+  get wrong."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external]))
 

@@ -1,4 +1,12 @@
 (ns slopp.observe-test
+  "`query_observe` and `query_macroexpand`: what actually FLOWED through a
+  form, and what a macro actually expanded to.
+
+  Both exist because everything else slopp answers is static, and these are
+  the two questions where a static answer is routinely wrong — a value's real
+  shape at a call site, and code that no reader of the source can see. Small
+  namespace, and the pair belongs together: they are the store admitting the
+  limits of reading."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops] [slopp.ops.external :as external]))
 

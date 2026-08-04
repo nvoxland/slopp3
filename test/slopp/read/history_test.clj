@@ -1,4 +1,12 @@
 (ns slopp.read.history-test
+  "The pure FOLDS under the store's history reads — the milestone rows behind
+  `query_commits`, and the join of provenance, verification and cost behind
+  form effort.
+
+  Tested at the fold rather than through the tool on purpose: a fold over the
+  delta log has a value-in / value-out contract, and the tool wrapping it adds
+  only shape. When one of these breaks, the failure should name the
+  derivation, not the endpoint that happened to ask."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.read.history :as history]
             [slopp.store :as store]))

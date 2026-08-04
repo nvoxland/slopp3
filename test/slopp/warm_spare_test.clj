@@ -1,4 +1,13 @@
 (ns slopp.warm-spare-test
+  "The WARM SPARE: a second image booting ahead of the restart that will want
+  it.
+
+  One claim, and it is the only one worth making — that keeping a spare makes
+  a restart cheap. The spare is a pure optimisation, so its correctness
+  reduces to \"the image you get is the image you would have got\"; anything
+  else asserted here would be asserting the timing of an implementation
+  detail. Recorded in `.context/design-disciplines.md` as a measured DEAD END
+  in its pooled form, which is why this stayed one test rather than growing."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops] [slopp.ops.external :as external]))
 
