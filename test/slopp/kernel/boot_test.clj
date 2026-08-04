@@ -1,8 +1,8 @@
-(ns slopp.boot-test
+(ns slopp.kernel.boot-test
   "Cover for the KERNEL's boot path — the one layer with nothing behind it.
 
   Everywhere else in slopp a mistake is caught by the image, the suite, or a
-  gate. `slopp.boot` is what brings those into existence: it reads a store's
+  gate. `slopp.kernel.boot` is what brings those into existence: it reads a store's
   source out of sqlite and loads it into a bare JVM. A bug here does not fail
   a test, it fails to start.
 
@@ -19,11 +19,11 @@
   by calling it. It is pinned against the same literal instead, and the rule
   it encodes is written out where both can be read together.
 
-  `slopp.boot` also exists as a hand-maintained FILE, and both copies are
-  live. `slopp.store.kernel` is what keeps them honest; this covers what they
+  `slopp.kernel.boot` also exists as a hand-maintained FILE, and both copies are
+  live. `slopp.kernel.parity` is what keeps them honest; this covers what they
   do."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.boot :as boot]
+            [slopp.kernel.boot :as boot]
             [next.jdbc :as jdbc]))
 
 (deftest dependency-order-is-deps-first
@@ -133,16 +133,23 @@
   ;; there?" IS the assertion, so it must resolve by name — the carrier forms
   ;; the dialect prefers all capture the var and would answer about a binding
   ;; that no longer exists.
-  (let [nsx  'slopp.boot-reload-probe
+  ;;
+  ;; The probe namespace is FICTIONAL and shares no segment with the namespace
+  ;; under test. It used to be `slopp.kernel.boot-reload-probe`, which put the string
+  ;; `slopp.kernel.boot` inside three source STRINGS and one quoted symbol — and a
+  ;; prose sweep of `slopp.kernel.boot` matches the strings (a `-` bounds a word)
+  ;; while leaving the symbol alone, which half-rewrites the fixture into one
+  ;; that loads a namespace under one name and looks it up under another.
+  (let [nsx  'probe.reload-target
         var! (fn [n] (ns-resolve nsx (symbol n)))]
     (try
-      (#'boot/reload-ns! nsx "(ns slopp.boot-reload-probe)
+      (#'boot/reload-ns! nsx "(ns probe.reload-target)
                               (defn keeper [] 1)
                               (defn doomed [] 2)")
       (is (some? (var! "keeper")))
       (is (some? (var! "doomed")) "both live after the first load")
       (testing "a reload without the second form leaves NOTHING behind"
-        (#'boot/reload-ns! nsx "(ns slopp.boot-reload-probe)
+        (#'boot/reload-ns! nsx "(ns probe.reload-target)
                                 (defn keeper [] 99)")
         (is (nil? (var! "doomed"))
             "the deleted form must stop answering — this is the whole bug")
@@ -152,7 +159,7 @@
         ;; the conservative direction: a stale var beats a gutted namespace
         (is (thrown? Throwable
                      (#'boot/reload-ns!
-                      nsx "(ns slopp.boot-reload-probe) (defn x [] (no-such-thing))")))
+                      nsx "(ns probe.reload-target) (defn x [] (no-such-thing))")))
         (is (some? (var! "keeper"))
             "a failed reload must not take the working code with it"))
       (finally (remove-ns nsx)))))

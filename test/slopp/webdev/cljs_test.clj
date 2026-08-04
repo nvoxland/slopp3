@@ -531,7 +531,7 @@
   ;; {all true}` answered `{:external-pending {…} :ms 43}` — no :test, no
   ;; :pass, 43ms for 32 tests. Nothing ran, and nothing said so.
   ;;
-  ;; `slopp.rt/traced-run` maps `ns-interns` over every namespace it is handed,
+  ;; `slopp.kernel.rt/traced-run` maps `ns-interns` over every namespace it is handed,
   ;; and the whole-project path hands it EVERY namespace in the store. A :cljs
   ;; namespace does not exist in the JVM image, so `ns-interns` throws "No
   ;; namespace: … found" — lazily, inside the run. The throw crosses the eval

@@ -47,6 +47,7 @@ slopp.api/warm-spare?: slopp.ops/warm-spare?
 slopp.bench: slopp.lab
 slopp.bench.benchmark: slopp.lab.benchmark
 slopp.bench.evalseed: slopp.lab.evalseed
+slopp.boot: slopp.kernel.boot
 slopp.edit.refs: slopp.index.refs
 slopp.http-api: slopp.api
 slopp.http-api.contracts: slopp.api.contracts
@@ -55,7 +56,9 @@ slopp.http-api.heartbeat: slopp.hub
 slopp.http-api.model: slopp.api.model
 slopp.http-api.reads: slopp.api.reads
 slopp.http-api.server: slopp.api.server
+slopp.rt: slopp.kernel.rt
 slopp.store.build: slopp.build
+slopp.store.kernel: slopp.kernel.parity
 slopp.store.mine: slopp.lab.mine
 slopp.ui-api: slopp.api
 ui-hub: hub

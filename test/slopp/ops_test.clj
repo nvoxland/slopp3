@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
+            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.kernel.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -483,7 +483,7 @@
 (deftest ^:external creating-a-namespace-that-shadows-a-classpath-one-warns
   ;; Found by bricking a real project. `slopp-ui` created `slopp.review.views`
   ;; holding two of its own views; a project's MCP server runs the FULL slopp
-  ;; jar and `slopp.boot` loads store namespaces FIRST, so at the next boot
+  ;; jar and `slopp.kernel.boot` loads store namespaces FIRST, so at the next boot
   ;; slopp's own `slopp.review.pages` died on `No such var: views/module-graph`.
   ;; The store was then unopenable by the only tool that could remove the
   ;; namespace again.

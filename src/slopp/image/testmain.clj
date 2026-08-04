@@ -17,7 +17,7 @@
   why the runner resolves it dynamically instead of requiring it."
   (:require [clojure.java.io :as io]
             [clojure.test :as t]
-            [slopp.rt :as rt]))
+            [slopp.kernel.rt :as rt]))
 
 (def ^:export trace-file-prefix
   "Marks this run's trace files in the built dir. Each shard writes its own

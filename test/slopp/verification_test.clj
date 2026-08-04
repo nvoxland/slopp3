@@ -15,7 +15,7 @@
   worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image]))
+            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.kernel.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -353,9 +353,9 @@
       (finally (api/close! sess)))))
 
 (deftest ^:external child-image-rt-calls-reach-the-callers-trace
-  ;; THE child-JVM blind spot (#126). Driving a child image runs slopp.rt THERE,
+  ;; THE child-JVM blind spot (#126). Driving a child image runs slopp.kernel.rt THERE,
   ;; where the caller's var-wrapping cannot reach. Measured on the live store
-  ;; 2026-07-17: slopp.rt/traced-run read 0 covering tests while 213 exercised it
+  ;; 2026-07-17: slopp.kernel.rt/traced-run read 0 covering tests while 213 exercised it
   ;; through image/traced-test-run — and instrument! read 1. The 1 is the
   ;; dangerous one: 0 means "no information" and falls back to running the whole
   ;; closure, while 1 narrows to a single test and calls the result green.
@@ -370,7 +370,7 @@
         (try
           (api/test-run! sess 'vdemo)
           (testing "rt that ran in the CHILD is attributed to the caller's test"
-            (is (contains? @touched 'slopp.rt/traced-run) (pr-str @touched)))
+            (is (contains? @touched 'slopp.kernel.rt/traced-run) (pr-str @touched)))
           (finally (rt/restore! originals))))
       (finally (api/close! sess)))))
 

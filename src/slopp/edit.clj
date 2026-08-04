@@ -366,7 +366,7 @@
   look more fundamental than it is."
   '#{slopp.ops/external-test-run!
      slopp.mcp/call! slopp.mcp/call-main! slopp.mcp/serve! slopp.mcp/-main
-     slopp.boot/-main slopp.lab.benchmark/-main})
+     slopp.kernel.boot/-main slopp.lab.benchmark/-main})
 
 (def image-spawning-vars
   "Vars that spawn ONE image and return. A deftest touching one is still kept
@@ -647,8 +647,8 @@
   one repeated what the compiler said.
 
   Two sources, in order: a STORE namespace whose last segment is the alias
-  (`kernel` → `slopp.store.kernel`), which is how the convention actually
-  works here, and the handful of clojure.* aliases everyone uses. Ambiguity
+  (`parcel` → `logi.parcel`), which is how the convention actually
+  works, and the handful of clojure.* aliases everyone uses. Ambiguity
   names every candidate rather than picking — the point is to save the lookup,
   not to guess."
   [store err ns-sym]

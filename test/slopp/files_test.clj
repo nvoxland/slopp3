@@ -45,14 +45,16 @@
         [s1 d1] (store/record-config-put base mf :manifest
                                          "Main-Class" "slopp.launcher" :agent "a")
         [s2 d2] (store/record-config-put s1 mf :manifest
-                                         "X-Slopp-Main" "slopp.boot/-main" :agent "a")]
+                                         "X-Slopp-Main" "slopp.kernel.boot/-main" :agent "a")]
     (testing "the store holds semantics, not text"
       (is (= {:format :manifest
               :values {"Main-Class" "slopp.launcher"
-                       "X-Slopp-Main" "slopp.boot/-main"}}
+                       "X-Slopp-Main" "slopp.kernel.boot/-main"}}
              (get-in s2 [:config mf]))))
     (testing "rendering serializes to the format (sorted, deterministic)"
-      (is (= "Main-Class: slopp.launcher\nX-Slopp-Main: slopp.boot/-main\n"
+      (is (= "Main-Class: slopp.launcher
+X-Slopp-Main: slopp.kernel.boot/-main
+"
              (store/render-config (get-in s2 [:config mf])))))
     (testing "per-key deltas replay on foreign stores"
       (is (= (get-in s2 [:config mf])

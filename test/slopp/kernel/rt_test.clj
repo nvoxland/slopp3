@@ -1,6 +1,6 @@
-(ns slopp.rt-test
+(ns slopp.kernel.rt-test
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.rt :as rt]))
+            [slopp.kernel.rt :as rt]))
 
 ^:unsafe (deftest instrument-seam-records-and-restores
   ;; THE instrumentation seam (#121). traced-run had this loop inline; the
@@ -25,7 +25,7 @@
         (is (= #{} @touched))))))
 
 ^:unsafe (deftest self-instrument-catches-rts-own-calls
-  ;; In a CHILD image, slopp.rt is the ONLY slopp code that runs (inject-rt! is
+  ;; In a CHILD image, slopp.kernel.rt is the ONLY slopp code that runs (inject-rt! is
   ;; the sole place slopp code is evaled in; the child otherwise loads its own
   ;; store). Nothing there wraps rt, so its calls were invisible.
   ;;
@@ -43,18 +43,18 @@
                 reads as covered by the one test that calls it directly, and a
                 PARTIAL count is worse than none: zero falls back to running
                 everything, one narrows to one test and says green."
-        (is (contains? @rt/self-touched 'slopp.rt/self-instrument!)))
+        (is (contains? @rt/self-touched 'slopp.kernel.rt/self-instrument!)))
       (rt/qualified #'clojure.core/inc)
       (let [drained (rt/drain-self!)]
         (testing "an rt call made here is recorded against rt's own atom"
-          (is (contains? drained 'slopp.rt/qualified) (pr-str drained))))
+          (is (contains? drained 'slopp.kernel.rt/qualified) (pr-str drained))))
       (testing "the drain CLEARS — it runs once per eval, and re-reporting a
                 call would inflate whichever test is traced next"
-        (is (not (contains? (rt/drain-self!) 'slopp.rt/qualified))))
+        (is (not (contains? (rt/drain-self!) 'slopp.kernel.rt/qualified))))
       (finally (rt/restore! originals))))
   (testing "restored — self-instrumentation is temporary like every other"
     (rt/qualified #'clojure.core/inc)
-    (is (not (contains? (rt/drain-self!) 'slopp.rt/qualified)))))
+    (is (not (contains? (rt/drain-self!) 'slopp.kernel.rt/qualified)))))
 
 ^:unsafe (deftest nested-instrument-restores-the-outer-sink
   ;; The sink is how rt calls made in a CHILD image find the test being traced

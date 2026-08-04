@@ -207,7 +207,7 @@
   process's. A failed host reload is exactly when the two diverge, so the
   oracle comparing clean is no evidence at all about the host.
 
-  **So the host now measures ITSELF.** `slopp.boot/host-drift` compares what
+  **So the host now measures ITSELF.** `slopp.kernel.boot/host-drift` compares what
   this process actually loaded — recorded by every door into this JVM,
   `load-store!` and the live watcher — against the store's current sources,
   kernel rendering on both sides. It arrives on `info` as `:host-drift`, and a

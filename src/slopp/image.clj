@@ -4,7 +4,7 @@
   recording the green/red result as provenance (D5/D6, C4)."
   (:require [slopp.store.render :as render]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.rt :as rt] [slopp.image.currency :as currency] [rewrite-clj.node :as n]))
+            [slopp.store :as store] [slopp.kernel.rt :as rt] [slopp.image.currency :as currency] [rewrite-clj.node :as n]))
 
 (defn load-ns-into!
   "Evaluate `ns-sym`'s current source (rendered from the store) into `handle`
@@ -80,12 +80,12 @@
   (first (repl/eval! handle (format "(clojure.test/run-tests '%s)" ns-sym))))
 
 (defn- drain-child-rt!
-  "Move what slopp.rt did IN `handle`'s child onto whoever is tracing us (#126).
+  "Move what slopp.kernel.rt did IN `handle`'s child onto whoever is tracing us (#126).
 
   rt is the only slopp code that executes in a child image — `repl/inject-rt!`
   is the sole place slopp code is evaled in, and the child otherwise loads its
   own store. So its calls are invisible to a caller that only wraps its OWN
-  vars: measured 2026-07-17, slopp.rt/traced-run read 0 covering tests while 213
+  vars: measured 2026-07-17, slopp.kernel.rt/traced-run read 0 covering tests while 213
   exercised it from here.
 
   No sink means nobody is tracing — the MCP server's own images, overwhelmingly
@@ -96,11 +96,11 @@
   (when-let [sink @rt/touched-sink]
     (when-let [syms (first (repl/eval!
                             handle
-                            "(when-let [d (resolve 'slopp.rt/drain-self!)] (d))"))]
+                            "(when-let [d (resolve 'slopp.kernel.rt/drain-self!)] (d))"))]
       (swap! sink into syms))))
 
 ^:reads (defn traced-test-run
-  "Run `test-ns`'s tests in the image with form-tracing (slopp.rt): the fn
+  "Run `test-ns`'s tests in the image with form-tracing (slopp.kernel.rt): the fn
   vars of `test-ns`'s dependency CLOSURE are observed (item 2 — not every
   store namespace), so the result maps each test to the forms it exercised.
   `only` (a coll of plain test names) restricts which tests run. `test-ns`
@@ -109,8 +109,8 @@
 
   **Non-JVM namespaces are dropped here, and this is load-bearing.** The image
   holds no `:cljs` namespace, and BOTH halves of the tracer walk `ns-interns`
-  over what they are handed — `slopp.rt/traced-run` over the test namespaces,
-  `slopp.rt/instrument!` over the targets. `ns-interns` THROWS on a namespace
+  over what they are handed — `slopp.kernel.rt/traced-run` over the test namespaces,
+  `slopp.kernel.rt/instrument!` over the targets. `ns-interns` THROWS on a namespace
   that does not exist, lazily, inside the run: the throw crosses the eval
   boundary as text, the caller destructures a nil `:summary`, and its `cond->`
   builds a map with no counts in it. One empty `:cljs` namespace was therefore
@@ -125,7 +125,7 @@
   which dispatch value lives in which form.
 
   Also drains what rt itself did in the child onto whoever is tracing US (#126)
-  — this call is where `slopp.rt/traced-run` actually executes, so it is the
+  — this call is where `slopp.kernel.rt/traced-run` actually executes, so it is the
   only place that evidence can come from."
   [handle store test-ns & {:keys [only skip-integration?]}]
   (let [in-image? #(and (contains? (:namespaces store) %)
@@ -141,7 +141,7 @@
       ;; nil and throw the very exception this filter exists to prevent.
       {:summary {:test 0 :pass 0 :fail 0 :error 0 :type :summary} :trace {}}
       (let [result (first (repl/eval! handle
-                                      (format "(slopp.rt/traced-run '%s '%s '%s %s '%s)"
+                                      (format "(slopp.kernel.rt/traced-run '%s '%s '%s %s '%s)"
                                               nses
                                               (vec (sort targets))
                                               (pr-str (some-> only vec))

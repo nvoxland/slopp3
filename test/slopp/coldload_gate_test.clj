@@ -1,7 +1,7 @@
 (ns slopp.coldload-gate-test
   "The compile gate must refuse writes that hot-load into the live image but
   leave a namespace a FRESH load cannot resolve (forward references) — the
-  gap found when an edit_group committed a slopp.sync that slopp.boot
+  gap found when an edit_group committed a slopp.sync that slopp.kernel.boot
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]

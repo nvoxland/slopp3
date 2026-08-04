@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as project.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as project.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.kernel.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -363,7 +363,7 @@
   (if-let [err (edit/observe-gate driver-code)]
     {:error err}
     (first (repl/eval! (:image @session)
-                       (format "(slopp.rt/observe '%s/%s (fn [] %s) %d)"
+                       (format "(slopp.kernel.rt/observe '%s/%s (fn [] %s) %d)"
                                ns-sym nm driver-code limit)))))
 
 ^:reads (defn query-macroexpand
@@ -2881,7 +2881,7 @@ recompiled (session/after-write! session ns-sym)]
                   (if-let [err (edit/observe-gate code)]
                     {:error err}
                     (first (repl/eval! (:image @session)
-                                       (format "(slopp.rt/observe '%s (fn [] %s) %d)"
+                                       (format "(slopp.kernel.rt/observe '%s (fn [] %s) %d)"
                                                qname code limit)))))]
       (cond
         (:error obs) obs
@@ -2973,7 +2973,7 @@ recompiled (session/after-write! session ns-sym)]
         ;; the kernel ns exists only in a process that booted from a store
         ;; (the dev server, a jar launch) — reach it through the carrier and
         ;; treat any failure as absence, never an error
-        host     (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
+        host     (when-let [info (try ((store/late-ref 'slopp.kernel.boot/current-boot-info))
                                       (catch Throwable _ nil))]
                    (orient/host-brief info (count (filter #(and (> (:at % 0) (:booted-at info 0))
                                         (not (contains? fields/markers (:op %))))
@@ -3238,7 +3238,7 @@ recompiled (session/after-write! session ns-sym)]
    refusal would break a documented extension point to prevent a naming
    mistake.
 
-   Why it warns at all: `slopp.boot` loads store namespaces BEFORE slopp's own,
+   Why it warns at all: `slopp.kernel.boot` loads store namespaces BEFORE slopp's own,
    so a shadowing namespace that does not define everything the real one does
    breaks the server at its next boot — and the store is then unopenable by the
    only tool that could remove it. That happened: a project defined

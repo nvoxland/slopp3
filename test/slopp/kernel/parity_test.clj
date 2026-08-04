@@ -1,4 +1,4 @@
-(ns slopp.store.kernel-test
+(ns slopp.kernel.parity-test
   "Cover for the kernel parity comparator.
 
   Same-package by necessity — the subject is package-private to
@@ -12,10 +12,10 @@
   today's diff; grounding each case in a real incident is what keeps it a
   guard rather than a description."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.store.kernel :as kernel]))
+            [slopp.kernel.parity :as kernel]))
 
 (deftest kernel-parity-catches-the-two-drifts-that-actually-happened
-  ;; `slopp.rt` and `slopp.boot` exist as BOTH a hand-maintained file on main
+  ;; `slopp.kernel.rt` and `slopp.kernel.boot` exist as BOTH a hand-maintained file on main
   ;; and a namespace in the store. The file serves a main-checkout dev run
   ;; (which is how the benchmarks execute); the store serves everything the
   ;; jar and the external tier touch. Nothing has ever compared them, and they
@@ -52,7 +52,7 @@
 
 (deftest kernel-parity-tolerates-the-residual-and-refuses-to-pass-on-nothing
   (testing "form ORDER is not drift — the store orders by its own logic, the file by human grouping"
-    ;; this is most of what `git diff main slopp/main -- src/slopp/rt.clj`
+    ;; this is most of what `git diff main slopp/main -- src/slopp/kernel/rt.clj`
     ;; renders, as delete-here/add-there, and it is why the raw diff has never
     ;; been usable as the guard
     (let [file  "(ns k) (defn a [] 1) (defn b [] 2)"

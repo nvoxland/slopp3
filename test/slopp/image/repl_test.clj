@@ -11,7 +11,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
             [clojure.string]
-            [slopp.boot :as boot]
+            [slopp.kernel.boot :as boot]
             [slopp.image.repl :as repl]))
 
 (deftest ^:external owned-repl-eval-and-restart
@@ -201,7 +201,7 @@
     (try
       (testing "a fresh image records what baseline means for it, and is clean"
         (is (seq (:nses (:baseline img))) "the namespace set, before any store code")
-        (is (contains? (set (:nses (:baseline img))) 'slopp.rt)
+        (is (contains? (set (:nses (:baseline img))) 'slopp.kernel.rt)
             "rt is injected before the snapshot, so it survives every reset")
         (is (false? (first (repl/eval! img repl/dirty-probe)))))
       (testing "a tenant's namespaces are gone after reset"
@@ -288,7 +288,7 @@
   ;; The ordering below is the real claim and it holds either way: seeding has
   ;; to precede the resolution it exists to serve.
   ;;
-  ;; The policy lives in `slopp.boot/ensure-repos!` and is CALLED rather than
+  ;; The policy lives in `slopp.kernel.boot/ensure-repos!` and is CALLED rather than
   ;; restated, so the two processes cannot drift about where to look.
   (let [code (#'repl/add-libs-code '{some/lib {:mvn/version "1.0.0"}})]
     (is (string? code))

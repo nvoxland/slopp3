@@ -23,7 +23,7 @@ slopp.git-projection: slopp.git slopp.read slopp.store slopp.ops (test)
 slopp.gitauthor: slopp.git
 slopp.history: slopp.mcp slopp.read slopp.store slopp.ops (test)
 slopp.hub: slopp.project slopp.web slopp.store (test)
-slopp.image: slopp.boot slopp.rt slopp.store
+slopp.image: slopp.kernel slopp.store
 slopp.index: slopp.cache slopp.image slopp.store slopp.build (test) slopp.mcp (test) slopp.ops (test) slopp.read (test) slopp.rules (test)
 slopp.integration-tier: slopp.ops (test)
 slopp.lab: slopp.mcp slopp.ops slopp.read slopp.store
@@ -33,7 +33,7 @@ slopp.merge: slopp.store
 slopp.modules: slopp.edit slopp.read slopp.store slopp.ops (test)
 slopp.multiproc: slopp.read slopp.store slopp.ops (test)
 slopp.observe: slopp.ops (test)
-slopp.ops: slopp.boot slopp.build slopp.edit slopp.image slopp.index slopp.project slopp.read slopp.rules slopp.store slopp.store (test)
+slopp.ops: slopp.build slopp.edit slopp.image slopp.index slopp.kernel slopp.project slopp.read slopp.rules slopp.store slopp.store (test)
 slopp.orientation: slopp.edit slopp.read slopp.ops (test)
 slopp.phase4: slopp.read slopp.store slopp.ops (test)
 slopp.project: slopp.index slopp.store
@@ -45,10 +45,10 @@ slopp.store: slopp.cache slopp.ops (test) slopp.read (test)
 slopp.subform: slopp.read slopp.ops (test)
 slopp.subform-plan: slopp.edit slopp.store
 slopp.surgeon: slopp.read slopp.ops (test)
-slopp.sync: slopp.boot slopp.git slopp.ops slopp.read slopp.store
+slopp.sync: slopp.git slopp.kernel slopp.ops slopp.read slopp.store
 slopp.sync-plan: slopp.sync
 slopp.trace: slopp.ops (test)
 slopp.unsafe: slopp.edit slopp.read slopp.store slopp.ops (test)
-slopp.verification: slopp.image slopp.read slopp.rt slopp.store slopp.ops (test)
+slopp.verification: slopp.image slopp.kernel slopp.read slopp.store slopp.ops (test)
 slopp.warm-spare: slopp.ops (test)
 slopp.webdev: slopp.build slopp.edit slopp.image slopp.ops slopp.project slopp.rules slopp.store slopp.web slopp.read (test)

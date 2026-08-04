@@ -470,8 +470,16 @@
    that in mind, because both names were later REUSED and a glossary keyed by
    spelling cannot say so — `slopp.api` here is the 322-form operation drawer
    (today's `slopp.ops`), and `slopp.http-api` is what today's `slopp.api`
-   was called. Nothing about this fixture is stale; the names simply moved
-   underneath it."
+   was called. `slopp.boot` and `slopp.rt` were later folded into one module,
+   `slopp.kernel`. Nothing about this fixture is stale; the names simply moved
+   underneath it.
+
+   These are MODULE names, which is why a store-wide prose sweep must not
+   touch them: a module is the first TWO segments of a namespace, so the
+   rewrite a sweep produces for a namespace that gained a segment — here
+   `slopp.rt` to `slopp.kernel.rt` — names a module that `module-of` can
+   never yield. It is not merely dated then, it is invalid. Both sweeps of
+   the kernel move hit this form and both were reverted."
   {"slopp.api"   ["slopp.boot" "slopp.edit" "slopp.image" "slopp.index" "slopp.store" "slopp.web"]
    "slopp.bench" ["slopp.api" "slopp.mcp" "slopp.store"]
    "slopp.boot"  []
@@ -488,6 +496,9 @@
    "slopp.web"   []})
 
 (deftest substrate-on-a-real-manifest-names-the-foundation-and-nothing-else
+  ;; The names here are the DATED ones `slopp-production` carries and must
+  ;; keep — see its docstring. A sweep that renames them renames one half of
+  ;; a fixture whose two halves are compared against each other.
   (let [band  (modules/substrate slopp-production)
         edges (for [[m ds] slopp-production d ds] [m d])]
     (testing "the foundation is the three widely-used sinks plus the store hub"

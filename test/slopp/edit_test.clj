@@ -288,13 +288,20 @@
   ;; Every other structural refusal here names the next call: the module gate
   ;; gives the exact `module_dep`, the tier gate the exact `module_purity`.
   ;; This one repeated what the compiler said.
+  ;;
+  ;; The fixture names are FICTIONAL on purpose. It used to ingest the real
+  ;; `slopp.store.kernel`, which made a unit test of a pure string function
+  ;; hostage to a rename of production code — and when that rename came, the
+  ;; quoted symbol moved while the `(ns …)` three tokens later, inside a
+  ;; STRING, did not. The store held a fixture declaring one namespace under
+  ;; the name of another.
   (let [st (-> (store/empty-store)
-               (store/ingest 'slopp.store.kernel "(ns slopp.store.kernel)\n(defn f [] 1)\n")
+               (store/ingest 'some.kernel "(ns some.kernel)\n(defn f [] 1)\n")
                (store/ingest 'app.core "(ns app.core)\n(defn g [] 2)\n"))]
     (testing "a store namespace whose LAST SEGMENT is the alias"
       (let [h (#'edit/missing-alias-hint st "No such namespace: kernel" 'app.core)]
         (is (some? h))
-        (is (str/includes? h "slopp.store.kernel"))
+        (is (str/includes? h "some.kernel"))
         (is (str/includes? h "ns_add_require"))
         (is (str/includes? h "app.core") "the require goes on the ns being WRITTEN")))
     (testing "a well-known clojure alias, which no store namespace can supply"
@@ -310,5 +317,5 @@
     (testing "ambiguity names every candidate instead of picking one"
       (let [st2 (store/ingest st 'other.kernel "(ns other.kernel)\n(defn h [] 3)\n")
             h   (#'edit/missing-alias-hint st2 "No such namespace: kernel" 'app.core)]
-        (is (str/includes? h "slopp.store.kernel"))
+        (is (str/includes? h "some.kernel"))
         (is (str/includes? h "other.kernel"))))))

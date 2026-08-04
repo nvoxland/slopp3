@@ -16,9 +16,9 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [slopp.ops :as api]
-            [slopp.boot :as boot]
+            [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store.kernel :as kernel]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as kernel]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -110,7 +110,7 @@
   "Clone git remote `url` into `dir` as a fileless slopp store: fetch the
   slopp-owned branch (`:branch`, else \"slopp\", else the legacy \"main\"),
   restore the deps manifest from the remote deps.edn, ingest every namespace
-  through the verified write path (dependency order — reuses slopp.boot's
+  through the verified write path (dependency order — reuses slopp.kernel.boot's
   require-graph sort), and record `git-remote`/`git-base-sha`
   so the projection grafts onto the remote's history and later syncs use the
   same branch. Ingest is byte-exact, so a fresh clone's live tree equals the

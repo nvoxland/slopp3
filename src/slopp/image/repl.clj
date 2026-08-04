@@ -5,7 +5,7 @@
   backstop. Phase-1 uses plain restart; the warm-spare optimization is deferred."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [nrepl.core :as nrepl] [slopp.boot :as boot])
+            [nrepl.core :as nrepl] [slopp.kernel.boot :as boot])
   (:import [java.io BufferedReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -30,7 +30,7 @@
   existing installs with no per-store migration, and merged into every image's
   `-Sdeps` AFTER the manifest so slopp controls their versions. Image-tier ONLY
   — the server/boot JVM runs on the kernel deps (root deps.edn); slopp code that
-  uses these must run in the image (feature-detected, like `slopp.rt`)."
+  uses these must run in the image (feature-detected, like `slopp.kernel.rt`)."
   '{nrepl/nrepl   {:mvn/version "1.3.1"}
     metosin/malli {:mvn/version "0.20.1"}})
 
@@ -195,7 +195,7 @@
   happens to carry every declared lib and the failures were therefore
   invisible. Nothing of a user's manifest comes from slopp's jar.
 
-  `slopp.boot/ensure-repos!` is CALLED, not restated, so the host and the
+  `slopp.kernel.boot/ensure-repos!` is CALLED, not restated, so the host and the
   image cannot come to disagree about where artifacts live."
   [deps-map]
   (str "(do (require 'clojure.repl.deps 'clojure.java.basis"
@@ -291,13 +291,13 @@
   "(boolean (resolve 'user/slopp-image-dirty))")
 
 (defn- inject-rt!
-  "Load slopp's runtime support (slopp.rt — traced test execution) into the
+  "Load slopp's runtime support (slopp.kernel.rt — traced test execution) into the
   image, ensure the parent-death watchdog is aboard, wrap rt against itself
   (#126), record the BASELINE namespace set, then return to `user`. Every
   owned image carries all of it.
 
   The self-instrument call is FEATURE-DETECTED, not assumed. `io/resource` reads
-  whichever slopp/rt.clj is on the READING process's classpath, and that differs
+  whichever rt source is on the READING process's classpath, and that differs
   by caller: the external runner is a built project, so it gets the store's
   rendered rt; the MCP server runs from the uberjar, so it gets whatever rt that
   jar was built with — which lags the store by design. Calling a var the older
@@ -318,8 +318,15 @@
   line, before nREPL starts — this re-run is the safety net for images
   launched with a custom :cmd; the name guard makes it land exactly once."
   [handle]
-  (eval! handle (slurp (io/resource "slopp/rt.clj")))
-  (eval! handle "(when-let [f (resolve 'slopp.rt/self-instrument!)] (f))")
+  ;; BOTH paths, for the same reason the resolve below is feature-detected:
+  ;; the jar lags the store, and the kernel move changed where rt renders.
+  ;; A built project has slopp/kernel/rt.clj; a jar built before that move
+  ;; has slopp/rt.clj and nothing else. Ordered new-first so the current
+  ;; layout always wins; the second arm dies with the last jar predating
+  ;; the move, and until then it is what keeps every image startable.
+  (eval! handle (slurp (or (io/resource "slopp/kernel/rt.clj")
+                           (io/resource "slopp/rt.clj"))))
+  (eval! handle "(when-let [f (resolve 'slopp.kernel.rt/self-instrument!)] (f))")
   (eval! handle watchdog-src)
   (let [handle (assoc handle :baseline
                       (try {:nses (first (eval! handle "(set (map ns-name (all-ns)))"))
@@ -330,14 +337,15 @@
 
 (defn ^:export ^{:live-handle true
         :malli/schema
-        [:=> [:cat [:? [:map
+        [:=> {:throws [[:map [:pid {:optional true} [:maybe :int]]]]}
+              [:cat [:? [:map
                         [:slopp.image.repl/cmd {:optional true} [:maybe [:sequential :string]]]
                         [:slopp.image.repl/dir {:optional true} [:maybe :some]]
                         [:slopp.image.repl/timeout-ms {:optional true} :int]
                         [:slopp.image.repl/deps {:optional true} [:maybe :map]]]]]
          :map]}
   start!
-  "Launch a fresh owned image (with slopp.rt support loaded); returns a handle
+  "Launch a fresh owned image (with slopp.kernel.rt support loaded); returns a handle
   for eval!/restart!/stop!.
 
   The OPTION map is a caller-built contract, so its keys are qualified —
@@ -416,7 +424,7 @@
   such a name, and the alternative — sweeping the runtime's own namespaces —
   is measured to break dependency loading.
 
-  Also clears `rt/touched-sink`, which lives in `slopp.rt` and therefore
+  Also clears `rt/touched-sink`, which lives in `slopp.kernel.rt` and therefore
   SURVIVES the sweep: a leftover sink would silently drain the next tenant's
   trace into the previous tenant's collector.
 
@@ -429,7 +437,7 @@
       (when-not (first (eval! image dirty-probe))
         (let [b (set nses)]
           (eval! image
-                 (str "(do (when-let [v (resolve 'slopp.rt/touched-sink)]"
+                 (str "(do (when-let [v (resolve 'slopp.kernel.rt/touched-sink)]"
                       "      (reset! (var-get v) nil))"
                       "    (let [runtime? (fn [n] (or (.startsWith (name n) \"clojure.\")"
                       "                               (.startsWith (name n) \"nrepl.\")))]"

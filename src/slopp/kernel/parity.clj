@@ -1,7 +1,7 @@
-(ns slopp.store.kernel
+(ns slopp.kernel.parity
   "Keeping the KERNEL's two copies honest.
 
-  `slopp.rt` and `slopp.boot` are the one part of slopp that is not only a
+  `slopp.kernel.rt` and `slopp.kernel.boot` are the one part of slopp that is not only a
   store namespace: each also exists as a hand-maintained file on `main`, and
   both copies are live. That makes the kernel the single layer a store-wide
   sweep cannot see — a rename that rewrites every reference in the store walks
@@ -80,7 +80,7 @@
 (defn ^:export kernel-parity
   "Compare two copies of one kernel source and report where they have DRIFTED.
 
-  `slopp.rt` and `slopp.boot` are the kernel: they exist as a hand-maintained
+  `slopp.kernel.rt` and `slopp.kernel.boot` are the kernel: they exist as a hand-maintained
   file on `main` AND as namespaces in the store, and both copies are live — the
   file serves a `main`-checkout dev run (which is how the benchmarks execute),
   the store's projection is what the jar ships and what `build!` materializes

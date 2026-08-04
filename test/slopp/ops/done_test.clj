@@ -4,7 +4,7 @@
    through a real session in slopp.ops-test."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops.done :as done] [slopp.ops.external :as external] [slopp.boot :as boot] [slopp.ops :as api]))
+            [slopp.ops.done :as done] [slopp.ops.external :as external] [slopp.kernel.boot :as boot] [slopp.ops :as api]))
 
 (defn- store-with-requires []
   (store/ingest (store/empty-store) 'du.core

@@ -2,7 +2,7 @@
   "The cold-load half of the compile gate: index/forward-refs finds same-ns
   var usages that precede the var's first definition/declare — legal against
   a live image, fatal on a fresh namespace load (boot/restart). Found the
-  hard way: an edit_group committed a namespace slopp.boot couldn't load."
+  hard way: an edit_group committed a namespace slopp.kernel.boot couldn't load."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 

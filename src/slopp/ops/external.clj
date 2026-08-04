@@ -463,7 +463,7 @@ client-deps (merge (:client-deps st) (:client provided))
   is true and useless in a plain test JVM; gating on the boot record means
   drift is only ever computed where an empty registry would be news."
   [st]
-  (when-let [info (try ((store/late-ref 'slopp.boot/current-boot-info))
+  (when-let [info (try ((store/late-ref 'slopp.kernel.boot/current-boot-info))
                        (catch Throwable _ nil))]
     (orient/host-warning info
                          (orient/code-deltas-since st (:booted-at info 0))

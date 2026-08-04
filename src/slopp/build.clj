@@ -5,7 +5,7 @@
 
   The generated launcher uses `gen-class` — legal here because the D3/D4
   dialect gates *authored store code*; build output is host-generated
-  scaffolding, the same standing as slopp.rt's instrumentation machinery.
+  scaffolding, the same standing as slopp.kernel.rt's instrumentation machinery.
   The dialect is also what makes this target reliable: the bans on
   eval/read-string/gen-class/user-macros are exactly the closed-world
   assumptions native-image needs.

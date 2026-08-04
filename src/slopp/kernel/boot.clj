@@ -1,4 +1,4 @@
-(ns slopp.boot
+(ns slopp.kernel.boot
   "Run a slopp store's program directly from the db — no exported source.
   Renders every namespace's source from `<dir>/.slopp/store.db` (the
   `elements` table) and loads it into the CURRENT JVM in dependency order, then
@@ -11,7 +11,7 @@
   (default) loads a fixed version at startup; `--live` also tracks the store's
   data_version and hot-reloads changed namespaces into this JVM as they commit.
 
-  slopp running itself is just the self-host instance — `slopp.boot` + `slopp.rt`
+  slopp running itself is just the self-host instance — `slopp.kernel.boot` + `slopp.kernel.rt`
   + the dep coords are slopp-the-tool, not project source, so ANY store runs from
   its db with zero project source files."
   (:require [clojure.edn :as edn]
@@ -94,7 +94,7 @@
                 :when  (and lib (contains? all-nses lib))]
             lib))))
 
-(defn dependency-order
+(defn ^:export dependency-order
   "Store namespaces, dependencies first — a deterministic Kahn sort over the
   internal require graph (ties by sorted name; a cycle appends the sorted
   remainder). Mirrors slopp.store/ns-dependency-order without the store value."
@@ -114,7 +114,7 @@
   ;; no .clj on the classpath for store nses) — the in-process image/load-ns! trick
   (dosync (commute @#'clojure.core/*loaded-libs* conj ns-sym)))
 
-(def default-repos
+(def ^:export default-repos
   "Where to look for artifacts when the runtime cannot say — the same two the
   Clojure CLI's root deps.edn configures, so this RESTORES the default rather
   than inventing one."
@@ -129,7 +129,7 @@
   hand, is a claim that goes stale the first time `deps.edn` changes."
   "META-INF/slopp/bundled-libs.edn")
 
-(def framework-version-path
+(def ^:export framework-version-path
   "Resource naming which `slopp-web` release this jar's `slopp/web/**` IS.
 
   Written by `build.clj` from the tracked `META-INF/MANIFEST.MF`'s
@@ -141,7 +141,7 @@
   of the truth for slopp-web (D-framework-injection)."
   "META-INF/slopp/framework-version.edn")
 
-(defn framework-version
+(defn ^:export framework-version
   "The `slopp-web` release THIS slopp corresponds to, or nil when the process
   cannot say — a `clojure -M` run, a checkout, the oracle image.
 
@@ -160,7 +160,7 @@
   (when-let [r (io/resource framework-version-path)]
     (not-empty (str/trim (slurp r)))))
 
-(defn framework-files
+(defn ^:export framework-files
   "The framework slopp vendors into stores it serves: `{\"slopp/web.clj\" src …}`,
   or nil when this process cannot supply it (a checkout, a `clojure -M` run).
 
@@ -183,7 +183,7 @@
                         [p (slurp res)])))
            (edn/read-string (slurp r))))))
 
-(defn framework-deps
+(defn ^:export framework-deps
   "What the vendored framework needs from OUTSIDE — `{lib coord}` — or nil when
   this process cannot say.
 
@@ -204,7 +204,7 @@
   (when-let [r (io/resource "META-INF/slopp/framework-deps.edn")]
     (not-empty (edn/read-string (slurp r)))))
 
-(defn bundled-libs
+(defn ^:export bundled-libs
   "lib→coord for everything the host uberjar carries, or nil when this process
   is not running from one (a `clojure -M` run, a checkout, the oracle image)."
   []
@@ -223,7 +223,7 @@
   (when (and (empty? current) (seq bundled))
     bundled))
 
-(defn host-lib-divergence
+(defn ^:export host-lib-divergence
   "PURE. Where `manifest` and what the host jar `bundled` disagree about a
   version: lib→`{:declared coord :in-force coord}`, empty when they agree.
 
@@ -359,7 +359,7 @@
     (try
       (add-libs-here! deps)
       (catch Throwable t
-        (log! "slopp.boot: manifest deps did not resolve as one graph ("
+        (log! "slopp.kernel.boot: manifest deps did not resolve as one graph ("
               (.getMessage t) ") — retrying one at a time")
         (let [failed (reduce
                       (fn [acc [lib coord]]
@@ -371,10 +371,10 @@
                       []
                       deps)]
           (if (seq failed)
-            (log! "slopp.boot: could not add " (count failed) " of "
+            (log! "slopp.kernel.boot: could not add " (count failed) " of "
                   (count deps) " manifest deps: " (str/join "; " failed)
                   " — continuing; a require that needs one will say so")
-            (log! "slopp.boot: manifest deps resolved individually ("
+            (log! "slopp.kernel.boot: manifest deps resolved individually ("
                   (count deps) ")")))))))
 
 ^:reads (defn store-platforms
@@ -481,7 +481,7 @@
   when some namespace did not load.
 
   **Best-effort, deliberately (frictions 3b/3f/19).** This used to rethrow on
-  the first failure, and the blast radius was the whole system: `slopp.boot`
+  the first failure, and the blast radius was the whole system: `slopp.kernel.boot`
   loads every store namespace, so ONE namespace that no longer compiles took
   down every tool in every process — including the `edit_add_form` that would
   have put the missing form back. Three times in one wave a store reached a
@@ -520,7 +520,7 @@
               (vswap! failed conj {:ns ns-sym :why (str (.getMessage t))}))))
         (measure-host! (into {} (filter #(jvm-loadable? platforms (key %))) sources))
         (when (seq @failed)
-          (log! "slopp.boot:" (count @failed)
+          (log! "slopp.kernel.boot:" (count @failed)
                 "namespace(s) did NOT load —" (str/join ", " (map :ns @failed))
                 "— the store is open and editable anyway; fix them and restart."
                 "First:" (:why (first @failed))))
@@ -531,7 +531,7 @@
 ^:reads (defn- data-version [conn]
           (:data_version (jdbc/execute-one! conn ["PRAGMA data_version"])))
 
-(defonce boot-info
+(defonce ^:export boot-info
   ;; the host's own currency record — session_brief reads it (through the
   ;; late-ref carrier; absent in processes that didn't boot from a store) to
   ;; answer "which code is this server actually running": :snapshot mode =
@@ -543,7 +543,7 @@
   ;; :reloads :failed maintained by watch-live!.
   (atom nil))
 
-(defn current-boot-info
+(defn ^:export current-boot-info
   "The boot-info record, or nil — the fn face session_brief reaches through
   a late-ref carrier (an atom cannot be a carrier target).
 
@@ -775,20 +775,20 @@
        :args  (if (seq extra) extra [dir])})))
 
 ^:unsafe (defn -main
-  "clojure -M -m slopp.boot <dir> [--snapshot | --live] [--main ns/fn arg...]
+  "clojure -M -m slopp.kernel.boot <dir> [--snapshot | --live] [--main ns/fn arg...]
 
   Load the store's program into THIS jvm and run its entry point (default
   slopp.mcp/-main <dir>). --live tracks the store and hot-reloads changed
   namespaces (the watcher is a DAEMON thread — it never keeps the JVM alive
   after the program exits). --main trampolines any store CLI — in a fileless
   tree this is THE entry point: e.g.
-    clojure -M -m slopp.boot . --main slopp.sync/-main push . <url>"
+    clojure -M -m slopp.kernel.boot . --main slopp.sync/-main push . <url>"
   [& args]
   (let [{:keys [dir live? main args]} (parse-args args)]
     (reset! boot-info {:dir dir
                        :mode (if live? :live :snapshot)
                        :booted-at (System/currentTimeMillis)})
-    (log! "slopp.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
+    (log! "slopp.kernel.boot: loading store at " dir " (" (if live? "live" "snapshot") ")")
     (let [sources (load-store! dir)]
       ;; a typo'd dir CREATES an empty .slopp/store.db and loads zero
       ;; namespaces; without this the real error surfaced downstream as
@@ -799,10 +799,10 @@
         ;; the ordinary case for a dir that never adopted slopp — the
         ;; server is expected to serve those and leave them alone
         (if (.exists (io/file dir ".slopp" "store.db"))
-          (log! "slopp.boot: the store at " dir " has no namespaces yet —"
+          (log! "slopp.kernel.boot: the store at " dir " has no namespaces yet —"
                 " a freshly adopted store, or the wrong directory (a"
                 " populated one lives at " dir "/.slopp/store.db).")
-          (log! "slopp.boot: no slopp store at " dir " — serving an"
+          (log! "slopp.kernel.boot: no slopp store at " dir " — serving an"
                 " unadopted directory and leaving it untouched. Your first"
                 " write creates " dir "/.slopp/store.db.")))
       ;; a namespace that did not load is now SURVIVABLE (load-store! is

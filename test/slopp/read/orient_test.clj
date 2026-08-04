@@ -318,7 +318,7 @@
   ;; code". Two different processes are being conflated there:
   ;;
   ;;   - the reload that FAILED is the HOST's — this server process, whose
-  ;;     watcher lives in slopp.boot;
+  ;;     watcher lives in slopp.kernel.boot;
   ;;   - the image that was COMPARED is the child ORACLE, a separate JVM.
   ;;     `currency/stamp!` runs server-side, but it records what was pushed
   ;;     INTO the oracle, so `currency/drift` measures the oracle.
@@ -354,7 +354,7 @@
 (deftest a-failed-reload-is-a-stuck-watcher-when-THIS-process-compares-clean
   ;; The claim removed earlier today, now earned. It was wrong because the
   ;; comparison behind it was against the child ORACLE. Measured against this
-  ;; process — `slopp.boot/host-drift`, which every door into this JVM writes
+  ;; process — `slopp.kernel.boot/host-drift`, which every door into this JVM writes
   ;; — "the watcher is stuck, not stale code" is exactly right, and it is what
   ;; friction 20a needed: a rename left the watcher retrying a namespace the
   ;; store no longer had, failing forever and reporting staleness that a
