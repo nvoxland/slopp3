@@ -44,6 +44,55 @@
           d  (doctor/diagnose st)]
       (is (= [:unusedok] (map :marker (:unknown-markers d)))
           "a typo of ^:unused-ok waives nothing and reads as though it does")))
+  (testing "a vocabulary row whose VALUE goes nowhere — the glossary sending a
+            reader from one dead name to another"
+    ;; The vocabulary is written through `config_file` and NO gate reads it, so
+    ;; a row can point anywhere at all. Two consumers trust it without checking:
+    ;; the `retired-vocabulary` rule over store forms, and
+    ;; bin/check-shipped-prose.sh over the skills and docs/ — which is prose
+    ;; that SHIPS. A row pointing at a name this store does not have is a
+    ;; glossary entry that answers "where did it go?" with another dead end.
+    (let [st (-> (store/ingest (store/empty-store) 'vc.core
+                               "(ns vc.core)\n(defn f [] 1)\n")
+                 (assoc-in [:config "vocabulary" :values]
+                           {"vc.gone"  "vc.core"     ; resolves — a live namespace
+                            "old-word" "new-word"    ; bare terms: unresolvable BY CONSTRUCTION, so skipped
+                            "vc.a"     "vc.nowhere"  ; dead end
+                            "vc.b"     "vc.gone"}))  ; chain — points at another row's KEY
+          d  (doctor/diagnose st)
+          by (into {} (map (juxt :row :why) (:vocabulary-dead-ends d)))]
+      (is (= 4 (count (get-in st [:config "vocabulary" :values])))
+          "the fixture's own control — a vocabulary that failed to attach
+           satisfies every assertion below it")
+      (is (= 2 (count (:vocabulary-dead-ends d))) (pr-str (:vocabulary-dead-ends d)))
+      (is (= :unresolved (by "vc.a")) (pr-str by))
+      (is (= :chained (by "vc.b"))
+          (str "a value that is another row's key is reported as a CHAIN rather"
+               " than merely unresolved — the fix differs: " (pr-str by)))
+      (is (every? string? (map :fix (:vocabulary-dead-ends d)))
+          "a finding with no next call is a complaint")))
+  (testing "a name that lives ONLY in metadata is still a live name"
+    ;; The first run of this check reported `slopp.api/agent-id ->
+    ;; slopp.ops/agent-id` as unresolved. It was wrong: :slopp.ops/agent-id is
+    ;; declared in the malli schema on slopp.ops.external/open!, and a schema
+    ;; lives in METADATA — which `tree-seq coll? seq` walks straight past,
+    ;; because a node's meta is not one of its children. The resolution blob
+    ;; therefore had a hole shaped like every declared contract in the store.
+    ;;
+    ;; Both directions in one fixture on purpose: the silent case is only
+    ;; evidence if the loud case fires in the same store.
+    (let [st (-> (store/ingest (store/empty-store) 'vm.core
+                               (str "(ns vm.core)\n"
+                                    "(defn ^{:=> [:=> [:cat [:map [:vm.ctx/id :string]]] :any]}"
+                                    " f [x] x)\n"))
+                 (assoc-in [:config "vocabulary" :values]
+                           {"vm.was"   "vm.ctx/id"    ; reachable ONLY through metadata
+                            "vm.other" "vm.absent"})) ; reachable nowhere
+          d  (doctor/diagnose st)]
+      (is (= ["vm.other"] (map :row (:vocabulary-dead-ends d)))
+          (str "the metadata-only name must stay quiet AND the absent one must"
+               " fire — one without the other proves nothing: "
+               (pr-str (:vocabulary-dead-ends d))))))
   (testing "a CLEAN store reports clean, and says what it looked at"
     (let [st (store/ingest (store/empty-store) 'lg.ok
                            "(ns lg.ok)\n(defn ^{:unused-ok \"surface\"} f \"F.\" [x] x)\n")
@@ -51,6 +100,7 @@
       (is (= [] (:unmanaged-declares d)))
       (is (= [] (:duplicate-names d)))
       (is (= [] (:unknown-markers d)))
+      (is (= [] (:vocabulary-dead-ends d)))
       (is (true? (:healthy d)))
       (is (pos? (:scanned d))
           "a clean verdict over nothing is the vacuity every guard here has

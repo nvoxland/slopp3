@@ -996,7 +996,14 @@
    None exists in slopp today, which is why there is no escape yet.
 
    `:suggest` names the namespace whose LAST SEGMENT matches, when exactly one
-   does — the derivation `stranded-aliases` uses, and it resolved all three."
+   does — the derivation `stranded-aliases` uses, and it resolved all three.
+
+   **Stated reach limit.** The walk is `tree-seq coll? seq` over the form's
+   sexpr, and a node's METADATA is not one of its children — so a regex living
+   in metadata is invisible here. Measured the day this shipped: zero regex
+   literals in metadata store-wide, so this is a hole with nothing in it rather
+   than a known miss. `rules.doctor/diagnose` hit the same gap for real and
+   walks metadata; copy that shape if an instance ever turns up."
   [_session st* changed]
   (let [nses  (set (map str (keys (:namespaces st*))))
         root  (fn [m] (first (str/split m #"\.")))
