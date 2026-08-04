@@ -1098,6 +1098,46 @@ them. The arming condition (`web-enabled?`) tells you the audience — anything
 narrower than it that appears in the string is a claim about a store that may
 not be the one reading.
 
+### Sharpening (2026-08-04): the noun is RIGHT and the REACH is short
+
+Core 9 proper is a check computed over a different noun. There is a neighbour
+with the same tell and a different remedy: the check reads **the right noun,
+partially**, and reports on the part it reached in the voice of the whole.
+slopp-ui's formulation, after we each hit it the same week:
+
+> Not a wrong check — a check whose subject is partly outside its own reach,
+> reporting on the part it can see in the voice of the whole.
+
+| Instance | Subject | What the reach excluded |
+|---|---|---|
+| `rename_sweep` over store forms | every form | forms with `:name nil` — 3 of them, invisible to a name-addressed pass. It reported "15 forms", green, and left a docstring with four stale mentions |
+| `X-Slopp-Main` in the jar manifest | every reference to `slopp.boot` | a config VALUE that names code. No reference-tracking models it, so a full green preceded a jar that would not start |
+| slopp-ui's `tree-seq vector?` | the rendered hiccup | anything spliced as a bare seq |
+| slopp-ui's `tree-seq coll?` | the rendered TEXT | nothing — it reached too FAR, into attribute maps, so a text assertion passed on an `href` |
+| slopp-ui's `{:total 0}` | a 248-form store | all of it, from a guessed arity. Caught only because the count was in the result |
+
+**Both directions fail toward clean, and that is the part worth carrying.** My
+own framing of the traversal case was that reach is too NARROW; slopp-ui
+measured both predicates and found the too-WIDE one was the instance already
+biting. A walk that descends into an attribute map still returns strings, so
+"the name is rendered" passes on a link with no visible text. Too little reach
+finds nothing; too much finds the wrong thing. Neither announces itself.
+
+**The remedy is different from Core 9's, which is why this is worth separating.**
+There the fix is to move the check to where the real noun is visible. Here the
+noun is already right, so the fix is to **report the reach**: `rename_sweep`
+saying "15 forms, and 3 I could not address" costs one line and turns a silent
+class into a visible one. Same for an ad-hoc query — put the population count in
+the result, always, because `{:nameless []}` and `{:forms-scanned 248
+:nameless []}` are the same answer and only one of them is evidence.
+
+**The tell, adapted from Core 9's:** *what does my traversal/scan/index address
+things BY, and what is addressed some other way?* Names, paths, symbols and
+types are all addressing schemes, and every one of them has residents that do
+not have one. A form with no name, a reference living in a config value, a node
+spliced rather than wrapped — each is a citizen of the subject that the
+addressing scheme cannot name, and therefore cannot count.
+
 ## Core 10 — a refusal is read in FIX-IT mode, and design rationale is a different room
 
 **Root.** Named 2026-08-01 from the same cold read. slopp-ui hit

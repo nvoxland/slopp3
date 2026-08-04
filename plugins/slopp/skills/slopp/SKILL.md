@@ -463,6 +463,14 @@ fixture you thought you built is one namespace.
 Assert the fixture, not your intention for it: something that counts what the
 setup actually produced, before anything is read off it.
 
+**And put the population count in every ad-hoc `query_store` too.** A scan
+returning `{:offenders []}` is indistinguishable from a scan that read nothing
+— a guessed arity, a filter that matched no namespace, a key that is spelled
+differently than you remember. Return `{:namespaces-scanned n :forms-scanned n
+:offenders []}` and the empty answer becomes evidence. Compare the count
+against something you already know (`full_check` reports the store's form
+count) and it becomes proof.
+
 **And if you are building the FILTER, probe it both ways.** A detector needs an
 input it must flag and an input it must NOT — verify only that it can fire and
 every false-positive mode goes untested. A guard shipped here with a can-fire
