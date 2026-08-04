@@ -310,6 +310,62 @@ missing population, and the failure propagates as green. Filed as friction #53,
 whose remedy list starts with `done` deriving it — a test body calling a write
 verb in statement position is visible in the store.
 
+#### Sharpening (2026-08-04): a population control is not a PATTERN control
+
+The two sharpenings above push the control DOWN, from the assertion to the
+fixture. This one pushes it sideways, and it is the case where every existing
+form of the discipline was already satisfied.
+`ops.engine-test/the-write-engine-names-no-app-type` carried the population
+control twice, explicitly labelled:
+
+```clj
+(testing "there is a population — the vacuity that ate a sibling guard"
+  (is (< 50 (count (:namespaces st))))
+  (is (re-find #"rebased-write!" src) "rendered the wrong namespace, or rendered nothing"))
+…
+(is (= [] (vec (re-seq #"slopp\.api\.cljs" src))))
+```
+
+Phase 3 renamed `slopp.api.cljs` to `slopp.webdev.cljs`. The haystack stayed
+real — 193 namespaces, the right rendered source, both controls green — and the
+needle named a string that could no longer occur anywhere in the store. The
+guard's own comment says it "survives the move as the specific statement of it".
+It survived syntactically and died semantically, the day after the move it was
+written to outlive.
+
+> A control on the POPULATION says the haystack is real. It says nothing about
+> whether the NEEDLE still matches anything. When a check's subject is a
+> LITERAL — a regex, a search string, a path — it needs a second control
+> asserting that literal matches something known to contain it.
+
+The fix costs one line and is always available, because whatever the pattern was
+written to find exists somewhere:
+
+```clj
+(is (seq (re-seq #"slopp\.webdev\.cljs" (render/render-ns st 'slopp.webdev.cljs))))
+```
+
+Two of the three instances measured **already had that control, three lines
+below the broken assertion and spelled correctly**: `build-deps-edn-trace-alias`
+asserts `slopp\.image\.testmain` appears exactly twice in the trace branch,
+while the branch above searched for `slopp\.testmain` and therefore could not
+fail whatever the generator emitted. Nothing compares two literals inside one
+form — friction #47's shape (a fixture's two halves, three tokens apart, checked
+by nothing) landing in an assertion instead of a fixture.
+
+**Why this one could be mechanised where the others could not.** A search
+pattern is DATA: `ns_rename` rewrites requires, qualified refs, quoted symbols
+and prose, and a regex escapes its dots, so even the text sweep misses the
+spelling. But the store knows every namespace it has, so a regex naming a name
+in the store's OWN root family that is not one is checkable rather than a
+discipline — the `:stale-pattern` done-advisory. The scope is what makes it
+usable and it is not a heuristic: unrestricted the rule reports 119 findings of
+which 2 are real (fixtures name `mv.core`, libraries name `clojure.set`, config
+keys name `web.static`, assets name `logo.png`); restricted to the store's own
+roots it reports 3, all three bugs. That restriction is the *fixture should not
+name real production code* rule read backwards — **a fixture that names nothing
+real is exactly a fixture this check cannot see.**
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by

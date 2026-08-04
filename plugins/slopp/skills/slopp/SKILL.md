@@ -481,6 +481,30 @@ substring, and it reported every freshly-corrected line as a violation. A check
 that flags everything is exactly as uninformative as one that flags nothing,
 and it teaches its reader to stop looking.
 
+**And a control on the POPULATION says nothing about your PATTERN.** These are
+different claims and it is easy to have the first while believing you have the
+second. A guard here asserted that one namespace's rendered source does NOT
+mention another, and carried two population controls — 50+ namespaces in the
+store, and a `re-find` proving the right source had rendered. Then the named
+namespace was RENAMED. Both controls stayed green and the absence assertion went
+on searching for a string that could no longer occur anywhere.
+
+A search pattern is DATA: `ns_rename` rewrites requires, qualified references,
+quoted symbols and prose, while `rename_sweep` matches text and a regex escapes
+its dots — so no verb reaches it. Pair the absence with a match against
+something you KNOW contains the name:
+
+```clj
+(is (seq (re-seq #"acme\.client" (render/render-ns st 'acme.client))))  ; the needle still bites
+(is (= [] (vec (re-seq #"acme\.client" src))))                          ; …and it is absent HERE
+```
+
+slopp reports this one for you: the **`stale-pattern`** advisory flags a regex
+naming a name in your store's OWN root family that is neither a namespace nor a
+prefix of one. The scoping is deliberate and it is the fixture rule read
+backwards — *a fixture that names no real production code is exactly a fixture
+this check cannot see*. One more reason to name fixtures after nothing real.
+
 **This applies to a shell command exactly as it does to an `is`.** A rename was
 verified with `query_capabilities | grep ':set true'` → no output → read as "the
 rename landed". Empty meant two things at once: *nothing is set*, and *the tool
