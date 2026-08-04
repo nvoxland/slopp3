@@ -2650,7 +2650,7 @@ Run the check that can only be run once BEFORE you delete what makes it
 possible, and run it over the whole population: a sample would have found the
 renderer drift and missed this entirely.
 
-## D-ui-hub (2026-07-27, user decision) — one UI process per machine; each project serves its own data
+## D-hub (2026-07-27, user decision) — one UI process per machine; each project serves its own data
 
 `slopp.mcp/-main` autostarted the reviewer UI on `ui.port`, a capability
 whose default is the fixed 7359. That works for exactly one project. Run two
@@ -2811,7 +2811,7 @@ checked on the far side of it.
 
 Open, and cosmetic only: `ideas/ui-hub-styling.md`.
 
-### D-ui-hub part 3 (2026-07-27, user decision) — the UI becomes its own slopp project, and talks HTTP
+### D-hub part 3 (2026-07-27, user decision) — the UI becomes its own slopp project, and talks HTTP
 
 Part 1 made the hub a separate PROCESS; its code still lived in slopp's store.
 That left one store holding two applications, which is what made the
@@ -2881,7 +2881,7 @@ Frictions found while building: `ideas/ui-split-frictions.md` — notably that a
 `def` computed from another form stays STALE after an in-image edit, which made
 a new tool parameter silently unusable in the session that added it.
 
-### D-ui-hub part 4 — as built (2026-07-28)
+### D-hub part 4 — as built (2026-07-28)
 
 The split is standing and verified across two processes and two stores.
 `slopp-ui` is its own git repo, its own `.slopp/store.db`, and depends on
@@ -2929,7 +2929,7 @@ Two items were open at part 4 and are settled in part 5: a stale `done` verdict
 that could not be superseded (friction 14), and layout sitting on the wrong
 side of the line.
 
-### D-ui-hub part 5 — the framework sheds presentation (2026-07-28)
+### D-hub part 5 — the framework sheds presentation (2026-07-28)
 
 Stage 4 landed at milestone `d17437`. The framework store now serves data and
 nothing else.
@@ -2974,7 +2974,7 @@ stays, because the MCP still binds its own listener and beats to the hub.
 `review.heartbeat` now takes its interval from the registration response
 rather than a shared constant, so the two sides can be different releases.
 
-### D-ui-hub part 6 — an address is only claimable while something answers (2026-07-29)
+### D-hub part 6 — an address is only claimable while something answers (2026-07-29)
 
 Found by reviewing the split rather than by using it, which is worth noting:
 three surfaces described the pre-split world and every check was green.
@@ -3091,7 +3091,7 @@ names it.
 `slopp-ui` pinned `slopp-web 0.1.3`. The trailing-slash fix in
 `slopp.web.static/mount-routes` — made BECAUSE of slopp-ui — shipped in slopp's
 store, reached the uberjar, and never reached slopp-ui, because the declaration
-is what loads. Green everywhere for a day. `framework-drift` (D-ui-hub part 6's
+is what loads. Green everywhere for a day. `framework-drift` (D-hub part 6's
 tail) reports that now; this removes the ability to be in that state at all.
 
 **Why injection and not shading/vendoring**, which was the first suggestion.
@@ -3277,7 +3277,7 @@ over the store. `slopp.review.*` was the HTTP API slopp-ui consumes: a
 different concern, a different module, its own layer.
 
 That collision was manufactured by an earlier fix. The module was
-`slopp.ui`, renamed to `slopp.review` (D-ui-hub part 5) on the correct
+`slopp.ui`, renamed to `slopp.review` (D-hub part 5) on the correct
 objection that a module named for a UI it no longer contains is a claim a
 reader trusts. True — but the replacement landed on a word `slopp.api.review`
 already owned.

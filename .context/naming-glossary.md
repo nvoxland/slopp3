@@ -182,7 +182,8 @@ These name things that still exist; the phrase is what was retired.
 | "the dev server" | keeping a web project live in development — the mechanism is web tooling's, and it is `live` there |
 | "the app server" | the web project's own server, on `web.port` |
 | "the reviewer UI" / "reviewer API" | the external API (`slopp.api.*`) and its consumers. A viewing UI is ONE consumer, not the surface's identity |
-| "the UI hub" | "a hub" / "the hub". A hub is a role — one process per machine holding a registry fed by heartbeats. Rendering pages is what today's only hub (`slopp-ui`) happens to do with that registry, not what a hub is. `D-ui-hub` keeps its name as a decision ID |
+| "the UI hub" | "a hub" / "the hub". A hub is a role — one process per machine holding a registry fed by heartbeats. Rendering pages is what today's only hub (`slopp-ui`) happens to do with that registry, not what a hub is |
+| `D-ui-hub` | `D-hub`. The decision ID was left alone when the phrase was retired on 2026-07-27, on the rule that a dated record keeps its names — but a decision ID is not a dated record, it is an ADDRESS, and later entries in `decisions.md` had already started spelling it `D-hub` while no heading answered to that name. Two spellings for one decision, one of them dangling. Renamed 2026-08-04 |
 
 Naming a piece for its consumer or its current contents is the bug this whole
 restructure exists to fix (**R3**). Both change; that is what stranded
