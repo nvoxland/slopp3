@@ -111,6 +111,20 @@ measurably bleed tokens.
    wrong code. Restart the server (or fix the reload failure named in
    `:failed`) and re-run before believing a green. It is absent unless there
    is something to doubt, so when you see it, act on it.
+   **`:host :jar` says which ARTIFACT is answering** — `{:head <delta>
+   :behind N}`, the store head the running jar was BUILT from and how many
+   code deltas have landed since. `:host` otherwise reports the process's
+   MODE, never its code, which leaves "am I running the slopp that has the
+   fix?" answerable only by unzipping a file. A `:head` with **no `:behind`**
+   is not zero — it means the jar came from a DIFFERENT store than the one you
+   are reading (slopp's own jar serves other projects), so the count would be
+   meaningless and the identity is what to compare. The whole section is absent
+   when the process cannot say: a checkout, a `clojure -M` run.
+   **`restart` does not change the jar.** It rebuilds the images INSIDE this
+   JVM, which is the remedy for `:host-stale` and for verification drift, and
+   is no remedy at all for a stale artifact — a running JVM holds the classes
+   it loaded at boot. A jar `:behind` by hundreds needs a rebuild and a
+   PROCESS restart, and the tool named `restart` will look like it should work.
    **`:ms` says what verification cost.** Every write's `:test`, every `done`,
    every `full_check` and every external run reports its own wall time, and
    the number persists on the delta — so "where is my time going?" is a query

@@ -16,7 +16,8 @@
   Local flow (fileless tree): materialize the store (the `build` MCP tool →
   target/jar-src) then `clojure -T:build uber`. CI flow (checkout of the
   published repo): `clojure -T:build uber :src src`."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]))
 
@@ -134,15 +135,22 @@
                         (map #(.lastModified ^java.io.File %))
                         (reduce max 0))
             db     (io/file ".slopp" "store.db")
-            stamp  (io/file (or (.getParent srcd) ".") ".slopp-head")
+            stamp  (io/file srcd "META-INF" "slopp" "head.edn")
             fmt    #(.format (java.text.SimpleDateFormat. "HH:mm:ss") (java.util.Date. ^long %))]
         ;; NEVER be silent about what is being shipped. `build!` stamps the
         ;; materialization with the head delta it was built from; print it so a
         ;; stale jar is visible rather than inferred. (This tool runs under -T,
         ;; whose deps replace the project's, so it has no sqlite driver to read
         ;; the current head itself — comparing is the caller's one glance.)
+        ;;
+        ;; The stamp is UNDER src/, so it is the same file the jar carries and
+        ;; slopp.kernel.boot/jar-head reads back at runtime. It used to sit
+        ;; beside the tree, where this print was its only reader and the
+        ;; artifact could not answer for itself.
         (println (str "jarring a materialization of "
-                      (if (.exists stamp) (str "head " (slurp stamp)) "UNKNOWN head")
+                      (if (.exists stamp)
+                        (str "head " (:head (edn/read-string (slurp stamp))))
+                        "UNKNOWN head")
                       ", written " (fmt newest)))
         (when (and (.exists db) (> (.lastModified db) newest))
           (println (str "WARNING: .slopp/store.db changed at " (fmt (.lastModified db))

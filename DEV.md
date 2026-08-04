@@ -103,8 +103,19 @@ SLOPP_JAR=$PWD/target/slopp.jar  # what the plugin's bin/slopp honours
 **`uber` alone silently ships a STALE jar.** It bundles whatever is under
 `target/jar-src/src` — if you skip the materialize step that directory can be
 days old, and the build succeeds, prints "built target/slopp.jar", and takes
-only a few seconds. Verify when it matters: `unzip -l target/slopp.jar | grep
-slopp/api/external.clj` should show today's timestamp.
+only a few seconds. Two things say so rather than one:
+
+- `uber` PRINTS the head it is jarring (`build!` writes
+  `src/META-INF/slopp/head.edn`), and warns when `store.db` changed after the
+  materialization was written.
+- **the running process reports it back** — `session_brief`'s `:host :jar
+  {:head :behind}`. That is the one that matters, because the question is
+  almost never asked while building; it is asked two days later by whoever is
+  wondering why a fix they can see in the store is not in the tool.
+
+The old check was `ls -la` plus `unzip -p … | grep` for a symbol, and it was
+expensive AND wrong once: mtime and size agreed with a build that had not
+finished writing. A head id cannot race that way.
 
 Note `src` specifically, not the whole materialization. `test/`, `cljs-src/`
 and `instruments/` are siblings of `src/` in that tree and none of them is

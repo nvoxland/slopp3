@@ -382,6 +382,30 @@ The oracle must never return a false verdict. Everything here serves that.
    points at done/commit_point for the real verdict) and `commit_point`'s
    GATE. A green done carrying `:host-stale` still records a milestone today —
    changing the milestone bar is decision-grade and was not taken here.
+   **Which ARTIFACT produced the verdict (2026-08-05, task #30).** Everything
+   above measures a NAMESPACE against the store, which presumes the code doing
+   the measuring is the code you think it is. The layer under it — the jar —
+   said nothing at all, so "am I running the slopp that has the fix?" was
+   answered six times by hand and once WRONGLY (an `ls -la` + `unzip | grep`
+   read a jar mid-write, and mtime and size agreed with a build that had not
+   happened). `build!` now writes `src/META-INF/slopp/head.edn`,
+   `kernel.boot/jar-head` reads it back off the classpath, and
+   `orient/jar-currency` places it: `session_brief`'s `:host :jar
+   {:head :behind}`.
+   **`:behind` is ABSENT rather than 0 for a foreign head**, which is the case
+   the obvious version gets wrong — slopp's jar serves stores that are not
+   slopp's, and counting deltas after a foreign head's timestamp in THIS log
+   measures the reader's writing speed and reports it as the tool's age. Three
+   claims, one shape, the same as `:host-drift`.
+   The stamp sits UNDER `src/` for the reason `tiers-resource-path` gives: a
+   build jars `src`, so a stamp beside the tree is read by whoever ran the
+   build and by nobody afterwards — and the question is never asked at build
+   time. It is asked two days later by whoever is wondering why a fix visible
+   in the store is not in the tool.
+   And note which remedy does NOT apply: the `restart` TOOL rebuilds images
+   inside this JVM and cannot pick up a new jar, because a running JVM holds
+   the classes it loaded at boot. Both are in DEV.md's table and in the shipped
+   skill; a consumer lost ten minutes to the tool being named `restart`.
 6. **Cold-load gate (S1b, `edit/cold-load-errors` → `index/forward-refs`).**
    Hot-loading into the LIVE image cannot see forward references — the vars
    already exist there — so a write could commit a namespace that
