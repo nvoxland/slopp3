@@ -106,11 +106,11 @@ slopp --call git_clone '{"url":"https://github.com/you/proj.git","dir":"proj"}'
 
 ```sh
 git clone https://github.com/nvoxland/slopp3.git && cd slopp3
-clojure -M -m slopp.boot . --live
+clojure -M -m slopp.kernel.boot . --live
 ```
 
-The working tree is fileless: only the boot kernel (`src/slopp/boot.clj`,
-`src/slopp/rt.clj`) and `deps.edn` are real files. `slopp.boot` loads every
+The working tree is fileless: only the boot kernel (`src/slopp/kernel/boot.clj`,
+`src/slopp/kernel/rt.clj`) and `deps.edn` are real files. `slopp.kernel.boot` loads every
 namespace's byte-exact source out of `store.db` into the JVM in dependency
 order and invokes the entry point, so a plain `-m slopp.mcp` finds nothing.
 

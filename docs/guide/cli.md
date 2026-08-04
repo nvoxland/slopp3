@@ -54,7 +54,7 @@ program the server is running. It watches the journal's `data_version` and
 reloads changed namespaces into the running process.
 
 The one layer `--live` cannot reload is the boot kernel itself
-(`src/slopp/boot.clj`, `src/slopp/rt.clj`), because that is the code doing the
+(`src/slopp/kernel/boot.clj`, `src/slopp/kernel/rt.clj`), because that is the code doing the
 loading.
 
 ## CI

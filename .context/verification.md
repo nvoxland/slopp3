@@ -4,7 +4,7 @@ The oracle must never return a false verdict. Everything here serves that.
 
 ## The pieces
 
-1. **Traced runs (`slopp.rt/traced-run`, injected into every image).**
+1. **Traced runs (`slopp.kernel.rt/traced-run`, injected into every image).**
    Temporarily wraps fn vars of the store namespaces (alter-var-root,
    restored in `finally`), runs each test var individually, returns
    `{:summary {... :failures [...]} :trace {test-sym #{form-sym}}}`.
@@ -67,8 +67,8 @@ The oracle must never return a false verdict. Everything here serves that.
      (`ideas/the-image-is-too-heavy-a-unit.md`). What a session actually needs
      is a clean NAMESPACE SPACE, which is why an image can be recycled rather
      than respawned.
-   - **Two copies of `slopp.rt` exist** and each has its own consumer: the
-     KERNEL FILE (`src/slopp/rt.clj`, shipped in the uberjar) is what
+   - **Two copies of `slopp.kernel.rt` exist** and each has its own consumer: the
+     KERNEL FILE (`src/slopp/kernel/rt.clj`, shipped in the uberjar) is what
      `repl/inject-rt!` evals into every image; the STORE namespace is what
      `build!` renders and what slopp's own image actually loads (it wins —
      it loads after the injection). They must agree on **public surface and
@@ -436,7 +436,7 @@ The oracle must never return a false verdict. Everything here serves that.
    plain cognitect.
    **The child image REPORTS BACK (#126, 2026-07-17) — the subprocess limit is
    CLOSED, not accepted.** It used to read "the tracer cannot trace itself
-   through a subprocess". It can, because slopp.rt is the ONLY slopp code that
+   through a subprocess". It can, because slopp.kernel.rt is the ONLY slopp code that
    executes in a child (`repl/inject-rt!` is the sole place slopp code is evaled
    in; the child otherwise loads its own store). So:
    - `inject-rt!` calls `rt/self-instrument!`, wrapping rt against
@@ -466,9 +466,12 @@ The oracle must never return a false verdict. Everything here serves that.
      the originals map's metadata and `restore!` hands it back. Clearing it to
      nil stops the drain for every later test in the shard, SILENTLY.
    - Feature-detected via `resolve` at both ends: a lagging uberjar's rt predates
-     the seam, and `io/resource` reads whichever `slopp/rt.clj` is on the READING
+     the seam, and `io/resource` reads whichever rt source is on the READING
      process's classpath. A missing drain must degrade to no evidence, never an
-     error.
+     error. `inject-rt!` tries `slopp/kernel/rt.clj` and then `slopp/rt.clj` for
+     the same reason one level up — the kernel move changed where rt RENDERS, so
+     a jar built before it carries only the old path, and the read has to
+     tolerate the lag the `resolve` calls already do.
 
    **Measured, full suite, before → after:** `rt/traced-run` **0 → 214**;
    `rt/instrument!`/`restore!`/`qualified` **1 → 218**. The **1** was the
@@ -482,7 +485,7 @@ The oracle must never return a false verdict. Everything here serves that.
    either — at depth 3–4 across 376 tests everything is "covered" (p90 = 227
    tests, measured 2026-07-17).
    **The skip is REPORTED, not silent (`traced-run!`, 2026-07-16).**
-   `slopp.rt/traced-run` has dropped external-tier tests unconditionally since
+   `slopp.kernel.rt/traced-run` has dropped external-tier tests unconditionally since
    d980 (`true (remove (comp :external meta))`; the tag was spelled
    `^:isolated` until D-external-test-tier renamed it) — they have never executed
    in-image, and that half was never broken. What WAS broken: the skip was

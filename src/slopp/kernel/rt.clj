@@ -1,4 +1,4 @@
-(ns slopp.rt
+(ns slopp.kernel.rt
   "Runtime support slopp injects into every owned image (see slopp.image.repl/start!).
   Lives IN the image, next to the code under management.
 
@@ -17,7 +17,7 @@
        (let [m (meta v)]
          (and (not (:macro m)) (not (:test m))))))
 
-(defn qualified
+(defn ^:export qualified
   "A var's fully-qualified symbol — the key shape of every trace map, both
   tiers (#121). Public so the external trace runner keys tests identically to
   the in-image tracer instead of re-deriving it."
@@ -66,7 +66,7 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
-(def ^:ambient-ok touched-sink
+(def ^:ambient-ok ^:export touched-sink
   "The atom `instrument!` is currently collecting into, or nil.
 
   THE child-image drain's handle. rt runs in TWO processes: a runner wraps its
@@ -81,7 +81,7 @@
   earlier run's set."
   (atom nil))
 
-^:unsafe (defn restore!
+^:unsafe (defn ^:export restore!
   "Put back what `instrument!` wrapped — var roots AND multimethod table
   entries — and hand the `touched-sink` back to whatever run was collecting
   before it (nil at the outermost). Call from a `finally` — an image whose vars
@@ -99,7 +99,7 @@
   (doseq [[^clojure.lang.MultiFn mf k orig] (:methods originals)]
     (.addMethod mf k orig)))
 
-^:unsafe ^:reads (defn instrument!
+^:unsafe ^:reads (defn ^:export instrument!
   "Wrap every instrumentable fn var of `target-nses` so each call conjes its
   qualified symbol onto `touched` (an atom holding a set). Returns the
   originals map — hand it to `restore!` from a `finally`; instrumentation is
@@ -271,8 +271,8 @@
   is worse than none: zero means 'no information' and falls back to running the
   whole closure, one narrows to one test and calls the result green."
   []
-  (let [originals (instrument! ['slopp.rt] self-touched)]
-    (swap! self-touched conj 'slopp.rt/self-instrument!)
+  (let [originals (instrument! ['slopp.kernel.rt] self-touched)]
+    (swap! self-touched conj 'slopp.kernel.rt/self-instrument!)
     originals))
 
 (defn drain-self!
@@ -291,7 +291,7 @@
     (reset! self-touched #{})
     s))
 
-(defn install-parent-watchdog!
+(defn ^:export install-parent-watchdog!
   "Start the parent-death watchdog in THIS process, install-once by thread
   name. Stdin is a pipe from the parent JVM, so EOF means the parent's fds
   closed — and EOF is a LEVEL, not an edge: a parent that died before this

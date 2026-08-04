@@ -57,7 +57,7 @@ on the store's files manifest names the launcher and the fn it delegates to.
 
 `--live` hot-reloads the *running server's own namespaces* as its store
 changes; `--snapshot` freezes at startup. From a checkout of this repo,
-`clojure -M -m slopp.boot . --live` does the same.
+`clojure -M -m slopp.kernel.boot . --live` does the same.
 
 ## The model
 

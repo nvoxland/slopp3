@@ -379,7 +379,7 @@ its store-backed static reader moved to `api.web/store-reader`.
 
 - **MCP stdio** (`clojure -M -m slopp.mcp [dir]`) — Claude Code and Codex
   (`config.toml` recipe in README). Optional dir = durable session. The
-  in-repo `.mcp.json` runs it THROUGH `slopp.boot` (`-m slopp.boot . --snapshot`)
+  in-repo `.mcp.json` runs it THROUGH `slopp.kernel.boot` (`-m slopp.kernel.boot . --snapshot`)
   so slopp serves from its own store, no exported source — see
   "Running from the store" below.
 - ~~**Git smart-HTTP**~~ — **REMOVED 2026-08-02.** Serving the store to a git
@@ -468,20 +468,20 @@ its store-backed static reader moved to `api.web/store-reader`.
   otherwise refuses naming how to set one. It used to lead with a local
   listener URL; there is no listener.
 - CLI (fileless tree — everything enters through the boot trampoline):
-  `clojure -M -m slopp.boot <dir> --main slopp.sync/-main
+  `clojure -M -m slopp.kernel.boot <dir> --main slopp.sync/-main
   clone <url> <dir> | push <dir> [url] | pull <dir>`. Auth:
   `SLOPP_GIT_TOKEN=$(gh auth token)` env on the command. Proven against
   real GitHub (nvoxland/slopp3): push → API edit → pull → FF push.
 
-## Running from the store (`slopp.boot`)
+## Running from the store (`slopp.kernel.boot`)
 
-- The entry `clojure -M -m slopp.boot <dir> [--snapshot|--live]` runs the
+- The entry `clojure -M -m slopp.kernel.boot <dir> [--snapshot|--live]` runs the
   store's program WITHOUT exported source: `load-store!` reads every ns's
   byte-exact source with raw next.jdbc, `dependency-order`s them (parses ns
   requires — a self-contained mirror of `store/ns-dependency-order`), and
   `load-string`s each into THIS jvm with a `*loaded-libs*` stamp (in-process
   `image/load-ns!`), then invokes `--main` (default `slopp.mcp/-main <dir>`).
-  This is what `.mcp.json` runs. `slopp.boot` is self-contained (next.jdbc +
+  This is what `.mcp.json` runs. `slopp.kernel.boot` is self-contained (next.jdbc +
   core only) so it can bootstrap slopp itself; keep it that way.
 - **Serve-time auto-import** (cost-cut round, 2026-07-13): `mcp/-main` calls
   `sync/maybe-auto-import!` first — a git checkout carrying a `slopp` branch
@@ -500,7 +500,7 @@ its store-backed static reader moved to `api.web/store-reader`.
   error. `mcp/call!` is the engine: open durable session (turns enforced —
   turn state is in the store, so `turn_begin` in one invocation covers the
   next), one `call-tool` dispatch, close. For scripts, CI, and degraded
-  agent sessions; `slopp.boot` itself stays kernel-only (the sugar just
+  agent sessions; `slopp.kernel.boot` itself stays kernel-only (the sugar just
   rewrites argv — `call-main!` resolves from the loaded store).
 - `--snapshot` (default) freezes a version at startup. `--live` runs
   `watch-live!`: poll `db data_version`, and on a foreign commit `load-string`

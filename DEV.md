@@ -16,7 +16,7 @@ these are real files:
 - `build.clj` — the uberjar recipe.
 - Docs, CI config, this file, and everything else humans own.
 
-**`src/slopp/boot.clj` and `src/slopp/rt.clj` are NOT in that list**, though
+**`src/slopp/kernel/boot.clj` and `src/slopp/kernel/rt.clj` are NOT in that list**, though
 they sit on disk and look like it. The boot kernel lives in the store with
 everything else; `build!` materializes it into `target/jar-src/src` and the
 uberjar is built from THERE, so those two files are projections. Edit them
@@ -55,7 +55,7 @@ code and the other serving you.
 From a checkout:
 
 ```sh
-clojure -M -m slopp.boot . --live
+clojure -M -m slopp.kernel.boot . --live
 ```
 
 `--live` watches the store's `data_version` and hot-reloads changed namespaces
@@ -97,8 +97,8 @@ kernel or dependency changes — everything else is store code and hot-reloads
 image only — session_brief's `:host` section states what the server is
 actually running). Rebuilding under a running server is safe: `uber` builds
 aside and atomically renames, so the live process keeps its old jar inode
-and the next launch gets the new one. Note `slopp.boot` is file AND store
-namespace (like `slopp.rt`) and the jar bundles the STORE copy — kernel
+and the next launch gets the new one. Note `slopp.kernel.boot` is file AND store
+namespace (like `slopp.kernel.rt`) and the jar bundles the STORE copy — kernel
 edits go to both.
 
 ## Test
@@ -209,7 +209,7 @@ Two rules for writing:
 At milestones:
 
 ```sh
-clojure -M -m slopp.boot . --snapshot --main slopp.lab.benchmark/-main
+clojure -M -m slopp.kernel.boot . --snapshot --main slopp.lab.benchmark/-main
 ```
 
 The tree is fileless, so a plain `-m slopp.lab.benchmark` finds nothing.

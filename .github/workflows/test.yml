@@ -69,7 +69,7 @@ jobs:
       - name: Shipped prose names nothing we retired
         run: bin/check-shipped-prose.sh
 
-  # The kernel (slopp.rt, slopp.boot) exists TWICE and both copies are live:
+  # The kernel (slopp.kernel.rt, slopp.kernel.boot) exists TWICE and both copies are live:
   # a hand-maintained file on main serves a main-checkout dev run — which is
   # how the benchmarks execute — while the store's projection is what the jar
   # ships and what build! materializes for the external tier.
@@ -124,10 +124,10 @@ jobs:
       # quietly become a mute button.
       - name: The kernel's two copies still agree
         run: |
-          git show main:src/slopp/rt.clj   > /tmp/rt-main.clj
-          git show main:src/slopp/boot.clj > /tmp/boot-main.clj
-          clojure -M -m slopp.sync kernel /tmp/rt-main.clj   src/slopp/rt.clj
-          clojure -M -m slopp.sync kernel /tmp/boot-main.clj src/slopp/boot.clj
+          git show main:src/slopp/kernel/rt.clj   > /tmp/rt-main.clj
+          git show main:src/slopp/kernel/boot.clj > /tmp/boot-main.clj
+          clojure -M -m slopp.sync kernel /tmp/rt-main.clj   src/slopp/kernel/rt.clj
+          clojure -M -m slopp.sync kernel /tmp/boot-main.clj src/slopp/kernel/boot.clj
   test-via-slopp:
     runs-on: ubuntu-latest
     steps:

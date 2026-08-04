@@ -10,7 +10,7 @@
 - **No `.clj` files on disk.** The store is the source code; a VFS renders
   source on demand (`query-source`); explicit `build!` materializes files
   only when asked. No file→store reconciliation, ever.
-- **The store is RUN, not just materialized** (`slopp.boot`). A tiny
+- **The store is RUN, not just materialized** (`slopp.kernel.boot`). A tiny
   self-contained kernel loads every namespace's byte-exact source straight
   from `store.db` into the JVM (in dependency order) and invokes the entry
   point — no exported project source needed. `--snapshot` freezes a version
@@ -134,8 +134,8 @@ The resulting graph is acyclic and nearly linear:
 | 7 | `mcp` | `mcp` `.tools` `.smells` `.http` `.turn` — the agent-facing transports |
 | 8 | `bench` | `bench` `.benchmark` `.evalseed` — dev instruments, on no user path |
 
-**`slopp.boot`, `slopp.rt` and `slopp.sync` are deliberately exempt.** Each is a
-published interface (`java -jar slopp.jar`, `clojure -M -m slopp.boot`,
+**`slopp.kernel.boot`, `slopp.kernel.rt` and `slopp.sync` are deliberately exempt.** Each is a
+published interface (`java -jar slopp.jar`, `clojure -M -m slopp.kernel.boot`,
 `slopp --main slopp.sync/-main import .`); renaming them breaks other people's
 scripts to buy taxonomy.
 
@@ -178,8 +178,8 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.store.merge` | the merge ENGINE (deep, world-exported): `merge-logs` delta-log replay with causal delivery, MV conflicts, semver auto-resolution, merge markers; unregistered ops REFUSE |
 | `slopp.store.render` | VFS: store → source (lossless, memoized); `element-offsets` maps positions back to elements |
 | `slopp.store.db` | the journal: SQLite WAL, conditional `append!`, `data-version`, `load-store`; `persist!` only for branch snapshots |
-| `slopp.image.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.rt` |
-| `slopp.rt` | runtime support inside the image: traced (multi-ns) test runs + failure capture, observe |
+| `slopp.image.repl` | owned image subprocess: start!/eval!/eval-checked!/load-checked!/stop!; injects `slopp.kernel.rt` |
+| `slopp.kernel.rt` | runtime support inside the image: traced (multi-ns) test runs + failure capture, observe |
 | `slopp.image` | store↔image bridge: load-ns!, traced-test-run (dependency-closure instrumentation) |
 | `slopp.index` | clj-kondo static index (content-fed): defs/refs/call graph, `!`-effect reachability, lint |
 | `slopp.index.refs` | THE reference graph (deep, world-exported): canonical form-anchored records from every producer — static/carrier/declared; `refs`/`refs-to` are the only reference query surface. Every edge INSIDE the store |
@@ -198,7 +198,7 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.mcp.smells` | workflow-smell machinery (deep): the smell registry, per-session counters, the hint chooser |
 | `slopp.mcp.turn` | one-shot CLI for Claude Code hooks: verbatim-prompt turn markers appended out-of-band |
 | `slopp.build` | explicit build: files + GraalVM native-image recipe (O4). Pure generators, zero internal requires — layer 0, because its three callers (`slopp.git`, `slopp.ops.external`, `slopp.webdev.cljs`) sit in different modules |
-| `slopp.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.rt` are slopp-the-tool, not project source |
+| `slopp.kernel.boot` | run a store's program straight from `store.db` (no exported source): load-string every ns into THIS jvm in dependency order (`*loaded-libs*` stamp = in-process `load-ns!`), then invoke the entry (default `slopp.mcp/-main`). `--snapshot` / `--live` (watches `data_version`, self-reloads). The on-disk kernel + `slopp.kernel.rt` are slopp-the-tool, not project source |
 | `slopp.index.deps` | P4-deps: external-dependency ANALYSIS — resolve a dep's own jars (classpath diff) and extract its API surface (provided namespaces + var arities/docs/macro flags) via clj-kondo, content-addressed by `coord@version` |
 | `slopp.store.semver` | tiny mvn-version parse + numeric compare (`newer?`); used by `merge-logs` to auto-resolve deps version divergence to the newer coord |
 | `slopp.git` | P4-m8 git compatibility: the PROJECTION over one IN-MEMORY JGit repo (deterministic shas, `git_map` pinning, journal→commit projection, grafting onto `git-base-sha`). Exists to be PUSHED — serving it to a git client as a remote was removed |

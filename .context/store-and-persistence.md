@@ -123,7 +123,7 @@
 - **There are FOUR implementations of that one rule**, and they have each
   disagreed at least once:
   `store.render/render-ns` (the reference), `store.db/rendered-sources` (rows →
-  the git wip ref), `slopp.boot/store-sources` (the kernel — cannot call the
+  the git wip ref), `slopp.kernel.boot/store-sources` (the kernel — cannot call the
   others, since its whole property is booting a store with no slopp code
   loaded), and `element-offsets` below, which must SIMULATE the rendering
   rather than reproduce it. Change one and check all four; the compiler will

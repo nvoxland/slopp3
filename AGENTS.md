@@ -114,11 +114,11 @@ the backlog for attention.
 - **The working tree is FILELESS**: slopp's own code (system + tests) lives
   in `.slopp/store.db`; only `deps.edn` and `build.clj` are files humans own.
   ALL development goes through slopp's MCP tools — including the boot kernel,
-  which is IN the store despite `src/slopp/boot.clj` and `src/slopp/rt.clj`
+  which is IN the store despite `src/slopp/kernel/boot.clj` and `src/slopp/kernel/rt.clj`
   existing on disk. **Those two are projections**: `build!` materializes them
   from the store over `target/jar-src/`, so a hand-edit there is silently
   discarded at build time and looks exactly like a stale jar. Edit
-  `slopp.boot` / `slopp.rt` through the tools like everything else. What is
+  `slopp.kernel.boot` / `slopp.kernel.rt` through the tools like everything else. What is
   special about them is narrower than "needs a restart", and the distinction
   is worth knowing because it decides whether you interrupt the user:
   **a kernel function the poll loop CALLS is hot-fixable** (`reload-ns!` is
@@ -156,7 +156,7 @@ the backlog for attention.
 - **Dogfooding is a standing practice:** build real things through slopp
   itself under `projects/<name>/` (untracked); write findings to a
   `REPORT.md` there; findings drive the roadmap. See `.context/dogfooding.md`.
-- **Benchmark at milestones** (`clojure -M -m slopp.boot . --snapshot --main slopp.lab.benchmark/-main` — the tree is fileless; plain `-m slopp.lab.benchmark` finds nothing).
+- **Benchmark at milestones** (`clojure -M -m slopp.kernel.boot . --snapshot --main slopp.lab.benchmark/-main` — the tree is fileless; plain `-m slopp.lab.benchmark` finds nothing).
   The row appends to `benchmarks/results.md`, which is **gitignored** — a LOCAL
   record, never committed. See `.context/dogfooding.md`.
 - **The image is the oracle:** verification correctness depends on
@@ -173,7 +173,7 @@ the backlog for attention.
 | `.context/decisions.md` | any design-level change — DECISIONS only |
 | `.context/findings-log.md` | what past user tests / evals actually observed |
 | `.context/store-and-persistence.md` | `slopp.store`, `slopp.store.db`, `slopp.store.render` |
-| `.context/verification.md` | `slopp.rt`, `slopp.image`, verification in `slopp.ops.engine` |
+| `.context/verification.md` | `slopp.kernel.rt`, `slopp.image`, verification in `slopp.ops.engine` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
 | `.context/operation-api.md` | `slopp.ops`, `slopp.mcp`, `slopp.edit.refactor` |
 | `.context/naming-glossary.md` | reading any OLD record — old→new for renamed namespaces, keys and retired phrases |

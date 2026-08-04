@@ -4,7 +4,7 @@
 
 - **The store IS the source**: every namespace (system + tests) lives in
   `.slopp/store.db`. There are NO project `.clj` files to edit.
-- `src/slopp/boot.clj` + `src/slopp/rt.clj` — the boot KERNEL (slopp-the-tool,
+- `src/slopp/kernel/boot.clj` + `src/slopp/kernel/rt.clj` — the boot KERNEL (slopp-the-tool,
   not project source): `boot` loads the store into the JVM; `rt` is injected
   into every owned image. `deps.edn` = the tool's dep coordinates.
 - `projects/` — untracked dogfooding grounds (`.context/dogfooding.md`).
@@ -16,7 +16,7 @@
 
 - **Everything goes through slopp's MCP tools** — query_* to read, edit_* to
   write. There are no files to hand-edit and no file↔store drift by
-  construction. The server runs `clojure -M -m slopp.boot . --live`
+  construction. The server runs `clojure -M -m slopp.kernel.boot . --live`
   (`.mcp.json`), so committed edits hot-reload into the running server.
 - **Red/green TDD always**: add the failing test (edit_add_form/ns_create in
   a test ns), watch the write result report red, implement, watch the
@@ -90,5 +90,5 @@ in the same pass (`grep` the old name across `docs/` and `plugins/`).
   `close!`/`stop!` in `finally` — leaked child JVMs are a bug
   (`ps aux | grep nrepl.cmdline`).
 - `build!` materializes files on demand (tooling/native); `git_push`
-  publishes them; neither is needed to RUN (slopp.boot) or TEST
+  publishes them; neither is needed to RUN (slopp.kernel.boot) or TEST
   (`test_run {external true}`).

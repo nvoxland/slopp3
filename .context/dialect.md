@@ -79,7 +79,7 @@ values (nothing is mutated in place) and stay legal — the cut is exactly the
 two in-place mutators. Same cheap-for-agents / hard-for-analysis template as the
 resolvers and `declare`: a generator writes the metadata inline for the same
 keystrokes; only a human feels the ceremony. (It is a D3 *denylist* entry, so
-`^:unsafe` bypasses it — the host/`slopp.rt` do mutate metadata as
+`^:unsafe` bypasses it — the host/`slopp.kernel.rt` do mutate metadata as
 instrumentation.) Zero usage in slopp's own store when added, so no adoption
 break. The sandbox (`pure-eval-refusal`) is a SEPARATE property and unchanged —
 per the D3-is-not-a-sandbox decoupling above.
@@ -99,7 +99,7 @@ live oracle makes safe); constrain **metaprogramming dynamism** (what defeats
 machine understanding). The denylist is about the *semantic layer*, not the
 CST (which can represent anything).
 
-Note: the D3 bans apply to *authored* store code. The host and `slopp.rt`
+Note: the D3 bans apply to *authored* store code. The host and `slopp.kernel.rt`
 legitimately use `alter-var-root`/`binding` as instrumentation machinery.
 
 **The dialect gate is for STORED code only — it is not a sandbox** (fixed
