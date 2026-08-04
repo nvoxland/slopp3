@@ -58,7 +58,7 @@
   that a new key on the read must be named here too; the contract check is
   what makes that a red test rather than a silently missing field."
   [req]
-  (if-let [{:keys [ns tier forms tested-by]} (:outline (:web/reads req))]
+  (if-let [{:keys [ns tier forms tested-by gaps]} (:outline (:web/reads req))]
     {:status 200
      :body {:ns (str ns)
             :tier tier
@@ -73,7 +73,8 @@
                             :callers-out-test callers-out-test
                             :effectful? effectful? :exported? exported?})
                          forms)
-            :tested-by (vec tested-by)}}
+            :tested-by (vec tested-by)
+            :gaps gaps}}
     {:status 404 :body {:error "no such namespace"}}))
 
 (defn ^{:web/method :get :web/path "/api/timeline" :web/auth :public

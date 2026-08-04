@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.read.query :as query]
             [slopp.read.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
-            [slopp.read.modules :as read.modules] [slopp.edit.tiers :as tiers]))
+            [slopp.read.modules :as read.modules] [slopp.edit.tiers :as tiers] [slopp.store.render :as render]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -409,6 +409,112 @@
                         (dissoc (json-card (orient/form-card session ns-sym nm)) :form))
            graph (assoc :graph graph)))))))
 
+(defn gaps-by-ns
+  "`{ns-sym {:forms :no-doc :no-why :uncovered}}` over PRODUCTION namespaces —
+  the counts a consumer needs to show where a page is about to be thin.
+
+  slopp-ui's framing, and it is the point of the whole thing: a form with no
+  recorded why and no test renders identically to one with both, so a diagram
+  cannot point at its own weak spots — silence reads the same as coverage.
+  Counts rather than rows, so an overlay tints the EXISTING layout instead of
+  reflowing it.
+
+  **`:no-doc` is not the `missing-doc-warning` advisory, and the difference is
+  deliberate.** That advisory asks *should this be NAGGED* — public module
+  surface only, privates exempt, because nagging a private helper is noise.
+  This asks *can a reader learn what this is without opening it*, which is
+  every named form. Neither is the other's approximation; a consumer tinting by
+  the advisory's number would draw a namespace of undocumented privates as
+  fully documented.
+
+  **`:no-why` is the WRITE PROMPT** (`prompt-by-form`) — the ask that produced
+  the form, which is the thing a file-based codebase cannot show at all. A form
+  with a doc and no why says what it does and not why it exists.
+
+  **`:uncovered` inverts the trace map ONCE.** Asking per form, the way a form
+  card does, is `forms × tests` set lookups — ~1.8M on this store. The union of
+  covered keys is one pass and then a lookup per form. `tmap` is session state
+  (`:test-map`), so a caller without one passes nil and `:uncovered` equals
+  `:forms` — the honest answer for a process that has run nothing, rather than
+  a zero that reads as coverage."
+  [store tmap]
+  (let [prompts (store/prompt-by-form store)
+        covered (into #{} (mapcat val) tmap)]
+    (into {}
+          (for [n (keys (:namespaces store))
+                :when (not (render/test-ns? n))]
+            [n (reduce (fn [acc e]
+                         (cond-> (update acc :forms inc)
+                           (nil? (store/form-docstring (:node e))) (update :no-doc inc)
+                           (nil? (get prompts (:id e)))            (update :no-why inc)
+                           (not (some covered (store/form-trace-keys n e)))
+                           (update :uncovered inc)))
+                       {:forms 0 :no-doc 0 :no-why 0 :uncovered 0}
+                       (filter :name (store/forms store n)))]))))
+
+(defn module-detail
+  "One module from the INSIDE: its production namespaces, the ns→ns edges
+  among them, the layering those edges imply, and the edges crossing its
+  boundary. nil for a module with no production namespaces, so a page can 404
+  rather than render an empty frame.
+
+  The level below `module-index`, and it makes the same split one rung down —
+  `:layers` is analysis only the store can do, placement is the consumer's.
+
+  Edges come from `module-usage-rows`, THE reference graph, which is the same
+  producer `production-manifest` reads. That is the point: the descended view
+  and the module view cannot disagree about what an edge is, and a second
+  derivation here would be free to drift (the `:sig`-had-three-producers bug,
+  one system over).
+
+  An internal edge lands in a namespace's `:deps` and nowhere else. Repeating
+  it under `:boundary` would draw every internal arrow twice, and `:boundary`
+  answers a different question: which namespaces face OUT, and which of them
+  anything outside actually reaches. A module whose `:in` names one namespace
+  has a front door; one where `:in` names six does not, and that is a finding
+  a reader should be able to see without opening anything."
+  [session module]
+  (let [st      (:store @session)
+gaps    (gaps-by-ns st (:test-map @session))
+        module  (str module)
+        test?   #(str/ends-with? (str %) "-test")
+        member? #(and (not (test? %)) (= module (modules/module-of %)))
+        members (into (sorted-set) (filter member?) (keys (:namespaces st)))]
+    (when (seq members)
+      (let [edges  (into #{} (comp (remove #(test? (:from-ns %)))
+                                   (map (juxt :from-ns :to))
+                                   (remove (fn [[f t]] (= f t))))
+                         (modules/module-usage-rows st))
+            inside (filter (fn [[f t]] (and (members f) (members t))) edges)
+            out    (sort-by (juxt :from :to)
+                            (for [[f t] edges :when (and (members f) (not (members t)))]
+                              {:from (str f) :to (str t)
+                               :to-module (modules/module-of t)}))
+            in     (sort-by (juxt :from :to)
+                            (for [[f t] edges :when (and (not (members f)) (members t))]
+                              {:from (str f) :from-module (modules/module-of f)
+                               :to (str t)}))
+            by-ns  (reduce (fn [m [f t]] (update m f (fnil conj #{}) t))
+                           (into {} (map (juxt identity (constantly #{}))) members)
+                           inside)
+            {:keys [layers cycles]}
+            (store/module-layers
+             (into {} (map (fn [[k v]] [(str k) (into #{} (map str) v)])) by-ns))]
+        {:module     module
+         :tier       (name (tiers/tier-for st (symbol module)))
+         :namespaces (vec (for [n members]
+                            {:ns    (str n)
+                             :forms (count (store/forms st n))
+                             :tier  (name (tiers/tier-for st n))
+                             :deps  (vec (sort (map str (get by-ns n))))
+                             ;; so the descend can tint a namespace without an
+                             ;; /api/ns/:ns per box — the N+1 this level exists
+                             ;; to avoid at module grain, avoided here too
+                             :gaps  (get gaps n)}))
+         :boundary   {:out (vec out) :in (vec in)}
+         :layers     (mapv vec layers)
+         :cycles     (mapv vec cycles)}))))
+
 (defn module-index
   "The Code landing model: the architecture as FACTS a consumer can draw.
 
@@ -454,6 +560,13 @@
                                  (modules/module-of t)))
         test-tally (frequencies (mapcat reach (filter test? nses)))
         tiers      (:module-tiers st)
+        ;; summed over the module's OWN namespaces, which is exactly the list
+        ;; each row carries — so a reader can check the rollup against the
+        ;; rows below it rather than taking it on faith
+        gaps       (gaps-by-ns st (:test-map @session))
+        roll       (fn [ms] (reduce (fn [a n] (merge-with + a (get gaps n)))
+                                    {:forms 0 :no-doc 0 :no-why 0 :uncovered 0}
+                                    ms))
         manifest   (read.modules/production-manifest st)
         band       (read.modules/substrate manifest)
         ;; layer the graph WITHOUT the foundation: leaving it in stretches
@@ -467,68 +580,11 @@
                        :tests      (get test-tally m 0)
                        :tier       (name (get tiers m :external))
                        :foundation (contains? band m)
-                       :deps       (vec (sort (get reduced m)))})
+                       :deps       (vec (sort (get reduced m)))
+                       :gaps       (roll (get by-module m))})
                     (sort (keys by-module)))
      :layers  (mapv vec layers)
      :cycles  (mapv vec cycles)}))
-
-(defn module-detail
-  "One module from the INSIDE: its production namespaces, the ns→ns edges
-  among them, the layering those edges imply, and the edges crossing its
-  boundary. nil for a module with no production namespaces, so a page can 404
-  rather than render an empty frame.
-
-  The level below `module-index`, and it makes the same split one rung down —
-  `:layers` is analysis only the store can do, placement is the consumer's.
-
-  Edges come from `module-usage-rows`, THE reference graph, which is the same
-  producer `production-manifest` reads. That is the point: the descended view
-  and the module view cannot disagree about what an edge is, and a second
-  derivation here would be free to drift (the `:sig`-had-three-producers bug,
-  one system over).
-
-  An internal edge lands in a namespace's `:deps` and nowhere else. Repeating
-  it under `:boundary` would draw every internal arrow twice, and `:boundary`
-  answers a different question: which namespaces face OUT, and which of them
-  anything outside actually reaches. A module whose `:in` names one namespace
-  has a front door; one where `:in` names six does not, and that is a finding
-  a reader should be able to see without opening anything."
-  [session module]
-  (let [st      (:store @session)
-        module  (str module)
-        test?   #(str/ends-with? (str %) "-test")
-        member? #(and (not (test? %)) (= module (modules/module-of %)))
-        members (into (sorted-set) (filter member?) (keys (:namespaces st)))]
-    (when (seq members)
-      (let [edges  (into #{} (comp (remove #(test? (:from-ns %)))
-                                   (map (juxt :from-ns :to))
-                                   (remove (fn [[f t]] (= f t))))
-                         (modules/module-usage-rows st))
-            inside (filter (fn [[f t]] (and (members f) (members t))) edges)
-            out    (sort-by (juxt :from :to)
-                            (for [[f t] edges :when (and (members f) (not (members t)))]
-                              {:from (str f) :to (str t)
-                               :to-module (modules/module-of t)}))
-            in     (sort-by (juxt :from :to)
-                            (for [[f t] edges :when (and (not (members f)) (members t))]
-                              {:from (str f) :from-module (modules/module-of f)
-                               :to (str t)}))
-            by-ns  (reduce (fn [m [f t]] (update m f (fnil conj #{}) t))
-                           (into {} (map (juxt identity (constantly #{}))) members)
-                           inside)
-            {:keys [layers cycles]}
-            (store/module-layers
-             (into {} (map (fn [[k v]] [(str k) (into #{} (map str) v)])) by-ns))]
-        {:module     module
-         :tier       (name (tiers/tier-for st (symbol module)))
-         :namespaces (vec (for [n members]
-                            {:ns    (str n)
-                             :forms (count (store/forms st n))
-                             :tier  (name (tiers/tier-for st n))
-                             :deps  (vec (sort (map str (get by-ns n))))}))
-         :boundary   {:out (vec out) :in (vec in)}
-         :layers     (mapv vec layers)
-         :cycles     (mapv vec cycles)}))))
 
 (defn tests-covering
   "The test namespaces that require `nsx` directly — what to open when the

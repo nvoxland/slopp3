@@ -96,12 +96,21 @@
 
   So this asks whether a docstring can LEGALLY be there rather than whether
   index 2 happens to hold a string — `(def x \"a value\")` is a value, not a
-  doc."
+  doc.
+
+  **The length check is a DEF check, not a docstring check**, and reading it as
+  the second cost eight namespaces. `(def x \"a value\")` is three elements and
+  the string is the value, so a def-like head needs something after index 2
+  before the string can be documentation. `ns` has NO value position — a string
+  at index 2 is a docstring or the form does not compile — and `(ns foo \"doc\")`
+  with nothing to require is exactly three elements. Eight documented
+  production namespaces here read as undocumented for that reason, on every
+  surface that shows a namespace's purpose."
   [node]
   (let [s (form-sexpr node)]
     (when (and (seq? s) (symbol? (first s)) (contains? def-heads (first s))
                (string? (nth s 2 nil))
-               (> (count s) 3))
+               (or (= 'ns (first s)) (> (count s) 3)))
       (nth s 2))))
 
 (defn def-init

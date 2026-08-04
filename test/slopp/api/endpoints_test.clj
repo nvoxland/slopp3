@@ -28,7 +28,7 @@
                 (store/ingest 'demo.core
                               "(ns demo.core)\n\n(defn hello \"Says hi.\" [x] x)\n")
                 (store/ingest 'demo.util "(ns demo.util)\n\n(defn undocumented [x] x)\n"))
-                ;; the served list, not a hand-picked subset: the reads these
+        ;; the served list, not a hand-picked subset: the reads these
         ;; endpoints declare are performed by slopp.api.reads, so a context
         ;; holding only slopp.api.endpoints answers 500 and tests nothing real
         ctx (web/context {:web/namespaces server/served-namespaces
@@ -74,7 +74,14 @@
                          ;; grows. That is the whole reason mass is not lines.
                          :mass 7 :calls [] :callers-out 0 :callers-out-test 0
                          :effectful? false :exported? false}]
-                :tested-by []}
+                :tested-by []
+                ;; the THINNESS counts, exact on this fixture: a bare
+                ;; `(ns demo.core)` has no docstring, `store/ingest` records no
+                ;; write prompt so both forms are :no-why, and there is no
+                ;; session trace map — so :uncovered equals :forms, which is
+                ;; the honest answer for a process that has run nothing rather
+                ;; than a zero that would read as coverage.
+                :gaps {:forms 2 :no-doc 1 :no-why 2 :uncovered 2}}
                (:body r))
             "nothing tests this fixture, and that reports as an empty list rather
              than a missing key — the page should be able to SAY untested")
@@ -95,7 +102,11 @@
                          :private? false :doc nil :schema nil
                          :mass 6 :calls [] :callers-out 0 :callers-out-test 0
                          :effectful? false :exported? false}]
-                :tested-by []}
+                :tested-by []
+                ;; BOTH forms undocumented here, against demo.core's one — the
+                ;; count moves with the fixture, which is what makes it a
+                ;; measurement rather than a constant
+                :gaps {:forms 2 :no-doc 2 :no-why 2 :uncovered 2}}
                (:body r)))
         (is (m/validate contracts/ns-outline (:body r)))))
     (testing "an unknown namespace is a 404, not an empty outline"
@@ -660,3 +671,48 @@
         (is (nil? (:graph (:body r))))))
     (testing "an unknown FIDELITY is still a 404, because that one does not"
       (is (= 404 (:status (GET "view=nope&depth=2")))))))
+
+(deftest a-module-rollup-sums-the-namespaces-that-row-LISTS
+  ;; slopp-ui ask #3: counts so a box can be tinted by how thin it is, over
+  ;; the identical layout. The property worth pinning is not the arithmetic —
+  ;; it is that the rollup is over exactly the namespaces the row NAMES, so a
+  ;; reader can check it against the rows below instead of taking it on faith.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'gp.mod.a "(ns gp.mod.a \"Has a purpose.\")\n(defn f \"Does.\" [x] x)\n")
+                (store/ingest 'gp.mod.b "(ns gp.mod.b)\n(defn g [x] x)\n")
+                (store/ingest 'gp.mod.a-test
+                              (str "(ns gp.mod.a-test (:require [clojure.test :refer [deftest is]]\n"
+                                   "                            [gp.mod.a :as a]))\n"
+                                   "(deftest f-t (is (= 1 (a/f 1))))\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        mods (:body (web/handle! ctx {:request-method :get :uri "/api/modules"}))
+        row  (first (filter #(= "gp.mod" (:module %)) (:modules mods)))
+        det  (:body (web/handle! ctx {:request-method :get :uri "/api/module/gp.mod"}))]
+    (is (some? row) (pr-str (map :module (:modules mods))))
+    (testing "the row's counts are the sum over the namespaces it lists"
+      ;; a  → ns documented, f documented        → 2 forms, 0 no-doc
+      ;; b  → neither                            → 2 forms, 2 no-doc
+      (is (= ["gp.mod.a" "gp.mod.b"] (:namespaces row)))
+      (is (= {:forms 4 :no-doc 2 :no-why 4 :uncovered 4} (:gaps row))))
+    (testing "a -test namespace contributes NOTHING to the counts"
+      ;; it folds into this module and is counted under :tests, so folding it
+      ;; into :gaps too would count one namespace twice in two vocabularies
+      (is (= 1 (:tests row)))
+      (is (= 4 (:forms (:gaps row))) "6 if the test namespace's forms leaked in"))
+    (testing "and the DESCEND carries the same counts per namespace"
+      ;; the rollup and the rows are one derivation, so the descend cannot
+      ;; disagree with the level above it
+      (let [by-ns (into {} (map (juxt :ns :gaps)) (:namespaces det))]
+        (is (= {:forms 2 :no-doc 0 :no-why 2 :uncovered 2} (by-ns "gp.mod.a")))
+        (is (= {:forms 2 :no-doc 2 :no-why 2 :uncovered 2} (by-ns "gp.mod.b")))
+        (is (= (:gaps row)
+               (reduce (fn [a m] (merge-with + a m))
+                       {:forms 0 :no-doc 0 :no-why 0 :uncovered 0}
+                       (vals by-ns)))
+            "the module rollup IS the sum of its descend rows")))
+    (testing "both bodies satisfy their contracts"
+      (is (m/validate contracts/module-index mods)
+          (pr-str (m/explain contracts/module-index mods)))
+      (is (m/validate contracts/module-detail det)
+          (pr-str (m/explain contracts/module-detail det))))))

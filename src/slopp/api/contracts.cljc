@@ -76,25 +76,6 @@
    [:effectful? :boolean]
    [:exported? :boolean]])
 
-(def ns-outline
-  "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.
-
-  `:tested-by` is always present and empty rather than absent when nothing
-  covers the namespace: an absent key and an untested namespace would render
-  identically, and the second is a finding worth showing.
-
-  `:tier` is the NAMESPACE's effective purity tier, most-specific declaration
-  winning — a claim about what this namespace is ALLOWED to do, which is a
-  different grain from a row's `:effectful?` (what that form actually does).
-  Always present for the same reason `:tested-by` is: undeclared resolves to
-  `\"external\"`, so there is no \"nobody said\" for an absent key to mean, and a
-  consumer badging on it would otherwise have to invent a fourth state."
-  [:map
-   [:ns :string]
-   [:tier [:enum "pure" "internal" "external"]]
-   [:forms [:sequential form-row]]
-   [:tested-by [:sequential :string]]])
-
 (def token
   "One syntax token: `[\"keyword\" \":web/path\"]`.
 
@@ -196,6 +177,52 @@
    [:name :string]
    [:source :string]])
 
+(def gaps
+  "Where a subject is about to be THIN — counts, never rows.
+
+  A form with no recorded why and no covering test renders identically to one
+  with both, so a diagram cannot point at its own weak spots: silence reads the
+  same as coverage. These are the four numbers that let a consumer tint the
+  EXISTING layout, which is what makes an overlay toggleable — rows would
+  reflow it and a reflow is a different picture, not the same picture with a
+  finding on it.
+
+  One schema for all three carriers (a module row, a module's namespace row, a
+  namespace outline) so the same four numbers cannot be described three ways.
+
+  `:no-doc` is every named form without a docstring, which is NOT the
+  `missing-doc-warning` advisory — that one asks whether to NAG (public module
+  surface only) and this asks whether a reader can learn what a form is without
+  opening it. `:no-why` is the absent WRITE PROMPT, the ask that produced the
+  form. `:uncovered` is measured against the SESSION's trace map, so a process
+  that has run nothing reports everything uncovered rather than a zero that
+  would read as coverage."
+  [:map
+   [:forms :int]
+   [:no-doc :int]
+   [:no-why :int]
+   [:uncovered :int]])
+
+(def ns-outline
+  "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.
+
+  `:tested-by` is always present and empty rather than absent when nothing
+  covers the namespace: an absent key and an untested namespace would render
+  identically, and the second is a finding worth showing.
+
+  `:tier` is the NAMESPACE's effective purity tier, most-specific declaration
+  winning — a claim about what this namespace is ALLOWED to do, which is a
+  different grain from a row's `:effectful?` (what that form actually does).
+  Always present for the same reason `:tested-by` is: undeclared resolves to
+  `\"external\"`, so there is no \"nobody said\" for an absent key to mean, and a
+  consumer badging on it would otherwise have to invent a fourth state."
+  [:map
+   [:ns :string]
+   [:tier [:enum "pure" "internal" "external"]]
+   [:forms [:sequential form-row]]
+   [:tested-by [:sequential :string]]
+   [:gaps gaps]])
+
 (def module-row
   "One module in the Code nav: its production namespaces, how many test
    namespaces fold into it, its declared purity tier, whether it was found to
@@ -217,7 +244,8 @@
    [:tests :int]
    [:tier :string]
    [:foundation :boolean]
-   [:deps [:sequential :string]]])
+   [:deps [:sequential :string]]
+   [:gaps gaps]])
 
 (def module-detail
   "`GET /api/module/:m` — one module from the inside: its namespaces, how they
@@ -250,7 +278,8 @@
                               [:ns :string]
                               [:forms :int]
                               [:tier [:enum "pure" "internal" "external"]]
-                              [:deps [:sequential :string]]]]]
+                              [:deps [:sequential :string]]
+                              [:gaps gaps]]]]
    [:boundary [:map
                [:out [:sequential [:map
                                    [:from :string]

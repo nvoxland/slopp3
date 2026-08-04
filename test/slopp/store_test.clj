@@ -604,3 +604,44 @@
                                       (get-in folded [:namespaces 'j.core :elements]))))))
       (is (nil? (:comment (first (filter #(= 'a (:name %))
                                          (get-in folded [:namespaces 'j.core :elements])))))))))
+
+(deftest an-ns-form-has-no-VALUE-position-so-its-string-is-always-a-doc
+  ;; form-docstring guards on `(> (count s) 3)` because `(def x "a value")` has
+  ;; a STRING at index 2 that is a value, not documentation — that guard is
+  ;; right and it is why this accessor exists at all.
+  ;;
+  ;; It is wrong for `ns`, which has no value position. `(ns foo "doc")` — a
+  ;; leaf namespace that requires nothing — is exactly three elements, so the
+  ;; guard threw away a docstring that could not have been anything else.
+  ;;
+  ;; Measured before fixing: EIGHT production namespaces in this store are
+  ;; documented and read as undocumented — slopp.cache, slopp.api.contracts,
+  ;; slopp.store.fields, slopp.mcp.tools, slopp.rules.catalog,
+  ;; slopp.store.semver, slopp.web.routes, slopp.image.currency. Every surface
+  ;; that shows a namespace's purpose was showing them blank.
+  (let [doc-of #(store/form-docstring
+                 (:node (first (store/forms (store/ingest (store/empty-store) 'd.x %) 'd.x))))]
+    (testing "an ns form with a docstring and NOTHING else"
+      (is (= "The whole point." (doc-of "(ns d.x \"The whole point.\")\n"))))
+    (testing "and with a clause after it, which already worked"
+      (is (= "Still documented."
+             (doc-of "(ns d.x \"Still documented.\" (:require [clojure.string]))\n"))))
+    (testing "an ns form with no docstring is still nil"
+      (is (nil? (doc-of "(ns d.x)\n")))
+      (is (nil? (doc-of "(ns d.x (:require [clojure.string]))\n"))))
+    (testing "and a def's VALUE is still not a docstring — the guard this protects"
+      ;; the whole reason the count check exists: `(def greeting "hello")` has a
+      ;; string at index 2 and it is the value. Loosening it for `ns` must not
+      ;; loosen it here.
+      (is (nil? (doc-of "(ns d.x)\n(def greeting \"hello\")\n"))
+          "the ns form itself is undocumented")
+      (let [st (store/ingest (store/empty-store) 'd.y
+                             "(ns d.y)\n(def greeting \"hello\")\n")]
+        (is (nil? (store/form-docstring (:node (store/form-named st 'd.y 'greeting))))
+            "a def's value is not its documentation")
+        (is (= "Says it."
+               (store/form-docstring
+                (:node (store/form-named
+                        (store/ingest st 'd.z "(ns d.z)\n(defn f \"Says it.\" [x] x)\n")
+                        'd.z 'f))))
+            "and a real docstring still arrives")))))

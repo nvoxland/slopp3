@@ -162,7 +162,12 @@
          ;; form fact, which is the mistake it exists to prevent.
          ;; Always present: undeclared resolves to :external, so there is no
          ;; "nobody said" for an absent key to mean.
-         :tier (name (tiers/tier-for st sym))}))))
+         :tier (name (tiers/tier-for st sym))
+;; NAMESPACE grain like :tier, and for the same reason: the module
+         ;; rollup answers "which box is thin", this answers "and where in it".
+         ;; A consumer holding only the rollup would have to sum the rows it is
+         ;; already rendering, which is the arithmetic this exists to save.
+         :gaps (get (model/gaps-by-ns st (:test-map @session)) sym)}))))
 
 (defn ^{:web/read :browse/module} module-detail-read
   "Read performer: one module from the inside — its production namespaces,
