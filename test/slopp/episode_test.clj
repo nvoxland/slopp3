@@ -7,7 +7,7 @@
             [slopp.store :as store]
             [slopp.mcp.turn]
             [slopp.mcp]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (def seed
   (str "(ns ep.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -19,12 +19,12 @@
 (deftest ^:external solo-episode-lifecycle
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
       ;; a classic TDD arc: red test change, then the fix
-      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
+      (ops/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
                          :prompt "want +10 behavior")
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
                          :prompt "implement +10")
       (testing "query-changes = my work since my last stable spot"
         (let [c (history/query-changes sess)]
@@ -43,17 +43,17 @@
       (testing "collapsed history reads at episode grain"
         (let [rows (history/query-history sess :collapse true)]
           (is (some #(= "plus-ten" (get-in % [:episode :label])) rows))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external parallel-agents-have-independent-episodes
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
       ;; two "sub-agents" interleave on one session
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1 1))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1 1))"
                          :prompt "alice's work" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 2))"
+      (ops/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 2))"
                          :prompt "bob's work" :agent "bob")
       (testing "each agent sees only ITS episode"
         (is (= #{'ep.core/f}
@@ -65,47 +65,47 @@
         (is (empty? (:forms (history/query-changes sess :agent "alice"))))
         (is (= #{'ep.core/g}
                (set (map :form (:forms (history/query-changes sess :agent "bob")))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external episode-revert-scraps-only-my-unshared-work
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline")
       ;; alice: modifies f, adds a helper — and touches the SHARED form h
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 9))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 9))"
                          :prompt "alice attempt" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 9 (f 1))))"
+      (ops/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 9 (f 1))))"
                          :agent "alice")
-      (api/add-form! sess 'ep.core "(defn alice-helper [x] x)" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :alice-touched)"
+      (ops/add-form! sess 'ep.core "(defn alice-helper [x] x)" :agent "alice")
+      (ops/edit-replace! sess 'ep.core 'h "(defn h [x] :alice-touched)"
                          :agent "alice")
       ;; bob also touches h (the shared-form hazard)
-      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :bob-touched)"
+      (ops/edit-replace! sess 'ep.core 'h "(defn h [x] :bob-touched)"
                          :agent "bob")
-      (let [r (api/revert-episode! sess :agent "alice")]
+      (let [r (ops/revert-episode! sess :agent "alice")]
         (testing "alice's exclusive work is rolled back to the boundary"
           (is (nil? (:error r)) (pr-str r))
-          (is (= [2] (api/query-eval sess "(ep.core/f 1)")))
+          (is (= [2] (ops/query-eval sess "(ep.core/f 1)")))
           (is (not (re-find #"alice-helper" (query/query-source sess 'ep.core)))))
         (testing "the SHARED form is skipped and reported, not stomped"
           (is (= ['ep.core/h] (:skipped-shared r)))
           (is (re-find #":bob-touched" (query/query-source sess 'ep.core))))
         (testing "the revert is itself provenance, and tests are green again"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external turn-trees-from-label-paths                    ; P4-m6.1
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       (external/done! sess :label "baseline" :agent "alice")
       ;; alice's turn: her own edit + two sub-agents she spawned
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 1))"
                          :prompt "alice's own step" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 9))"
+      (ops/edit-replace! sess 'ep.core 'g "(defn g [x] (- x 9))"
                          :prompt "sub tests work" :agent "alice/tests")
-      (api/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
+      (ops/edit-replace! sess 'ep.core 'h "(defn h [x] :sub-impl)"
                          :prompt "sub impl work" :agent "alice/impl")
       (external/done! sess :label "alice turn done" :agent "alice")
       (testing "the collapsed history nests sub-agent episodes under the turn"
@@ -122,21 +122,21 @@
       (testing "deltas carry wall-clock provenance"
         (is (number? (:at (last (store/deltas (:store @sess))))))
         (is (every? #(number? (:at %)) (store/deltas (:store @sess)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external turn-markers-bracket-the-history               ; P4-m6.2
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
-      (api/turn-begin! sess :agent "alice"
+      (ops/ingest! sess 'ep.core seed)
+      (ops/turn-begin! sess :agent "alice"
                        :intent "add rush-order support to checkout"
                        :user "nathan")
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 7))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 7))"
                          :prompt "step 1" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
+      (ops/edit-replace! sess 'ep.core 'g "(defn g [x] :sub-work)"
                          :prompt "sub step" :agent "alice/impl")
       (external/done! sess :label "rush support" :agent "alice")
-      (let [r (api/turn-end! sess :agent "alice")]
+      (let [r (ops/turn-end! sess :agent "alice")]
         (is (nil? (:error r))))
       (testing "lineage + form-history resolve the enclosing turn's ask"
         (let [lin (history/query-lineage sess 'ep.core 'f)
@@ -159,7 +159,7 @@
               (is (contains? agents "alice/impl"))))
           (testing "turn contents don't ALSO appear as top-level rows"
             (is (not-any? #(= "alice" (get-in % [:episode :agent])) rows)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external hook-driven-turn-markers-flow-through-the-journal
   ;; the Claude Code hooks path: a one-shot CLI appends the turn delta
@@ -168,26 +168,26 @@
                  "/slopp-turn-" (System/nanoTime))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       ;; simulate the UserPromptSubmit hook (separate process in production)
       (slopp.mcp.turn/-main dir "begin" "alice" "fix" "the" "flaky" "test")
-      (api/sync-with-journal! sess)
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 2))"
+      (ops/sync-with-journal! sess)
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 2))"
                          :prompt "the fix" :agent "alice")
       (slopp.mcp.turn/-main dir "end" "alice")
-      (api/sync-with-journal! sess)
+      (ops/sync-with-journal! sess)
       (let [turn (first (keep :turn (history/query-history sess :collapse true)))]
         (is (= "fix the flaky test" (:intent turn)))
         (is (= 1 (count (:episodes turn)))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external turn-gate-blocks-unrooted-writes               ; P4-m6.2 enforcement
   (let [sess (external/open!)]
     (try
       (swap! sess assoc :require-turns? true)   ; transport policy (real servers set this)
-      (api/ingest! sess 'ep.core seed)          ; api-level stays ungated
+      (ops/ingest! sess 'ep.core seed)          ; api-level stays ungated
       (let [call (fn [tool args]
                    (get-in (slopp.mcp/handle! sess
                                              {:id 1 :method "tools/call"
@@ -220,44 +220,44 @@
                        (call "edit_delete_form"
                              {:ns "ep.core" :name "sub-added"
                               :agent "alice"})))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external hook-json-mode-records-the-exact-user-words    ; the real hook shape
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-hook-" (System/nanoTime))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'ep.core seed)
+      (ops/ingest! sess 'ep.core seed)
       ;; UserPromptSubmit pipes {"prompt": "..."} on stdin
       (with-in-str "{\"prompt\":\"please add rush orders — exactly these words\",\"session_id\":\"x\"}"
         (slopp.mcp.turn/-main dir "hook-begin" "alice"))
-      (api/sync-with-journal! sess)
-      (is (api/turn-open? sess "alice"))
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 4))"
+      (ops/sync-with-journal! sess)
+      (is (ops/turn-open? sess "alice"))
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (* x 4))"
                          :prompt "work" :agent "alice")
       (with-in-str "{}"
         (slopp.mcp.turn/-main dir "hook-end" "alice"))
-      (api/sync-with-journal! sess)
-      (is (not (api/turn-open? sess "alice")))
+      (ops/sync-with-journal! sess)
+      (is (not (ops/turn-open? sess "alice")))
       (let [turn (first (keep :turn (history/query-history sess :collapse true)))]
         (is (= "please add rush orders — exactly these words" (:intent turn))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external history-drill-down-and-text-rendering          ; granularity gaps
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
-      (api/turn-begin! sess :agent "alice" :intent "make f add ten")
-      (api/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
+      (ops/ingest! sess 'ep.core seed)
+      (ops/turn-begin! sess :agent "alice" :intent "make f add ten")
+      (ops/edit-replace! sess 'ep.core 'f-t "(deftest f-t (is (= 11 (f 1))))"
                          :prompt "red first" :agent "alice")
-      (api/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
+      (ops/edit-replace! sess 'ep.core 'f "(defn f [x] (+ x 10))"
                          :prompt "green" :agent "alice")
       (external/done! sess :label "plus-ten" :agent "alice")
-      (api/turn-end! sess :agent "alice")
+      (ops/turn-end! sess :agent "alice")
       ;; more work after, so the span is genuinely historical
-      (api/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
+      (ops/edit-replace! sess 'ep.core 'g "(defn g [x] :later)"
                          :prompt "later work" :agent "bob")
       (testing "a PAST episode inspects like the current one: plug the
                 from/to ids from its collapsed row into query_changes"
@@ -278,22 +278,22 @@
           (is (string? txt))
           (is (re-find #"make f add ten" txt))
           (is (re-find #"plus-ten" txt))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external human-history-timestamps-diffs-and-intent-search
   ;; the human-side gaps: WHEN did it happen, WHAT changed (as a diff, not
   ;; two full sources), and finding a turn by what the user actually asked
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ep.core seed)
-      (api/turn-begin! sess :agent "alice" :intent "teach h to double, loudly")
-      (api/edit-replace! sess 'ep.core 'h
+      (ops/ingest! sess 'ep.core seed)
+      (ops/turn-begin! sess :agent "alice" :intent "teach h to double, loudly")
+      (ops/edit-replace! sess 'ep.core 'h
                          "(defn h [x]\n  ;; loud on purpose\n  (* x 2))"
                          :prompt "make h double" :agent "alice")
       (external/done! sess :label "h doubles" :agent "alice")
-      (api/turn-end! sess :agent "alice")
+      (ops/turn-end! sess :agent "alice")
       ;; a later, still-open episode so was/now spans a real line-level change
-      (api/edit-replace! sess 'ep.core 'h
+      (ops/edit-replace! sess 'ep.core 'h
                          "(defn h [x]\n  ;; loud on purpose\n  (* x 3))"
                          :prompt "actually triple" :agent "alice")
       (testing "collapsed rows carry human-readable timestamps"
@@ -326,27 +326,27 @@
         (let [c (history/query-changes sess :agent "alice")]
           (is (map? c))
           (is (re-find #"\* x 2" (:was (first (:forms c)))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-always-verifies-the-episode
   ;; the done-point IS the test run — it must verify the episode's changes
   ;; even when normalization has nothing to rewrite
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dv.core
+      (ops/ingest! sess 'dv.core
                    (str "(ns dv.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (api/test-run! sess 'dv.core)
+      (ops/test-run! sess 'dv.core)
       (external/done! sess :label "baseline")
-      (api/edit-replace! sess 'dv.core 'f "(defn f \"F2.\" [x] (inc x))"
+      (ops/edit-replace! sess 'dv.core 'f "(defn f \"F2.\" [x] (inc x))"
                          :prompt "docstring only — normalize will not rewrite")
       (let [r (external/done! sess :label "tweaked")]
         (is (zero? (:normalized r)) (pr-str r))
         (is (pos? (:test (:test r) 0))
             (str "tests must run at the done-point even with zero rewrites: "
                  (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-findings-resurface-in-the-next-session
   ;; a turn-end auto-done that leaves reds must greet the next session —
@@ -356,23 +356,23 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'fr.core
+      (ops/ingest! sess 'fr.core
                    (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [x] x)\n"
                         "(deftest f-t (is (= 1 (f 1))))\n"))
-      (api/test-run! sess 'fr.core)
-      (api/edit-replace! sess 'fr.core 'f "(defn f \"F.\" [x] (inc x))"
+      (ops/test-run! sess 'fr.core)
+      (ops/edit-replace! sess 'fr.core 'f "(defn f \"F.\" [x] (inc x))"
                          :prompt "breaks f-t")
       (let [r (external/done! sess :label "left red")]
         (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str r)))
-      (finally (api/close! sess)))
+      (finally (ops/close! sess)))
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
-        (let [b (api/session-brief sess2)]
+        (let [b (ops/session-brief sess2)]
           (is (= "left red" (get-in b [:last-done :label])) (pr-str (:last-done b)))
           (is (pos? (get-in b [:last-done :findings :failures] 0))
               (pr-str (:last-done b))))
-        (finally (api/close! sess2))))))
+        (finally (ops/close! sess2))))))
 
 (deftest ^:external done-reaches-tests-in-other-namespaces
   ;; dogfooding catch: with no trace coverage, done's fallback ran "all
@@ -380,20 +380,20 @@
   ;; separate -test ns. The require-closure bounds the honest fallback.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dr.core "(ns dr.core)\n(defn f \"F.\" [x] (inc x))\n")
-      (api/ingest! sess 'dr.core-test
+      (ops/ingest! sess 'dr.core "(ns dr.core)\n(defn f \"F.\" [x] (inc x))\n")
+      (ops/ingest! sess 'dr.core-test
                    (str "(ns dr.core-test (:require [dr.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest f-t (is (= 2 (c/f 1))))\n"))
       (external/done! sess :label "baseline")
       ;; break f WITHOUT ever running tests — the trace map knows nothing
-      (api/edit-replace! sess 'dr.core 'f "(defn f \"F.\" [x] (+ x 2))"
+      (ops/edit-replace! sess 'dr.core 'f "(defn f \"F.\" [x] (+ x 2))"
                          :prompt "breaks f-t; only dr.core-test can prove it")
       (let [r (external/done! sess :label "must catch the red")]
         (is (pos? (:test (:test r) 0))
             (str "the done-point must reach dr.core-test: " (pr-str r)))
         (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external episode-reds-compress-to-direction
   ;; response diet for the REPL flow: full failure detail rides ONCE (when a
@@ -401,36 +401,36 @@
   ;; :still-red names; recovery reports :went-green. Direction, not repetition.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'er.core
+      (ops/ingest! sess 'er.core
                    (str "(ns er.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (api/test-run! sess 'er.core)
+      (ops/test-run! sess 'er.core)
       (testing "the FIRST red carries full failure detail"
-        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 9))"
+        (let [r (ops/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 9))"
                                    :prompt "break f-t")]
           (is (seq (get-in r [:test :failures])) (pr-str (:test r)))))
       (testing "the SAME red on the next write compresses to :still-red"
-        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 8))"
+        (let [r (ops/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (+ x 8))"
                                    :prompt "still broken, differently")]
           (is (= '[er.core/f-t] (get-in r [:test :still-red])) (pr-str (:test r)))
           (is (empty? (get-in r [:test :failures]))
               "no re-printed expected/actual blocks")))
       (testing "recovery reports :went-green"
-        (let [r (api/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (inc x))"
+        (let [r (ops/edit-replace! sess 'er.core 'f "(defn f \"F.\" [x] (inc x))"
                                    :prompt "fixed")]
           (is (= '[er.core/f-t] (get-in r [:test :went-green])) (pr-str (:test r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external missing-doc-waits-for-the-done-point
   ;; advisories are episode-level concerns: writes stay quiet, the boundary
   ;; names the undocumented public surface once
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'md.core "(ns md.core)\n(defn seeded \"S.\" [x] x)\n")
+      (ops/ingest! sess 'md.core "(ns md.core)\n(defn seeded \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")
       (testing "the write itself stays quiet"
-        (let [r (api/add-form! sess 'md.core "(defn bare [x] x)"
+        (let [r (ops/add-form! sess 'md.core "(defn bare [x] x)"
                                :prompt "no docstring yet")]
           (is (nil? (:error r)) (pr-str r))
           (is (not-any? :missing-doc (:warnings r)) (pr-str (:warnings r)))))
@@ -438,7 +438,7 @@
         (let [r (external/done! sess :label "review")]
           (is (= '[md.core/bare] (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-separates-new-lint-from-carried
   ;; every done re-listed the same stale warnings from untouched forms —
@@ -447,12 +447,12 @@
   ;; + form names. Errors are never demoted.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'lc.core
+      (ops/ingest! sess 'lc.core
                    (str "(ns lc.core)\n\n"
                         "(defn ^:unused-ok stale \"S.\" [x] (let [a x] (let [b a] b)))\n\n"
                         "(defn ^:unused-ok fresh \"F.\" [x] x)\n"))
       (external/done! sess :label "baseline" :agent "t")
-      (api/edit-replace! sess 'lc.core 'fresh
+      (ops/edit-replace! sess 'lc.core 'fresh
                          "(defn ^:unused-ok fresh \"F.\" [x] (let [c x] (let [d c] d)))"
                          :prompt "introduce a new warning" :agent "t")
       (let [r (external/done! sess :label "the split" :agent "t")]
@@ -462,7 +462,7 @@
           (is (not-any? #(= 'lc.core/stale (:form %)) (:lint r)))
           (is (= 1 (:count (:lint-carried r))) (pr-str (:lint-carried r)))
           (is (some #{'lc.core/stale} (:forms (:lint-carried r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-runs-impacted-external-tests
   ;; the tier is an implementation detail: done's contract is "everything
@@ -470,9 +470,9 @@
   ;; changes run in the external JVM without the agent asking.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ti.core "(ns ti.core)\n\n(defn f \"F.\" [x] (* 2 x))\n"
+      (ops/ingest! sess 'ti.core "(ns ti.core)\n\n(defn f \"F.\" [x] (* 2 x))\n"
                    :agent "t")
-      (api/ingest! sess 'ti.core-test
+      (ops/ingest! sess 'ti.core-test
                    (str "(ns ti.core-test (:require [ti.core :as core]\n"
                         "                           [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest ^:external f-t (is (= 6 (core/f 3))))\n")
@@ -482,7 +482,7 @@
         (is (= :green (:status (:external r))))
         (is (= :green (get-in r [:findings :test-status]))
             (pr-str (:findings r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-caps-the-external-slice-and-reports
   ;; The cap is on TESTS (40) and it still exists for the honest reason: a
@@ -494,12 +494,12 @@
   ;; case now RUNS and only a genuinely-wide reach defers.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n"
+      (ops/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n"
                    :agent "t")
       ;; deep test nses: hub.core.uN-test folds into module hub.core, so the
       ;; fixture needs no edge ceremony
       (doseq [i (range 2)]
-        (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
+        (ops/ingest! sess (symbol (str "hub.core.u" i "-test"))
                      (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
                           "                            [clojure.test :refer [deftest is]]))\n\n"
                           "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
@@ -509,7 +509,7 @@
           (is (nil? (get-in r [:findings :external-pending])) (pr-str (:findings r)))
           (is (= 2 (:ran (:external r))) (pr-str (:external r)))))
       ;; now push the reach over the cap: one ns, 41 external tests
-      (api/ingest! sess 'hub.core.wide-test
+      (ops/ingest! sess 'hub.core.wide-test
                    (apply str
                           "(ns hub.core.wide-test (:require [hub.core :as core]\n"
                           "                          [clojure.test :refer [deftest is]]))\n\n"
@@ -528,7 +528,7 @@
             (is (<= 41 (get-in r [:findings :external-pending :count]))
                 (pr-str (:findings r)))
             (is (seq (get-in r [:findings :external-pending :tests]))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external unused-publics-gate-the-done
   ;; unused public surface FAILS the done gate (error-grade lint + findings)
@@ -537,7 +537,7 @@
   ;; so the dial can never rot.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'up.core
+      (ops/ingest! sess 'up.core
                    (str "(ns up.core)\n\n"
                         "(defn keeper \"K.\" [x] x)\n\n"
                         "(defn orphan \"O.\" [x] (keeper x))\n")
@@ -554,14 +554,14 @@
         (let [r (external/commit-point! sess "should refuse")]
           (is (re-find #"unused" (str (:error r))) (pr-str (dissoc r :test)))))
       (testing "the ^:unused-ok marker is the deliberate escape"
-        (api/edit-replace! sess 'up.core 'orphan
+        (ops/edit-replace! sess 'up.core 'orphan
                            "(defn ^:unused-ok orphan \"O.\" [x] (keeper x))"
                            :prompt "external surface" :agent "t")
         (let [r (external/done! sess :label "marked" :agent "t")]
           (is (nil? (get-in r [:findings :unused-public]))
               (pr-str (:findings r)))))
       (testing "a STALE marker fails too — remove the flag when it's called"
-        (api/edit-replace! sess 'up.core 'keeper
+        (ops/edit-replace! sess 'up.core 'keeper
                            "(defn ^:unused-ok keeper \"K.\" [x] x)"
                            :prompt "wrongly marked — orphan calls it" :agent "t")
         (let [r (external/done! sess :label "stale" :agent "t")]
@@ -570,7 +570,7 @@
           (is (some #(and (= :stale-unused-ok (:type %))
                           (re-find #"remove" (str (:message %))))
                     (:lint r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-runs-the-traced-external-slice
   ;; The complement of done-caps-the-external-slice-and-reports. THAT one's tests
@@ -583,16 +583,16 @@
   ;; touched it. Before #127 done deferred all five and ran nothing.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n" :agent "t")
+      (ops/ingest! sess 'hub.core "(ns hub.core)\n\n(defn f \"F.\" [x] x)\n" :agent "t")
       (doseq [i (range 5)]
-        (api/ingest! sess (symbol (str "hub.core.u" i "-test"))
+        (ops/ingest! sess (symbol (str "hub.core.u" i "-test"))
                      (str "(ns hub.core.u" i "-test (:require [hub.core :as core]\n"
                           "                            [clojure.test :refer [deftest is]]))\n\n"
                           "(deftest ^:external t" i " (is (= 1 (core/f 1))))\n")
                      :agent "t"))
       (external/done! sess :label "setup" :agent "t")
       (swap! sess assoc :test-map {'hub.core.u0-test/t0 #{'hub.core/f}})
-      (api/edit-replace! sess 'hub.core 'f "(defn f \"F.\" [x] (identity x))"
+      (ops/edit-replace! sess 'hub.core 'f "(defn f \"F.\" [x] (identity x))"
                          :prompt "traced edit" :agent "t")
       (let [r (external/done! sess :label "traced edit" :agent "t")]
         (is (nil? (get-in r [:findings :external-pending]))
@@ -601,7 +601,7 @@
         (is (= 1 (:ran (:external r)))
             (str "exactly the one test the evidence names, not all five: "
                  (pr-str (:external r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-walks-back-by-delta-not-by-name
   ;; The hole undo! fills. edit_revert is NAME-addressed, so it cannot undo a
@@ -611,30 +611,30 @@
   ;; which is the coordinate system in which a deleted form still exists.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'un.core
+      (ops/ingest! sess 'un.core
                    (str "(ns un.core)\n\n"
                         "(defn a [] 1)\n\n"
                         "(defn b [] 2)\n"))
-      (api/edit-replace! sess 'un.core 'a "(defn a [] 99)"
+      (ops/edit-replace! sess 'un.core 'a "(defn a [] 99)"
                          :prompt "bad edit" :agent "u")
       (testing "the default undoes the single last write"
-        (let [r (api/undo! sess :agent "u" :prompt "undo the bad edit")]
+        (let [r (ops/undo! sess :agent "u" :prompt "undo the bad edit")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:reverted r))))
         (is (re-find #"\(defn a \[\] 1\)" (query/query-source sess 'un.core))))
       (testing "undo restores a DELETED form — the case edit_revert cannot reach"
-        (api/delete-form! sess 'un.core 'b :prompt "bad delete" :agent "u")
-        (is (:error (api/revert-form! sess 'un.core 'b))
+        (ops/delete-form! sess 'un.core 'b :prompt "bad delete" :agent "u")
+        (is (:error (ops/revert-form! sess 'un.core 'b))
             "name-addressed revert has no name left to look up")
-        (let [r (api/undo! sess :agent "u" :prompt "undo the bad delete")]
+        (let [r (ops/undo! sess :agent "u" :prompt "undo the bad delete")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:reverted r))))
         (is (re-find #"\(defn b \[\] 2\)" (query/query-source sess 'un.core))))
       (testing "a chain that went off the rails comes back in one call"
-        (api/edit-replace! sess 'un.core 'a "(defn a [] 7)" :prompt "w1" :agent "u")
-        (api/edit-replace! sess 'un.core 'b "(defn b [] 8)" :prompt "w2" :agent "u")
-        (api/add-form! sess 'un.core "(defn c [] 9)" :prompt "w3" :agent "u")
-        (let [r (api/undo! sess :deltas 3 :agent "u"
+        (ops/edit-replace! sess 'un.core 'a "(defn a [] 7)" :prompt "w1" :agent "u")
+        (ops/edit-replace! sess 'un.core 'b "(defn b [] 8)" :prompt "w2" :agent "u")
+        (ops/add-form! sess 'un.core "(defn c [] 9)" :prompt "w3" :agent "u")
+        (let [r (ops/undo! sess :deltas 3 :agent "u"
                            :prompt "that whole line of work was wrong")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 3 (:reverted r))))
@@ -642,7 +642,7 @@
           (is (re-find #"\(defn a \[\] 1\)" src))
           (is (re-find #"\(defn b \[\] 2\)" src))
           (is (not (re-find #"defn c" src)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external lint-severity-splits-write-from-done
   ;; Three separate questions, three answers:
@@ -653,9 +653,9 @@
   ;; branch must land even though it is error-grade at done.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [x] x)\n")
+      (ops/ingest! sess 'lg2.core "(ns lg2.core)\n(defn ^:unused-ok ok \"D.\" [x] x)\n")
       (testing "a warning-grade finding neither refuses nor counts"
-        (let [r (api/add-form! sess 'lg2.core
+        (let [r (ops/add-form! sess 'lg2.core
                                "(defn ^:unused-ok w \"D.\" [] (let [x 1] 2))"
                                :prompt "an unused binding")]
           (is (nil? (:error r)) (pr-str r)))
@@ -666,7 +666,7 @@
       (testing "an error-grade STYLE finding lands at the write — and the
                 NORMALIZER fixes it before done ever judges it, which is why
                 it is not the write gate's business"
-        (let [r (api/add-form! sess 'lg2.core
+        (let [r (ops/add-form! sess 'lg2.core
                                "(defn ^:unused-ok halfif \"D.\" [y] (if y 2))"
                                :prompt "missing else — normalize turns it into when")]
           (is (nil? (:error r)) (pr-str r)))
@@ -677,7 +677,7 @@
                                [:target :source]))
               (get-in (query/query-slice sess 'lg2.core 'halfif) [:target :source]))))
       (testing "but an INCOHERENT form is refused — it is no step toward anything"
-        (let [r (api/add-form! sess 'lg2.core
+        (let [r (ops/add-form! sess 'lg2.core
                                "(defn ^:unused-ok bad \"D.\" [] (ok 1 2 3))"
                                :prompt "wrong arity")]
           (is (:error r) (pr-str r))
@@ -685,7 +685,7 @@
       (testing "done names its scope and points at full_check every time"
         (let [f (:findings (external/done! sess :label "scope note"))]
           (is (re-find #"full_check" (str (:scope f))) (pr-str f))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-runs-the-whole-suite-regardless-of-what-was-touched
   ;; Replaces one-untraced-form-no-longer-collapses-narrowing, which pinned the
@@ -697,23 +697,23 @@
   ;; inverse, so nobody reintroduces selection for speed without deciding to.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'wsa.core "(ns wsa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
+      (ops/ingest! sess 'wsa.core "(ns wsa.core)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n"
                    :agent "t")
-      (api/ingest! sess 'wsb.core "(ns wsb.core)\n\n(defn h \"H.\" [x] x)\n" :agent "t")
-      (api/ingest! sess 'wsa.core-test
+      (ops/ingest! sess 'wsb.core "(ns wsb.core)\n\n(defn h \"H.\" [x] x)\n" :agent "t")
+      (ops/ingest! sess 'wsa.core-test
                    (str "(ns wsa.core-test (:require [wsa.core :as a]\n"
                         "                            [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest f-t (is (= 1 (a/f 1))))\n\n"
                         "(deftest g-t (is (= 1 (a/g 1))))\n")
                    :agent "t")
-      (api/ingest! sess 'wsb.core-test
+      (ops/ingest! sess 'wsb.core-test
                    (str "(ns wsb.core-test (:require [wsb.core :as b]\n"
                         "                            [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest h-t (is (= 1 (b/h 1))))\n")
                    :agent "t")
       (external/done! sess :label "setup" :agent "t")
       ;; touch ONE form in ONE namespace
-      (api/edit-replace! sess 'wsa.core 'f "(defn f \"F.\" [x] (identity x))"
+      (ops/edit-replace! sess 'wsa.core 'f "(defn f \"F.\" [x] (identity x))"
                          :prompt "one small edit" :agent "t")
       (let [r (external/done! sess :label "one edit" :agent "t")]
         (testing "every test in the store ran, not just the ones f reaches"
@@ -721,7 +721,7 @@
         (testing "green, with no external-pending noise"
           (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))
           (is (nil? (get-in r [:findings :external-pending])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-to-without-agent-reverts-cleanly
   ;; The pool-revert bug, distilled. I scrapped a whole exploration with
@@ -737,14 +737,14 @@
   (let [sess (external/open!)
         me   (:agent-id @sess)]           ; what every real write is tagged with
     (try
-      (let [_    (api/ingest! sess 'ur.core "(ns ur.core)\n" :agent me)
-            base (:id (:delta (api/add-form! sess 'ur.core "(defn keep-me [] 1)"
+      (let [_    (ops/ingest! sess 'ur.core "(ns ur.core)\n" :agent me)
+            base (:id (:delta (ops/add-form! sess 'ur.core "(defn keep-me [] 1)"
                                              :prompt "keep this" :agent me)))]
-        (api/add-form! sess 'ur.core "(def p (atom 0))" :prompt "explore: state" :agent me)
-        (api/add-form! sess 'ur.core "(defn f [] (swap! p inc))" :prompt "explore" :agent me)
-        (api/edit-replace! sess 'ur.core 'f "(defn f [] (swap! p + 2))" :prompt "tweak" :agent me)
+        (ops/add-form! sess 'ur.core "(def p (atom 0))" :prompt "explore: state" :agent me)
+        (ops/add-form! sess 'ur.core "(defn f [] (swap! p inc))" :prompt "explore" :agent me)
+        (ops/edit-replace! sess 'ur.core 'f "(defn f [] (swap! p + 2))" :prompt "tweak" :agent me)
         ;; scrap it — no :agent, exactly how the MCP tool calls undo
-        (let [r (api/undo! sess :to base :prompt "scrap this dead end")]
+        (let [r (ops/undo! sess :to base :prompt "scrap this dead end")]
           (is (nil? (:error r)) (pr-str r))
           (is (empty? (:skipped-shared r))
               (str "the session's own forms must not be skipped as shared: " (pr-str r)))
@@ -753,7 +753,7 @@
             (is (not (re-find #"def p|defn f" src))
                 (str "the explored forms should be gone:\n" src))
             (is (re-find #"defn keep-me" src) "the pre-exploration form stays"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external episode-revert-without-agent-scraps-my-own-work
   ;; The revert-episode! twin of the undo bug. Every write carries the
@@ -763,11 +763,11 @@
   (let [sess (external/open!)
         me   (:agent-id @sess)]
     (try
-      (api/ingest! sess 'er.core "(ns er.core)\n\n(defn f [] 1)\n" :agent me)
-      (api/edit-replace! sess 'er.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
-      (api/add-form! sess 'er.core "(defn g [] 2)" :prompt "explore more" :agent me)
+      (ops/ingest! sess 'er.core "(ns er.core)\n\n(defn f [] 1)\n" :agent me)
+      (ops/edit-replace! sess 'er.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
+      (ops/add-form! sess 'er.core "(defn g [] 2)" :prompt "explore more" :agent me)
       ;; no :agent — exactly how the MCP tool calls it
-      (let [r (api/revert-episode! sess :prompt "scrap the episode")]
+      (let [r (ops/revert-episode! sess :prompt "scrap the episode")]
         (is (nil? (:error r)) (pr-str r))
         (is (empty? (:skipped-shared r))
             (str "the session's own forms must not be skipped as shared: " (pr-str r)))
@@ -779,7 +779,7 @@
         (let [src (query/query-source sess 'er.core)]
           (is (not (re-find #"defn f|defn g" src))
               (str "the whole episode should be scrapped:\n" (pr-str src)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-to-last-commit-scraps-uncommitted-work
   ;; The dead-end anchor. Scrapping an exploration usually means "back to the
@@ -789,17 +789,17 @@
   (let [sess (external/open!)
         me   (:agent-id @sess)]
     (try
-      (api/ingest! sess 'lc.core "(ns lc.core)\n\n(defn f [] 1)\n" :agent me)
+      (ops/ingest! sess 'lc.core "(ns lc.core)\n\n(defn f [] 1)\n" :agent me)
       (external/commit-point! sess "baseline milestone" :force true)   ; the anchor
-      (api/add-form! sess 'lc.core "(defn g [] 2)" :prompt "explore" :agent me)
-      (api/edit-replace! sess 'lc.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
-      (let [r (api/undo! sess :to :last-commit :prompt "scrap since the milestone")]
+      (ops/add-form! sess 'lc.core "(defn g [] 2)" :prompt "explore" :agent me)
+      (ops/edit-replace! sess 'lc.core 'f "(defn f [] 999)" :prompt "explore" :agent me)
+      (let [r (ops/undo! sess :to :last-commit :prompt "scrap since the milestone")]
         (is (nil? (:error r)) (pr-str r))
         (is (pos? (:reverted r)) (str "must revert the uncommitted work: " (pr-str r)))
         (let [src (query/query-source sess 'lc.core)]
           (is (re-find #"\(defn f \[\] 1\)" src) "f is back to the committed state")
           (is (not (re-find #"defn g" src)) "uncommitted g is gone")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-to-last-done-rolls-back-to-the-done-point
   ;; The finer anchor: :last-done rolls back to the session's own last done,
@@ -808,16 +808,16 @@
   (let [sess (external/open!)
         me   (:agent-id @sess)]
     (try
-      (api/ingest! sess 'ld.core "(ns ld.core)\n\n(defn f [] 1)\n" :agent me)
+      (ops/ingest! sess 'ld.core "(ns ld.core)\n\n(defn f [] 1)\n" :agent me)
       (external/done! sess)                                    ; the done boundary
-      (api/add-form! sess 'ld.core "(defn g [] 2)" :prompt "explore past the done" :agent me)
-      (let [r (api/undo! sess :to :last-done :prompt "scrap since my last done")]
+      (ops/add-form! sess 'ld.core "(defn g [] 2)" :prompt "explore past the done" :agent me)
+      (let [r (ops/undo! sess :to :last-done :prompt "scrap since my last done")]
         (is (nil? (:error r)) (pr-str r))
         (is (pos? (:reverted r)) (str "must revert since the done: " (pr-str r)))
         (let [src (query/query-source sess 'ld.core)]
           (is (re-find #"defn f" src) "work up to the done stays")
           (is (not (re-find #"defn g" src)) "work after the done is gone")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external reverted-work-is-a-findable-dead-end
   ;; The whole point of #3: a scrapped exploration should not vanish — it
@@ -828,10 +828,10 @@
   (let [sess (external/open!)
         me   (:agent-id @sess)]
     (try
-      (api/ingest! sess 'de.core "(ns de.core)\n\n(defn keep-me [] 1)\n" :agent me)
+      (ops/ingest! sess 'de.core "(ns de.core)\n\n(defn keep-me [] 1)\n" :agent me)
       (external/commit-point! sess "baseline" :force true)
-      (api/add-form! sess 'de.core "(defn tried-approach [] :nope)" :prompt "explore X" :agent me)
-      (api/undo! sess :to :last-commit
+      (ops/add-form! sess 'de.core "(defn tried-approach [] :nope)" :prompt "explore X" :agent me)
+      (ops/undo! sess :to :last-commit
                  :prompt "approach X: dead end — the suite is CPU-bound, no win")
       (testing "the dead-end is listed with its why and the scrapped form"
         (let [des (history/query-history sess :dead-ends true)]
@@ -843,7 +843,7 @@
       (testing "filterable to dead-ends that touched a namespace"
         (is (= 1 (count (history/query-history sess :dead-ends "de.core"))))
         (is (empty? (history/query-history sess :dead-ends "other.ns"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external report-carries-the-verbatim-user-asks
   ;; report is THE handoff composite, but it only carried per-form :asks (the
@@ -854,27 +854,27 @@
   ;; — reading the journal by hand is the product failing its own ledger claim.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rp.core seed)
-      (api/turn-begin! sess :agent "alice"
+      (ops/ingest! sess 'rp.core seed)
+      (ops/turn-begin! sess :agent "alice"
                        :intent "add rush-order support to checkout"
                        :user "nathan")
-      (api/edit-replace! sess 'rp.core 'f "(defn f [x] (+ x 7))"
+      (ops/edit-replace! sess 'rp.core 'f "(defn f [x] (+ x 7))"
                          :prompt "bump the rate" :agent "alice")
-      (api/turn-end! sess :agent "alice")
-      (api/turn-begin! sess :agent "alice"
+      (ops/turn-end! sess :agent "alice")
+      (ops/turn-begin! sess :agent "alice"
                        :intent "then rename zone to region everywhere"
                        :user "nathan")
-      (api/edit-replace! sess 'rp.core 'g "(defn g [x] :renamed)"
+      (ops/edit-replace! sess 'rp.core 'g "(defn g [x] :renamed)"
                          :prompt "rename step" :agent "alice")
-      (api/turn-end! sess :agent "alice")
+      (ops/turn-end! sess :agent "alice")
       (testing "report lists the verbatim user asks, newest work included"
-        (let [r  (api/report sess)
+        (let [r  (ops/report sess)
               is* (:intents r)]
           (is (some #(re-find #"rush-order support" (str %)) is*)
               (pr-str is*))
           (is (some #(re-find #"rename zone to region" (str %)) is*)
               (pr-str is*))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-changes-takes-named-span-anchors
   ;; query_changes is the only surface that carries CODE (:was/:now per form),
@@ -890,12 +890,12 @@
                   "(defn ^:unused-ok g [x] (dec x))\n"
                   "(deftest f-t (is (= 2 (f 1))))\n")]
     (try
-      (api/ingest! sess 'sp.core src)
-      (api/edit-replace! sess 'sp.core 'f "(defn f [x] (+ x 1))"
+      (ops/ingest! sess 'sp.core src)
+      (ops/edit-replace! sess 'sp.core 'f "(defn f [x] (+ x 1))"
                          :prompt "first change" :agent "alice")
       (let [c (external/commit-point! sess "a milestone" :agent "alice")]
         (is (:commit c) (str "fixture: the milestone must land — " (pr-str (dissoc c :test :findings)))))
-      (api/edit-replace! sess 'sp.core 'g "(defn ^:unused-ok g [x] :after-commit)"
+      (ops/edit-replace! sess 'sp.core 'g "(defn ^:unused-ok g [x] :after-commit)"
                          :prompt "post-milestone change" :agent "alice")
       (testing ":start spans the whole log and carries the code"
         (let [c  (history/query-changes sess :from :start)
@@ -911,7 +911,7 @@
               (str "f predates the milestone: " (pr-str fs)))))
       (testing "an anchor with nothing to point at says so instead of throwing"
         (is (map? (history/query-changes sess :from :last-done))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-turn-refusal-names-the-cause-a-second-store-hits
   ;; Friction 4, and I walked into it while reviewing: a session whose cwd is
@@ -929,7 +929,7 @@
   (let [sess (external/open!)]
     (try
       (swap! sess assoc :require-turns? true)
-      (api/ingest! sess 'tc.core "(ns tc.core)\n(defn f [x] x)\n")
+      (ops/ingest! sess 'tc.core "(ns tc.core)\n(defn f [x] x)\n")
       (let [call (fn [tool args]
                    (get-in (slopp.mcp/handle! sess
                                               {:id 1 :method "tools/call"
@@ -959,7 +959,7 @@
                         [:result :content 0 :text])]
           (is (re-find #"/w/the-other-store" r)
               (str "the refusal must name the store it is about: " r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-done-with-nothing-to-judge-does-not-append-a-second-one
   ;; Measured on slopp's own store: the last eight deltas were
@@ -981,7 +981,7 @@
   (let [sess (external/open!)
         n-deltas #(count (store/deltas (:store @sess)))]
     (try
-      (api/ingest! sess 'nd.core "(ns nd.core)\n(defn f [x] x)\n")
+      (ops/ingest! sess 'nd.core "(ns nd.core)\n(defn f [x] x)\n")
       (let [first-done (external/done! sess :label "real work")
             after-first (n-deltas)]
         (testing "a done that judged something records itself, as always"
@@ -1004,12 +1004,12 @@
                   "it must SAY it did nothing, or a caller reads a stale verdict as fresh"))))
         (testing "and a write re-arms it — the short-circuit must not wedge done
                   shut for the rest of the session"
-          (api/add-form! sess 'nd.core "(defn g [x] (inc x))" :prompt "more work")
+          (ops/add-form! sess 'nd.core "(defn g [x] (inc x))" :prompt "more work")
           (let [third (external/done! sess :label "real work again")]
             (is (< after-first (n-deltas)))
             (is (not= (:done first-done) (:done third)) (pr-str third))
             (is (nil? (:note third)) (pr-str third)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-refuses-rather-than-reaching-past-what-it-cannot-invert
   ;; Reported by slopp-ui, refuse-grade, and the worst class this project
@@ -1036,13 +1036,13 @@
   ;; to invert something is fine. Reaching past it is not.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'un2.core "(ns un2.core)\n(defn a \"A.\" [] 1)\n")
-      (api/edit-replace! sess 'un2.core 'a "(defn a \"A.\" [] 99)"
+      (ops/ingest! sess 'un2.core "(ns un2.core)\n(defn a \"A.\" [] 1)\n")
+      (ops/edit-replace! sess 'un2.core 'a "(defn a \"A.\" [] 99)"
                          :prompt "the work that must survive" :agent "u")
-      (is (nil? (:error (api/ns-rename! sess 'un2.core 'un2.renamed
+      (is (nil? (:error (ops/ns-rename! sess 'un2.core 'un2.renamed
                                         :prompt "regroup" :agent "u"))))
       (testing "undo does not silently revert the edit BEHIND the rename"
-        (let [r (api/undo! sess :agent "u" :prompt "undo the last thing")]
+        (let [r (ops/undo! sess :agent "u" :prompt "undo the last thing")]
           (is (zero? (:reverted r))
               (str "it reverted something — and whatever it was, it was not"
                    " the last delta: " (pr-str r)))
@@ -1056,10 +1056,10 @@
       (testing "and once the un-invertible delta is no longer the head, undo works"
         ;; must-not-over-refuse: the fix is about REACHING PAST, not about
         ;; refusing whenever such a delta exists anywhere in the log
-        (api/edit-replace! sess 'un2.renamed 'a "(defn a \"A.\" [] 7)"
+        (ops/edit-replace! sess 'un2.renamed 'a "(defn a \"A.\" [] 7)"
                            :prompt "a fresh mistake" :agent "u")
-        (let [r (api/undo! sess :agent "u" :prompt "undo that")]
+        (let [r (ops/undo! sess :agent "u" :prompt "undo that")]
           (is (= 1 (:reverted r)) (pr-str r))
           (is (re-find #"99" (query/query-source sess 'un2.renamed))
               "back to the protected version, not further")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

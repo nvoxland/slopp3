@@ -5,7 +5,7 @@
   the REMOTE only; the local side never materializes a working tree."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -39,7 +39,7 @@
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gc.core seed)
+      (ops/ingest! sess 'gc.core seed)
       (external/commit-point! sess "v1: f ships" :agent "alice")
       (let [ctx (git/open-ctx! dir)]
         (try
@@ -76,7 +76,7 @@
                 (finally (.close repo)))))
           (finally (git/close-ctx! ctx))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! dir)
         (rm-rf! (io/file bare))))))
 

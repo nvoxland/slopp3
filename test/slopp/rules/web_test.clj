@@ -14,7 +14,7 @@
   discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.rules.web :as web] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.web-test :as web-test]))
+            [slopp.rules.web :as web] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.web-test :as web-test]))
 
 (deftest routes-derive-from-stored-nodes
   (let [src (str "(ns shop.api)\n\n"
@@ -66,22 +66,22 @@
 (deftest ^:external web-gates-ride-the-write-path
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shop.api "(ns shop.api)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'shop.api "(ns shop.api)\n\n(defn seed \"S.\" [x] x)\n")
       (testing "before opting in, an endpoint-shaped form lands ungated (the adoption story)"
-        (let [r (api/add-form! sess 'shop.api
+        (let [r (ops/add-form! sess 'shop.api
                                "(defn ^{:web/method :get :web/path \"/pre\"} pre \"P.\" [req] req)"
                                :prompt "pre-optin endpoint")]
           (is (nil? (:error r)) (pr-str r))))
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "an endpoint with no :web/auth is refused with teaching, and never lands"
-        (let [r (api/add-form! sess 'shop.api
+        (let [r (ops/add-form! sess 'shop.api
                                "(defn ^{:web/method :get :web/path \"/naked\"} naked \"N.\" [req] req)"
                                :prompt "endpoint without auth")]
           (is (re-find #":web/auth" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'shop.api 'naked)))))
       (testing "with a declared policy and response contract it lands, and the route reports"
-        (let [r (api/add-form! sess 'shop.api
+        (let [r (ops/add-form! sess 'shop.api
                                (str "(defn ^{:web/method :get :web/path \"/api/ping\""
                                     " :web/auth :public :web/response :map} ping \"P.\" [req] req)")
                                :prompt "a public endpoint")]
@@ -89,7 +89,7 @@
           (let [rep (web/routes-report (:store @sess))]
             (is (true? (:enabled rep)))
             (is (some #(= "/api/ping" (:path %)) (:routes rep))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ui-route-refs-classify-link-targets
   (let [src (str "(ns shop.ui)\n\n"
@@ -189,7 +189,7 @@
 (deftest ^:external done-surfaces-dangling-route-refs
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ui.core
+      (ops/ingest! sess 'ui.core
                    (str "(ns ui.core)\n\n"
                         "(defn ^{:web/method :get :web/path \"/home\" :web/auth :public :web/response :map} home \"H.\" [req]\n"
                         "  [:a {:href \"/nowhere\"} \"x\"])\n"))
@@ -197,7 +197,7 @@
         (let [r (external/done! sess :label "pre-optin")]
           (is (empty? (get-in r [:findings :web-dangling-route-refs]))
               (pr-str (:findings r)))))
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a dangling href fires with the form and path"
         (let [r (external/done! sess :label "dangling")]
@@ -206,87 +206,87 @@
                        (get-in r [:findings :web-dangling-route-refs])))
               (pr-str (:findings r)))))
       (testing "adding the route discharges"
-        (api/add-form! sess 'ui.core
+        (ops/add-form! sess 'ui.core
                        "(defn ^{:web/method :get :web/path \"/nowhere\" :web/auth :public :web/response :map} nowhere \"N.\" [req] req)"
                        :prompt "serve the missing route")
         (let [r (external/done! sess :label "served")]
           (is (empty? (get-in r [:findings :web-dangling-route-refs]))
               (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external react-attr-names-refuse-at-the-write
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ui.rx "(ns ui.rx)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/ingest! sess 'ui.rx "(ns ui.rx)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a React attribute name in a literal hiccup element refuses, teaching the HTML spelling"
-        (let [r (api/add-form! sess 'ui.rx
+        (let [r (ops/add-form! sess 'ui.rx
                                "(defn card \"C.\" [] [:div {:className \"x\"} \"c\"])"
                                :prompt "a React-ism")]
           (is (re-find #":class\b" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'ui.rx 'card)))))
       (testing "the HTML spelling lands"
-        (let [r (api/add-form! sess 'ui.rx
+        (let [r (ops/add-form! sess 'ui.rx
                                "(defn card \"C.\" [] [:div {:class \"x\"} \"c\"])"
                                :prompt "correct spelling")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external web-endpoint-schema-gate-requires-a-response-contract
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shopc.api "(ns shopc.api)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'shopc.api "(ns shopc.api)\n\n(defn seed \"S.\" [x] x)\n")
       (testing "before opt-in, an endpoint without :web/response lands (grandfathered)"
-        (let [r (api/add-form! sess 'shopc.api
+        (let [r (ops/add-form! sess 'shopc.api
                                "(defn ^{:web/method :get :web/path \"/pre\" :web/auth :public} pre \"P.\" [req] req)"
                                :prompt "pre-optin endpoint")]
           (is (nil? (:error r)) (pr-str r))))
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "under opt-in, an endpoint with auth but NO :web/response is refused, never lands"
-        (let [r (api/add-form! sess 'shopc.api
+        (let [r (ops/add-form! sess 'shopc.api
                                "(defn ^{:web/method :get :web/path \"/list\" :web/auth :public} list-it \"L.\" [req] req)"
                                :prompt "no response contract")]
           (is (re-find #":web/response" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'shopc.api 'list-it)) "never lands")))
       (testing "declaring :web/response (here inline) lets it land"
-        (let [r (api/add-form! sess 'shopc.api
+        (let [r (ops/add-form! sess 'shopc.api
                                (str "(defn ^{:web/method :get :web/path \"/ok\" :web/auth :public"
                                     " :web/response [:map [:n :int]]} ok \"O.\" [req] req)")
                                :prompt "with a response contract")]
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'shopc.api 'ok)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external web-endpoint-schema-requires-request-on-body-methods
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shopr.api "(ns shopr.api)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/ingest! sess 'shopr.api "(ns shopr.api)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "opt into HTTP")
       (testing "a POST endpoint with :web/response but NO :web/request is refused"
-        (let [r (api/add-form! sess 'shopr.api
+        (let [r (ops/add-form! sess 'shopr.api
                                (str "(defn ^{:web/method :post :web/path \"/orders\" :web/auth :public"
                                     " :web/response [:map [:id :int]]} create \"C.\" [req] req)")
                                :prompt "no request contract")]
           (is (re-find #":web/request" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'shopr.api 'create)))))
       (testing "a GET endpoint needs only :web/response (no request body)"
-        (let [r (api/add-form! sess 'shopr.api
+        (let [r (ops/add-form! sess 'shopr.api
                                (str "(defn ^{:web/method :get :web/path \"/orders\" :web/auth :public"
                                     " :web/response [:map]} listing \"L.\" [req] req)")
                                :prompt "get needs only response")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "declaring both contracts lets the POST land"
-        (let [r (api/add-form! sess 'shopr.api
+        (let [r (ops/add-form! sess 'shopr.api
                                (str "(defn ^{:web/method :post :web/path \"/orders2\" :web/auth :public"
                                     " :web/request [:map [:item :string]] :web/response [:map [:id :int]]}"
                                     " create2 \"C.\" [req] req)")
                                :prompt "both contracts")]
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'shopr.api 'create2)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest routes-surface-the-declared-contract
   ;; D-web-contracts dogfood finding: the endpoint-schema gate makes
@@ -446,16 +446,16 @@
   ;; standing warning.
   (let [sess (external/open!)]
     (try
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "the web rules are inert until the store opts in")
-      (api/ingest! sess 'spa.ui
+      (ops/ingest! sess 'spa.ui
                    (str "(ns spa.ui)\n"
                         "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
                         "        :web/client false :web/response :string}\n"
                         "  doc \"The document.\" [_] {:status 200 :body \"<html></html>\"})\n"))
       (external/done! sess :label "baseline")
       (testing "adding the declaration states the consequence"
-        (api/edit-replace! sess 'spa.ui 'doc
+        (ops/edit-replace! sess 'spa.ui 'doc
                            (str "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
                                 "        :web/client false :web/response :string\n"
                                 "        :web/spa [\"/store\"]}\n"
@@ -466,7 +466,7 @@
           (is (re-find #"200" (str (:teach (first f)))) (pr-str f))
           (is (re-find #"(?i)not-found" (str (:teach (first f)))) (pr-str f))))
       (testing "it does NOT re-fire while the declaration merely stands"
-        (api/edit-replace! sess 'spa.ui 'doc
+        (ops/edit-replace! sess 'spa.ui 'doc
                            (str "(defn ^{:web/method :get :web/path \"/\" :web/auth :public\n"
                                 "        :web/client false :web/response :string\n"
                                 "        :web/spa [\"/store\"]}\n"
@@ -474,7 +474,7 @@
                            :prompt "touch the form without touching the declaration")
         (let [f (get-in (external/done! sess :label "again") [:findings :spa-consequences])]
           (is (nil? f) (pr-str f))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-client-router-path-is-not-somebody-elses-server
   ;; Friction 13, measured on slopp-ui: seven view forms render `/store/ns/foo`

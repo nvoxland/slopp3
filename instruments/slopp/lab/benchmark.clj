@@ -15,7 +15,7 @@
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.mcp :as mcp] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -122,7 +122,7 @@
         {:app name :steps (inc (count steps)) :wall-ms wall
          :tok-in  (quot (reduce + (map :in (conj sizes final))) 4)
          :tok-out (quot (reduce + (map :out (conj sizes final))) 4)})
-      (finally (api/close! session)))))
+      (finally (ops/close! session)))))
 
 (defn- git-sha []
   (let [r (sh/sh "git" "rev-parse" "--short" "HEAD")]

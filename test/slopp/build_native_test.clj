@@ -7,7 +7,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.build :as build] [slopp.ops.external :as external])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -56,7 +56,7 @@
         dir  (str (Files/createTempDirectory "slopp-native"
                                              (make-array FileAttribute 0)))]
     (try
-      (api/ingest! sess 'calc.core
+      (ops/ingest! sess 'calc.core
                    (str "(ns calc.core)\n"
                         "(defn run-cli [args]\n"
                         "  (doseq [a args] (println a)))\n"))
@@ -98,21 +98,21 @@
           (is (not (.exists (io/file dir2 "src" "native"))))
           (is (= {:paths ["src"]}
                  (edn/read-string (slurp (io/file dir2 "deps.edn")))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external build-reads-the-app-manifest
   (let [sess (external/open!)
         dir  (str (Files/createTempDirectory "slopp-appmain"
                                              (make-array FileAttribute 0)))]
     (try
-      (api/ingest! sess 'calc.core
+      (ops/ingest! sess 'calc.core
                    (str "(ns calc.core)\n"
                         "(defn run-cli [args]\n"
                         "  (doseq [a args] (println a)))\n"))
       (testing "with app.main + app.name set, build! needs no arguments"
-        (api/config-file! sess "capabilities" :key "app.main" :value "calc.core/run-cli"
+        (ops/config-file! sess "capabilities" :key "app.main" :value "calc.core/run-cli"
                           :prompt "persist the entry point")
-        (api/config-file! sess "capabilities" :key "app.name" :value "mycalc"
+        (ops/config-file! sess "capabilities" :key "app.name" :value "mycalc"
                           :prompt "persist the app name")
         (let [r (external/build! sess dir)]
           (is (nil? (:error r)) (pr-str r))
@@ -123,4 +123,4 @@
                                                    (make-array FileAttribute 0)))
               r (external/build! sess dir2 :main 'calc.core/run-cli :name "other")]
           (is (= "other" (get-in r [:native :binary])) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

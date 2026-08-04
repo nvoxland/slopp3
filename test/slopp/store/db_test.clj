@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.store.render :as render]
             [slopp.store.db :as db]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n] [slopp.read.history :as history])
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n] [slopp.read.history :as history])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -55,28 +55,28 @@
                     "(deftest t (is (= 6 (add 2 3))))\n")
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'demo target)
-      (api/edit-replace! sess 'demo 'add "(defn add [x y] (+ x y 1))" :prompt "off-by-one")
-      (api/test-run! sess 'demo)
-      (finally (api/close! sess)))
+      (ops/ingest! sess 'demo target)
+      (ops/edit-replace! sess 'demo 'add "(defn add [x y] (+ x y 1))" :prompt "off-by-one")
+      (ops/test-run! sess 'demo)
+      (finally (ops/close! sess)))
     ;; process "restarts": a brand-new session over the same dir
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "source is reconstructed from the db"
           (is (re-find #"\(\+ x y 1\)" (query/query-source sess2 'demo))))
         (testing "the image was reloaded from the store"
-          (is (= [6] (api/query-eval sess2 "(demo/add 2 3)"))))
+          (is (= [6] (ops/query-eval sess2 "(demo/add 2 3)"))))
         (testing "lineage (incl. prompt and verification) survives"
           (let [lin (history/query-lineage sess2 'demo 'add)]
             (is (some #(= "off-by-one" (:prompt %)) lin))
             (is (contains? (set (map :op lin)) :ingest)))
           (is (= :verify (:op (last (store/deltas (:store @sess2)))))))
         (testing "new edits continue cleanly (no id collisions with history)"
-          (let [r (api/edit-replace! sess2 'demo 'add "(defn add [x y] (* x y))"
+          (let [r (ops/edit-replace! sess2 'demo 'add "(defn add [x y] (* x y))"
                                      :prompt "mul")]
             (is (nil? (:error r)))
-            (is (= [6] (api/query-eval sess2 "(demo/add 2 3)")))))
-        (finally (api/close! sess2))))))
+            (is (= [6] (ops/query-eval sess2 "(demo/add 2 3)")))))
+        (finally (ops/close! sess2))))))
 
 (deftest ^:external module-tiers-survive-persist-and-reload
   (testing "declared purity tiers reconstruct through persist! -> load-store"
@@ -104,14 +104,14 @@
         (is (not (.exists sdir))
             ".slopp/ must not be created just by serving a dir"))
       (testing "the first real write materializes the store"
-        (api/ingest! sess 'demo "(ns demo)\n(defn add [x y] (+ x y))\n")
+        (ops/ingest! sess 'demo "(ns demo)\n(defn add [x y] (+ x y))\n")
         (is (.exists (io/file sdir "store.db"))))
-      (finally (api/close! sess)))
+      (finally (ops/close! sess)))
     (testing "and that write is durable — a fresh session reads it back"
       (let [sess2 (external/open! {:slopp.ops/dir dir})]
         (try
           (is (re-find #"\(\+ x y\)" (query/query-source sess2 'demo)))
-          (finally (api/close! sess2)))))))
+          (finally (ops/close! sess2)))))))
 
 (deftest ^:external legacy-tier-spellings-normalize-at-load
   (testing "a pre-canonicalization db row (:effects) loads as :external"

@@ -4,7 +4,7 @@
   because slopp can't see the dep's body. Narrowable by marking the dep var
   `:pure`. Store/stdlib calls are unaffected. Warnings, never rejections."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.edit.tiers :as tiers])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -19,22 +19,22 @@
 (deftest ^:external external-dep-call-is-effectful-by-default
   (let [sess (external/open! {:slopp.ops/dir (temp-dir)})]     ; durable → surface is cached
     (try
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
       ;; dump calls a NON-bang external var (json/write-str) — slopp can't see
       ;; its body, so dump is effectful and should be named dump!
-      (api/ingest! sess 'ex.core
+      (ops/ingest! sess 'ex.core
                    (str "(ns ex.core (:require [clojure.data.json :as json]))\n\n"
                         "(defn dump [x] (json/write-str x))\n"))
       (testing "the external call makes the caller effectful (a !-name warning)"
         (is (warns-about? sess 'ex.core 'dump)
             (pr-str (edit/ns-warnings (:store @sess) 'ex.core))))
       (testing "marking the dep var :pure narrows it — no more warning"
-        (api/deps-pure! sess 'clojure.data.json/write-str :agent "a")
+        (ops/deps-pure! sess 'clojure.data.json/write-str :agent "a")
         (is (not (warns-about? sess 'ex.core 'dump))))
       (testing "the :pure annotation persists (delta + reopen)"
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json/write-str)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external pure-narrows-at-namespace-and-lib-granularity   ; M3 coarser :pure
   ;; slopp is built on wholesale-pure libs (rewrite-clj, clj-kondo); marking
@@ -42,26 +42,26 @@
   ;; :pure also lands at namespace and whole-dep granularity.
   (let [sess (external/open! {:slopp.ops/dir (temp-dir)})]
     (try
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
-      (api/ingest! sess 'ex.core
+      (ops/ingest! sess 'ex.core
                    (str "(ns ex.core (:require [clojure.data.json :as json]))\n\n"
                         "(defn dump [x] (json/write-str x))\n"))
       (is (warns-about? sess 'ex.core 'dump))
       (testing "marking the whole NAMESPACE pure narrows every var in it"
-        (api/deps-pure! sess 'clojure.data.json :agent "a")
+        (ops/deps-pure! sess 'clojure.data.json :agent "a")
         (is (not (warns-about? sess 'ex.core 'dump)))
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
       (testing "un-pure at namespace granularity restores the warning"
-        (api/deps-unpure! sess 'clojure.data.json :agent "a")
+        (ops/deps-unpure! sess 'clojure.data.json :agent "a")
         (is (warns-about? sess 'ex.core 'dump)))
       (testing "marking the whole LIB pure expands to its provided namespaces"
-        (let [r (api/deps-pure! sess 'org.clojure/data.json :agent "a")]
+        (let [r (ops/deps-pure! sess 'org.clojure/data.json :agent "a")]
           (is (= 'org.clojure/data.json (:lib r)))
           (is (contains? (set (:namespaces r)) 'clojure.data.json)))
         (is (not (warns-about? sess 'ex.core 'dump)))
         (is (contains? (:dep-pure (:store @sess)) 'clojure.data.json)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external reads-suppresses-the-effect-name-warning   ; per-form !-effect override
   ;; A fn that READS through an effectful-by-default external dep is flagged
@@ -70,46 +70,46 @@
   ;; Greppable + self-limiting, like `^:unsafe` for the dialect gate.
   (let [sess (external/open! {:slopp.ops/dir (temp-dir)})]
     (try
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
-      (api/ingest! sess 'rd.core
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
+      (ops/ingest! sess 'rd.core
                    (str "(ns rd.core (:require [clojure.data.json :as json]))\n\n"
                         "(defn peek-json [x] (json/read-str x))\n"))
       (testing "a read through an external dep is flagged effectful by default"
         (is (warns-about? sess 'rd.core 'peek-json)))
       (testing "^:reads clears the naming warning"
-        (api/edit-replace! sess 'rd.core 'peek-json
+        (ops/edit-replace! sess 'rd.core 'peek-json
                            "^:reads\n(defn peek-json [x] (json/read-str x))")
         (is (not (warns-about? sess 'rd.core 'peek-json))))
       (testing "query_symbol surfaces :reads? (greppable), form still addressable"
         (let [q (query/query-symbol sess 'rd.core 'peek-json)]
           (is (:reads? q))
           (is (= 'peek-json (:name q)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external store-and-stdlib-calls-are-not-external
   (let [sess (external/open! {:slopp.ops/dir (temp-dir)})]
     (try
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
       ;; pure fn using only clojure.core/clojure.string + a store call
-      (api/ingest! sess 'ex.pure
+      (ops/ingest! sess 'ex.pure
                    (str "(ns ex.pure (:require [clojure.string :as s]))\n\n"
                         "(defn shout [x] (s/upper-case (str x)))\n"))
       (testing "a stdlib-only fn is NOT flagged effectful"
         (is (not (warns-about? sess 'ex.pure 'shout))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external dep-namespaces-persist-and-reopen
   (let [dir (temp-dir)]
     (let [sess (external/open! {:slopp.ops/dir dir})]
       (try
-        (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+        (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
-        (api/deps-pure! sess 'clojure.data.json/write-str :agent "a")
+        (ops/deps-pure! sess 'clojure.data.json/write-str :agent "a")
         (is (contains? (get (:dep-ns (:store @sess))
                             'org.clojure/data.json)
                        'clojure.data.json))
-        (finally (api/close! sess))))
+        (finally (ops/close! sess))))
     (testing "a reopened session reconstructs :dep-ns and :dep-pure"
       (let [s2 (external/open! {:slopp.ops/dir dir})]
         (try
@@ -117,7 +117,7 @@
                          'clojure.data.json))
           (is (contains? (:dep-pure (:store @s2))
                          'clojure.data.json/write-str))
-          (finally (api/close! s2)))))))
+          (finally (ops/close! s2)))))))
 
 (deftest ^:external declaring-a-tier-verifies-the-code-already-there
   ;; The gap recorded in ideas/functional-core-gate.md: `:pure` gates only NEW
@@ -126,29 +126,29 @@
   ;; code, so it has to be checked against the code.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tv.core
+      (ops/ingest! sess 'tv.core
                    (str "(ns tv.core)\n"
                         "(defn ^:unused-ok calc \"Pure.\" [x] (inc x))\n"
                         "(defn ^:unused-ok write! \"Effectful.\" [x] (slurp x))\n"))
       (testing "declaring :pure over an effectful module is REFUSED, and names why"
-        (let [r (api/module-tier! sess "tv.core" :pure :prompt "wishful")]
+        (let [r (ops/module-tier! sess "tv.core" :pure :prompt "wishful")]
           (is (:error r) (pr-str r))
           (is (re-find #"tv\.core/write!" (str (:error r))) (str (:error r)))))
       (testing "the tier is NOT recorded — a refused declaration must not land"
         (is (nil? (get (:module-tiers (:store @sess)) "tv.core"))
             (pr-str (:module-tiers (:store @sess)))))
       (testing ":external is always declarable — it asserts nothing"
-        (let [r (api/module-tier! sess "tv.core" :effects :prompt "periphery")]
+        (let [r (ops/module-tier! sess "tv.core" :effects :prompt "periphery")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :external (get (:module-tiers (:store @sess)) "tv.core"))
               "legacy :effects in, canonical :external stored")))
       (testing "and a genuinely pure module declares clean"
-        (api/ingest! sess 'tp.core
+        (ops/ingest! sess 'tp.core
                      "(ns tp.core)\n(defn ^:unused-ok f \"Pure.\" [x] (* 2 x))\n")
-        (let [r (api/module-tier! sess "tp.core" :pure :prompt "real core")]
+        (let [r (ops/module-tier! sess "tp.core" :pure :prompt "real core")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :pure (get (:module-tiers (:store @sess)) "tp.core")))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external purity-is-declarable-at-namespace-grain
   ;; Measured on slopp itself: slopp.api holds SEVEN fully-pure namespaces
@@ -157,29 +157,29 @@
   ;; test can rely on it. The most specific declaration wins.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ng.core
+      (ops/ingest! sess 'ng.core
                    "(ns ng.core)\n(defn ^:unused-ok boot! \"Edge.\" [p] (slurp p))\n")
-      (api/ingest! sess 'ng.core.calc
+      (ops/ingest! sess 'ng.core.calc
                    "(ns ng.core.calc)\n(defn ^:unused-ok add \"Pure.\" [a b] (+ a b))\n")
-      (api/module-tier! sess "ng.core" :effects :prompt "the module has an edge")
+      (ops/module-tier! sess "ng.core" :effects :prompt "the module has an edge")
       (testing "a pure DEEP namespace declares :pure inside an :effects module"
-        (let [r (api/module-tier! sess "ng.core.calc" :pure :prompt "the core")]
+        (let [r (ops/module-tier! sess "ng.core.calc" :pure :prompt "the core")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "and the deeper declaration WINS for forms in it"
-        (let [r (api/add-form! sess 'ng.core.calc
+        (let [r (ops/add-form! sess 'ng.core.calc
                                "(defn ^:unused-ok sneak \"Edge.\" [p] (slurp p))"
                                :prompt "an effect in the declared-pure core")]
           (is (:error r) (pr-str r))
           (is (re-find #"ng\.core\.calc" (str (:error r))) (str (:error r)))))
       (testing "while the parent module stays unrestricted"
-        (let [r (api/add-form! sess 'ng.core
+        (let [r (ops/add-form! sess 'ng.core
                                "(defn ^:unused-ok more! \"Edge.\" [p] (slurp p))"
                                :prompt "effects are fine out here")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "and declaring :pure over an already-effectful deep ns is refused"
-        (let [r (api/module-tier! sess "ng.core" :pure :prompt "wishful")]
+        (let [r (ops/module-tier! sess "ng.core" :pure :prompt "wishful")]
           (is (:error r) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external tier-layering-is-reported-by-full-check
   ;; effectful-vars sees a CROSS-NAMESPACE effect only when the callee is
@@ -194,15 +194,15 @@
   ;; Refusing there would also force rigidly bottom-up declaration order.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ly.shell
+      (ops/ingest! sess 'ly.shell
                    "(ns ly.shell)\n(defn read-cfg \"No bang.\" [p] (slurp p))\n")
-      (api/module-tier! sess "ly.shell" :effects :prompt "the shell")
-      (api/module-dep! sess "ly.core" "ly.shell" :prompt "fixture edge")
-      (api/ingest! sess 'ly.core
+      (ops/module-tier! sess "ly.shell" :effects :prompt "the shell")
+      (ops/module-dep! sess "ly.core" "ly.shell" :prompt "fixture edge")
+      (ops/ingest! sess 'ly.core
                    (str "(ns ly.core (:require [ly.shell :as sh]))\n"
                         "(defn ^:unused-ok load-it \"Looks pure.\" [p] (sh/read-cfg p))\n"))
       (testing "the declaration itself is NOT refused — its verdict could still change"
-        (let [r (api/module-tier! sess "ly.core" :pure :prompt "core, for now")]
+        (let [r (ops/module-tier! sess "ly.core" :pure :prompt "core, for now")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "but full_check names the core→shell edge effect-reachability missed"
         (let [r (external/full-check! sess)
@@ -228,15 +228,15 @@
                    " finding the agent can scroll past is not a rule: "
                    (pr-str (select-keys r [:status :tier-layering]))))))
       (testing "layering-violations itself: :reads may depend on :pure, not :effects"
-        (api/ingest! sess 'lz.pure "(ns lz.pure)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
-        (api/module-tier! sess "lz.pure" :pure :prompt "core")
-        (api/module-dep! sess "lz.mid" "lz.pure" :prompt "fixture edge")
-        (api/ingest! sess 'lz.mid
+        (ops/ingest! sess 'lz.pure "(ns lz.pure)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
+        (ops/module-tier! sess "lz.pure" :pure :prompt "core")
+        (ops/module-dep! sess "lz.mid" "lz.pure" :prompt "fixture edge")
+        (ops/ingest! sess 'lz.mid
                      (str "(ns lz.mid (:require [lz.pure :as p]))\n"
                           "(defn ^:unused-ok twice \"P.\" [x] (p/calc (p/calc x)))\n"))
         (is (empty? (tiers/layering-violations (:store @sess) 'lz.mid :reads)))
         (is (seq (tiers/layering-violations (:store @sess) 'ly.core :pure))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external full-check-layer-loop-exempts-test-namespaces
   ;; A -test namespace nested UNDER a declared-:pure module inherits :pure via
@@ -247,13 +247,13 @@
   ;; you declared a tier for.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'pl.core.io
+      (ops/ingest! sess 'pl.core.io
                    "(ns pl.core.io)\n(defn ^:unused-ok read-cfg \"IO.\" [p] (slurp p))\n")
-      (api/module-tier! sess "pl.core.io" :external :prompt "the shell leaf")
-      (api/ingest! sess 'pl.core "(ns pl.core)\n(defn ^:unused-ok f \"P.\" [x] (inc x))\n")
-      (api/module-tier! sess "pl.core" :pure :prompt "pure core")
+      (ops/module-tier! sess "pl.core.io" :external :prompt "the shell leaf")
+      (ops/ingest! sess 'pl.core "(ns pl.core)\n(defn ^:unused-ok f \"P.\" [x] (inc x))\n")
+      (ops/module-tier! sess "pl.core" :pure :prompt "pure core")
       ;; a nested test that legitimately exercises the shell leaf
-      (api/ingest! sess 'pl.core.io-test
+      (ops/ingest! sess 'pl.core.io-test
                    (str "(ns pl.core.io-test (:require [pl.core.io :as io]\n"
                         "                              [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest reads (is (nil? (try (io/read-cfg \"/nope\") (catch Exception _ nil)))))\n"))
@@ -262,7 +262,7 @@
               v (:tier-layering r)]
           (is (not-any? #(= 'pl.core.io-test (:ns %)) v)
               (str "a -test namespace was flagged by the layer loop: " (pr-str v)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external requiring-an-undeclared-ns-from-a-tiered-one-teaches-at-the-write
   ;; frictions #4: wiring a NEW deep ns into a :pure consumer was accepted by
@@ -272,25 +272,25 @@
   ;; result now carries the teaching.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tw.core "(ns tw.core)\n(defn ^:unused-ok f [x] x)\n")
-      (api/module-tier! sess "tw.core" :pure :prompt "core is pure")
-      (api/ingest! sess 'tw.util "(ns tw.util)\n(defn ^:unused-ok g [x] x)\n")
+      (ops/ingest! sess 'tw.core "(ns tw.core)\n(defn ^:unused-ok f [x] x)\n")
+      (ops/module-tier! sess "tw.core" :pure :prompt "core is pure")
+      (ops/ingest! sess 'tw.util "(ns tw.util)\n(defn ^:unused-ok g [x] x)\n")
       (testing "a tiered ns gaining an UNDECLARED dep is taught at the write"
-        (let [r (api/add-require! sess 'tw.core "[tw.util :as u]" :prompt "wire")]
+        (let [r (ops/add-require! sess 'tw.core "[tw.util :as u]" :prompt "wire")]
           (is (nil? (:error r)) (pr-str r))
           (is (some? (:tier-note r)) (pr-str (keys r)))
           (is (re-find #"module_purity" (str (:tier-note r))) (:tier-note r))
           (is (re-find #"tw\.util" (str (:tier-note r))) (:tier-note r))))
-      (api/ingest! sess 'tw.led "(ns tw.led)\n(defn ^:unused-ok h [x] x)\n")
-      (api/module-tier! sess "tw.led" :pure :prompt "declared at creation")
+      (ops/ingest! sess 'tw.led "(ns tw.led)\n(defn ^:unused-ok h [x] x)\n")
+      (ops/module-tier! sess "tw.led" :pure :prompt "declared at creation")
       (testing "declared-at-creation keeps the write quiet"
-        (let [r (api/add-require! sess 'tw.core "[tw.led :as l]" :prompt "wire")]
+        (let [r (ops/add-require! sess 'tw.core "[tw.led :as l]" :prompt "wire")]
           (is (nil? (:tier-note r)) (pr-str (:tier-note r)))))
       (testing "an untiered consumer stays quiet — nothing to lose"
-        (api/ingest! sess 'tw.free "(ns tw.free)\n(defn ^:unused-ok k [x] x)\n")
-        (let [r (api/add-require! sess 'tw.free "[tw.util :as u]" :prompt "wire")]
+        (ops/ingest! sess 'tw.free "(ns tw.free)\n(defn ^:unused-ok k [x] x)\n")
+        (let [r (ops/add-require! sess 'tw.free "[tw.util :as u]" :prompt "wire")]
           (is (nil? (:tier-note r)) (pr-str (:tier-note r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external tier-layering-says-when-the-shell-was-never-declared
   ;; The finding names the namespace whose CLAIM breaks — and that namespace
@@ -305,13 +305,13 @@
   ;; moved. Four times in one session, each read as a fresh mystery.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'lu.helper
+      (ops/ingest! sess 'lu.helper
                    "(ns lu.helper)\n(defn ^:unused-ok calc \"P.\" [x] (inc x))\n")
-      (api/module-dep! sess "lu.core" "lu.helper" :prompt "fixture edge")
-      (api/ingest! sess 'lu.core
+      (ops/module-dep! sess "lu.core" "lu.helper" :prompt "fixture edge")
+      (ops/ingest! sess 'lu.core
                    (str "(ns lu.core (:require [lu.helper :as h]))\n"
                         "(defn ^:unused-ok go \"P.\" [x] (h/calc x))\n"))
-      (is (nil? (:error (api/module-tier! sess "lu.core" :pure :prompt "core"))))
+      (is (nil? (:error (ops/module-tier! sess "lu.core" :pure :prompt "core"))))
       (let [r (external/full-check! sess)
             v (first (filter #(= 'lu.core (:ns %)) (:tier-layering r)))]
         (is (some? v) (pr-str (:tier-layering r)))
@@ -321,4 +321,4 @@
         (testing "and the note points at the declaration as a candidate fix"
           (is (re-find #"(?i)declar" (str (:tier-layering-note r)))
               (pr-str (:tier-layering-note r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

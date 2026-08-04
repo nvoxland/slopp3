@@ -5,7 +5,7 @@
   Plan tests are pure (ingest stores); the api op is exercised external."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.edit.refactor :as refactor]
-            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external]))
+            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external]))
 
 (defn- st2 []
   (-> (store/empty-store)
@@ -63,20 +63,20 @@
 (deftest ^:external change-signature-end-to-end
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'cs.e2e
+      (ops/create-ns! sess 'cs.e2e
                       :source "(ns cs.e2e (:require [clojure.test :refer [deftest is]]))\n(defn f [x y] (+ x y))\n(defn g [a] (f a 1))\n(deftest g-t (is (= 3 (g 2))))\n")
       (testing "defn + callers move as one group; verification stays green"
-        (let [r (api/change-signature! sess 'cs.e2e 'f
+        (let [r (ops/change-signature! sess 'cs.e2e 'f
                                        "(defn f [x y z] (+ x y (or z 0)))"
                                        "$1 $2 nil")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 1 (:rewrote r)))
           (is (zero? (get-in r [:test :fail] 0)) (pr-str (:test r)))))
       (testing "a template that breaks arity is refused by the lint gate, with the hint"
-        (let [r (api/change-signature! sess 'cs.e2e 'f
+        (let [r (ops/change-signature! sess 'cs.e2e 'f
                                        "(defn f [x y z] (+ x y (or z 0)))"
                                        "$1")]
           (is (:error r))
           (is (re-find #"invalid-arity" (str (:error r))))
           (is (re-find #"change_signature" (str (:error r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

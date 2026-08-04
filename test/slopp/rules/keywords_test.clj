@@ -1,7 +1,7 @@
 (ns slopp.rules.keywords-test
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.rules.keywords :as attrs]
-            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
+            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (deftest keyword-inventory-collects-namespaced-domain-keys
   (let [s (store/ingest (store/empty-store) 'app.core
@@ -45,7 +45,7 @@
 (deftest ^:external done-surfaces-key-typos-as-advisory
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'kt.core
+      (ops/ingest! sess 'kt.core
                    (str "(ns kt.core)\n"
                         ;; ^:unused-ok throughout: done now scans the whole
                         ;; store, so unmarked fixture surface would make
@@ -53,19 +53,19 @@
                         "(defn ^:unused-ok a [m] {:user/email (:x m)})\n"
                         "(defn ^:unused-ok b [m] {:user/email (:y m)})\n"))
       (external/done! sess :label "baseline")
-      (api/add-form! sess 'kt.core "(defn ^:unused-ok c [m] {:user/emial (:z m)})"
+      (ops/add-form! sess 'kt.core "(defn ^:unused-ok c [m] {:user/emial (:z m)})"
                      :prompt "typo the boundary key")
       (let [r (external/done! sess :label "typo")]
         (testing "the typo'd key is flagged with the established key it resembles"
           (is (= [{:used :user/emial :suggest :user/email :seen 2}]
                  (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
       (testing "advisory only — a key typo does NOT flip test-status red"
-        (api/add-form! sess 'kt.core "(defn ^:unused-ok d \"D.\" [m] {:order/idd (:z m)})"
+        (ops/add-form! sess 'kt.core "(defn ^:unused-ok d \"D.\" [m] {:order/idd (:z m)})"
                        :prompt "another typo, but there is no established :order key")
         (let [r (external/done! sess :label "no-neighbor")]
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest vocabulary-lists-domain-keys-most-used-first
   (let [s (store/ingest (store/empty-store) 'app.core
@@ -91,7 +91,7 @@
   ;; question cares most about. It did not say "partial"; it looked complete.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'kb.core
+      (ops/ingest! sess 'kb.core
                    (str "(ns kb.core)\n\n"
                         "(defn mk [] {:kb/conn 1 :plain 2})\n\n"
                         "(defn literal [m] (:kb/conn m))\n\n"
@@ -108,4 +108,4 @@
       (testing "unqualified keys resolve too"
         (let [forms (set (map :form (:rows (graph/query-depends sess ":plain"))))]
           (is (contains? forms 'bare) (pr-str forms))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

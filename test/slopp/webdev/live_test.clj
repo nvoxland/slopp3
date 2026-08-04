@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.webdev.live :as live] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as api] [slopp.read.orient :as orient]))
+            [slopp.webdev.live :as live] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as ops] [slopp.read.orient :as orient]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -713,7 +713,7 @@
   ;; check that passes.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'fb.core "(ns fb.core)\n(defn ^:unused-ok a \"A.\" [] 1)\n")
+      (ops/ingest! sess 'fb.core "(ns fb.core)\n(defn ^:unused-ok a \"A.\" [] 1)\n")
       (testing "no app server — nothing to say, and that is most stores"
         (is (nil? (:app (external/full-check! sess)))))
       (testing "serving and behind — the number, and where to look"
@@ -733,4 +733,4 @@
                 :served-at (:at (last (store/deltas (:store @sess))))})
         (let [a (:app (external/full-check! sess))]
           (is (= 0 (:behind a)) (pr-str a))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

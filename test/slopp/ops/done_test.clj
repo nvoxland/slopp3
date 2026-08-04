@@ -4,7 +4,7 @@
    through a real session in slopp.ops-test."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops.done :as done] [slopp.ops.external :as external] [slopp.kernel.boot :as boot] [slopp.ops :as api]))
+            [slopp.ops.done :as done] [slopp.ops.external :as external] [slopp.kernel.boot :as boot] [slopp.ops :as ops]))
 
 (defn- store-with-requires []
   (store/ingest (store/empty-store) 'du.core
@@ -41,13 +41,13 @@
   ;; done reaches the kernel carrier and puts what it finds on the verdict.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hs.core "(ns hs.core)\n(defn f \"F.\" [] 1)\n")
+      (ops/ingest! sess 'hs.core "(ns hs.core)\n(defn f \"F.\" [] 1)\n")
       (testing "no boot record — the process cannot be stale, and the verdict is quiet"
         (let [r (external/done! sess :label "clean")]
           (is (nil? (get-in r [:findings :host-stale])) (pr-str (:findings r)))))
       (testing "a snapshot host with code deltas since boot rides the verdict"
         (reset! boot/boot-info {:dir "." :mode :snapshot :booted-at 1})
-        (api/edit-replace! sess 'hs.core 'f "(defn f \"F.\" [] 2)"
+        (ops/edit-replace! sess 'hs.core 'f "(defn f \"F.\" [] 2)"
                            :prompt "a code delta the host cannot be running")
         (let [r  (external/done! sess :label "stale host")
               hs (get-in r [:findings :host-stale])]
@@ -57,4 +57,4 @@
               "it must say what staleness means for THIS result")))
       (finally
         (reset! boot/boot-info nil)
-        (api/close! sess)))))
+        (ops/close! sess)))))

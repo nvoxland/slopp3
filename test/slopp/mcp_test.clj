@@ -16,7 +16,7 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.edn :as edn]
             [cheshire.core :as json]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.api.server :as ui-server] [slopp.web.client :as client] [slopp.read.history :as history]))
 
 (deftest ^:external protocol-handshake
@@ -60,7 +60,7 @@
               wire-resp (json/parse-string (json/generate-string resp) true)]
           (is (nil? (:error wire-resp)))
           (is (re-find #"\b6\b" (call! sess "query_eval" {:code "(demo/add 2 3)"})))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external help-and-hints                                ; item 3: weak-model guidance
   (let [sess (external/open!)]
@@ -91,7 +91,7 @@
       (testing "an in-image test_run immediately before done earns the redundancy hint"
         (call! sess "test_run" {:ns "hint"})
         (is (re-find #"pre-flight" (call! sess "done" {:label "noisy"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rename-arg-forgiveness                        ; from the symmetric eval
   (let [sess (external/open!)]
@@ -106,7 +106,7 @@
                      (call! sess "edit_rename" {:ns "ra"})))
         (is (re-find #"missing required argument :ns"
                      (call! sess "query_source" {}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external write-op-arg-forgiveness                      ; eval round 2
   (let [sess (external/open!)]
@@ -119,7 +119,7 @@
           (is (nil? (:error r))))
         (is (re-find #"needs :form" (call! sess "edit_extract"
                                           {:ns "wa" :from "f" :name "z"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external green-responses-are-terse                     ; B1
   (let [sess (external/open!)]
@@ -144,7 +144,7 @@
                                        {:ns "b1" :name "f"
                                         :source "(defn f [x] (inc x))"}))]
           (is (seq (get-in r [:test :failures])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest parse-call-args-shapes
   (testing "nil/blank → {}"
@@ -216,7 +216,7 @@
         (let [r (call! sess "edit_add_form" {:ns "pi.core"
                                             :source "(defn g [] 2)"})]
           (is (re-find #"no open turn" r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external two-sessions-never-merge-episodes
   ;; the P4 invariant, now free of wire labels: two sessions on ONE store
@@ -236,7 +236,7 @@
       (testing "B's work is gone, A's survives"
         (is (not (re-find #"defn fb" (call! sb "query_source" {:targets [{:ns "iso.b" :name "fb"}]}))))
         (is (re-find #"defn fa" (call! sa "query_source" {:targets [{:ns "iso.a" :name "fa"}]}))))
-      (finally (api/close! sa) (api/close! sb)))))
+      (finally (ops/close! sa) (ops/close! sb)))))
 
 (deftest ^:external terse-results-carry-forms
   (let [sess (external/open!)]
@@ -246,7 +246,7 @@
         (is (re-find #":forms \[\"tf.core/f\"\]"
                      (call! sess "edit_replace_form" {:ns "tf.core" :name "f"
                                                      :source "(defn f [x] (identity x))"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external trimmed-responses-spool-the-full-version
   (let [sess (external/open!)]
@@ -269,7 +269,7 @@
           (is (not (re-find #"z{1000}" r)))))
       (testing "an unknown id is an honest error"
         (is (re-find #"no spooled response" (call! sess "query_detail" {:id "r999"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external untested-writes-stay-terse-and-honest
   (let [sess (external/open!)]
@@ -297,7 +297,7 @@
         (let [r (call! sess "edit_replace_form" {:ns "ut.core-test" :name "g-t"
                                                 :source "(deftest g-t (is (= 3 (c/g 3))))"})]
           (is (not (re-find #":untested" r)) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rename-names-leftover-prose-mentions
   (let [sess (external/open!)]
@@ -318,7 +318,7 @@
                :source "(defn describe [n] (str \"tier: \" (volume-rate n)))"})
         (let [r (call! sess "edit_rename" {:ns "pm.core" :old "volume-rate" :new "tier-rate"})]
           (is (not (re-find #":mentions" r)) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external milestones-publish-themselves
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -337,7 +337,7 @@
           (is (= 40 (count (clojure.string/trim head))) head)))
       (testing "no REMOTE is touched or saved — remote publishing stays explicit"
         (is (nil? (db/get-meta (:db @sess) "git-remote"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external commits-prove-git-alignment
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -354,7 +354,7 @@
           (is (re-find #":aligned true" r) r)
           (is (re-find #":branch-head" r) r)
           (is (re-find #"no worktree" r) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external whole-ns-source-is-outline-by-default
   (let [sess (external/open!)]
@@ -370,7 +370,7 @@
                      (call! sess "query_source" {:targets [{:ns "gt.core" :name "f"}]}))))
       (testing "full: true is the explicit whole-namespace dump"
         (is (re-find #"\(\* x 2\)" (call! sess "query_source" {:ns "gt.core" :full true}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rename-sweep-is-one-intent
   (let [sess (external/open!)]
@@ -396,7 +396,7 @@
       (testing "behavior survives under the new names"
         (is (re-find #"600" (call! sess "query_eval" {:code "(sw.core/total 1)"})))
         (is (re-find #"500" (call! sess "query_eval" {:code "(sw.region/region-fee 1)"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external repeated-reads-are-free
   (let [sess (external/open!)]
@@ -419,7 +419,7 @@
       (testing "a change the view can SEE invalidates it"
         (call! sess "edit_add_form" {:ns "tk.core" :source "(defn g [x] x)"})
         (is (re-find #":outline" (call! sess "query_source" {:ns "tk.core"}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external usage-smells-hint-once
   (let [sess (external/open!)]
@@ -437,7 +437,7 @@
         (call! sess "edit_rename" {:ns "sm.a" :old "f" :new "f2"})
         (let [r (call! sess "edit_rename" {:ns "sm.a" :old "g" :new "g2"})]
           (is (re-find #"rename_sweep" r) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external one-off-pushes-keep-the-default-remote
   (let [dir   (str (java.nio.file.Files/createTempDirectory
@@ -450,7 +450,7 @@
         _     (sh/sh "git" "init" "--bare" bareb)
         sess  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
+      (ops/ingest! sess 'pr.core "(ns pr.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/commit-point! sess "seed" :agent "t")
       (testing "the FIRST url is saved as the default"
         (is (nil? (:error (sync/push! dir :url barea))))
@@ -460,7 +460,7 @@
           (is (nil? (:error r)) (pr-str r))
           (is (= barea (db/get-meta (:db @sess) "git-remote")))
           (is (= barea (str (:default-remote r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external mirror-push-and-pull-sync-slopp-branches
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -493,8 +493,8 @@
               (let [r (call! s2 "git_pull" {:branches ["main"] :url bare})]
                 (is (re-find #":pulled" r) r)
                 (is (re-find #"slopp/main" r) r))
-              (finally (api/close! s2))))))
-      (finally (api/close! sess)))
+              (finally (ops/close! s2))))))
+      (finally (ops/close! sess)))
     (testing "a FILELESS store (no .git) still publishes — the projection goes directly"
       (let [d2   (str (java.nio.file.Files/createTempDirectory
                        "slopp-nogit" (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -512,7 +512,7 @@
             (is (re-find #":pushed" r) r))
           (is (re-find #"refs/heads/slopp/main"
                        (:out (sh/sh "git" "ls-remote" "--heads" bare2))))
-          (finally (api/close! s3)))))))
+          (finally (ops/close! s3)))))))
 
 (deftest ^:external red-first-rides-the-wire
   ;; the api carried :red-first but the wire's select-keys dropped it —
@@ -532,7 +532,7 @@
                      :prompt "red first over the wire"})]
         (is (re-find #":red-first \[rw\.core/dbl\]" r) r)
         (is (re-find #"stubbed in-image" r) r))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external read-tools-declare-readonly-on-the-wire
   ;; MCP readOnlyHint: without it, plan-mode clients must treat every tool
@@ -549,7 +549,7 @@
         (is (nil? (get-in by-name ["edit_replace_form" :annotations]))
             "writes carry NO read-only claim")
         (is (nil? (get-in by-name ["module_dep" :annotations]))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-wire-speaks-done-not-groups
   (let [sess (external/open!)]
@@ -561,7 +561,7 @@
         (is (not (contains? names "edit_group"))
             "episodes are inferred — no agent-facing grouping")
         (is (not (contains? names "checkpoint"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external test-run-wire-guards-the-whole-suite
   (let [sess (external/open!)]
@@ -580,7 +580,7 @@
         (let [r (call! sess "test_run" {:all true})]
           (is (re-find #":pass" r) r)
           (is (re-find #"rarely needed" r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external review-scan-is-on-the-wire-and-read-only
   (let [sess (external/open!)]
@@ -595,7 +595,7 @@
       (let [r (call! sess "review_scan" {})]
         (is (re-find #":flagged" r) r)
         (is (re-find #"rw.io/zap!" r) "the effectful undocumented fn is flagged"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest tool-registry-changes-notify-the-client
   ;; a live reload can rename/add tools (edit_move_forms replaced
@@ -665,7 +665,7 @@
         (is (re-find #"wce\.core/f" r) "the owning form is named")
         (is (re-find #"noSuchStaticThing" r) "a match-ready snippet rides")
         (is (not (re-find #"\.clj:\d" r)) "no file:line in the wire text"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-create-platform-rides-the-wire
   (let [sess (external/open!)]
@@ -681,7 +681,7 @@
                         :prompt "client handler"})]
           (is (re-find #":cljs-deferred-to-compile" r) r)
           (is (not (re-find #"form failed to compile" r)) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external module-purity-rides-the-wire
   (let [sess (external/open!)]
@@ -698,7 +698,7 @@
                       {:ns "wcore" :source "(defn tick! \"T.\" [a] (swap! a inc))"
                        :prompt "mutation"})]
           (is (re-find #"functional-core" r) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest boundary-leak-tolerates-non-keyword-keyed-maps
   ;; a sorted-map with STRING keys: (contains? v :row)/(get v :row) compares the
@@ -733,7 +733,7 @@
                  (call! sess "edit_replace_form"
                        {:ns "sa" :name "f" :source "(defn f \"D.\" [x] (inc x))"}))]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-vocabulary-rides-the-wire
   (let [sess (external/open!)]
@@ -749,7 +749,7 @@
       (testing "ns narrows by keyword namespace"
         (let [r (edn/read-string (call! sess "query_vocabulary" {:ns "order"}))]
           (is (= [:order/id] (mapv :kw (:attributes r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-rules-rides-the-wire
   (let [sess (external/open!)]
@@ -760,12 +760,12 @@
         (is (= :refuse (:severity (first (filter #(= :schema-refusal (:rule %)) rs))))
             (pr-str rs)))
       (testing "a per-store severity override is reflected"
-        (api/config-file! sess "rules" :key "schema-drift" :value "advisory"
+        (ops/config-file! sess "rules" :key "schema-drift" :value "advisory"
                           :prompt "dial schema-drift down")
         (let [rs (edn/read-string (call! sess "query_rules" {}))
               drift (first (filter #(= :schema-drift (:rule %)) rs))]
           (is (= :advisory (:severity drift)) (pr-str drift))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-rule-telemetry-rides-the-wire
   (let [sess (external/open!)]
@@ -778,7 +778,7 @@
         (is (>= (get-in t [:window :dones]) 1) (pr-str t))
         (is (every? #(contains? (:escape-markers t) %) [:unsafe :reads :unused-ok]) (pr-str t))
         (is (contains? t :dials) (pr-str t)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external cleanup-is-reachable-over-the-wire
   ;; The done-point tidy has to be callable for ONE namespace, because a legacy
@@ -797,7 +797,7 @@
             "superseded — one general tidy, not a declare-specific tool")
         (is (nil? (get-in by-name ["cleanup" :annotations]))
             "it writes — no read-only claim"))
-      (api/ingest! sess 'fd.wire
+      (ops/ingest! sess 'fd.wire
                    (str "(ns fd.wire)\n\n"
                         "(declare b)\n\n"
                         "(defn a [] (b))\n\n"
@@ -806,7 +806,7 @@
         (is (re-find #"1" (call! sess "cleanup" {:ns "fd.wire"})))
         (is (not (re-find #"declare"
                           (call! sess "query_source" {:ns "fd.wire" :full true})))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external undo-is-reachable-over-the-wire
   ;; undo must be on the wire to do its job: it is only reached for reflexively
@@ -828,7 +828,7 @@
         (let [src (call! sess "query_source" {:ns "un.wire" :full true})]
           (is (not (re-find #"oops" src)))
           (is (re-find #"keep-me" src) "unrelated work survives")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external module-purity-accepts-the-spelling-the-docs-use
   ;; Every surface writes the tier WITH the colon — the tool description says
@@ -843,7 +843,7 @@
                                             :prompt "a pure core"})]
           (is (not (re-find #"tier must be" r)) (str spelling " → " r))
           (is (re-find #":pure" r) (str spelling " → " r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external review-scan-reports-a-size-distribution-not-just-a-count
   ;; ":large 3" is honest but misleading as a progress signal: DECOMPOSING a
@@ -852,7 +852,7 @@
   ;; flatten, not a quantity to minimize, so report the shape.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rs.core
+      (ops/ingest! sess 'rs.core
                    (str "(ns rs.core)\n\n"
                         "(defn small [x] (inc x))\n\n"
                         "(defn big [x]\n"
@@ -864,7 +864,7 @@
         (testing "the median is the honest counterweight to the max"
           (is (< (get-in r [:loc :median]) (get-in r [:loc :max]))
               (pr-str (:loc r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external untested-does-not-flag-plain-defs
   ;; :untested means "no runtime evidence reaches this form". A plain (def x
@@ -874,7 +874,7 @@
   ;; defn/defmulti stay flaggable; they are callable.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ut.core
+      (ops/ingest! sess 'ut.core
                    (str "(ns ut.core)\n\n"
                         "(def threshold 42)\n\n"
                         "(defn untouched [x] (+ x threshold))\n"))
@@ -884,7 +884,7 @@
             (str "a plain def cannot be traced: " (pr-str flags)))
         (is (contains? (set (get flags 'ut.core/untouched)) :untested)
             (str "a callable fn with no evidence still flags: " (pr-str flags))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-zero-test-verification-is-unverified-not-green
   ;; The single most expensive dishonesty in the response shape. A write whose
@@ -898,7 +898,7 @@
   ;; test_run manually after every write because the status cannot be trusted.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'uv.core "(ns uv.core)\n")
+      (ops/ingest! sess 'uv.core "(ns uv.core)\n")
       (let [r (call! sess "edit_add_form"
                      {:ns "uv.core" :source "(defn ^:unused-ok f [x] (inc x))"
                       :prompt "no covering test exists"})]
@@ -906,7 +906,7 @@
         (is (not (re-find #":status :green" r)) r)
         (is (re-find #":coverage :none" r) r))
       (testing "a run that DID execute tests still reports green"
-        (api/ingest! sess 'uv.core-test
+        (ops/ingest! sess 'uv.core-test
                      (str "(ns uv.core-test\n"
                           "  (:require [clojure.test :refer [deftest is]]\n"
                           "            [uv.core :as c]))\n\n"
@@ -916,7 +916,7 @@
                         :source "(defn ^:unused-ok f [x] (inc x))"
                         :prompt "touch it so its test runs"})]
           (is (not (re-find #":unverified" r)) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external unverified-says-why-it-verified-nothing
   ;; :unverified alone repeats the original sin at one remove. "No test covers
@@ -926,14 +926,14 @@
   ;; fallback hid — it looked like an ordinary untested form for months.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'uw.core "(ns uw.core)\n")
+      (ops/ingest! sess 'uw.core "(ns uw.core)\n")
       (let [r (call! sess "edit_add_form"
                      {:ns "uw.core" :source "(defn ^:unused-ok f [x] (inc x))"
                       :prompt "genuinely nothing covers this"})]
         (is (re-find #":status :unverified" r) r)
         (is (re-find #":reason :no-covering-tests" r)
             (str "an :unverified must name its cause: " r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external edit-group-stays-off-the-wire-on-purpose
   ;; Its absence is a MEASURED design decision, not an oversight, and it looks
@@ -961,7 +961,7 @@
           (is (contains? by-name "rename_sweep"))
           (is (contains? by-name "change_signature"))
           (is (contains? by-name "undo"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external unknown-argument-is-refused
   ;; The MCP dispatch used to DROP an unrecognised argument — a typo'd flag
@@ -971,7 +971,7 @@
   ;; deliberately accepts as an alias (edit_extract :subform) must still pass.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'uk.core "(ns uk.core)\n(defn f [] {:uk/target 1})\n")
+      (ops/ingest! sess 'uk.core "(ns uk.core)\n(defn f [] {:uk/target 1})\n")
       (testing "an unknown key is refused, names itself and the accepted keys, and NOTHING runs"
         (let [before (count (store/deltas (:store @sess)))
               r      (call! sess "rename_sweep" {:from ":uk/target"
@@ -990,7 +990,7 @@
                                         {:ns "uk2" :from "f" :name "doubled"
                                          :subform "(+ x x 1)"}))]
           (is (nil? (:error r)) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external dry-run-is-honored-over-the-wire
   ;; A preview that silently performs the operation is far worse than no
@@ -1003,7 +1003,7 @@
   ;; the opposite meaning of what was asked.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dw.core "(ns dw.core)\n(defn f [] {:dw/target 1})\n")
+      (ops/ingest! sess 'dw.core "(ns dw.core)\n(defn f [] {:dw/target 1})\n")
       (let [before (count (store/deltas (:store @sess)))
             r      (call! sess "rename_sweep" {:from ":dw/target"
                                                :to ":dw/renamed"
@@ -1013,7 +1013,7 @@
             "a preview over the wire must append NO delta")
         (is (re-find #":dw/target" (query/query-source sess 'dw.core))
             "and must not rewrite anything"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-write-cannot-green-what-the-tier-never-ran
   ;; Writing an ^:external deftest returned :status :green — a green earned by
@@ -1062,7 +1062,7 @@
           (is (map? t) raw)
           (is (= :unverified (:status t)) raw)
           (is (= :all-impacted-external (:reason t)) raw)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-previews-payload-survives-the-wire
   ;; The fourth silent loss on this path. :dry-run's payload, :drift and
@@ -1074,7 +1074,7 @@
   ;; invariant belongs where the agent reads it: over the wire.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'wp.core
+      (ops/ingest! sess 'wp.core
                    (str "(ns wp.core)\n"
                         "(defn opts \"O.\" [{:keys [dir]}] dir)\n"
                         "(defn ^:unused-ok a \"A.\" [] (opts {:dir \"x\"}))\n"
@@ -1092,7 +1092,7 @@
                        (get-in (query/query-slice sess 'wp.core 'opts)
                                [:target :source]))
               "the arglist must be untouched after a dry run")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-trimmed-payload-stays-parseable-and-says-what-it-dropped
   ;; The trim used to be (subs s 0 8000) — a blind mid-structure cut. For a
@@ -1216,7 +1216,7 @@
             (is (= "7357" (:value port))))))
       (testing "the tool is advertised read-only"
         (is (contains? tools/read-only-tools "query_capabilities")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external branch-milestones-mirror-the-branch-line
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -1244,7 +1244,7 @@
                        (:out (sh/sh "git" "-C" dir "show"
                                     "refs/heads/slopp/feature:src/bp/core.clj")))
               "the branch work must be IN the mirrored tree")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-routes-rides-the-wire
   (let [sess (external/open!)]
@@ -1269,7 +1269,7 @@
           (is (= 'wr.api/ping (:handler row)))))
       (testing "the tool is advertised read-only"
         (is (contains? tools/read-only-tools "query_routes")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external spot-check-runs-external-tests-in-their-tier
   ;; frictions #1: red/green on ONE ^:external test used to cost a manual
@@ -1291,7 +1291,7 @@
         (let [r (call! sess "test_run" {:ns "spot"})]
           (is (re-find #":image" r) r)
           (is (re-find #":external" r) r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external edit-subform-after-does-not-combine-with-match
   ;; review host-F1: the :after INSERT anchor composed src as (str after "\n"
@@ -1312,7 +1312,7 @@
       (testing "the form was NOT mutated by the refused call — a still binds once"
         (let [src (call! sess "query_source" {:ns "sf" :targets [{:ns "sf" :name "f"}]})]
           (is (= 1 (count (re-seq #"\[a 1\]" (str src)))) src)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external one-shot-call-errors-stay-readable
   ;; The turn gate on --call is DELIBERATE (see one-shot-call: reads are free,
@@ -1359,9 +1359,9 @@
   ;; nothing moved.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mx.helper "(ns mx.helper)\n(defn shared \"S.\" [x] x)\n")
-      (api/module-dep! sess "mx.other" "mx.helper" :prompt "other uses helper")
-      (api/ingest! sess 'mx.other
+      (ops/ingest! sess 'mx.helper "(ns mx.helper)\n(defn shared \"S.\" [x] x)\n")
+      (ops/module-dep! sess "mx.other" "mx.helper" :prompt "other uses helper")
+      (ops/ingest! sess 'mx.other
                    (str "(ns mx.other (:require [mx.helper :as h]))\n"
                         "(defn b \"B.\" [x] (h/shared x))\n"))
       (let [out (call! sess "module_extract"
@@ -1376,7 +1376,7 @@
         (is (re-find #"(?i)unknown|unsupported"
                      (call! sess "module_extract"
                             {:namespaces ["mx.helper"] :to "mx.core" :dryrun true}))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ui-serve-rides-the-wire-and-is-not-read-only
   (let [sess (external/open!)]
@@ -1398,7 +1398,7 @@
                no store content at all.")))
       (finally
         (call! sess "ui_serve" {:stop true})
-        (api/close! sess)))))
+        (ops/close! sess)))))
 
 (deftest ^:external a-turn-records-where-its-wall-clock-went
   ;; slopp measured what its own verification cost and nothing else, so a
@@ -1444,7 +1444,7 @@
           (is (= 2 (:calls t))
               (str "turn_begin + query_project, and nothing from turn one: "
                    (pr-str t)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-new-ask-rotates-the-turn
   ;; A turn is supposed to be ONE USER ASK — that is what makes it the unit
@@ -1502,7 +1502,7 @@
               (str "a duplicate add is refused and must be counted: " (pr-str t)))
           (is (some #(= "edit_add_form" (:tool %)) (get-in t [:refused :by-tool]))
               (pr-str t))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-ui-comes-up-with-the-server-and-never-blocks-it
   ;; The reviewer UI died with every server restart and nothing brought it
@@ -1559,19 +1559,19 @@
             ;; clients never show anyone — so without this, autostart is a
             ;; feature that cannot be found
             (is (= (:url r) (:ui-url @sess)))
-            (is (= (:url r) (:ui (api/session-brief sess)))))
+            (is (= (:url r) (:ui (ops/session-brief sess)))))
           (testing "starting the UI does NOT make the brief claim a hub — no
                     hub is running here, and this assertion used to be
                     `(swap! sess assoc :hub …)` followed by reading it back,
                     which proved only that assoc works. The claim it was
                     standing in for was false: `:hub` was set from the
                     CONFIGURED port whether or not anything answered"
-            (let [b (api/session-brief sess)]
+            (let [b (ops/session-brief sess)]
               (is (nil? (:hub b)) (pr-str (select-keys b [:ui :hub])))))
           (ui-server/stop!)))
       (finally
         (ui-server/stop!)
-        (api/close! sess)))))
+        (ops/close! sess)))))
 
 (deftest targets-accepts-the-shapes-a-reader-would-try
   ;; Core 6, the reporting half: a refusal must speak the AUTHOR's vocabulary.
@@ -1706,7 +1706,7 @@
           (is (str/includes? stub "unchanged"))
           (is (str/includes? stub ":detail")
               "a read-only tool's withheld payload must not need a write-capable one")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external store-doctor-rides-the-wire-read-only
   ;; The legacy sweep. Its population is an ADOPTED store — code that came in
@@ -1715,7 +1715,7 @@
   ;; asserts is the wiring plus the honest baseline.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sd.core "(ns sd.core)\n(defn ^:unused-ok f \"F.\" [x] x)\n")
+      (ops/ingest! sess 'sd.core "(ns sd.core)\n(defn ^:unused-ok f \"F.\" [x] x)\n")
       (let [r (edn/read-string (call! sess "store_doctor" {}))]
         (testing "it answers, and says what it looked at"
           (is (pos? (:scanned r)) (pr-str r))
@@ -1729,7 +1729,7 @@
           (is (= [] (:unknown-markers r)))))
       (testing "and it is read-only, so plan mode can auto-permit it"
         (is (contains? tools/read-only-tools "store_doctor")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external no-tool-keeps-its-own-result-key-allowlist
   ;; Four keys have been built, tested and correct one layer down while the

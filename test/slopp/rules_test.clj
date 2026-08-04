@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as api] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -42,28 +42,28 @@
 (deftest ^:external per-store-severity-config-retunes-done
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sv.core
+      (ops/ingest! sess 'sv.core
                    (str "(ns sv.core)\n"
                         "(defn a [m] {:user/email (:x m)})\n"
                         "(defn b [m] {:user/email (:y m)})\n"
                         "(defn handle \"H.\" ([x] x) ([x y] (+ x y)))\n"))
       (external/done! sess :label "baseline")
-      (api/config-file! sess "rules" :key "key-typos" :value "off"
+      (ops/config-file! sess "rules" :key "key-typos" :value "off"
                         :prompt "silence typos for this project")
-      (api/config-file! sess "rules" :key "breaking-changes" :value "error"
+      (ops/config-file! sess "rules" :key "breaking-changes" :value "error"
                         :prompt "make a boundary break BLOCK here")
       (testing ":off silences an advisory end-to-end"
-        (api/add-form! sess 'sv.core "(defn c [m] {:user/emial (:z m)})"
+        (ops/add-form! sess 'sv.core "(defn c [m] {:user/emial (:z m)})"
                        :prompt "typo — but the advisory is dialed off")
         (let [r (external/done! sess :label "typo-off")]
           (is (nil? (get-in r [:findings :key-typos])) (pr-str (:findings r)))))
       (testing ":error escalates an advisory to flip test-status red"
-        (api/edit-replace! sess 'sv.core 'handle "(defn handle \"H.\" [x] x)"
+        (ops/edit-replace! sess 'sv.core 'handle "(defn handle \"H.\" [x] x)"
                            :prompt "narrow away the 2-arity")
         (let [r (external/done! sess :label "narrow")]
           (is (seq (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest catalog-covers-every-registered-rule
   (let [cataloged   (set (map :rule catalog/rule-catalog))
@@ -83,22 +83,22 @@
   (let [sess (external/open!)]
     (try
       (testing "a write gate dialed :advisory now reports :advisory (warn-but-proceed)"
-        (api/config-file! sess "rules" :key "schema-refusal" :value "advisory"
+        (ops/config-file! sess "rules" :key "schema-refusal" :value "advisory"
                           :prompt "soften a write gate to advisory")
         (let [sr (first (filter #(= :schema-refusal (:rule %)) (rules/query-rules sess)))]
           (is (= :form (:grain sr)) (pr-str sr))
           (is (= :advisory (:severity sr)) (pr-str sr))))
       (testing ":off on a write gate is honored and reported"
-        (api/config-file! sess "rules" :key "schema-refusal" :value "off"
+        (ops/config-file! sess "rules" :key "schema-refusal" :value "off"
                           :prompt "turn it off")
         (let [sr (first (filter #(= :schema-refusal (:rule %)) (rules/query-rules sess)))]
           (is (= :off (:severity sr)) (pr-str sr))))
       (testing "a done advisory keeps its full severity range"
-        (api/config-file! sess "rules" :key "key-typos" :value "error"
+        (ops/config-file! sess "rules" :key "key-typos" :value "error"
                           :prompt "escalate an advisory")
         (let [kt (first (filter #(= :key-typos (:rule %)) (rules/query-rules sess)))]
           (is (= :error (:severity kt)) (pr-str kt))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ambient-state-and-bare-throw-checks
   (let [src (str "(ns app.core)\n"
@@ -116,10 +116,10 @@
 (deftest ^:external done-surfaces-ambient-state-and-bare-throw
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'as.core "(ns as.core)\n\n(defn seed \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")
-      (api/add-form! sess 'as.core "(def cache (atom {}))" :prompt "a global atom")
-      (api/add-form! sess 'as.core "(defn boom \"B.\" [x] (throw (IllegalArgumentException. \"e\")))"
+      (ops/add-form! sess 'as.core "(def cache (atom {}))" :prompt "a global atom")
+      (ops/add-form! sess 'as.core "(defn boom \"B.\" [x] (throw (IllegalArgumentException. \"e\")))"
                      :prompt "a bare throw at a boundary")
       (let [r (external/done! sess :label "check")]
         (testing "the ambient global atom is flagged"
@@ -128,7 +128,7 @@
         (testing "the boundary bare throw is flagged"
           (is (= '[as.core/boom] (mapv :form (get-in r [:findings :bare-throw])))
               (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ambient-ok-marks-a-deliberate-global-and-polices-itself
   ;; ambient-state can only be BLOCKING if a legitimately-deliberate global has
@@ -138,7 +138,7 @@
   ;; itself a finding, so the flag can never drift into decoration.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'am.core
+      (ops/ingest! sess 'am.core
                    (str "(ns am.core)\n\n"
                         "(def plain 41)\n\n"
                         "(def ^:ambient-ok memo (atom {}))\n\n"
@@ -164,7 +164,7 @@
               (str "a stale flag must fail symmetrically: " (pr-str hits))))
         (testing "a plain def is untouched either way"
           (is (not (contains? hits 'am.core/plain)) (pr-str hits))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external every-advisory-fires-on-its-own-fixture
   ;; A rule that has stopped firing is INDISTINGUISHABLE from a clean codebase.
@@ -180,7 +180,7 @@
     (if fires-on
       (let [sess (external/open!)]
         (try
-          (api/ingest! sess 'rf.core fires-on)
+          (ops/ingest! sess 'rf.core fires-on)
           (let [st   (:store @sess)
                 ;; the fixture's LAST form is "the change"; anything before it is
                 ;; established baseline. key-typos compares a new key against
@@ -191,7 +191,7 @@
                 (str key " did not fire on its own :fires-on fixture — either"
                      " the check is broken or the fixture stopped exercising"
                      " it. Both are silent failures in production.")))
-          (finally (api/close! sess))))
+          (finally (ops/close! sess))))
       (is (string? selftest-note)
           (str key " has neither a :fires-on fixture nor a :selftest-note"
                " explaining why it cannot have one")))))
@@ -205,11 +205,11 @@
   ;; when the filter kept testing only the retired spellings.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sw.core
+      (ops/ingest! sess 'sw.core
                    "(ns sw.core)\n(defn ^:unused-ok grab \"E.\" [p] (slurp p))\n")
       (external/done! sess :label "baseline")
       (testing "declaring a namespace :external raises the question at done"
-        (api/module-tier! sess "sw.core" :external :prompt "needs to read a file")
+        (ops/module-tier! sess "sw.core" :external :prompt "needs to read a file")
         (let [f (get-in (external/done! sess :label "widened") [:findings :shell-widening])]
           (is (some #(= 'sw.core (:ns %)) f) (pr-str f))
           (is (re-find #"(?i)shell" (str (:why (first f)))) (pr-str f))))
@@ -227,14 +227,14 @@
           (is (re-find #"(?i)nothing has happened" (:note again)) (pr-str again))))
       (testing "and it does NOT re-fire on the next done that judges something —
                 one prompt, not nagging"
-        (api/add-form! sess 'sw.core "(defn later-work [x] x)" :prompt "more work")
+        (ops/add-form! sess 'sw.core "(defn later-work [x] x)" :prompt "more work")
         (let [f (get-in (external/done! sess :label "later") [:findings :shell-widening])]
           (is (nil? f) (pr-str f))))
       (testing "and it is advisory: a question does not turn the done red"
-        (api/module-tier! sess "sw.other" :external :prompt "another edge")
+        (ops/module-tier! sess "sw.other" :external :prompt "another edge")
         (let [r (external/done! sess :label "still green")]
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest stale-reference-check-flags-prose-that-lies
   ;; The failure CLAUDE.md rule 4 exists to prevent, and which this session hit
@@ -520,13 +520,13 @@
   ;; touched them since. It surfaced weeks later on a docstring typo-fix.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tv.core "(ns tv.core)\n(defn pure-thing \"P.\" [] (inc 1))\n")
-      (api/module-tier! sess "tv.core" :pure :prompt "the core is pure")
-      (api/ingest! sess 'elsewhere.io
+      (ops/ingest! sess 'tv.core "(ns tv.core)\n(defn pure-thing \"P.\" [] (inc 1))\n")
+      (ops/module-tier! sess "tv.core" :pure :prompt "the core is pure")
+      (ops/ingest! sess 'elsewhere.io
                    "(ns elsewhere.io)\n(defn read-it \"R.\" [] (slurp \"deps.edn\"))\n")
       (external/done! sess :label "baseline")
       (testing "the fold itself is allowed — it is a rename, not a write to the forms"
-        (is (nil? (:error (api/ns-rename! sess 'elsewhere.io 'tv.core.io
+        (is (nil? (:error (ops/ns-rename! sess 'elsewhere.io 'tv.core.io
                                           :prompt "fold it under the pure core")))))
       (testing "and done catches that the moved code cannot satisfy its new tier"
         (let [r (external/done! sess :label "after the fold")
@@ -537,7 +537,7 @@
           (is (= :external (:supports (first f))))
           (is (= :red (get-in r [:findings :test-status]))
               "a tier the code does not satisfy is a declaration that lies")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-asks-about-assertions-that-were-never-watched-fail
   ;; The cheaper half of `assertions-that-cannot-fail`. Both instances in that
@@ -549,15 +549,15 @@
   ;; red out of the `:verify` deltas, and a source-only fixture has neither.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'anr.core "(ns anr.core)\n(defn f \"F.\" [] 1)\n")
-      (api/ingest! sess 'anr.core-test
+      (ops/ingest! sess 'anr.core "(ns anr.core)\n(defn f \"F.\" [] 1)\n")
+      (ops/ingest! sess 'anr.core-test
                    (str "(ns anr.core-test\n"
                         "  (:require [clojure.test :refer [deftest is]]\n"
                         "            [anr.core :as c]))\n"
                         "(deftest t-f (is (= 1 (c/f))))\n"))
       (external/done! sess :label "baseline")
       (testing "an assertion added to a test that stayed green is asked about"
-        (api/edit-replace! sess 'anr.core-test 't-f
+        (ops/edit-replace! sess 'anr.core-test 't-f
                            "(deftest t-f (is (= 1 (c/f))) (is (some? (c/f))))"
                            :prompt "extend the test")
         (let [f (get-in (external/done! sess :label "extended") [:findings :assertions-never-red])]
@@ -565,22 +565,22 @@
           (is (re-find #"never went red" (str (:teach (first f)))) (pr-str f))))
       (testing "a test that actually BOUNCED is not asked about"
         ;; it went red, so its assertions were exercised — nothing to say
-        (api/edit-replace! sess 'anr.core 'f "(defn f \"F.\" [] 2)"
+        (ops/edit-replace! sess 'anr.core 'f "(defn f \"F.\" [] 2)"
                            :prompt "break it so the test goes red")
-        (api/edit-replace! sess 'anr.core-test 't-f
+        (ops/edit-replace! sess 'anr.core-test 't-f
                            "(deftest t-f (is (= 2 (c/f))) (is (some? (c/f))) (is (pos? (c/f))))"
                            :prompt "catch the test up and add another assertion")
         (let [f (get-in (external/done! sess :label "after a red") [:findings :assertions-never-red])]
           (is (nil? (some #(= 'anr.core-test/t-f (:form %)) f))
               (str "t-f was observed failing this episode: " (pr-str f)))))
       (testing "and it is advisory — a question does not turn the done red"
-        (api/edit-replace! sess 'anr.core-test 't-f
+        (ops/edit-replace! sess 'anr.core-test 't-f
                            "(deftest t-f (is (= 2 (c/f))) (is (some? (c/f))) (is (pos? (c/f))) (is (int? (c/f))))"
                            :prompt "one more assertion, nothing broken")
         (let [r (external/done! sess :label "still green")]
           (is (seq (get-in r [:findings :assertions-never-red])) "it fired")
           (is (not= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest every-done-advisory-declares-whether-it-applies-to-tests
   ;; Standing structural ask #5, from the modernization sweep: "Tests are
@@ -655,7 +655,7 @@
   ;; only what passes through them, so something has to ask again.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sw.core
+      (ops/ingest! sess 'sw.core
                    (str "(ns sw.core \"Reaches the network by hand.\")\n\n"
                         "(defn ^{:unused-ok \"fixture: the standing violation\"} fetch\n"
                         "  \"Fetches.\"\n"
@@ -668,7 +668,7 @@
         (is (= '[sw.core/fetch]
                (mapv :form (get-in (external/done! sess :label "wrote it")
                                    [:findings :direct-http])))))
-      (api/add-form! sess 'sw.core
+      (ops/add-form! sess 'sw.core
                      "(defn ^{:unused-ok \"fixture: unrelated work\"} tag \"Tags.\" [x] x)"
                      :prompt "an episode that touches something else")
       (testing "a LATER episode is not told — the violation is now permanently invisible"
@@ -704,7 +704,7 @@
               (pr-str {:swept (:swept sw) :not-swept (mapv :rule (:not-swept sw))}))
           (is (empty? (filter (set (:swept sw)) (map :rule (:not-swept sw))))
               "a rule cannot be both swept and named as unsweepable")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external standing-rule-violations-are-reported-by-full-check
   ;; The wiring half of friction #27. `sweep-store!` existing is not the fix:
@@ -719,7 +719,7 @@
   ;; opposite reasons.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'fs.core
+      (ops/ingest! sess 'fs.core
                    (str "(ns fs.core \"A clean namespace.\")\n\n"
                         "(defn ^{:unused-ok \"fixture: nothing calls it\"} tag\n"
                         "  \"Tags.\"\n"
@@ -746,7 +746,7 @@
         ;; The namespace carries a form on purpose. `namespace-purpose` exempts
         ;; EMPTY namespaces — there is no author to ask — so an ns form alone
         ;; exercises the exemption and not the rule.
-        (api/ingest! sess 'fs.quiet
+        (ops/ingest! sess 'fs.quiet
                      (str "(ns fs.quiet)\n\n"
                           "(defn ^{:unused-ok \"fixture: nothing calls it\"} hush\n"
                           "  \"Hushes.\"\n"
@@ -759,7 +759,7 @@
               (str "an :advisory rule must be REPORTED without flipping — a"
                    " heuristic that goes red is a heuristic people dial off: "
                    (pr-str (select-keys r [:status :rules]))))))
-      (api/add-form! sess 'fs.core
+      (ops/add-form! sess 'fs.core
                      (str "(defn ^{:unused-ok \"fixture: the standing violation\"} fetch\n"
                           "  \"Fetches.\"\n"
                           "  [u]\n"
@@ -784,7 +784,7 @@
                    " done and full_check grade on ONE bar, and a finding the agent"
                    " can scroll past is not a rule: "
                    (pr-str (select-keys r [:status :rules]))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest applies-to-actually-filters-and-never-silently-drops
   ;; Declaring the dimension is half of ask #5; the runner acting on it is the

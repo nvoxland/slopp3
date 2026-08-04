@@ -11,7 +11,7 @@
   Mostly in-image, because the assembly is pure. The external ones are the
   cases that need a real session to have a real history to be oriented in."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.read.orient :as orient] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store :as store]))
+            [slopp.ops :as ops] [slopp.read.orient :as orient] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store :as store]))
 
 (deftest fit-report-keeps-reports-under-the-gate
   (let [fat {:milestones [{:commit "d9" :description "m"}]
@@ -41,13 +41,13 @@
 (deftest ^:external form-cards-are-the-interface-view
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cd.core
+      (ops/ingest! sess 'cd.core
                    (str "(ns cd.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn scale\n  \"Rounds to the nearest cent.\"\n  [cents rate]\n"
                         "  (long (Math/round (double (* cents rate)))))\n"
                         "(deftest scale-t (is (= 50 (scale 100 0.5))))\n"))
-      (api/test-run! sess 'cd.core)
-      (api/edit-replace! sess 'cd.core 'scale
+      (ops/test-run! sess 'cd.core)
+      (ops/edit-replace! sess 'cd.core 'scale
                          "(defn scale\n  \"Rounds to the nearest cent.\"\n  [cents rate]\n  (long (Math/round (* (double cents) rate))))"
                          :prompt "avoid double-coercion of the product" :agent "t")
       (let [c (orient/form-card sess 'cd.core 'scale)]
@@ -58,24 +58,24 @@
         (is (= 1 (get-in c [:warranty :covered])) (pr-str c))
         (is (nil? (:source c)) (pr-str c))
         (is (< (count (pr-str c)) 400) (str (count (pr-str c)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external cards-carry-observed-examples
   (let [dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-obs" (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'ob.core
+      (ops/ingest! sess 'ob.core
                    "(ns ob.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")
-      (api/remember-observation! sess 'ob.core 'scale
-                                 (api/query-observe sess 'ob.core 'scale
+      (ops/remember-observation! sess 'ob.core 'scale
+                                 (ops/query-observe sess 'ob.core 'scale
                                                     "(ob.core/scale 100 0.5)"))
       (testing "the card carries observed input→output pairs (Q: examples don't lie)"
         (let [c (orient/form-card sess 'ob.core 'scale)]
           (is (vector? (:examples c)) (pr-str c))
           (is (some #(re-find #"100" %) (:examples c)) (pr-str c))
           (is (some #(re-find #"50" %) (:examples c)) (pr-str c))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external observed-examples-survive-a-reopen
   ;; The half cards-carry-observed-examples does NOT cover: examples written
@@ -87,19 +87,19 @@
                   "slopp-obs-reopen" (make-array java.nio.file.attribute.FileAttribute 0)))]
     (let [sess (external/open! {:slopp.ops/dir dir})]
       (try
-        (api/ingest! sess 'ob2.core
+        (ops/ingest! sess 'ob2.core
                      "(ns ob2.core)\n(defn scale \"Half it.\" [c r] (long (* c r)))\n")
-        (api/remember-observation! sess 'ob2.core 'scale
-                                   (api/query-observe sess 'ob2.core 'scale
+        (ops/remember-observation! sess 'ob2.core 'scale
+                                   (ops/query-observe sess 'ob2.core 'scale
                                                       "(ob2.core/scale 100 0.5)"))
-        (finally (api/close! sess))))
+        (finally (ops/close! sess))))
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (let [c (orient/form-card sess2 'ob2.core 'scale)]
           (is (vector? (:examples c))
               (str "a reopened session must still carry observed examples: " (pr-str c)))
           (is (some #(re-find #"100" %) (:examples c)) (pr-str c)))
-        (finally (api/close! sess2))))))
+        (finally (ops/close! sess2))))))
 
 (deftest host-brief-reads-the-currency-record
   ;; frictions #8 (three sightings): which code the serving host actually
@@ -428,7 +428,7 @@
   ;; plausible, which is why one fix never closes the class.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sg.core
+      (ops/ingest! sess 'sg.core
                    (str "(ns sg.core)\n"
                         "(def rates \"Known rates.\" [0.07 0.20])\n"
                         "(def lookup {:a 1})\n"
@@ -443,7 +443,7 @@
         (is (= '[cents rate] (:sig (orient/form-card sess 'sg.core 'scale)))))
       (testing "and every arity of a multi-arity, which is why sig is nested"
         (is (= '[[a] [a b]] (:sig (orient/form-card sess 'sg.core 'multi)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-suspect-verdict-says-which-of-the-two-images-is-stale
   ;; slopp-ui, 2026-08-03: they read "restart the server", took it to mean the

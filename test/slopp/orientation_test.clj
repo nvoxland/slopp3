@@ -12,17 +12,17 @@
   claim being one the brief actually checked rather than one it assumed at
   startup and never revisited."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
+            [slopp.ops :as ops] [slopp.edit :as edit] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (deftest ^:external outline-and-namespaces                        ; T2
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'o.core
+      (ops/ingest! sess 'o.core
                    (str "(ns o.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn pure-f\n  \"Adds one.\n  Slowly.\"\n  [x] (inc x))\n"
                         "(defn mut! [a] (swap! a inc))\n"
                         "(deftest t (is (= 2 (pure-f 1))))\n"))
-      (api/ingest! sess 'o.util "(ns o.util)\n(defn helper [x] x)\n")
+      (ops/ingest! sess 'o.util "(ns o.util)\n(defn helper [x] x)\n")
       (testing "query-namespaces: what exists, without knowing names up front"
         (is (= [{:ns 'o.core :forms 4} {:ns 'o.util :forms 2}]
                (query/query-namespaces sess))))
@@ -51,13 +51,13 @@
         (is (empty? (query/query-search sess "nonexistent-thing")))
         (testing "bad regex is a clean error"
           (is (:error (query/query-search sess "([")))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external batched-source-reads
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
-      (api/create-ns! sess 'bq.b :source "(ns bq.b)\n(defn h [] 3)\n")
+      (ops/create-ns! sess 'bq.a :source "(ns bq.a)\n(defn f [] 1)\n(defn g [] 2)\n")
+      (ops/create-ns! sess 'bq.b :source "(ns bq.b)\n(defn h [] 3)\n")
       (let [r (query/query-sources sess [{:ns 'bq.a :name 'f}
                                        {:ns 'bq.b}
                                        {:ns 'bq.a :name 'nope}
@@ -66,28 +66,28 @@
         (is (re-find #"defn h" (:source (nth r 1))))
         (is (:error (nth r 2)))
         (is (:error (nth r 3))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-project-since
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
+      (ops/create-ns! sess 'qs.core :source "(ns qs.core)\n(defn f [] 1)\n")
       (let [head (:head (query/query-project sess))]
         (testing "unchanged structure is a one-liner"
           (is (= {:unchanged-since head :head head}
                  (select-keys (query/query-project sess :since head)
                               [:unchanged-since :head]))))
         (testing "a write invalidates it"
-          (api/add-form! sess 'qs.core "(defn g [] 2)" :agent "t")
+          (ops/add-form! sess 'qs.core "(defn g [] 2)" :agent "t")
           (let [r (query/query-project sess :since head)]
             (is (nil? (:unchanged-since r)))
             (is (seq (:namespaces r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external outline-is-compact-by-default
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'oc.core
+      (ops/create-ns! sess 'oc.core
                       :source "(ns oc.core)\n(defn f\n  \"Adds one.\"\n  [x] (inc x))\n")
       (testing "no doc lines unless asked"
         (is (nil? (-> (query/query-outline sess 'oc.core) :forms first :doc)))
@@ -97,16 +97,16 @@
         (is (nil? (-> (query/query-project sess) :namespaces first :forms first :doc)))
         (is (some? (-> (query/query-project sess :detail true)
                        :namespaces first :forms first :doc))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-brief-is-the-one-call-dossier
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
-      (api/module-dep! sess "qb.b" "qb.a" :prompt "fixture edge")
-      (api/create-ns! sess 'qb.b :source "(ns qb.b (:require [qb.a :as a]))\n(defn g [x] (a/f x))\n")
-      (api/edit-replace! sess 'qb.a 'f "(defn f\n  \"Core fn.\"\n  [x] (+ x 1))" :prompt "prefer + for clarity" :agent "t")
-      (api/test-run! sess nil)
+      (ops/create-ns! sess 'qb.a :source "(ns qb.a (:require [clojure.test :refer [deftest is]]))\n(defn f\n  \"Core fn.\"\n  [x] (inc x))\n(deftest f-t (is (= 2 (f 1))))\n")
+      (ops/module-dep! sess "qb.b" "qb.a" :prompt "fixture edge")
+      (ops/create-ns! sess 'qb.b :source "(ns qb.b (:require [qb.a :as a]))\n(defn g [x] (a/f x))\n")
+      (ops/edit-replace! sess 'qb.a 'f "(defn f\n  \"Core fn.\"\n  [x] (+ x 1))" :prompt "prefer + for clarity" :agent "t")
+      (ops/test-run! sess nil)
       (let [b (query/query-brief sess 'qb.a 'f)]
         (is (re-find #"\+ x 1" (:source b)))
         (testing "cross-ns callers included"
@@ -117,21 +117,21 @@
           (is (= "prefer + for clarity" (get-in b [:why :prompt])))))
       (testing "unknown form is an honest error"
         (is (:error (query/query-brief sess 'qb.a 'nope))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external flow-and-impact-answer-the-thread
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
-      (api/module-dep! sess "fl.b" "fl.a" :prompt "fixture edge")
-      (api/ingest! sess 'fl.b
+      (ops/ingest! sess 'fl.a "(ns fl.a)\n(defn mk [r?] {:rush? r?})\n")
+      (ops/module-dep! sess "fl.b" "fl.a" :prompt "fixture edge")
+      (ops/ingest! sess 'fl.b
                    (str "(ns fl.b (:require [fl.a :as a] [clojure.test :refer [deftest is]]))\n"
                         "(defn ship [o] (if (:rush? o) 2 1))\n"
                         "(defn total [o] (* (ship o) 10))\n"
                         "(defn pick [f o] (f o))\n"
                         "(defn use-ho [o] (pick ship o))\n"
                         "(deftest ship-t (is (= 2 (ship (a/mk true)))))\n"))
-      (api/test-run! sess 'fl.b)
+      (ops/test-run! sess 'fl.b)
       (testing "query-flow threads a keyword across namespaces"
         (let [r (graph/query-flow sess ":rush?")]
           (is (= #{['fl.a 'mk] ['fl.b 'ship]}
@@ -142,36 +142,36 @@
           (is (= {:count 1 :tests ['fl.b/ship-t]} (:covered-by r)) (pr-str r))
           (is (some #(and (= 'total (:form %)) (= 1 (:calls %))) (:callers r)) (pr-str r))
           (is (some #(and (= 'use-ho (:form %)) (pos? (:value-refs %))) (:callers r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external draft-test-scaffolds-from-observation
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dt.core
+      (ops/ingest! sess 'dt.core
                    "(ns dt.core)\n(defn scale [x r] (long (Math/round (* x r))))\n")
       (testing "with a driver, observed calls become assertions (Rock 5)"
-        (let [r (api/draft-test sess 'dt.core 'scale
+        (let [r (ops/draft-test sess 'dt.core 'scale
                                 :code "(do (dt.core/scale 100 0.5) (dt.core/scale 9 0.1))")]
           (is (re-find #"deftest scale-t" (str (:draft r))) (pr-str r))
           (is (re-find #"\(is \(= 50 \(dt.core/scale 100 0.5\)\)\)" (str (:draft r))) (pr-str r))
           (is (= 2 (:observed r)) (pr-str r))))
       (testing "without a driver, a signature skeleton with named holes"
-        (let [r (api/draft-test sess 'dt.core 'scale)]
+        (let [r (ops/draft-test sess 'dt.core 'scale)]
           (is (re-find #"deftest scale-t" (str (:draft r))) (pr-str r))
           (is (re-find #":TODO-x :TODO-r" (str (:draft r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external session-brief-is-the-one-call-orientation
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
+      (ops/ingest! sess 'br.a (str "(ns br.a)\n(defn ^:unused-ok f [x] x)\n"
                                    "(defn ^:unused-ok g [x] x)\n"))
-      (api/ingest! sess 'br.b "(ns br.b)\n(defn ^:unused-ok h [x] x)\n")
+      (ops/ingest! sess 'br.b "(ns br.b)\n(defn ^:unused-ok h [x] x)\n")
       (external/commit-point! sess
                          (str "seeded the br domain "
                               (apply str (repeat 40 "with a very long story ")))
                          :agent "t")
-      (let [r (api/session-brief sess)]
+      (let [r (ops/session-brief sess)]
         (testing "names-only project map"
           (is (= '[f g] (:forms (first (filter #(= 'br.a (:ns %)) (:project r)))))
               (pr-str r)))
@@ -182,19 +182,19 @@
         (testing "the loop is stated and the whole thing is SMALL"
           (is (re-find #"commit_point" (str (:loop r))) (pr-str r))
           (is (< (count (pr-str r)) 1500) (str (count (pr-str r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external report-composes-the-handoff
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
+      (ops/ingest! sess 'rp.core "(ns rp.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/commit-point! sess "seed rp" :agent "t")
-      (api/edit-replace! sess 'rp.core 'f "(defn ^:unused-ok f [x] (inc x))"
+      (ops/edit-replace! sess 'rp.core 'f "(defn ^:unused-ok f [x] (inc x))"
                          :prompt (str "make f increment "
                                       (apply str (repeat 40 "because reasons ")))
                          :agent "t")
       (external/commit-point! sess "f increments now" :agent "t")
-      (let [r (api/report sess)]
+      (let [r (ops/report sess)]
         (testing "milestones + changes with their recorded asks"
           (is (some #(re-find #"f increments" (str (:description %))) (:milestones r)) (pr-str r))
           (is (some #(and (= 'rp.core (:ns %)) (= 'f (:form %))
@@ -208,15 +208,15 @@
           (is (every? #(<= (count %) 150)
                       (mapcat :asks (:changes r)))
               (pr-str (mapv :asks (:changes r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external slices-are-source-plus-cards
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sl.util
+      (ops/ingest! sess 'sl.util
                    "(ns sl.util)\n(defn pad \"Pads.\" [s] (str \" \" s))\n(defn fmt \"Formats cents.\" [c] (pad (str \"$\" c)))\n")
-      (api/module-dep! sess "sl.core" "sl.util" :prompt "fixture edge")
-      (api/ingest! sess 'sl.core
+      (ops/module-dep! sess "sl.core" "sl.util" :prompt "fixture edge")
+      (ops/ingest! sess 'sl.core
                    (str "(ns sl.core (:require [sl.util :as u]))\n"
                         "(defn- tax \"Ten percent.\" [c] (long (* c 0.1)))\n"
                         "(defn total \"Subtotal plus tax.\" [c] (u/fmt (+ c (tax c))))\n"))
@@ -236,46 +236,46 @@
         (let [r (query/query-slice sess 'sl.core 'total :depth 1)]
           (is (= #{'sl.core/tax 'sl.util/fmt}
                  (set (map :form (:cards r)))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external briefs-arrive-task-shaped
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'bw.core
+      (ops/ingest! sess 'bw.core
                    (str "(ns bw.core)\n"
                         "(defn billable-weight-g \"Greater of actual and volumetric.\" [p] (max (:w p) (:v p)))\n"
                         "(defn unrelated-thing [x] x)\n"
                         "(defn quote-breakdown \"Quote parts.\" [p] {:w (billable-weight-g p)})\n"))
-      (api/turn-begin! sess :agent "t"
+      (ops/turn-begin! sess :agent "t"
                        :intent "oversize parcels should use the billable weight in the quote breakdown")
       (testing "the brief mines the ask and arrives with the relevant cards (intent-scoped orientation)"
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (some #(= 'bw.core/billable-weight-g (:form %)) (:relevant b))
               (pr-str (:relevant b)))
           (is (not-any? #(= 'bw.core/unrelated-thing (:form %)) (:relevant b)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external briefs-roll-up-namespace-families
   (let [sess (external/open!)]
     (try
       (doseq [i (range 1 7)]
-        (api/ingest! sess (symbol (str "fam.r0" i))
+        (ops/ingest! sess (symbol (str "fam.r0" i))
                      (str "(ns fam.r0" i ")\n(defn probe [] " i ")\n")))
-      (api/ingest! sess 'solo.core "(ns solo.core)\n(defn f [x] x)\n")
+      (ops/ingest! sess 'solo.core "(ns solo.core)\n(defn f [x] x)\n")
       (testing "sibling families collapse to one row; solos keep their names (breadth stays cheap)"
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (some #(and (:family %) (= 6 (:nses %))) (:project b))
               (pr-str (:project b)))
           (is (some #(= 'solo.core (:ns %)) (:project b)))
           (is (not-any? #(= 'fam.r01 (:ns %)) (:project b)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-depends-is-the-generic-front-door
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
-      (api/module-dep! sess "dp.app" "dp.base" :prompt "fixture edge")
-      (api/ingest! sess 'dp.app
+      (ops/ingest! sess 'dp.base "(ns dp.base)\n(defn fee \"Fee.\" [z] (get {1 500} z 0))\n")
+      (ops/module-dep! sess "dp.app" "dp.base" :prompt "fixture edge")
+      (ops/ingest! sess 'dp.app
                    (str "(ns dp.app (:require [dp.base :as base]))\n"
                         "(defn total [o] (+ 100 (base/fee (:dest-zone o))))\n"))
       (testing "a NAMESPACE answer: who requires it + what it requires"
@@ -299,7 +299,7 @@
       (testing "a namespace's :dependencies are its requires"
         (let [r (graph/query-depends sess "dp.app" :direction :dependencies)]
           (is (some #{'dp.base} (:requires r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external review-scan-triages-by-risk
   ;; a whole-codebase review shouldn't read 800 forms blindly — the store
@@ -308,26 +308,26 @@
   ;; untested (the flaw dogfooding caught).
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rv.core
+      (ops/ingest! sess 'rv.core
                    (str "(ns rv.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn safe \"Doc.\" [x] (inc x))\n"
                         "(deftest safe-t (is (= 2 (safe 1))))\n"))
-      (api/ingest! sess 'rv.io
+      (ops/ingest! sess 'rv.io
                    (str "(ns rv.io)\n"
                         "(defn orphan! [x] (spit \"/dev/null\" x))\n"
                         "(defn probed! [x] (spit \"/dev/null\" x))\n"))
-      (api/module-dep! sess "rv.app" "rv.io" :prompt "fixture edge")
-      (api/ingest! sess 'rv.app
+      (ops/module-dep! sess "rv.app" "rv.io" :prompt "fixture edge")
+      (ops/ingest! sess 'rv.app
                    (str "(ns rv.app (:require [rv.io :as io]))\n"
                         "(defn a [x] (io/orphan! x))\n"
                         "(defn b [x] (io/orphan! x))\n"
                         "(defn c [x] (io/orphan! x))\n"))
-      (api/module-dep! sess "rv.probe" "rv.io" :prompt "test edge")
-      (api/ingest! sess 'rv.probe-test
+      (ops/module-dep! sess "rv.probe" "rv.io" :prompt "test edge")
+      (ops/ingest! sess 'rv.probe-test
                    (str "(ns rv.probe-test (:require [rv.io :as io]\n"
                         "                            [clojure.test :refer [deftest is]]))\n"
                         "(deftest probe-t (is (nil? (io/probed! 1))))\n"))
-      (api/test-run! sess 'rv.core)   ; trace covers ONLY safe — not probed!
+      (ops/test-run! sess 'rv.core)   ; trace covers ONLY safe — not probed!
       (let [r   (review/review-scan sess)
             top (mapv :form (:top r))
             row (fn [q] (first (filter #(= q (:form %)) (:top r))))]
@@ -345,7 +345,7 @@
           (is (not (some #{'rv.core/safe} top))))
         (testing "totals roll up the risks"
           (is (pos? (get-in r [:totals :untested] 0)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-store-is-the-data-oracle
   ;; the image answers questions OF the code; query_store answers questions
@@ -354,7 +354,7 @@
   ;; otherwise becomes a canned tool or a raw db read.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'qs.core
+      (ops/ingest! sess 'qs.core
                    (str "(ns qs.core)\n\n"
                         "(defn f \"F.\" [x] x)\n\n"
                         "(defn- g \"G.\" [x] x)\n"))
@@ -395,7 +395,7 @@
         (is (re-find #"boom"
                      (str (:error (query/query-store
                                    sess "(fn [store] (throw (ex-info \"boom\" {})))"))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external review-scan-flags-unused-publics
   ;; kondo sees unused PRIVATES per-namespace; unused PUBLICS need the
@@ -403,7 +403,7 @@
   ;; callers on a public defn/def is dead code or unadvertised surface.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ru.core
+      (ops/ingest! sess 'ru.core
                    (str "(ns ru.core)\n\n"
                         "(defn used \"U.\" [x] x)\n\n"
                         "(defn orphan \"O.\" [x] x)\n\n"
@@ -415,7 +415,7 @@
             "called forms aren't flagged")
         (is (not (some #{:unused} (:flags (row 'ru.core/-main))))
             "entry points are exempt from the unused flag"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-call-invokes-the-oracle
   ;; the structured face of query-eval's common case: the reference rides
@@ -425,12 +425,12 @@
   ;; by construction. In-store drivers — the normal app case — need none.)
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'qc.core
+      (ops/ingest! sess 'qc.core
                    "(ns qc.core)\n\n(defn ^:unused-ok pair \"P.\" [x y] [x y])\n")
-      (is (= [[1 2]] (api/query-call sess 'qc.core/pair 1 2)))
-      (is (= [[[:a 1] "s"]] (api/query-call sess 'qc.core/pair [:a 1] "s"))
+      (is (= [[1 2]] (ops/query-call sess 'qc.core/pair 1 2)))
+      (is (= [[[:a 1] "s"]] (ops/query-call sess 'qc.core/pair [:a 1] "s"))
           "data args ride pr-str")
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 ^:unsafe
 (deftest sandbox-refuses-resolver-escapes
@@ -479,7 +479,7 @@
 (deftest ^:external impact-traces-the-map-shape-callers-pass
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sh.core
+      (ops/ingest! sess 'sh.core
                    (str "(ns sh.core)\n"
                         "(defn consume\n"
                         "  ([] (consume {:sh/alpha 0}))\n"
@@ -505,7 +505,7 @@
           (is (not (some #{'sh.core/no-arg} (:unknown-shape sh))) (pr-str sh)))
         (testing "the mismatch is computed, not eyeballed"
           (is (= #{:alpha} (:passed-never-read (:mismatch sh))) (pr-str sh))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-brief-names-a-hub-only-while-one-is-answering
   ;; The lie this closes, measured on a real session: `:hub` was set the
@@ -523,7 +523,7 @@
                 — the slug is the one thing only the hub can tell us, so having
                 it IS the proof we are registered"
         (swap! sess assoc :hub "http://127.0.0.1:7359/p/slopp2")
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (= "http://127.0.0.1:7359/p/slopp2" (:hub b)))
           (is (nil? (:hub-note b))
               "nothing to explain when the address works")))
@@ -531,7 +531,7 @@
                 address is withheld rather than guessed"
         (swap! sess dissoc :hub)
         (swap! sess assoc :hub-configured "http://127.0.0.1:7359/")
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (nil? (:hub b))
               "handing over an address nothing answers is the whole bug")
           (is (string? (:hub-note b)))
@@ -541,10 +541,10 @@
       (testing "no hub configured at all says nothing — slopp.hub.port 0 is a
                 deliberate choice and does not need explaining every session"
         (swap! sess dissoc :hub :hub-configured)
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (nil? (:hub b)))
           (is (nil? (:hub-note b)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-hub-that-refused-us-says-so-rather-than-reading-as-absent
   ;; The drift alarm has to end up somewhere an agent looks, and session_brief is
@@ -558,7 +558,7 @@
     (try
       (swap! sess assoc :hub-configured "http://127.0.0.1:7359/")
       (testing "configured, nothing answering — the hub is simply not running"
-        (let [note (:hub-note (api/session-brief sess))]
+        (let [note (:hub-note (ops/session-brief sess))]
           (is (string? note))
           (is (re-find #"(?i)no hub is answering" note) note)))
       (testing "configured, and REFUSING us — a different situation, and the
@@ -567,7 +567,7 @@
                {:hub/refused 400
                 :hub/explain {:error "does not satisfy the contract"
                               :explain {:dir ["missing required key"]}}})
-        (let [b    (api/session-brief sess)
+        (let [b    (ops/session-brief sess)
               note (:hub-note b)]
           (is (nil? (:hub b))
               "refused is not registered, so there is still no address")
@@ -581,7 +581,7 @@
       (testing "and a beat that succeeds afterwards clears the alarm"
         (swap! sess dissoc :hub-refused)
         (swap! sess assoc :hub "http://127.0.0.1:7359/p/slopp2")
-        (let [b (api/session-brief sess)]
+        (let [b (ops/session-brief sess)]
           (is (= "http://127.0.0.1:7359/p/slopp2" (:hub b)))
           (is (nil? (:hub-note b)) (pr-str (:hub-note b)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

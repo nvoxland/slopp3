@@ -13,7 +13,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.store.db :as db]
             [slopp.git :as git]
             [slopp.store :as store] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external])
@@ -93,7 +93,7 @@
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gp.core seed)
+      (ops/ingest! sess 'gp.core seed)
       (let [r (external/commit-point! sess "v1: f ships" :agent "alice")
             d (->> (store/deltas (:store @sess))
                    (filter #(= (:commit r) (:id %))) first)]
@@ -108,19 +108,19 @@
                 (is (= (query/query-source sess 'gp.core) src))
                 (is (str/includes? (str src) ";; top-level trivia")))
               (finally (git/close-ctx! ctx))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external projection-mints-deterministic-shas
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gp.core seed)
+      (ops/ingest! sess 'gp.core seed)
       ;; G5: milestones stamp a configured author; pin it so the assertions
       ;; below don't depend on this machine's global git config
       (external/config! sess "user.name" "alice")
       (external/config! sess "user.email" "alice@slopp")
       (external/commit-point! sess "v1: f ships" :agent "alice")
-      (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
+      (ops/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip arg order" :agent "alice")
       (external/commit-point! sess "v2: flipped" :agent "alice")
       (let [ctx  (git/open-ctx! dir)
@@ -149,7 +149,7 @@
         (testing "re-projection is a no-op"
           (is (= tip (get-in (git/ensure-projected! ctx) [:refs "main"]))))
         (testing "query-commits surfaces the projected sha"
-          (let [[c2 c1] (api/query-commits sess)]
+          (let [[c2 c1] (ops/query-commits sess)]
             (is (= tip (:sha c2)))
             (is (= (first (:parents info)) (:sha c1)))))
         (git/close-ctx! ctx)
@@ -159,16 +159,16 @@
               (jdbc/execute! (:slopp.git/map-conn ctx2) ["DELETE FROM git_map"])
               (is (= tip (get-in (git/ensure-projected! ctx2) [:refs "main"])))
               (finally (git/close-ctx! ctx2))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external branch-shares-prefix-shas
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gp.core seed)
+      (ops/ingest! sess 'gp.core seed)
       (external/commit-point! sess "v1: f ships" :agent "alice")
       (branch/branch! sess "feature")
-      (api/edit-replace! sess 'gp.core 'f "(defn f [x] (int (+ x 10)))"
+      (ops/edit-replace! sess 'gp.core 'f "(defn f [x] (int (+ x 10)))"
                          :prompt "tweak on feature" :agent "bob")
       (external/commit-point! sess "feature: tweak" :agent "bob")
       (let [ctx (git/open-ctx! dir)]
@@ -185,7 +185,7 @@
                             (:slopp.git/map-conn ctx)
                             ["SELECT COUNT(*) AS n FROM git_map"]))))))
           (finally (git/close-ctx! ctx))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external retroactive-target-projects-the-state-it-names
   ;; `commit_point {:target ...}` marks a spot the journal has already walked
@@ -202,9 +202,9 @@
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gp.core seed)
+      (ops/ingest! sess 'gp.core seed)
       (let [r1 (external/commit-point! sess "v1" :agent "alice")]
-        (api/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
+        (ops/edit-replace! sess 'gp.core 'f "(defn f [x] (+ 10 x))"
                            :prompt "newer work" :agent "alice")
         (external/commit-point! sess "v2" :agent "alice")
         (external/commit-point! sess "v1.5 was actually here" :agent "alice"
@@ -225,14 +225,14 @@
               (testing "re-projection returns the PINNED sha"
                 (is (= tip (get-in (git/ensure-projected! ctx) [:refs "main"])))))
             (finally (git/close-ctx! ctx)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external forced-red-milestone-carries-status-trailer
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gp.core seed)
-      (api/edit-replace! sess 'gp.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
+      (ops/ingest! sess 'gp.core seed)
+      (ops/edit-replace! sess 'gp.core 'f-t "(deftest f-t (is (= 999 (f 1))))"
                          :prompt "deliberately red" :agent "bob")
       (let [r (external/commit-point! sess "broken but important" :agent "bob"
                                  :force true)]
@@ -243,7 +243,7 @@
               (is (str/includes? (:message (commit-info (:slopp.git/repo ctx) tip))
                                  "Slopp-Status: red")))
             (finally (git/close-ctx! ctx)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-projected-tree-is-laid-out-like-a-build
   ;; The mirror is not decoration: build.clj's CI flow is
@@ -254,11 +254,11 @@
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (is (pos? (:forms (api/ingest! sess 'gl.core "(ns gl.core)\n(defn ^:unused-ok f [] 1)\n"))))
-      (is (pos? (:forms (api/ingest! sess 'gl.lab "(ns gl.lab)\n(defn ^:unused-ok -main [] 1)\n"))))
-      (is (pos? (:forms (api/ingest! sess 'gl.shared "(ns gl.shared)\n(defn ^:unused-ok s [] 1)\n"))))
-      (is (nil? (:error (api/module-role! sess "gl.lab" :instrument))))
-      (is (nil? (:error (api/module-platform! sess "gl.shared" :cljc))))
+      (is (pos? (:forms (ops/ingest! sess 'gl.core "(ns gl.core)\n(defn ^:unused-ok f [] 1)\n"))))
+      (is (pos? (:forms (ops/ingest! sess 'gl.lab "(ns gl.lab)\n(defn ^:unused-ok -main [] 1)\n"))))
+      (is (pos? (:forms (ops/ingest! sess 'gl.shared "(ns gl.shared)\n(defn ^:unused-ok s [] 1)\n"))))
+      (is (nil? (:error (ops/module-role! sess "gl.lab" :instrument))))
+      (is (nil? (:error (ops/module-platform! sess "gl.shared" :cljc))))
       (let [r (external/commit-point! sess "v1" :agent "alice")]
         (is (nil? (:error r)) (pr-str r)))
       (let [ctx (git/open-ctx! dir)]
@@ -279,4 +279,4 @@
               (is (some? (at "src/gl/shared.cljc")))
               (is (nil? (at "src/gl/shared.clj")))))
           (finally (git/close-ctx! ctx))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

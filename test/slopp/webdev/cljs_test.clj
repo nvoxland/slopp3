@@ -15,7 +15,7 @@
   only unverifiable layer in slopp verified by something that cannot fail."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.webdev.cljs :as cljs]
-            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.store.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str] [slopp.web.client :as client]))
+            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.store.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str] [slopp.web.client :as client]))
 
 (deftest parse-result-extracts-the-marked-edn
   (testing "reads the EDN after the SLOPP-CLJS-RESULT marker, ignoring other output"
@@ -56,10 +56,10 @@
 (deftest ^:external compiles-a-clean-cljs-namespace-to-a-served-blob
   (let [sess (external/open!)]
     (try
-      (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+      (ops/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
                      :client true :prompt "the cljs compiler")
-      (api/module-platform! sess "tc.client" :cljs :prompt "browser code")
-      (api/ingest! sess 'tc.client
+      (ops/module-platform! sess "tc.client" :cljs :prompt "browser code")
+      (ops/ingest! sess 'tc.client
                    (str "(ns tc.client)\n"
                         "(defn greet [n] (str \"Hi \" n))\n"))
       (let [r (cljs/compile-client! sess :output "public/tc.js")]
@@ -79,14 +79,14 @@
                 "the bytes are on disk under their sha")))
         (testing "recompiling RECLAIMS the bundle it supersedes"
           (let [old (get-in @sess [:store :artifacts "public/tc.js" :sha])]
-            (api/add-form! sess 'tc.client "(defn shout [n] (str \"HI \" n))")
+            (ops/add-form! sess 'tc.client "(defn shout [n] (str \"HI \" n))")
             (cljs/compile-client! sess :output "public/tc.js")
             (let [new-sha (get-in @sess [:store :artifacts "public/tc.js" :sha])]
               (is (not= old new-sha) "the bundle really changed")
               (is (not (.exists (artifacts/cache-file (:dir @sess) old)))
                   "the superseded bytes are gone — else the cache grows by a bundle per compile")
               (is (.exists (artifacts/cache-file (:dir @sess) new-sha)))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-cljs-write-lands-unverified-not-refused
   (let [sess (external/open!)]
@@ -94,14 +94,14 @@
       ;; CONTROL — a :jvm namespace: js/* is genuinely unresolvable on the JVM,
       ;; so the write is REFUSED (the oracle cannot load it). This is the
       ;; behaviour that must stay for ordinary Clojure.
-      (api/ingest! sess 'wp.server "(ns wp.server)\n(defn ok [] 1)\n")
-      (is (:error (api/add-form! sess 'wp.server "(defn boom [] (js/alert \"hi\"))"))
+      (ops/ingest! sess 'wp.server "(ns wp.server)\n(defn ok [] 1)\n")
+      (is (:error (ops/add-form! sess 'wp.server "(defn boom [] (js/alert \"hi\"))"))
           "a js/* form in a :jvm ns fails to load — refused")
       ;; a :cljs namespace: the SAME form LANDS, its verification deferred to
       ;; the cljs compiler (compile_client), reported :unverified with a reason.
-      (api/module-platform! sess "wp.client" :cljs :prompt "browser code")
-      (api/ingest! sess 'wp.client "(ns wp.client)\n")
-      (let [r (api/add-form! sess 'wp.client "(defn boom [] (js/alert \"hi\"))"
+      (ops/module-platform! sess "wp.client" :cljs :prompt "browser code")
+      (ops/ingest! sess 'wp.client "(ns wp.client)\n")
+      (let [r (ops/add-form! sess 'wp.client "(defn boom [] (js/alert \"hi\"))"
                              :prompt "client click handler")]
         (is (nil? (:error r)) (pr-str r))
         (is (some? (:delta r)) (pr-str r))
@@ -110,42 +110,42 @@
         (is (= :unverified (:status (:test r))) (pr-str (:test r)))
         (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r))))
       ;; ingest! of a :cljs ns whose body ALREADY uses js/* also lands
-      (api/module-platform! sess "wp.widget" :cljs :prompt "browser code")
-      (let [r (api/ingest! sess 'wp.widget
+      (ops/module-platform! sess "wp.widget" :cljs :prompt "browser code")
+      (let [r (ops/ingest! sess 'wp.widget
                            "(ns wp.widget)\n(defn go [] (js/console.log \"x\"))\n")]
         (is (nil? (:error r)) (pr-str r))
         (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-create-with-a-platform-is-born-there
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'wc.client :source "(ns wc.client)\n"
+      (ops/create-ns! sess 'wc.client :source "(ns wc.client)\n"
                       :platform :cljs :prompt "browser code")
       (testing "the platform is declared at creation, at the namespace grain"
         (is (= :cljs (store/platform-for (:store @sess) 'wc.client))))
       (testing "born :cljs, a js/* form lands straight away — no separate decl"
-        (let [r (api/add-form! sess 'wc.client "(defn boom [] (js/alert \"hi\"))")]
+        (let [r (ops/add-form! sess 'wc.client "(defn boom [] (js/alert \"hi\"))")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :cljs-deferred-to-compile (:reason (:test r))) (pr-str (:test r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external auto-compile-recompiles-the-client-bundle-on-write
   (let [sess (external/open!)]
     (try
-      (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+      (ops/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
                      :client true :prompt "the cljs compiler")
-      (api/module-platform! sess "ac.client" :cljs :prompt "browser code")
-      (api/ingest! sess 'ac.client "(ns ac.client)\n")
+      (ops/module-platform! sess "ac.client" :cljs :prompt "browser code")
+      (ops/ingest! sess 'ac.client "(ns ac.client)\n")
       (testing "auto-compile OFF (default): a client write does NOT recompile"
-        (let [r (api/add-form! sess 'ac.client "(defn a [] (js/alert \"a\"))")]
+        (let [r (ops/add-form! sess 'ac.client "(defn a [] (js/alert \"a\"))")]
           (is (nil? (:client-recompiling r)) (pr-str r))
           (is (nil? (get-in @sess [:store :artifacts "public/cljs/main.js"]))
               "no bundle written yet")))
       (testing "auto-compile ON: a client write schedules an ASYNC recompile"
-        (api/config-file! sess "client" :key "auto-compile" :value "true"
+        (ops/config-file! sess "client" :key "auto-compile" :value "true"
                           :prompt "dev loop")
-        (let [r (api/add-form! sess 'ac.client "(defn b [] (js/alert \"b\"))")]
+        (let [r (ops/add-form! sess 'ac.client "(defn b [] (js/alert \"b\"))")]
           (is (true? (:client-recompiling r)) (pr-str r))
           ;; async: the background compile registers the artifact shortly after.
           ;; The bundle is DERIVED now, so it lands in :artifacts as a sha and a
@@ -158,40 +158,40 @@
             (is (string? (:sha entry)) "fresh bundle registered within timeout")
             (is (.exists (artifacts/cache-file (:dir @sess) (:sha entry)))
                 "and its bytes are in the cache"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external edit-rename-handles-a-cljs-form
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'rf.client
+      (ops/create-ns! sess 'rf.client
                       :source "(ns rf.client)\n(defn boom [] (js/alert \"hi\"))\n"
                       :platform :cljs :prompt "browser code")
       (testing "edit_rename renames a :cljs form (js/* — never loaded on the JVM)"
-        (let [r (api/rename! sess 'rf.client 'boom 'kaboom)]
+        (let [r (ops/rename! sess 'rf.client 'boom 'kaboom)]
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'rf.client 'kaboom))
               "renamed form is present")
           (is (nil? (store/form-named (:store @sess) 'rf.client 'boom))
               "old name is gone")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external edit-move-forms-handles-cljs-forms
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'mvc.a
+      (ops/create-ns! sess 'mvc.a
                       :source "(ns mvc.a)\n(defn ping [] (js/alert \"a\"))\n"
                       :platform :cljs :prompt "browser code")
-      (api/create-ns! sess 'mvc.b
+      (ops/create-ns! sess 'mvc.b
                       :source "(ns mvc.b)\n(defn other [] (js/console.log \"b\"))\n"
                       :platform :cljs :prompt "browser code")
       (testing "edit_move_forms moves a :cljs form between :cljs namespaces"
-        (let [r (api/move-forms! sess 'mvc.a '[ping] 'mvc.b)]
+        (let [r (ops/move-forms! sess 'mvc.a '[ping] 'mvc.b)]
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'mvc.b 'ping))
               "moved into the target")
           (is (nil? (store/form-named (:store @sess) 'mvc.a 'ping))
               "gone from the source")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest client-wrapper-specs-resolves-endpoints-and-schemas
   (let [st (-> (store/empty-store)
@@ -295,10 +295,10 @@
 (deftest ^:external generate-client-writes-a-protected-cljs-namespace
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shopg.contracts
+      (ops/ingest! sess 'shopg.contracts
                    "(ns shopg.contracts)\n\n(def order [:map [:item :string] [:qty :int]])\n")
-      (api/module-platform! sess "shopg.contracts" "cljc" :prompt "shared contract")
-      (api/ingest! sess 'shopg.api
+      (ops/module-platform! sess "shopg.contracts" "cljc" :prompt "shared contract")
+      (ops/ingest! sess 'shopg.api
                    (str "(ns shopg.api)\n\n"
                         "(defn ^{:web/method :post :web/path \"/api/orders\""
                         " :web/request shopg.contracts/order :web/response shopg.contracts/order}"
@@ -313,12 +313,12 @@
         (testing "no shippable-schema problems for a clean :cljc contract"
           (is (nil? (:problems r)) (pr-str (:problems r)))))
       (testing "the generated form refuses a hand edit — the protection gate is wired end to end"
-        (let [r (api/edit-replace! sess 'shopg.client.api 'create-order!
+        (let [r (ops/edit-replace! sess 'shopg.client.api 'create-order!
                                    (str "(defn ^{:generated \"shopg.api/create-order\"} ^:export create-order!"
                                         " \"x\" [params] :hacked)")
                                    :prompt "try to hand-edit the generated wrapper")]
           (is (re-find #"generate_client" (str (:error r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest client-wrapper-specs-honors-the-client-opt-out
   ;; Dogfood finding: an HTML page is a :web/path form like any other, so
@@ -351,10 +351,10 @@
   ;; says nothing once one exists.
   (let [sess (external/open!)]
     (try
-      (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+      (ops/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
                      :client true :prompt "the cljs compiler")
-      (api/module-platform! sess "sv.client" :cljs :prompt "browser code")
-      (api/ingest! sess 'sv.client "(ns sv.client)\n(defn greet [n] (str \"Hi \" n))\n")
+      (ops/module-platform! sess "sv.client" :cljs :prompt "browser code")
+      (ops/ingest! sess 'sv.client "(ns sv.client)\n(defn greet [n] (str \"Hi \" n))\n")
       (testing "nothing serves the output yet, so the result says how"
         (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
           (is (nil? (:error r)) (pr-str r))
@@ -363,11 +363,11 @@
           (is (re-find #"config_file" (str (:serve-with r))) (pr-str r))))
       (testing "once a mount covers it, the hint goes away"
         ;; repeating advice already taken is how a result becomes noise
-        (api/config-file! sess "capabilities" :key "web.static./js"
+        (ops/config-file! sess "capabilities" :key "web.static./js"
                           :value "public/cljs" :prompt "serve the bundle")
         (let [r (cljs/compile-client! sess :output "public/cljs/main.js")]
           (is (nil? (:serve-with r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-hard-compile-error-anchors-like-a-warning
   ;; Core 6: verification stops at the boundary. Analyzer WARNINGS cross the
@@ -545,29 +545,29 @@
   ;; one.
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'wp.core :source "(ns wp.core)\n(defn f [x] (* 2 x))\n")
-      (api/create-ns! sess 'wp.core-test
+      (ops/create-ns! sess 'wp.core :source "(ns wp.core)\n(defn f [x] (* 2 x))\n")
+      (ops/create-ns! sess 'wp.core-test
                       :source (str "(ns wp.core-test\n"
                                    "  (:require [clojure.test :refer [deftest is]]\n"
                                    "            [wp.core :as c]))\n"
                                    "(deftest doubles-it (is (= 4 (c/f 2))))\n"))
       (testing "the whole-project run reports what it ran, with no cljs present"
-        (let [r (api/test-run! sess nil)]
+        (let [r (ops/test-run! sess nil)]
           (is (= 1 (:test r)) (pr-str r))
           (is (= 1 (:pass r)) (pr-str r))))
-      (api/create-ns! sess 'wp.client :source "(ns wp.client)\n"
+      (ops/create-ns! sess 'wp.client :source "(ns wp.client)\n"
                       :platform :cljs :prompt "browser code")
       (testing "and a :cljs namespace in the store does not change that — it
                 cannot run in the image, which is a reason to leave it out of
                 the run, never a reason for the run to vanish"
-        (let [r (api/test-run! sess nil)]
+        (let [r (ops/test-run! sess nil)]
           (is (= 1 (:test r)) (pr-str r))
           (is (= 1 (:pass r)) (pr-str r))
           (is (zero? (+ (:fail r 0) (:error r 0))) (pr-str r))))
       (testing "and the trace still lands, which is what review_scan reads"
         (is (contains? (get (:test-map @sess) 'wp.core-test/doubles-it) 'wp.core/f)
             (pr-str (:test-map @sess))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-published-contract-is-READ-and-never-evaluated
   ;; The docstring's central claim is a SECURITY one: this is data off a network
@@ -613,10 +613,10 @@
   ;; `app`. It is a placeholder that shipped as a default.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shopf.contracts
+      (ops/ingest! sess 'shopf.contracts
                    "(ns shopf.contracts)\n\n(def order [:map [:item :string]])\n")
-      (api/module-platform! sess "shopf.contracts" "cljc" :prompt "shared contract")
-      (api/ingest! sess 'shopf.api
+      (ops/module-platform! sess "shopf.contracts" "cljc" :prompt "shared contract")
+      (ops/ingest! sess 'shopf.api
                    (str "(ns shopf.api)\n\n"
                         "(defn ^{:web/method :post :web/path \"/api/orders\""
                         " :web/request shopf.contracts/order"
@@ -640,7 +640,7 @@
         (let [r (cljs/generate-client! sess :ns 'shopf.elsewhere.api)]
           (is (not (contains? (set (:other-clients r)) 'shopf.elsewhere.api))
               (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-generated-client-namespace-states-its-own-purpose
   ;; slopp-ui, 2026-08-03: `namespace-purpose` fires on their generated client

@@ -10,7 +10,7 @@
   next reload down with it. Each of those was a real failure before it was a
   test here."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.ops.external :as external]
             [slopp.read.query :as query]
             [slopp.store :as store] [slopp.read.history :as history]))
@@ -23,13 +23,13 @@
 (deftest ^:external add-form-grows-the-namespace
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'adm target)
+      (ops/ingest! sess 'adm target)
       (testing "validation"
-        (is (:error (api/add-form! sess 'adm "(defn add [x] x)")))     ; name taken
-        (is (:error (api/add-form! sess 'adm "(defmacro m [x] x)")))   ; dialect (D4)
-        (is (:error (api/add-form! sess 'adm "(def a 1) (def b 2)"))) ; one form only
-        (is (:error (api/add-form! sess 'nope "(def a 1)"))))          ; unknown ns
-      (let [r (api/add-form! sess 'adm "(defn triple [x] (* 3 x))" :prompt "new helper")]
+        (is (:error (ops/add-form! sess 'adm "(defn add [x] x)")))     ; name taken
+        (is (:error (ops/add-form! sess 'adm "(defmacro m [x] x)")))   ; dialect (D4)
+        (is (:error (ops/add-form! sess 'adm "(def a 1) (def b 2)"))) ; one form only
+        (is (:error (ops/add-form! sess 'nope "(def a 1)"))))          ; unknown ns
+      (let [r (ops/add-form! sess 'adm "(defn triple [x] (* 3 x))" :prompt "new helper")]
         (is (nil? (:error r)))
         (is (= :add (:op (:delta r))))
         (testing "rendered source contains the new form, tidily separated"
@@ -37,31 +37,31 @@
             (is (re-find #"\(defn triple \[x\] \(\* 3 x\)\)" src))
             (is (not (re-find #"\n\n\n" src)))))
         (testing "the new form is live in the image"
-          (is (= [12] (api/query-eval sess "(adm/triple 4)"))))
+          (is (= [12] (ops/query-eval sess "(adm/triple 4)"))))
         (testing "its lineage starts at the :add delta"
           (is (= [:add] (mapv :op (history/query-lineage sess 'adm 'triple)))))
         (testing "verification ran and was recorded"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (testing "effect warnings surface at add time (D6)"
-        (let [r (api/add-form! sess 'adm "(defn stash [a v] (reset! a v))")]
+        (let [r (ops/add-form! sess 'adm "(defn stash [a v] (reset! a v))")]
           (is (some #(= "stash!" (:suggest %)) (:warnings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external delete-form-removes-everywhere
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'adm target)
-      (api/add-form! sess 'adm "(defn triple [x] (* 3 x))")
-      (is (:error (api/delete-form! sess 'adm 'nope)))
-      (let [r (api/delete-form! sess 'adm 'triple :prompt "unused")]
+      (ops/ingest! sess 'adm target)
+      (ops/add-form! sess 'adm "(defn triple [x] (* 3 x))")
+      (is (:error (ops/delete-form! sess 'adm 'nope)))
+      (let [r (ops/delete-form! sess 'adm 'triple :prompt "unused")]
         (is (nil? (:error r)))
         (is (= :delete (:op (:delta r))))
         (testing "gone from the source and from the live image"
           (is (not (re-find #"triple" (query/query-source sess 'adm))))
-          (is (= [nil] (api/query-eval sess "(resolve 'adm/triple)"))))
+          (is (= [nil] (ops/query-eval sess "(resolve 'adm/triple)"))))
         (testing "remaining tests still verify green"
           (is (= 1 (:pass (:test r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deleting-a-defmethod-unregisters-it
   ;; ns-unmap was the delete path's only image effect — a no-op for a
@@ -72,22 +72,22 @@
   ;; (suspicious-red? fires on reds). The delete must remove-method.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dmz
+      (ops/ingest! sess 'dmz
                    (str "(ns dmz)\n\n(defmulti area :shape)\n\n"
                         "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
                         "(defmethod area :default [_] :unknown)\n"))
       (let [meth-id (->> (store/forms (:store @sess) 'dmz)
                          (filter #(nil? (:name %)))
                          first :id)
-            _ (is (= [4] (api/query-eval sess "(dmz/area {:shape :square :side 2})")))
-            r (api/delete-form! sess 'dmz (symbol meth-id) :prompt "drop :square")]
+            _ (is (= [4] (ops/query-eval sess "(dmz/area {:shape :square :side 2})")))
+            r (ops/delete-form! sess 'dmz (symbol meth-id) :prompt "drop :square")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the method is gone from the SOURCE"
           (is (not (re-find #":square" (query/query-source sess 'dmz)))))
         (testing "…and gone from the IMAGE — dispatch falls to :default"
           (is (= [:unknown]
-                 (api/query-eval sess "(dmz/area {:shape :square :side 2})")))))
-      (finally (api/close! sess)))))
+                 (ops/query-eval sess "(dmz/area {:shape :square :side 2})")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external replacing-a-defmethods-dispatch-unregisters-the-old
   ;; Hot-load of the replacement evals the NEW defmethod — registering :sq —
@@ -97,23 +97,23 @@
   ;; through replace. The old dispatch must be unregistered when it changes.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dmr
+      (ops/ingest! sess 'dmr
                    (str "(ns dmr)\n\n(defmulti area :shape)\n\n"
                         "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
                         "(defmethod area :default [_] :unknown)\n"))
       (let [meth-id (->> (store/forms (:store @sess) 'dmr)
                          (filter #(nil? (:name %)))
                          first :id)
-            r (api/edit-replace! sess 'dmr (symbol meth-id)
+            r (ops/edit-replace! sess 'dmr (symbol meth-id)
                                  "(defmethod area :sq [s] (* (:side s) (:side s)))"
                                  :prompt "rename the dispatch")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the new dispatch answers"
-          (is (= [4] (api/query-eval sess "(dmr/area {:shape :sq :side 2})"))))
+          (is (= [4] (ops/query-eval sess "(dmr/area {:shape :sq :side 2})"))))
         (testing "the OLD dispatch no longer does — store and image agree"
           (is (= [:unknown]
-                 (api/query-eval sess "(dmr/area {:shape :square :side 2})")))))
-      (finally (api/close! sess)))))
+                 (ops/query-eval sess "(dmr/area {:shape :square :side 2})")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ambiguous-form-names-refuse-instead-of-guessing
   ;; A legacy `(declare b)` and `(defn b …)` are TWO store elements answering
@@ -123,28 +123,28 @@
   ;; cannot tell which element you meant must refuse and show both.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'amb.core
+      (ops/ingest! sess 'amb.core
                    (str "(ns amb.core)\n\n"
                         "(declare b)\n\n"
                         "(defn b [] 2)\n\n"
                         "(defn a [] (b))\n"))
       (testing "delete refuses and names the candidates"
-        (let [r (api/delete-form! sess 'amb.core 'b)]
+        (let [r (ops/delete-form! sess 'amb.core 'b)]
           (is (re-find #"ambiguous" (str (:error r))) (pr-str r))
           (is (= 2 (count (:candidates r))) (pr-str r))))
       (testing "replace refuses too"
-        (let [r (api/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
+        (let [r (ops/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
                                    :prompt "x")]
           (is (re-find #"ambiguous" (str (:error r))) (pr-str r))))
       (testing "the definition is untouched — nothing was guessed away"
-        (is (= [2] (api/query-eval sess "(amb.core/b)"))))
+        (is (= [2] (ops/query-eval sess "(amb.core/b)"))))
       (testing "cleanup resolves the ambiguity, and then writes land normally"
-        (api/cleanup! sess 'amb.core :prompt "retire the legacy declare")
-        (let [r (api/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
+        (ops/cleanup! sess 'amb.core :prompt "retire the legacy declare")
+        (let [r (ops/edit-replace! sess 'amb.core 'b "(defn b [] 3)"
                                    :prompt "now unambiguous")]
           (is (nil? (:error r)) (pr-str r)))
-        (is (= [3] (api/query-eval sess "(amb.core/b)"))))
-      (finally (api/close! sess)))))
+        (is (= [3] (ops/query-eval sess "(amb.core/b)"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deleting-a-form-with-a-live-caller-is-refused
   ;; friction 3f/19, the ROOT. The catastrophe was fixed by making boot
@@ -162,7 +162,7 @@
   ;; requirers; there is no reason for the form-level delete to differ.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dl.core
+      (ops/ingest! sess 'dl.core
                    (str "(ns dl.core)\n"
                         "(defn helper [x] (inc x))\n"
                         "(defn ^:unused-ok use-it [x] (helper x))\n"))
@@ -170,7 +170,7 @@
         ;; the delete that bricked the store was slopp.ui.pages/form-doc, used
         ;; by read performers in its OWN namespace; a cross-ns-only check would
         ;; have missed it entirely
-        (let [r (api/delete-form! sess 'dl.core 'helper)]
+        (let [r (ops/delete-form! sess 'dl.core 'helper)]
           (is (:error r) (pr-str r))
           (is (re-find #"use-it" (str (:error r))) (pr-str r))
           (is (re-find #"query_depends" (str (:error r)))
@@ -178,12 +178,12 @@
       (testing "the form is still THERE — a refusal that half-applied would be worse"
         (is (some? (store/form-named (:store @sess) 'dl.core 'helper))))
       (testing "delete the caller first, and the callee goes"
-        (is (nil? (:error (api/delete-form! sess 'dl.core 'use-it))) )
-        (is (nil? (:error (api/delete-form! sess 'dl.core 'helper)))))
+        (is (nil? (:error (ops/delete-form! sess 'dl.core 'use-it))) )
+        (is (nil? (:error (ops/delete-form! sess 'dl.core 'helper)))))
       (testing "a form calling ITSELF is not its own live caller"
-        (api/ingest! sess 'dl.rec
+        (ops/ingest! sess 'dl.rec
                      (str "(ns dl.rec)\n"
                           "(defn ^:unused-ok countdown [n]"
                           " (if (pos? n) (countdown (dec n)) :done))\n"))
-        (is (nil? (:error (api/delete-form! sess 'dl.rec 'countdown)))))
-      (finally (api/close! sess)))))
+        (is (nil? (:error (ops/delete-form! sess 'dl.rec 'countdown)))))
+      (finally (ops/close! sess)))))

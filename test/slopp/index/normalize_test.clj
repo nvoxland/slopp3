@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.normalize :as norm]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (defn- normed [src] (:src (norm/normalize-source src)))
 
@@ -29,14 +29,14 @@
 (deftest ^:external done-normalizes-the-working-set
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cp.core
+      (ops/ingest! sess 'cp.core
                    (str "(ns cp.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn ^:unused-ok clean [x] (inc x))\n"))
       (external/done! sess :label "baseline")           ; everything-so-far boundary
       ;; agent writes working-but-clunky code
-      (api/add-form! sess 'cp.core
+      (ops/add-form! sess 'cp.core
                      "(defn classify [x] (if (not (neg? x)) (if (pos? x) :pos :zero) :neg))")
-      (api/add-form! sess 'cp.core
+      (ops/add-form! sess 'cp.core
                      (str "(deftest classify-t\n"
                           "  (is (= :pos (classify 2)))\n"
                           "  (is (= :zero (classify 0)))\n"
@@ -50,7 +50,7 @@
                        (query/query-source sess 'cp.core))))
         (testing "behavior verified after normalization (affected tests green)"
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
-          (is (= [:pos] (api/query-eval sess "(cp.core/classify 5)"))))
+          (is (= [:pos] (ops/query-eval sess "(cp.core/classify 5)"))))
         (testing "provenance: a :normalize delta + a :done boundary"
           (is (contains? (set (map :op (history/query-lineage sess 'cp.core 'classify)))
                          :normalize))
@@ -60,13 +60,13 @@
           (is (zero? (:normalized r)))
           (is (empty? (:lint r)))))
       (testing "done lints the changed namespaces (kondo findings)"
-        (api/add-form! sess 'cp.core "(defn sloppy [x] (let [unused 1] x))")
+        (ops/add-form! sess 'cp.core "(defn sloppy [x] (let [unused 1] x))")
         (let [r    (external/done! sess :label "lint probe")
               hits (filter #(= :unused-binding (:type %)) (:lint r))]
           (is (seq hits))
           (is (= 'cp.core/sloppy (:form (first hits))))
           (is (= :warning (:level (first hits))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest expanded-rules-are-strictly-value-preserving
   (doseq [[in out] {"(= x nil)"                  "(nil? x)"
@@ -84,22 +84,22 @@
 (deftest ^:external done-removes-stale-auto-declare-silently
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dh.core
+      (ops/ingest! sess 'dh.core
                    (str "(ns dh.core)\n"
                         "(defn ping [n] n)\n"
                         "(defn pong [n] (ping n))\n"))
       (external/done! sess :label "base")
       ;; make ping call pong → mutual recursion → the pipeline auto-declares
       ;; (the agent writes NO declare — the edit path bans them)
-      (api/add-form! sess 'dh.core "(declare later)")  ; refused — proves the ban
-      (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (pong n))")
+      (ops/add-form! sess 'dh.core "(declare later)")  ; refused — proves the ban
+      (ops/edit-replace! sess 'dh.core 'ping "(defn ping [n] (pong n))")
       (is (re-find #":auto-declare" (query/query-source sess 'dh.core))
           "the cycle got a pipeline-owned, marked declare")
       ;; break the cycle → the auto-declare is now stale
-      (api/edit-replace! sess 'dh.core 'ping "(defn ping [n] (inc n))")
+      (ops/edit-replace! sess 'dh.core 'ping "(defn ping [n] (inc n))")
       (let [r (external/done! sess :label "feature")]
         (is (nil? (:declares-fixed r))
             "done cleans up SILENTLY — no declare housekeeping reported")
         (is (not (re-find #"declare" (query/query-source sess 'dh.core)))
             "the stale auto-declare was removed at done"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

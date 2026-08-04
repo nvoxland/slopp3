@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [slopp.rules.schema :as schema]
             [slopp.store :as store]
-            [slopp.image.repl :as repl] [slopp.ops :as api] [slopp.ops.external :as external]))
+            [slopp.image.repl :as repl] [slopp.ops :as ops] [slopp.ops.external :as external]))
 
 (deftest schema-of-reads-name-metadata
   (let [src (str "(ns app.bnd)\n\n"
@@ -64,23 +64,23 @@
 (deftest ^:external done-surfaces-schema-drift
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sd.core "(ns sd.core)\n(defn seeded \"S.\" [x] x)\n")
+      (ops/ingest! sess 'sd.core "(ns sd.core)\n(defn seeded \"S.\" [x] x)\n")
       (external/done! sess :label "baseline")
       (testing "an honest :=> schema draws no drift finding"
-        (api/add-form! sess 'sd.core
+        (ops/add-form! sess 'sd.core
                        "(defn ^{:malli/schema [:=> [:cat :int] :int]} honest \"H.\" [x] (inc x))"
                        :prompt "honest schema")
         (let [r (external/done! sess :label "honest")]
           (is (nil? (get-in r [:findings :schema-drift])) (pr-str (:findings r)))))
       (testing "a lying :=> schema surfaces as :schema-drift and flips status red"
-        (api/add-form! sess 'sd.core
+        (ops/add-form! sess 'sd.core
                        "(defn ^{:malli/schema [:=> [:cat :int] :string]} liar \"L.\" [x] (inc x))"
                        :prompt "lying schema")
         (let [r (external/done! sess :label "lying")]
           (is (= '[sd.core/liar] (mapv :form (get-in r [:findings :schema-drift])))
               (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest analyzer-pure-excludes-nondeterminism
   (let [src (str "(ns app.nd)\n\n"

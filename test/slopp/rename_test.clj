@@ -19,7 +19,7 @@
   a rename rebuilds the image, so it needs a real session."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history])
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -33,12 +33,12 @@
 (deftest ^:external rename-coordinates-all-references
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rdemo target)
-      (api/test-run! sess 'rdemo)                ; build the trace map
+      (ops/ingest! sess 'rdemo target)
+      (ops/test-run! sess 'rdemo)                ; build the trace map
       (testing "validation errors"
-        (is (:error (api/rename! sess 'rdemo 'nope 'x)))
-        (is (:error (api/rename! sess 'rdemo 'helper 'caller))))
-      (let [r (api/rename! sess 'rdemo 'helper 'doubler :prompt "clearer name")]
+        (is (:error (ops/rename! sess 'rdemo 'nope 'x)))
+        (is (:error (ops/rename! sess 'rdemo 'helper 'caller))))
+      (let [r (ops/rename! sess 'rdemo 'helper 'doubler :prompt "clearer name")]
         (is (nil? (:error r)))
         (let [src (query/query-source sess 'rdemo)]
           (testing "def + true references renamed"
@@ -54,51 +54,51 @@
           (is (= 1 (:pass (:test r))))
           (is (zero? (+ (:fail (:test r)) (:error (:test r))))))
         (testing "the image reflects the rename; the old var is gone"
-          (is (= [11] (api/query-eval sess "(rdemo/caller 5)")))
-          (is (= [nil] (api/query-eval sess "(resolve 'rdemo/helper)")))
-          (is (= [10] (api/query-eval sess "(rdemo/trap (fn [x] 10))"))))
+          (is (= [11] (ops/query-eval sess "(rdemo/caller 5)")))
+          (is (= [nil] (ops/query-eval sess "(resolve 'rdemo/helper)")))
+          (is (= [10] (ops/query-eval sess "(rdemo/trap (fn [x] 10))"))))
         (testing "lineage of the new name includes the rename delta"
           (is (contains? (set (map :op (history/query-lineage sess 'rdemo 'doubler)))
                          :rename))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rename-across-namespaces-and-restart
   (let [dir  (str (Files/createTempDirectory "slopp-rename-test"
                                              (make-array FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'liba "(ns liba)\n(defn helper [x] (* x 2))\n")
-      (api/module-dep! sess "libb" "liba" :prompt "fixture edge")
-      (api/ingest! sess 'libb (str "(ns libb\n  (:require [liba :as la]))\n"
+      (ops/ingest! sess 'liba "(ns liba)\n(defn helper [x] (* x 2))\n")
+      (ops/module-dep! sess "libb" "liba" :prompt "fixture edge")
+      (ops/ingest! sess 'libb (str "(ns libb\n  (:require [liba :as la]))\n"
                                    "(defn use-it [x] (la/helper x))\n"))
-      (let [r (api/rename! sess 'liba 'helper 'twice :prompt "cross-ns")]
+      (let [r (ops/rename! sess 'liba 'helper 'twice :prompt "cross-ns")]
         (is (nil? (:error r)))
         (testing "alias-qualified reference in the other namespace is rewritten"
           (is (re-find #"defn twice" (query/query-source sess 'liba)))
           (is (re-find #"la/twice" (query/query-source sess 'libb))))
         (testing "the live image works across the rename"
-          (is (= [10] (api/query-eval sess "(libb/use-it 5)")))))
-      (finally (api/close! sess)))
+          (is (= [10] (ops/query-eval sess "(libb/use-it 5)")))))
+      (finally (ops/close! sess)))
     ;; a fresh session over the same dir: the rename persisted in both nses
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (is (re-find #"defn twice" (query/query-source sess2 'liba)))
         (is (re-find #"la/twice" (query/query-source sess2 'libb)))
-        (is (= [10] (api/query-eval sess2 "(libb/use-it 5)")))
+        (is (= [10] (ops/query-eval sess2 "(libb/use-it 5)")))
         (is (= :rename (:op (last (filter #(= :rename (:op %))
                                           (store/deltas (:store @sess2)))))))
-        (finally (api/close! sess2))))))
+        (finally (ops/close! sess2))))))
 
 (deftest ^:external already-renamed-is-state-not-error
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'ar.core :source "(ns ar.core)\n(defn old-name [] 1)\n")
-      (is (nil? (:error (api/rename! sess 'ar.core 'old-name 'new-name :agent "t"))))
+      (ops/create-ns! sess 'ar.core :source "(ns ar.core)\n(defn old-name [] 1)\n")
+      (is (nil? (:error (ops/rename! sess 'ar.core 'old-name 'new-name :agent "t"))))
       (testing "the retried rename reports state instead of refusing"
-        (let [r (api/rename! sess 'ar.core 'old-name 'new-name :agent "t")]
+        (let [r (ops/rename! sess 'ar.core 'old-name 'new-name :agent "t")]
           (is (nil? (:error r)) (pr-str r))
           (is (:already (:renamed r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-rename-survives-reopen
   (let [dir (str (java.nio.file.Files/createTempDirectory
@@ -106,35 +106,35 @@
                   (make-array java.nio.file.attribute.FileAttribute 0)))
         s1  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! s1 'nr.old "(ns nr.old)\n(defn f [x] x)\n")
-      (let [r (api/ns-rename! s1 "nr.old" "nr.new")]
+      (ops/ingest! s1 'nr.old "(ns nr.old)\n(defn f [x] x)\n")
+      (let [r (ops/ns-rename! s1 "nr.old" "nr.new")]
         (is (nil? (:error r)) (pr-str r)))
-      (finally (api/close! s1)))
+      (finally (ops/close! s1)))
     (let [s2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "the rename PERSISTED — the old ns does not resurrect (eval9 sweep found both alive)"
           (is (nil? (get-in (:store @s2) [:namespaces 'nr.old]))
               (pr-str (keys (:namespaces (:store @s2)))))
           (is (some? (get-in (:store @s2) [:namespaces 'nr.new]))))
-        (finally (api/close! s2))))))
+        (finally (ops/close! s2))))))
 
 (deftest ^:external renaming-replaces-unmap-the-old-var
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'gv.core "(ns gv.core)\n(defn alpha [x] x)\n(defn beta [x] x)\n")
+      (ops/ingest! sess 'gv.core "(ns gv.core)\n(defn alpha [x] x)\n(defn beta [x] x)\n")
       (testing "single replace-that-renames unmaps (eval9: ghost zone-t failed mid-sweep)"
-        (api/edit-replace! sess 'gv.core 'alpha "(defn alpha2 [x] x)" :prompt "rn")
+        (ops/edit-replace! sess 'gv.core 'alpha "(defn alpha2 [x] x)" :prompt "rn")
         (is (re-find #"nil"
-                     (str (api/query-eval sess "(resolve 'gv.core/alpha)")))
-            (pr-str (api/query-eval sess "(resolve 'gv.core/alpha)"))))
+                     (str (ops/query-eval sess "(resolve 'gv.core/alpha)")))
+            (pr-str (ops/query-eval sess "(resolve 'gv.core/alpha)"))))
       (testing "group replace-that-renames unmaps too"
-        (api/edit-group! sess [{:action :replace :ns 'gv.core :name 'beta
+        (ops/edit-group! sess [{:action :replace :ns 'gv.core :name 'beta
                                 :source "(defn beta2 [x] x)"}]
                          :prompt "rn2")
         (is (re-find #"nil"
-                     (str (api/query-eval sess "(resolve 'gv.core/beta)")))
-            (pr-str (api/query-eval sess "(resolve 'gv.core/beta)"))))
-      (finally (api/close! sess)))))
+                     (str (ops/query-eval sess "(resolve 'gv.core/beta)")))
+            (pr-str (ops/query-eval sess "(resolve 'gv.core/beta)"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external sweep-requalifies-keys-destructuring
   ;; rename_sweep renames keyword LITERALS by text. A destructuring names its
@@ -150,14 +150,14 @@
   ;; fixture self-inconsistent. That happened here with :repo.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rq.core
+      (ops/ingest! sess 'rq.core
                    (str "(ns rq.core)\n\n"
                         "(defn mk [] {:zkey-one 1 :zkey-two 2 :zkey-three 3})\n\n"
                         "(defn only-one [{:keys [zkey-two]}] zkey-two)\n\n"
                         "(defn mixed [{:keys [zkey-one zkey-two zkey-three]}]\n"
                         "  [zkey-one zkey-two zkey-three])\n\n"
                         "(defn direct [m] (:zkey-two m))\n"))
-      (let [r (api/rename-sweep! sess ":zkey-two" ":rq/zkey-two"
+      (let [r (ops/rename-sweep! sess ":zkey-two" ":rq/zkey-two"
                                  :prompt "namespace the key")]
         (is (nil? (:error r)) (pr-str r)))
       (let [src (query/query-source sess 'rq.core)]
@@ -170,9 +170,9 @@
           (is (re-find #":rq/zkey-two 2" src) src)
           (is (re-find #"\(:rq/zkey-two m\)" src) src)))
       (testing "and it actually still reads the value at runtime"
-        (is (= [2] (api/query-eval sess "(rq.core/only-one (rq.core/mk))")))
-        (is (= [[1 2 3]] (api/query-eval sess "(rq.core/mixed (rq.core/mk))"))))
-      (finally (api/close! sess)))))
+        (is (= [2] (ops/query-eval sess "(rq.core/only-one (rq.core/mk))")))
+        (is (= [[1 2 3]] (ops/query-eval sess "(rq.core/mixed (rq.core/mk))"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external sweep-preserves-type-hints-when-requalifying
   ;; The first cut of requalify-keys rebuilt the :keys vector from `sexpr`,
@@ -187,12 +187,12 @@
   ;; key is corrupted by any later sweep of it.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hint.core
+      (ops/ingest! sess 'hint.core
                    (str "(ns hint.core)\n\n"
                         "(defn mk [] {:zhint-one \"c\" :zhint-two 1})\n\n"
                         "(defn use-it [{:keys [^String zhint-one ^Long zhint-two]}]\n"
                         "  [zhint-one zhint-two])\n"))
-      (let [r (api/rename-sweep! sess ":zhint-one" ":hint/zhint-one"
+      (let [r (ops/rename-sweep! sess ":zhint-one" ":hint/zhint-one"
                                  :prompt "namespace a hinted key")]
         (is (nil? (:error r)) (pr-str r)))
       (let [src (query/query-source sess 'hint.core)]
@@ -201,8 +201,8 @@
         (testing "the symbols left behind keep theirs"
           (is (re-find #":keys \[\^Long zhint-two\]" src) src)))
       (testing "and it still evaluates"
-        (is (= [["c" 1]] (api/query-eval sess "(hint.core/use-it (hint.core/mk))"))))
-      (finally (api/close! sess)))))
+        (is (= [["c" 1]] (ops/query-eval sess "(hint.core/use-it (hint.core/mk))"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external sweep-dry-run-separates-string-hits-from-code
   ;; A sweep is store-wide and rewrites prose and STRING LITERALS as well as
@@ -216,12 +216,12 @@
   ;; query_store first, which is the tool's job, not mine.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dr.core
+      (ops/ingest! sess 'dr.core
                    (str "(ns dr.core)\n\n"
                         "(defn real [] {:dr/target 1})\n\n"
                         "(defn fixture []\n"
                         "  \"a :dr/target inside a string — data, not prose\")\n"))
-      (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed" :dry-run true)]
+      (let [r (ops/rename-sweep! sess ":dr/target" ":dr/renamed" :dry-run true)]
         (testing "nothing is written"
           (is (:dry-run r) (pr-str r))
           (is (re-find #":dr/target" (query/query-source sess 'dr.core))
@@ -235,18 +235,18 @@
         ;; a green on a path it never touched. So assert the property, not the
         ;; instance: NO dry run appends a delta, whatever it matches.
         (let [before (count (store/deltas (:store @sess)))
-              r      (api/rename-sweep! sess "dr" "renamed" :dry-run true)]
+              r      (ops/rename-sweep! sess "dr" "renamed" :dry-run true)]
           (is (= '[[dr.core renamed.core]] (:renamed-namespaces r)) (pr-str r))
           (is (contains? (set (keys (:namespaces (:store @sess)))) 'dr.core)
               "the namespace must still exist after a preview")
           (is (= before (count (store/deltas (:store @sess))))
               "a dry run must append NO delta — the shape-level guarantee")))
       (testing "without dry-run it still writes"
-        (let [r (api/rename-sweep! sess ":dr/target" ":dr/renamed"
+        (let [r (ops/rename-sweep! sess ":dr/target" ":dr/renamed"
                                    :prompt "for real")]
           (is (nil? (:error r)) (pr-str r))
           (is (re-find #":dr/renamed" (query/query-source sess 'dr.core)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-sweep-that-loses-a-hint-says-so
   ;; The case that started it. A rename_sweep silently rebuilt a destructuring
@@ -259,10 +259,10 @@
   ;; bypassed drift detection entirely until now.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sd.core
+      (ops/ingest! sess 'sd.core
                    (str "(ns sd.core)\n\n"
                         "(defn use-it [^String zsweep-target] zsweep-target)\n"))
-      (let [r (api/edit-group! sess
+      (let [r (ops/edit-group! sess
                                [{:action :replace :ns 'sd.core :name 'use-it
                                  :source "(defn use-it [zsweep-target] zsweep-target)"}]
                                :prompt "a group op that loses a hint")]
@@ -271,7 +271,7 @@
         (is (= '{zsweep-target "String"} (:detail (first (:drift r))))
             (str "the drift names WHICH hint went, on WHICH symbol: "
                  (pr-str (:drift r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (defn ^:unused-ok src-of
   "The rendered source of `ns-sym/nm` via `query-slice`, which nests it under
@@ -286,13 +286,13 @@
   ;; the key means more than one thing.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rq.core
+      (ops/ingest! sess 'rq.core
                    (str "(ns rq.core)\n"
                         "(defn opts \"O.\" [{:keys [dir mode]}] [dir mode])\n"
                         "(defn ^:unused-ok a \"A.\" [] (opts {:dir \"x\" :mode :fast}))\n"
                         "(defn ^:unused-ok b \"B.\" [m] (opts m))\n"
                         "(defn ^:unused-ok c \"C.\" [] {:dir \"not an argument\"})\n"))
-      (let [r (api/requalify-boundary-keys! sess 'rq.core 'opts
+      (let [r (ops/requalify-boundary-keys! sess 'rq.core 'opts
                                             :prompt "namespace the option keys")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the keys are DERIVED, so half a contract cannot be namespaced"
@@ -309,7 +309,7 @@
               (src-of sess 'rq.core 'c)))
         (testing "the non-literal call site is NAMED, not silently skipped"
           (is (= '[rq.core/b] (:unknown-shape r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rename-carries-qualified-prose-references
   ;; A qualified reference in a docstring is unambiguous — `a.b/c` can only
@@ -320,13 +320,13 @@
   ;; word, and only a human can judge that.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'qp.core
+      (ops/ingest! sess 'qp.core
                    (str "(ns qp.core)\n"
                         "(defn ^:unused-ok fee \"F.\" [x] x)\n"
                         "(defn ^:unused-ok teach\n"
                         "  \"call qp.core/fee for the rate; fee is also a domain word\"\n"
                         "  [x] (fee x))\n"))
-      (let [r (api/rename! sess 'qp.core 'fee 'charge :prompt "fee -> charge")]
+      (let [r (ops/rename! sess 'qp.core 'fee 'charge :prompt "fee -> charge")]
         (is (nil? (:error r)) (pr-str r)))
       (let [src (query/query-source sess 'qp.core)]
         (testing "the QUALIFIED prose reference followed the rename"
@@ -337,7 +337,7 @@
           (is (re-find #"\(charge x\)" src) src))
         (testing "the BARE domain word is left alone for a human to judge"
           (is (re-find #"fee is also a domain word" src) src)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external move-and-ns-rename-carry-qualified-prose
   ;; The d9077 case itself: a form MOVES namespace and the prose keeps naming
@@ -346,13 +346,13 @@
   (let [sess (external/open!)]
     (try
       (testing "edit_move_forms: prose naming the pre-move address follows"
-        (api/ingest! sess 'mv.src
+        (ops/ingest! sess 'mv.src
                      (str "(ns mv.src)\n"
                           "(defn ^:unused-ok helper \"H.\" [x] x)\n"))
-        (api/ingest! sess 'mv.doc
+        (ops/ingest! sess 'mv.doc
                      (str "(ns mv.doc)\n"
                           "(defn ^:unused-ok teach \"call mv.src/helper first\" [x] x)\n"))
-        (let [r (api/move-forms! sess 'mv.src ["helper"] 'mv.dest
+        (let [r (ops/move-forms! sess 'mv.src ["helper"] 'mv.dest
                                  :prompt "move helper out")]
           (is (nil? (:error r)) (pr-str r)))
         (let [src (query/query-source sess 'mv.doc)]
@@ -360,19 +360,19 @@
           (is (not (re-find #"mv\.src/helper" src))
               (str "prose kept the pre-move address: " src))))
       (testing "ns_rename: prose naming the old namespace follows"
-        (api/ingest! sess 'nr.old
+        (ops/ingest! sess 'nr.old
                      (str "(ns nr.old)\n"
                           "(defn ^:unused-ok calc \"C.\" [x] x)\n"))
-        (api/ingest! sess 'nr.doc
+        (ops/ingest! sess 'nr.doc
                      (str "(ns nr.doc)\n"
                           "(defn ^:unused-ok teach \"see nr.old/calc for the rule\" [x] x)\n"))
-        (let [r (api/ns-rename! sess 'nr.old 'nr.new :prompt "rename the ns")]
+        (let [r (ops/ns-rename! sess 'nr.old 'nr.new :prompt "rename the ns")]
           (is (nil? (:error r)) (pr-str r)))
         (let [src (query/query-source sess 'nr.doc)]
           (is (re-find #"nr\.new/calc" src) src)
           (is (not (re-find #"nr\.old/calc" src))
               (str "prose kept the old namespace: " src))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-rename-reports-the-occurrences-it-did-not-rewrite
   ;; The dominant failure mode of a 16-namespace restructure: four tests broke
@@ -393,13 +393,13 @@
   ;; claim about what the changeset intended to do.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rn.core "(ns rn.core)\n(defn f \"F.\" [] \"rn.core\")\n")
-      (api/ingest! sess 'rn.core-test
+      (ops/ingest! sess 'rn.core "(ns rn.core)\n(defn f \"F.\" [] \"rn.core\")\n")
+      (ops/ingest! sess 'rn.core-test
                    (str "(ns rn.core-test (:require [rn.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest t (is (string? (c/f))))\n"
                         "(def opts \"Opts.\" {:rn.core/mode :fast})\n"))
-      (let [r    (api/ns-rename! sess 'rn.core 'rn.renamed :prompt "regroup")
+      (let [r    (ops/ns-rename! sess 'rn.core 'rn.renamed :prompt "regroup")
             left (:left-behind r)]
         (is (some? left) (str "the rename must say what it left: " (pr-str (keys r))))
         (testing "the string literal naming the old namespace"
@@ -413,10 +413,10 @@
         (testing "and singles keywords out as the class nothing catches later"
           (is (re-find #"(?i)keyword" (str (:note r))) (pr-str (:note r)))))
       (testing "a clean rename says nothing — absence means checked-and-none"
-        (api/ingest! sess 'rn.clean "(ns rn.clean)\n(defn g \"G.\" [] 1)\n")
-        (let [r (api/ns-rename! sess 'rn.clean 'rn.spotless :prompt "regroup")]
+        (ops/ingest! sess 'rn.clean "(ns rn.clean)\n(defn g \"G.\" [] 1)\n")
+        (let [r (ops/ns-rename! sess 'rn.clean 'rn.spotless :prompt "regroup")]
           (is (nil? (:left-behind r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external sweep-requalifies-only-the-destructuring-that-names-the-old-key
   ;; A `:keys` destructuring names its key as a SYMBOL, so the sweep has to
@@ -438,7 +438,7 @@
   ;; right key" from "reads nothing and says so quietly".
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rk.core
+      (ops/ingest! sess 'rk.core
                    (str "(ns rk.core)\n\n"
                         "(defn mk-q [] {:rkold/ztarget 1 :rkold/zother 2})\n\n"
                         "(defn mk-u [] {:ztarget 9})\n\n"
@@ -446,7 +446,7 @@
                         "  [ztarget zother])\n\n"
                         "(defn wholesale [{:rkold/keys [ztarget]}] ztarget)\n\n"
                         "(defn bare [{:keys [ztarget]}] ztarget)\n"))
-      (let [r (api/rename-sweep! sess ":rkold/ztarget" ":rknew/ztarget"
+      (let [r (ops/rename-sweep! sess ":rkold/ztarget" ":rknew/ztarget"
                                  :prompt "move the key to its new owner")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the STRUCTURAL half of the diff is named, not silent"
@@ -463,10 +463,10 @@
         (testing "an UNQUALIFIED destructuring names :ztarget — leave it alone"
           (is (re-find #"\(defn bare \[\{:keys \[ztarget\]\}\]" src) src)))
       (testing "and every one of them still reads its own key at runtime"
-        (is (= [[1 2]] (api/query-eval sess "(rk.core/split (rk.core/mk-q))")))
-        (is (= [1] (api/query-eval sess "(rk.core/wholesale (rk.core/mk-q))")))
-        (is (= [9] (api/query-eval sess "(rk.core/bare (rk.core/mk-u))"))))
-      (finally (api/close! sess)))))
+        (is (= [[1 2]] (ops/query-eval sess "(rk.core/split (rk.core/mk-q))")))
+        (is (= [1] (ops/query-eval sess "(rk.core/wholesale (rk.core/mk-q))")))
+        (is (= [9] (ops/query-eval sess "(rk.core/bare (rk.core/mk-u))"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-sweep-that-cannot-move-a-destructuring-names-it
   ;; The one case the structural pass has to DECLINE. `{:lb/keys [zbefore]}`
@@ -482,11 +482,11 @@
   ;; names it was, by construction, not rewritten.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'lb.core
+      (ops/ingest! sess 'lb.core
                    (str "(ns lb.core)\n\n"
                         "(defn mk [] {:lb/zbefore 4})\n\n"
                         "(defn read-it [{:lb/keys [zbefore]}] zbefore)\n"))
-      (let [r    (api/rename-sweep! sess ":lb/zbefore" ":lb/zafter"
+      (let [r    (ops/rename-sweep! sess ":lb/zbefore" ":lb/zafter"
                                     :prompt "rename the key itself")
             left (:left-behind r)]
         (is (nil? (:error r)) (pr-str r))
@@ -501,16 +501,16 @@
           (is (re-find #"(?i)not rewritten" (str (:note r))) (pr-str (:note r)))
           (is (re-find #"(?i)local" (str (:note r))) (pr-str (:note r)))))
       (testing "a sweep that only requalifies leaves nothing behind — absence means checked-and-none"
-        (api/ingest! sess 'lb.clean
+        (ops/ingest! sess 'lb.clean
                      (str "(ns lb.clean)\n\n"
                           "(defn mk [] {:one/zkey 5})\n\n"
                           "(defn read-it [{:one/keys [zkey]}] zkey)\n"))
-        (let [r (api/rename-sweep! sess ":one/zkey" ":two/zkey"
+        (let [r (ops/rename-sweep! sess ":one/zkey" ":two/zkey"
                                    :prompt "move the key's owner")]
           (is (nil? (:left-behind r)) (pr-str r))
           (is (= [{:ns 'lb.clean :form 'read-it}] (:requalified r)) (pr-str r))
-          (is (= [5] (api/query-eval sess "(lb.clean/read-it (lb.clean/mk))")))))
-      (finally (api/close! sess)))))
+          (is (= [5] (ops/query-eval sess "(lb.clean/read-it (lb.clean/mk))")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-rename-names-the-aliases-it-stranded
   ;; The relationship no rewrite in this verb can reach. A rename rewrites the
@@ -533,19 +533,19 @@
   ;; Hence the `:forms` assertions: they are the fixture's own control.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ra.core.thing "(ns ra.core.thing)\n(defn f \"F.\" [] 1)\n")
-      (api/ingest! sess 'ra.core.caller
+      (ops/ingest! sess 'ra.core.thing "(ns ra.core.thing)\n(defn f \"F.\" [] 1)\n")
+      (ops/ingest! sess 'ra.core.caller
                    (str "(ns ra.core.caller (:require [ra.core.thing :as thing]))\n"
                         "(defn c \"C.\" [] (thing/f))\n"))
       (testing "changing MODULES under the same last segment strands nothing —
                 `thing` still names what it calls"
-        (let [r (api/ns-rename! sess 'ra.core.thing 'ra.moved.thing :prompt "regroup")]
+        (let [r (ops/ns-rename! sess 'ra.core.thing 'ra.moved.thing :prompt "regroup")]
           (is (= 2 (:forms (:renamed r))) (pr-str r))
           (is (nil? (:alias (:left-behind r))) (pr-str r))))
       (testing "changing the last segment does strand it — and NOTHING else is
                 left behind here, so the report exists only if the alias makes
                 it exist"
-        (let [r    (api/ns-rename! sess 'ra.moved.thing 'ra.moved.other :prompt "regroup")
+        (let [r    (ops/ns-rename! sess 'ra.moved.thing 'ra.moved.other :prompt "regroup")
               rows (:alias (:left-behind r))]
           (is (= 2 (:forms (:renamed r))) (pr-str r))
           (is (seq rows) (pr-str r))
@@ -555,4 +555,4 @@
               "the alias the convention would have produced")
           (testing "and the note names the verb that fixes it, not just the fact"
             (is (re-find #"ns_realias" (str (:note r))) (pr-str (:note r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

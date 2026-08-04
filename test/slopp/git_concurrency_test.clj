@@ -6,7 +6,7 @@
   contexts over one store dir stand in for two server processes."
   (:require [clojure.test :refer [deftest is testing]]
             [next.jdbc :as jdbc]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.git :as git]
             [slopp.ops.external :as external])
   (:import [java.nio.file Files]
@@ -26,12 +26,12 @@
   (let [dir  (temp-dir "slopp-git-conc")
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'gc.core seed)
+      (ops/ingest! sess 'gc.core seed)
       (external/commit-point! sess "v1" :agent "alice")
-      (api/edit-replace! sess 'gc.core 'f "(defn f [x] (+ 10 x))"
+      (ops/edit-replace! sess 'gc.core 'f "(defn f [x] (+ 10 x))"
                          :prompt "flip" :agent "alice")
       (external/commit-point! sess "v2" :agent "alice")
-      (api/edit-replace! sess 'gc.core 'f "(defn f [x] (int (+ 10 x)))"
+      (ops/edit-replace! sess 'gc.core 'f "(defn f [x] (int (+ 10 x)))"
                          :prompt "tighten" :agent "alice")
       (external/commit-point! sess "v3" :agent "alice")
       ;; two ctxs = two processes: separate repo handles, conns, locks
@@ -58,7 +58,7 @@
           (finally
             (git/close-ctx! ctx1)
             (git/close-ctx! ctx2))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external foreign-milestone-projected-without-restart
   ;; the m5b operating model: another agent's server shares the store dir, and
@@ -76,17 +76,17 @@
         ctx   (git/open-ctx! dir)
         tip   (fn [c] (get-in (git/ensure-projected! c) [:refs "main"]))]
     (try
-      (api/ingest! sess1 'gc.core seed)
+      (ops/ingest! sess1 'gc.core seed)
       (external/commit-point! sess1 "v1" :agent "alice")
       (let [tip1 (tip ctx)]
         (is (some? tip1))
         ;; a SECOND session on the same dir — a foreign writer
         (let [sess2 (external/open! {:slopp.ops/dir dir})]
           (try
-            (api/edit-replace! sess2 'gc.core 'f "(defn f [x] (+ 10 x))"
+            (ops/edit-replace! sess2 'gc.core 'f "(defn f [x] (+ 10 x))"
                                :prompt "foreign work" :agent "bob")
             (external/commit-point! sess2 "v2: foreign milestone" :agent "bob")
-            (finally (api/close! sess2))))
+            (finally (ops/close! sess2))))
         (let [tip2  (tip ctx)
               fresh (let [c2 (git/open-ctx! dir)]
                       (try (tip c2) (finally (git/close-ctx! c2))))]
@@ -96,4 +96,4 @@
             (is (= fresh tip2)))))
       (finally
         (git/close-ctx! ctx)
-        (api/close! sess1)))))
+        (ops/close! sess1)))))

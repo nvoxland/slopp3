@@ -4,7 +4,7 @@
   the owned image's classpath and the generated deps.edn."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.build :as build]
             [slopp.index.deps :as deps]
             [slopp.mcp]
@@ -99,55 +99,55 @@
   (let [sess (external/open!)]
     (try
       (let [pid0 (.pid ^Process (:process (:image @sess)))
-            r    (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
+            r    (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
         (is (nil? (:error r)) (pr-str r))
         (testing "hot-added — no restart, same image process"
           (is (true? (:hot r)))
           (is (= pid0 (.pid ^Process (:process (:image @sess))))))
         (testing "the dep is on the image classpath now"
           (is (= "{\"a\":1}"
-                 (last (api/query-eval
+                 (last (ops/query-eval
                         sess (str "(require 'clojure.data.json)"
                                   "(clojure.data.json/write-str {:a 1})"))))))
         (testing "deps-list reflects it"
           (is (= {:mvn/version "2.5.0"}
-                 (get (api/deps-list sess) 'org.clojure/data.json))))
+                 (get (ops/deps-list sess) 'org.clojure/data.json))))
         (testing "removing restarts the image (jar can't unload)"
-          (let [rr (api/deps-remove! sess 'org.clojure/data.json)]
+          (let [rr (ops/deps-remove! sess 'org.clojure/data.json)]
             (is (true? (:restarted rr)))
             (is (not= pid0 (.pid ^Process (:process (:image @sess)))))
-            (is (empty? (api/deps-list sess))))))
-      (finally (api/close! sess)))))
+            (is (empty? (ops/deps-list sess))))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deps-add-validates
   (let [sess (external/open!)]
     (try
-      (is (:error (api/deps-add! sess "not-a-symbol" {:mvn/version "1.0"})))
-      (is (:error (api/deps-add! sess 'a/b {})))
-      (is (:error (api/deps-remove! sess 'never/declared)))
-      (finally (api/close! sess)))))
+      (is (:error (ops/deps-add! sess "not-a-symbol" {:mvn/version "1.0"})))
+      (is (:error (ops/deps-add! sess 'a/b {})))
+      (is (:error (ops/deps-remove! sess 'never/declared)))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deps-durable-round-trip-and-branch-inherit
   (let [dir (temp-dir)]
     (let [sess (external/open! {:slopp.ops/dir dir})]
       (try
-        (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+        (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                        :agent "a")
         (testing "a branch created after the add inherits the manifest"
           (branch/branch! sess "feature")
           (is (= {:mvn/version "2.5.0"}
-                 (get (api/deps-list sess) 'org.clojure/data.json))))
-        (finally (api/close! sess))))
+                 (get (ops/deps-list sess) 'org.clojure/data.json))))
+        (finally (ops/close! sess))))
     (testing "a fresh session over the same dir reloads deps AND its image can use them"
       (let [sess2 (external/open! {:slopp.ops/dir dir})]
         (try
           (is (= {:mvn/version "2.5.0"}
-                 (get (api/deps-list sess2) 'org.clojure/data.json)))
+                 (get (ops/deps-list sess2) 'org.clojure/data.json)))
           (is (= "{\"a\":1}"
-                 (last (api/query-eval
+                 (last (ops/query-eval
                         sess2 (str "(require 'clojure.data.json)"
                                    "(clojure.data.json/write-str {:a 1})")))))
-          (finally (api/close! sess2)))))))
+          (finally (ops/close! sess2)))))))
 
 (deftest build-deps-edn-carries-manifest
   (testing "an empty manifest is byte-identical to the pre-manifest output"
@@ -207,10 +207,10 @@
 (deftest ^:external deps-add-returns-surface
   (let [sess (external/open!)]
     (try
-      (let [r (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
+      (let [r (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"})]
         (is (some #{'clojure.data.json} (:namespaces r)))
         (is (pos? (:vars r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 ;; ---------------------------------------------------------------------------
 ;; M6: native-compat gate (GraalVM reachability metadata)
@@ -233,8 +233,8 @@
   (let [dir  (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
+      (ops/ingest! sess 'app.core "(ns app.core)\n\n(defn run [& args] (apply println args))\n")
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"} :agent "a")
       (let [out (str (temp-dir) "/built")
             r   (external/build! sess out :main 'app.core/run)]
         (is (nil? (:error r)) (pr-str r))
@@ -242,7 +242,7 @@
           (is (re-find #"data\.json" (str (get-in r [:native :warnings]))))
           (is (some #{'org.clojure/data.json}
                     (get-in r [:native :metadata-missing])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deps-ride-the-mcp-surface
   (let [sess (external/open!)]
@@ -258,7 +258,7 @@
                                          :version "2.5.0" :agent "a"}))))
         (testing "deps_list answers over MCP"
           (is (re-find #"data\.json" (call "deps_list" {})))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest build-deps-edn-trace-alias
   ;; #121: the external tier is the ONLY tier that runs ^:external tests, so it
@@ -306,7 +306,7 @@
 (deftest ^:external deps-add-client-is-build-only
   (let [sess (external/open!)]
     (try
-      (let [r (api/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
+      (let [r (ops/deps-add! sess 'org.clojure/clojurescript {:mvn/version "1.11.132"}
                              :client true :prompt "the cljs compiler")]
         (testing "a :client dep records to the build-only manifest"
           (is (:client r))
@@ -314,7 +314,7 @@
                  (get-in @sess [:store :client-deps 'org.clojure/clojurescript]))))
         (testing "and NEVER enters the runtime :deps that hot-loads and ships"
           (is (nil? (get-in @sess [:store :deps 'org.clojure/clojurescript])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest build-deps-edn-cljs-alias
   (testing "no client deps → byte-identical output (the ours? guard depends on it)"
@@ -349,19 +349,19 @@
   (let [dir (temp-dir)
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
+      (ops/deps-add! sess 'org.clojure/data.json {:mvn/version "2.5.0"}
                      :agent "a")
-      (let [m (api/deps-manifest sess)]
+      (let [m (ops/deps-manifest sess)]
         (is (= {:mvn/version "2.5.0"} (get (:deps m) 'org.clojure/data.json))
             "the declarations are still all there, under :deps")
-        (is (= (api/deps-list sess) (:deps m))
+        (is (= (ops/deps-list sess) (:deps m))
             "and they are exactly what the accessor returns")
         (testing "silence when nothing is overridden"
           ;; this suite runs from a checkout, not a jar, so nothing is bundled
           ;; — the key must be ABSENT rather than present-and-empty, or every
           ;; caller has to distinguish two spellings of nothing
           (is (not (contains? m :host-override)) (pr-str m))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest build-deps-edn-instruments-path
   (testing "no instruments → byte-identical output (the ours? guard depends on it)"

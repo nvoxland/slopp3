@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.kernel.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
+            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.kernel.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -22,30 +22,30 @@
   (let [sess (external/open!)]
     (try
       (testing ":source lands a whole namespace in one verified call (folded-in ingest)"
-        (let [r (api/create-ns! sess 'cn.core
+        (let [r (ops/create-ns! sess 'cn.core
                                 :source "(ns cn.core)\n(defn f [x] (* 2 x))\n(defn g [x] (+ 1 x))\n"
                                 :agent "alice")]
           (is (nil? (:error r)))
           (is (= 3 (:forms r)))
           (is (re-find #"defn f" (query/query-source sess 'cn.core)))
-          (is (= [10] (api/query-eval sess "(cn.core/f 5)")))))
+          (is (= [10] (ops/query-eval sess "(cn.core/f 5)")))))
       (testing ":source carries provenance via :agent"
         (is (some #(= "alice" (:agent %))
                   (history/query-lineage sess 'cn.core 'f))))
       (testing ":requires still scaffolds an empty namespace"
-        (let [r (api/create-ns! sess 'cn.util :requires ["[clojure.string :as str]"])]
+        (let [r (ops/create-ns! sess 'cn.util :requires ["[clojure.string :as str]"])]
           (is (nil? (:error r)))
           (is (re-find #"clojure.string" (query/query-source sess 'cn.util)))))
       (testing ":source and :requires are mutually exclusive"
-        (is (:error (api/create-ns! sess 'cn.bad
+        (is (:error (ops/create-ns! sess 'cn.bad
                                     :source "(ns cn.bad)\n"
                                     :requires ["[clojure.string]"]))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external operation-surface
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'demo
+      (ops/ingest! sess 'demo
                    (str "(ns demo)\n"
                         "(defn add [x y] (+ x y))\n"
                         "(defn tainted [a] (swap! a inc))\n"))
@@ -57,7 +57,7 @@
       (testing "query.references finds callers"
         ;; tainted is defined AFTER add — the caller must be the later form,
         ;; or the write is (correctly) refused by the cold-load gate (S1b)
-        (let [r (api/edit-replace! sess 'demo 'tainted
+        (let [r (ops/edit-replace! sess 'demo 'tainted
                                    "(defn tainted [a] (add (swap! a inc) 1))"
                                    :prompt "call add")]
           (is (nil? (:error r)) (pr-str r)))
@@ -65,18 +65,18 @@
       (testing "a cycle (add calls tainted, which already calls add) AUTO-DECLARES"
         ;; mutual recursion has no legal order — the pipeline inserts a marked
         ;; declare instead of refusing; the agent writes none
-        (let [r (api/edit-replace! sess 'demo 'add
+        (let [r (ops/edit-replace! sess 'demo 'add
                                    "(defn add [x y] (tainted (atom (+ x y))))"
                                    :prompt "call tainted")]
           (is (nil? (:error r)) (pr-str r))
           (is (re-find #":auto-declare" (query/query-source sess 'demo)))))
       (testing "query.eval asks the live image (the oracle)"
-        (is (= [7] (api/query-eval sess "(+ 3 4)"))))
+        (is (= [7] (ops/query-eval sess "(+ 3 4)"))))
       (testing "edit.replace-form updates store + hot-reloads image"
-        (let [r (api/edit-replace! sess 'demo 'tainted "(defn tainted [a] a)"
+        (let [r (ops/edit-replace! sess 'demo 'tainted "(defn tainted [a] a)"
                                    :prompt "defang")]
           (is (nil? (:error r)))
-          (is (= [42] (api/query-eval sess "(demo/tainted 42)")))))
+          (is (= [42] (ops/query-eval sess "(demo/tainted 42)")))))
       (testing "query.lineage shows provenance (ingest + replaces, with prompts)"
         (let [lin (history/query-lineage sess 'demo 'tainted)]
           (is (contains? (set (map :op lin)) :ingest))
@@ -94,7 +94,7 @@
             (spit (str dir "/deps.edn") "{:paths [\"src\"] :custom true}\n")
             (external/build! sess dir)
             (is (re-find #":custom" (slurp (str dir "/deps.edn")))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest parse-test-summary-reads-the-runner-line
   (testing "a green clojure.test summary"
@@ -115,11 +115,11 @@
   ;; default classpath (a :test alias makes them runnable).
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'proj.core "(ns proj.core)\n(defn f [x] (inc x))\n")
-      (api/create-ns! sess 'proj.core-test
+      (ops/ingest! sess 'proj.core "(ns proj.core)\n(defn f [x] (inc x))\n")
+      (ops/create-ns! sess 'proj.core-test
                       :requires ["[clojure.test :refer [deftest is]]"
                                  "[proj.core :as c]"])
-      (api/add-form! sess 'proj.core-test "(deftest f-t (is (= 2 (c/f 1))))")
+      (ops/add-form! sess 'proj.core-test "(deftest f-t (is (= 2 (c/f 1))))")
       (let [dir (str (Files/createTempDirectory "slopp-testdir"
                                                 (make-array FileAttribute 0)))
             f   #(clojure.java.io/file dir %)]
@@ -132,7 +132,7 @@
           (let [m (clojure.edn/read-string (slurp (f "deps.edn")))]
             (is (= ["src"] (:paths m)))
             (is (= ["test"] (get-in m [:aliases :test :extra-paths]))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest parse-test-failures-extracts-blocks
   (let [out (str "\nRunning tests in #{\"test\"}\n\nTesting foo.bar-test\n\n"
@@ -157,14 +157,14 @@
 (deftest ^:external inline-test-stores-build-a-runnable-suite
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'il.core
+      (ops/ingest! sess 'il.core
                    (str "(ns il.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
       (let [r (external/external-test-run! sess)]
         (is (= :green (:status r)) (pr-str r))
         (is (= 1 (:ran r)) (pr-str r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external build-routes-tests-through-the-trace-runner-when-present
   ;; #121: the external tier can only trace if the built project carries the
@@ -174,7 +174,7 @@
         tmp  #(str (java.nio.file.Files/createTempDirectory
                     % (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try
-      (api/ingest! sess 'tb.core
+      (ops/ingest! sess 'tb.core
                    (str "(ns tb.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
@@ -185,7 +185,7 @@
             (is (re-find #"\"-m\" \"cognitect\.test-runner\"" d))
             (is (not (re-find #"slopp\.image\.testmain" d))))))
       (testing "the store provides one — both aliases route through it"
-        (api/create-ns! sess 'slopp.image.testmain
+        (ops/create-ns! sess 'slopp.image.testmain
                         :source (str "(ns slopp.image.testmain \"Stub: presence is"
                                      " the condition build! reads.\")\n"
                                      "(defn -main [& _args] nil)\n"))
@@ -194,7 +194,7 @@
           (let [d (slurp (java.io.File. dir "deps.edn"))]
             (is (= 2 (count (re-seq #"\"-m\" \"slopp\.image\.testmain\"" d))) d)
             (is (not (re-find #"\"-m\" \"cognitect\.test-runner\"" d))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-commits-rows-carry-title-lines
   ;; frictions #7: needing ONE sha fetched five multi-paragraph milestone
@@ -203,20 +203,20 @@
   ;; is one drill-down away via {commit "dN"}.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'qc.core "(ns qc.core)\n(defn ^:unused-ok f [x] x)\n")
+      (ops/ingest! sess 'qc.core "(ns qc.core)\n(defn ^:unused-ok f [x] x)\n")
       (external/done! sess :label "w")
       (external/commit-point! sess
                               "The title line\n\nThe body paragraph that must not ride the list.")
-      (let [rows (api/query-commits sess)
+      (let [rows (ops/query-commits sess)
             row  (first rows)]
         (testing "the list rung is title lines"
           (is (= "The title line" (:description row)) (pr-str row))
           (is (pos? (:more-lines row 0)) (pr-str row)))
         (testing "the drill-down rung is one full milestone"
-          (let [full (api/query-commits sess :commit (:commit row))]
+          (let [full (ops/query-commits sess :commit (:commit row))]
             (is (map? full))
             (is (re-find #"body paragraph" (:description full)) (pr-str full)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ns-delete-retires-an-empty-unreferenced-namespace
   ;; frictions #10: there was NO ns deletion — a mistaken scaffold rode
@@ -226,31 +226,31 @@
   ;; :ns-delete delta and the husk is gone from store, image, and rows.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'nd.gone "(ns nd.gone)\n(defn ^:unused-ok f [x] x)\n")
-      (api/ingest! sess 'nd.user (str "(ns nd.user (:require [nd.gone :as g]))\n"
+      (ops/ingest! sess 'nd.gone "(ns nd.gone)\n(defn ^:unused-ok f [x] x)\n")
+      (ops/ingest! sess 'nd.user (str "(ns nd.user (:require [nd.gone :as g]))\n"
                                       "(defn ^:unused-ok h [x] x)\n"))
       (testing "forms remaining → refused, named"
-        (let [r (api/delete-ns! sess 'nd.gone)]
+        (let [r (ops/delete-ns! sess 'nd.gone)]
           (is (re-find #"\bf\b" (str (:error r))) (pr-str r))
           (is (re-find #"edit_delete_form" (str (:error r))))))
-      (api/delete-form! sess 'nd.gone 'f :prompt "clear the husk")
+      (ops/delete-form! sess 'nd.gone 'f :prompt "clear the husk")
       (testing "still required → refused, requirer named"
-        (let [r (api/delete-ns! sess 'nd.gone)]
+        (let [r (ops/delete-ns! sess 'nd.gone)]
           (is (re-find #"nd\.user" (str (:error r))) (pr-str r))
           (is (re-find #"ns_remove_require" (str (:error r))))))
-      (let [rr (api/remove-require! sess 'nd.user 'nd.gone :prompt "unwire")]
+      (let [rr (ops/remove-require! sess 'nd.user 'nd.gone :prompt "unwire")]
         (is (nil? (:error rr)) (pr-str rr)))
       (testing "a self-named def still blocks deletion (structural, not by-name)"
-        (api/ingest! sess 'nd.self "(ns nd.self)\n(def nd.self 1)\n")
-        (let [r (api/delete-ns! sess 'nd.self)]
+        (ops/ingest! sess 'nd.self "(ns nd.self)\n(def nd.self 1)\n")
+        (let [r (ops/delete-ns! sess 'nd.self)]
           (is (re-find #"still holds" (str (:error r))) (pr-str r))))
       (testing "empty and unreferenced → deleted everywhere, delta id returned"
-        (let [r (api/delete-ns! sess 'nd.gone :prompt "retire the scaffold")]
+        (let [r (ops/delete-ns! sess 'nd.gone :prompt "retire the scaffold")]
           (is (= "nd.gone" (:deleted r)) (pr-str r))
           (is (string? (:delta r)) (pr-str r)))
         (is (nil? (get-in (:store @sess) [:namespaces 'nd.gone])))
         (is (= :ns-delete (:op (last (store/deltas (:store @sess)))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest await-image-is-a-noop-when-sync-and-surfaces-a-boot-failure-when-async
   ;; the async-boot contract: a synchronously-opened session has no
@@ -260,15 +260,15 @@
   ;; oracle call.
   (testing "no ready-promise (the sync default) → await returns immediately"
     (let [s (atom {:image :live})]
-      (is (identical? s (api/await-image! s)))))
+      (is (identical? s (ops/await-image! s)))))
   (testing "a delivered :ok returns the session"
     (let [p (promise) s (atom {:image-ready p :image :live})]
       (deliver p :ok)
-      (is (identical? s (api/await-image! s)))))
+      (is (identical? s (ops/await-image! s)))))
   (testing "a delivered boot error is rethrown at await"
     (let [p (promise) s (atom {:image-ready p})]
       (deliver p (ex-info "image boot failed" {}))
-      (is (thrown-with-msg? Exception #"image boot failed" (api/await-image! s))))))
+      (is (thrown-with-msg? Exception #"image boot failed" (ops/await-image! s))))))
 
 (deftest ^:external async-image-boot-defers-the-oracle-not-the-connection
   ;; the server-startup fix: with :async-image?, open! returns as soon as the
@@ -279,20 +279,20 @@
   (let [dir (str (System/getProperty "java.io.tmpdir") "/slopp-async-" (System/nanoTime))
         s1  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! s1 'async.core "(ns async.core)\n(defn twice [x] (* 2 x))\n")
+      (ops/ingest! s1 'async.core "(ns async.core)\n(defn twice [x] (* 2 x))\n")
       (let [s (external/open! {:slopp.ops/dir dir :slopp.ops/async-image? true})]
         (try
           (testing "async mode arms a ready-promise; the store reads immediately"
             (is (some? (:image-ready @s)) "async mode set a ready-promise")
             (is (contains? (:namespaces (:store @s)) 'async.core))
-            (is (seq (:project (api/session-brief s)))))
+            (is (seq (:project (ops/session-brief s)))))
           (testing "await-image! brings the oracle up and it answers"
-            (api/await-image! s)
+            (ops/await-image! s)
             (is (some? (:image @s)))
-            (is (= [10] (api/query-eval s "(async.core/twice 5)"))))
-          (finally (api/close! s))))
+            (is (= [10] (ops/query-eval s "(async.core/twice 5)"))))
+          (finally (ops/close! s))))
       (finally
-        (api/close! s1)
+        (ops/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest client-build-deps-injects-slopp-toolchain-for-client-stores
@@ -322,7 +322,7 @@
                    "slopp-toolchain"
                    (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try
-      (api/create-ns! sess 'cbt.view
+      (ops/create-ns! sess 'cbt.view
                       :source "(ns cbt.view)\n\n(defn ^:export main \"Entry.\" [] 1)\n"
                       :platform "cljs")
       (is (nil? (:error (external/build! sess dir))))
@@ -333,7 +333,7 @@
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
-        (api/close! sess)))))
+        (ops/close! sess)))))
 
 (deftest ^:external build-stamps-the-head-it-was-materialized-from
   ;; Derived artifacts serve old truth silently: `uber` jarred a two-day-old
@@ -346,7 +346,7 @@
         dir  (str (java.nio.file.Files/createTempDirectory
                    "slopp-stamp" (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try
-      (api/create-ns! sess 'stamp.core :source "(ns stamp.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/create-ns! sess 'stamp.core :source "(ns stamp.core)\n\n(defn f \"F.\" [x] x)\n")
       (external/build! sess dir)
       (let [stamp (io/file dir ".slopp-head")
             head  (:id (last (store/deltas (:store @sess))))]
@@ -356,7 +356,7 @@
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
-        (api/close! sess)))))
+        (ops/close! sess)))))
 
 (deftest ^:external prune-requires-drops-dead-and-keeps-load-bearing
   ;; The done-point prunes a require that is genuinely dead, but KEEPS (marked
@@ -366,12 +366,12 @@
   ;; in-image verdict: an orphaned registering target is load-bearing.
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'pz.pure :source "(ns pz.pure)\n(defn g [] 1)\n")
-      (api/create-ns! sess 'pz.reg
+      (ops/create-ns! sess 'pz.pure :source "(ns pz.pure)\n(defn g [] 1)\n")
+      (ops/create-ns! sess 'pz.reg
                       :source "(ns pz.reg)\n(defmulti area identity)\n(defmethod area :sq [_] 42)\n")
-      (api/create-ns! sess 'pz.app
+      (ops/create-ns! sess 'pz.app
                       :source "(ns pz.app (:require [pz.pure :as p] [pz.reg :as r]))\n(defn f [] 1)\n")
-      (let [r (api/prune-requires! sess 'pz.app :agent "t")]
+      (let [r (ops/prune-requires! sess 'pz.app :agent "t")]
         (testing "the dead pure require is pruned; the registering one is kept"
           (is (= '[pz.pure] (:pruned r)) (pr-str r))
           (is (= '[pz.reg]  (:kept r))   (pr-str r)))
@@ -381,10 +381,10 @@
             (is (re-find #":side-effect" (str ns-src)) (str ns-src))
             (is (re-find #"pz\.reg" (str ns-src)) (str ns-src)))))
       (testing "a second prune is a no-op: the kept require is marked, not re-tried"
-        (let [r2 (api/prune-requires! sess 'pz.app :agent "t")]
+        (let [r2 (ops/prune-requires! sess 'pz.app :agent "t")]
           (is (= [] (:pruned r2)) (pr-str r2))
           (is (= [] (:kept r2)) (pr-str r2))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-recycled-session-cannot-see-the-previous-tenant
   ;; The isolation an image gives is the whole reason the external tier exists,
@@ -397,10 +397,10 @@
   ;; vacuous-guard failure this codebase has been bitten by before.
   (repl/drain-parked!)
   (let [a (external/open!)]
-    (api/ingest! a 'tenant.one "(ns tenant.one)\n(defn secret \"S.\" [] 42)\n")
+    (ops/ingest! a 'tenant.one "(ns tenant.one)\n(defn secret \"S.\" [] 42)\n")
     (is (= 42 (first (repl/eval! (:image @a) "(tenant.one/secret)")))
         "the first tenant really did load into its image")
-    (api/close! a))
+    (ops/close! a))
   (let [b (external/open!)]
     (try
       (is (pos? (:reuses (:image @b) 0))
@@ -408,10 +408,10 @@
       (is (nil? (first (repl/eval! (:image @b) "(find-ns 'tenant.one)")))
           "and must not be able to see the previous tenant's namespaces")
       (is (nil? (first (repl/eval! (:image @b) "(resolve 'tenant.one/secret)"))))
-      (api/ingest! b 'tenant.two "(ns tenant.two)\n(defn v \"V.\" [] 7)\n")
+      (ops/ingest! b 'tenant.two "(ns tenant.two)\n(defn v \"V.\" [] 7)\n")
       (is (= 7 (first (repl/eval! (:image @b) "(tenant.two/v)")))
           "a recycled image is fully WORKING, not merely empty")
-      (finally (api/close! b) (repl/drain-parked!)))))
+      (finally (ops/close! b) (repl/drain-parked!)))))
 
 (deftest ^:external store-health-counts-the-artifact-cache
   ;; store_health exists because uncounted bytes accumulate — a tree snapshot
@@ -423,7 +423,7 @@
                    "slopp-health" (make-array FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/create-ns! sess 'health.core :source "(ns health.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/create-ns! sess 'health.core :source "(ns health.core)\n\n(defn f \"F.\" [x] x)\n")
       (let [kept   (artifacts/put! dir (.getBytes "referenced\n" "UTF-8")
                                    {:kind :build :tool "compile_client"})
             _      (artifacts/put! dir (.getBytes "left behind\n" "UTF-8") {:kind :build})
@@ -440,7 +440,7 @@
               "and the reclaimable half is called out separately")))
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
-          (api/close! sess)
+          (ops/close! sess)
           (rm! (io/file dir)))))))
 
 (deftest ^:external build-reports-artifacts-it-could-not-materialize
@@ -455,7 +455,7 @@
                    "slopp-build-out" (make-array FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/create-ns! sess 'miss.core :source "(ns miss.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/create-ns! sess 'miss.core :source "(ns miss.core)\n\n(defn f \"F.\" [x] x)\n")
       (let [entry (artifacts/put! dir (.getBytes "compiled bytes\n" "UTF-8")
                                   {:kind :build :tool "compile_client"})]
         (swap! sess update :store
@@ -476,7 +476,7 @@
                 "the file really is absent — the report is describing reality"))))
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
-          (api/close! sess)
+          (ops/close! sess)
           (rm! (io/file dir))
           (rm! (io/file out)))))))
 
@@ -502,7 +502,7 @@
         ;; out — and a fixture naming a namespace slopp no longer owns asserts
         ;; nothing while still passing today, because the CHECK is classpath
         ;; ownership. Pick one that is load-bearing and going nowhere.
-        (let [r (api/create-ns! sess 'slopp.web.html :source "(ns slopp.web.html)\n")
+        (let [r (ops/create-ns! sess 'slopp.web.html :source "(ns slopp.web.html)\n")
               w (first (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))]
           (is (nil? (:error r)) "overriding is legitimate — it must still be possible")
           (is (some? w) (pr-str r))
@@ -510,16 +510,16 @@
               "name it: the agent chose the name and has to know which one bites")
           (is (re-find #"(?i)shadow" (str (:message w))))))
       (testing "a dependency's namespace warns for the same reason"
-        (let [r (api/create-ns! sess 'clojure.string :source "(ns clojure.string)\n")]
+        (let [r (ops/create-ns! sess 'clojure.string :source "(ns clojure.string)\n")]
           (is (some #(= :shadows-classpath-ns (:kind %)) (:warnings r)) (pr-str r))))
       (testing "a name the project owns warns about nothing"
         ;; the root slopp-ui settled on, and the reason it is safe: `slopp-ui`
         ;; is a different SEGMENT from `slopp`, so it cannot collide
-        (let [r (api/create-ns! sess 'slopp-ui.views :source "(ns slopp-ui.views)\n")]
+        (let [r (ops/create-ns! sess 'slopp-ui.views :source "(ns slopp-ui.views)\n")]
           (is (nil? (:error r)) (pr-str r))
           (is (empty? (filter #(= :shadows-classpath-ns (:kind %)) (:warnings r)))
               (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-whole-store-check-supersedes-a-stale-episode-verdict
   ;; friction 14. `done` reports :test-status :none whenever the episode's
@@ -535,27 +535,27 @@
         full  (store/record-verification write '[a.b]
                                          {:status :green :scope :full-check
                                           :namespaces 3 :lint-errors 0})]
-    (is (= :red (:test-status (api/last-judged-done red))))
+    (is (= :red (:test-status (ops/last-judged-done red))))
 
     (testing "a per-write :verify is not a whole-store judgement"
       ;; record-verification lands on ordinary writes too, and those are
       ;; form-scoped. Only :scope :full-check judged the whole store.
-      (is (= :red (:test-status (api/last-judged-done write)))))
+      (is (= :red (:test-status (ops/last-judged-done write)))))
 
     (testing "a green full_check supersedes the stale episode verdict"
-      (is (= :green (:test-status (api/last-judged-done full))))
-      (is (= :full-check (:scope (api/last-judged-done full)))))
+      (is (= :green (:test-status (ops/last-judged-done full))))
+      (is (= :full-check (:scope (ops/last-judged-done full)))))
 
     (testing "informational counts stay OUT of the verdict"
       ;; commit_point derives its refusal reason from whichever keys are
       ;; present and non-zero, so a namespace count would make a refusal say
       ;; "namespaces" as though that were the thing that fired.
-      (is (nil? (:namespaces (api/last-judged-done full)))))
+      (is (nil? (:namespaces (ops/last-judged-done full)))))
 
     (testing "and a later done supersedes the full_check in turn"
       (let [after (first (store/record-done full "r2"
                                             :findings {:test-status :red :failures 1}))]
-        (is (= :red (:test-status (api/last-judged-done after))))))))
+        (is (= :red (:test-status (ops/last-judged-done after))))))))
 
 (deftest slopp-supplies-the-framework-to-stores-that-USE-it
   ;; D-framework-injection. A store does not declare io.github.nvoxland/slopp-web
@@ -618,7 +618,7 @@
                    "slopp-framework"
                    (make-array java.nio.file.attribute.FileAttribute 0)))]
     (try
-      (api/create-ns! sess 'fw.app
+      (ops/create-ns! sess 'fw.app
                       :source (str "(ns fw.app (:require [slopp.web :as web]))\n\n"
                                    "(defn ^:export handler \"H.\" [req] (web/handle! req))\n"))
       (is (nil? (:error (external/build! sess dir))))
@@ -650,7 +650,7 @@
       (finally
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
-        (api/close! sess)))))
+        (ops/close! sess)))))
 
 (deftest ^:external a-framework-using-store-survives-a-RESTART
   ;; Two bugs, one test, and the second was invisible to the first version of it.
@@ -696,16 +696,16 @@
           (testing "a RESTART gives the new image the framework AND what the
                     framework itself requires — the store LOADS, which is the
                     property; the file being present is not"
-            (api/restart! sess)
+            (ops/restart! sess)
             (is (vendored?) "the restarted image booted without the framework")
             (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))
                 "loading is the real property — a vendored file that cannot
                  resolve its own requires is a dead store"))
           (testing "and again — one image is a fluke, two is the property"
-            (api/restart! sess)
+            (ops/restart! sess)
             (is (vendored?))
             (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'fw.app))))
-          (finally (api/close! sess)))))))
+          (finally (ops/close! sess)))))))
 
 (deftest ^:external a-built-web-app-RUNS-outside-slopp-entirely
   ;; SHAPE was never the question. Every build! test here asserted the tree
@@ -790,7 +790,7 @@
         (finally
           (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
             (rm! (io/file dir)))
-          (api/close! sess))))))
+          (ops/close! sess))))))
 
 (deftest ^:external the-warm-spare-is-ADOPTED-and-carries-the-framework
   ;; slopp-ui measured this and slopp should assert it — the same principle as
@@ -821,7 +821,7 @@
         ;; The spare standing at open was warmed from an empty store and must be
         ;; discarded rather than adopted — that mismatch is its own hazard, and
         ;; asserting adoption on this restart would be asserting the bug.
-        (api/restart! sess)
+        (ops/restart! sess)
         ;; WAIT for the spare's JVM to exist before marking t0. start-spare!
         ;; returns a future, so the boot happens in the BACKGROUND — and their
         ;; samples were 6-11s apart by human pacing, which hid this. In a tight
@@ -830,7 +830,7 @@
         ;; question. Deref blocks until the handle is real.
         (some-> (:spare @sess) deref)
         (let [t0 (System/currentTimeMillis)]
-          (api/restart! sess)
+          (ops/restart! sess)
           (let [started (first (repl/eval!
                                 (:image @sess)
                                 (str "(.getStartTime (java.lang.management."
@@ -845,43 +845,43 @@
         (testing "and the adopted image CARRIES the framework — adoption without
                   it is the worse bug, not the fix"
           (is (nil? (image/load-ns! (:image @sess) (:store @sess) 'sp.app))))
-        (finally (api/close! sess))))))
+        (finally (ops/close! sess))))))
 
 (deftest ^:external capabilities-config-validates-at-write
   (let [sess (external/open!)]
     (try
       (testing "an unknown capability key is refused with teaching"
-        (let [r (api/config-file! sess "capabilities" :key "web.prot" :value "8080"
+        (let [r (ops/config-file! sess "capabilities" :key "web.prot" :value "8080"
                                   :prompt "typo'd key")]
           (is (re-find #"web\.prot" (str (:error r))) (pr-str r))
           (is (re-find #"query_capabilities" (str (:error r))) (pr-str r))))
       (testing "a bad value is refused with the type teaching"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "banana"
+        (let [r (ops/config-file! sess "capabilities" :key "web.port" :value "banana"
                                   :prompt "bad port")]
           (is (re-find #"integer" (str (:error r))) (pr-str r))
           (is (nil? (get-in (:store @sess) [:config "capabilities" :values "web.port"]))
               "the refused value never landed")))
       (testing "a good value lands and takes effect"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
+        (let [r (ops/config-file! sess "capabilities" :key "web.port" :value "7357"
                                   :prompt "real port")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 7357 (caps/effective (:store @sess) "web.port")))))
       (testing "a wildcard-governed key is known, not alien"
-        (let [r (api/config-file! sess "capabilities" :key "web.auth.groups.admin.members" :value "alice,bob"
+        (let [r (ops/config-file! sess "capabilities" :key "web.auth.groups.admin.members" :value "alice,bob"
                                   :prompt "a group")]
           (is (nil? (:error r)) (pr-str r))
           (is (= #{"alice" "bob"} (caps/effective (:store @sess) "web.auth.groups.admin.members")))))
       (testing "a key under an undeclared owner is refused like any unknown key"
-        (let [r (api/config-file! sess "capabilities" :key "groups.admin.members" :value "alice"
+        (let [r (ops/config-file! sess "capabilities" :key "groups.admin.members" :value "alice"
                                   :prompt "the retired spelling")]
           (is (re-find #"is not a capability" (str (:error r))) (pr-str r))))
       (testing "unset returns to the default"
-        (api/config-file! sess "capabilities" :key "web.port" :unset true
+        (ops/config-file! sess "capabilities" :key "web.port" :unset true
                           :prompt "back to default")
         ;; web.port's declared default is nil now — serve! owns the 8080 and the
       ;; dev server derives, so "returns to the default" means returns to unset
       (is (nil? (caps/effective (:store @sess) "web.port"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external config-writes-say-whether-anything-validated-them
   ;; `capabilities` is the ONLY path with a registry behind it. Every other
@@ -891,15 +891,15 @@
   (let [sess (external/open!)]
     (try
       (testing "a capabilities write was checked against the registry"
-        (let [r (api/config-file! sess "capabilities" :key "web.port" :value "7357"
+        (let [r (ops/config-file! sess "capabilities" :key "web.port" :value "7357"
                                   :prompt "real port")]
           (is (= [:registry] (:verified r)) (pr-str r))
           (is (= [] (:unverified r)) (pr-str r))))
       (testing "any other path is recorded UNVALIDATED, and says so"
-        (let [r (api/config-file! sess "rules" :key "key-typos" :value "off"
+        (let [r (ops/config-file! sess "rules" :key "key-typos" :value "off"
                                   :prompt "quiet that rule")]
           (is (= [] (:verified r)) (pr-str r))
           (is (= [:schema] (:unverified r)) (pr-str r))
           (is (re-find #"capabilities" (str (:note r)))
               "the note must name the one path that IS validated")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

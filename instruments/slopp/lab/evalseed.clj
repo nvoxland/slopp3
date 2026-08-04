@@ -3,7 +3,7 @@
   slopp store and (b) a conventional files project (via build!). Fresh eval
   agents then get IDENTICAL starting codebases for the modify-and-extend task.
   Run: clojure -M -m slopp.lab.evalseed <template-dir>   (see .context/dogfooding.md)"
-  (:require [slopp.ops :as api] [clojure.java.io :as io] [clojure.string :as str] [slopp.ops.external :as external]))
+  (:require [slopp.ops :as ops] [clojure.java.io :as io] [clojure.string :as str] [slopp.ops.external :as external]))
 
 (def model-src
   (str "(ns tasker.model\n  (:require [clojure.test :refer [deftest is]]))\n\n"
@@ -71,15 +71,15 @@
       (doseq [[ns-sym src] [['tasker.model model-src]
                             ['tasker.store store-src]
                             ['tasker.report report-src]]]
-        (let [r (api/ingest! sess ns-sym src)]
+        (let [r (ops/ingest! sess ns-sym src)]
           (when (:error r) (throw (ex-info (str "seed ingest failed: " (:error r)) r)))))
       (doseq [ns-sym '[tasker.model tasker.store tasker.report]]
-        (let [r (api/test-run! sess ns-sym)]
+        (let [r (ops/test-run! sess ns-sym)]
           (when-not (zero? (+ (:fail r) (:error r)))
             (throw (ex-info (str "seed not green in " ns-sym) r)))))
       (external/done! sess :label "seed: tasker v1")
       (external/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 ;; --- round 3: the SCALE seed (12 interconnected namespaces) ---
 (defn- padding
@@ -265,13 +265,13 @@
   (let [sess (external/open! {:slopp.ops/dir dir})]
     (try
       (doseq [[ns-sym src] large-namespaces]
-        (let [r (api/ingest! sess ns-sym (str src "\n" (padding ns-sym 6)))]
+        (let [r (ops/ingest! sess ns-sym (str src "\n" (padding ns-sym 6)))]
           (when (:error r) (throw (ex-info (str ns-sym ": " (:error r)) r)))
           (when-not (zero? (+ (get-in r [:test :fail]) (get-in r [:test :error])))
             (throw (ex-info (str ns-sym " not green") r)))))
       (external/done! sess :label "seed: orders v1")
       (external/build! sess (.getAbsolutePath (clojure.java.io/file (str dir "-files"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (defn -main "CLI: seed an eval template — a known-green codebase as BOTH a slopp store
   and a conventional files project, so eval agents start from identical

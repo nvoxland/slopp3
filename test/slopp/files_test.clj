@@ -3,7 +3,7 @@
   store, surviving pushes because they ride every projected tree. Same
   state-carrying-delta pattern as the deps manifest."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [slopp.ops :as api] [slopp.ops.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc] [slopp.store.artifacts :as artifacts]))
+            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.store.db :as db] [next.jdbc :as jdbc] [slopp.store.artifacts :as artifacts]))
 
 (def wf ".github/workflows/test.yml")
 
@@ -77,28 +77,28 @@ X-Slopp-Main: slopp.kernel.boot/-main
   (let [sess (external/open!)]
     (try
       (testing "put lands and reports what it wrote"
-        (let [r (api/file-put! sess "README.md" "# hello\n" :prompt "seed")]
+        (let [r (ops/file-put! sess "README.md" "# hello\n" :prompt "seed")]
           (is (nil? (:error r)) (pr-str r))
           (is (= {:path "README.md" :bytes 8} r))))
       (testing "get reads it back"
         (is (= {:path "README.md" :content "# hello\n"}
-               (api/file-get sess "README.md"))))
+               (ops/file-get sess "README.md"))))
       (testing "put overwrites, and :at still sees the old content"
         (let [before (:id (last (:deltas (:store @sess))))]
-          (api/file-put! sess "README.md" "# v2\n" :prompt "revise")
-          (is (= "# v2\n" (:content (api/file-get sess "README.md"))))
-          (is (= "# hello\n" (:content (api/file-get sess "README.md" :at before)))
+          (ops/file-put! sess "README.md" "# v2\n" :prompt "revise")
+          (is (= "# v2\n" (:content (ops/file-get sess "README.md"))))
+          (is (= "# hello\n" (:content (ops/file-get sess "README.md" :at before)))
               "time travel through the files manifest")))
       (testing "remove drops it, and reading it back is an error not a nil"
-        (is (= {:removed "README.md"} (api/file-remove! sess "README.md")))
+        (is (= {:removed "README.md"} (ops/file-remove! sess "README.md")))
         (is (re-find #"not on the files manifest"
-                     (str (:error (api/file-get sess "README.md"))))))
+                     (str (:error (ops/file-get sess "README.md"))))))
       (testing "the refusals are data, not throws"
-        (is (re-find #"needs a :path" (str (:error (api/file-put! sess "" "x")))))
-        (is (re-find #"needs :content" (str (:error (api/file-put! sess "a.txt" nil)))))
+        (is (re-find #"needs a :path" (str (:error (ops/file-put! sess "" "x")))))
+        (is (re-find #"needs :content" (str (:error (ops/file-put! sess "a.txt" nil)))))
         (is (re-find #"not on the files manifest"
-                     (str (:error (api/file-remove! sess "nope.txt"))))))
-      (finally (api/close! sess)))))
+                     (str (:error (ops/file-remove! sess "nope.txt"))))))
+      (finally (ops/close! sess)))))
 
 (deftest binary-files-are-content-addressed
   (let [base  (store/empty-store)
@@ -172,25 +172,25 @@ X-Slopp-Main: slopp.kernel.boot/-main
         b64  (.encodeToString (java.util.Base64/getEncoder) png)]
     (try
       (testing "binary put reports the content address"
-        (let [r (api/file-put! sess "public/i.png" b64
+        (let [r (ops/file-put! sess "public/i.png" b64
                                :encoding "base64" :content-type "image/png"
                                :prompt "asset")]
           (is (nil? (:error r)) (pr-str r))
           (is (= (count png) (:bytes r)))
           (is (string? (:sha r)))))
       (testing "binary get returns base64 + content-type"
-        (let [r (api/file-get sess "public/i.png")]
+        (let [r (ops/file-get sess "public/i.png")]
           (is (= "base64" (:encoding r)))
           (is (= "image/png" (:content-type r)))
           (is (java.util.Arrays/equals
                png (.decode (java.util.Base64/getDecoder) (str (:content r)))))))
       (testing "text stays text"
-        (api/file-put! sess "NOTES.md" "plain\n")
-        (let [r (api/file-get sess "NOTES.md")]
+        (ops/file-put! sess "NOTES.md" "plain\n")
+        (let [r (ops/file-get sess "NOTES.md")]
           (is (= "plain\n" (:content r)))
           (is (nil? (:encoding r)))))
       (testing "build! materializes the asset as real bytes"
-        (api/ingest! sess 'bf.core "(ns bf.core)\n(defn ^:unused-ok f [x] x)\n")
+        (ops/ingest! sess 'bf.core "(ns bf.core)\n(defn ^:unused-ok f [x] x)\n")
         (let [dir (str (java.nio.file.Files/createTempDirectory
                         "slopp-binbuild" (make-array java.nio.file.attribute.FileAttribute 0)))
               r   (external/build! sess dir)]
@@ -198,7 +198,7 @@ X-Slopp-Main: slopp.kernel.boot/-main
           (is (java.util.Arrays/equals
                png (java.nio.file.Files/readAllBytes
                     (.toPath (java.io.File. dir "public/i.png")))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-vendored-js-declaration-can-be-checked-against-its-blob
   (let [b64      "Ly8gcm91Z2gK"                       ; "// rough\n"
@@ -240,25 +240,25 @@ X-Slopp-Main: slopp.kernel.boot/-main
       (spit tmp "var rough=1;\n")
       (testing "a format typo would be a silent no-op at compile time"
         (is (re-find #":iife, :umd or :esm"
-                     (str (:error (api/js-dep! sess "roughjs"
+                     (str (:error (ops/js-dep! sess "roughjs"
                                                {:version "4.6.6" :format :iffe
                                                 :global "rough"
                                                 :file "public/js/rough.js"}
                                                :source (str tmp)))))))
       (testing "an :iife library with no :global has nothing to map a require onto"
         (is (re-find #":global"
-                     (str (:error (api/js-dep! sess "roughjs"
+                     (str (:error (ops/js-dep! sess "roughjs"
                                                {:version "4.6.6" :format :iife
                                                 :file "public/js/rough.js"}
                                                :source (str tmp)))))))
       (testing "no :source at all — declaring IS vendoring, so the bytes must exist"
         (is (re-find #":source"
-                     (str (:error (api/js-dep! sess "roughjs"
+                     (str (:error (ops/js-dep! sess "roughjs"
                                                {:version "4.6.6" :format :iife
                                                 :global "rough"
                                                 :file "public/js/rough.js"}))))))
       (testing "a good declaration vendors the bytes and records the coordinate"
-        (let [r (api/js-dep! sess "roughjs"
+        (let [r (ops/js-dep! sess "roughjs"
                              {:version "4.6.6" :format :iife :global "rough"
                               :file "public/js/rough.js"
                               :npm "roughjs@4.6.6" :npm-path "bundled/rough.js"
@@ -281,6 +281,6 @@ X-Slopp-Main: slopp.kernel.boot/-main
             (is (= 64 (count (:sha r))))
             (is (.exists (artifacts/cache-file (:dir @sess) (:sha r)))))))
       (testing "retraction drops the declaration"
-        (is (= {:retracted "roughjs"} (api/js-dep! sess "roughjs" nil :remove true)))
+        (is (= {:retracted "roughjs"} (ops/js-dep! sess "roughjs" nil :remove true)))
         (is (nil? (get-in (:store @sess) [:js-deps "roughjs"]))))
-      (finally (.delete tmp) (api/close! sess)))))
+      (finally (.delete tmp) (ops/close! sess)))))

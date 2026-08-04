@@ -1,3 +1,4 @@
+D-ui-hub: D-hub
 auth.bearer.: web.auth.bearer.
 auth.default-policy: web.auth.default-policy
 auth.oidc.: web.auth.oidc.

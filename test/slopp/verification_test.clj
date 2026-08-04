@@ -15,7 +15,7 @@
   worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.ops :as api] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.kernel.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image]))
+            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.kernel.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -27,29 +27,29 @@
 (deftest ^:external tracing-maps-tests-to-forms
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'vdemo target)
-      (let [res (api/test-run! sess 'vdemo)]
+      (ops/ingest! sess 'vdemo target)
+      (let [res (ops/test-run! sess 'vdemo)]
         (is (= 2 (:pass res))))
       (testing "each test maps to exactly the forms it exercises (D1 form-granularity)"
         (let [tmap (:test-map @sess)]
           (is (= #{'vdemo/add} (tmap 'vdemo/add-t)))
           (is (= #{'vdemo/mul} (tmap 'vdemo/mul-t)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external edit-runs-only-affected-tests
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'vdemo target)
-      (api/test-run! sess 'vdemo)                          ; builds the trace map
+      (ops/ingest! sess 'vdemo target)
+      (ops/test-run! sess 'vdemo)                          ; builds the trace map
       (testing "editing mul re-runs only mul-t (add-t is untouched by the edit)"
-        (let [r (api/edit-replace! sess 'vdemo 'mul "(defn mul [x y] (* y x))"
+        (let [r (ops/edit-replace! sess 'vdemo 'mul "(defn mul [x y] (* y x))"
                                    :prompt "commute")]
           (is (nil? (:error r)))
           (is (= ['vdemo/mul-t] (:affected r)))
           (is (= 1 (:test (:test r))))
           (is (= 1 (:pass (:test r))))))
       (testing "editing a test itself re-runs exactly that test"
-        (let [r (api/edit-replace! sess 'vdemo 'mul-t
+        (let [r (ops/edit-replace! sess 'vdemo 'mul-t
                                    "(deftest mul-t (is (= 8 (mul 2 4))))"
                                    :prompt "retarget")]
           (is (= ['vdemo/mul-t] (:affected r)))
@@ -57,19 +57,19 @@
       (testing "ingest itself seeds the trace map (W1): edits narrow immediately"
         (let [sess2 (external/open!)]
           (try
-            (api/ingest! sess2 'vdemo target)
-            (let [r (api/edit-replace! sess2 'vdemo 'mul "(defn mul [x y] (* y x))")]
+            (ops/ingest! sess2 'vdemo target)
+            (let [r (ops/edit-replace! sess2 'vdemo 'mul "(defn mul [x y] (* y x))")]
               (is (= ['vdemo/mul-t] (:affected r)))
               (is (= 1 (:test (:test r)))))
-            (finally (api/close! sess2)))))
-      (finally (api/close! sess)))))
+            (finally (ops/close! sess2)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external reload-signature-reds-still-heal              ; D5.1 belt-and-suspenders
   ;; Even when the red IS on an edited path (flip rule says "explained"), an
   ;; unbound-var-style failure smells like staleness and must cross-check.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sig.core
+      (ops/ingest! sess 'sig.core
                    (str "(ns sig.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn helper [x] (* 2 x))\n"
                         "(defn f [x] (helper x))\n"
@@ -78,48 +78,48 @@
       (repl/eval! (:image @sess) "(ns-unmap 'sig.core 'helper)")
       ;; editing f now hits the compile gate against the stale image; D5.1
       ;; heals it: fresh image, retried load, write proceeds
-      (let [r (api/edit-replace! sess 'sig.core 'f "(defn f [x] (helper x))"
+      (let [r (ops/edit-replace! sess 'sig.core 'f "(defn f [x] (helper x))"
                                  :prompt "touch f while helper is stale")]
         (is (nil? (:error r)))
         (is (true? (:image-healed r)))
         (is (zero? (+ (:fail (:test r)) (:error (:test r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external test-run-fresh-forces-a-cross-check
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'fr.core
+      (ops/ingest! sess 'fr.core
                    (str "(ns fr.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] x)\n(deftest f-t (is (= 1 (f 1))))\n"))
       (let [before (:port (:image @sess))
-            res    (api/test-run! sess 'fr.core :fresh true)]
+            res    (ops/test-run! sess 'fr.core :fresh true)]
         (is (zero? (:fail res)))
         (is (not= before (:port (:image @sess)))))   ; image really was replaced
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external test-run-only-targets-named-tests
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'vdemo target)
-      (let [r (api/test-run! sess 'vdemo :only ['add-t])]
+      (ops/ingest! sess 'vdemo target)
+      (let [r (ops/test-run! sess 'vdemo :only ['add-t])]
         (is (= 1 (:test r)))
         (is (= 1 (:pass r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external red-is-cross-checked-on-a-fresh-image
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'vdemo target)
+      (ops/ingest! sess 'vdemo target)
       (testing "staleness flip: image drifts behind the store's back; NOTHING was
                 edited, so the red is unexplained -> restart heals it"
         ;; poison the image only (the store is untouched) — the classic stale state
         (repl/eval! (:image @sess) "(in-ns 'vdemo) (def add (fn [x y] 999))")
-        (let [res (api/test-run! sess 'vdemo)]
+        (let [res (ops/test-run! sess 'vdemo)]
           (is (zero? (+ (:fail res) (:error res))))
           (is (true? (:staleness-detected res)))))
       (testing "genuine red (D5.1): assertion failure on the just-edited path is
                 reported immediately — ONE run, no restart, no cross-check"
-        (let [r (api/edit-replace! sess 'vdemo 'add "(defn add [x y] (- x y))"
+        (let [r (ops/edit-replace! sess 'vdemo 'add "(defn add [x y] (- x y))"
                                    :prompt "break it")]
           (is (= 1 (:fail (:test r))))
           (is (= :genuine (:diagnosis (:test r))))
@@ -131,16 +131,16 @@
               (is (= :fail (:type f)))
               (is (re-find #"\(= 5 \(add 2 3\)\)" (:expected f)))
               (is (= "(not (= 5 -1))" (:actual f)))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external red-results-name-the-implicated-forms
   ;; Rock 2: the system holds the trace map AND the delta — a red write
   ;; result says WHICH changed form each failing test exercises
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'im.core :source "(ns im.core (:require [clojure.test :refer [deftest is]]))\n(defn f [x] (inc x))\n(defn g [x] (dec x))\n(deftest f-t (is (= 2 (f 1))))\n(deftest g-t (is (= 0 (g 1))))\n")
-      (api/test-run! sess nil)
-      (let [r     (api/edit-replace! sess 'im.core 'f "(defn f [x] (+ x 2))"
+      (ops/create-ns! sess 'im.core :source "(ns im.core (:require [clojure.test :refer [deftest is]]))\n(defn f [x] (inc x))\n(defn g [x] (dec x))\n(deftest f-t (is (= 2 (f 1))))\n(deftest g-t (is (= 0 (g 1))))\n")
+      (ops/test-run! sess nil)
+      (let [r     (ops/edit-replace! sess 'im.core 'f "(defn f [x] (+ x 2))"
                                      :prompt "break it" :agent "t")
             fails (get-in r [:test :failures])]
         (is (seq fails))
@@ -148,7 +148,7 @@
           (is (= ['im.core/f] (:implicated (first fails)))))
         (testing "narrowing kept the untouched test out of the run"
           (is (= 1 (count fails)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external trace-map-survives-sessions
   (let [dir (str (java.nio.file.Files/createTempDirectory
@@ -156,20 +156,20 @@
                   (make-array java.nio.file.attribute.FileAttribute 0)))
         s1  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! s1 'vdemo target)
-      (api/test-run! s1 'vdemo)
+      (ops/ingest! s1 'vdemo target)
+      (ops/test-run! s1 'vdemo)
       (is (seq (:test-map @s1)))
-      (finally (api/close! s1)))
+      (finally (ops/close! s1)))
     (let [s2 (external/open! {:slopp.ops/dir dir})]
       (try
         (testing "a fresh session on the same store starts with the trace warm (Q3)"
           (is (= #{'vdemo/add} (get (:test-map @s2) 'vdemo/add-t))
               (pr-str (:test-map @s2))))
         (testing "…so its first edit narrows instead of running everything"
-          (let [r (api/edit-replace! s2 'vdemo 'mul "(defn mul [x y] (* y x))"
+          (let [r (ops/edit-replace! s2 'vdemo 'mul "(defn mul [x y] (* y x))"
                                      :prompt "commute")]
             (is (= ['vdemo/mul-t] (:affected r)) (pr-str (select-keys r [:affected :test])))))
-        (finally (api/close! s2))))))
+        (finally (ops/close! s2))))))
 
 (deftest failure-themes-cluster-root-causes
   (let [block  (fn [t msg]
@@ -192,13 +192,13 @@
                    (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'ia.core "(ns ia.core)\n(defn f \"F.\" [x] (inc x))\n")
-      (api/ingest! sess 'ia.core-test
+      (ops/ingest! sess 'ia.core "(ns ia.core)\n(defn f \"F.\" [x] (inc x))\n")
+      (ops/ingest! sess 'ia.core-test
                    (str "(ns ia.core-test (:require [ia.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest f-t (is (= 2 (c/f 1))))\n"))
-      (api/ingest! sess 'ib.core "(ns ib.core)\n(defn g \"G.\" [x] (dec x))\n")
-      (api/ingest! sess 'ib.core-test
+      (ops/ingest! sess 'ib.core "(ns ib.core)\n(defn g \"G.\" [x] (dec x))\n")
+      (ops/ingest! sess 'ib.core-test
                    (str "(ns ib.core-test (:require [ib.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest g-t (is (= 0 (c/g 1))))\n"))
@@ -208,7 +208,7 @@
           (is (zero? (:ran r)) (pr-str r))
           (is (re-find #"full gate" (str (:note r))))))
       (testing "changing ONE island runs only the tests that can reach it"
-        (let [er (api/edit-replace! sess 'ia.core 'f "(defn f \"F.\" [x] (+ x 1))"
+        (let [er (ops/edit-replace! sess 'ia.core 'f "(defn f \"F.\" [x] (+ x 1))"
                                     :prompt "same behavior, new spelling")]
           (is (nil? (:error er)) (pr-str er))
           (is (nil? (:conflict er)) (pr-str er)))
@@ -217,7 +217,7 @@
           (is (= '[ia.core-test] (get-in r [:affected :selected])) (pr-str (:affected r)))
           (is (some #{'ia.core} (get-in r [:affected :changed-nses])))
           (is (= :green (:status r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external parallel-external-runs-shard-and-merge
   ;; the full external suite is the wall-time king (~210s at repo scale,
@@ -225,11 +225,11 @@
   ;; must return the same merged truth
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'pa.core
+      (ops/ingest! sess 'pa.core
                    (str "(ns pa.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
-      (api/ingest! sess 'pb.core
+      (ops/ingest! sess 'pb.core
                    (str "(ns pb.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn g \"G.\" [x] (dec x))\n"
                         "(deftest g-t (is (= 0 (g 1))))\n"
@@ -240,13 +240,13 @@
         (is (= :green (:status r)))
         (is (= 2 (:shards r))))
       (testing "a red in any shard surfaces with its details"
-        (api/edit-replace! sess 'pb.core 'g "(defn g \"G.\" [x] (+ x 5))"
+        (ops/edit-replace! sess 'pb.core 'g "(defn g \"G.\" [x] (+ x 5))"
                            :prompt "breaks both g tests")
         (let [r (external/external-test-run! sess :parallel 2)]
           (is (= :red (:status r)))
           (is (pos? (:failures r 0)))
           (is (seq (:all-failing r)) (pr-str (dissoc r :output)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest auto-parallel-scales-with-work-and-cores
   ;; sharding only pays above real scale (each shard reloads the whole store);
@@ -268,10 +268,10 @@
   ;; exactly those shards once, serially, and merge honestly.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ds.one-test
+      (ops/ingest! sess 'ds.one-test
                    (str "(ns ds.one-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest a-t (is (= 1 1)))\n"))
-      (api/ingest! sess 'ds.two-test
+      (ops/ingest! sess 'ds.two-test
                    (str "(ns ds.two-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest b-t (is (= 2 2)))\n"))
       (let [tries (atom {})
@@ -293,7 +293,7 @@
              (is (= 2 (:shard-retries r)))
              (is (every? (fn [[_ n]] (= 2 n)) @tries)
                  "each dead shard retried exactly once"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest external-traces-merge-across-shards
   ;; #121: a sharded external run is N concurrent JVMs in ONE built dir, each
@@ -328,13 +328,13 @@
   ;; with a STUB runner, so it tests the wiring rather than the tracer.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tt.core
+      (ops/ingest! sess 'tt.core
                    (str "(ns tt.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(deftest f-t (is (= 2 (f 1))))\n"))
       ;; a runner that writes a known trace, then hands off to the real
       ;; cognitect main — exactly the delegate-don't-replace shape.
-      (api/create-ns! sess 'slopp.image.testmain
+      (ops/create-ns! sess 'slopp.image.testmain
                       :source (str "(ns slopp.image.testmain\n"
                                    "  \"Stub trace runner (test).\"\n"
                                    "  (:require [clojure.java.io :as io]))\n"
@@ -350,7 +350,7 @@
       (testing "the trace the external tier observed lands in the session"
         (is (= '#{tt.core/f} (get (:test-map @sess) 'tt.core-test/f-t))
             (pr-str (:test-map @sess))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external child-image-rt-calls-reach-the-callers-trace
   ;; THE child-JVM blind spot (#126). Driving a child image runs slopp.kernel.rt THERE,
@@ -364,15 +364,15 @@
   ;; instrument! does around every external test, then drive a child image.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'vdemo target)
+      (ops/ingest! sess 'vdemo target)
       (let [touched   (atom #{})
             originals (rt/instrument! [] touched)]
         (try
-          (api/test-run! sess 'vdemo)
+          (ops/test-run! sess 'vdemo)
           (testing "rt that ran in the CHILD is attributed to the caller's test"
             (is (contains? @touched 'slopp.kernel.rt/traced-run) (pr-str @touched)))
           (finally (rt/restore! originals))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external multimethod-tests-trace-to-the-method-forms
   ;; The whole point of the C-wave: a test exercising ONE method of a
@@ -382,17 +382,17 @@
   ;; fn?) and a multimethod-heavy project got zero narrowing evidence.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'shapes.core
+      (ops/ingest! sess 'shapes.core
                    (str "(ns shapes.core)\n\n"
                         "(defmulti area :shape)\n\n"
                         "(defmethod area :square [s] (* (:side s) (:side s)))\n\n"
                         "(defmethod area :circle [c] (* 3 (:r c) (:r c)))\n"))
-      (api/ingest! sess 'shapes.core-test
+      (ops/ingest! sess 'shapes.core-test
                    (str "(ns shapes.core-test (:require [shapes.core :as c]\n"
                         "                               [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest square-t (is (= 4 (c/area {:shape :square :side 2}))))\n\n"
                         "(deftest circle-t (is (= 12 (c/area {:shape :circle :r 2}))))\n"))
-      (let [r (api/test-run! sess 'shapes.core-test)
+      (let [r (ops/test-run! sess 'shapes.core-test)
             _ (is (= 2 (:pass r)) (pr-str r))
             st    (:store @sess)
             forms (store/forms st 'shapes.core)
@@ -409,7 +409,7 @@
           (is (not (contains? sq-trace (fkey ci-form))))
           (is (contains? ci-trace (fkey ci-form)) (pr-str ci-trace))
           (is (not (contains? ci-trace (fkey sq-form))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external protocols-and-records-track-through-their-vars
   ;; The other half of the polymorphism wave — and it PINS A LIMIT found red
@@ -422,15 +422,15 @@
   ;; form (D8 names), and everything method-carrying refuses to narrow.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'geo.core
+      (ops/ingest! sess 'geo.core
                    (str "(ns geo.core)\n\n"
                         "(defprotocol P \"Perimeter.\" (perim [x] \"P.\"))\n\n"
                         "(defrecord Sq [side]\n  P\n  (perim [_] (* 4 side)))\n"))
-      (api/ingest! sess 'geo.core-test
+      (ops/ingest! sess 'geo.core-test
                    (str "(ns geo.core-test (:require [geo.core :as g]\n"
                         "                            [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest perim-t (is (= 8 (g/perim (g/->Sq 2)))))\n"))
-      (is (= 1 (:pass (api/test-run! sess 'geo.core-test))))
+      (is (= 1 (:pass (ops/test-run! sess 'geo.core-test))))
       (testing "the defrecord form owns its constructors' evidence (D8 names)"
         (let [b (query/query-brief sess 'geo.core 'Sq)]
           (is (= {:count 1 :tests '[geo.core-test/perim-t]} (:covered-by b)) (pr-str b))))
@@ -442,12 +442,12 @@
           (is (nil? (:covered-by b)) (pr-str (:covered-by b)))))
       (testing "editing the record falls back to run-everything and says so —
                 ->Sq evidence alone would under-select"
-        (let [r (api/edit-replace! sess 'geo.core 'Sq
+        (let [r (ops/edit-replace! sess 'geo.core 'Sq
                                    "(defrecord Sq [side]\n  P\n  (perim [_] (+ side side side side)))"
                                    :prompt "same perimeter, different arithmetic")]
           (is (= :all (:affected r)) (pr-str (select-keys r [:affected])))
           (is (:untested r) "the per-write path admits it could not cover this")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external restart-recovers-from-a-broken-image-handle
   ;; restart is the correctness backstop, and it had a bootstrapping
@@ -460,14 +460,14 @@
   ;; A repair tool must not require the thing it repairs to be healthy.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rr.core "(ns rr.core)\n(defn f [] 41)\n")
-      (is (= [41] (api/query-eval sess "(rr.core/f)")))
+      (ops/ingest! sess 'rr.core "(ns rr.core)\n(defn f [] 41)\n")
+      (is (= [41] (ops/query-eval sess "(rr.core/f)")))
       (testing "with a garbage image handle, restart still rebuilds"
         (swap! sess assoc :image {:bogus true} :spare nil)
-        (is (some? (api/restart! sess)))
-        (is (= [41] (api/query-eval sess "(rr.core/f)"))
+        (is (some? (ops/restart! sess)))
+        (is (= [41] (ops/query-eval sess "(rr.core/f)"))
             "the store reloads into a genuinely fresh image"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external fallback-verifies-tests-that-reach-the-change
   ;; The "conservative full" fallback ran tests IN the touched PRODUCTION
@@ -482,29 +482,29 @@
   ;; deliberately NOT cv.core-test, so a naming heuristic still finds nothing.
   (let [sess (external/open!)]
     (try
-      (is (nil? (:error (api/ingest! sess 'cv.core
+      (is (nil? (:error (ops/ingest! sess 'cv.core
                                      "(ns cv.core)\n(defn f [] 41)\n"))))
-      (is (nil? (:error (api/ingest!
+      (is (nil? (:error (ops/ingest!
                          sess 'cv.core.probe-test
                          (str "(ns cv.core.probe-test\n"
                               "  (:require [clojure.test :refer [deftest is]]\n"
                               "            [cv.core :as c]))\n\n"
                               "(deftest covers-f (is (= 41 (c/f))))\n")))))
       (testing "a single-form write with NO trace evidence still verifies"
-        (let [r (api/edit-replace! sess 'cv.core 'f "(defn f [] 41)"
+        (let [r (ops/edit-replace! sess 'cv.core 'f "(defn f [] 41)"
                                    :prompt "empty trace map")]
           (is (pos? (:test (:test r)))
               (str "must run the covering test ns found via the graph: "
                    (pr-str (:test r))))))
       (testing "a GROUP write does too — this is where it mattered most"
-        (let [r (api/edit-group! sess
+        (let [r (ops/edit-group! sess
                                  [{:action :replace :ns 'cv.core :name 'f
                                    :source "(defn f [] 41)"}]
                                  :prompt "group with no trace evidence")]
           (is (pos? (:test (:test r)))
               (str "a multi-form refactor must not verify nothing: "
                    (pr-str (:test r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external live-handle-shape-change-rebuilds-the-image
   ;; The one failure this project never guarded, and it bricked the session
@@ -523,11 +523,11 @@
   ;; version of the code and passed back forever after.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'lh.core
+      (ops/ingest! sess 'lh.core
                    (str "(ns lh.core)\n\n"
                         "(defn ^:live-handle mk [] {:conn 1 :port 2})\n"))
       (testing "changing a live-handle's KEY SHAPE rebuilds the image"
-        (let [r (api/edit-replace! sess 'lh.core 'mk
+        (let [r (ops/edit-replace! sess 'lh.core 'mk
                                    "(defn ^:live-handle mk [] {:lh/conn 1 :port 2})"
                                    :prompt "namespace a handle key")]
           (is (nil? (:error r)) (pr-str r))
@@ -535,19 +535,19 @@
               (str "a stale handle must be replaced BEFORE anything reads it: "
                    (pr-str r)))))
       (testing "the image still works afterwards"
-        (is (= [3] (api/query-eval sess "(+ 1 2)"))))
+        (is (= [3] (ops/query-eval sess "(+ 1 2)"))))
       (testing "a body change with the SAME keys does not rebuild"
-        (let [r (api/edit-replace! sess 'lh.core 'mk
+        (let [r (ops/edit-replace! sess 'lh.core 'mk
                                    "(defn ^:live-handle mk [] {:lh/conn 9 :port 2})"
                                    :prompt "same shape, different values")]
           (is (nil? (:image-rebuilt r)) (pr-str r))))
       (testing "an UNMARKED fn changing its keys does not rebuild — no handle"
-        (api/ingest! sess 'lh.plain "(ns lh.plain)\n(defn mk [] {:a 1})\n")
-        (let [r (api/edit-replace! sess 'lh.plain 'mk
+        (ops/ingest! sess 'lh.plain "(ns lh.plain)\n(defn mk [] {:a 1})\n")
+        (let [r (ops/edit-replace! sess 'lh.plain 'mk
                                   "(defn mk [] {:b 1})"
                                   :prompt "ordinary map, not a handle")]
           (is (nil? (:image-rebuilt r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest run-cmd-kills-a-runner-that-stopped-talking
   ;; run-shard! and the serial branch blocked in sh/sh with no bound — one
@@ -569,10 +569,10 @@
   ;; the parse in BOTH branches.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'gx.one-test
+      (ops/ingest! sess 'gx.one-test
                    (str "(ns gx.one-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest a-t (is (= 1 1)))\n"))
-      (api/ingest! sess 'gx.two-test
+      (ops/ingest! sess 'gx.two-test
                    (str "(ns gx.two-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest b-t (is (= 2 2)))\n"))
       (let [green-out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors."]
@@ -588,7 +588,7 @@
             #(let [r (external/external-test-run! sess :ns 'gx.one-test)]
                (is (= :error (:status r))
                    (pr-str (select-keys r [:status :exit :note])))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external full-check-affected-narrows-only-the-external-tier
   ;; full_check is ~190s and ~187s of that is the external suite (299 image
@@ -605,9 +605,9 @@
                ;; SUFFIX-convention tests, not inline: the external runner's
                ;; generated :test alias assumes the -test suffix and REPLs out
                ;; on inline-test projects (finding Q13)
-               (api/ingest! sess nsx
+               (ops/ingest! sess nsx
                             (str "(ns " nsx ")\n(defn f \"F.\" [x] (+ x " v "))\n"))
-               (api/ingest! sess (symbol (str nsx "-test"))
+               (ops/ingest! sess (symbol (str nsx "-test"))
                             (str "(ns " nsx "-test (:require [" nsx " :as t]\n"
                                  "                          [clojure.test :refer [deftest is]]))\n"
                                  "(deftest ^:external f-t (is (= (+ 1 " v ") (t/f 1))))\n")))]
@@ -619,7 +619,7 @@
       (let [c (external/commit-point! sess "baseline")]
         (is (:commit c) (str "fixture: baseline must land — "
                              (pr-str (dissoc c :test :findings)))))
-      (api/edit-replace! sess 'fa.one 'f "(defn f \"F.\" [x] (inc x))"
+      (ops/edit-replace! sess 'fa.one 'f "(defn f \"F.\" [x] (inc x))"
                          :prompt "touch one namespace only")
       (let [r   (external/full-check! sess :affected true)
             sel (set (map str (get-in r [:external :affected :selected])))]
@@ -635,7 +635,7 @@
         (testing "and the result SAYS the tier was narrowed"
           (is (re-find #"(?i)narrowed" (str (:scope r)))
               (str "an unstated omission reads as coverage: " (pr-str (:scope r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external verification-records-what-it-COST-not-only-what-it-found
   ;; A delta carries :at (when it landed) and nothing about how long the work
@@ -649,17 +649,17 @@
   ;; :verify delta's :result with no change at any of the twelve call sites.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ms.core
+      (ops/ingest! sess 'ms.core
                    (str "(ns ms.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [] 1)\n"
                         "(deftest f-t (is (= 1 (f))))\n"))
-      (api/edit-replace! sess 'ms.core 'f "(defn f \"F.\" [] 1)"
+      (ops/edit-replace! sess 'ms.core 'f "(defn f \"F.\" [] 1)"
                          :prompt "a write whose verification actually runs")
       (let [v (last (filter #(= :verify (:op %)) (store/deltas (:store @sess))))
             ms (get-in v [:result :ms])]
         (is (number? ms) (str "the verify delta must record its own cost: " (pr-str v)))
         (is (<= 0 ms) "a duration is never negative"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external full-check-records-the-whole-store-verdict-and-its-cost
   ;; Measured on this store's own log: per-write verification is 349 writes
@@ -669,7 +669,7 @@
   ;; guessed from the gap before whatever landed next.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'fc.core
+      (ops/ingest! sess 'fc.core
                    (str "(ns fc.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [] 1)\n"
                         "(deftest f-t (is (= 1 (f))))\n"))
@@ -682,7 +682,7 @@
           (is (some? v) "the whole-store verdict must land in the journal")
           (is (number? (get-in v [:result :ms])))
           (is (= :green (get-in v [:result :status])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external done-and-the-external-tier-report-their-own-cost
   ;; done is the most frequently called verdict — 109 calls in one 25-hour
@@ -692,7 +692,7 @@
   ;; answerable from the log instead of inferred from delta gaps.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dc.core
+      (ops/ingest! sess 'dc.core
                    (str "(ns dc.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f \"F.\" [] 1)\n"
                         "(deftest f-t (is (= 1 (f))))\n"))
@@ -703,7 +703,7 @@
       (testing "the external tier reports what a fresh-JVM run cost"
         (let [x (external/external-test-run! sess)]
           (is (number? (:ms x)) (pr-str (keys x)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external built-store-reaches-the-code-this-build-actually-contains
   ;; THE prerequisite for any whole-store invariant, and the reason
@@ -762,11 +762,11 @@
   ;; surface as an error rather than as a quiet green.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'nh.core-test
+      (ops/ingest! sess 'nh.core-test
                    (str "(ns nh.core-test (:require [clojure.test :refer [deftest is]]))\n\n"
                         "(deftest a-t (is (= 1 1)))\n"))
       (testing "the sane case still reports what it ran"
-        (let [r (api/test-run! sess 'nh.core-test)]
+        (let [r (ops/test-run! sess 'nh.core-test)]
           (is (= 1 (:test r)) (pr-str r))
           (is (= 1 (:pass r)) (pr-str r))))
       (testing "a runner that returns no summary is an ERROR — the one shape
@@ -774,7 +774,7 @@
                 caller reads that as a clean run"
         (with-redefs-fn {#'image/traced-test-run
                          (fn [& _] "Execution error: No namespace: nh.nope found")}
-          #(let [r (api/test-run! sess 'nh.core-test)]
+          #(let [r (ops/test-run! sess 'nh.core-test)]
              (is (map? r) (pr-str r))
              (is (pos? (:error r 0))
                  (str "an absent summary must count as an error, or a run that"
@@ -784,7 +784,7 @@
              (is (re-find #"nh\.nope" (pr-str (:failures r)))
                  (str "and it must carry what the runner actually said, or the"
                       " next cause is undiagnosable: " (pr-str r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external an-eval-that-threw-is-not-an-eval-that-returned-nothing
   ;; The root of the whole family. `repl/eval!` keeps `:value` from the nREPL
@@ -814,7 +814,7 @@
             (is (re-find #"no\.such\.namespace\.here" (pr-str r))
                 (str "and it must carry what was thrown, or the next cause is"
                      " undiagnosable: " (pr-str r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-renamed-deftest-verifies-under-its-NEW-name
   ;; slopp-ui, 2026-08-02: replacing a deftest whose NAME changes reported
@@ -834,25 +834,25 @@
   ;; is a red nobody reads.
   (let [sess (external/open!)]
     (try
-      (is (nil? (:error (api/ingest! sess 'rn.core
+      (is (nil? (:error (ops/ingest! sess 'rn.core
                                      "(ns rn.core)\n(defn f [] 41)\n"))))
-      (is (nil? (:error (api/ingest!
+      (is (nil? (:error (ops/ingest!
                          sess 'rn.core-test
                          (str "(ns rn.core-test\n"
                               "  (:require [clojure.test :refer [deftest is]]\n"
                               "            [rn.core :as c]))\n\n"
                               "(deftest f-is-41 (is (= 41 (c/f))))\n")))))
       (testing "a renamed deftest runs under the name it now has"
-        (let [r (api/edit-replace! sess 'rn.core-test 'f-is-41
+        (let [r (ops/edit-replace! sess 'rn.core-test 'f-is-41
                                    "(deftest f-returns-41 (is (= 41 (c/f))))"
                                    :prompt "rename the deftest")]
           (is (pos? (:test (:test r) 0))
               (str "the rename must not empty the scope: " (pr-str (:test r))))))
       (testing "and a rename that also goes RED reports the red"
-        (let [r (api/edit-replace! sess 'rn.core-test 'f-returns-41
+        (let [r (ops/edit-replace! sess 'rn.core-test 'f-returns-41
                                    "(deftest f-returns-42 (is (= 42 (c/f))))"
                                    :prompt "rename and break in one write")]
           (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0)))
               (str "a red must survive a rename in the same write: "
                    (pr-str (:test r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

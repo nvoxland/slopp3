@@ -5,7 +5,7 @@
   couldn't cold-load. Covers the three write shapes that can create one:
   single-form replace, edit_group replace-before-add, and edit_move."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api] [slopp.store :as store] [slopp.edit :as edit] [slopp.ops.branch :as branch] [clojure.java.io :as io] [slopp.read.query :as query] [slopp.ops.external :as external]))
+            [slopp.ops :as ops] [slopp.store :as store] [slopp.edit :as edit] [slopp.ops.branch :as branch] [clojure.java.io :as io] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
 (def seed
   (str "(ns cl.core)\n"
@@ -17,8 +17,8 @@
   (let [sess (external/open!)]
     (try
       (testing "replace: an early form referencing a later one AUTO-REORDERS (silent)"
-        (api/ingest! sess 'cl.core seed)
-        (let [r (api/edit-replace! sess 'cl.core 'early "(defn early [] (late))"
+        (ops/ingest! sess 'cl.core seed)
+        (let [r (ops/edit-replace! sess 'cl.core 'early "(defn early [] (late))"
                                    :prompt "x" :agent "t")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:reordered r)) "no ordering key leaks to the agent")
@@ -28,8 +28,8 @@
           (is (nil? (edit/cold-load-errors (:store @sess) '[cl.core])))))
 
       (testing "group: add a helper + a caller referencing it AUTO-REORDERS atomically"
-        (api/ingest! sess 'cl.grp "(ns cl.grp)\n(defn early [] 1)\n")
-        (let [r (api/edit-group! sess
+        (ops/ingest! sess 'cl.grp "(ns cl.grp)\n(defn early [] 1)\n")
+        (let [r (ops/edit-group! sess
                                  [{:action :replace :ns 'cl.grp :name 'early
                                    :source "(defn early [] (brand-new))"}
                                   {:action :add :ns 'cl.grp
@@ -42,8 +42,8 @@
           (is (nil? (edit/cold-load-errors (:store @sess) '[cl.grp])))))
 
       (testing "genuine CYCLE (mutual recursion) AUTO-DECLARES — the pipeline owns it"
-        (api/ingest! sess 'cl.cyc "(ns cl.cyc)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
-        (let [r (api/edit-replace! sess 'cl.cyc 'ping "(defn ping [n] (pong n))"
+        (ops/ingest! sess 'cl.cyc "(ns cl.cyc)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
+        (let [r (ops/edit-replace! sess 'cl.cyc 'ping "(defn ping [n] (pong n))"
                                    :prompt "cyc" :agent "t")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:declared r)) "silent — no declare key leaks to the agent")
@@ -53,17 +53,17 @@
               "a MARKED declare was inserted by the pipeline")))
 
       (testing "move: relocating a caller before its callee is still REFUSED (explicit order)"
-        (api/ingest! sess 'cl.mv "(ns cl.mv)\n(defn early [] 1)\n(defn late [] 2)\n(defn tail [] (late))\n")
-        (let [r (api/move-form! sess 'cl.mv 'tail :before 'late
+        (ops/ingest! sess 'cl.mv "(ns cl.mv)\n(defn early [] 1)\n(defn late [] 2)\n(defn tail [] (late))\n")
+        (let [r (ops/move-form! sess 'cl.mv 'tail :before 'late
                                 :prompt "m" :agent "t")]
           (is (:error r))
           (is (re-find #"cold-load" (str (:error r))))))
 
       (testing "legal writes still land"
-        (let [r (api/edit-replace! sess 'cl.core 'tail "(defn tail [] (early))"
+        (let [r (ops/edit-replace! sess 'cl.core 'tail "(defn tail [] (early))"
                                    :prompt "ok" :agent "t")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external merge-replay-that-breaks-cold-load-is-refused
   ;; Each line is individually gate-legal, but the MERGE interleaves into a
@@ -74,7 +74,7 @@
                    "slopp-coldload-merge" (make-array java.nio.file.attribute.FileAttribute 0)))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'm.core
+      (ops/ingest! sess 'm.core
                    (str "(ns m.core)\n"
                         "(declare h)\n"
                         "(defn f [] (h))\n"
@@ -83,16 +83,16 @@
       ;; branch: g starts calling h — legal, the declare is above
       (let [r (branch/branch! sess "side")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/edit-replace! sess 'm.core 'g "(defn g [] (h))"
+      (let [r (ops/edit-replace! sess 'm.core 'g "(defn g [] (h))"
                                  :prompt "g uses h" :agent "t")]
         (is (nil? (:error r)) (pr-str r)))
       ;; main: f drops h, the satisfied declare is tidied away — also legal
       (let [r (branch/branch-switch! sess "main")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/edit-replace! sess 'm.core 'f "(defn f [] :indep)"
+      (let [r (ops/edit-replace! sess 'm.core 'f "(defn f [] :indep)"
                                  :prompt "f drops h" :agent "t")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/fix-declares! sess 'm.core :agent "t")]
+      (let [r (ops/fix-declares! sess 'm.core :agent "t")]
         (is (nil? (:error r)) (pr-str r))
         (is (not (re-find #"declare" (query/query-source sess 'm.core)))
             "setup: the declare must be gone on main"))
@@ -103,9 +103,9 @@
         (is (re-find #"cold-load" (str (:error r))))
         (testing "nothing committed, image intact"
           (is (= before (query/query-source sess 'm.core)))
-          (is (= [:indep] (api/query-eval sess "(m.core/f)")))))
+          (is (= [:indep] (ops/query-eval sess "(m.core/f)")))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (letfn [(rm [f] (let [f (clojure.java.io/file f)]
                           (when (.isDirectory f) (run! rm (.listFiles f)))
                           (.delete f)))]
@@ -114,15 +114,15 @@
 (deftest ^:external declare-satisfies-the-gate
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cl.two
+      (ops/ingest! sess 'cl.two
                    (str "(ns cl.two)\n"
                         "(declare lazy)\n"
                         "(defn user [] 7)\n"
                         "(defn lazy [] 8)\n"))
-      (let [r (api/edit-replace! sess 'cl.two 'user "(defn user [] (lazy))"
+      (let [r (ops/edit-replace! sess 'cl.two 'user "(defn user [] (lazy))"
                                  :prompt "declared forward use" :agent "t")]
         (is (nil? (:error r)) (pr-str r)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest registrations-and-the-cold-load-gate
   ;; Registrations are ANONYMOUS (D8), and the reorder machinery is name-keyed:
@@ -195,11 +195,11 @@
   ;; moving, and re-applying — three writes to reorder two forms.
   (let [sess (external/open!)]
     (try
-      (api/module-platform! sess "cljsord" :cljs :prompt "browser code")
-      (api/ingest! sess 'cljsord.view
+      (ops/module-platform! sess "cljsord" :cljs :prompt "browser code")
+      (ops/ingest! sess 'cljsord.view
                    "(ns cljsord.view)\n(defn init [] 1)\n(defn helper [] 2)\n")
       (testing "a :cljs write referencing a later form reorders, like Clojure"
-        (let [r (api/edit-replace! sess 'cljsord.view 'init
+        (let [r (ops/edit-replace! sess 'cljsord.view 'init
                                    "(defn init [] (helper))"
                                    :prompt "use the helper" :agent "t")]
           (is (nil? (:error r)) (pr-str r))
@@ -212,4 +212,4 @@
         ;; the point of the fix — an agent working in :cljs never reaches the
         ;; state where every legal move is refused
         (is (nil? (edit/cold-load-errors (:store @sess) '[cljsord.view]))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

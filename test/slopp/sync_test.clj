@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.store.db :as db]
             [slopp.git :as git]
             [slopp.store :as store]
@@ -50,7 +50,7 @@
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
         sess  (external/open! {:slopp.ops/dir dir-a})]
     (try
-      (api/ingest! sess 'gc.core seed)
+      (ops/ingest! sess 'gc.core seed)
       (external/commit-point! sess "v1: f ships" :agent "alice")
       (let [p1 (sync/push! dir-a :url bare)]
         (is (nil? (:error p1)) (pr-str p1))
@@ -73,7 +73,7 @@
                 (is (= (:pushed p1) (db/get-meta conn "git-base-sha")))))
 
             (testing "edit + milestone + push from the clone = fast-forward onto the remote's history"
-              (let [e (api/edit-replace! sb 'gc.core 'f "(defn f [x] (+ 1 x))"
+              (let [e (ops/edit-replace! sb 'gc.core 'f "(defn f [x] (+ 1 x))"
                                          :prompt "flip arg order" :agent "bob")]
                 (is (nil? (:error e)) (pr-str e)))
               (let [m (external/commit-point! sb "v2: flipped" :agent "bob")]
@@ -95,9 +95,9 @@
                              (get (git/tree-at remote tip) "src/gc/core.clj")
                              "(+ 1 x)"))))
                     (finally (.close remote))))))
-            (finally (api/close! sb)))))
+            (finally (ops/close! sb)))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! dir-a)
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
@@ -110,13 +110,13 @@
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
         sa    (external/open! {:slopp.ops/dir dir-a})]
     (try
-      (api/ingest! sa 'gc.core seed)
+      (ops/ingest! sa 'gc.core seed)
       (external/commit-point! sa "v1" :agent "alice")
       (is (nil? (:error (sync/push! dir-a :url bare))))
       (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
 
       ;; A moves on: f + its test change together (stays green)
-      (api/edit-group! sa [{:action :replace :ns 'gc.core :name 'f
+      (ops/edit-group! sa [{:action :replace :ns 'gc.core :name 'f
                             :source "(defn f [x] (+ x 10))"}
                            {:action :replace :ns 'gc.core :name 'f-t
                             :source "(deftest f-t (is (= 11 (f 1))))"}]
@@ -144,7 +144,7 @@
               (is (:up-to-date (sync/pull! sb :agent "bob"))))
 
             (testing "B works on top and pushes — fast-forward through the pulled chain"
-              (api/edit-group! sb [{:action :add :ns 'gc.core
+              (ops/edit-group! sb [{:action :add :ns 'gc.core
                                     :source "(defn g [x] (* 2 x))"}
                                    {:action :add :ns 'gc.core
                                     :source "(deftest g-t (is (= 4 (g 2))))"}]
@@ -167,9 +167,9 @@
                 (is (nil? (:error r)) (pr-str r))
                 (is (= (query/query-source sb 'gc.core)
                        (query/query-source sa 'gc.core)))))
-            (finally (api/close! sb)))))
+            (finally (ops/close! sb)))))
       (finally
-        (api/close! sa)
+        (ops/close! sa)
         (rm-rf! dir-a)
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
@@ -183,13 +183,13 @@
         bare  (bare-repo! (str (temp-dir) "/remote.git"))
         sa    (external/open! {:slopp.ops/dir dir-a})]
     (try
-      (api/ingest! sa 'gc.core seed)
+      (ops/ingest! sa 'gc.core seed)
       (external/commit-point! sa "v1" :agent "alice")
       (is (nil? (:error (sync/push! dir-a :url bare))))
       (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
 
       ;; A changes f (with its test); B changes f divergently (same behavior)
-      (api/edit-group! sa [{:action :replace :ns 'gc.core :name 'f
+      (ops/edit-group! sa [{:action :replace :ns 'gc.core :name 'f
                             :source "(defn f [x] (+ x 10))"}
                            {:action :replace :ns 'gc.core :name 'f-t
                             :source "(deftest f-t (is (= 11 (f 1))))"}]
@@ -199,7 +199,7 @@
 
       (let [sb (external/open! {:slopp.ops/dir dir-b})]
         (try
-          (api/edit-replace! sb 'gc.core 'f "(defn f [x] (+ x 0 1))"
+          (ops/edit-replace! sb 'gc.core 'f "(defn f [x] (+ x 0 1))"
                              :prompt "local tweak" :agent "bob")
           (let [b-version (query/query-source sb 'gc.core)
                 r         (sync/pull! sb :agent "bob")]
@@ -216,7 +216,7 @@
                 (is (= "src/gc/core.clj" (:path c)))
                 (is (str/includes? (str (:source c)) "(+ x 10)"))))
             (testing "resolve: adopt the remote content, clear, milestone, push"
-              (api/edit-group! sb [{:action :replace :ns 'gc.core :name 'f
+              (ops/edit-group! sb [{:action :replace :ns 'gc.core :name 'f
                                     :source "(defn f [x] (+ x 10))"}
                                    {:action :replace :ns 'gc.core :name 'f-t
                                     :source "(deftest f-t (is (= 11 (f 1))))"}]
@@ -224,9 +224,9 @@
               (is (empty? (:conflicts (sync/resolve! dir-b "src/gc/core.clj"))))
               (external/commit-point! sb "v3: merged" :agent "bob")
               (is (nil? (:error (sync/push! dir-b))))))
-          (finally (api/close! sb))))
+          (finally (ops/close! sb))))
       (finally
-        (api/close! sa)
+        (ops/close! sa)
         (rm-rf! dir-a)
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
@@ -249,8 +249,8 @@
     (let [dir  (temp-dir)
           sess (external/open! {:slopp.ops/dir dir})]
       (try
-        (api/ingest! sess 'cg.core "(ns cg.core)\n(defn f [] 1)\n")
-        (api/close! sess)
+        (ops/ingest! sess 'cg.core "(ns cg.core)\n(defn f [] 1)\n")
+        (ops/close! sess)
         (is (:error (sync/clone! "ignored" dir)))
         (finally (rm-rf! dir)))))
   (testing "push with no url and no saved remote is an honest error"
@@ -302,7 +302,7 @@
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         sess (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn ^:unused-ok f [] 1)\n")
+      (ops/ingest! sess 'mo.core "(ns mo.core)\n(defn ^:unused-ok f [] 1)\n")
       (external/commit-point! sess "v1" :agent "a")
       (testing "default push lands on the slopp branch; main is never created"
         (let [p (sync/push! dir :url bare)]
@@ -315,7 +315,7 @@
               (finally (.close remote))))))
       (testing "a human commit on main survives slopp pushes and stays out of pulls"
         (let [human-sha (human-commit! bare "main" "NOTES.md" "mine, not slopp's\n")]
-          (api/edit-replace! sess 'mo.core 'f "(defn ^:unused-ok f [] 2)"
+          (ops/edit-replace! sess 'mo.core 'f "(defn ^:unused-ok f [] 2)"
                              :prompt "v2" :agent "a")
           (external/commit-point! sess "v2" :agent "a")
           (is (nil? (:error (sync/push! dir))))
@@ -328,7 +328,7 @@
             (is (:up-to-date (sync/pull! sess :agent "a")))
             (is (nil? (get (:files (:store @sess)) "NOTES.md"))))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! dir)
         (rm-rf! (.getParentFile (io/file bare)))))))
 
@@ -342,7 +342,7 @@
         (.setDirectory (io/file work)) (.call) (.close))
     (let [sess (external/open! {:slopp.ops/dir dir})]
       (try
-        (api/ingest! sess 'lo.core "(ns lo.core)\n")
+        (ops/ingest! sess 'lo.core "(ns lo.core)\n")
         (external/commit-point! sess "v1" :agent "a")
         (testing "the checked-out branch is refused"
           (let [r (sync/push! dir :url work :branch "main")]
@@ -352,7 +352,7 @@
           (let [r (sync/push! dir :url work :branch "other")]
             (is (nil? (:error r)) (pr-str r))))
         (finally
-          (api/close! sess)
+          (ops/close! sess)
           (rm-rf! dir)
           (rm-rf! work))))))
 
@@ -365,7 +365,7 @@
         sess   (external/open! {:slopp.ops/dir seed-d})]
     (try
       ;; seed origin's slopp branch from a store, and main from a "human"
-      (api/ingest! sess 'im.core "(ns im.core)\n(defn ^:unused-ok f [] 41)\n")
+      (ops/ingest! sess 'im.core "(ns im.core)\n(defn ^:unused-ok f [] 41)\n")
       (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
@@ -389,7 +389,7 @@
           (let [sw (external/open! {:slopp.ops/dir work})]
             (try
               (is (= "." (db/get-meta (:db @sw) "git-remote")))
-              (api/edit-replace! sw 'im.core 'f "(defn ^:unused-ok f [] 42)"
+              (ops/edit-replace! sw 'im.core 'f "(defn ^:unused-ok f [] 42)"
                                  :prompt "answer" :agent "b")
               (external/commit-point! sw "v2" :agent "b")
               (let [p (sync/push! work)]
@@ -401,10 +401,10 @@
                   (try
                     (is (= (:pushed p) (.name (.resolve local "refs/heads/slopp/main"))))
                     (finally (.close local)))))
-              (finally (api/close! sw)))))
+              (finally (ops/close! sw)))))
         (rm-rf! work))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))
 
@@ -415,7 +415,7 @@
         seed-d (temp-dir)
         sess   (external/open! {:slopp.ops/dir seed-d})]
     (try
-      (api/ingest! sess 'im2.core "(ns im2.core)\n(defn ^:unused-ok f [] 41)\n")
+      (ops/ingest! sess 'im2.core "(ns im2.core)\n(defn ^:unused-ok f [] 41)\n")
       (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# my project\n")
@@ -431,7 +431,7 @@
           (is (= 1 (:namespaces r))))
         (rm-rf! work))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))
 
@@ -442,7 +442,7 @@
         seed-d (temp-dir)
         sess   (external/open! {:slopp.ops/dir seed-d})]
     (try
-      (api/ingest! sess 'ai.core "(ns ai.core)\n(defn ^:unused-ok f [] 41)\n")
+      (ops/ingest! sess 'ai.core "(ns ai.core)\n(defn ^:unused-ok f [] 41)\n")
       (external/commit-point! sess "v1" :agent "a")
       (is (nil? (:error (sync/push! seed-d :url origin))))
       (human-commit! origin "main" "README.md" "# p\n")
@@ -464,6 +464,6 @@
           (is (nil? (sync/maybe-auto-import! plain)))
           (rm-rf! plain)))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))

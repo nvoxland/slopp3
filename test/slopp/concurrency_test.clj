@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.ops :as api] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
+            [slopp.ops :as ops] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (def seed
   (str "(ns cc.core)\n"
@@ -14,10 +14,10 @@
 (deftest ^:external parallel-different-form-edits-all-land
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cc.core seed)
+      (ops/ingest! sess 'cc.core seed)
       (let [results (doall
                      (pmap (fn [nm]
-                             (api/edit-replace! sess 'cc.core nm
+                             (ops/edit-replace! sess 'cc.core nm
                                                 (format "(defn %s [x] (+ x %s))"
                                                         nm (int (first (str nm))))
                                                 :prompt (str "bump " nm)))
@@ -34,13 +34,13 @@
           (is (= 4 (count (filter #(= :replace (:op %))
                                   (store/deltas (:store @sess)))))))
         (testing "the image agrees with the store"
-          (is (= [(+ 5 97)] (api/query-eval sess "(cc.core/a 5)")))))
-      (finally (api/close! sess)))))
+          (is (= [(+ 5 97)] (ops/query-eval sess "(cc.core/a 5)")))))
+      (finally (ops/close! sess)))))
 
 ^:unsafe (deftest ^:external same-form-contention-surfaces-a-conflict
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cc.core seed)
+      (ops/ingest! sess 'cc.core seed)
       ;; deterministic contention: between this write's hot-load and its
       ;; commit, a competing write to the SAME form lands (one-shot: the hook
       ;; must not re-fire on the rebase retry)
@@ -48,10 +48,10 @@
             r (binding [session/*pre-commit-hook*
                         (fn [] (when (compare-and-set! fired false true)
                                  (binding [session/*pre-commit-hook* nil]
-                                   (api/edit-replace! sess 'cc.core 'a
+                                   (ops/edit-replace! sess 'cc.core 'a
                                                       "(defn a [x] :competitor)"
                                                       :prompt "raced in first"))))]
-                (api/edit-replace! sess 'cc.core 'a "(defn a [x] :loser)"
+                (ops/edit-replace! sess 'cc.core 'a "(defn a [x] :loser)"
                                    :prompt "should conflict"))]
         (is (some? (:conflict r)))
         (is (re-find #"changed concurrently" (str (:conflict r))))
@@ -63,40 +63,40 @@
               r (binding [session/*pre-commit-hook*
                           (fn [] (when (compare-and-set! fired false true)
                                    (binding [session/*pre-commit-hook* nil]
-                                     (api/edit-replace! sess 'cc.core 'b
+                                     (ops/edit-replace! sess 'cc.core 'b
                                                         "(defn b [x] :other)"
                                                         :prompt "raced, different form"))))]
-                  (api/edit-replace! sess 'cc.core 'c "(defn c [x] :mine)"
+                  (ops/edit-replace! sess 'cc.core 'c "(defn c [x] :mine)"
                                      :prompt "should rebase and land"))]
           (is (nil? (:error r)))
           (is (nil? (:conflict r)))
           (let [src (query/query-source sess 'cc.core)]
             (is (re-find #":other" src))
             (is (re-find #":mine" src)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external revert-restores-a-prior-version
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rv.core "(ns rv.core)\n(defn f [x] x)\n")
-      (api/edit-replace! sess 'rv.core 'f "(defn f [x] (inc x))" :prompt "v2")
-      (api/edit-replace! sess 'rv.core 'f "(defn f [x] (+ 2 x))" :prompt "v3")
-      (let [r (api/revert-form! sess 'rv.core 'f)]     ; default: previous
+      (ops/ingest! sess 'rv.core "(ns rv.core)\n(defn f [x] x)\n")
+      (ops/edit-replace! sess 'rv.core 'f "(defn f [x] (inc x))" :prompt "v2")
+      (ops/edit-replace! sess 'rv.core 'f "(defn f [x] (+ 2 x))" :prompt "v3")
+      (let [r (ops/revert-form! sess 'rv.core 'f)]     ; default: previous
         (is (nil? (:error r)))
         (is (re-find #"\(inc x\)" (query/query-source sess 'rv.core)))
-        (is (= [6] (api/query-eval sess "(rv.core/f 5)")))
+        (is (= [6] (ops/query-eval sess "(rv.core/f 5)")))
         (testing "the revert is itself provenance"
           (is (re-find #"revert to"
                        (str (:prompt (last (history/query-lineage sess 'rv.core 'f))))))))
       (testing "revert to a specific delta from form history"
         (let [v1 (first (history/query-form-history sess 'rv.core 'f))
-              r  (api/revert-form! sess 'rv.core 'f :to (:delta v1))]
+              r  (ops/revert-form! sess 'rv.core 'f :to (:delta v1))]
           (is (nil? (:error r)))
-          (is (= [5] (api/query-eval sess "(rv.core/f 5)")))))
+          (is (= [5] (ops/query-eval sess "(rv.core/f 5)")))))
       (testing "errors"
-        (is (:error (api/revert-form! sess 'rv.core 'nope)))
-        (is (:error (api/revert-form! sess 'rv.core 'f :to "d99999"))))
-      (finally (api/close! sess)))))
+        (is (:error (ops/revert-form! sess 'rv.core 'nope)))
+        (is (:error (ops/revert-form! sess 'rv.core 'f :to "d99999"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external durable-concurrent-writers-share-the-journal   ; m5a storage inversion
   (let [dir (str (System/getProperty "java.io.tmpdir")
@@ -104,17 +104,17 @@
     (try
       (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
-          (api/ingest! sess 'cc.core seed)
+          (ops/ingest! sess 'cc.core seed)
           (let [results (doall
                          (pmap (fn [nm]
-                                 (api/edit-replace! sess 'cc.core nm
+                                 (ops/edit-replace! sess 'cc.core nm
                                                     (format "(defn %s [x] (+ x %s))"
                                                             nm (int (first (str nm))))
                                                     :prompt (str "bump " nm)))
                                '[a b c d]))]
             (is (every? #(and (nil? (:error %)) (nil? (:conflict %))) results)
                 (pr-str (mapv #(select-keys % [:error :conflict]) results))))
-          (finally (api/close! sess))))
+          (finally (ops/close! sess))))
       ;; the journal is the record: a fresh session sees all four writes
       (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
@@ -122,7 +122,7 @@
             (doseq [nm '[a b c d]]
               (is (re-find (re-pattern (format "defn %s \\[x\\] \\(\\+ x" nm)) src)
                   (str nm " lost from the journal"))))
-          (finally (api/close! sess))))
+          (finally (ops/close! sess))))
       (finally (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 ^:unsafe (deftest ^:external a-lost-race-does-not-leave-the-loser-in-the-image
@@ -136,7 +136,7 @@
     (try
       (let [a (external/open! {:slopp.ops/dir dir})]
         (try
-          (api/ingest! a 'ch.core
+          (ops/ingest! a 'ch.core
                        "(ns ch.core)\n(defn ^:unused-ok f \"D.\" [x] :original)\n")
           (let [b (external/open! {:slopp.ops/dir dir})]
             (try
@@ -144,16 +144,16 @@
                     r (binding [session/*pre-commit-hook*
                                 (fn [] (when (compare-and-set! fired false true)
                                          (binding [session/*pre-commit-hook* nil]
-                                           (api/edit-replace! b 'ch.core 'f
+                                           (ops/edit-replace! b 'ch.core 'f
                                                               "(defn ^:unused-ok f \"D.\" [x] :winner)"
                                                               :prompt "raced in first"))))]
-                        (api/edit-replace! a 'ch.core 'f
+                        (ops/edit-replace! a 'ch.core 'f
                                            "(defn ^:unused-ok f \"D.\" [x] :loser)"
                                            :prompt "loses the race"))]
                 (is (some? (:conflict r)) (pr-str r))
                 (testing "the losing session's image answers with the winner"
-                  (is (= [:winner] (api/query-eval a "(ch.core/f 1)"))
+                  (is (= [:winner] (ops/query-eval a "(ch.core/f 1)"))
                       "the image kept the loser's code after the conflict")))
-              (finally (api/close! b))))
-          (finally (api/close! a))))
+              (finally (ops/close! b))))
+          (finally (ops/close! a))))
       (finally (clojure.java.shell/sh "rm" "-rf" dir)))))

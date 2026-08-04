@@ -15,7 +15,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.ops :as api] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -24,26 +24,26 @@
       (is (re-find #"unparseable" (:error r)))))
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'er.core "(ns er.core)\n(defn f [x] x)\n")
+      (ops/ingest! sess 'er.core "(ns er.core)\n(defn f [x] x)\n")
       (testing "add with unbalanced source: {:error}, nothing committed"
         (let [n (count (store/deltas (:store @sess)))
-              r (api/add-form! sess 'er.core "(defn broken [x")]
+              r (ops/add-form! sess 'er.core "(defn broken [x")]
           (is (:error r))
           (is (= n (count (store/deltas (:store @sess)))))))
       (testing "replace and ingest too"
-        (is (:error (api/edit-replace! sess 'er.core 'f "(defn f [x")))
-        (is (:error (api/ingest! sess 'er2.core "(ns er2.core"))))
+        (is (:error (ops/edit-replace! sess 'er.core 'f "(defn f [x")))
+        (is (:error (ops/ingest! sess 'er2.core "(ns er2.core"))))
       (testing "ingest returns a tidy map now, not the session atom (F8)"
-        (let [r (api/ingest! sess 'er3.core "(ns er3.core)\n(def a 1)\n")]
+        (let [r (ops/ingest! sess 'er3.core "(ns er3.core)\n(def a 1)\n")]
           (is (= 'er3.core (:ns r)))
           (is (= 2 (:forms r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external ingest-is-the-batch-write-for-NEW-namespaces   ; W1 (user decision)
   (let [sess (external/open!)]
     (try
       (testing "a whole namespace lands in one verified write"
-        (let [r (api/ingest! sess 'w1.core
+        (let [r (ops/ingest! sess 'w1.core
                              (str "(ns w1.core (:require [clojure.test :refer [deftest is]]))\n"
                                   "(defn triple [x] (* 3 x))\n"
                                   "(deftest triple-t (is (= 9 (triple 3))))\n"))]
@@ -51,88 +51,88 @@
           (is (= 1 (:pass (:test r))))
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))))
       (testing "red tests are reported (commit stands; compile failures don't commit)"
-        (let [r (api/ingest! sess 'w1.red
+        (let [r (ops/ingest! sess 'w1.red
                              (str "(ns w1.red (:require [clojure.test :refer [deftest is]]))\n"
                                   "(defn f [x] x)\n"
                                   "(deftest f-t (is (= 2 (f 1))))\n"))]
           (is (= 1 (:fail (:test r))))
           (is (seq (get-in r [:test :failures])))))
       (testing "overwriting an existing namespace is NOT allowed"
-        (let [r (api/ingest! sess 'w1.core "(ns w1.core)\n(def replaced 1)\n")]
+        (let [r (ops/ingest! sess 'w1.core "(ns w1.core)\n(def replaced 1)\n")]
           (is (re-find #"already exists" (:error r)))
           (is (re-find #"triple" (query/query-source sess 'w1.core)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external create-ns-and-add-require                     ; F4 + F5
   (let [sess (external/open!)]
     (try
       (testing "create a namespace directly, with requires"
-        (let [r (api/create-ns! sess 'fresh.core
+        (let [r (ops/create-ns! sess 'fresh.core
                                 :requires ["[clojure.test :refer [deftest is]]"])]
           (is (nil? (:error r)))
           (is (re-find #"\(ns fresh\.core" (query/query-source sess 'fresh.core)))
           (is (re-find #"clojure\.test" (query/query-source sess 'fresh.core)))))
       (testing "duplicate namespace rejected"
-        (is (:error (api/create-ns! sess 'fresh.core))))
+        (is (:error (ops/create-ns! sess 'fresh.core))))
       (testing "add-require structurally extends the ns form and hot-reloads"
-        (let [r (api/add-require! sess 'fresh.core "[clojure.string :as str]")]
+        (let [r (ops/add-require! sess 'fresh.core "[clojure.string :as str]")]
           (is (nil? (:error r)))
           (is (re-find #"clojure\.string :as str" (query/query-source sess 'fresh.core)))
           ;; the alias is genuinely live in the image
-          (api/add-form! sess 'fresh.core "(defn shout [s] (str/upper-case s))")
-          (is (= ["HI"] (api/query-eval sess "(fresh.core/shout \"hi\")")))))
+          (ops/add-form! sess 'fresh.core "(defn shout [s] (str/upper-case s))")
+          (is (= ["HI"] (ops/query-eval sess "(fresh.core/shout \"hi\")")))))
       (testing "duplicate require rejected"
-        (is (:error (api/add-require! sess 'fresh.core "[clojure.string :as up]"))))
+        (is (:error (ops/add-require! sess 'fresh.core "[clojure.string :as up]"))))
       (testing "ns without a :require clause gains one"
-        (api/create-ns! sess 'bare.core)
-        (let [r (api/add-require! sess 'bare.core "[clojure.set :as cset]")]
+        (ops/create-ns! sess 'bare.core)
+        (let [r (ops/add-require! sess 'bare.core "[clojure.set :as cset]")]
           (is (nil? (:error r)))
-          (api/add-form! sess 'bare.core "(defn u [a b] (cset/union a b))")
-          (is (= [#{1 2}] (api/query-eval sess "(bare.core/u #{1} #{2})")))))
-      (finally (api/close! sess)))))
+          (ops/add-form! sess 'bare.core "(defn u [a b] (cset/union a b))")
+          (is (= [#{1 2}] (ops/query-eval sess "(bare.core/u #{1} #{2})")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external warnings-report-only-whats-new                ; T3
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'w.core)
+      (ops/create-ns! sess 'w.core)
       (testing "first violation reported in full"
-        (let [r (api/add-form! sess 'w.core "(defn stash \"Stash.\" [a v] (reset! a v))")]
+        (let [r (ops/add-form! sess 'w.core "(defn stash \"Stash.\" [a v] (reset! a v))")]
           (is (= ['w.core/stash] (mapv :var (:warnings r))))))
       (testing "an unrelated green write doesn't repeat it — just counts it"
-        (let [r (api/add-form! sess 'w.core "(defn pure-f \"Id.\" [x] x)")]
+        (let [r (ops/add-form! sess 'w.core "(defn pure-f \"Id.\" [x] x)")]
           (is (empty? (:warnings r)))
           (is (= 1 (:existing-warnings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external failed-namespace-load-is-not-silently-committed   ; T4
   (let [sess (external/open!)]
     (try
       (testing "requiring a not-yet-created store ns fails loudly, nothing committed"
-        (let [r (api/create-ns! sess 'dep.user :requires ["[dep.lib :as lib]"])]
+        (let [r (ops/create-ns! sess 'dep.user :requires ["[dep.lib :as lib]"])]
           (is (:error r))
           (is (nil? (get-in (:store @sess) [:namespaces 'dep.user])))))
       (testing "after creating the dependency, it works"
-        (api/create-ns! sess 'dep.lib)
-        (is (nil? (:error (api/create-ns! sess 'dep.user
+        (ops/create-ns! sess 'dep.lib)
+        (is (nil? (:error (ops/create-ns! sess 'dep.user
                                           :requires ["[dep.lib :as lib]"])))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external query-eval-is-observe-only                    ; T5
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'g.core "(ns g.core)\n(defn f [x] x)\n")
+      (ops/ingest! sess 'g.core "(ns g.core)\n(defn f [x] x)\n")
       (testing "definitions and code mutation are rejected — use edit tools"
-        (is (:error (api/query-eval sess "(def sneaky 1)")))
-        (is (:error (api/query-eval sess "(in-ns 'g.core)")))
-        (is (:error (api/query-eval sess "(ns-unmap 'g.core 'f)")))
-        (is (:error (api/query-eval sess "(do (defn g [] 1) (g))"))))
+        (is (:error (ops/query-eval sess "(def sneaky 1)")))
+        (is (:error (ops/query-eval sess "(in-ns 'g.core)")))
+        (is (:error (ops/query-eval sess "(ns-unmap 'g.core 'f)")))
+        (is (:error (ops/query-eval sess "(do (defn g [] 1) (g))"))))
       (testing "banned tokens as QUOTED DATA are observation (position-aware gate)"
-        (is (= [2] (api/query-eval sess "(count '#{defn defmacro})")))
-        (is (= [true] (api/query-eval sess "(contains? '#{defn} 'defn)"))))
+        (is (= [2] (ops/query-eval sess "(count '#{defn defmacro})")))
+        (is (= [true] (ops/query-eval sess "(contains? '#{defn} 'defn)"))))
       (testing "observation — including calling effectful fns — still works"
-        (is (= [3] (api/query-eval sess "(g.core/f 3)")))
-        (is (= [1] (api/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
-      (finally (api/close! sess)))))
+        (is (= [3] (ops/query-eval sess "(g.core/f 3)")))
+        (is (= [1] (ops/query-eval sess "(let [a (atom 0)] (swap! a inc))"))))
+      (finally (ops/close! sess)))))
 
 (deftest spawning-tests-must-be-external
   ;; The fixture's require is a SOURCE STRING, so `ns_rename` cannot reach it —
@@ -187,13 +187,13 @@
 (deftest ^:external red-first-specs-land-as-red
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rf.core "(ns rf.core)\n(defn seed \"S.\" [x] x)\n")
-      (api/ingest! sess 'rf.core-test
+      (ops/ingest! sess 'rf.core "(ns rf.core)\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'rf.core-test
                    (str "(ns rf.core-test (:require [rf.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest seed-t (is (= 1 (c/seed 1))))\n"))
       (testing "a spec referencing a NOT-YET-WRITTEN fn lands as a real red"
-        (let [r (api/add-form! sess 'rf.core-test
+        (let [r (ops/add-form! sess 'rf.core-test
                                "(deftest future-t (is (= 4 (c/future-fn 2))))"
                                :prompt "red first")]
           (is (nil? (:error r)) (pr-str r))
@@ -201,12 +201,12 @@
           (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0)))
               "the red is a failing test, not a refusal")))
       (testing "implementing the fn turns the same spec green"
-        (let [r (api/add-form! sess 'rf.core
+        (let [r (ops/add-form! sess 'rf.core
                                "(defn future-fn \"Doubles.\" [x] (* 2 x))"
                                :prompt "green")]
           (is (nil? (:error r)) (pr-str r))
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external red-first-is-command-agnostic
   ;; the seam is the compile gate, not the command: EVERY write path that
@@ -214,20 +214,20 @@
   ;; :refer'd bare names, and image restarts with stubs outstanding
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rg.core "(ns rg.core)\n(defn seed \"S.\" [x] x)\n")
-      (api/ingest! sess 'rg.core-test
+      (ops/ingest! sess 'rg.core "(ns rg.core)\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'rg.core-test
                    (str "(ns rg.core-test (:require [rg.core :as c]\n"
                         "                           [clojure.test :refer [deftest is]]))\n"
                         "(deftest seed-t (is (= 1 (c/seed 1))))\n"))
       (testing "a GROUP step spec lands red with the missing var named"
-        (let [r (api/edit-group! sess
+        (let [r (ops/edit-group! sess
                                  [{:action :add :ns 'rg.core-test
                                    :source "(deftest dbl-t (is (= 4 (c/dbl 2))))"}]
                                  :prompt "red first via group")]
           (is (nil? (:error r)) (pr-str r))
           (is (= ['rg.core/dbl] (:red-first r)) (pr-str r))))
       (testing "a whole spec NS with a :refer to a missing fn lands red (ingest path)"
-        (let [r (api/create-ns! sess 'rg.core.extra-test
+        (let [r (ops/create-ns! sess 'rg.core.extra-test
                                 :source (str "(ns rg.core.extra-test\n"
                                              "  (:require [rg.core :refer [trbl]]\n"
                                              "            [clojure.test :refer [deftest is]]))\n"
@@ -235,16 +235,16 @@
           (is (nil? (:error r)) (pr-str r))
           (is (= ['rg.core/trbl] (:red-first r)) (pr-str r))))
       (testing "a fresh image survives outstanding red-first stubs"
-        (is (nil? (:error (api/restart! sess)))))
+        (is (nil? (:error (ops/restart! sess)))))
       (testing "implementing the fns turns the whole store green"
-        (api/add-form! sess 'rg.core "(defn dbl \"Doubles.\" [x] (* 2 x))"
+        (ops/add-form! sess 'rg.core "(defn dbl \"Doubles.\" [x] (* 2 x))"
                        :prompt "green dbl")
-        (let [r (api/add-form! sess 'rg.core "(defn trbl \"Triples.\" [x] (* 3 x))"
+        (let [r (ops/add-form! sess 'rg.core "(defn trbl \"Triples.\" [x] (* 3 x))"
                                :prompt "green trbl")]
           (is (nil? (:error r)) (pr-str r))
           (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0)))
               (pr-str (:test r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external incremental-signature-change-is-unforced
   ;; REPL-native flow: growing a signature one write at a time must not be
@@ -252,36 +252,36 @@
   ;; an error inside the form being written still refuses
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sg2.core
+      (ops/ingest! sess 'sg2.core
                    (str "(ns sg2.core)\n"
                         "(defn base \"B.\" [x] (* 2 x))\n"
                         "(defn ^:unused-ok caller \"C.\" [x] (base x))\n"))
       (testing "editing the defn's signature ALONE lands, stale callers carried"
-        (let [r (api/edit-replace! sess 'sg2.core 'base
+        (let [r (ops/edit-replace! sess 'sg2.core 'base
                                    "(defn base \"B.\" [x y] (* x y))"
                                    :prompt "grow the signature incrementally")]
           (is (nil? (:error r)) (pr-str r))
           (is (some #(= 'sg2.core/caller (:form %)) (:carried-errors r))
               (pr-str r))))
       (testing "an error IN the written form itself still refuses"
-        (let [r (api/edit-replace! sess 'sg2.core 'caller
+        (let [r (ops/edit-replace! sess 'sg2.core 'caller
                                    "(defn caller \"C.\" [x] (base))"
                                    :prompt "zero-arity call in MY OWN form")]
           (is (:error r) (pr-str r))))
       (testing "catching the caller up, then done → clean lint"
-        (api/edit-replace! sess 'sg2.core 'caller
+        (ops/edit-replace! sess 'sg2.core 'caller
                            "(defn ^:unused-ok caller \"C.\" [x] (base x 3))"
                            :prompt "caller catches up")
         (let [r (external/done! sess :label "signature change complete")]
           (is (empty? (filter #(= :error (:level %)) (:lint r)))
               (pr-str (:lint r)))))
       (testing "done with a STANDING stale caller reports it in findings"
-        (api/edit-replace! sess 'sg2.core 'base
+        (ops/edit-replace! sess 'sg2.core 'base
                            "(defn base \"B.\" [x y z] (* x y z))"
                            :prompt "grow again, forget the caller")
         (let [r (external/done! sess :label "left broken")]
           (is (pos? (get-in r [:findings :lint-errors] 0)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external renaming-via-replace-refuses-when-callers-dangle
   ;; replacing a form with a DIFFERENTLY-NAMED one strands committed callers
@@ -289,20 +289,20 @@
   ;; in miniature). The write must refuse and teach the atomic tool.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rn.core
+      (ops/ingest! sess 'rn.core
                    (str "(ns rn.core)\n\n"
                         "(defn helper \"H.\" [x] x)\n\n"
                         "(defn ^:unused-ok user \"U.\" [x] (helper x))\n"))
       (testing "a caller-stranding rename is refused with teaching"
-        (let [r (api/edit-replace! sess 'rn.core 'helper
+        (let [r (ops/edit-replace! sess 'rn.core 'helper
                                    "(defn assist \"H.\" [x] x)")]
           (is (re-find #"edit_rename" (str (:error r))) (pr-str r))
           (is (re-find #"rn\.core/user" (str (:error r))))))
       (testing "a rename with NO callers lands (leaf tidy-up)"
-        (let [r (api/edit-replace! sess 'rn.core 'user
+        (let [r (ops/edit-replace! sess 'rn.core 'user
                                    "(defn ^:unused-ok consumer \"U.\" [x] (helper x))")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external compile-failures-reach-the-agent-as-anchors
   ;; a write that fails to compile must hand the agent an ACTIONABLE
@@ -311,8 +311,8 @@
   ;; (Java interop is the genuine kondo-miss → raw compiler path.)
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ca.core "(ns ca.core)\n\n(defn ok \"O.\" [x] x)\n")
-      (let [r (api/edit-replace! sess 'ca.core 'ok
+      (ops/ingest! sess 'ca.core "(ns ca.core)\n\n(defn ok \"O.\" [x] x)\n")
+      (let [r (ops/edit-replace! sess 'ca.core 'ok
                                  "(defn ok \"O.\" [x] (String/noSuchStaticThing x))")]
         (is (:error r) (pr-str r))
         (is (= 'ca.core/ok (:form r)) "the owning form is named")
@@ -321,7 +321,7 @@
             "the semantic message survives")
         (is (not (re-find #"\.clj:\d" (str (:error r))))
             "no file:line in the message"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external forward-refs-auto-reorder-no-declare
   ;; the agent writes in any order; a forward reference is RESOLVED by the
@@ -330,12 +330,12 @@
   ;; concern). The reorder is proven by the store order flipping [a b] → [b a].
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ar.core
+      (ops/ingest! sess 'ar.core
                    "(ns ar.core)\n\n(defn a \"A.\" [x] x)\n\n(defn b \"B.\" [x] x)\n")
       (is (= '[ar.core a b] (mapv :name (store/forms (:store @sess) 'ar.core)))
           "precondition: a defined before b")
       (testing "editing `a` to call `b` (defined below) auto-reorders, not refuses"
-        (let [r (api/edit-replace! sess 'ar.core 'a "(defn a \"A.\" [x] (b x))")]
+        (let [r (ops/edit-replace! sess 'ar.core 'a "(defn a \"A.\" [x] (b x))")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:reordered r)) "the reorder is SILENT — no ordering key leaks to the agent")))
       (testing "b now precedes a; the ns cold-loads; no declare"
@@ -343,7 +343,7 @@
             "the def was moved above its caller")
         (is (nil? (edit/cold-load-errors (:store @sess) '[ar.core])))
         (is (not (re-find #"\(declare" (query/query-source sess 'ar.core)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external add-caller-before-callee-auto-reorders
   ;; the .ideas motivating case: the agent adds a caller anchored ABOVE the
@@ -351,9 +351,9 @@
   ;; callee above the caller silently, no declare, no refusal.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cc.core "(ns cc.core)\n\n(defn callee \"C.\" [x] (inc x))\n")
+      (ops/ingest! sess 'cc.core "(ns cc.core)\n\n(defn callee \"C.\" [x] (inc x))\n")
       (testing "adding a caller :before its callee resolves the forward ref"
-        (let [r (api/add-form! sess 'cc.core "(defn caller \"C.\" [x] (callee x))"
+        (let [r (ops/add-form! sess 'cc.core "(defn caller \"C.\" [x] (callee x))"
                                :before 'callee)]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:reordered r)) "silent — no ordering key leaks")))
@@ -361,7 +361,7 @@
         (is (= '[cc.core callee caller] (mapv :name (store/forms (:store @sess) 'cc.core))))
         (is (nil? (edit/cold-load-errors (:store @sess) '[cc.core])))
         (is (not (re-find #"\(declare" (query/query-source sess 'cc.core)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external genuine-cycle-auto-declares-with-marker
   ;; mutual recursion has no legal form order — the pipeline OWNS the declare:
@@ -369,9 +369,9 @@
   ;; never writes one, and no declare key leaks back (like the reorder).
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cy.core "(ns cy.core)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
+      (ops/ingest! sess 'cy.core "(ns cy.core)\n(defn ping [n] n)\n(defn pong [n] (ping n))\n")
       (testing "editing ping into mutual recursion auto-declares (no refusal)"
-        (let [r (api/edit-replace! sess 'cy.core 'ping "(defn ping [n] (pong n))"
+        (let [r (ops/edit-replace! sess 'cy.core 'ping "(defn ping [n] (pong n))"
                                    :prompt "cyc")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:declared r)) "silent — no declare key leaks to the agent")))
@@ -382,7 +382,7 @@
           (is (re-find #":auto-declare" src) "the declare carries the marker/why")
           (is (and decl (re-find #"ping" decl)) "ping is declared")
           (is (and decl (re-find #"pong" decl)) "pong is declared")))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external hand-written-declares-are-refused
   ;; the pipeline OWNS declares — an agent never writes one. A hand-written
@@ -390,18 +390,18 @@
   ;; and the pipeline's own inserts are unaffected.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'nd.core "(ns nd.core)\n(defn a [] 1)\n")
+      (ops/ingest! sess 'nd.core "(ns nd.core)\n(defn a [] 1)\n")
       (testing "add_form of a bare declare is refused with teaching"
-        (let [r (api/add-form! sess 'nd.core "(declare later)" :prompt "x")]
+        (let [r (ops/add-form! sess 'nd.core "(declare later)" :prompt "x")]
           (is (:error r))
           (is (re-find #"declare" (str (:error r))))
           (is (re-find #"order" (str (:error r)))
               "teaches that ordering is automatic")))
       (testing "ingest of ported code containing a declare is still allowed"
-        (let [r (api/ingest! sess 'nd.imp
+        (let [r (ops/ingest! sess 'nd.imp
                              "(ns nd.imp)\n(declare h)\n(defn f [] (h))\n(defn h [] 2)\n")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external inline-run-defers-external-tests
   ;; ^:external tests only behave in a FRESH image — the in-image per-write
@@ -409,13 +409,13 @@
   ;; :external-pending. The whole-ns fallback (no trace) is where they leak in.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ir.test
+      (ops/ingest! sess 'ir.test
                    (str "(ns ir.test (:require [clojure.test :refer [deftest is]]))\n"
                         "(deftest fast (is true))\n"))
-      (let [r (api/add-form! sess 'ir.test "(deftest ^:external slow (is true))")]
+      (let [r (ops/add-form! sess 'ir.test "(deftest ^:external slow (is true))")]
         (is (some #{'slow} (:tests (:external-pending (:test r))))
             (str "slow must be deferred, not run in-image: " (pr-str (:test r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-write-reports-what-it-changed-that-you-did-not-name
   ;; A refactor silently dropped ^Repository and ^java.sql.Connection from a
@@ -429,32 +429,32 @@
   ;; legitimate intentional edit. Just never silent.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dw.core
+      (ops/ingest! sess 'dw.core
                    (str "(ns dw.core)\n\n"
                         "(defn f\n  \"Has a docstring.\"\n"
                         "  [{:keys [^String a]} b] [a b])\n"))
       (testing "losing a type hint is reported"
-        (let [r (api/edit-replace! sess 'dw.core 'f
+        (let [r (ops/edit-replace! sess 'dw.core 'f
                                    "(defn f\n  \"Has a docstring.\"\n  [{:keys [a]} b] [a b])"
                                    :prompt "drop the hint")]
           (is (nil? (:error r)) (pr-str r))
           (is (some #(= :metadata-lost (:kind %)) (:drift r)) (pr-str r))))
       (testing "losing a docstring is reported"
-        (let [r (api/edit-replace! sess 'dw.core 'f
+        (let [r (ops/edit-replace! sess 'dw.core 'f
                                    "(defn f [{:keys [a]} b] [a b])"
                                    :prompt "drop the docstring")]
           (is (some #(= :docstring-lost (:kind %)) (:drift r)) (pr-str r))))
       (testing "changing arity is reported"
-        (let [r (api/edit-replace! sess 'dw.core 'f
+        (let [r (ops/edit-replace! sess 'dw.core 'f
                                    "(defn f [{:keys [a]}] a)"
                                    :prompt "drop an arg")]
           (is (some #(= :arity-changed (:kind %)) (:drift r)) (pr-str r))))
       (testing "an ordinary edit reports no drift at all"
-        (let [r (api/edit-replace! sess 'dw.core 'f
+        (let [r (ops/edit-replace! sess 'dw.core 'f
                                    "(defn f [{:keys [a]}] (identity a))"
                                    :prompt "same contract")]
           (is (empty? (:drift r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-too-narrow-subform-edit-teaches-the-fix
   ;; I hit this twice and flailed both times: a loop binding and its recur, and
@@ -468,17 +468,17 @@
   ;; need, not only in a skill an agent may not re-read.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'nt.core
+      (ops/ingest! sess 'nt.core
                    "(ns nt.core)\n\n(defn f [a b] (+ a b))\n")
       (testing "an edit introducing an unbound symbol teaches widening"
-        (let [r (api/edit-subform! sess 'nt.core 'f "[a b]" "[a]"
+        (let [r (ops/edit-subform! sess 'nt.core 'f "[a b]" "[a]"
                                    :prompt "narrow the arglist only")]
           (is (:error r) (pr-str r))
           (is (re-find #"two edits to ONE form is ONE edit" (str (:error r)))
               (str "the refusal must name the fix: " (pr-str (:error r))))))
       (testing "the form is untouched — a refusal changes nothing"
         (is (re-find #"\[a b\] \(\+ a b\)" (query/query-source sess 'nt.core))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-refused-write-carries-the-require-it-needs
   ;; The most frequent mechanical friction measured on a real session: ~8
@@ -494,9 +494,9 @@
   ;; and it is where every other structural refusal in slopp teaches anyway.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ma.core "(ns ma.core)\n(defn f \"F.\" [] 1)\n")
+      (ops/ingest! sess 'ma.core "(ns ma.core)\n(defn f \"F.\" [] 1)\n")
       (testing "the refusal names the ns_add_require call and says to resend"
-        (let [r (api/edit-replace! sess 'ma.core 'f
+        (let [r (ops/edit-replace! sess 'ma.core 'f
                                    "(defn f \"F.\" [] (str/join \",\" [1 2]))"
                                    :prompt "use an alias this ns does not have")
               e (str (:error r))]
@@ -506,22 +506,22 @@
           (is (str/includes? e "ma.core")
               "the require goes on the ns being WRITTEN")))
       (testing "and the two-step it names actually works"
-        (api/add-require! sess 'ma.core "[clojure.string :as str]"
+        (ops/add-require! sess 'ma.core "[clojure.string :as str]"
                           :prompt "the require the refusal asked for")
-        (let [r (api/edit-replace! sess 'ma.core 'f
+        (let [r (ops/edit-replace! sess 'ma.core 'f
                                    "(defn f \"F.\" [] (str/join \",\" [1 2]))"
                                    :prompt "resend unchanged, as the refusal said")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "an ordinary compile error is left alone rather than guessed at"
         ;; a wrong suggestion costs more than none: it sends the next call
         ;; somewhere real and useless
-        (let [r (api/edit-replace! sess 'ma.core 'f
+        (let [r (ops/edit-replace! sess 'ma.core 'f
                                    "(defn f \"F.\" [] (no-such-fn 1))"
                                    :prompt "a genuine unresolved symbol")]
           (is (:error r) (pr-str r))
           (is (not (str/includes? (str (:error r)) "ns_add_require"))
               (str "nothing can supply this: " (pr-str r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external wrap-nests-existing-code-without-retyping-it
   ;; The motivating edit, verbatim in shape: introduce a binding around a call
@@ -532,13 +532,13 @@
   (let [sess (external/open!)
         src  #(render/render-ns (:store @sess) 'wr.core)]
     (try
-      (api/ingest! sess 'wr.core
+      (ops/ingest! sess 'wr.core
                    (str "(ns wr.core)\n"
                         "(defn handle \"H.\" [r]\n"
                         "  (swap! r inc)\n"
                         "  @r)\n"))
       (testing "the matched form ends up INSIDE the template, untouched"
-        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+        (let [res (ops/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
                                      "(let [before @r] $1 before)"
                                      :wrap true
                                      :prompt "capture the prior value")]
@@ -546,18 +546,18 @@
           (is (str/includes? (src) "(let [before @r] (swap! r inc) before)") (src))
           (is (str/includes? (src) "@r)") "the rest of the fn survived")))
       (testing "a template with no $1 is refused rather than deleting the match"
-        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+        (let [res (ops/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
                                      "(do 1)" :wrap true :prompt "no hole")]
           (is (:error res) (pr-str res))
           (is (str/includes? (str (:error res)) "$1") (pr-str res))))
       (testing "and the ordinary non-wrap path still REPLACES rather than nesting"
-        (let [res (api/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
+        (let [res (ops/edit-subform! sess 'wr.core 'handle "(swap! r inc)"
                                      "(swap! r dec)"
                                      :prompt "plain replace still works")]
           (is (nil? (:error res)) (pr-str res))
           (is (str/includes? (src) "(swap! r dec)") (src))
           (is (not (str/includes? (src) "(swap! r inc)")) (src))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-write-repairs-what-it-would-have-left-stale
   ;; friction 1, and the class behind it. Hot-reload re-evaluates the EDITED
@@ -577,13 +577,13 @@
   ;; detector became the trigger.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ds.core
+      (ops/ingest! sess 'ds.core
                    (str "(ns ds.core)\n"
                         "(def base 1)\n"
                         "(def derived (inc base))\n"
                         "(defn ^:unused-ok read-it [] derived)\n"))
-      (is (= [2] (api/query-eval sess "(ds.core/read-it)")))
-      (let [r (api/edit-replace! sess 'ds.core 'base "(def base 10)"
+      (is (= [2] (ops/query-eval sess "(ds.core/read-it)")))
+      (let [r (ops/edit-replace! sess 'ds.core 'base "(def base 10)"
                                  :prompt "bump the base")]
         (is (nil? (:error r)) (pr-str r))
         (is (= '[ds.core] (:image-reloaded r))
@@ -592,15 +592,15 @@
         (is (nil? (:stale-in-image r))
             (str "and nothing was left stale to report: " (pr-str r))))
       (testing "the repair is real — the image agrees with the store"
-        (is (= [11] (api/query-eval sess "(ds.core/read-it)"))
+        (is (= [11] (ops/query-eval sess "(ds.core/read-it)"))
             "derived was recomputed from the new base, not merely reported"))
       (testing "an ordinary defn write reloads nothing — this is not a tax on every write"
-        (let [r (api/edit-replace! sess 'ds.core 'read-it
+        (let [r (ops/edit-replace! sess 'ds.core 'read-it
                                    "(defn ^:unused-ok read-it [] (+ 0 derived))"
                                    :prompt "same answer, different spelling")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:image-reloaded r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external editing-a-schema-repairs-the-endpoint-that-captured-it
   ;; friction 17 is friction 1 wearing different clothes, and the root-cause
@@ -617,37 +617,37 @@
   ;; pass while the published contract stayed wrong.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sc.api
+      (ops/ingest! sess 'sc.api
                    (str "(ns sc.api)\n"
                         "(def timeline [:map [:n :int]])\n"
                         "(defn ^{:web/response timeline} ^:unused-ok handler [_] {:n 1})\n"))
-      (let [r (api/edit-replace! sess 'sc.api 'timeline
+      (let [r (ops/edit-replace! sess 'sc.api 'timeline
                                  "(def timeline [:map [:n :int] [:extra :string]])"
                                  :prompt "add a field to the response")]
         (is (nil? (:error r)) (pr-str r))
         (is (= '[sc.api] (:image-reloaded r)) (pr-str r)))
       (is (= [[:map [:n :int] [:extra :string]]]
-             (api/query-eval sess "(:web/response (meta #'sc.api/handler))"))
+             (ops/query-eval sess "(:web/response (meta #'sc.api/handler))"))
           "the endpoint publishes the schema the store now has")
       (testing "and ACROSS namespaces, which is the real topology"
         ;; slopp's own shape: schemas in `<app>.contracts`, endpoints in
         ;; `<app>.api` — same module, different namespaces. A
         ;; same-namespace-only repair would pass the case above and miss this.
-        (api/ingest! sess 'sc.core.contracts
+        (ops/ingest! sess 'sc.core.contracts
                      (str "(ns sc.core.contracts)\n"
                           "(def ^:export beat [:map [:ms :int]])\n"))
-        (api/ingest! sess 'sc.core.api
+        (ops/ingest! sess 'sc.core.api
                      (str "(ns sc.core.api"
                           " (:require [sc.core.contracts :as c]))\n"
                           "(defn ^{:web/response c/beat} ^:unused-ok heartbeat [_]"
                           " {:ms 1})\n"))
-        (let [r (api/edit-replace! sess 'sc.core.contracts 'beat
+        (let [r (ops/edit-replace! sess 'sc.core.contracts 'beat
                                    "(def ^:export beat [:map [:ms :int] [:at :int]])"
                                    :prompt "the beat carries a timestamp now")]
           (is (nil? (:error r)) (pr-str r))
           (is (= '[sc.core.api] (:image-reloaded r))
               (str "the OTHER namespace is what had to be reloaded: " (pr-str r))))
         (is (= [[:map [:ms :int] [:at :int]]]
-               (api/query-eval sess
+               (ops/query-eval sess
                                "(:web/response (meta #'sc.core.api/heartbeat))"))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

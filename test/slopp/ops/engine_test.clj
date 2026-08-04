@@ -15,7 +15,7 @@
   Also here: the engine's R6 guard, which is about what the engine may KNOW
   rather than about what it does."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.edit :as edit]
             [slopp.store :as store] [slopp.ops.engine :as session] [slopp.ops.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
 
@@ -32,7 +32,7 @@
   ;; how a merge refusal reads as a merge-ordering bug for hours.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hp2.core "(ns hp2.core)\n\n(defn top \"T.\" [x] x)\n")
+      (ops/ingest! sess 'hp2.core "(ns hp2.core)\n\n(defn top \"T.\" [x] x)\n")
       (let [st   (:store @sess)
             st1  (store/ingest st 'hp2.newdep
                                "(ns hp2.newdep)\n\n(defn helper \"H.\" [x] (inc x))\n")
@@ -53,8 +53,8 @@
         (is (not (re-find #"Could not locate" (str (:err r))))
             (str "the heal manufactured a classpath error: " (pr-str r)))
         (is (:healed r) (pr-str r))
-        (is (= [3] (api/query-eval sess "(hp2.core/top 2)"))))
-      (finally (api/close! sess)))))
+        (is (= [3] (ops/query-eval sess "(hp2.core/top 2)"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external heal-path-replays-candidate-namespaces
   ;; the extract_ns live failure: hot-load-all!'s heal boots a FRESH image
@@ -65,7 +65,7 @@
   ;; stamped) before retrying.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'hp.core "(ns hp.core)\n\n(defn top \"T.\" [x] x)\n")
+      (ops/ingest! sess 'hp.core "(ns hp.core)\n\n(defn top \"T.\" [x] x)\n")
       (let [st   (:store @sess)
             st1  (store/ingest st 'hp.core.impl
                                "(ns hp.core.impl)\n\n(defn helper \"H.\" [x] (inc x))\n")
@@ -85,8 +85,8 @@
                        (mapv :id (store/forms st3 'hp.core.impl)))
             r    (#'session/hot-load-all! sess st3 ids)]
         (is (:healed r) (pr-str r))
-        (is (= [3] (api/query-eval sess "(hp.core/top 2)"))))
-      (finally (api/close! sess)))))
+        (is (= [3] (ops/query-eval sess "(hp.core/top 2)"))))
+      (finally (ops/close! sess)))))
 
 (deftest external-among-splits-traced-tests-by-tier
   ;; done! already knows PRECISELY which tests a change reaches — that is what

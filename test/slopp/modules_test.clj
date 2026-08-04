@@ -4,7 +4,7 @@
   edges (default-deny once a `modules` manifest exists), acyclic graph,
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (deftest module-of-is-the-first-two-segments
@@ -124,23 +124,23 @@
 (deftest ^:external the-manifest-follows-ns-renames
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'ma.core "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n")
-      (api/module-dep! sess "mb.app" "ma.core" :prompt "app uses core")
-      (api/ingest! sess 'mb.app
+      (ops/ingest! sess 'ma.core "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n")
+      (ops/module-dep! sess "mb.app" "ma.core" :prompt "app uses core")
+      (ops/ingest! sess 'mb.app
                    (str "(ns mb.app (:require [ma.core :as core]))\n"
                         "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))
       (testing "renaming the CALLER module re-keys the manifest entry"
-        (is (nil? (:error (api/ns-rename! sess 'mb.app 'mb.hub :prompt "rebrand"))))
+        (is (nil? (:error (ops/ns-rename! sess 'mb.app 'mb.hub :prompt "rebrand"))))
         (is (= {"mb.hub" #{"ma.core"}}
                (modules/modules-manifest (:store @sess)))))
       (testing "renaming the TARGET module re-keys the dep values"
-        (is (nil? (:error (api/ns-rename! sess 'ma.core 'mx.core :prompt "rebrand"))))
+        (is (nil? (:error (ops/ns-rename! sess 'ma.core 'mx.core :prompt "rebrand"))))
         (is (= {"mb.hub" #{"mx.core"}}
                (modules/modules-manifest (:store @sess))))
-        (is (nil? (:error (api/edit-replace! sess 'mb.hub 'use-it
+        (is (nil? (:error (ops/edit-replace! sess 'mb.hub 'use-it
                                              "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
                                              :prompt "still declared under the new names")))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external an-unadopted-populated-store-adopts-on-reopen
   (let [dir  (str (java.nio.file.Files/createTempDirectory
@@ -151,21 +151,21 @@
     ;; does) — manifest stays {}, journal has no :module-edge deltas
     (try
       (swap! sess assoc :adopting? true)
-      (api/ingest! sess 'ka.core "(ns ka.core)\n(defn f \"F.\" [x] x)\n")
-      (api/ingest! sess 'kb.app
+      (ops/ingest! sess 'ka.core "(ns ka.core)\n(defn f \"F.\" [x] x)\n")
+      (ops/ingest! sess 'kb.app
                    (str "(ns kb.app (:require [ka.core :as core]))\n"
                         "(defn g \"G.\" [x] (core/f x))\n"))
       (is (= {} (modules/modules-manifest (:store @sess))))
-      (finally (api/close! sess)))
+      (finally (ops/close! sess)))
     ;; reopen: empty manifest + populated + no edge delta ever = adopt
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (is (= {"kb.app" #{"ka.core"}}
                (modules/modules-manifest (:store @sess2))))
-        (is (nil? (:error (api/edit-replace! sess2 'kb.app 'g
+        (is (nil? (:error (ops/edit-replace! sess2 'kb.app 'g
                                              "(defn g \"G.\" [x] (core/f (inc x)))"
                                              :prompt "gated edits work under the adopted manifest"))))
-        (finally (api/close! sess2))))))
+        (finally (ops/close! sess2))))))
 
 (deftest ^:external cycle-refusal-is-local-to-the-new-edge
   (testing "module-path answers reachability deterministically"
@@ -179,20 +179,20 @@
   (testing "an unrelated edge lands; closing a real chain refuses"
     (let [sess (external/open!)]
       (try
-        (api/ingest! sess 'a.x "(ns a.x)\n(defn f \"F.\" [n] n)\n")
-        (api/module-dep! sess "b.y" "a.x" :prompt "b calls a")
-        (api/ingest! sess 'b.y
+        (ops/ingest! sess 'a.x "(ns a.x)\n(defn f \"F.\" [n] n)\n")
+        (ops/module-dep! sess "b.y" "a.x" :prompt "b calls a")
+        (ops/ingest! sess 'b.y
                      "(ns b.y (:require [a.x :as x]))\n(defn g \"G.\" [n] (x/f n))\n")
-        (api/module-dep! sess "c.z" "b.y" :prompt "c calls b")
-        (api/ingest! sess 'c.z
+        (ops/module-dep! sess "c.z" "b.y" :prompt "c calls b")
+        (ops/ingest! sess 'c.z
                      "(ns c.z (:require [b.y :as y]))\n(defn h \"H.\" [n] (y/g n))\n")
-        (let [r (api/module-dep! sess "d.w" "c.z" :prompt "unrelated — must land")]
+        (let [r (ops/module-dep! sess "d.w" "c.z" :prompt "unrelated — must land")]
           (is (nil? (:error r)) (pr-str r)))
-        (let [r (api/module-dep! sess "a.x" "c.z" :prompt "would close a.x→c.z→b.y→a.x")]
+        (let [r (ops/module-dep! sess "a.x" "c.z" :prompt "would close a.x→c.z→b.y→a.x")]
           (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r)))
-        (let [r (api/module-dep! sess "b.y" "d.w" :prompt "d.w reaches nothing — fine")]
+        (let [r (ops/module-dep! sess "b.y" "d.w" :prompt "d.w reaches nothing — fine")]
           (is (nil? (:error r)) (pr-str r)))
-        (finally (api/close! sess))))))
+        (finally (ops/close! sess))))))
 
 (deftest module-layers-condense-cycles
   (testing "a DAG layers by deepest dependency"
@@ -211,16 +211,16 @@
 (deftest ^:external the-module-lifecycle
   (let [sess (external/open!)]
     (try
-      (is (nil? (:error (api/ingest! sess 'ma.core
+      (is (nil? (:error (ops/ingest! sess 'ma.core
                                      "(ns ma.core)\n(defn shared \"Public.\" [x] x)\n"))))
-      (is (nil? (:error (api/ingest! sess 'ma.core.impl
+      (is (nil? (:error (ops/ingest! sess 'ma.core.impl
                                      (str "(ns ma.core.impl)\n"
                                           "(defn hidden \"Package.\" [x] x)\n"
                                           "(defn ^:export hoisted \"Public via export.\" [x] x)\n"
                                           "(defn ^{:export \"ma.core\"} scoped \"Module-wide only.\" [x] x)\n"))))
           "deep ns lands fine — same module")
       (testing "enforcement is on from birth: declare-then-use"
-        (let [r (api/ingest! sess 'mb.app
+        (let [r (ops/ingest! sess 'mb.app
                              (str "(ns mb.app (:require [ma.core :as core]\n"
                                   "                     [ma.core.impl :as impl]))\n"
                                   "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))]
@@ -228,7 +228,7 @@
           (is (re-find #"module_dep \{from \"mb\.app\" to \"ma\.core\"\}" (str (:error r)))
               "the refusal teaches the semantic verb")))
       (testing "declaring the edge is a semantic call whose WHY lands in the journal"
-        (let [r (api/module-dep! sess "mb.app" "ma.core"
+        (let [r (ops/module-dep! sess "mb.app" "ma.core"
                                  :prompt "the app renders core's data")]
           (is (nil? (:error r)) (pr-str r))
           (is (= {:from "mb.app" :to "ma.core" :action :add}
@@ -236,50 +236,50 @@
           (let [d (last (filter #(= :module-edge (:op %))
                                 (store/deltas (:store @sess))))]
             (is (= "the app renders core's data" (:prompt d)))))
-        (is (nil? (:error (api/ingest! sess 'mb.app
+        (is (nil? (:error (ops/ingest! sess 'mb.app
                                        (str "(ns mb.app (:require [ma.core :as core]\n"
                                             "                     [ma.core.impl :as impl]))\n"
                                             "(defn use-it \"Uses ma.\" [x] (core/shared x))\n"))))
             "the same ingest now lands"))
       (testing "re-declaring is idempotent, not journal noise"
-        (is (:already-declared (api/module-dep! sess "mb.app" "ma.core"))))
+        (is (:already-declared (ops/module-dep! sess "mb.app" "ma.core"))))
       (testing "an edge that would close a CYCLE is refused with the cycle named"
-        (let [r (api/module-dep! sess "ma.core" "mb.app" :prompt "nope")]
+        (let [r (ops/module-dep! sess "ma.core" "mb.app" :prompt "nope")]
           (is (re-find #"(?i)cycle" (str (:error r))) (pr-str r))))
       (testing "retracting an edge is the same verb and re-arms the gate"
-        (is (nil? (:error (api/module-dep! sess "mb.app" "ma.core" :remove true
+        (is (nil? (:error (ops/module-dep! sess "mb.app" "ma.core" :remove true
                                            :prompt "trying decoupling"))))
-        (let [r (api/edit-replace! sess 'mb.app 'use-it
+        (let [r (ops/edit-replace! sess 'mb.app 'use-it
                                    "(defn use-it \"Uses ma.\" [x] (core/shared (inc x)))"
                                    :prompt "should be blocked again")]
           (is (re-find #"does not declare" (str (:error r))) (pr-str r)))
-        (is (nil? (:error (api/module-dep! sess "mb.app" "ma.core"
+        (is (nil? (:error (ops/module-dep! sess "mb.app" "ma.core"
                                            :prompt "restored")))))
       (testing "deep vars are package-private; ^:export hoists into the surface"
-        (let [r (api/edit-replace! sess 'mb.app 'use-it
+        (let [r (ops/edit-replace! sess 'mb.app 'use-it
                                    "(defn use-it \"Uses ma.\" [x] (impl/hidden x))"
                                    :prompt "blocked: package-private")]
           (is (re-find #"package-private" (str (:error r))) (pr-str r))
           (is (re-find #"\^:export" (str (:error r))) "the refusal teaches the hoist"))
-        (is (nil? (:error (api/edit-replace! sess 'mb.app 'use-it
+        (is (nil? (:error (ops/edit-replace! sess 'mb.app 'use-it
                                              "(defn use-it \"Uses ma.\" [x] (impl/hoisted x))"
                                              :prompt "fine: exported")))))
       (testing "a subtree :export reaches its prefix but not the world"
-        (is (nil? (:error (api/edit-replace! sess 'ma.core 'shared
+        (is (nil? (:error (ops/edit-replace! sess 'ma.core 'shared
                                              "(defn shared \"Public.\" [x] (ma.core.impl/scoped x))"
                                              :prompt "fine: ma.core is inside ma.core.*"))))
-        (let [r (api/edit-replace! sess 'mb.app 'use-it
+        (let [r (ops/edit-replace! sess 'mb.app 'use-it
                                    "(defn use-it \"Uses ma.\" [x] (impl/scoped x))"
                                    :prompt "blocked: exported to ma.core.* only")]
           (is (re-find #"exported only within ma\.core\.\*" (str (:error r)))
               (pr-str r))))
       (testing "ns_create of a violating namespace is gated too"
-        (let [r (api/create-ns! sess 'mc.rogue
+        (let [r (ops/create-ns! sess 'mc.rogue
                                 :source (str "(ns mc.rogue (:require [ma.core :as core]))\n"
                                              "(defn steal \"Rogue.\" [x] (core/shared x))\n"))]
           (is (re-find #"does not declare" (str (:error r))) (pr-str r))))
       (testing "a public defn without a docstring surfaces at the DONE-POINT (never blocks)"
-        (let [r (api/edit-replace! sess 'mb.app 'use-it
+        (let [r (ops/edit-replace! sess 'mb.app 'use-it
                                    "(defn use-it [x] (impl/hoisted x))"
                                    :prompt "drop the doc")]
           (is (nil? (:error r)) (pr-str r))
@@ -287,7 +287,7 @@
         (let [r (external/done! sess :label "docs review")]
           (is (some #{'mb.app/use-it} (get-in r [:findings :missing-doc]))
               (pr-str (:findings r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest fully-qualified-unrequired-calls-hit-the-gate
   ;; kondo emits NO var-usage row for a qualified call into a namespace the
@@ -353,41 +353,41 @@
   (let [sess (external/open!)]
     (try
       (testing "declares a tier, folded onto the store"
-        (let [r (api/module-tier! sess "app.core" :pure :prompt "keep core pure")]
+        (let [r (ops/module-tier! sess "app.core" :pure :prompt "keep core pure")]
           (is (= :pure (:tier r)))
           (is (= "app.core" (:module r)))
           (is (= :pure (get-in @sess [:store :module-tiers "app.core"])))))
       (testing "rejects a bogus tier"
-        (is (:error (api/module-tier! sess "app.core" :bogus))))
+        (is (:error (ops/module-tier! sess "app.core" :bogus))))
       (testing "rejects a non-module string"
         ;; a DEEP namespace is now legal — a pure core routinely lives below an
       ;; effectful module, and the tier exists to make agents move code into
       ;; that shape, which it cannot do if it cannot name it
-      (is (nil? (:error (api/module-tier! sess "app.core.impl" :pure))))
-      (is (:error (api/module-tier! sess "has spaces" :pure))))
-      (finally (api/close! sess)))))
+      (is (nil? (:error (ops/module-tier! sess "app.core.impl" :pure))))
+      (is (:error (ops/module-tier! sess "has spaces" :pure))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external purity-gate-refuses-effectful-writes
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'pcore "(ns pcore)\n\n(defn add \"A.\" [x y] (+ x y))\n")
-      (api/module-tier! sess "pcore" :pure :prompt "core stays pure")
+      (ops/ingest! sess 'pcore "(ns pcore)\n\n(defn add \"A.\" [x y] (+ x y))\n")
+      (ops/module-tier! sess "pcore" :pure :prompt "core stays pure")
       (testing "an effectful ADD into a :pure module is hard-refused with teaching"
-        (let [r (api/add-form! sess 'pcore "(defn tick! \"T.\" [a] (swap! a inc))"
+        (let [r (ops/add-form! sess 'pcore "(defn tick! \"T.\" [a] (swap! a inc))"
                                :prompt "sneak in a mutation")]
           (is (re-find #"functional-core" (str (:error r))))
           (is (nil? (store/form-named (:store @sess) 'pcore 'tick!))
               "the refused form never landed")))
       (testing "REPLACING a pure form with an effectful body is refused"
-        (let [r (api/edit-replace! sess 'pcore 'add
+        (let [r (ops/edit-replace! sess 'pcore 'add
                                    "(defn add \"A.\" [x y] (swap! x + y))"
                                    :prompt "turn add effectful")]
           (is (re-find #"functional-core" (str (:error r))))))
       (testing "a pure edit into the same module lands"
-        (let [r (api/add-form! sess 'pcore "(defn sub \"S.\" [x y] (- x y))"
+        (let [r (ops/add-form! sess 'pcore "(defn sub \"S.\" [x y] (- x y))"
                                :prompt "pure helper")]
           (is (nil? (:error r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest gate-refusal-composes-module-and-tier-gates
   (testing "it catches a purity-tier violation (tier gate is registered)"
@@ -454,35 +454,35 @@
 (deftest ^:external schema-require-gate-refuses-boundary-writes
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'sg.core "(ns sg.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/ingest! sess 'sg.core "(ns sg.core)\n\n(defn seed \"S.\" [x] x)\n")
       (testing "OFF by default: a module-external map-arg fn with no schema lands"
-        (let [r (api/add-form! sess 'sg.core "(defn handle \"H.\" [{:keys [x]}] x)"
+        (let [r (ops/add-form! sess 'sg.core "(defn handle \"H.\" [{:keys [x]}] x)"
                                :prompt "no gate yet")]
           (is (nil? (:error r)) (pr-str r))))
-      (api/config-file! sess "gates" :key "require-boundary-schemas" :value "true"
+      (ops/config-file! sess "gates" :key "require-boundary-schemas" :value "true"
                         :prompt "require boundary schemas")
       (testing "enabling does NOT retro-break the already-landed boundary fn"
         (is (some? (store/form-named (:store @sess) 'sg.core 'handle))))
       (testing "ON: a NEW module-external map-arg fn lacking a :=> schema is hard-refused"
-        (let [r (api/add-form! sess 'sg.core "(defn accept \"A.\" [{:keys [y]}] y)"
+        (let [r (ops/add-form! sess 'sg.core "(defn accept \"A.\" [{:keys [y]}] y)"
                                :prompt "boundary fn, no schema")]
           (is (re-find #":malli/schema" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'sg.core 'accept))
               "the refused form never landed")))
       (testing "ON: a :=> schema WITHOUT :throws is still refused — a caller cannot
              tell whether it signals failure by throwing or by returning"
-        (let [r (api/add-form! sess 'sg.core
+        (let [r (ops/add-form! sess 'sg.core
                                "(defn ^{:malli/schema [:=> [:cat [:map [:y :int]]] :int]} accept \"A.\" [{:keys [y]}] y)"
                                :prompt "boundary fn, schema but no throws")]
           (is (re-find #":throws" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'sg.core 'accept))
               "the refused form never landed")))
       (testing "ON: the same boundary fn WITH :=> and an explicit :throws lands"
-        (let [r (api/add-form! sess 'sg.core
+        (let [r (ops/add-form! sess 'sg.core
                                "(defn ^{:malli/schema [:=> {:throws []} [:cat [:map [:y :int]]] :int]} accept \"A.\" [{:keys [y]}] y)"
                                :prompt "boundary fn, schema and explicit empty throws")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest rule-severity-reads-per-store-config
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
@@ -539,19 +539,19 @@
 (deftest ^:external namespaced-keys-gate-refuses-boundary-writes
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'nk.core "(ns nk.core)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
+      (ops/ingest! sess 'nk.core "(ns nk.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
                         :prompt "require namespaced boundary keys")
       (testing "a boundary fn destructuring unqualified :keys is hard-refused"
-        (let [r (api/add-form! sess 'nk.core "(defn accept \"A.\" [{:keys [id]}] id)"
+        (let [r (ops/add-form! sess 'nk.core "(defn accept \"A.\" [{:keys [id]}] id)"
                                :prompt "bare keys at the boundary")]
           (is (re-find #"namespaced" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'nk.core 'accept)))))
       (testing "the namespaced form lands"
-        (let [r (api/add-form! sess 'nk.core "(defn accept \"A.\" [{:acct/keys [id]}] id)"
+        (let [r (ops/add-form! sess 'nk.core "(defn accept \"A.\" [{:acct/keys [id]}] id)"
                                :prompt "namespaced keys")]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest pure-tier-forbids-nondeterminism
   (let [rand-src "(ns app.core)\n\n(defn roll \"R.\" [] (rand-int 6))\n"
@@ -617,19 +617,19 @@
 (deftest ^:external advisory-write-gate-warns-but-proceeds
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'aw.core "(ns aw.core)\n\n(defn seed \"S.\" [x] x)\n")
-      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
+      (ops/ingest! sess 'aw.core "(ns aw.core)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/config-file! sess "gates" :key "require-namespaced-keys" :value "true"
                         :prompt "require namespaced boundary keys")
-      (api/config-file! sess "rules" :key "namespaced-keys-refusal" :value "advisory"
+      (ops/config-file! sess "rules" :key "namespaced-keys-refusal" :value "advisory"
                         :prompt "but only advise, don't block")
-      (let [r (api/add-form! sess 'aw.core "(defn accept \"A.\" [{:keys [id]}] id)"
+      (let [r (ops/add-form! sess 'aw.core "(defn accept \"A.\" [{:keys [id]}] id)"
                              :prompt "bare keys — should warn, not block")]
         (testing "the write LANDS (advisory, not blocked)"
           (is (nil? (:error r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'aw.core 'accept))))
         (testing "and the gate's teaching rides the result's :advisories"
           (is (re-find #"namespaced" (str (first (:advisories r)))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external purity-gate-exempts-test-namespaces
   ;; A test namespace belongs to its module (x.y-test → x.y), so declaring a
@@ -640,20 +640,20 @@
   ;; slopp.normalize :pure had already stranded slopp.normalize-test.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'pt.core "(ns pt.core)\n(defn add [x y] (+ x y))\n")
-      (api/module-tier! sess "pt.core" :pure :prompt "a pure core")
+      (ops/ingest! sess 'pt.core "(ns pt.core)\n(defn add [x y] (+ x y))\n")
+      (ops/module-tier! sess "pt.core" :pure :prompt "a pure core")
       (testing "an effectful write to the production namespace is still refused"
-        (let [r (api/add-form! sess 'pt.core "(defn slurp! [f] (slurp f))"
+        (let [r (ops/add-form! sess 'pt.core "(defn slurp! [f] (slurp f))"
                                :prompt "effect into a pure core")]
           (is (re-find #"declared :pure" (str (:error r))) (pr-str r))))
       (testing "the module's TEST namespace may reach effects"
-        (api/ingest! sess 'pt.core-test "(ns pt.core-test)\n")
-        (let [r (api/add-form! sess 'pt.core-test
+        (ops/ingest! sess 'pt.core-test "(ns pt.core-test)\n")
+        (let [r (ops/add-form! sess 'pt.core-test
                                "(defn setup! [f] (slurp f))"
                                :prompt "a test fixture doing IO")]
           (is (nil? (:error r))
               (str "tests exercise effects by design: " (pr-str r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external foreign-keys-marks-a-third-party-map-and-polices-itself
   ;; require-namespaced-keys cannot be satisfied by a fn that destructures
@@ -664,24 +664,24 @@
   ;; opt-out someone sprinkles to silence the gate.
   (let [sess (external/open!)]
     (try
-      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
-      (api/ingest! sess 'fk.core "(ns fk.core)\n")
+      (ops/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
+      (ops/ingest! sess 'fk.core "(ns fk.core)\n")
       (testing "an unmarked bare-keys boundary fn is refused"
-        (let [r (api/add-form! sess 'fk.core
+        (let [r (ops/add-form! sess 'fk.core
                                "(defn takes-bare [{:keys [id]}] id)"
                                :prompt "bare keys at a boundary")]
           (is (re-find #"namespaced" (str (:error r))) (pr-str r))))
       (testing "^:foreign-keys discharges it"
-        (let [r (api/add-form! sess 'fk.core
+        (let [r (ops/add-form! sess 'fk.core
                                "(defn ^:foreign-keys takes-foreign [{:keys [id]}] id)"
                                :prompt "third-party map")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "a marker with nothing to excuse is refused — no blanket opt-out"
-        (let [r (api/add-form! sess 'fk.core
+        (let [r (ops/add-form! sess 'fk.core
                                "(defn ^:foreign-keys no-map [x] x)"
                                :prompt "stale marker")]
           (is (re-find #"remove the flag" (str (:error r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external rule-test-applicability-is-declared-not-rediscovered
   ;; Whether a rule applies to TEST namespaces bit twice: a :pure tier silently
@@ -704,11 +704,11 @@
   (testing "and the report agrees with the gate by construction"
     (let [sess (external/open!)]
       (try
-        (api/ingest! sess 'ra.core "(ns ra.core)\n(defn add [x y] (+ x y))\n")
-        (api/ingest! sess 'ra.core-test "(ns ra.core-test)\n(defn setup! [f] (slurp f))\n")
+        (ops/ingest! sess 'ra.core "(ns ra.core)\n(defn add [x y] (+ x y))\n")
+        (ops/ingest! sess 'ra.core-test "(ns ra.core-test)\n(defn setup! [f] (slurp f))\n")
         (is (= :pure (:supports (tiers/tier-report (:store @sess) 'ra.core)))
             "the effectful TEST namespace must not veto the module's tier")
-        (finally (api/close! sess))))))
+        (finally (ops/close! sess))))))
 
 (deftest ^:external namespaced-keys-gate-scope-is-pinned-in-both-directions
   ;; The anti-drift guard. A rule stated only in prose drifts: I read
@@ -727,30 +727,30 @@
   ;; spelling is right and namespacing is pure loss.
   (let [sess (external/open!)]
     (try
-      (api/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
-      (api/ingest! sess 'ks.core "(ns ks.core)\n")
+      (ops/config-file! sess "gates" :key "require-namespaced-keys" :value "true")
+      (ops/ingest! sess 'ks.core "(ns ks.core)\n")
       (testing "IN scope: a module-external defn destructuring bare :keys"
         (is (re-find #"namespaced"
-                     (str (:error (api/add-form! sess 'ks.core
+                     (str (:error (ops/add-form! sess 'ks.core
                                                  "(defn boundary [{:keys [id]}] id)"
                                                  :prompt "in scope"))))))
       (testing "OUT of scope: a PRIVATE fn — the module can see its own producer"
-        (is (nil? (:error (api/add-form! sess 'ks.core
+        (is (nil? (:error (ops/add-form! sess 'ks.core
                                          "(defn- internal [{:keys [id]}] id)"
                                          :prompt "private")))))
       (testing "OUT of scope: keys read in the BODY, not destructured in the arglist"
-        (is (nil? (:error (api/add-form! sess 'ks.core
+        (is (nil? (:error (ops/add-form! sess 'ks.core
                                          "(defn reads-body [m] (:id m))"
                                          :prompt "body read")))))
       (testing "OUT of scope: a RETURN map's keys"
-        (is (nil? (:error (api/add-form! sess 'ks.core
+        (is (nil? (:error (ops/add-form! sess 'ks.core
                                          "(defn returns [] {:id 1 :error nil})"
                                          :prompt "return map")))))
       (testing "OUT of scope: a non-map argument"
-        (is (nil? (:error (api/add-form! sess 'ks.core
+        (is (nil? (:error (ops/add-form! sess 'ks.core
                                          "(defn plain [id] id)"
                                          :prompt "no map arg")))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest purity-gate-sees-console-io-and-watch-mutation
   (let [at (fn [src tier]
@@ -794,36 +794,36 @@
 (deftest ^:external module-platforms-surface-in-query-depends
   (let [sess (external/open!)]
     (try
-      (api/create-ns! sess 'plat.client :source "(ns plat.client)\n"
+      (ops/create-ns! sess 'plat.client :source "(ns plat.client)\n"
                       :platform :cljs :prompt "browser")
-      (api/create-ns! sess 'plat.shared :source "(ns plat.shared)\n"
+      (ops/create-ns! sess 'plat.shared :source "(ns plat.shared)\n"
                       :platform :cljc :prompt "portable")
-      (api/create-ns! sess 'plat.server :source "(ns plat.server)\n(defn ^:unused-ok f [] 1)\n")
+      (ops/create-ns! sess 'plat.server :source "(ns plat.server)\n(defn ^:unused-ok f [] 1)\n")
       (let [r (graph/query-depends sess "" :modules true)]
         (testing "declared platforms surface in the module graph"
           (is (= :cljs (get (:platforms r) "plat.client")) (pr-str (:platforms r)))
           (is (= :cljc (get (:platforms r) "plat.shared")) (pr-str (:platforms r))))
         (testing "an undeclared ns (= :jvm default) is absent, not noise"
           (is (nil? (get (:platforms r) "plat.server")) (pr-str (:platforms r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external module-platform-verb
   (let [sess (external/open!)]
     (try
       (testing "declares a platform, folded onto the store"
-        (let [r (api/module-platform! sess "app.client" :cljs :prompt "browser code")]
+        (let [r (ops/module-platform! sess "app.client" :cljs :prompt "browser code")]
           (is (= :cljs (:platform r)))
           (is (= "app.client" (:module r)))
           (is (= :cljs (get-in @sess [:store :module-platforms "app.client"])))))
       (testing "accepts a string spelling (MCP/JSON carries no keyword)"
-        (is (= :cljc (:platform (api/module-platform! sess "app.shared" ":cljc")))))
+        (is (= :cljc (:platform (ops/module-platform! sess "app.shared" ":cljc")))))
       (testing "defaults nil to :jvm"
-        (is (= :jvm (:platform (api/module-platform! sess "app.server" nil)))))
+        (is (= :jvm (:platform (ops/module-platform! sess "app.server" nil)))))
       (testing "rejects an unknown platform"
-        (is (:error (api/module-platform! sess "app.client" :wasm))))
+        (is (:error (ops/module-platform! sess "app.client" :wasm))))
       (testing "rejects a non-module string"
-        (is (:error (api/module-platform! sess "has spaces" :cljs))))
-      (finally (api/close! sess)))))
+        (is (:error (ops/module-platform! sess "has spaces" :cljs))))
+      (finally (ops/close! sess)))))
 
 (deftest rule-applies-to-platform?-scopes-by-target
   (testing ":everywhere fires on every platform"
@@ -904,19 +904,19 @@
   ;; the intermediate store is one the module gate refuses.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'me.helper
+      (ops/ingest! sess 'me.helper
                    (str "(ns me.helper)\n"
                         "(defn shared \"Reached from outside.\" [x] x)\n"
                         "(defn local \"Reached only from me.core.\" [x] x)\n"))
-      (api/module-dep! sess "me.core" "me.helper" :prompt "core uses helper")
-      (api/module-dep! sess "me.other" "me.helper" :prompt "other uses helper")
-      (api/ingest! sess 'me.core
+      (ops/module-dep! sess "me.core" "me.helper" :prompt "core uses helper")
+      (ops/module-dep! sess "me.other" "me.helper" :prompt "other uses helper")
+      (ops/ingest! sess 'me.core
                    (str "(ns me.core (:require [me.helper :as h]))\n"
                         "(defn a \"A.\" [x] (h/local x))\n"))
-      (api/ingest! sess 'me.other
+      (ops/ingest! sess 'me.other
                    (str "(ns me.other (:require [me.helper :as h]))\n"
                         "(defn b \"B.\" [x] (h/shared x))\n"))
-      (let [r (api/module-extract! sess '[me.helper] 'me.core
+      (let [r (ops/module-extract! sess '[me.helper] 'me.core
                                    :prompt "regroup helper under core")]
         (is (nil? (:error r)) (pr-str r))
         (testing "the namespace moved, with its callers rewritten"
@@ -930,11 +930,11 @@
           (is (contains? (get (modules/modules-manifest (:store @sess)) "me.other")
                          "me.core")))
         (testing "THE property: the end state has no module violations"
-          (is (nil? (:error (api/edit-replace!
+          (is (nil? (:error (ops/edit-replace!
                              sess 'me.other 'b
                              "(defn b \"B.\" [x] (h/shared (inc x)))"
                              :prompt "a write still passes the gate afterwards")))))) 
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external namespace-grained-registers-follow-an-ns-rename
   ;; The manifest already follows a rename. The purity TIER and the PLATFORM
@@ -945,12 +945,12 @@
   ;; lists ghosts.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tr.core "(ns tr.core)\n(defn f \"F.\" [x] x)\n")
-      (api/module-tier! sess "tr.core" :pure :prompt "a pure core")
-      (api/module-platform! sess "tr.core" "cljc" :prompt "shared with the client")
-(api/module-role! sess "tr.core" :instrument :prompt "a hand-run probe")
+      (ops/ingest! sess 'tr.core "(ns tr.core)\n(defn f \"F.\" [x] x)\n")
+      (ops/module-tier! sess "tr.core" :pure :prompt "a pure core")
+      (ops/module-platform! sess "tr.core" "cljc" :prompt "shared with the client")
+(ops/module-role! sess "tr.core" :instrument :prompt "a hand-run probe")
       (is (= :pure (get-in @sess [:store :module-tiers "tr.core"])))
-      (is (nil? (:error (api/ns-rename! sess 'tr.core 'tr.hub :prompt "rebrand"))))
+      (is (nil? (:error (ops/ns-rename! sess 'tr.core 'tr.hub :prompt "rebrand"))))
       (testing "the tier follows the name it describes"
         (is (= :pure (get-in @sess [:store :module-tiers "tr.hub"])))
         (is (nil? (get-in @sess [:store :module-tiers "tr.core"]))
@@ -961,7 +961,7 @@
 (testing "and so does the ROLE — three registers, one rule"
         (is (= :instrument (get-in @sess [:store :module-roles "tr.hub"])))
         (is (nil? (get-in @sess [:store :module-roles "tr.core"]))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external the-whole-store-check-names-no-app-type
   ;; R6 (no `slopp.*` surface may assume a project is a web project), and the
@@ -1066,28 +1066,28 @@
   ;; slopp.index.deps-test calls slopp.mcp/handle!.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mp.core "(ns mp.core)\n(defn shared \"P.\" [x] x)\n")
-      (api/ingest! sess 'mr.tool "(ns mr.tool)\n(defn helper \"H.\" [x] x)\n")
-      (api/module-dep! sess "mq.app" "mp.core" :prompt "production: app calls core")
-      (api/ingest! sess 'mq.app
+      (ops/ingest! sess 'mp.core "(ns mp.core)\n(defn shared \"P.\" [x] x)\n")
+      (ops/ingest! sess 'mr.tool "(ns mr.tool)\n(defn helper \"H.\" [x] x)\n")
+      (ops/module-dep! sess "mq.app" "mp.core" :prompt "production: app calls core")
+      (ops/ingest! sess 'mq.app
                    (str "(ns mq.app (:require [mp.core :as core]))\n"
                         "(defn use-it \"Uses mp.\" [x] (core/shared x))\n"))
-      (api/module-dep! sess "mp.core" "mr.tool" :prompt "a TEST fixture reaches for a tool")
-      (api/ingest! sess 'mp.core-test
+      (ops/module-dep! sess "mp.core" "mr.tool" :prompt "a TEST fixture reaches for a tool")
+      (ops/ingest! sess 'mp.core-test
                    (str "(ns mp.core-test (:require [clojure.test :refer [deftest is]]\n"
                         "                            [mr.tool :as tool]))\n"
                         "(deftest fixture-uses-the-tool (is (= 1 (tool/helper 1))))\n"))
       (testing "the manufactured edge is in the DECLARED manifest"
         (is (contains? (get (modules/modules-manifest (:store @sess)) "mp.core") "mr.tool")))
       (testing "an edge blocked only by a test-manufactured path is allowed"
-        (let [r (api/module-dep! sess "mr.tool" "mq.app"
+        (let [r (ops/module-dep! sess "mr.tool" "mq.app"
                                  :prompt "acyclic in production: mq→mp, and mr is a leaf")]
           (is (nil? (:error r)) (pr-str r))))
       (testing "a genuine production cycle is still refused"
-        (let [r (api/module-dep! sess "mp.core" "mq.app"
+        (let [r (ops/module-dep! sess "mp.core" "mq.app"
                                  :prompt "production mq.app → mp.core already exists")]
           (is (re-find #"(?i)closes a dependency cycle" (str (:error r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external declarations-say-which-axes-they-verified
   ;; D-surface-honesty at DECLARATION grain. Every register verb checks some
@@ -1099,7 +1099,7 @@
   (let [sess (external/open!)]
     (try
       (testing "module_purity verified the forms, NOT the require graph"
-        (let [r (api/module-tier! sess "app.core" :pure)]
+        (let [r (ops/module-tier! sess "app.core" :pure)]
           (is (= [:forms] (:verified r)))
           (is (= [:layering] (:unverified r)))
           (is (re-find #"full_check" (str (:note r)))
@@ -1108,23 +1108,23 @@
         ;; tier-violations returns [] immediately for :external — the claim is
         ;; empty, and a verb that reported [:forms] here would be claiming a
         ;; check it skipped by definition.
-        (let [r (api/module-tier! sess "app.shell" :external)]
+        (let [r (ops/module-tier! sess "app.shell" :external)]
           (is (= [] (:verified r)))))
       (testing "module_platform verifies nothing about the code at all"
-        (let [r (api/module-platform! sess "app.client" :cljs)]
+        (let [r (ops/module-platform! sess "app.client" :cljs)]
           (is (= [] (:verified r)))
           (is (= [:compilation] (:unverified r)))
           (is (re-find #"compile_client" (str (:note r))))))
       (testing "module_dep verified cycles over PRODUCTION edges only"
-        (let [r (api/module-dep! sess "app.core" "app.util")]
+        (let [r (ops/module-dep! sess "app.core" "app.util")]
           (is (= [:cycles] (:verified r)))
           (is (= [:usage] (:unverified r)))))
       (testing "a refusal carries no axes — it is not a partial answer"
-        (let [r (api/module-tier! sess "has spaces" :pure)]
+        (let [r (ops/module-tier! sess "has spaces" :pure)]
           (is (:error r))
           (is (nil? (:verified r)))
           (is (nil? (:unverified r)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest tier-report-reads-the-GOVERNING-tier-not-the-modules
   ;; `tier-for` is THE producer of "which tier governs this namespace": most
@@ -1162,23 +1162,23 @@
   (let [sess (external/open!)]
     (try
       (testing "a tier can be declared and then retired"
-        (api/module-tier! sess "rm.core" :pure :prompt "core is pure")
+        (ops/module-tier! sess "rm.core" :pure :prompt "core is pure")
         (is (= :pure (get-in @sess [:store :module-tiers "rm.core"])))
-        (let [r (api/module-tier! sess "rm.core" nil :remove true :prompt "not any more")]
+        (let [r (ops/module-tier! sess "rm.core" nil :remove true :prompt "not any more")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :removed (:action r)) (pr-str r))
           (is (nil? (get-in @sess [:store :module-tiers "rm.core"]))
               "retired, not overwritten with a looser tier")))
       (testing "retiring what was never declared is an ERROR, not a silent no-op"
-        (is (:error (api/module-tier! sess "rm.absent" nil :remove true))))
+        (is (:error (ops/module-tier! sess "rm.absent" nil :remove true))))
       (testing "the same for a platform"
-        (api/module-platform! sess "rm.ui" :cljs :prompt "browser code")
-        (let [r (api/module-platform! sess "rm.ui" nil :remove true :prompt "back to jvm")]
+        (ops/module-platform! sess "rm.ui" :cljs :prompt "browser code")
+        (let [r (ops/module-platform! sess "rm.ui" nil :remove true :prompt "back to jvm")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :removed (:action r)))
           (is (nil? (get-in @sess [:store :module-platforms "rm.ui"]))))
-        (is (:error (api/module-platform! sess "rm.absent" nil :remove true))))
-      (finally (api/close! sess)))))
+        (is (:error (ops/module-platform! sess "rm.absent" nil :remove true))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external module-extract-verifies-ONCE-not-once-per-rename
   ;; A three-namespace extraction ran past 465s and had to be backgrounded.
@@ -1191,18 +1191,18 @@
   ;; callers not yet rewritten, so a verification there is meaningless.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mx.one "(ns mx.one)\n(defn a \"A.\" [] 1)\n")
-      (api/ingest! sess 'mx.two "(ns mx.two)\n(defn b \"B.\" [] 2)\n")
+      (ops/ingest! sess 'mx.one "(ns mx.one)\n(defn a \"A.\" [] 1)\n")
+      (ops/ingest! sess 'mx.two "(ns mx.two)\n(defn b \"B.\" [] 2)\n")
       (let [verifies #(count (filter (fn [d] (= :verify (:op d)))
                                      (store/deltas (:store @sess))))
             before   (verifies)
-            r        (api/module-extract! sess ['mx.one 'mx.two] "mx.core"
+            r        (ops/module-extract! sess ['mx.one 'mx.two] "mx.core"
                                           :prompt "regroup under one prefix")]
         (is (nil? (:error r)) (pr-str r))
         (is (= 2 (count (:renames (:extracted r)))) (pr-str r))
         (is (= 1 (- (verifies) before))
             "one transaction, ONE verification — not one per rename"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external deleting-a-namespace-retires-declarations-it-alone-owned
   ;; A tier or platform describes a NAME, and `ns_rename` already carries them
@@ -1218,12 +1218,12 @@
   (let [sess (external/open!)]
     (try
       (testing "a declaration naming only the deleted namespace is retired with it"
-        (api/ingest! sess 'dg.gone "(ns dg.gone)\n")
-        (api/module-tier! sess "dg.gone" :pure :prompt "leaf, pure")
-        (api/module-platform! sess "dg.gone" :cljc :prompt "shared")
-(api/module-role! sess "dg.gone" :instrument :prompt "hand-run")
+        (ops/ingest! sess 'dg.gone "(ns dg.gone)\n")
+        (ops/module-tier! sess "dg.gone" :pure :prompt "leaf, pure")
+        (ops/module-platform! sess "dg.gone" :cljc :prompt "shared")
+(ops/module-role! sess "dg.gone" :instrument :prompt "hand-run")
         (is (= :pure (get-in @sess [:store :module-tiers "dg.gone"])))
-        (let [r (api/delete-ns! sess 'dg.gone :prompt "retire the scaffold")]
+        (let [r (ops/delete-ns! sess 'dg.gone :prompt "retire the scaffold")]
           (is (nil? (:error r)) (pr-str r)))
         (is (nil? (get-in @sess [:store :module-tiers "dg.gone"]))
             "the tier went with the namespace it named")
@@ -1232,14 +1232,14 @@
 (is (nil? (get-in @sess [:store :module-roles "dg.gone"]))
             "and so did the role — three registers, one rule"))
       (testing "a declaration still governing live code SURVIVES the husk's deletion"
-        (api/ingest! sess 'dg.keep "(ns dg.keep)\n")
-        (api/ingest! sess 'dg.keep.deep "(ns dg.keep.deep)\n(defn ^:unused-ok f [x] x)\n")
-        (api/module-tier! sess "dg.keep" :pure :prompt "the whole subtree is pure")
-        (let [r (api/delete-ns! sess 'dg.keep :prompt "the husk is empty; the subtree is not")]
+        (ops/ingest! sess 'dg.keep "(ns dg.keep)\n")
+        (ops/ingest! sess 'dg.keep.deep "(ns dg.keep.deep)\n(defn ^:unused-ok f [x] x)\n")
+        (ops/module-tier! sess "dg.keep" :pure :prompt "the whole subtree is pure")
+        (let [r (ops/delete-ns! sess 'dg.keep :prompt "the husk is empty; the subtree is not")]
           (is (nil? (:error r)) (pr-str r)))
         (is (= :pure (get-in @sess [:store :module-tiers "dg.keep"]))
             "dg.keep.deep is still governed by it — retiring would ungate live code"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-build-carries-its-purity-tiers-as-a-resource
   ;; friction 2. A purity tier is a DECLARATION in the producer's store, not
@@ -1260,12 +1260,12 @@
         dir  (str (System/getProperty "java.io.tmpdir")
                   "/slopp-tiers-" (System/nanoTime))]
     (try
-      (api/ingest! sess 'pl.core
+      (ops/ingest! sess 'pl.core
                    "(ns pl.core)\n(defn ^:unused-ok render [x] (str x))\n")
-      (api/ingest! sess 'pl.io
+      (ops/ingest! sess 'pl.io
                    "(ns pl.io)\n(defn ^:unused-ok touch! [f] (slurp f))\n")
-      (api/module-tier! sess "pl.core" :pure :prompt "rendering is pure")
-      (api/module-tier! sess "pl.io" :external :prompt "it reads files")
+      (ops/module-tier! sess "pl.core" :pure :prompt "rendering is pure")
+      (ops/module-tier! sess "pl.io" :external :prompt "it reads files")
       (let [r (external/build! sess dir)]
         (is (nil? (:error r)) (pr-str r)))
       (let [f (clojure.java.io/file dir "src" "META-INF" "slopp" "tiers.edn")]
@@ -1274,7 +1274,7 @@
                (clojure.edn/read-string (slurp f)))
             "every declared tier travels, not just the pure ones"))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (doseq [f (reverse (file-seq (clojure.java.io/file dir)))] (.delete f))))))
 
 (deftest ^:external deps-add-adopts-a-published-librarys-purity-tiers
@@ -1291,14 +1291,14 @@
                       "/slopp-pub-" (System/nanoTime))
         producer (external/open!)]
     (try
-      (api/ingest! producer 'plib.core
+      (ops/ingest! producer 'plib.core
                    "(ns plib.core)\n(defn ^:unused-ok render [x] (str x))\n")
-      (api/module-tier! producer "plib.core" :pure :prompt "rendering is pure")
+      (ops/module-tier! producer "plib.core" :pure :prompt "rendering is pure")
       (is (nil? (:error (external/build! producer dir))))
-      (finally (api/close! producer)))
+      (finally (ops/close! producer)))
     (let [consumer (external/open!)]
       (try
-        (let [r (api/deps-add! consumer 'pub/lib {:local/root dir}
+        (let [r (ops/deps-add! consumer 'pub/lib {:local/root dir}
                                :prompt "depend on the published library")]
           (is (nil? (:error r)) (pr-str r))
           (is (= '[plib.core] (:adopted-pure r))
@@ -1306,7 +1306,7 @@
         (is (contains? (:dep-pure (:store @consumer)) 'plib.core)
             "so a caller of plib.core/render is not flagged effectful")
         (finally
-          (api/close! consumer)
+          (ops/close! consumer)
           (doseq [f (reverse (file-seq (clojure.java.io/file dir)))]
             (.delete f)))))))
 
@@ -1329,22 +1329,22 @@
         d2 (str (System/getProperty "java.io.tmpdir") "/slopp-sh2-" (System/nanoTime))
         producer (external/open!)]
     (try
-      (api/ingest! producer 'plib2.core
+      (ops/ingest! producer 'plib2.core
                    "(ns plib2.core)\n(defn ^:unused-ok v [] :one)\n")
       (is (nil? (:error (external/build! producer d1))))
       (is (nil? (:error (external/build! producer d2))))
-      (finally (api/close! producer)))
+      (finally (ops/close! producer)))
     (let [consumer (external/open!)]
       (try
-        (let [r1 (api/deps-add! consumer 'sh/one {:local/root d1} :prompt "first copy")]
+        (let [r1 (ops/deps-add! consumer 'sh/one {:local/root d1} :prompt "first copy")]
           (is (nil? (:error r1)) (pr-str r1))
           (is (nil? (:shadowed r1)) "nothing shadows it yet"))
-        (let [r2 (api/deps-add! consumer 'sh/two {:local/root d2} :prompt "second copy")]
+        (let [r2 (ops/deps-add! consumer 'sh/two {:local/root d2} :prompt "second copy")]
           (is (nil? (:error r2)) (pr-str r2))
           (is (contains? (:shadowed r2) 'plib2.core)
               (str "the second copy cannot govern — say so: " (pr-str r2))))
         (finally
-          (api/close! consumer)
+          (ops/close! consumer)
           (doseq [f (concat (reverse (file-seq (clojure.java.io/file d1)))
                             (reverse (file-seq (clojure.java.io/file d2))))]
             (.delete f)))))))
@@ -1365,9 +1365,9 @@
   ;; that passes.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mo.core "(ns mo.core)\n(defn shared \"Public.\" [x] x)\n")
-      (api/module-dep! sess "mo.app" "mo.core" :prompt "app uses core")
-      (api/ingest! sess 'mo.app
+      (ops/ingest! sess 'mo.core "(ns mo.core)\n(defn shared \"Public.\" [x] x)\n")
+      (ops/module-dep! sess "mo.app" "mo.core" :prompt "app uses core")
+      (ops/ingest! sess 'mo.app
                    (str "(ns mo.app (:require [mo.core :as core]))\n"
                         "(defn ^:unused-ok use-it \"Uses core.\" [x] (core/shared x))\n"))
       (testing "the must-NOT-flag half — same fixture, one rename earlier"
@@ -1379,7 +1379,7 @@
         ;; the caller is outside that subtree. The declared EDGE survives —
         ;; `module-of` is still "mo.core" — so visibility alone is what breaks,
         ;; which is why nothing about the manifest looks wrong afterwards.
-        (is (nil? (:error (api/ns-rename! sess 'mo.core 'mo.core.impl
+        (is (nil? (:error (ops/ns-rename! sess 'mo.core 'mo.core.impl
                                           :prompt "regroup")))))
       (testing "the RULES see it — so a green whole-store check is the check not asking"
         ;; localizes a future failure: this half is the rule, the next is the
@@ -1408,7 +1408,7 @@
               (str "a standing module violation must FLIP the check red — a"
                    " finding the agent can scroll past is not a rule: "
                    (pr-str (select-keys r [:status :module-violations]))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-rename-that-strands-a-caller-is-caught-at-done
   ;; The MODULE sibling of
@@ -1428,9 +1428,9 @@
   ;; report, from either end of the edge.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'md.core "(ns md.core)\n(defn shared \"Public.\" [x] x)\n")
-      (api/module-dep! sess "md.app" "md.core" :prompt "app uses core")
-      (api/ingest! sess 'md.app
+      (ops/ingest! sess 'md.core "(ns md.core)\n(defn shared \"Public.\" [x] x)\n")
+      (ops/module-dep! sess "md.app" "md.core" :prompt "app uses core")
+      (ops/ingest! sess 'md.app
                    (str "(ns md.app (:require [md.core :as core]))\n"
                         "(defn ^:unused-ok use-it \"Uses core.\" [x] (core/shared x))\n"))
       (testing "the must-NOT-flag half: a done with no relocation in it"
@@ -1439,7 +1439,7 @@
               (pr-str (get-in r [:findings :module-governance])))
           (is (= :green (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (testing "the rename itself is allowed — nothing about it is wrong"
-        (is (nil? (:error (api/ns-rename! sess 'md.core 'md.core.impl
+        (is (nil? (:error (ops/ns-rename! sess 'md.core 'md.core.impl
                                           :prompt "regroup")))))
       (testing "and done names the caller the rename stranded"
         (let [r (external/done! sess :label "after the rename")
@@ -1452,7 +1452,7 @@
           (is (= :red (get-in r [:findings :test-status]))
               (str "a module rule the code no longer satisfies is the same"
                    " failure a write gate refuses: " (pr-str (:findings r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-cycle-refusal-names-a-test-only-crossing-as-what-it-is
   ;; Friction 19b, with its filed diagnosis CORRECTED by measurement. The claim
@@ -1475,9 +1475,9 @@
   ;; fixture. Name the real obstruction, and name who is causing it.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mq.helper "(ns mq.helper)\n(defn h \"H.\" [x] x)\n")
-      (api/module-dep! sess "mq.core" "mq.helper" :prompt "core uses helper")
-      (api/ingest! sess 'mq.core
+      (ops/ingest! sess 'mq.helper "(ns mq.helper)\n(defn h \"H.\" [x] x)\n")
+      (ops/module-dep! sess "mq.core" "mq.helper" :prompt "core uses helper")
+      (ops/ingest! sess 'mq.core
                    (str "(ns mq.core (:require [mq.helper :as hp]))\n"
                         "(defn op \"O.\" [x] (hp/h x))\n"))
       ;; The fixture starts INSIDE its subject's module, where no edge is
@@ -1487,18 +1487,18 @@
       ;; installing the very cycle this refusal exists to prevent. Logged
       ;; separately as its own friction; here it would hide the case under
       ;; test.)
-      (is (nil? (:error (api/ingest! sess 'mq.core.spec-test
+      (is (nil? (:error (ops/ingest! sess 'mq.core.spec-test
                                      (str "(ns mq.core.spec-test (:require [mq.core :as core]))\n"
                                           "(defn ^:unused-ok probe \"P.\" [x] (core/op x))\n")))))
       ;; …and a regroup moves it under a DIFFERENT module, which is the
       ;; sequence that produces this every time.
-      (is (nil? (:error (api/ns-rename! sess 'mq.core.spec-test 'mq.helper.spec-test
+      (is (nil? (:error (ops/ns-rename! sess 'mq.core.spec-test 'mq.helper.spec-test
                                         :prompt "regroup the fixture"))))
       (testing "the edge is still refused — the cycle is real"
-        (let [r (api/module-dep! sess "mq.helper" "mq.core" :prompt "the fixture needs it")]
+        (let [r (ops/module-dep! sess "mq.helper" "mq.core" :prompt "the fixture needs it")]
           (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
       (testing "but the refusal names the test and offers the declaration that fits"
-        (let [e (str (:error (api/module-dep! sess "mq.helper" "mq.core"
+        (let [e (str (:error (ops/module-dep! sess "mq.helper" "mq.core"
                                               :prompt "the fixture needs it")))]
           (is (re-find #"mq\.helper\.spec-test" e) e)
           (is (re-find #"(?i)is a TEST" e) e)
@@ -1509,16 +1509,16 @@
       (testing "and a cycle with a PRODUCTION caller keeps the generic advice"
         ;; the must-not-flag half: the new branch must not swallow the case it
         ;; was carved out of.
-        (api/module-dep! sess "mr.core" "mr.helper" :prompt "core uses helper")
-        (api/ingest! sess 'mr.helper "(ns mr.helper)\n(defn h \"H.\" [x] x)\n")
-        (api/ingest! sess 'mr.core
+        (ops/module-dep! sess "mr.core" "mr.helper" :prompt "core uses helper")
+        (ops/ingest! sess 'mr.helper "(ns mr.helper)\n(defn h \"H.\" [x] x)\n")
+        (ops/ingest! sess 'mr.core
                      (str "(ns mr.core (:require [mr.helper :as hp]))\n"
                           "(defn ^:unused-ok op \"O.\" [x] (hp/h x))\n"))
-        (let [e (str (:error (api/module-dep! sess "mr.helper" "mr.core"
+        (let [e (str (:error (ops/module-dep! sess "mr.helper" "mr.core"
                                               :prompt "the other way too")))]
           (is (re-find #"CLOSES a dependency cycle" e) e)
           (is (re-find #"extracting the shared piece" e) e)))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-test-only-edge-is-declarable-and-binds-only-tests
   ;; Friction #20, settled 2026-08-02 (user). A done-time advisory can only be
@@ -1536,17 +1536,17 @@
   ;; expressible, written down twice.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'tz.helper "(ns tz.helper)\n(defn h \"H.\" [x] x)\n")
-      (api/module-dep! sess "tz.core" "tz.helper" :prompt "core uses helper")
-      (api/ingest! sess 'tz.core
+      (ops/ingest! sess 'tz.helper "(ns tz.helper)\n(defn h \"H.\" [x] x)\n")
+      (ops/module-dep! sess "tz.core" "tz.helper" :prompt "core uses helper")
+      (ops/ingest! sess 'tz.core
                    (str "(ns tz.core (:require [tz.helper :as hp]))\n"
                         "(defn ^:unused-ok op \"O.\" [x] x)\n"
                         "(defn ^:unused-ok use-h \"U.\" [x] (hp/h x))\n"))
       (testing "the production edge back is refused — the cycle is real"
-        (let [r (api/module-dep! sess "tz.helper" "tz.core" :prompt "no")]
+        (let [r (ops/module-dep! sess "tz.helper" "tz.core" :prompt "no")]
           (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
       (testing "the SAME edge declared test-only is not a cycle — it is not a production edge"
-        (let [r (api/module-dep! sess "tz.helper" "tz.core"
+        (let [r (ops/module-dep! sess "tz.helper" "tz.core"
                                  :test-only true
                                  :prompt "advisory tests must produce a done point")]
           (is (nil? (:error r)) (pr-str r))
@@ -1560,11 +1560,11 @@
                          "tz.core")
               (pr-str (modules/module-test-manifest st)))))
       (testing "a -test namespace under tz.helper may now cross"
-        (is (nil? (:error (api/ingest! sess 'tz.helper.spec-test
+        (is (nil? (:error (ops/ingest! sess 'tz.helper.spec-test
                                        (str "(ns tz.helper.spec-test (:require [tz.core :as core]))\n"
                                             "(defn ^:unused-ok probe \"P.\" [x] (core/op x))\n"))))))
       (testing "and PRODUCTION under tz.helper still may not — the guarantee the old edge never gave"
-        (let [r (api/ingest! sess 'tz.helper.impl
+        (let [r (ops/ingest! sess 'tz.helper.impl
                              (str "(ns tz.helper.impl (:require [tz.core :as core]))\n"
                                   "(defn ^:unused-ok sneak \"S.\" [x] (core/op x))\n"))]
           (is (re-find #"does not declare tz\.core" (str (:error r))) (pr-str r))))
@@ -1578,13 +1578,13 @@
           ;; …and retracting the test edge makes that same crossing a violation,
           ;; which is what proves the fold CONSULTS the test manifest rather
           ;; than exempting test namespaces wholesale.
-          (is (nil? (:error (api/module-dep! sess "tz.helper" "tz.core"
+          (is (nil? (:error (ops/module-dep! sess "tz.helper" "tz.core"
                                              :test-only true :remove true
                                              :prompt "retract"))))
           (let [vs (debt)]
             (is (= 1 (count vs)) (pr-str vs))
             (is (= 'tz.helper.spec-test (:from-ns (first vs))) (pr-str vs)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-rename-REPORTS-the-module-debt-it-leaves-standing
   ;; The sibling of `a-rename-that-strands-a-caller-is-caught-at-done`, one
@@ -1609,21 +1609,21 @@
       ;; carries the edges over; the uncovered case is the ordinary one, where
       ;; a module sheds ONE namespace and the callers are left pointing at a
       ;; module nobody declared.
-      (api/ingest! sess 'mr.core.query
+      (ops/ingest! sess 'mr.core.query
                    "(ns mr.core.query)\n(defn ^:export read-it \"R.\" [] 2)\n")
-      (api/ingest! sess 'mr.core.history
+      (ops/ingest! sess 'mr.core.history
                    "(ns mr.core.history)\n(defn ^:unused-ok h \"H.\" [] 1)\n")
-      (api/module-dep! sess "mr.app" "mr.core" :prompt "app reads")
-      (api/ingest! sess 'mr.app
+      (ops/module-dep! sess "mr.app" "mr.core" :prompt "app reads")
+      (ops/ingest! sess 'mr.app
                    (str "(ns mr.app (:require [mr.core.query :as q]))\n"
                         "(defn ^:unused-ok uses \"U.\" [] (q/read-it))\n"))
       ;; declared PRODUCTION, crossed only by a test — so the recommendation
       ;; below cannot be inherited from the old declaration, only derived
-      (api/module-dep! sess "mr.tool" "mr.core" :prompt "tool reads")
-      (api/ingest! sess 'mr.tool.core-test
+      (ops/module-dep! sess "mr.tool" "mr.core" :prompt "tool reads")
+      (ops/ingest! sess 'mr.tool.core-test
                    (str "(ns mr.tool.core-test (:require [mr.core.query :as q]))\n"
                         "(defn ^:unused-ok t \"T.\" [] (q/read-it))\n"))
-      (let [r    (api/ns-rename! sess 'mr.core.query 'mr.read.query
+      (let [r    (ops/ns-rename! sess 'mr.core.query 'mr.read.query
                                  :prompt "the reads are their own module")
             debt (:module-debt r)
             edge (fn [to] (first (filter #(= to (:to %)) (:edges-needed debt))))]
@@ -1647,11 +1647,11 @@
         (testing "the note hands over the calls to make"
           (is (re-find #"module_dep" (str (:note debt))) (pr-str debt))))
       (testing "a rename that crosses nothing says nothing — absence means checked"
-        (api/ingest! sess 'mr.lone.thing
+        (ops/ingest! sess 'mr.lone.thing
                      "(ns mr.lone.thing)\n(defn ^:unused-ok x \"X.\" [] 1)\n")
-        (let [r (api/ns-rename! sess 'mr.lone.thing 'mr.solo.thing :prompt "regroup")]
+        (let [r (ops/ns-rename! sess 'mr.lone.thing 'mr.solo.thing :prompt "regroup")]
           (is (nil? (:module-debt r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-rename-warns-when-DECLARING-its-edges-would-close-a-cycle
   ;; The expensive half of the same report. An undeclared edge is a chore;
@@ -1665,25 +1665,25 @@
   ;; the graph is what is wrong, and only the graph can say so.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'mc.app.thing
+      (ops/ingest! sess 'mc.app.thing
                    "(ns mc.app.thing)\n(defn ^:export t \"T.\" [] 1)\n")
-      (api/module-dep! sess "mc.util" "mc.app" :prompt "util builds on app")
-      (api/ingest! sess 'mc.util.other
+      (ops/module-dep! sess "mc.util" "mc.app" :prompt "util builds on app")
+      (ops/ingest! sess 'mc.util.other
                    (str "(ns mc.util.other (:require [mc.app.thing :as th]))\n"
                         "(defn ^:unused-ok o \"O.\" [] (th/t))\n"))
-      (api/ingest! sess 'mc.core.query
+      (ops/ingest! sess 'mc.core.query
                    "(ns mc.core.query)\n(defn ^:export read-it \"R.\" [] 2)\n")
-      (api/ingest! sess 'mc.core.history
+      (ops/ingest! sess 'mc.core.history
                    "(ns mc.core.history)\n(defn ^:unused-ok h \"H.\" [] 1)\n")
-      (api/module-dep! sess "mc.app" "mc.core" :prompt "app reads core")
-      (api/ingest! sess 'mc.app.reader
+      (ops/module-dep! sess "mc.app" "mc.core" :prompt "app reads core")
+      (ops/ingest! sess 'mc.app.reader
                    (str "(ns mc.app.reader (:require [mc.core.query :as q]))\n"
                         "(defn ^:unused-ok r \"R.\" [] (q/read-it))\n"))
       (testing "the graph is acyclic before the move — mc.util → mc.app → mc.core"
         (is (empty? (:cycles (store/module-layers
                               (modules/modules-manifest (:store @sess)))))
             "fixture precondition"))
-      (let [r    (api/ns-rename! sess 'mc.core.query 'mc.util.query
+      (let [r    (ops/ns-rename! sess 'mc.core.query 'mc.util.query
                                  :prompt "the reads join util")
             debt (:module-debt r)]
         (is (nil? (:error r)) (pr-str r))
@@ -1695,9 +1695,9 @@
           (is (= [["mc.app" "mc.util"]] (mapv vec (:cycles debt))) (pr-str debt))
           (is (re-find #"(?i)cycle" (str (:note debt))) (pr-str debt))))
       (testing "and module_dep does refuse it — the warning was not hypothetical"
-        (let [r (api/module-dep! sess "mc.app" "mc.util" :prompt "as advised")]
+        (let [r (ops/module-dep! sess "mc.app" "mc.util" :prompt "as advised")]
           (is (re-find #"CLOSES a dependency cycle" (str (:error r))) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest a-visibility-refusal-names-the-var-to-export
   ;; The refusal's one instruction is "mark the target ^:export in its defn",
@@ -1772,30 +1772,30 @@
 (deftest ^:external module-role-verb
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rv.core "(ns rv.core)\n(defn ^:unused-ok f [] 1)\n")
-      (api/ingest! sess 'rv.lab "(ns rv.lab)\n(defn ^:unused-ok -main [] 1)\n")
+      (ops/ingest! sess 'rv.core "(ns rv.core)\n(defn ^:unused-ok f [] 1)\n")
+      (ops/ingest! sess 'rv.lab "(ns rv.lab)\n(defn ^:unused-ok -main [] 1)\n")
       (testing "undeclared is :product, and the register is empty"
         (is (= {} (:module-roles (:store @sess))))
         (is (= :product (store/role-for (:store @sess) 'rv.lab))))
       (testing "declaring records one canonical entry"
-        (let [r (api/module-role! sess "rv.lab" :instrument :prompt "run by hand")]
+        (let [r (ops/module-role! sess "rv.lab" :instrument :prompt "run by hand")]
           (is (nil? (:error r)) (pr-str r))
           (is (= :instrument (:role r)))
           (is (= {"rv.lab" :instrument} (:roles r)))
           (is (= :instrument (store/role-for (:store @sess) 'rv.lab)))))
       (testing "a JSON string spelling round-trips to the keyword"
-        (is (= :instrument (:role (api/module-role! sess "rv.lab" ":instrument")))))
+        (is (= :instrument (:role (ops/module-role! sess "rv.lab" ":instrument")))))
       (testing "an unknown role is refused by name"
-        (let [r (api/module-role! sess "rv.lab" :scratch)]
+        (let [r (ops/module-role! sess "rv.lab" :scratch)]
           (is (:error r))
           (is (re-find #":product" (:error r)) (pr-str r))))
       (testing "and it can be RETIRED — absent is not the same claim as :product"
-        (let [r (api/module-role! sess "rv.lab" nil :remove true)]
+        (let [r (ops/module-role! sess "rv.lab" nil :remove true)]
           (is (nil? (:error r)) (pr-str r))
           (is (= {} (:roles r))))
-        (is (:error (api/module-role! sess "rv.lab" nil :remove true))
+        (is (:error (ops/module-role! sess "rv.lab" nil :remove true))
             "removing a declaration that is not there is an error, not a silent no-op"))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external declaring-an-instrument-checks-nothing-product-needs-it
   ;; :instrument is not a label, it MOVES the code out of src/ — so the one
@@ -1810,31 +1810,31 @@
   ;; satisfies every absence assertion downstream of it).
   (let [sess (external/open!)]
     (try
-      (is (pos? (:forms (api/ingest! sess 'ri.lab
+      (is (pos? (:forms (ops/ingest! sess 'ri.lab
                                      "(ns ri.lab)\n(defn ^:unused-ok probe [] 1)\n"))))
-      (api/module-dep! sess "ri.app" "ri.lab")
-      (is (pos? (:forms (api/ingest! sess 'ri.app
+      (ops/module-dep! sess "ri.app" "ri.lab")
+      (is (pos? (:forms (ops/ingest! sess 'ri.app
                                      (str "(ns ri.app (:require [ri.lab :as lab]))\n"
                                           "(defn ^:unused-ok go [] (lab/probe))\n"))))
           "the CALLER has to exist for its absence to mean anything")
       (testing "product code requires it → refused, and the refusal NAMES the caller"
-        (let [r (api/module-role! sess "ri.lab" :instrument)]
+        (let [r (ops/module-role! sess "ri.lab" :instrument)]
           (is (:error r) (pr-str r))
           (is (re-find #"ri\.app" (:error r)) (pr-str r))
           (is (= ["ri.app"] (:required-by r)) (pr-str r))
           (is (= {} (:module-roles (:store @sess)))
               "and nothing was recorded")))
       (testing "a TEST requiring it is fine — a test does not ship either"
-        (is (pos? (:forms (api/ingest! sess 'ri.lab-test
+        (is (pos? (:forms (ops/ingest! sess 'ri.lab-test
                                        (str "(ns ri.lab-test (:require [ri.lab :as lab]\n"
                                             "                          [clojure.test :refer [deftest is]]))\n"
                                             "(deftest probe-t (is (= 1 (lab/probe))))\n")))))
-        (api/edit-replace! sess 'ri.app 'go "(defn ^:unused-ok go [] 1)")
-        (api/remove-require! sess 'ri.app 'ri.lab)
-        (let [r (api/module-role! sess "ri.lab" :instrument)]
+        (ops/edit-replace! sess 'ri.app 'go "(defn ^:unused-ok go [] 1)")
+        (ops/remove-require! sess 'ri.app 'ri.lab)
+        (let [r (ops/module-role! sess "ri.lab" :instrument)]
           (is (nil? (:error r)) (pr-str r))
           (is (= :instrument (store/role-for (:store @sess) 'ri.lab)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-build-leaves-an-instrument-out-of-src
   ;; R5's second clause, made mechanical. What ships is decided at
@@ -1844,11 +1844,11 @@
         dir  (str (System/getProperty "java.io.tmpdir")
                   "/slopp-role-" (System/nanoTime))]
     (try
-      (is (pos? (:forms (api/ingest! sess 'rb.core
+      (is (pos? (:forms (ops/ingest! sess 'rb.core
                                      "(ns rb.core)\n(defn ^:unused-ok f [] 1)\n"))))
-      (is (pos? (:forms (api/ingest! sess 'rb.lab
+      (is (pos? (:forms (ops/ingest! sess 'rb.lab
                                      "(ns rb.lab)\n(defn ^:unused-ok -main [] 1)\n"))))
-      (is (nil? (:error (api/module-role! sess "rb.lab" :instrument))))
+      (is (nil? (:error (ops/module-role! sess "rb.lab" :instrument))))
       (let [r (external/build! sess dir)]
         (is (nil? (:error r)) (pr-str r)))
       (testing "product code is under src/, exactly as before"
@@ -1865,5 +1865,5 @@
                (:paths (clojure.edn/read-string
                         (slurp (clojure.java.io/file dir "deps.edn")))))))
       (finally
-        (api/close! sess)
+        (ops/close! sess)
         (doseq [f (reverse (file-seq (clojure.java.io/file dir)))] (.delete f))))))

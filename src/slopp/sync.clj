@@ -15,7 +15,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
             [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as kernel]))
@@ -142,24 +142,24 @@
                 (let [sess (external/open! {:slopp.ops/dir dir})]
                   (try
                     (doseq [[lib coord] (sort-by (comp str key) deps)]
-                      (let [r (api/deps-add! sess lib coord :agent agent
+                      (let [r (ops/deps-add! sess lib coord :agent agent
                                              :prompt (str "clone: dep from " url))]
                         (when (:error r)
                           (throw (ex-info (str "dep " lib ": " (:error r)) {})))))
                     (swap! sess assoc :adopting? true)
                     (doseq [ns-sym (boot/dependency-order sources)]
-                      (let [r (api/ingest! sess ns-sym (get sources ns-sym)
+                      (let [r (ops/ingest! sess ns-sym (get sources ns-sym)
                                            :agent agent)]
                         (when (:error r)
                           (throw (ex-info (str ns-sym ": " (:error r)) {})))))
                     (swap! sess dissoc :adopting?)
-                    (api/adopt-modules! sess :agent agent)
+                    (ops/adopt-modules! sess :agent agent)
                     (let [conn (:db @sess)]
                       (db/set-meta! conn "git-remote" (str url))
                                             (doseq [[path text] tree
                               :when (and (nil? (path-ns path))
                                          (not= "deps.edn" path))]
-                        (api/file-put! sess path text :agent agent
+                        (ops/file-put! sess path text :agent agent
                                        :prompt (str "clone: file from " url)))
                       (db/set-meta! conn "git-base-sha" tip))
                     {:dir (str dir) :namespaces (count sources)
@@ -168,7 +168,7 @@
                       {:error (str "clone failed at " (ex-message e)
                                    " — partial store left at " dir
                                    "; delete it to retry")})
-                    (finally (api/close! sess))))))))
+                    (finally (ops/close! sess))))))))
         (catch Exception e
           {:error (str "clone failed: " (ex-message e))})
         (finally (.close repo))))))
@@ -252,7 +252,7 @@
             pos   (.indexOf ^java.util.List names nm)
             spos  (.indexOf ^java.util.List names succ)]
         (when (not= (inc pos) spos)
-          (api/move-form! session ns-sym nm :before succ
+          (ops/move-form! session ns-sym nm :before succ
                           :prompt "pull: match remote form order" :agent agent))))))
 
 (defn- apply-deps!
@@ -269,9 +269,9 @@
       (cond
         (= cv tv) nil
         (= cv mv) (let [r (if tv
-                            (api/deps-add! session lib tv :agent agent
+                            (ops/deps-add! session lib tv :agent agent
                                            :prompt "pull: remote deps change")
-                            (api/deps-remove! session lib :agent agent
+                            (ops/deps-remove! session lib :agent agent
                                               :prompt "pull: remote deps removal"))]
                     (when (:error r)
                       (conflict! "deps.edn" nil (str lib ": " (:error r)))))
@@ -296,7 +296,7 @@
       (nil? old)
       (cond
         (= cur new) nil
-        (not have)  (let [r (api/ingest! session ns-sym new :agent agent)]
+        (not have)  (let [r (ops/ingest! session ns-sym new :agent agent)]
                       (if (:error r)
                         (conflict! path ns-sym (:error r))
                         (applied! ns-sym)))
@@ -312,7 +312,7 @@
                                (note! (str path ": comment/whitespace-only remote change — "
                                            "not representable as a form edit, skipped")))
             :else
-            (let [r (api/edit-group! session (:steps plan)
+            (let [r (ops/edit-group! session (:steps plan)
                                      :prompt (str "pull: " path) :agent agent)]
               (if (:error r)
                 (conflict! path ns-sym (str "failed to apply: " (:error r)))
@@ -334,9 +334,9 @@
     (cond
       (= cv tv) nil
       (= cv mv) (let [r (if (some? tv)
-                          (api/file-put! session path tv :agent agent
+                          (ops/file-put! session path tv :agent agent
                                          :prompt (str "pull: " path))
-                          (api/file-remove! session path :agent agent
+                          (ops/file-remove! session path :agent agent
                                             :prompt (str "pull: removed " path)))]
                   (if (:error r)
                     (conflict! path nil (str "file change failed: " (:error r)))
@@ -652,10 +652,10 @@
             "push"   (push! a :url b)
             "pull"   (let [sess (external/open! {:slopp.ops/dir a})]
                        (try (pull! sess)
-                            (finally (api/close! sess))))
+                            (finally (ops/close! sess))))
             "test"   (let [sess (external/open! {:slopp.ops/dir a})]
                        (try (external/external-test-run! sess)
-                            (finally (api/close! sess))))
+                            (finally (ops/close! sess))))
             ;; The kernel exists as a hand-maintained file AND as a store
             ;; namespace, and no TEST can compare them: in every context a
             ;; test runs, the "file" IS the store's rendering, so the

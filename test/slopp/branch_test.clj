@@ -4,7 +4,7 @@
   semantics; merging down to main rides the m2 causal-delivery engine."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
-            [slopp.ops :as api] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store]))
+            [slopp.ops :as ops] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store]))
 
 (def seed
   (str "(ns br.core (:require [clojure.test :refer [deftest is]]))\n"
@@ -14,75 +14,75 @@
 (deftest ^:external branch-edit-switch-isolation
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (testing "branching is instant and starts identical (no image work)"
         (let [r (branch/branch! sess "feature")]
           (is (= "feature" (:branch r)))
           (is (= "main" (:from r))))
-        (is (= [2] (api/query-eval sess "(br.core/f 1)"))))
+        (is (= [2] (ops/query-eval sess "(br.core/f 1)"))))
       (testing "branch edits are verified writes like any other"
-        (let [r (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
+        (let [r (ops/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
                                    :prompt "feature behavior")]
           (is (= 1 (:fail (:test r))))          ; honest red: f-t expects inc
           (is (= :genuine (:diagnosis (:test r)))))
-        (api/edit-replace! sess 'br.core 'f-t
+        (ops/edit-replace! sess 'br.core 'f-t
                            "(deftest f-t (is (= 11 (f 1))))"
                            :prompt "test the feature behavior")
-        (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
+        (is (= [11] (ops/query-eval sess "(br.core/f 1)"))))
       (testing "switching back to main restores main's code AND image"
         (let [r (branch/branch-switch! sess "main")]
           (is (= "main" (:switched r))))
-        (is (= [2] (api/query-eval sess "(br.core/f 1)")))
+        (is (= [2] (ops/query-eval sess "(br.core/f 1)")))
         (is (re-find #"\(inc x\)" (query/query-source sess 'br.core))))
       (testing "and forward again"
         (branch/branch-switch! sess "feature")
-        (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
-      (finally (api/close! sess)))))
+        (is (= [11] (ops/query-eval sess "(br.core/f 1)"))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external merge-branch-down-to-main
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
-      (api/add-form! sess 'br.core "(defn g [x] (* 2 (f x)))"
+      (ops/add-form! sess 'br.core "(defn g [x] (* 2 (f x)))"
                      :prompt "feature work" :agent "brancher")
-      (api/add-form! sess 'br.core "(deftest g-t (is (= 4 (g 1))))"
+      (ops/add-form! sess 'br.core "(deftest g-t (is (= 4 (g 1))))"
                      :agent "brancher")
       (branch/branch-switch! sess "main")
       ;; main did its own (different-form) work meanwhile
-      (api/add-form! sess 'br.core "(defn h [x] (- x 1))" :prompt "main work")
+      (ops/add-form! sess 'br.core "(defn h [x] (- x 1))" :prompt "main work")
       (testing "merge lands the branch's work on main, verified"
         (let [r (branch/branch-merge! sess "feature")]
           (is (nil? (:error r)) (pr-str r))
           (is (empty? (:conflicts r)))
           (is (= 2 (:merged r)))
           (is (zero? (+ (:fail (:test r)) (:error (:test r)))))
-          (is (= [4] (api/query-eval sess "(br.core/g 1)")))
+          (is (= [4] (ops/query-eval sess "(br.core/g 1)")))
           (is (re-find #"defn h" (query/query-source sess 'br.core)))))
       (testing "the branch can keep going and merge again exactly"
         (branch/branch-switch! sess "feature")
-        (api/edit-replace! sess 'br.core 'g "(defn g [x] (* 3 (f x)))"
+        (ops/edit-replace! sess 'br.core 'g "(defn g [x] (* 3 (f x)))"
                            :prompt "round 2")
-        (api/edit-replace! sess 'br.core 'g-t "(deftest g-t (is (= 6 (g 1))))")
+        (ops/edit-replace! sess 'br.core 'g-t "(deftest g-t (is (= 6 (g 1))))")
         (branch/branch-switch! sess "main")
         (let [r (branch/branch-merge! sess "feature")]
           (is (empty? (:conflicts r)))
           (is (= 2 (:merged r)))
-          (is (= [6] (api/query-eval sess "(br.core/g 1)")))))
+          (is (= [6] (ops/query-eval sess "(br.core/g 1)")))))
       (testing "same-form divergence surfaces the MV conflict; main stays live"
         (branch/branch-switch! sess "feature")
-        (api/edit-replace! sess 'br.core 'g "(defn g [x] :branch-version)")
+        (ops/edit-replace! sess 'br.core 'g "(defn g [x] :branch-version)")
         (branch/branch-switch! sess "main")
-        (api/edit-replace! sess 'br.core 'g "(defn g [x] :main-version)")
+        (ops/edit-replace! sess 'br.core 'g "(defn g [x] :main-version)")
         (let [r (branch/branch-merge! sess "feature")]
           (is (= 1 (count (:conflicts r))))
           (is (re-find #":main-version" (query/query-source sess 'br.core)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external branch-guards-and-listing
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
       (testing "listing shows every line and where we are"
         (let [b (branch/query-branches sess)]
@@ -98,7 +98,7 @@
         (branch/branch-switch! sess "main")
         (is (nil? (:error (branch/branch-delete! sess "feature"))))
         (is (= ["main"] (mapv :name (:branches (branch/query-branches sess))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external branches-survive-restart-of-a-durable-session
   (let [dir (str (System/getProperty "java.io.tmpdir")
@@ -106,14 +106,14 @@
     (try
       (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
-          (api/ingest! sess 'br.core seed)
+          (ops/ingest! sess 'br.core seed)
           (branch/branch! sess "feature")
-          (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
+          (ops/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
                              :prompt "feature work")
-          (api/edit-replace! sess 'br.core 'f-t
+          (ops/edit-replace! sess 'br.core 'f-t
                              "(deftest f-t (is (= 11 (f 1))))")
           (branch/branch-switch! sess "main")
-          (finally (api/close! sess))))
+          (finally (ops/close! sess))))
       (let [sess (external/open! {:slopp.ops/dir dir})]
         (try
           (testing "the branch is still there after reopen"
@@ -121,52 +121,52 @@
                       (:branches (branch/query-branches sess)))))
           (testing "switching to it restores its content and image"
             (branch/branch-switch! sess "feature")
-            (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
-          (finally (api/close! sess))))
+            (is (= [11] (ops/query-eval sess "(br.core/f 1)"))))
+          (finally (ops/close! sess))))
       (finally
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external per-branch-images-park-adopt-and-reap          ; m4
   (let [sess (external/open! {:slopp.ops/branch-image-ttl-ms 200})]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
-      (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
+      (ops/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))"
                          :prompt "feature behavior")
-      (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
+      (ops/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
       (let [feature-port (:port (:image @sess))]
         (testing "switching away PARKS the branch image; main boots its own"
           (branch/branch-switch! sess "main")
           (is (not= feature-port (:port (:image @sess))))
-          (is (= [2] (api/query-eval sess "(br.core/f 1)")))
+          (is (= [2] (ops/query-eval sess "(br.core/f 1)")))
           (is (some? (get-in @sess [:lines "feature" :image]))))
         (testing "switching back ADOPTS the parked image — same process"
           (let [r (branch/branch-switch! sess "feature")]
             (is (:adopted r)))
           (is (= feature-port (:port (:image @sess))))
-          (is (= [11] (api/query-eval sess "(br.core/f 1)"))))
+          (is (= [11] (ops/query-eval sess "(br.core/f 1)"))))
         (testing "idle parked images get reaped after the TTL"
           (branch/branch-switch! sess "main")
           (Thread/sleep 400)                       ; > ttl
-          (api/reap-idle-images! sess)
+          (ops/reap-idle-images! sess)
           (is (nil? (get-in @sess [:lines "feature" :image])))
           (testing "...and switching back just boots a fresh one, correct code"
             (let [r (branch/branch-switch! sess "feature")]
               (is (:booted r))
               (is (not= feature-port (:port (:image @sess))))
-              (is (= [11] (api/query-eval sess "(br.core/f 1)")))))))
-      (finally (api/close! sess)))))
+              (is (= [11] (ops/query-eval sess "(br.core/f 1)")))))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external branches-have-identity-beyond-their-name
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (branch/branch! sess "feature")
       (let [id1 (:id (first (filter #(= "feature" (:name %))
                                     (:branches (branch/query-branches sess)))))]
         (is (string? id1))
-        (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))")
-        (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
+        (ops/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 10))")
+        (ops/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 11 (f 1))))")
         (branch/branch-switch! sess "main")
         (branch/branch-merge! sess "feature")
         (branch/branch-delete! sess "feature")
@@ -176,19 +176,19 @@
                                         (:branches (branch/query-branches sess)))))]
             (is (not= id1 id2)))
           ;; and it merges cleanly as its own line of work
-          (api/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 20))")
-          (api/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 21 (f 1))))")
+          (ops/edit-replace! sess 'br.core 'f "(defn f [x] (+ x 20))")
+          (ops/edit-replace! sess 'br.core 'f-t "(deftest f-t (is (= 21 (f 1))))")
           (branch/branch-switch! sess "main")
           (let [r (branch/branch-merge! sess "feature")]
             (is (nil? (:error r)) (pr-str r))
             (is (empty? (:conflicts r)))
-            (is (= [21] (api/query-eval sess "(br.core/f 1)"))))))
-      (finally (api/close! sess)))))
+            (is (= [21] (ops/query-eval sess "(br.core/f 1)"))))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external concurrent-branch-creation-races-yield-one-winner
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'br.core seed)
+      (ops/ingest! sess 'br.core seed)
       (let [results (doall (pmap (fn [_] (branch/branch! sess "contested"))
                                  (range 2)))
             wins    (filter #(= "contested" (:branch %)) results)
@@ -196,23 +196,23 @@
         (is (= 1 (count wins)))
         (is (= 1 (count errs)))
         (is (re-find #"already exists" (:error (first errs)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external merge-loads-changed-upstream-before-new-downstream
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'up.core "(ns up.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/ingest! sess 'up.core "(ns up.core)\n\n(defn f \"F.\" [x] x)\n")
       (branch/branch! sess "feat")
-      (let [r (api/add-form! sess 'up.core "(defn g \"G.\" [x] (inc x))"
+      (let [r (ops/add-form! sess 'up.core "(defn g \"G.\" [x] (inc x))"
                              :prompt "upstream gains g on the branch")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/add-form! sess 'up.core "(defn doomed \"D.\" [x] x)"
+      (let [r (ops/add-form! sess 'up.core "(defn doomed \"D.\" [x] x)"
                              :prompt "added then deleted on the branch")]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/delete-form! sess 'up.core 'doomed :prompt "gone again")]
+      (let [r (ops/delete-form! sess 'up.core 'doomed :prompt "gone again")]
         (is (nil? (:error r)) (pr-str r)))
-      (api/module-dep! sess "up.web" "up.core" :prompt "the downstream web module calls the upstream core")
-      (let [r (api/create-ns! sess 'up.web
+      (ops/module-dep! sess "up.web" "up.core" :prompt "the downstream web module calls the upstream core")
+      (let [r (ops/create-ns! sess 'up.web
                               :source "(ns up.web (:require [up.core :as core]))\n\n(defn h \"H.\" [x] (core/g x))\n")]
         (is (nil? (:error r)) (pr-str r)))
       (branch/branch-switch! sess "main")
@@ -222,17 +222,17 @@
           (is (some #{'up.web} (:new-nses r)) (pr-str r))
           (is (some? (store/form-named (:store @sess) 'up.core 'g)))
           (is (some? (store/form-named (:store @sess) 'up.web 'h)))
-          (is (= [2] (api/query-eval sess "(up.web/h 1)")))))
-      (finally (api/close! sess)))))
+          (is (= [2] (ops/query-eval sess "(up.web/h 1)")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external merge-hot-adds-the-branch-deps-before-loading
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'dp.core "(ns dp.core)\n\n(defn ^:unused-ok f \"F.\" [x] x)\n")
+      (ops/ingest! sess 'dp.core "(ns dp.core)\n\n(defn ^:unused-ok f \"F.\" [x] x)\n")
       (branch/branch! sess "deps-feat")
-      (let [r (api/deps-add! sess 'http-kit/http-kit {:mvn/version "2.8.0"})]
+      (let [r (ops/deps-add! sess 'http-kit/http-kit {:mvn/version "2.8.0"})]
         (is (nil? (:error r)) (pr-str r)))
-      (let [r (api/create-ns! sess 'dp.web
+      (let [r (ops/create-ns! sess 'dp.web
                               :source "(ns dp.web (:require [org.httpkit.server :as hk]))\n\n(defn ^:unused-ok server-fn? \"S.\" [] (fn? hk/run-server))\n")]
         (is (nil? (:error r)) (pr-str r)))
       (branch/branch-switch! sess "main")
@@ -241,8 +241,8 @@
           (is (nil? (:error r)) (pr-str r))
           (is (= {:mvn/version "2.8.0"}
                  (get-in @sess [:store :deps 'http-kit/http-kit])))
-          (is (= [true] (api/query-eval sess "(dp.web/server-fn?)")))))
-      (finally (api/close! sess)))))
+          (is (= [true] (ops/query-eval sess "(dp.web/server-fn?)")))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external a-durable-merge-with-config-on-both-sides-persists
   ;; H1 end to end: the pure merge test proves the journal has no dup id;
@@ -251,18 +251,18 @@
   ;; exact shape that failed permanently before the re-mint fix).
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'cb.core seed)
+      (ops/ingest! sess 'cb.core seed)
       (branch/branch! sess "feature")
-      (api/config-file! sess "capabilities" :key "web.port" :value "9090"
+      (ops/config-file! sess "capabilities" :key "web.port" :value "9090"
                         :prompt "branch sets a port")
       (branch/branch-switch! sess "main")
-      (api/config-file! sess "capabilities" :key "web.enabled" :value "true"
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
                         :prompt "main enables http")
       (testing "the merge COMMITS (no permanent 'store changed during merge')"
         (let [r (branch/branch-merge! sess "feature")]
           (is (nil? (:error r)) (pr-str r))
           (is (nil? (:conflict r)) (pr-str r))))
       (testing "both keys survive the durable round trip"
-        (is (= "9090" (:value (api/config-file! sess "capabilities" :key "web.port"))))
-        (is (= "true" (:value (api/config-file! sess "capabilities" :key "web.enabled")))))
-      (finally (api/close! sess)))))
+        (is (= "9090" (:value (ops/config-file! sess "capabilities" :key "web.port"))))
+        (is (= "true" (:value (ops/config-file! sess "capabilities" :key "web.enabled")))))
+      (finally (ops/close! sess)))))

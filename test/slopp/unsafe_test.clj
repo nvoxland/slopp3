@@ -5,7 +5,7 @@
   binding/alter-var-root/read-string are otherwise un-editable."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.edit :as edit]
             [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external]))
 
@@ -53,39 +53,39 @@
 (deftest ^:external unsafe-form-ingests-loads-and-is-addressable
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'us.core
+      (ops/ingest! sess 'us.core
                    (str "(ns us.core)\n\n"
                         "(def ^:dynamic *tap* nil)\n\n"
                         "^:unsafe\n(defn with-tap [f] (binding [*tap* f] (f 1)))\n"))
       (testing "the ^:unsafe form loaded into the image and works"
-        (is (= [2] (api/query-eval sess "(us.core/with-tap inc)"))))
+        (is (= [2] (ops/query-eval sess "(us.core/with-tap inc)"))))
       (testing "it is addressable by name (form-symbol saw through :meta)"
         (is (str/includes? (query/query-source sess 'us.core) "with-tap"))
-        (let [r (api/edit-replace! sess 'us.core 'with-tap
+        (let [r (ops/edit-replace! sess 'us.core 'with-tap
                                    "^:unsafe (defn with-tap [f] (binding [*tap* f] (f 10)))"
                                    :prompt "bump" :agent "a")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= [11] (api/query-eval sess "(us.core/with-tap inc)")))))
+          (is (= [11] (ops/query-eval sess "(us.core/with-tap inc)")))))
       (testing "the ^:unsafe marker round-trips through render"
         (is (str/includes? (query/query-source sess 'us.core) "^:unsafe")))
       (testing "query_symbol surfaces :unsafe? (greppable/visible)"
         (is (:unsafe? (query/query-symbol sess 'us.core 'with-tap)))
         (is (not (:unsafe? (query/query-symbol sess 'us.core '*tap*)))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external unsafe-survives-done-normalize
   ;; done runs slopp.normalize over changed forms — the ^:unsafe marker
   ;; (and the form's addressability) must survive that node-level rewrite
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'us.chk
+      (ops/ingest! sess 'us.chk
                    (str "(ns us.chk)\n\n"
                         "^:unsafe\n(defn q [x] (binding [*out* *out*] (inc x)))\n"))
       (external/done! sess :label "cp" :agent "a")
       (is (str/includes? (query/query-source sess 'us.chk) "^:unsafe"))
       (is (:unsafe? (query/query-symbol sess 'us.chk 'q)))
-      (is (= [2] (api/query-eval sess "(us.chk/q 1)")))
-      (finally (api/close! sess)))))
+      (is (= [2] (ops/query-eval sess "(us.chk/q 1)")))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external import-path-gates-dialect-like-edit
   ;; the import path (ingest! / ns_create {:source}) must run the SAME dialect
@@ -96,7 +96,7 @@
   (let [sess (external/open!)]
     (try
       (testing "an un-^:unsafe host form is REJECTED on import (nothing commits)"
-        (let [r (api/ingest! sess 'ig.bad
+        (let [r (ops/ingest! sess 'ig.bad
                              "(ns ig.bad)\n(defn f [a] (alter-var-root a (constantly 1)))\n")]
           (is (:error r))
           (is (re-find #"unsafe" (str (:error r))))
@@ -105,7 +105,7 @@
       (testing "ALL offending forms are reported at once, not just the first"
         ;; else a whole-ns import must be re-sent once per host form, discovering
         ;; them one rejection at a time (brutal for a big namespace)
-        (let [r (api/ingest! sess 'ig.many
+        (let [r (ops/ingest! sess 'ig.many
                              (str "(ns ig.many)\n"
                                   "(defn a [x] (alter-var-root x (constantly 1)))\n"
                                   "(defn b [y] (binding [*out* *out*] y))\n"
@@ -121,31 +121,31 @@
           (is (nil? (get-in (:store @sess) [:namespaces 'ig.many]))
               "the rejected namespace must not have committed")))
       (testing "the same form marked ^:unsafe imports cleanly (never frozen)"
-        (let [r (api/ingest! sess 'ig.ok
+        (let [r (ops/ingest! sess 'ig.ok
                              "(ns ig.ok)\n^:unsafe\n(defn f [a] (alter-var-root a (constantly 1)))\n")]
           (is (nil? (:error r)) (pr-str r))
           (is (= 2 (:forms r)))))
       (testing "import now RETURNS the !-warnings it used to swallow"
-        (let [r (api/ingest! sess 'ig.warn
+        (let [r (ops/ingest! sess 'ig.warn
                              "(ns ig.warn)\n(def s (atom 0))\n(defn bump [] (swap! s inc))\n")]
           (is (contains? r :warnings))
           (is (some #(re-find #"bump" (str %)) (:warnings r))
               (str "expected a !-naming warning for the swap!-ing fn: "
                    (pr-str (:warnings r))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external unsafe-does-not-relax-effect-warnings
   ;; ^:unsafe opts out of the DIALECT ban only — honest !-labeling is orthogonal
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'us.eff
+      (ops/ingest! sess 'us.eff
                    (str "(ns us.eff)\n\n(def s (atom 0))\n\n"
                         "^:unsafe\n(defn bump [] (binding [*out* *out*] (reset! s 1)))\n"))
       (let [ws (edit/ns-warnings (:store @sess) 'us.eff)]
         (is (some #(re-find #"bump" (str %)) ws)
             (str "expected a !-naming warning for the reset!-ing fn: "
                  (pr-str ws))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest ^:external resolvers-are-denylisted-outside-carriers
   ;; the enforcement point of the reference-carrier decision: a string or
@@ -154,20 +154,20 @@
   ;; tests may hold quoted symbols; nothing un-carried may BECOME a var.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'rz.core "(ns rz.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/ingest! sess 'rz.core "(ns rz.core)\n\n(defn f \"F.\" [x] x)\n")
       (testing "naked requiring-resolve is refused with carrier teaching"
-        (let [r (api/add-form! sess 'rz.core
+        (let [r (ops/add-form! sess 'rz.core
                                (str "(defn sneak \"S.\" [q]\n"
                                     "  ((requiring-resolve q) 1))\n"))]
           (is (re-find #"late-ref" (str (:error r))) (pr-str r))))
       (testing "resolve and ns-resolve too"
-        (is (:error (api/add-form! sess 'rz.core
+        (is (:error (ops/add-form! sess 'rz.core
                                    "(defn peek* \"P.\" [q] (resolve q))")))
-        (is (:error (api/add-form! sess 'rz.core
+        (is (:error (ops/add-form! sess 'rz.core
                                    "(defn peek2 \"P.\" [q] (ns-resolve 'rz.core q))"))))
       (testing "^:unsafe is the marked escape — the author takes the obligation"
-        (let [r (api/add-form! sess 'rz.core
+        (let [r (ops/add-form! sess 'rz.core
                                (str "^:unsafe (defn bridge \"B.\" [q]\n"
                                     "  ((requiring-resolve q) 1))\n"))]
           (is (nil? (:error r)) (pr-str r))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))

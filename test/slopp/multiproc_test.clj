@@ -8,14 +8,14 @@
             [rewrite-clj.parser]
             [slopp.store :as store]
             [slopp.store.render]
-            [slopp.ops :as api] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
+            [slopp.ops :as ops] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (deftest ^:external two-servers-one-store
   (let [dir (str (System/getProperty "java.io.tmpdir")
                  "/slopp-m5b-" (System/nanoTime))
         s1  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! s1 'tp.core
+      (ops/ingest! s1 'tp.core
                    (str "(ns tp.core (:require [clojure.test :refer [deftest is]]))\n"
                         "(defn f [x] (inc x))\n"
                         "(defn h [x] (dec x))\n"
@@ -23,52 +23,52 @@
       (let [s2 (external/open! {:slopp.ops/dir dir})]           ; second server, same dir
         (try
           (testing "server 2 opens onto server 1's work"
-            (is (= [2] (api/query-eval s2 "(tp.core/f 1)"))))
+            (is (= [2] (ops/query-eval s2 "(tp.core/f 1)"))))
 
           (testing "s1 commits; s2 absorbs it — cache AND image"
-            (api/edit-replace! s1 'tp.core 'f "(defn f [x] (+ x 10))"
+            (ops/edit-replace! s1 'tp.core 'f "(defn f [x] (+ x 10))"
                                :prompt "s1's change" :agent "server-1")
-            (api/edit-replace! s1 'tp.core 'f-t
+            (ops/edit-replace! s1 'tp.core 'f-t
                                "(deftest f-t (is (= 11 (f 1))))")
-            (let [r (api/sync-with-journal! s2)]
+            (let [r (ops/sync-with-journal! s2)]
               (is (pos? (:synced r 0))))
-            (is (= [11] (api/query-eval s2 "(tp.core/f 1)")))
+            (is (= [11] (ops/query-eval s2 "(tp.core/f 1)")))
             (is (re-find #"\(\+ x 10\)" (query/query-source s2 'tp.core))))
 
           (testing "and the other direction"
-            (api/add-form! s2 'tp.core "(defn g [x] (* 2 (f x)))"
+            (ops/add-form! s2 'tp.core "(defn g [x] (* 2 (f x)))"
                            :prompt "s2's addition" :agent "server-2")
-            (api/sync-with-journal! s1)
-            (is (= [22] (api/query-eval s1 "(tp.core/g 1)"))))
+            (ops/sync-with-journal! s1)
+            (is (= [22] (ops/query-eval s1 "(tp.core/g 1)"))))
 
           (testing "a STALE different-form write rebases and lands (no sync needed)"
-            (api/edit-replace! s1 'tp.core 'f "(defn f [x] (+ x 100))")
-            (api/edit-replace! s1 'tp.core 'f-t
+            (ops/edit-replace! s1 'tp.core 'f "(defn f [x] (+ x 100))")
+            (ops/edit-replace! s1 'tp.core 'f-t
                                "(deftest f-t (is (= 101 (f 1))))")
             ;; s2 has NOT synced; its base is stale, but it touches h only
-            (let [r (api/edit-replace! s2 'tp.core 'h "(defn h [x] (- x 5))"
+            (let [r (ops/edit-replace! s2 'tp.core 'h "(defn h [x] (- x 5))"
                                        :prompt "stale but different form")]
               (is (nil? (:error r)) (pr-str r))
               (is (nil? (:conflict r))))
-            (api/sync-with-journal! s1)
+            (ops/sync-with-journal! s1)
             (is (re-find #"\(- x 5\)" (query/query-source s1 'tp.core)))
             (is (re-find #"\(\+ x 100\)" (query/query-source s1 'tp.core))))
 
           (testing "a cross-server same-form race surfaces the conflict"
-            (api/edit-replace! s1 'tp.core 'h "(defn h [x] :server-1)")
+            (ops/edit-replace! s1 'tp.core 'h "(defn h [x] :server-1)")
             ;; s2 unsynced: edits the SAME form from a stale base
-            (let [r (api/edit-replace! s2 'tp.core 'h "(defn h [x] :server-2)")]
+            (let [r (ops/edit-replace! s2 'tp.core 'h "(defn h [x] :server-2)")]
               (is (some? (:conflict r)) (pr-str r)))
             (is (re-find #":server-1" (query/query-source s1 'tp.core))))
 
           (testing "provenance shows which server did what"
-            (api/sync-with-journal! s2)
+            (ops/sync-with-journal! s2)
             (let [hist (pr-str (history/query-history s2))]
               (is (re-find #"server-1" hist))
               (is (re-find #"server-2" hist))))
-          (finally (api/close! s2))))
+          (finally (ops/close! s2))))
       (finally
-        (api/close! s1)
+        (ops/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external private-checkouts-shared-branch-storage        ; m5c
@@ -76,34 +76,34 @@
                  "/slopp-m5c-" (System/nanoTime))
         s1  (external/open! {:slopp.ops/dir dir})]
     (try
-      (api/ingest! s1 'pc.core
+      (ops/ingest! s1 'pc.core
                    (str "(ns pc.core)\n(defn f [x] (inc x))\n"))
       ;; server 1 branches and works there; its checkout is ITS state
       (branch/branch! s1 "feature")
-      (api/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 50))"
+      (ops/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 50))"
                          :prompt "feature work" :agent "server-1")
       (let [s2 (external/open! {:slopp.ops/dir dir})]          ; server 2: own checkout (main)
         (try
           (testing "checkouts are per-server: s2 is on main, unaffected"
             (is (= "main" (:current (branch/query-branches s2))))
-            (is (= [2] (api/query-eval s2 "(pc.core/f 1)"))))
+            (is (= [2] (ops/query-eval s2 "(pc.core/f 1)"))))
           (testing "s2 can see and switch to s1's branch (shared storage)"
             (is (some #(= "feature" (:name %))
                       (:branches (branch/query-branches s2))))
             (branch/branch-switch! s2 "feature")
-            (is (= [51] (api/query-eval s2 "(pc.core/f 1)"))))
+            (is (= [51] (ops/query-eval s2 "(pc.core/f 1)"))))
           (testing "both on feature: commits flow across servers via the journal"
-            (api/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 500))"
+            (ops/edit-replace! s1 'pc.core 'f "(defn f [x] (+ x 500))"
                                :prompt "more feature work")
-            (api/sync-with-journal! s2)
-            (is (= [501] (api/query-eval s2 "(pc.core/f 1)"))))
+            (ops/sync-with-journal! s2)
+            (is (= [501] (ops/query-eval s2 "(pc.core/f 1)"))))
           (testing "meanwhile s1 can go back to main independently"
             (branch/branch-switch! s1 "main")
-            (is (= [2] (api/query-eval s1 "(pc.core/f 1)")))
+            (is (= [2] (ops/query-eval s1 "(pc.core/f 1)")))
             (is (= "feature" (:current (branch/query-branches s2)))))
-          (finally (api/close! s2))))
+          (finally (ops/close! s2))))
       (finally
-        (api/close! s1)
+        (ops/close! s1)
         (clojure.java.shell/sh "rm" "-rf" dir)))))
 
 (deftest ^:external incremental-sync-replays-the-suffix-exactly    ; backlog: no full reload
