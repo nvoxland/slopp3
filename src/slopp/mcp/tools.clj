@@ -244,7 +244,14 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_rename"
-    :description "Rename ONE form + every reference across namespaces (shadow-safe). For concept-wide renames (ns + keys + prose) use rename_sweep."
+    :description "Rename ONE form + every reference across namespaces (shadow-safe). For concept-wide renames (ns + keys + prose) use rename_sweep; to rename a namespace's ALIAS rather than a var, ns_realias."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"} :old {:type "string"}
+                               :new {:type "string"} :prompt {:type "string"}
+                               :verbose {:type "boolean"}}
+                  :required ["ns" "old" "new"]}}
+   {:name "ns_realias"
+    :description "Rename ONE namespace's require alias as a single intent: the `:as` in its ns form and every `alias/sym` in its bodies, together. THE tool for an alias ns_rename left stale — a rename rewrites namespaces and walks straight past the `:as`, so moved code goes on being called by its old module's name; when that name is later REUSED the alias points at a real, different module, which is worse than one naming nothing. There is no safe hand route: the two halves cannot be separate writes, because between them the ns form and the bodies disagree about the qualifier and the namespace does not load. Scoped to one namespace on purpose — an alias is a name ONE namespace chose, so two namespaces calling a lib different things is not drift. A BARE occurrence of the old alias is LEFT ALONE: only `alias/x` is the qualifier, and the same spelling is routinely a local or a parameter. READ THE RESULT: :sites is how many qualified references moved (0 means the alias was unused, not that nothing happened); :left-behind is the alias named inside STRING literals — fixture source, a docstring saying `alias/f` — reported and never rewritten, because rewriting one half of a fixture is how a half-renamed ns form ships green. Absence means checked-and-none."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :old {:type "string"}
                                :new {:type "string"} :prompt {:type "string"}
@@ -274,7 +281,12 @@
     :inputSchema {:type "object"
                   :properties {:prompt {:type "string"}}}}
    
-   {:description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified. READ THE RESULT: a relocation lands as one changeset and runs NO write gates, so nothing refuses what it breaks. :left-behind lists what no rewrite reaches (strings, qualified KEYWORDS, the -test sibling); :module-debt lists the module_dep edges its callers now need, calls that now reach a package-private ns, and cycles module_dep will refuse. Absence of either means checked-and-none.", :inputSchema {:properties {:new {:type "string"}, :prompt {:type "string"}, :old {:type "string"}}, :type "object", :required ["old" "new"]}, :name "ns_rename"}
+   {:name "ns_rename"
+    :description "Rename a WHOLE namespace everywhere (decl, requires, qualified refs). Verified. READ THE RESULT: a relocation lands as one changeset and runs NO write gates, so nothing refuses what it breaks. :left-behind lists what no rewrite reaches (strings, qualified KEYWORDS, the -test sibling); :module-debt lists the module_dep edges its callers now need, calls that now reach a package-private ns, and cycles module_dep will refuse. Absence of either means checked-and-none. It does NOT touch the `:as` in any caller's ns form, so every namespace that aliased the old name goes on calling it that — finish with ns_realias per caller, and do it now rather than later: the alias is harmless only until the old name is REUSED, after which it points at a real and different module."
+    :inputSchema {:type "object"
+                  :properties {:old {:type "string"} :new {:type "string"}
+                               :prompt {:type "string"}}
+                  :required ["old" "new"]}}
    {:name "ns_delete"
     :description "Retire a namespace: refuses while any form remains (edit_delete_form them first — each deletion verified) or any other ns still requires it (ns_remove_require) — then removes the empty husk from store, image, and every projection. One :ns-delete delta; say WHY in prompt."
     :inputSchema {:type "object"
@@ -683,7 +695,7 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
         ["edit_delete_form" "edit_rename" "edit_extract"
          "edit_move" "ns_add_require" "ns_remove_require" "ns_create"
          "ns_delete" "done" "commit_point" "deps_add" "deps_remove"
-         "deps_pure" "change_signature"]))
+         "deps_pure" "change_signature" "ns_realias"]))
 
 (def wire-keys
   "Every key a write result may carry to the agent — ONE list, replacing the
@@ -711,6 +723,8 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
     :mentions :changed-nses :reverted :skipped-shared :moved-to :moved :rewrote
     :callers :edges-declared :export-not-landed :export-note
     :extracted :step :to-ns :keys :unknown-shape
+    ;; what a realias moved, and what it declined to
+    :sites :lib :left-behind
     ;; what it cost and whether to believe it
     :test :ms :untested :image-healed :red-first :carried-errors
     :warnings :existing-warnings :advisories :drift :manual

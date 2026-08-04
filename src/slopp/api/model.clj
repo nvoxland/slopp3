@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.read.query :as query]
             [slopp.read.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
-            [slopp.read.modules :as api.modules]))
+            [slopp.read.modules :as read.modules]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -333,8 +333,8 @@
                                  (modules/module-of t)))
         test-tally (frequencies (mapcat reach (filter test? nses)))
         tiers      (:module-tiers st)
-        manifest   (api.modules/production-manifest st)
-        band       (api.modules/substrate manifest)
+        manifest   (read.modules/production-manifest st)
+        band       (read.modules/substrate manifest)
         ;; layer the graph WITHOUT the foundation: leaving it in stretches
         ;; every module above it a rung further from what it actually needs.
         reduced    (into {} (for [[m ds] manifest :when (not (band m))]

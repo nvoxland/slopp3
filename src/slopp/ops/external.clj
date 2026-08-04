@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as api] [slopp.project.deps :as api.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -129,7 +129,7 @@ client-deps (merge (:client-deps st) (:client provided))
                                                         (n/string (:node %)))
                                               (store/forms st nsx)))
                                       (keys (:namespaces st)))))
-        incompat (when main (seq (filter api.deps/native-incompatible-deps (keys deps))))
+        incompat (when main (seq (filter project.deps/native-incompatible-deps (keys deps))))
         ;; a deps.edn is ours iff it's byte-identical to a generated variant
         ;; (for THIS store's manifest + test layout — else it reads as foreign)
         traced?  (boolean (and has-tests?
@@ -233,7 +233,7 @@ client-deps (merge (:client-deps st) (:client provided))
                      (.setExecutable script true false)
                      (let [warns (vec (for [[lib coord] deps
                                             :when (= :none (:verdict
-                                                            (api.deps/dep-native-verdict session lib coord)))]
+                                                            (project.deps/dep-native-verdict session lib coord)))]
                                         lib))]
                        (cond-> {:binary bin
                                 :launcher "src/native/main.clj"
@@ -286,7 +286,7 @@ client-deps (merge (:client-deps st) (:client provided))
   [session & {:keys [alias ns only affected parallel nses]}]
   (let [t0    (System/currentTimeMillis)
         stamp (fn [r] (cond-> r (map? r) (assoc :ms (- (System/currentTimeMillis) t0))))
-        aff   (when affected (api/affected-test-nses session))]
+        aff   (when affected (ops/affected-test-nses session))]
     (if (and aff (empty? (:selected aff)))
       (stamp {:external true :ran 0 :status :green :affected aff
               :note (str "no test namespace can reach the changes since the last"
@@ -589,7 +589,7 @@ client-deps (merge (:client-deps st) (:client provided))
         _
         (doseq [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
                                     changed))]
-          (api/fix-declares! session ns*
+          (ops/fix-declares! session ns*
                          :prompt (or label "done declare hygiene")
                          :agent agent))
         ;; require hygiene, REPORTED (unlike declares, which the agent never
@@ -600,7 +600,7 @@ client-deps (merge (:client-deps st) (:client provided))
         (into (sorted-map)
               (for [ns* (distinct (keep #(store/ns-of-form-id (:store @session) %)
                                         changed))
-                    :let [pr (api/prune-requires! session ns*
+                    :let [pr (ops/prune-requires! session ns*
                                                   :prompt (or label "done require hygiene")
                                                   :agent agent)]
                     :when (or (seq (:pruned pr)) (seq (:kept pr)))]
@@ -1129,7 +1129,7 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; judged something, otherwise the last done that did.
                 verdict (if (#{:red :green} (get-in cp [:findings :test-status]))
                           (:findings cp)
-                          (api/last-judged-done st))
+                          (ops/last-judged-done st))
                 status  (or (:test-status verdict) (history/status-at st head))
                 status (if (= :unknown status) :green status) ; nothing ever ran red
                 ;; NO tree is captured. A milestone used to carry a byte-exact
@@ -1245,7 +1245,7 @@ client-deps (merge (:client-deps st) (:client provided))
             period (long (max 1000 (quot ttl 3)))]
         (.schedule t
                    (proxy [java.util.TimerTask] []
-                     (run [] (try (api/reap-idle-images! session)
+                     (run [] (try (ops/reap-idle-images! session)
                                   (catch Throwable _))))
                    period period)
         (swap! session assoc :reaper t))
@@ -1272,7 +1272,7 @@ client-deps (merge (:client-deps st) (:client provided))
                  (or (nil? (:modules store))
                      (and (empty? (:modules store))
                           (not-any? #(= :module-edge (:op %)) (:deltas store)))))
-        (api/adopt-modules! session :agent (or agent-id "slopp")))
+        (ops/adopt-modules! session :agent (or agent-id "slopp")))
       (when-let [p (:image-ready @session)] (deliver p :ok))
       session)
     (catch Throwable t
@@ -1422,7 +1422,7 @@ client-deps (merge (:client-deps st) (:client provided))
                session)
            (boot-image! session store conn agent-id ttl)))
        (catch Throwable t
-         (api/close! session)
+         (ops/close! session)
          (throw t))))))
 
 (defn ^:export spot-run!
@@ -1459,14 +1459,14 @@ client-deps (merge (:client-deps st) (:client provided))
                    :else      true)]
     (cond
       (empty? ext)
-      (api/test-run! session ns-sym :only only :fresh fresh)
+      (ops/test-run! session ns-sym :only only :fresh fresh)
 
       (not img?)
       (assoc (external-test-run! session :only ext)
              :note "external-tier spot-check — ran in one fresh serial JVM")
 
       :else
-      (let [img (api/test-run! session ns-sym :only img-only :fresh fresh)
+      (let [img (ops/test-run! session ns-sym :only img-only :fresh fresh)
             ex  (external-test-run! session :only ext)]
         ;; the external members RAN — the in-image side's pending note about
         ;; them would contradict the result beside it

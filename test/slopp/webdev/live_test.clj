@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.webdev.live :as devserver] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as api] [slopp.read.orient :as orient]))
+            [slopp.webdev.live :as live] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as api] [slopp.read.orient :as orient]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -21,18 +21,18 @@
         put (fn [s k v] (first (store/record-config-put s "capabilities"
                                                         :manifest k v)))]
     (testing "web.enabled is the opt-in, and refusing says how to opt in"
-      (let [p (devserver/serve-plan off "/tmp/shop")]
+      (let [p (live/serve-plan off "/tmp/shop")]
         (is (false? (:enabled? p)))
         (is (re-find #"web\.enabled" (:reason p)))
         (is (nil? (:port p)) "nothing is bound for a store that never opted in")))
     (testing "what to serve comes from the store, never from the caller"
-      (is (= ['shop.api] (:namespaces (devserver/serve-plan on "/tmp/shop")))))
+      (is (= ['shop.api] (:namespaces (live/serve-plan on "/tmp/shop")))))
     (testing "host and adapter are the declared capabilities"
-      (let [p (devserver/serve-plan on "/tmp/shop")]
+      (let [p (live/serve-plan on "/tmp/shop")]
         (is (= "127.0.0.1" (:host p)))
         (is (= :http-kit (:adapter p)))))
     (testing "an explicitly set web.port WINS — a pinned address stays pinned"
-      (is (= 9999 (:port (devserver/serve-plan (put on "web.port" "9999")
+      (is (= 9999 (:port (live/serve-plan (put on "web.port" "9999")
                                                "/tmp/shop")))))
     (testing "unset, the port DERIVES from the store dir"
       ;; web.port's registry DEFAULT is 8080, and a fixed default is exactly
@@ -40,18 +40,18 @@
       ;; exactly one project and collided for the second". Production wants a
       ;; known number, so the default still stands there — but two dev
       ;; sessions on one machine must not fight, so an UNSET port derives.
-      (let [a (:port (devserver/serve-plan on "/tmp/shop"))
-            b (:port (devserver/serve-plan on "/tmp/other"))]
+      (let [a (:port (live/serve-plan on "/tmp/shop"))
+            b (:port (live/serve-plan on "/tmp/other"))]
         (is (not= 8080 a) "the fixed default is not what a dev session binds")
         (is (not= a b) "two projects on one machine derive different ports")
-        (is (= a (:port (devserver/serve-plan on "/tmp/shop")))
+        (is (= a (:port (live/serve-plan on "/tmp/shop")))
             "stable across restarts — the url a human bookmarked keeps working")
         (is (< 1024 a 65536))))
     (testing "the plan says it is dev, so nothing reads it as the shipped one"
       ;; the dev server and the built app answer the same routes from
       ;; different stores at different grains — a plan that does not say
       ;; which it is becomes a proxy for the other (Core 9)
-      (is (= :dev (:mode (devserver/serve-plan on "/tmp/shop"))))) ))
+      (is (= :dev (:mode (live/serve-plan on "/tmp/shop"))))) ))
 
 (deftest the-app-image-loads-the-web-surface-and-what-it-reaches
   (let [s (-> (store/empty-store)
@@ -70,7 +70,7 @@
               (store/ingest 'shop.tools "(ns shop.tools)\n(defn cli \"C.\" [x] x)\n")
               (#(first (store/record-config-put % "capabilities" :manifest
                                                 "web.enabled" "true"))))
-        order (devserver/load-order s)]
+        order (live/load-order s)]
     (testing "the web surface and everything it transitively requires"
       (is (= #{'shop.api 'shop.db 'shop.data} (set order))))
     (testing "a namespace the surface cannot reach is not loaded into the app"
@@ -86,11 +86,11 @@
       ;; declared slopp-web coord, already on the child's classpath. Neither
       ;; case may require the app to say which.
       (let [with-fw (store/ingest s 'slopp.web "(ns slopp.web)\n(defn serve! \"S.\" [o] o)\n")]
-        (is (some #{'slopp.web} (devserver/load-order with-fw)))))
+        (is (some #{'slopp.web} (live/load-order with-fw)))))
     (testing "and its absence from the store is not an error"
       (is (not (some #{'slopp.web} order))))
     (testing "a store with no web surface loads nothing"
-      (is (= [] (devserver/load-order (store/empty-store)))))))
+      (is (= [] (live/load-order (store/empty-store)))))))
 
 (deftest the-serve-call-is-built-from-the-plan-not-written-by-the-app
   ;; The whole directive is that an app holds no `serve!` call. So the call
@@ -108,7 +108,7 @@
               :host "127.0.0.1" :port 51234 :adapter :jdk
               :max-body-bytes 2048
               :context-builder 'shop.system/deps}
-        form (edn/read-string (devserver/serve-code plan))
+        form (edn/read-string (live/serve-code plan))
         read (nth form 3)                       ; (:port (slopp.web/serve! …))
         call (second read)]
     (testing "the app's CONTEXT is built by the declared builder and passed in"
@@ -133,7 +133,7 @@
         (is (= :jdk (:web/adapter opts)))))
     (testing "an app that declares NO builder passes no context, rather than
               an empty map that would read as one"
-      (let [none (edn/read-string (devserver/serve-code (dissoc plan :context-builder)))]
+      (let [none (edn/read-string (live/serve-code (dissoc plan :context-builder)))]
         (is (not (contains? (last (second (nth none 2))) :web/perform-ctx)))))
     (testing "and it still evaluates to the BOUND port — an integer, so a
               throw (which comes back as a string) cannot read as success"
@@ -238,14 +238,14 @@
                  (#(first (store/record-config-put % "capabilities" :manifest
                                                    "web.enabled" "true"))))
         sess (atom {})
-        r    (devserver/start! sess s dir)]
+        r    (live/start! sess s dir)]
     (try
       (testing "it is up, and the app said nothing to make that happen"
         (is (:serving? r) (str "start! did not serve: " (:reason r))))
       (testing "at the address the plan derived — one answer, not two"
         ;; two derivations of "where does this serve" can disagree, and the
         ;; failure is a url that is reported and a port that is bound
-        (is (= (:port (devserver/serve-plan s dir)) (:port r)))
+        (is (= (:port (live/serve-plan s dir)) (:port r)))
         (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r))))
       (let [body (:http/body (client/request {:http/url (:url r)
                                               :http/timeout-ms 5000}))]
@@ -267,7 +267,7 @@
         (testing "and the body cap, which had a capability describing nothing
                   while the generated call ignored it"
           (is (str/includes? body "cap=1048576") body)))
-      (finally (devserver/stop! r)))
+      (finally (live/stop! r)))
     (testing "and stop! takes the whole thing down, because the image IS the
               server — there is no half-stopped state to leak a port"
       (is (= :unreachable
@@ -300,14 +300,14 @@
         body (fn [r] (:http/body (client/request {:http/url (:url r)
                                                   :http/timeout-ms 5000})))]
     (try
-      (let [v1 (devserver/refresh! sess (app "version one") dir)]
+      (let [v1 (live/refresh! sess (app "version one") dir)]
         (testing "the first refresh is just a start"
           (is (:serving? v1) (str "refresh! did not serve: " (:reason v1)))
           (is (str/includes? (body v1) "version one")))
         (testing "and it is held on the session, so the next refresh knows
                   what it is replacing"
           (is (= v1 (:app-server @sess))))
-        (let [v2 (devserver/refresh! sess (app "version two") dir)]
+        (let [v2 (live/refresh! sess (app "version two") dir)]
           (testing "a second refresh serves the CURRENT store"
             (is (:serving? v2) (str "refresh! did not re-serve: " (:reason v2)))
             (is (str/includes? (body v2) "version two")))
@@ -320,7 +320,7 @@
                                        "        :malli/schema [:=> [:cat :map] :map]\n"
                                        "        :web/response :map} b \"B.\"\n"
                                        "  [req] (a/nope-not-a-thing))\n"))
-                v3  (devserver/refresh! sess red dir)]
+                v3  (live/refresh! sess red dir)]
             (testing "a store that will not load does NOT come up"
               (is (not (:serving? v3)))
               (is (str/includes? (str (:reason v3)) "demo.broken")))
@@ -328,7 +328,7 @@
                       not down because someone was mid-thought"
               (is (str/includes? (body v2) "version two"))
               (is (= v2 (:app-server @sess)))))))
-      (finally (devserver/stop! (:app-server @sess))))))
+      (finally (live/stop! (:app-server @sess))))))
 
 (deftest whether-slopp-manages-a-dev-server-is-its-own-question
   ;; web.enabled means "this project serves HTTP". It does NOT mean "slopp
@@ -356,16 +356,16 @@
                                                   "web.enabled" "true"))))]
     (testing "a web project is managed, and the app does not have to ask —
               nothing it can configure turns this off any more"
-      (is (devserver/managed? web #{'something.else})))
+      (is (live/managed? web #{'something.else})))
     (testing "a store this process already serves is exempt, and stays a web
               project while it is"
-      (is (not (devserver/managed? web #{'app.api})))
-      (is (:enabled? (devserver/serve-plan web "/tmp/x")))
+      (is (not (live/managed? web #{'app.api})))
+      (is (:enabled? (live/serve-plan web "/tmp/x")))
       (testing "and the plan still says where it WOULD serve, because that is
                 what production asks"
-        (is (pos? (:port (devserver/serve-plan web "/tmp/x"))))))
+        (is (pos? (:port (live/serve-plan web "/tmp/x"))))))
     (testing "a store that serves no HTTP at all is not managed either"
-      (is (not (devserver/managed? (store/empty-store) #{}))))))
+      (is (not (live/managed? (store/empty-store) #{}))))))
 
 (deftest ^:external a-refresh-reports-what-it-cost
   ;; slopp-ui asked "measure app-image boot cost, and let the number pick the
@@ -388,7 +388,7 @@
                  (#(first (store/record-config-put % "capabilities" :manifest
                                                    "web.enabled" "true"))))
         sess (atom {})
-        r    (devserver/refresh! sess s dir)]
+        r    (live/refresh! sess s dir)]
     (try
       (is (:serving? r) (str "refresh! did not serve: " (:reason r)))
       (testing "the running map carries how long the image took to come up"
@@ -408,7 +408,7 @@
         (let [s' (store/ingest s 'demo.later "(ns demo.later)\n(defn l \"L.\" [] 1)\n")]
           (is (= 1 (orient/behind s' r))
               "one code delta landed since the image was built")))
-      (finally (devserver/stop! r)))))
+      (finally (live/stop! r)))))
 
 (deftest the-generated-serve-call-accounts-for-every-option-it-could-carry
   ;; The generalisation of `catalog-covers-every-registered-rule`, which is
@@ -439,11 +439,11 @@
                    :context-builder 'demo.sys/deps
                    :static {"/assets" "public"} :static-dir "/tmp/x"}
         generated (->> (edn/read-string {:default (fn [_ v] v)}
-                                        (devserver/serve-code plan))
+                                        (live/serve-code plan))
                        (tree-seq coll? seq)
                        (filter map?)
                        first keys set)
-        dropped   (set (keys devserver/unserved-options))]
+        dropped   (set (keys live/unserved-options))]
     (testing "every option is either generated or declared deliberately dropped"
       (is (= accepted (into generated dropped))
           (str "unaccounted for: " (set/difference accepted generated dropped))))
@@ -451,7 +451,7 @@
       ;; the rule `crossings/internal-markers` already follows: a partial
       ;; classification is worse than none, because the one real hole drowns
       ;; in the entries nobody explained
-      (is (every? #(and (string? %) (seq %)) (vals devserver/unserved-options))))
+      (is (every? #(and (string? %) (seq %)) (vals live/unserved-options))))
     (testing "nothing is BOTH generated and declared dropped"
       ;; The union check above cannot see this: a key in both sets still
       ;; satisfies it, so prose explaining why an option is missing survives
@@ -478,7 +478,7 @@
               :adapter :http-kit
               :static {"/assets" "public"}
               :static-dir "/tmp/slopp-static-probe"}
-        code (devserver/serve-code plan)]
+        code (live/serve-code plan)]
     (testing "the generated call mounts the prefixes the store declared"
       (is (str/includes? code "mount-routes") "no mount call was generated")
       (is (str/includes? code "/assets"))
@@ -494,7 +494,7 @@
       (is (str/includes? code "(require (quote slopp.web.static))")
           "the child resolves slopp.web.static/mount-routes only if it required it"))
     (testing "a plan with no mounts generates no routes key at all"
-      (is (not (str/includes? (devserver/serve-code (dissoc plan :static :static-dir))
+      (is (not (str/includes? (live/serve-code (dissoc plan :static :static-dir))
                               "mount-routes"))
           "an app without mounts must not pay for the machinery"))))
 
@@ -511,7 +511,7 @@
         s    (first (store/record-file-put s "src/notes.md" "# not mounted"))
         ;; tracked files carry their content inline, so the blob fallback is
         ;; never consulted here — artifacts are the case that needs it
-        dir  (devserver/materialize-static! s {"/assets" "public"} (constantly nil))]
+        dir  (live/materialize-static! s {"/assets" "public"} (constantly nil))]
     (testing "a mounted file lands under the dir at its manifest path"
       (is (= "body{}" (slurp (str dir "/public/app.css")))))
     (testing "nested paths keep their shape, so one mount serves a TREE"
@@ -519,7 +519,7 @@
     (testing "a file no mount covers is not copied — the dir is the mount, not the store"
       (is (not (.exists (java.io.File. (str dir "/src/notes.md"))))))
     (testing "no mounts means no dir, so an app without assets allocates nothing"
-      (is (nil? (devserver/materialize-static! s {} (constantly nil)))))))
+      (is (nil? (live/materialize-static! s {} (constantly nil)))))))
 
 (deftest ^:external a-managed-server-carries-the-apps-assets-all-the-way-into-the-child
   ;; The wiring test. The unit tests prove `serve-code` generates a mount and
@@ -544,7 +544,7 @@
                  (#(first (store/record-file-put % "public/app.css"
                                                  "body{color:rebeccapurple}"))))
         sess (atom {})
-        r    (devserver/start! sess s dir)]
+        r    (live/start! sess s dir)]
     (try
       (is (:serving? r) (str "start! did not serve: " (:reason r)))
       (let [body (:http/body (client/request {:http/url (:url r)
@@ -556,7 +556,7 @@
           ;; the assertion that spans all three. A mount that arrived but
           ;; pointed at an empty dir passes the line above and fails here.
           (is (str/includes? body "rebeccapurple") body)))
-      (finally (devserver/stop! r)))))
+      (finally (live/stop! r)))))
 
 (deftest the-only-store-that-should-not-be-managed-is-derivable
   ;; `dev.server` existed for exactly one true case: a store whose HTTP
@@ -578,13 +578,13 @@
                                     "        :web/response :map} hi \"H.\" [req] {:ok true})\n"))
                  (put "web.enabled" "true"))]
     (testing "an ordinary web project is not self-served, whatever else is running"
-      (is (not (devserver/self-served? web #{'some.other.ns}))))
+      (is (not (live/self-served? web #{'some.other.ns}))))
     (testing "a store whose every serving namespace this process already serves IS"
-      (is (devserver/self-served? web #{'app.api})))
+      (is (live/self-served? web #{'app.api})))
     (testing "and a store that serves NOTHING is not self-served — two empty
               sets agree, and vacuous truth here would silently stop managing
               every non-web project's server for the wrong reason"
-      (is (not (devserver/self-served? (store/empty-store) #{}))))))
+      (is (not (live/self-served? (store/empty-store) #{}))))))
 
 (deftest static-bytes-for-an-artifact-come-from-the-on-disk-cache
   ;; Measured against slopp-ui's real store minutes after shipping mounts:
@@ -614,7 +614,7 @@
         entry (artifacts/put! dir bs {:kind :cljs}
                               :content-type "application/javascript")
         st    {:artifacts {"public/cljs/main.js" entry} :blobs {}}
-        out   (devserver/materialize-static! st {"/assets" "public"} dir)]
+        out   (live/materialize-static! st {"/assets" "public"} dir)]
     (testing "the artifact's bytes are read from the cache and written out"
       (is (= "console.log(1)" (slurp (str out "/public/cljs/main.js")))))
     (testing "and inline content is NOT required — the store answers nil for it"
@@ -624,7 +624,7 @@
       (let [empty-dir (str (java.nio.file.Files/createTempDirectory
                             "slopp-empty-store"
                             (make-array java.nio.file.attribute.FileAttribute 0)))
-            o2 (devserver/materialize-static! st {"/assets" "public"} empty-dir)]
+            o2 (live/materialize-static! st {"/assets" "public"} empty-dir)]
         (is (not (.exists (java.io.File. (str o2 "/public/cljs/main.js")))))))))
 
 (deftest a-bind-failure-leads-with-the-diagnosis-and-says-what-to-do
@@ -635,7 +635,7 @@
   (testing "the measured case: something else holds the port"
     (let [raw (str "class java.net.BindException: Execution error (BindException)"
                    " at sun.nio.ch.Net/bind0 (Net.java:-2).\nAddress already in use")
-          m   (#'devserver/bind-failure 7999 raw)]
+          m   (#'live/bind-failure 7999 raw)]
       (is (str/starts-with? m "port 7999 is already in use")
           (str "the diagnosis has to be the first thing read: " m))
       (is (str/includes? m "web.port")
@@ -646,7 +646,7 @@
     ;; the honest half. A bind can fail for reasons this does not model
     ;; (privileged port, unresolvable host), and a confident wrong sentence
     ;; is worse than a verbose right one.
-    (let [m (#'devserver/bind-failure 7999 "Permission denied")]
+    (let [m (#'live/bind-failure 7999 "Permission denied")]
       (is (str/includes? m "Permission denied") m)
       (is (str/includes? m "7999") m))))
 

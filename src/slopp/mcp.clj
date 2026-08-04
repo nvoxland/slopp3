@@ -8,7 +8,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.ops :as api]
+            [slopp.ops :as ops]
             [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph]))
 
 (def ^:private protocol-version "2024-11-05")
@@ -325,7 +325,7 @@
   "call-tool dispatch \u2014 deps/branches/build/help (Q4: the stable dispatch tail lives in\n  per-group handler maps of (fn [session a sym]); call-tool keeps only the\n  hot query/edit clauses)."
   {"deps_add"
    (fn [session a sym]
-     (text! (api/deps-add! session (sym :lib)
+     (text! (ops/deps-add! session (sym :lib)
                           (or (:coord a)
                               (when (:version a)
                                 {:mvn/version (:version a)}))
@@ -333,11 +333,11 @@
                           :client (:client a))))
    "deps_remove"
    (fn [session a sym]
-     (text! (api/deps-remove! session (sym :lib)
+     (text! (ops/deps-remove! session (sym :lib)
                                            :agent (:agent a))))
    "deps_list"
    (fn [session _a _sym]
-     (text! (api/deps-manifest session)))
+     (text! (ops/deps-manifest session)))
    "store_health"
    (fn [session _a _sym]
      (text! (external/store-health session)))
@@ -367,8 +367,8 @@
    "deps_pure"
    (fn [session a sym]
      (text! (if (false? (:pure a))
-                           (api/deps-unpure! session (sym :target) :agent (:agent a))
-                           (api/deps-pure! session (sym :target) :agent (:agent a)))))
+                           (ops/deps-unpure! session (sym :target) :agent (:agent a))
+                           (ops/deps-pure! session (sym :target) :agent (:agent a)))))
    "branch_create"
    (fn [session a _sym]
      (text! (branch/branch! session (:name a))))
@@ -386,7 +386,7 @@
      (text! (branch/query-branches session)))
    "restart"
    (fn [session _a _sym]
-     (api/restart! session)
+     (ops/restart! session)
      (text! "restarted"))
    "build"
    (fn [session a _sym]
@@ -404,7 +404,7 @@
      (text! (external/config! session (:key a) (:value a))))
    "file_put"
    (fn [session a _sym]
-     (text! (api/file-put! session (:path a) (:content a)
+     (text! (ops/file-put! session (:path a) (:content a)
                            :prompt (:prompt a) :agent (:agent a)
                            :encoding (:encoding a)
                            :content-type (:content-type a)
@@ -413,7 +413,7 @@
    (fn [session a _sym]
      ;; format crosses the wire as a string; keywordize HERE so the verb's
      ;; own check sees a keyword and can name the keywords it wants
-     (text! (api/js-dep! session (:name a)
+     (text! (ops/js-dep! session (:name a)
                          {:version    (:version a)
                           :format     (some-> (:format a) not-empty keyword)
                           :global     (:global a)
@@ -430,37 +430,37 @@
                          :remove (:remove a) :source (:source a))))
    "file_remove"
    (fn [session a _sym]
-     (text! (api/file-remove! session (:path a)
+     (text! (ops/file-remove! session (:path a)
                                            :prompt (:prompt a) :agent (:agent a))))
    "file_list"
    (fn [session _a _sym]
-     (text! (api/files-list session)))
+     (text! (ops/files-list session)))
    "file_get"
    (fn [session a _sym]
-     (text! (api/file-get session (:path a) :at (:at a))))
+     (text! (ops/file-get session (:path a) :at (:at a))))
    "file_history"
    (fn [session a _sym]
-     (text! (api/file-history! session (:path a))))
+     (text! (ops/file-history! session (:path a))))
    "config_file"
    (fn [session a _sym]
-     (text! (api/config-file! session (:path a)
+     (text! (ops/config-file! session (:path a)
                                            :key (:key a) :value (:value a)
                                            :unset (:unset a) :format (:format a)
                                            :prompt (:prompt a) :agent (:agent a))))
    "module_dep"
    (fn [session a _sym]
-     (text! (api/module-dep! session (:from a) (:to a)
+     (text! (ops/module-dep! session (:from a) (:to a)
                              :remove (:remove a)
                              :test-only (:test_only a)
                              :prompt (:prompt a) :agent (:agent a))))
    "module_purity"
    (fn [session a _sym]
-     (text! (api/module-tier! session (:module a) (:tier a)
+     (text! (ops/module-tier! session (:module a) (:tier a)
                               :remove (:remove a)
                               :prompt (:prompt a) :agent (:agent a))))
 "module_platform"
    (fn [session a _sym]
-     (text! (api/module-platform! session (:module a) (:platform a)
+     (text! (ops/module-platform! session (:module a) (:platform a)
                                   :remove (:remove a)
                                   :prompt (:prompt a) :agent (:agent a))))})
 
@@ -522,9 +522,9 @@
    (fn [session a _sym]
      (text! (if (:commit a)
               ;; the drill-down rung: ONE milestone, full description
-              (or (api/query-commits session :commit (:commit a))
+              (or (ops/query-commits session :commit (:commit a))
                   {:error (str "no milestone " (:commit a))})
-              (let [rows (api/query-commits session)
+              (let [rows (ops/query-commits session)
                     conn (:db @session)
                     al   (when (and conn (:dir @session))
                            (sync/alignment (:dir @session) "."
@@ -860,8 +860,8 @@
                                                   (tools/accepted-arg-keys name)))))
                     {:tool name :unknown (vec bad)})))
   (when-not (contains? tools/image-free-tools name)
-    (api/await-image! session))
-  (api/sync-with-journal! session)      ; m5b: absorb other servers' commits      ; m5b: absorb other servers' commits
+    (ops/await-image! session))
+  (ops/sync-with-journal! session)      ; m5b: absorb other servers' commits      ; m5b: absorb other servers' commits
   (absorb-pending-intent! session)
   ;; A NEW ASK IS A NEW TURN. The gate used to open one only when none was
   ;; open, and nothing ever closed one, so a single turn spanned an entire
@@ -875,19 +875,19 @@
              (contains? tools/write-tools name)
              (not (#{"done" "commit_point"} name)))
     (let [ag (or (:agent arguments) (:agent-id @session))]
-      (when (api/turn-open? session ag)
-        (api/turn-end! session :agent ag))))
+      (when (ops/turn-open? session ag)
+        (ops/turn-end! session :agent ag))))
   (when (and (:require-turns? @session)
              (contains? tools/write-tools name)
              ;; done/commit_point CLOSE work; always allowed
              (not (#{"done" "commit_point"} name)))
     (let [ag (or (:agent arguments) (:agent-id @session))]
-      (when-not (api/turn-open? session ag)
+      (when-not (ops/turn-open? session ag)
         (if-let [intent (:pending-intent @session)]
           ;; the plugin's prompt hook captured the user's verbatim ask —
           ;; the turn opens itself (zero-ceremony turns)
           (do (swap! session dissoc :pending-intent)
-              (api/turn-begin! session :agent ag :intent intent))
+              (ops/turn-begin! session :agent ag :intent intent))
           ;; NAME THE CAUSE. "no open turn" alone reads as "the turn did not
           ;; take", which sends you to look at turns; the usual real cause is
           ;; that no ask ever arrived FOR THIS STORE. The plugin's prompt hook
@@ -940,13 +940,13 @@
     (if-let [h (tail-handlers! name)]
       (h session a sym)
       (case name
-      "ns_create" (text! (api/create-ns! session (sym :ns)
+      "ns_create" (text! (ops/create-ns! session (sym :ns)
                                                 :requires (:requires a)
                                                 :source (:source a)
                                                 :platform (:platform a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "ns_add_require" (text! (-> (api/add-require! session (sym :ns) (:require a)
+      "ns_add_require" (text! (-> (ops/add-require! session (sym :ns) (:require a)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys tools/wire-keys)
@@ -993,19 +993,19 @@
                                                           :detail (:detail a)
                                                           :direction (if (= "dependencies" (:direction a))
                                                                        :dependencies :dependents))))
-      "session_brief" (text! (let [b    (api/session-brief session)
+      "session_brief" (text! (let [b    (ops/session-brief session)
                                        conn (:db @session)
                                        al   (when (and conn (:dir @session))
                                               (sync/alignment
                                                (:dir @session) "."
                                                (str "slopp/" (:branch @session))
-                                               (api/query-commits session)))]
+                                               (ops/query-commits session)))]
                                    (told! session name a (cond-> b al (assoc :alignment al)))))
       "review_scan" (text! (told! session name a
                                             (review/review-scan session
                                                              :ns (:ns a)
                                                              :limit (or (:limit a) 25))))
-      "report" (text! (let [r    (api/report session
+      "report" (text! (let [r    (ops/report session
                                                        :since (:since a)
                                                        :contains (:contains a)
                                                        :limit (or (:limit a) 50))
@@ -1014,20 +1014,20 @@
                                               (sync/alignment
                                                (:dir @session) "."
                                                (str "slopp/" (:branch @session))
-                                               (api/query-commits session)))]
+                                               (ops/query-commits session)))]
                                    (cond-> r al (assoc :alignment al))))
-      "draft_test" (text! (api/draft-test session (sym :ns) (sym :name)
+      "draft_test" (text! (ops/draft-test session (sym :ns) (sym :name)
                                                 :code (:code a)
                                                 :limit (or (:limit a) 5)))
-      "turn_begin" (text! (api/turn-begin! session :agent (:agent a)
+      "turn_begin" (text! (ops/turn-begin! session :agent (:agent a)
                                                  :intent (:intent a)
                                                  :user (:user a)))
-      "turn_end" (text! (api/turn-end! session :agent (:agent a)
+      "turn_end" (text! (ops/turn-end! session :agent (:agent a)
                                                :note (:note a)))
       "query_changes" (text! (history/query-changes session :agent (:agent a)
                                                    :from (:from a) :to (:to a)
                                                    :format (:format a)))
-      "episode_revert" (text! (-> (api/revert-episode! session
+      "episode_revert" (text! (-> (ops/revert-episode! session
                                                          :agent (:agent a)
                                                          :prompt (:prompt a))
                                     (select-keys tools/wire-keys)
@@ -1070,38 +1070,38 @@
                                                               :collapse (:collapse a)
                                                               :format (:format a)
                                                               :limit (or (:limit a) 20))))))
-      "query_eval" (text! (api/query-eval session (:code a)))
-      "query_call" (text! (apply api/query-call session
+      "query_eval" (text! (ops/query-eval session (:code a)))
+      "query_call" (text! (apply ops/query-call session
                                  (symbol (or (:sym a)
                                              (throw (ex-info "query_call needs :sym (a qualified var name)" {}))))
                                  (:args a)))
       "query_store" (text! (told! session name a
                                   (query/query-store session (:code a)
                                                    :timeout-ms (or (:timeout_ms a) 10000))))
-      "query_observe" (text! (let [r (api/query-observe session (sym :ns) (sym :name)
+      "query_observe" (text! (let [r (ops/query-observe session (sym :ns) (sym :name)
                                                           (:code a)
                                                           :limit (or (:limit a) 10))]
-                                 (api/remember-observation! session (sym :ns) (sym :name) r)
+                                 (ops/remember-observation! session (sym :ns) (sym :name) r)
                                  r))
-      "query_macroexpand" (text! (api/query-macroexpand session (:code a)))
+      "query_macroexpand" (text! (ops/query-macroexpand session (:code a)))
       "query_vocabulary" (text! (told! session name a (query/query-vocabulary session :ns (:ns a))))
       "query_rules" (text! (told! session name a (rules/query-rules session)))
       "query_capabilities" (text! (told! session name a (query/query-capabilities session)))
       "query_routes" (text! (told! session name a (query/query-routes session)))
       "query_rule_telemetry" (text! (told! session name a (query/query-rule-telemetry session :since (:since a))))
-      "edit_replace_form" (text! (-> (api/edit-replace! session (sym :ns) (sym :name)
+      "edit_replace_form" (text! (-> (ops/edit-replace! session (sym :ns) (sym :name)
                                                        (src :source) :prompt (:prompt a)
                                                        :agent (:agent a))
                                     (assoc :forms [(str (sym :ns) "/" (sym :name))])
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
-      "edit_add_form" (text! (-> (api/add-form! session (sym :ns) (src :source)
+      "edit_add_form" (text! (-> (ops/add-form! session (sym :ns) (src :source)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)
                                                    :before (some-> (:before a) symbol))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
-      "edit_delete_form" (text! (-> (api/delete-form! session (sym :ns) (sym :name)
+      "edit_delete_form" (text! (-> (ops/delete-form! session (sym :ns) (sym :name)
                                                       :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys tools/wire-keys)
@@ -1110,18 +1110,18 @@
                                 new (or (:new a) (:to a))]
                             (when-not (and old new)
                               (throw (ex-info "edit_rename needs :old and :new (aliases: :name/:from, :to)" {})))
-                            (text! (-> (api/rename! session (sym :ns) (symbol old)
+                            (text! (-> (ops/rename! session (sym :ns) (symbol old)
                                                    (symbol new) :prompt (:prompt a)
                                                    :agent (:agent a))
                                       (select-keys tools/wire-keys)
                                       (summarize (:verbose a)))))
-      "ns_remove_require" (text! (-> (api/remove-require! session (sym :ns) (sym :lib)
+      "ns_remove_require" (text! (-> (ops/remove-require! session (sym :ns) (sym :lib)
                                                          :prompt (:prompt a)
                                                          :agent (:agent a))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
       "full_check" (text! (external/full-check! session :affected (:affected a)))
-      "edit_requalify" (text! (-> (api/requalify-boundary-keys!
+      "edit_requalify" (text! (-> (ops/requalify-boundary-keys!
                                    session (sym :ns) (sym :name)
                                    :to-ns (or (:to-ns a) (:to_ns a))
                                    :prompt (:prompt a)
@@ -1132,7 +1132,7 @@
       "rename_sweep" (let [{:keys [from to]} a]
                             (when-not (and from to)
                               (throw (ex-info "rename_sweep needs :from and :to (plain words/segments)" {})))
-                            (text! (-> (api/rename-sweep! session from to
+                            (text! (-> (ops/rename-sweep! session from to
                                                          :prompt (:prompt a)
                                                          :agent (:agent a)
                                                          :dry-run (or (:dry-run a) (:dry_run a)))
@@ -1156,7 +1156,7 @@
                                         (or (:source a) (:to a)))]
                             (when-not (and (or match (:where a)) src)
                               (throw (ex-info "edit_subform needs :match (exact subform source) OR :where {key value} (the unique map containing it) OR :after (a complete neighboring form to insert behind), plus :source" {})))
-                            (text! (-> (api/edit-subform! session (sym :ns)
+                            (text! (-> (ops/edit-subform! session (sym :ns)
                                             (symbol (or (:form a) (:name a)
                                                         (throw (ex-info "edit_subform needs :form (the containing form's name; :name works too)" {}))))
                                                          match src
@@ -1167,16 +1167,16 @@
                                                          :agent (:agent a))
                                       (select-keys tools/wire-keys)
                                       (summarize (:verbose a)))))
-      "edit_revert" (text! (-> (api/revert-form! session (sym :ns) (sym :name)
+      "edit_revert" (text! (-> (ops/revert-form! session (sym :ns) (sym :name)
                                                       :to (:to a) :prompt (:prompt a)
                                                       :agent (:agent a))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
-      "edit_move" (text! (api/move-form! session (sym :ns) (sym :name)
+      "edit_move" (text! (ops/move-form! session (sym :ns) (sym :name)
                                                 :before (sym :before)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-      "edit_comment" (text! (api/set-comment! session (sym :ns) (sym :name)
+      "edit_comment" (text! (ops/set-comment! session (sym :ns) (sym :name)
                                                    (:text a)
                                                    :prompt (:prompt a)
                                                    :agent (:agent a)))
@@ -1187,7 +1187,7 @@
                                              " or — better for anything large — :at, an"
                                              " ANCHOR: the subform's first line, which"
                                              " need not parse on its own")})
-                         (text! (-> (api/extract! session (sym :ns) (sym :from)
+                         (text! (-> (ops/extract! session (sym :ns) (sym :from)
                                                   (sym :name) subform
                                                   :at (:at a)
                                                   :prompt (:prompt a))
@@ -1259,7 +1259,7 @@
                                              :fresh (:fresh a))
 
                          (:all a)
-                         (assoc (api/test-run! session nil :fresh (:fresh a))
+                         (assoc (ops/test-run! session nil :fresh (:fresh a))
                                 :note (str "done runs the affected tests for everything"
                                            " you touched — a whole-suite in-image run is"
                                            " rarely needed mid-episode; the merge gate is"
@@ -1272,13 +1272,13 @@
                                          " tests itself. Whole suite in-image: {all true};"
                                          " external merge gate: {external true}.")}))
       
-      "ns_delete" (text! (api/delete-ns! session (sym :ns)
+      "ns_delete" (text! (ops/delete-ns! session (sym :ns)
                                               :prompt (:prompt a)
                                               :agent (:agent a)))
-      "ns_rename" (text! (api/ns-rename! session (:old a) (:new a)
+      "ns_rename" (text! (ops/ns-rename! session (:old a) (:new a)
                                                 :prompt (:prompt a)
                                                 :agent (:agent a)))
-"module_extract" (text! (api/module-extract!
+"module_extract" (text! (ops/module-extract!
                                session
                                (mapv symbol (:namespaces a))
                                (symbol (str (:to a)))
@@ -1286,18 +1286,18 @@
                                :prompt (:prompt a)
                                :agent (:agent a)))
       "cleanup" (text! (if (:all a)
-                        (api/cleanup-all! session
+                        (ops/cleanup-all! session
                                           :prompt (:prompt a)
                                           :agent (:agent a))
-                        (api/cleanup! session (sym :ns)
+                        (ops/cleanup! session (sym :ns)
                                       :prompt (:prompt a)
                                       :agent (:agent a))))
-      "undo" (text! (api/undo! session
+      "undo" (text! (ops/undo! session
                                :deltas (:deltas a)
                                :to (:to a)
                                :prompt (:prompt a)
                                :agent (:agent a)))
-      "edit_move_forms" (text! (-> (api/move-forms! session (sym :ns)
+      "edit_move_forms" (text! (-> (ops/move-forms! session (sym :ns)
                                                      (mapv symbol (:forms a))
                                                      (symbol (:to a))
                                                      :export (:export a)
@@ -1305,13 +1305,19 @@
                                                      :agent (:agent a))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
-      "change_signature" (text! (-> (api/change-signature! session (sym :ns)
+      "change_signature" (text! (-> (ops/change-signature! session (sym :ns)
                                                            (sym :name)
                                                            (src :source) (:calls a)
                                                            :prompt (:prompt a)
                                                            :agent (:agent a))
                                     (select-keys tools/wire-keys)
                                     (summarize (:verbose a))))
+"ns_realias" (text! (-> (ops/realias! session (sym :ns)
+                                             (sym :old) (sym :new)
+                                             :prompt (:prompt a)
+                                             :agent (:agent a))
+                              (select-keys tools/wire-keys)
+                              (summarize (:verbose a))))
       (throw (ex-info (str "unknown tool: " name ". Available: "
                            (str/join ", " (map :name tools/tools)))
                       {}))))))
@@ -1345,7 +1351,7 @@
                                chain)]
                (assoc (text! (str "error: " (str/join " <- " msgs)))
                       :isError true))))
-      (finally (api/close! session)))))
+      (finally (ops/close! session)))))
 
 ^:unsafe
 (defn ^:entry-point call-main!
@@ -1508,4 +1514,4 @@
         ;; bound for as long as the reap takes — and the next server to start
         ;; here wants exactly that port.
         (live/stop! (:app-server @session))
-        (api/close! session)))))
+        (ops/close! session)))))

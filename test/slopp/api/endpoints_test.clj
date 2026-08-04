@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.api.endpoints]
             [slopp.api.contracts :as contracts]
-            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as api] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs]))
+            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -141,7 +141,7 @@
   ;; models read the delta log, not just the store's namespaces.
   (let [sess (external/open!)]
     (try
-      (api/ingest! sess 'demo.core
+      (ops/ingest! sess 'demo.core
                    (str "(ns demo.core)\n\n(defn hello \"Says hi.\" [x] x)\n\n"
                         ;; a real CALLER, because [:sequential …] over an empty
                         ;; list validates vacuously — with no caller the whole
@@ -202,7 +202,7 @@
           (is (= 200 (:status (GET (str "/api/form/" fid "?view=clojure")))))
           (is (= 404 (:status (GET "/api/source/demo.core/nope"))))
           (is (= 404 (:status (GET "/api/change/d1..d2"))))))
-      (finally (api/close! sess)))))
+      (finally (ops/close! sess)))))
 
 (deftest the-modules-endpoint-serves-a-contract-shaped-architecture
   (let [st  (-> (store/empty-store)
@@ -316,7 +316,7 @@
           (is (nil? (store/form-named st 'demo.client.api 'contract)))))
       (finally
         (server/stop!)
-        (api/close! consumer)))))
+        (ops/close! consumer)))))
 
 (deftest an-outline-row-says-what-a-form-TAKES-and-what-KIND-it-is
   ;; slopp-ui, 2026-08-02: their namespace pane is now laid out as SOURCE, and

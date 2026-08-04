@@ -1947,3 +1947,43 @@
     (is (nil? (#'mcp/app-note-for
                {:serving? false :stopped true
                 :reason "web.enabled is false for this store — the managed app server was stopped"})))))
+
+(deftest ^:external every-advertised-tool-has-a-handler-that-names-it
+  ;; The other half of `slopp-prose-never-names-a-tool-that-does-not-exist`.
+  ;; That guard catches prose naming a tool that is not on the wire; this one
+  ;; catches the reverse — a tool ADVERTISED in `tools/tools` with nothing in
+  ;; `slopp.mcp` to run it. `call-tool!`'s fallthrough turns that into
+  ;; "unknown tool: X. Available: …" listing X itself, which is the least
+  ;; helpful error in the system, and it fires only when someone calls it.
+  ;;
+  ;; Nothing else checks this: the tool LIST and the dispatch are two literals
+  ;; in two namespaces, related by a string. Adding a tool is two writes, and
+  ;; a green suite after the first one says nothing is wrong.
+  ;;
+  ;; Matched on EXACT string equality, not on mention: a case branch and a
+  ;; handler-map key are both the bare literal `"ns_realias"`, while prose
+  ;; explaining a tool spells it inside a sentence. So this asks "is this name
+  ;; used as a dispatch key here", not "is it talked about".
+  (let [st       (external/built-store)
+        literals (into #{}
+                       (for [e    (store/forms st 'slopp.mcp)
+                             :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                             x    (tree-seq coll? seq s)
+                             :when (string? x)]
+                         x))
+        advertised (into #{} (map :name) tools/tools)
+        orphans    (vec (sort (remove literals advertised)))]
+    (testing "there is a POPULATION — the sibling guard above spent its whole
+              life scanning an empty store, and the fix is the same one line"
+      (is (< 40 (count advertised))
+          (str "expected slopp's tool list, got " (count advertised)))
+      (is (< 100 (count literals))
+          (str "expected slopp.mcp's string literals, got " (count literals))))
+    (testing "the detector still fires — a check that cannot fail is not a check"
+      (is (contains? literals "ns_rename") "a real dispatch key must be found")
+      (is (not (contains? literals "ns_rename_nonexistent"))
+          "and a name nothing dispatches must not be"))
+    (is (empty? orphans)
+        (str "tools/tools advertises " (count orphans) " tool(s) slopp.mcp"
+             " does not dispatch — calling one returns \"unknown tool\" naming"
+             " the tool itself: " (pr-str orphans)))))

@@ -277,13 +277,20 @@
                                " — restart the server"))
 
                     (and (not failed) (seq drift))
+                    ;; This is the ONE staleness line here the reader can act on, and it
+                    ;; was the only one with no verb in it — the two beside it,
+                    ;; both about the serving process, end in an instruction.
+                    ;; slopp-ui read that arrangement and concluded the image
+                    ;; drift was the unfixable one.
                     (conj (str (count drift) " form(s) in the VERIFICATION image"
                                " differ from the store — no reload failed there,"
                                " so nothing said so: "
                                (str/join ", "
                                          (map #(str (:ns %) "/" (:form %)
                                                     " (" (name (:why %)) ")")
-                                              (take 5 drift)))))
+                                              (take 5 drift)))
+                               ". The `restart` tool builds a fresh verification"
+                               " image and clears this"))
 
                     (and (not failed) (= :snapshot (:mode info))
                          (pos? (or deltas-since-boot 0)))
@@ -377,24 +384,51 @@
       (when (or drifted? behind? failed? stale?)
         (assoc (host-brief info deltas-since-boot false drift)
                :verdict-note
+               ;; Every branch names `restart` — the TOOL, in its own spelling. These
+               ;; said "restart the server", and slopp-ui read that as the MCP
+               ;; process a human owns, which is the one act they believed an
+               ;; agent cannot perform. They reported the staleness as a WALL and
+               ;; sized a mechanism around it; two calls later `restart` cleared
+               ;; it. The mechanism was right the whole time and the sentence
+               ;; sent them somewhere else, so the remedy has to be spelled as
+               ;; something the reader can call, not as an object they cannot
+               ;; reach.
+               ;; TWO images can be stale here and only one of them is the reader's.
+               ;; `slopp.ops/restart!` calls `session/fresh-image!`: it replaces
+               ;; the VERIFICATION image and does not touch the JVM serving MCP.
+               ;; So the drift branch names the tool and the host branches say
+               ;; plainly that it will not help — both halves matter, and each
+               ;; was got wrong in turn. slopp-ui read the old "restart the
+               ;; server" as the process a human owns, reported a two-call fix
+               ;; as a wall, and started sizing a mechanism around it; the first
+               ;; attempt at this comment then said `restart` everywhere, which
+               ;; would have spent a call to hand back an equally suspect
+               ;; verdict. A remedy the reader cannot run and a remedy that does
+               ;; not work fail the same way.
                (cond
                  behind?
                  (str "this verdict was produced by a host that is behind the"
                       " store on " (str/join ", " (take 5 hdrift))
                       " — it runs the code that ORCHESTRATES verification, so"
-                      " treat the verdict as suspect and restart the server")
+                      " treat the verdict as suspect. This is the SERVING"
+                      " process, not the verification image, so the `restart`"
+                      " tool does not clear it — the MCP server has to come up"
+                      " again")
 
                  drifted?
                  (str "this verdict was produced against a verification image"
                       " holding " (count drift) " form(s) the store has moved"
-                      " past — treat it as suspect and restart the server; the"
-                      " :oracle-drift list names them")
+                      " past — treat it as suspect. The `restart` tool builds a"
+                      " fresh verification image and clears this; the"
+                      " :oracle-drift list names the forms")
 
                  :else
                  (str "this verdict was produced by a host whose live-reload"
                       " failed, and whether it still runs the store's current"
                       " code has NOT been measured — treat it as suspect until"
-                      " the host is current (restart the server)")))))))
+                      " the host is current. That is the SERVING process, so the"
+                      " `restart` tool does not settle it; the next poll retries"
+                      " and the MCP server coming up again is the certain fix")))))))
 
 (defn ^:export behind
   "How many CODE changes the SERVED app image is behind the store — `0` when

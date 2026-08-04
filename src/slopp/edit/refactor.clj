@@ -1390,15 +1390,33 @@
 
             :else (recur (z/next z))))))))
 
+(def ^:private symbol-constituents
+  "The characters that can sit INSIDE a Clojure symbol token, as a regex
+  character-class body. Shared by the mention regexes below, which differ only
+  in which side they bound — a second copy would drift the moment one of them
+  learned about a character the other did not.
+
+  `-` is last on purpose: anywhere else in a class it reads as a range."
+  "A-Za-z0-9*+!_'?<>=/.&%$:#-")
+
+(defn- qualifier-mention-re
+  "A regex matching `alias` used as a QUALIFIER (`alias/…`) inside prose or a
+  string. Bounded on the left only: the right side is the qualified name, which
+  is symbol-constituent by definition, so [[symbol-mention-re]]'s trailing
+  guard would refuse every real hit."
+  [alias]
+  (re-pattern (str "(?<![" symbol-constituents "])"
+                   (java.util.regex.Pattern/quote (str alias)) "/")))
+
 (defn ^:export symbol-mention-re
   "A regex matching `nm` as a whole SYMBOL token in prose or a string — bounded
   by symbol-constituent characters rather than `\\b`, which is a word boundary
   and so never fires at a name's punctuation edge (`valid?`, `->row`). Used to
   surface leftover prose/string mentions after a rename."
   [nm]
-  (let [q   (java.util.regex.Pattern/quote (str nm))
-        sym "A-Za-z0-9*+!_'?<>=/.&%$:#-"]   ; symbol constituents; '-' last = literal
-    (re-pattern (str "(?<![" sym "])" q "(?![" sym "])"))))
+  (let [q (java.util.regex.Pattern/quote (str nm))]
+    (re-pattern (str "(?<![" symbol-constituents "])" q
+                     "(?![" symbol-constituents "])"))))
 
 (defn ^:export qualified-mention-changeset
   "{form-id new-node} rewriting QUALIFIED references inside STRING LITERALS
@@ -1547,3 +1565,129 @@
                      (when-not (edit.modules/export-level store nsx nm)
                        [(:id e) (export-mark (:node e) level)])))))
          targets)))
+
+(defn- zlocs
+  "Every zipper location of `node`, in walk order."
+  [node]
+  (->> (iterate z/next (z/of-node node))
+       (take-while (complement z/end?))))
+
+(defn- alias-declaration
+  "`node` (an `ns` form) with the ONE alias token in `:as` position rewritten
+  `old` → `new`, or nil when there is none.
+
+  Found STRUCTURALLY — by the `:as` immediately to its left — never by symbol
+  identity. The same spelling elsewhere in an `ns` form means something else
+  entirely: a `:refer`red var, a lib whose last segment happens to match, a
+  word in the docstring."
+  [node old new]
+  (loop [zl (z/of-node node) hit? false]
+    (let [as? (boolean (and (= :token (z/tag zl))
+                            (= old (safe-sexpr zl))
+                            (when-let [l (z/left zl)]
+                              (= :as (safe-sexpr l)))))
+          zl  (if as? (z/replace zl new) zl)
+          nxt (z/next zl)]
+      (if (z/end? nxt)
+        (when (or hit? as?)
+          (let [root (z/root zl)]
+            (if (= :forms (n/tag root))
+              (or (first (filter n/sexpr-able? (n/children root))) root)
+              root)))
+        (recur nxt (or hit? as?))))))
+
+(defn- qualified-site-count
+  "How many symbol tokens in `node` are qualified by `alias` — counted with the
+  same predicate the rewrite uses, so the number reported cannot drift from the
+  number changed."
+  [node alias]
+  (let [a (str alias)]
+    (count (for [zl    (zlocs node)
+                 :when (= :token (z/tag zl))
+                 :let  [s (safe-sexpr zl)]
+                 :when (and (symbol? s) (= a (namespace s)))]
+             s))))
+
+(defn- strings-mentioning
+  "The distinct STRING LITERALS of `src` that `pat` matches — the text a symbol
+  rewriter cannot reach, so the caller can be shown it instead."
+  [src pat]
+  (->> (iterate z/next (z/of-string src))
+       (take-while (complement z/end?))
+       (keep (fn [zl]
+               (let [nd (z/node zl)]
+                 (when (= :token (n/tag nd))
+                   (let [s (try (n/sexpr nd) (catch Exception _ nil))]
+                     (when (and (string? s) (re-find pat s)) s))))))
+       distinct
+       vec))
+
+(defn ^:export realias-plan
+  "Plan renaming ONE namespace's require alias `old` → `new`: the `:as` in its
+  `ns` form and every `old/…` in its bodies, as one step list for `edit-group!`.
+
+  Scoped to `ns-sym` and nothing else, because that is what an alias IS — a
+  name a single namespace chose for a lib. Two namespaces calling the same lib
+  by different aliases is not drift, so a store-wide alias sweep would be a
+  different and far more dangerous verb.
+
+  The two halves are found by different means on purpose. In a BODY only
+  `old/x` means the alias; a bare `old` is an ordinary symbol and is routinely
+  a local (`(defn two [dep] … (dep/g dep) …)` — one spelling, two meanings,
+  three tokens apart). In the `ns` FORM it is the reverse: the alias appears
+  bare, so it is located by the `:as` beside it rather than by its spelling,
+  which also occurs there as `:refer`red names and lib segments.
+
+  Returns {:steps [...] :sites n :left-behind [...]} or {:error msg}.
+  `:left-behind` is the alias mentioned inside STRING literals — a fixture that
+  ingests source, a docstring naming `old/f`. Reported, never rewritten: those
+  strings are as often data as prose, and rewriting one half of a fixture is
+  how a half-renamed `ns` form shipped green in phase 2."
+  [store ns-sym old new]
+  (try
+    (let [old (symbol (str old))
+          new (symbol (str new))
+          ns-decl? (fn [e] (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                             (boolean (and (seq? s) (= 'ns (first s))))))]
+      (cond
+        (nil? (get-in store [:namespaces ns-sym]))
+        {:error (str "no namespace " ns-sym)}
+
+        (= old new)
+        {:error (str ns-sym " already calls it " old)}
+
+        :else
+        (let [specs (require-specs store ns-sym)
+              held  (some #(when (= old (:alias %)) %) specs)
+              taken (some #(when (= new (:alias %)) %) specs)]
+          (cond
+            (nil? held)
+            {:error (str ns-sym " has no alias " old " — it aliases "
+                         (clojure.string/join ", " (sort (map str (keep :alias specs)))))}
+
+            taken
+            {:error (str ns-sym " already calls " (:lib taken) " by " new
+                         " — one qualifier cannot mean two libs")}
+
+            :else
+            (let [pat  (qualifier-mention-re old)
+                  mapr (fn [sym] (when (= (str old) (namespace sym))
+                                   (symbol (str new) (name sym))))
+                  rows (for [e (store/forms store ns-sym)
+                             :let [src   (n/string (:node e))
+                                   node' (if (ns-decl? e)
+                                           (alias-declaration (:node e) old new)
+                                           (let [r (rewrite-symbols (:node e) mapr)]
+                                             (when (not= (n/string r) src) r)))]]
+                         {:e e :node' node'
+                          :sites (qualified-site-count (:node e) old)
+                          :strings (strings-mentioning src pat)})]
+              {:steps (vec (for [{:keys [e node']} rows :when node']
+                             {:action :replace :ns ns-sym :name (:name e)
+                              :source (n/string node')}))
+               :sites (reduce + 0 (map :sites rows))
+               :lib (:lib held)
+               :left-behind (vec (for [{:keys [e strings]} rows, s strings]
+                                   {:ns ns-sym :name (:name e) :text s}))})))))
+    (catch Exception ex
+      {:error (str "realias plan failed: " (ex-message ex))})))

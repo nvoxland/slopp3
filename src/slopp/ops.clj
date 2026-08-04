@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as api.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as project.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -1596,7 +1596,7 @@ recompiled (session/after-write! session ns-sym)]
                                                % lib coord :agent agent :prompt prompt))
                                       [])
             {:added lib :coord coord :client true})
-        (let [surf (api.deps/analyze-dep! session lib coord)]             ; M4: API surface
+        (let [surf (project.deps/analyze-dep! session lib coord)]             ; M4: API surface
           (session/commit-appended! session
                                     #(first (store/record-deps-add
                                              % lib coord :agent agent :prompt prompt
@@ -4042,3 +4042,34 @@ recompiled (session/after-write! session ns-sym)]
         (artifacts/prune-superseded! (:dir @session) (:store @session) prior))
       {:declared js-name :version (:version spec) :format (:format spec)
        :file (:file spec) :sha (:sha entry) :bytes (alength bs)})))
+
+(defn realias!
+  "Rename ONE namespace's require alias as a single atomic intent: the `:as`
+  in its `ns` form and every `alias/sym` in its bodies, through `edit-group!`
+  — one gate pass, one verification.
+
+  This exists because the two halves cannot be written separately. Between
+  them sits a namespace whose ns form and bodies disagree about what the
+  qualifier is, which does not load — so the three-step add-both / migrate /
+  drop dance was the only hand-safe route, and at 62 call sites across a
+  468-line dispatch the retyping was a worse risk than the stale alias it
+  removed. Both stayed wrong for two phases for exactly that reason.
+
+  Scoped to `ns-sym`, because an alias is a name ONE namespace chose. Two
+  namespaces calling a lib by different names is not drift.
+
+  Returns the edit-group result plus `:sites` (qualified references rewritten)
+  and, when the alias is also named inside STRING literals, `:left-behind` —
+  fixture source and prose a symbol rewriter cannot reach. See
+  `refactor/realias-plan` for why those are reported rather than rewritten."
+  [session ns-sym old new & {:keys [prompt agent]}]
+  (let [ns-sym (symbol (str ns-sym))
+        plan   (refactor/realias-plan (:store @session) ns-sym old new)]
+    (if (:error plan)
+      plan
+      (let [r (edit-group! session (:steps plan)
+                           :prompt (or prompt (str "realias " ns-sym ": "
+                                                   old " → " new))
+                           :agent agent)]
+        (cond-> (assoc r :sites (:sites plan) :lib (:lib plan))
+          (seq (:left-behind plan)) (assoc :left-behind (:left-behind plan)))))))

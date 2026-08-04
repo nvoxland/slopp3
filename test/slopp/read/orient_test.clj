@@ -444,3 +444,67 @@
       (testing "and every arity of a multi-arity, which is why sig is nested"
         (is (= '[[a] [a b]] (:sig (orient/form-card sess 'sg.core 'multi)))))
       (finally (api/close! sess)))))
+
+(deftest a-suspect-verdict-says-which-of-the-two-images-is-stale
+  ;; slopp-ui, 2026-08-03: they read "restart the server", took it to mean the
+  ;; MCP process a human owns — the one act they believed an agent cannot
+  ;; perform — and reported the staleness as a WALL. It is not: `restart` was
+  ;; in their tool list the whole time, and two calls proved it cleared their
+  ;; drift. The mechanism was right and the sentence sent them elsewhere.
+  ;;
+  ;; But "say `restart` everywhere" is the WRONG fix, and writing it that way
+  ;; first is how this test found out. `slopp.ops/restart!` calls
+  ;; `session/fresh-image!` — it replaces the VERIFICATION image and does not
+  ;; touch the JVM serving MCP. So there are two staleness stories here and
+  ;; only one of them is the agent's:
+  ;;
+  ;;   oracle drift  → the verification image → `restart` clears it
+  ;;   host  drift   → this very process      → it does not
+  ;;
+  ;; Pointing an agent at `restart` for host drift costs a call and hands back
+  ;; a verdict just as suspect as the one before — the same failure as the
+  ;; sentence being fixed, aimed the other way.
+  (let [oracle (:verdict-note (orient/host-warning
+                               {:mode :live :booted-at 100} 0
+                               '[{:ns a.core :form f :why :derived-stale}]))
+        hosts  [(:verdict-note (orient/host-warning
+                                {:mode :live :booted-at 100 :host-drift '[a.core]} 0 nil))
+                (:verdict-note (orient/host-warning
+                                {:mode :live :booted-at 100 :failed '[a.core]} 0 nil))
+                (:verdict-note (orient/host-warning
+                                {:mode :snapshot :booted-at 100} 3 nil))]]
+    (testing "all four doubt-worthy shapes produce a note — an empty
+              population would make every assertion below true of nothing"
+      (is (some? oracle))
+      (is (= 3 (count (filter some? hosts))) (pr-str hosts)))
+    (testing "the verification image names the TOOL that clears it, in the
+              tool's own spelling — this is the one slopp-ui hit"
+      (is (re-find #"`restart`" (str oracle)) (pr-str oracle))
+      (is (not (re-find #"restart the server" (str oracle))) (pr-str oracle)))
+    (testing "the host notes name `restart` too — and RULE IT OUT. Banning the
+              word was this test's second wrong answer: an agent that has just
+              been told a verdict is suspect will reach for the one restart-ish
+              verb it has, so the note that stays silent about it and the note
+              that recommends it cost the same call. Saying it does not apply
+              is the only version that stops one."
+      (doseq [n hosts]
+        (is (re-find #"`restart` tool does not" (str n))
+            (str "must rule the tool out explicitly, not omit it: " (pr-str n)))
+        (is (re-find #"MCP server" (str n))
+            (str "and name what does have to come up again: " (pr-str n)))))))
+
+(deftest the-brief-reports-verification-drift-with-the-verb-that-clears-it
+  ;; Sibling of the verdict note, one reader over: `host-brief` feeds
+  ;; session_brief, so this is the FIRST place an agent learns the
+  ;; verification image is behind — and it stated the fact with no remedy at
+  ;; all, while the two host lines beside it both end in "restart the server".
+  ;; Read together that is worse than silence: three staleness lines, the two
+  ;; the agent cannot fix carry an instruction and the one it can carries none.
+  (let [line (:note (orient/host-brief
+                     {:mode :live :booted-at 100 :last-reload-at 200} 0 false
+                     '[{:ns a.core :form f :why :derived-stale}]))]
+    (is (re-find #"VERIFICATION image" (str line))
+        (str "the drift line must be produced at all: " (pr-str line)))
+    (is (re-find #"`restart`" (str line))
+        (str "name the verb that builds a fresh verification image: "
+             (pr-str line)))))

@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.rules.schema :as schema]
             [slopp.rules.keywords :as attrs]
-            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as api.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.web :as web] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.web :as web] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -384,7 +384,7 @@
    hid the one part of this check a human has to judge."
   [_session st* _changed]
   (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
-    (let [{:keys [dangling unresolved]} (api.web/dangling-route-refs st*)]
+    (let [{:keys [dangling unresolved]} (rules.web/dangling-route-refs st*)]
       (vec (concat dangling
                    (map #(assoc % :severity :info) unresolved))))))
 

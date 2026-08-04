@@ -1,8 +1,11 @@
 (ns slopp.edit.refactor-test
-  "The move-forms planner: pure move analysis over a store value — external
-  callers, dependency direction, selective requires, refusals with teaching.
-  The executor (api/move-forms!) is covered end-to-end in surgeon-test; here
-  the PLANS are cheap to assert."
+  "The refactor PLANNERS, asserted as pure analysis over ingested stores —
+  move-forms (external callers, dependency direction, selective requires,
+  refusals with teaching), module-extract, export-changeset, the `$n`
+  templating, and realias. The executors live behind `slopp.ops` and are
+  covered end to end elsewhere — `surgeon-test` for moves, `chsig-test` for
+  signatures, `realias-test` for aliases; here the plans are cheap to assert
+  and a fixture is three lines of source text."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.edit.refactor :as refactor]
             [slopp.store :as store] [clojure.string :as str] [rewrite-clj.node :as n]))
@@ -503,3 +506,77 @@
       (is (= '#{[mv.app go] [mv.core-test mid-t] [mv.core entry]}
              (set (map (juxt :from-ns :from-var) to)))
           (pr-str to)))))
+
+(defn- realias-store
+  "`ra.dep` is the callee; `ra.user` calls it through the alias `dep` and
+  also SHADOWS that spelling with a parameter, which is the case the rewrite
+  must not touch."
+  []
+  (-> (store/empty-store)
+      (store/ingest 'ra.dep "(ns ra.dep)\n\n(defn f \"F.\" [x] x)\n\n(defn g \"G.\" [x] x)\n")
+      (store/ingest 'ra.user
+                    (str "(ns ra.user (:require [ra.dep :as dep] [clojure.string :as str]))\n\n"
+                         "(defn one \"O.\" [x] (dep/f x))\n\n"
+                         "(defn two \"T.\" [dep] (str/join \",\" [(dep/g dep) dep]))\n"))))
+
+(deftest realias-plan-moves-the-ns-form-and-every-qualified-site
+  (let [p (refactor/realias-plan (realias-store) 'ra.user 'dep 'callee)]
+    (is (nil? (:error p)))
+    (testing "the ns form's :as is rewritten — the alias is DECLARED there, so
+              a plan that rewrote only the call sites would leave a namespace
+              that does not load, rather than one that merely reads oddly"
+      (let [ns-step (first (filter #(= 'ra.user (:name %)) (:steps p)))]
+        (is (some? ns-step))
+        (is (re-find #"\[ra\.dep :as callee\]" (:source ns-step)))
+        (is (not (re-find #":as dep" (:source ns-step))))))
+    (testing "every qualified site moves, and the plan says how many"
+      (is (= 2 (:sites p)))
+      (is (= 3 (count (:steps p)))))))
+
+(deftest realias-plan-leaves-a-bare-occurrence-alone
+  ;; `(defn two [dep] … (dep/g dep) … dep)` — the SAME spelling is a parameter
+  ;; twice and a qualifier once. An alias is a QUALIFIER, so only `dep/x` means
+  ;; it; substituting the symbol wholesale renames the parameter's USES and not
+  ;; its binding, which is either an unresolved symbol or, worse, a silent
+  ;; capture of something that happens to resolve.
+  (let [p   (refactor/realias-plan (realias-store) 'ra.user 'dep 'callee)
+        two (first (filter #(= 'two (:name %)) (:steps p)))]
+    (is (some? two))
+    (is (re-find #"\(callee/g dep\)" (:source two)) "the qualifier moved")
+    (is (re-find #"\[dep\]" (:source two)) "the parameter binding did not")
+    (is (not (re-find #"\bcallee\b(?!/)" (:source two)))
+        "and no bare `callee` was minted anywhere")))
+
+(deftest realias-plan-refuses-a-taken-or-absent-alias-by-name
+  (testing "an alias already bound here would merge two libs under one
+            qualifier — refused, naming the lib that already holds it, because
+            `str` alone does not tell the caller what they collided with"
+    (let [p (refactor/realias-plan (realias-store) 'ra.user 'dep 'str)]
+      (is (:error p))
+      (is (re-find #"clojure\.string" (:error p)))))
+  (testing "an alias that names nothing here is refused WITH the ones that do:
+            the caller is guessing at a spelling they did not choose, so the
+            list is the answer to the question behind the mistake"
+    (let [p (refactor/realias-plan (realias-store) 'ra.user 'nope 'callee)]
+      (is (:error p))
+      (is (re-find #"\bdep\b" (:error p)))
+      (is (re-find #"\bstr\b" (:error p))))))
+
+(deftest realias-plan-reports-an-alias-inside-a-string
+  ;; A fixture that ingests source TEXT, or a docstring naming `dep/f`, holds
+  ;; the alias where no symbol rewriter reaches. Rewriting blind would corrupt
+  ;; the fixture; staying silent is exactly how a half-rewritten ns form
+  ;; shipped green in phase 2 — both tests asserted nil and never read the
+  ;; name back. So: report it, and let the caller decide.
+  (let [s (-> (realias-store)
+              (store/ingest 'ra.prose
+                            (str "(ns ra.prose (:require [ra.dep :as dep]))\n\n"
+                                 "(defn three\n  \"Calls dep/f, which is prose.\"\n"
+                                 "  [x] (dep/f x))\n")))
+        p (refactor/realias-plan s 'ra.prose 'dep 'callee)]
+    (is (nil? (:error p)))
+    (is (= 1 (:sites p)) "the code site still moves")
+    (is (seq (:left-behind p)))
+    (is (some #(re-find #"dep/f" (str (:text %))) (:left-behind p)))
+    (is (some #(= 'three (:name %)) (:left-behind p))
+        "and it says WHICH form, so the caller can go look")))
