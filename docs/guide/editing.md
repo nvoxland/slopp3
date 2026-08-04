@@ -17,6 +17,7 @@ brief.
 | Small change inside a big form | `edit_subform` |
 | Change a function's signature | `change_signature` |
 | Rename one form | `edit_rename` |
+| Rename a namespace's require alias | `ns_realias` |
 | Rename a concept everywhere | `rename_sweep` |
 | Pull a helper out | `edit_extract` |
 | Move forms to another namespace | `edit_move_forms` |

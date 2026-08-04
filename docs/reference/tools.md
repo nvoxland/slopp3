@@ -226,6 +226,7 @@ Three things worth knowing:
 | `edit_revert {ns name to?}` | Revert one form to an earlier version. |
 | `change_signature {ns name source calls}` | New `defn` plus a `$1..$9` call-site template, as one intent. |
 | `edit_rename {ns old new}` | Rename a form and all its references, shadow-safe. |
+| `ns_realias {ns old new}` | Rename a namespace's require alias: the `:as` and every `old/sym` in that namespace, as one verified write. The two halves cannot be separate writes — between them the namespace does not load. Reach for it after `ns_rename`, which leaves the `:as` untouched. |
 | `rename_sweep {from to}` | A concept rename store-wide: namespaces, vars, keywords, prose. `dry-run` first. |
 | `edit_requalify {ns name}` | Namespace a function's option keys in its arglist and every caller's map literal together. |
 | `edit_extract {ns from name}` | Extract a subform into a new fn. Address it by `at` (an anchor) rather than quoting it whole. |

@@ -1108,3 +1108,39 @@ skill?" — not "was it clear". "I re-read the skill" is a failure even when the
 reader ends up in the right place. slopp-ui held their fix specifically to keep
 this measurement spendable, which was the right call and better than the
 instruction they were given.
+
+### Sharpening (2026-08-03): the FIX clause names an ACTOR, and it has to be one the reader can be
+
+Core 10 says a teach string carries the fix as a literal form. A REPORT — a
+verdict note, a brief line — carries the fix as an INSTRUCTION, and the same
+discipline applies to a part the form version never has to think about: who
+performs it.
+
+`full_check`'s stale-image note said *"treat it as suspect and restart the
+server"*. slopp-ui read "the server" as the MCP process a human owns, concluded
+the staleness was unfixable from where they stood, and reported it as a wall
+that wanted a mechanism. `restart` was in their tool list. **A remedy is only a
+remedy if the reader can be its subject**, and "the server" named a subject they
+could not be.
+
+**The correction then failed the mirror test, which is the part worth keeping.**
+Naming `restart` in every branch reads obviously right and is wrong:
+`slopp.ops/restart!` calls `session/fresh-image!` — it replaces the VERIFICATION
+image and never touches the serving JVM. Two of the three branches are about the
+host. So:
+
+> A remedy the reader cannot run and a remedy that does not work fail the same
+> way. The second is harder to catch, because the sentence reads helpful.
+
+**And silence is not the safe third option.** Having split the two, the tidy
+move was to leave `restart` out of the host notes. But a reader just told their
+verdict is suspect will reach for the one restart-ish verb they have, mentioned
+or not — so omitting it costs the same call as recommending it. The host notes
+now name the tool in order to RULE IT OUT. Ruling out is a fix clause; it tells
+the reader what to type by telling them what not to.
+
+**The check that catches this is cheap and was nearly skipped.** The first
+assertion written here — "the note contains `restart`" — went green immediately,
+against the exact sentence being fixed, because *"restart the server"* contains
+the word. An assertion about a REPORT's wording is an absence-shaped measurement
+wearing a presence costume (Core 1); watch it fail before believing it.
