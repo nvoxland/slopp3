@@ -46,6 +46,14 @@ if [ -z "$VOCAB_SRC" ]; then
   VOCAB_SRC=/tmp/slopp-vocabulary.$$
   git show slopp/main:vocabulary > "$VOCAB_SRC" 2>/dev/null \
     || { echo "FAIL: cannot read vocabulary from slopp/main -- is the projection published?" >&2; exit 2; }
+  # SAY WHICH VOCABULARY, AND HOW OLD. This reads the PUBLISHED projection, not
+  # the live store, so it is only as current as the last commit_point. Phase 3
+  # hit exactly that: it answered "clean over 51 spellings" while the store held
+  # 54, and nothing in the output said the number was short. A verdict that
+  # depends on a snapshot has to name the snapshot.
+  VOCAB_LABEL="slopp/main:vocabulary @ $(git log -1 --format='%h %cs' slopp/main 2>/dev/null || echo '?')"
+else
+  VOCAB_LABEL="$VOCAB_SRC (explicit)"
 fi
 
 # `old: new` per line. Only the retired spellings matter here.
@@ -66,16 +74,29 @@ fi
 #
 # The rule to keep: a term that reads as an English word cannot be scanned for
 # in prose. If you retire one, the prose half of the sweep stays manual.
-RETIRED=$(sed -E 's/:.*$//' "$VOCAB_SRC" | grep -E '\S' | grep -E '[._-]' | sort -u)
+ALL_TERMS=$(sed -E 's/:.*$//' "$VOCAB_SRC" | grep -E '\S' | sort -u)
+RETIRED=$(echo "$ALL_TERMS" | grep -E '[._-]')
+SKIPPED=$(echo "$ALL_TERMS" | grep -Ev '[._-]')
 FILES=$(find plugins/slopp/skills docs -name '*.md' 2>/dev/null | grep -v '^docs/blog/' | sort)
 
+n_all=$(echo "$ALL_TERMS" | grep -c .)
 n_terms=$(echo "$RETIRED" | grep -c .)
+n_skip=$(echo "$SKIPPED" | grep -c .)
 n_files=$(echo "$FILES" | grep -c .)
 
 # POSITIVE CONTROL. Either population being empty makes every check below pass
 # by being empty on both sides -- which is how the store-form sibling of this
 # guard spent its entire life scanning nothing and reporting success.
-echo "scanning $n_files shipped prose file(s) for $n_terms retired spelling(s)"
+echo "vocabulary: $VOCAB_LABEL"
+echo "scanning $n_files shipped prose file(s) for $n_terms of $n_all declared spelling(s)"
+# NO SILENT CAPS. The non-distinctive terms are dropped for a good reason (see
+# above) and dropping them quietly is how `devserver` was declared, skipped and
+# reported clean in one breath -- a bounded check that does not say what it
+# bounded reads as a complete one.
+if [ "$n_skip" -gt 0 ]; then
+  echo "  not scanned ($n_skip, no . - or _ -- an English word cannot be grepped for in prose):" \
+       "$(echo "$SKIPPED" | tr '\n' ' ')"
+fi
 [ "$n_terms" -gt 0 ] || { echo "FAIL: no retired vocabulary declared -- this check would pass vacuously" >&2; exit 2; }
 [ "$n_files" -gt 0 ] || { echo "FAIL: no prose files found -- this check would pass vacuously" >&2; exit 2; }
 

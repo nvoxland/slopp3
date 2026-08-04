@@ -366,6 +366,32 @@ roots it reports 3, all three bugs. That restriction is the *fixture should not
 name real production code* rule read backwards — **a fixture that names nothing
 real is exactly a fixture this check cannot see.**
 
+#### Third instance (2026-08-04): a walk over a form's sexpr sees CODE, not CONTRACTS
+
+The reach tell — *what does this scan address things BY, and what is addressed
+some other way?* — landed on its own author the day it was written down, twice
+in one measurement.
+
+`tree-seq coll? seq` over a form's sexpr addresses nodes by TREE POSITION. A
+node's METADATA is not one of its children, so the walk never enters it — and
+metadata is where slopp keeps malli schemas, `:web/*` declarations, and every
+other contract. A scan built that way sees a namespace's code and none of what
+it promises.
+
+It surfaced as a false FINDING rather than a miss, which is why it was caught:
+the new vocabulary check reported `:slopp.ops/agent-id` as a name occurring
+nowhere in the store. It occurs in the schema on `slopp.ops.external/open!`.
+Two independent confirmations had already agreed with the false finding — a
+keyword census (same `tree-seq`) and `form-named` returning nil (a keyword is
+not a form) — so the reach gap was reproduced three times before it was seen
+once.
+
+**The general form:** a walk is an addressing scheme like any other, and its
+residents-it-cannot-name are whatever the language attaches sideways rather than
+nests. In Clojure that is metadata, and metadata is disproportionately where
+DECLARATIONS live — so the blind spot is not random, it is aimed squarely at the
+things a store is asked about.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by
