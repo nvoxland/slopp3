@@ -3449,3 +3449,72 @@ project's configuration at all.
 `slopp.git.server/start-server!` — so the exclusion had never matched anything.
 A quoted symbol set is not checked against the store, which is how a name can
 sit in a registry looking exactly like coverage.
+
+## D-module-role (2026-08-04) — a module declares whether it SHIPS, and an instrument does not
+
+**Decided:** a third namespace-grained register, `:module-roles`, beside the
+purity tier and the platform. Two values: **`:product`** (the default — the
+system runs this code, it materializes under `src/`, it goes in the jar) and
+**`:instrument`** (a HUMAN runs it by hand — a benchmark, a seeding script, a
+mining CLI). Tool: `module_role {module role prompt}`, `remove: true` retires.
+
+This is R5's second clause — *"and that module does not ship"* — which had
+been stated since the restructure began and enforced by nothing. Naming
+`slopp.lab` (task #9) gave the instruments an honest module and changed
+nothing about what the jar contained.
+
+**The mechanism is a source ROOT, not a marker.** An `:instrument`
+materializes under `instruments/` instead of `src/`. The argument for that
+over a flag the build reads is the same one that makes `test/` a directory:
+**the exclusion has to work with a build script that has never heard of
+roles.** `build.clj` copies `src` by name; so does essentially every Clojure
+build. Move the file and the exclusion is free everywhere; add a flag and
+every build script in every project using slopp has to learn about it.
+`deps-edn` puts `instruments` on `:paths` so the code is still RUNNABLE from a
+materialized tree — it is excluded from the jar, not from the project.
+
+**Declaring `:instrument` is refused while product code requires the module,**
+naming the callers. Unchecked, the failure is a jar carrying a require to a
+namespace it does not contain, surfacing at a *consumer's* load time against a
+store that plainly has the code. A `-test` requirer is fine: a test does not
+ship either. This is the same bar `module_purity` meets by checking tier
+violations against the forms already present — a declaration is an assertion
+about the code, so it is checked against the code. What cannot be checked is
+the claim itself, that a human rather than the system runs this; nothing in
+the store distinguishes a benchmark from a scheduled job, so `:instrument` is
+the one register value that is purely the author's assertion, and
+`module_role` says so in its `:unverified`.
+
+**It also leaves the architecture view.** `production-manifest` excludes
+instruments exactly as it excludes `-test` namespaces, and for one reason
+rather than two: neither is product code. Measured before and after —
+`slopp.lab` sat at **layer 8, the apex of the product layer map**, so every
+layering statement about slopp had a benchmark harness on top of it. The apex
+is now `slopp.mcp`, the transport, which is what a layer map should say.
+
+Two things fell out that the decision did not plan.
+
+1. **The git PROJECTION ignored path resolution entirely** — `commit-paths`
+   called `source-path` with neither platform nor role, so a `:cljc` namespace
+   projected as `.clj`. Benign today (one namespace, and `:cljc` loads on the
+   JVM either way) and not benign in principle: build.clj's documented CI flow
+   is `clojure -T:build uber :src src` against a CHECKOUT of the mirror, so a
+   projection that roots a namespace differently from `build!` produces a
+   different jar from the same store. Both now resolve through the same call,
+   made where the fold holds the store.
+
+2. **The register set is now DATA** (`store/ns-grained-registers`).
+   `ns-rename!` and `delete-ns!` each hand-enumerated the registers, two arms
+   apiece and identical apart from which `record-*` they called — so a third
+   register would have been forgotten by construction, and the failure mode is
+   silent (an orphaned declaration names a namespace that no longer exists
+   while the code that moved goes ungated; that is how fifteen orphans
+   accumulated in one wave of deletions). A fourth register joins by adding a
+   row.
+
+**Measured:** four instrument namespaces, 36 KB, previously in every published
+jar — `lab/evalseed.clj` alone is 15 KB of code that seeds slopp's own eval
+rounds, downloaded by every user and usable by none. Namespaces under `src/`
+after the change: 84. `slopp.image.testmain` is deliberately NOT swept in: it
+looks like an instrument and is a built project's traced test entry point, so
+it ships on purpose.

@@ -85,11 +85,17 @@ clojure -T:build uber                                  # -> target/slopp.jar
 SLOPP_JAR=$PWD/target/slopp.jar  # what the plugin's bin/slopp honours
 ```
 
-**`uber` alone silently ships a STALE jar.** It bundles whatever is in
-`target/jar-src` — if you skip the materialize step that directory can be days
-old, and the build succeeds, prints "built target/slopp.jar", and takes only a
-few seconds. Verify when it matters: `unzip -l target/slopp.jar | grep
+**`uber` alone silently ships a STALE jar.** It bundles whatever is under
+`target/jar-src/src` — if you skip the materialize step that directory can be
+days old, and the build succeeds, prints "built target/slopp.jar", and takes
+only a few seconds. Verify when it matters: `unzip -l target/slopp.jar | grep
 slopp/api/external.clj` should show today's timestamp.
+
+Note `src` specifically, not the whole materialization. `test/`, `cljs-src/`
+and `instruments/` are siblings of `src/` in that tree and none of them is
+jarred — which is exactly how `module_role :instrument` keeps `slopp.lab` out
+of the jar (`D-module-role`): the role moves the file, and this line is the
+build script that has never heard of a role.
 
 `.claude/settings.json` sets `SLOPP_LIVE=1`. Rebuild the jar only for
 kernel or dependency changes — everything else is store code and hot-reloads

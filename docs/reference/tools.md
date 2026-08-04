@@ -254,11 +254,12 @@ Three things worth knowing:
 | `module_dep {from to}` | Declare or retract one module dependency edge. Adds are cycle-checked over production edges. `remove: true` retracts. `test_only: true` binds the module's `-test` namespaces alone -- production stays refused, and a test edge is never a cycle. |
 | `module_purity {module tier}` | Declare a namespace's purity tier. Verifies the FORMS already there; `:unverified` names what it did not check. `remove: true` retires the declaration. |
 | `module_platform {module platform}` | Declare a namespace's target platform. Records only — `:verified []`. `remove: true` retires it. See [web apps](#web-applications). |
+| `module_role {module role}` | Declare whether a module SHIPS: `:product` (default) or `:instrument` for code a human runs by hand. An instrument materializes under `instruments/` rather than `src/`, so a build that jars `src` excludes it, and it leaves the architecture view. Refused while product code requires it. `remove: true` retires it. |
 
-All three retire with `remove: true`, and retiring is a different statement
-from declaring the permissive value: `:external` and `:jvm` are claims,
-absence is no claim. A declaration whose namespace was renamed away is a ghost
-that every register view has to carry.
+All four retire with `remove: true`, and retiring is a different statement
+from declaring the permissive value: `:external`, `:jvm` and `:product` are
+claims, absence is no claim. A declaration whose namespace was renamed away is
+a ghost that every register view has to carry.
 
 ## Branches
 

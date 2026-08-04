@@ -76,9 +76,13 @@ share a layer instead of poisoning the picture), the `:cycles` themselves,
 `:unused-edges` (declared but never called -- the retire-direction drift a debt
 view cannot see), `:overstated-edges`, and standing debt.
 
-Layers and cycles are computed over production edges only. A `-test` namespace
-folds into its subject module, so its fixture dependencies would otherwise
-manufacture cycles that do not exist in production.
+Layers and cycles are computed over production edges only. Two kinds of
+namespace are left out, for one reason rather than two -- neither is product
+code. A `-test` namespace folds into its subject module, so its fixture
+dependencies would otherwise manufacture cycles that do not exist in
+production. An `:instrument` module ([Role](#role)) is code a human runs by
+hand, so counting it stands a harness on top of the thing it measures. Both
+still appear in `:manifest`, which is what the gate enforces.
 
 **`:overstated-edges` is the drift `:unused-edges` structurally cannot see.**
 An edge declared for production that only a `-test` namespace crosses: the
@@ -257,6 +261,37 @@ suite. See [the ClojureScript client](web/client.md).
 
 `query_depends {modules true}` returns a `:platforms` map alongside the
 manifest; anything absent from it is `:jvm`.
+
+## Role
+
+The fourth namespace-level declaration, same path scoping, same
+most-specific-wins rule -- and the one that decides whether code SHIPS:
+
+```clj
+module_role {module "shop.lab" role ":instrument"
+             prompt "load generator, run by hand before a release"}
+```
+
+`:product` is the default: the system runs this code, it materializes under
+`src/`, and it goes in your jar. `:instrument` is for code a **human** runs by
+hand -- a benchmark, a data-migration script, a seeding CLI, a one-off probe.
+
+It is not a label. An `:instrument` materializes under `instruments/` instead
+of `src/`, and that is the whole mechanism: your build script copies `src` by
+name, like essentially every Clojure build, so the exclusion works without any
+build tooling knowing what a role is. The generated `deps.edn` puts
+`instruments` on `:paths`, so the code is still *runnable* from a materialized
+tree -- it is out of the jar, not out of the project.
+
+Declaring `:instrument` is **refused while product code requires the module**,
+and the refusal names the callers. Otherwise your jar would carry a require to
+a namespace it does not contain, and you would find that out at a consumer's
+load time. A `-test` namespace requiring it is fine: a test does not ship
+either.
+
+The one thing slopp cannot check is the claim itself -- nothing in a store
+distinguishes a benchmark from a scheduled job -- so `module_role` says so in
+its `:unverified`.
 
 ## Boundary contracts
 

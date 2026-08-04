@@ -90,6 +90,16 @@ never loaded into the image, verified by the compiler). Declared with
 `module_platform`, same path scoping as the tier. See [the ClojureScript
 client](../guide/web/client.md).
 
+## Role
+
+Whether a module SHIPS: `:product` (the default -- the system runs it, it goes
+in your jar) or `:instrument` for code a **human** runs by hand, like a
+benchmark or a migration script. Declared with `module_role`, same path
+scoping. An instrument materializes under `instruments/` rather than `src/`,
+so an ordinary build that jars `src` excludes it, and it drops out of the
+architecture view so a harness cannot sit on top of what it measures.
+See [modules and tiers](../guide/modules-and-tiers.md#role).
+
 ## Capability
 
 A declared setting in the `capabilities` config saying what kind of application

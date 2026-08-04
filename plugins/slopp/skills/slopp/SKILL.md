@@ -212,11 +212,12 @@ measurably bleed tokens.
 | Comment on a form | `edit_comment {ns name text}` — the block rendered above it. A comment BELONGS to a form; there is no such thing as a comment between forms |
 | Risky experiment | `branch_create` → work → `branch_switch` + `branch_merge` |
 | Declare a module dependency | `module_dep {from to prompt}` — one edge, say why; `remove: true` retracts |
-| Retire a declaration | `remove: true` on `module_dep`, `module_purity`, `module_platform` — all three. Retiring is not the same as declaring the permissive value: `:external`/`:jvm` is a CLAIM, absence is no claim |
+| Retire a declaration | `remove: true` on `module_dep`, `module_purity`, `module_platform`, `module_role` — all four. Retiring is not the same as declaring the permissive value: `:external`/`:jvm`/`:product` is a CLAIM, absence is no claim |
 | Declare a namespace's purity tier | `module_purity {module tier prompt}` — `:pure` (referentially transparent) / `:internal` (mutates in-process only) / `:external` (IO). Namespace PATH, most-specific wins; declaring verifies the FORMS already there. Undeclared = `:external` = ungated |
+| Keep a benchmark / script / one-off CLI out of what ships | `module_role {module "instrument" prompt}` — for code a HUMAN runs by hand, as opposed to `:product` (the default: the system runs it). It is not a label, it MOVES the code: an instrument materializes under `instruments/` rather than `src/`, so any build that jars `src` excludes it **without knowing what a role is**, and it drops out of the architecture view so a harness cannot sit on top of what it measures. Namespace PATH, most-specific wins, so one call covers a subtree. **Declaring is REFUSED while product code requires the module**, naming the callers — otherwise the jar carries a require to a namespace it does not contain and you find out at a consumer's load time. A `-test` requirer is fine: a test does not ship either |
 
 **A declaration tells you which axes it checked.** Every register write —
-`module_purity`, `module_platform`, `module_dep`, `config_file` — returns
+`module_purity`, `module_platform`, `module_role`, `module_dep`, `config_file` — returns
 `:verified` and `:unverified` axis lists plus a `:note` saying where an
 unchecked axis IS judged. **Read `:unverified`, because a clean declaration is
 not a clean bill of health:**
@@ -228,6 +229,11 @@ not a clean bill of health:**
   all, because `:external` asserts nothing.
 - `module_platform` verifies NOTHING about the code; `compile_client` is what
   proves a `:cljc`/`:cljs` namespace actually compiles.
+- `module_role` checks the one thing that would BREAK — that no product
+  namespace requires an `:instrument`. What it cannot check is the claim
+  itself: that a human rather than the system runs this code. Nothing in the
+  store distinguishes a benchmark from a scheduled job, so `:instrument` is
+  the one register value that is purely your assertion.
 - `module_dep` checks cycles over PRODUCTION edges; whether anything uses the
   edge is `query_depends {modules true}`'s `:unused-edges`, and whether only
   TESTS use it is the same call's `:overstated-edges` — a production edge no
@@ -624,7 +630,9 @@ it into the module's public surface, `^{:export "x.y.z"}` exposes it to
 that subtree only. An edge that closes a cycle is refused (the cycle is
 named) — judged on PRODUCTION edges, so a `-test` namespace's fixture
 require never vetoes an architecture decision, even though it does show
-up in the declared manifest. **Red-first specs targeting a package-private ns go in a
+up in the declared manifest. An `:instrument` module (`module_role`) is
+out of that view for the same reason and stays in the manifest the same
+way, so its edges are still gated while it cannot distort the layers. **Red-first specs targeting a package-private ns go in a
 SAME-PACKAGE test ns** (`x.y.z` spec → `x.y.z-test` or another `x.y.*`
 test ns): an outside spec naming not-yet-existing deep vars hits the
 visibility gate before its stubs can land, and the escape it teaches
@@ -1311,7 +1319,7 @@ edit_rename change_signature rename_sweep edit_requalify edit_extract
 edit_move_forms module_extract edit_move edit_revert undo episode_revert cleanup ·
 branch_create branch_switch
 branch_merge branch_delete merge_from · deps_add deps_remove deps_list
-deps_pure · module_dep module_purity · file_put file_remove file_list file_get
+deps_pure · module_dep module_purity module_role · file_put file_remove file_list file_get
 file_history · config config_file · git_push git_clone git_pull git_conflicts git_resolve ·
 test_run draft_test done full_check commit_point restart build help ·
 ui_serve compile_client generate_client js_dep store_health

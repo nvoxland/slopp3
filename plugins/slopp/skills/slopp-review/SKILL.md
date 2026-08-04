@@ -76,7 +76,9 @@ conclusions, so the review reasons about findings, not source dumps.
 - **Architecture → `query_depends {modules true}`.** `:cycles` (should be empty
   — the gate refuses new ones; an ADOPTED cycle from an import surfaces here.
   Both `:layers` and `:cycles` read production edges only, so a `-test`
-  namespace's fixture require never shows up as one),
+  namespace's fixture require never shows up as one — and neither does an
+  `:instrument` module's, so a module ABSENT from `:layers` may be a role
+  declaration rather than a bug; `:manifest` still carries both),
   `:unused-edges` (declared deps nothing uses — retire them),
   `:overstated-edges` (declared for production but only a `-test` namespace
   crosses — the manifest claiming a dependency the production code does not
