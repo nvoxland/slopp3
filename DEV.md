@@ -29,6 +29,21 @@ What IS special about the kernel is that `--live` cannot hot-reload it — it is
 the code doing the reloading. A change there needs `build` → `clojure -T:build
 uber` → restart the MCP server.
 
+**"Restart" means two different events, and the `restart` TOOL is the one that
+does NOT pick up a new jar.** Worth stating because a consumer spent ten
+minutes on the distinction, having done everything right:
+
+| | what it does | picks up a new jar? |
+|---|---|---|
+| the `restart` **tool** | rebuilds the live/verification image INSIDE the running JVM and reloads the store's forms — this is what clears `:oracle-drift` | **no** |
+| a **process** restart | kills and relaunches `java -jar …/slopp.jar` | yes |
+
+A running JVM holds the classes it loaded at boot, so a newer jar on disk is
+invisible to it forever. This matters most for a CONSUMER of the jar: every
+slopp TOOL runs from it, so a fix that is real in your store and verified live
+is still absent from `generate_client`, `done`, or any other tool until the
+process that hosts them is relaunched. The store is hot; the toolchain is not.
+
 All code changes go through slopp's MCP tools. There is no file-to-store
 reconciliation by construction, so a hand-edited `.clj` would simply be
 ignored.

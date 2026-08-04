@@ -511,6 +511,27 @@ prefix of one. The scoping is deliberate and it is the fixture rule read
 backwards — *a fixture that names no real production code is exactly a fixture
 this check cannot see*. One more reason to name fixtures after nothing real.
 
+**And when you SAMPLE a collection, the sample is a population too.** Reading
+the keys off the first row of a sequence whose keys are OPTIONAL tells you what
+that row has, and nothing about the shape. Measured both ways in one exchange
+here: a consumer read `[form form-id module ns]` off one graph node and
+reported that the endpoint had stopped sending `:sig`; over the whole set, 32
+of 58 carried it, and the ones without were forms with no arglists. Take the
+UNION across rows, or say "this row has" rather than "the endpoint sends".
+It is the fixture trap wearing different clothes — **what is absent from the
+sample reads as absent from the contract.**
+
+**Two fields that coincide in the common case are ONE field for testing
+purposes.** A boundary report carries `:from` (a namespace) and `:from-module`
+(its module). At MODULE grain those hold the same string, so a consumer counted
+one and labelled it the other, and every test over its module-grain fixture
+agreed — the fixture could not distinguish the two readings, so no assertion
+over it could. The mislabel surfaced the instant real namespace-grain data
+arrived. The rule: **test at the grain where the two differ, or you have tested
+neither.** Suspect any pair where one value is derived from the other — a
+qualified symbol and its namespace, a path and its root, a form and its
+container.
+
 **This applies to a shell command exactly as it does to an `is`.** A rename was
 verified with `query_capabilities | grep ':set true'` → no output → read as "the
 rename landed". Empty meant two things at once: *nothing is set*, and *the tool

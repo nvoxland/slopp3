@@ -442,6 +442,38 @@ advisory on every `empty?`/`=` over a derived collection would be worse than
 nothing. It ships as a PRACTICE in the skill instead. Revisit if a precise
 population-shaped signal turns up.
 
+### Sharpening (2026-08-04): a fixture where two fields COINCIDE has tested neither
+
+Four instances of the population trap landed in one day, and the fourth is a
+different mechanism from the other three. The first three are all *the sample
+was too small*: a fixture that failed to build, a contract test whose fixture
+omitted the optional branch carrying `:via`, and a consumer reading the keys
+off ONE row of a collection whose keys are per-form optional (they reported
+`:sig` missing; the union over 58 rows had it on 32).
+
+The fourth is *the sample could not tell two things apart*. A boundary report
+carries `:from` (a namespace) and `:from-module` (its module). slopp-ui counted
+one and labelled it the other; every test they had ran against a MODULE-grain
+fixture, where the two hold the same string — so the fixture could not
+distinguish the readings and no assertion over it could. It surfaced the
+instant namespace-grain data arrived.
+
+**Two fields that coincide in the common case are ONE field for testing
+purposes. Test at the grain where they differ, or you have tested neither.**
+
+The tell is structural rather than statistical, which is what makes it usable:
+suspect any pair where one value is DERIVED from the other — a qualified symbol
+and its namespace, a path and its root, a form and its container, a module and
+one of its namespaces. In the degenerate case the derivation is the identity,
+and identity is where a confusion hides.
+
+Their half of it, which is the actionable one and belongs beside ours: *"my
+fallback and your endpoint disagreed about the GRAIN of the same field, and my
+tests only ever ran against the fallback."* A fixture built to stand in for a
+surface you do not have yet is a fixture whose shape you chose — so it agrees
+with your reading of the contract by construction, and the disagreement it
+exists to catch is the one thing it cannot.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
