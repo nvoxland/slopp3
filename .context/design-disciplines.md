@@ -502,6 +502,50 @@ prose (`stale-reference-check`, the tool-name-existence test). Still open:
 coverage edges as one graph query with per-edge `:via`, and kernel/config
 parity. Same move, same payoff.
 
+### Sharpening (2026-08-05): a comment asserting PARITY is a test nothing runs
+
+The two-derivations-drift shape has a variant that is strictly worse than the
+plain one, and slopp-ui found it in our own client generator.
+
+Two producers make a wrapper spec: `client-wrapper-specs` reads the local
+store, `contract->plan` reads a published contract document. Both discarded a
+GET's declared request. I fixed the first, verified it end to end on the local
+path, and reported it fixed. The second still discarded — and the line above it
+read:
+
+```clj
+;; a body verb carries a request; every other verb declares none,
+;; the same split client-wrapper-specs makes locally
+```
+
+**It was true when written, and the commit that made it false is the commit
+that made this code wrong.** Those being the same commit is what makes the
+class nasty rather than careless: nothing about fixing producer A draws your
+eye to a comment in producer B, and the comment is the only thing that knew
+they were a pair.
+
+**And prose asserting a parity is worse than no prose at all.** A bare
+duplicate invites suspicion; a documented agreement disarms it, and it disarms
+it precisely for the reader who is checking whether both paths were covered.
+slopp-ui read that comment, believed it, and looked elsewhere first.
+
+Their tell, which is cheap enough to apply by grep and is now in the shipped
+skill: **a comment naming another function as the reason THIS code is correct
+is a candidate for being that function's test instead.** Whatever the two are
+supposed to agree about can usually be one assertion over both — and then the
+comment is redundant rather than wrong.
+
+The worked fix: `both-client-producers-agree-about-what-a-GET-SENDS` builds the
+same endpoint twice — once as a store, once as the contract DOCUMENT that
+crosses the wire — and asserts the two render the same url expression. Not the
+whole wrapper: a published contract lost the publisher's var names, so the
+schema symbol legitimately differs. **Pick the part that must not vary, not the
+whole output** — a parity test over everything is one that gets deleted the
+first time a legitimate difference appears.
+
+Not yet swept: `client-signature` enumerates `:web/request`/`:web/response` by
+hand for the staleness advisory, which is a third reader of the same shape.
+
 ## Core 3 — self-hosting is a distorting lens
 
 **Root.** Dogfooding is the standing practice, so the loudest pains an agent

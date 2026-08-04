@@ -532,6 +532,20 @@ neither.** Suspect any pair where one value is derived from the other — a
 qualified symbol and its namespace, a path and its root, a form and its
 container.
 
+**And a comment asserting that two functions AGREE is a test nothing runs.**
+Worse than no comment, because a bare duplicate invites suspicion while a
+documented parity disarms it — for exactly the reader checking whether both
+paths were covered. Two producers here built the same thing, one was fixed,
+and the line above the other said *"the same split X makes locally"*: true when
+written, and the commit that made it false was the commit that made that code
+wrong. Nothing about fixing the first draws your eye to prose in the second.
+
+The tell is cheap and greppable: **a comment naming another function as the
+reason THIS code is correct is a candidate for being that function's test
+instead.** Then it is redundant rather than wrong. When you write the test,
+assert **the part that must not vary, not the whole output** — a parity test
+over everything gets deleted the first time a legitimate difference appears.
+
 **This applies to a shell command exactly as it does to an `is`.** A rename was
 verified with `query_capabilities | grep ':set true'` → no output → read as "the
 rename landed". Empty meant two things at once: *nothing is set*, and *the tool
