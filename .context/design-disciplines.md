@@ -621,6 +621,50 @@ first time a legitimate difference appears.
 Not yet swept: `client-signature` enumerates `:web/request`/`:web/response` by
 hand for the staleness advisory, which is a third reader of the same shape.
 
+#### Sharpening (2026-08-05): a UNIQUENESS claim is the same bug with nothing to grep
+
+The tell above is greppable because a parity comment NAMES the other producer.
+The day after it shipped, the same class turned up in a form where nothing was
+named. `orient-test/code-deltas-since-is-the-one-counter-for-host-currency`:
+
+```clj
+;; The set lives in store.fields/markers and this is the only place that
+;; reads it for this question, so the count cannot drift between
+;; session_brief and a verdict.
+```
+
+`session_brief` held a byte-identical copy of the expression the whole time.
+
+**A uniqueness claim is a claim about a form that does not exist**, and three
+things follow, in increasing order of how much they cost:
+
+1. The parity grep cannot see it. There is no other function named.
+2. No per-form check can see it either, because the violation is the EXISTENCE
+   of a second form somewhere else. This is the boundary of "report the
+   ungraded complement" (Core 1's fourth instance, generalised): an inclusion
+   frame has a complement to enumerate, an **absence claim has none**.
+3. It is worse than a parity comment for the reader, not better. A parity
+   comment at least says where to look. *"There is only one of these"* is
+   precisely the sentence that stops a reader looking for the second one — the
+   same disarming move as the parity comment, aimed at a wider target.
+
+**The general form, which is what makes this Core 2 rather than a curiosity:**
+slopp checks relations it can DERIVE — the reference graph, module edges,
+purity tiers, warranties, layering — and they cannot be wrong about themselves
+because they are computed from source. Every expensive failure of the last week
+was a relation that was ASSERTED instead: *this artifact came from that head*,
+*these two produce the same thing*, *this fixture stands for that surface*,
+*there is only one of these*. There is no way to DECLARE a relation and have it
+checked; `module_dep` and `module_purity` are the only declaration verbs and
+both are about a module, not a pair of forms.
+
+So the fix for an asserted relation is always the same and it is never a better
+comment: **make it derivable, or declare it somewhere a check reads.** The
+counter above was made derivable by deleting the second copy — one producer, no
+assertion needed. The jar's head (task #30) went the other way: a stamp the
+build writes and a reader that checks it, which is the first declared relation
+in the system with a checker attached.
+
 ## Core 3 — self-hosting is a distorting lens
 
 **Root.** Dogfooding is the standing practice, so the loudest pains an agent
