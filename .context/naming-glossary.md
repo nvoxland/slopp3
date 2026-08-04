@@ -93,6 +93,20 @@ and not there is how a rename keeps its blind spot.
 | `slopp.read.query/{query-references,query-deps,query-depends,query-impact,query-flow,callee-adjacency,coverage-view}` | `slopp.read.graph/*` | ditto — how forms REACH each other. The relationships live lower (`slopp.index.refs` IS the graph); this is the reading layer over them. Not a judgement call: partition `slopp.read.query` by the four kinds its own docstring named and every internal call falls INSIDE a cluster, with only the composite driver reads crossing — take those away and it is three disconnected components |
 | `:slopp.api/dir`, `/keys`, `/agent-id`, `/warm-spare?`, `/async-image?`, `/branch-image-ttl-ms` | `:slopp.ops/*` | ditto, the tail — `open!`'s option keys, 71 uses. They named module `slopp.api`, which after module 4 held only the WEB TOOLING namespaces, so the keys pointed at code with nothing to do with opening a session. NOT dangling, which is why nothing complained: the module still existed. Same class as `:slopp.api.telemetry/calls` above, and the second time a rename's KEYWORD tail outlived its namespace. (Phase 3 emptied `slopp.api` entirely; phase 2 gives the name to the external API.) |
 
+| `:spa-consequences` · `:stale-client` · `:inline-schema-dup` · `:generated-ns` | `:web-spa-consequences` · `:web-stale-client` · `:web-inline-schema-dup` · `:web-generated-ns` | **R6 in the rule catalog (2026-08-04).** 10 of 34 rules already carried a `web-` prefix and the convention was unenforced; these four were web-only under generic names. The check fns followed (`client-stale-check` → `web-stale-client-check` — that pair was inverted as well as unprefixed). Now pinned by `rules-test/a-rule-owned-by-an-app-type-is-named-for-it`: a rule IMPLEMENTED under an app type's namespace must carry that prefix, and one carrying it must be implemented there. The first three are DECLARED in the vocabulary; the fourth deliberately is not — see below |
+| the five web checks in `slopp.rules` | `slopp.rules.web/*` | ditto, and it is what made the guard possible. `spa-consequences`, `client-stale`, `inline-schema-dup`, `web-public-mutation` and `dangling-route-refs` checks sat in the GENERIC rules namespace reading `:web/*` and calling `edit.web/client-signature`. A naming rule cannot see those — a check with no app-type namespace has nothing to disagree with — which is exactly why a hand audit found 2 of the 4 leaks. Moving them made the other two visible, and `slopp.rules` lost its `slopp.edit.web` require entirely |
+
+**`generated-ns` is the measured limit of a spelling-keyed vocabulary.** It is
+RETIRED as a rule name and LIVE as a config key (`client`/`generated-ns`, where
+`generate_client` writes) — three legitimate shipped-prose mentions, in
+`SKILL.md`, `docs/guide/web/client.md` and `docs/reference/config.md`.
+Declaring it would flag all three. This is the same family as the
+ordinary-English-word limit (`reads`, `effects`) and a distinct member: there
+the term is too common to grep, here it is distinctive but means two things.
+A `config_file {path "vocabulary"}` row is keyed by SPELLING and cannot tell
+them apart, so the two rule-sense mentions were fixed by hand and the row was
+not declared.
+
 **R6, the rule the `slopp.webdev` rows follow:** no `slopp.*` surface may
 assume a project is a WEB project. Support for an app TYPE lives in a module
 named for that type, and the pattern must be replicable for type #2 **without

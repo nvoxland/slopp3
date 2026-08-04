@@ -1116,7 +1116,7 @@ stop being the assumption once the app grows.
   to 404 now serves the document and the client renders "not found" after its
   fetch 404s. That is correct, and it is a real change in what your status
   codes mean. `done` says it once, for the episode that adds the declaration
-  (`spa-consequences`) — and `full_check`'s `:crossings` keeps listing it as an
+  (`web-spa-consequences`) — and `full_check`'s `:crossings` keeps listing it as an
   UNCHECKED exit, because nothing compares your client's route table to the
   server's.
 - **`route-for` in `.cljc`, returning nil for unknown paths.** With server
@@ -1162,18 +1162,18 @@ response IN against the SAME schema the server enforces. Call them from your
 `.cljs`: `(api/create-order! params)` returns a promise; a wrong shape throws
 before the request leaves. Rules of the road:
 - **It's EXPLICIT** — run `generate_client` after changing an endpoint (like
-  `compile_client`, not on every edit). A `stale-client` done-advisory nudges you
+  `compile_client`, not on every edit). A `web-stale-client` done-advisory nudges you
   when a contract drifts from the last generation; with `client`/`auto-compile`
   on, the generate also refreshes the JS bundle.
 - **NEVER hand-edit it.** Every wrapper is `^{:generated "<endpoint>"}` and the
-  `generated-ns` gate REFUSES edits (regenerate instead; to take manual
+  `web-generated-ns` gate REFUSES edits (regenerate instead; to take manual
   ownership, strip the marker). It's still fully inspectable — `query_source`,
   blast-radius, refs — and because the wrappers reference the schema VARS,
   "change a schema → every affected client call" falls out of the reference graph.
 - **Schemas must be `.cljc`.** A `:web/request`/`:web/response` VAR the client
   ships has to live in a `:cljc` ns (so it compiles into the bundle AND is the
   one the server validates); `generate_client` SKIPS an endpoint whose schema
-  isn't shippable and reports it in `:problems`. A `inline-schema-dup` advisory
+  isn't shippable and reports it in `:problems`. A `web-inline-schema-dup` advisory
   nudges a shape shared across endpoints toward a named `.cljc` var.
 - **Serving under a path prefix: `set-base!`.** Every wrapper's path is
   root-absolute (`/api/orders`), so behind a reverse proxy that mounts the app

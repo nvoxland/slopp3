@@ -392,6 +392,38 @@ nests. In Clojure that is metadata, and metadata is disproportionately where
 DECLARATIONS live — so the blind spot is not random, it is aimed squarely at the
 things a store is asked about.
 
+#### Fourth instance (2026-08-04): a check that grades A against B cannot see an item with no B
+
+The reach tell aimed at a CLASSIFIER rather than a scan, and it decided the
+order of the R6 catalog work rather than being noticed afterwards.
+
+The guard asks *is a rule implemented under an app type's namespace named for
+that type?* Run against the real catalog it named three of four violations.
+The two it could not see — `spa-consequences` and `stale-client` — were
+web-only checks sitting in the GENERIC `slopp.rules`, so they had no app type
+to disagree with their name. **A rule with no owner is indistinguishable from
+a rule that is correctly generic**, and the guard reported accordingly.
+
+The hand audit that preceded it had the mirror-image blind spot, which is the
+part worth keeping: it found those two by READING NAMES, and missed
+`generated-ns` (owned by its defining namespace) and `inline-schema-dup`
+(owned by what it traverses) — the two where ownership is a fact about the
+code rather than the name. Two methods, disjoint blind spots, neither able to
+find all four, and the audit's 2-of-4 shipped as the recorded count.
+
+> A structural check reports on the items it can CLASSIFY. The ones it cannot
+> are not absent from the codebase, only from the report — and they are
+> disproportionately where the violation is, because being unclassifiable is
+> usually the same defect one level down.
+
+So the fix is not a better classifier. It is to make the unclassifiable
+classifiable and re-run the one you have: moving the five web checks into
+`slopp.rules.web` took the guard from 3 findings to 4 with no change to the
+guard. The durable half is a second check aimed at the gap itself —
+`the-generic-rules-namespace-cannot-reach-an-app-types-analysis` — which says
+the generic namespace holds no route to an app type's analysis, so the next
+unclassifiable case has to announce itself as a require.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by

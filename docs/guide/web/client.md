@@ -113,11 +113,11 @@ in, against the *same* schema var the server enforces.
 Rules of the road:
 
 - **It is explicit.** Run `generate_client` after changing an endpoint's
-  contract, like `compile_client`. A `stale-client` advisory at done time
+  contract, like `compile_client`. A `web-stale-client` advisory at done time
   nudges you when a contract has drifted since the last generation. With
   `client`/`auto-compile` on, generating also refreshes the JS bundle.
 - **Never hand-edit it.** Every wrapper carries `^{:generated "<endpoint>"}`
-  and the `generated-ns` gate refuses edits, because the next generate would
+  and the `web-generated-ns` gate refuses edits, because the next generate would
   overwrite them. To take manual ownership of a wrapper, strip the marker.
 - **It is still ordinary code.** `query_source` reads it, blast radius covers
   it, and because the wrappers reference schema *vars*, "change this schema ->
@@ -126,7 +126,7 @@ Rules of the road:
 - **Schemas must be `.cljc`.** A schema var the client ships has to compile
   into the bundle *and* be the one the server validates. `generate_client`
   skips an endpoint whose schema is not shippable and names it in
-  `:problems`. An `inline-schema-dup` advisory nudges a shape shared by two
+  `:problems`. A `web-inline-schema-dup` advisory nudges a shape shared by two
   endpoints toward a named `.cljc` var.
 - **Page endpoints opt out** with `:web/client false`. See [HTML and
   CSS](html.md).
