@@ -147,6 +147,17 @@ measurably bleed tokens.
    change was broad, when you DELETED A CALLER (dead surface appears in
    namespaces you never touched — the one thing episode scope structurally
    cannot see), or before a commit you want to stand behind.
+   **It is NOT a superset of `done`, and the axis it loses on is
+   ISOLATION.** `done` puts every impacted `^:external` test in ONE serial
+   JVM; `full_check` shards the suite across four. So two tests that only
+   fail TOGETHER — through a recycled image, a temp dir, any process-global
+   — fail under the narrower check and can pass under the broader one. **A
+   red `done` beside a green `full_check` is not `done` being wrong**; it is
+   the pair being co-scheduled in one place and split in the other, and the
+   reproduction is `test_run {external true affected true parallel 1}`.
+   Read the two as differing in COVERAGE and there is no other conclusion
+   available than "done is flaky", which is how a real interference gets
+   waved through.
    **`:rules` is the rule catalog asked about the WHOLE store, and it is the
    only thing that ever asks.** A `:grain :done` rule fires over the forms an
    episode CHANGED, so a violation older than the rule is invisible to `done`
@@ -469,6 +480,16 @@ fixture you thought you built is one namespace.
 
 Assert the fixture, not your intention for it: something that counts what the
 setup actually produced, before anything is read off it.
+
+**Read the MESSAGE, not the colour.** A red test discharges red-first only if
+the failure is the one you set out to reproduce. A fixture broken in some other
+way can fail the same assertion, with the same count, and the difference is
+visible only in the text — one bug reproduced by hand went red on the right
+assertion for a completely unrelated reason (a var the fixture never defined,
+throwing inside an ARGUMENT before the code under test was reached). Aim a fix
+at that and it lands green over an untouched defect. This is the same trap as
+the fixture control above with the sign flipped: there a broken fixture
+satisfied an ABSENCE assertion, here it satisfied a PRESENCE one.
 
 **And put the population count in every ad-hoc `query_store` too.** A scan
 returning `{:offenders []}` is indistinguishable from a scan that read nothing

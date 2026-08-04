@@ -270,14 +270,39 @@ The oracle must never return a false verdict. Everything here serves that.
      read). Anything that dirties an image in a new way MUST mark it there.
    - **The sweep leaves `clojure.*` / `nrepl.*`** — removing the runtime's own
      lazily-loaded machinery left `add-libs` unable to load a jar at all.
+   - **The sweep RETRACTS as well as removes, and this is the half that was
+     missing until 2026-08-05.** `remove-ns` unmaps a namespace; it does not
+     take the lib out of `clojure.core/*loaded-libs*`, which is what `require`
+     consults before doing any work. Sweep without retracting and the image is
+     left CLAIMING a lib it no longer has — the next tenant's `require` is a
+     silent no-op and `requiring-resolve` returns nil for the life of the
+     image. **Unmapped must mean reloadable.**
+
+     Note what the verification above could not do about it: it asks what
+     SURVIVED, and the answer was correct — the namespace really was gone. The
+     broken invariant lives on the other side of the removal, so a check built
+     around survivors is structurally blind to it. The symptom was the schema
+     oracle (`malli.generator` is lazily required): whichever `^:external`
+     test used it SECOND drew a `check-threw` on every honest schema in its
+     episode, and because `done` runs impacted externals in one serial JVM
+     while `full_check` shards, the narrower check saw it and the broader one
+     did not.
+   - **Isolation has two DIRECTIONS.** Nothing of the previous tenant may leak
+     IN, and the next tenant must lose no CAPABILITY the previous one happened
+     to use. Only the first was guarded for a long time, and the live bug was
+     the second.
    - **`fresh-image!` deliberately does NOT recycle.** It is the D5 staleness
      backstop; a genuinely new process is the whole point, and recycling there
      would undermine the diagnostic that catches a stale image.
    - Bounded by `recycle-limits` (2 parked, 50 reuses) because the check sees
      namespaces and nothing else; `SLOPP_NO_RECYCLE` switches it off entirely.
-     Isolation is pinned by `api-test/a-recycled-session-cannot-see-the-
+     Isolation is pinned by `ops-test/a-recycled-session-cannot-see-the-
      previous-tenant`, whose `:reuses` assertion exists so it cannot pass
-     vacuously the day recycling stops happening.
+     vacuously the day recycling stops happening — and whose verdict half
+     carries its own control, a LYING schema in the first tenant, because the
+     second tenant's clean verdict proves nothing unless the first tenant's
+     oracle actually ran. The reload invariant itself is
+     `repl-test/a-reset-image-can-reload-a-lib-a-previous-tenant-required`.
 4. **Warm spare.** `{:warm-spare? true}` keeps a `future`-started image
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the

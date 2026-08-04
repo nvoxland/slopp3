@@ -506,6 +506,49 @@ surface you do not have yet is a fixture whose shape you chose — so it agrees
 with your reading of the contract by construction, and the disagreement it
 exists to catch is the one thing it cannot.
 
+#### Sharpening (2026-08-05): a RED test proves nothing until the message is the one you came for
+
+The sharpenings above push the control down to the fixture, then sideways to
+the pattern. This one is about the moment the control is supposedly discharged.
+
+Reproducing the schema-oracle bug meant feeding `check-string` two candidates
+and watching it produce a drift finding per candidate. It went red on exactly
+the assertion expected, with exactly the expected count — and for the wrong
+reason. The fixture named vars the image did not have, so
+`(deref (resolve '<form>))`, an ARGUMENT, threw before the missing checker was
+ever consulted:
+
+```
+check-threw: Cannot invoke "java.util.concurrent.Future.get()" because "fut" is null
+```
+
+That is `clojure.core/deref` falling through to `deref-future` on a nil. The
+real bug's message is `… because "this.check" is null`. Two different defects,
+same finding shape, same count, same red assertion — and a fix aimed at the
+second would have left the first green and called it verified.
+
+> A red test discharges the control only if its FAILURE MESSAGE is the failure
+> you are reproducing. Red for the right count and the wrong reason is
+> indistinguishable from red for the right reason, and it is the state a
+> not-yet-written fix is about to be validated against.
+
+Note the symmetry with the fixture sharpening two above: there a broken
+fixture satisfied an ABSENCE assertion, here a broken fixture satisfied a
+PRESENCE one. The lesson is the same in both directions — **the fixture is
+part of the population, and a fixture can fail in a way that produces the
+verdict you were hoping for.** The cheap discharge is to read the message, not
+the colour.
+
+The same session supplied the report-level version. The failing `done`
+reported both a bogus `:schema-drift` and `:lint-errors 2`, and the filed
+friction read the pair as one process-global leak — *"neither number is
+reachable from the fixture's own source."* Measured a day later, the lint half
+was two `:unused-public` rows about the fixture's own uncalled fns: entirely
+correct, entirely unrelated. **Two anomalies in one report are not evidence of
+one cause**, and here the discriminator cost nothing — the lint LIST names its
+forms while the count only says "2". A count invites the story; the list ends
+it.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
