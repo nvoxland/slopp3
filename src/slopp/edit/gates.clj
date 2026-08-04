@@ -53,16 +53,32 @@
   per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`.
   The web-* gates (D-web) are additionally inert until the store opts into
   HTTP (`web-enabled?`)."
-  [#'modules/module-refusal #'tiers/tier-refusal #'modules/schema-refusal #'modules/namespaced-keys-refusal #'web/generated-ns
+  [#'modules/module-refusal #'tiers/tier-refusal #'modules/schema-refusal #'modules/namespaced-keys-refusal #'web/web-generated-ns
    #'web/web-auth-refusal #'web/web-endpoint-schema #'web/web-route-collision #'web/web-undeclared-effect #'web/web-undeclared-context
    #'web/web-unsafe-get #'web/web-unknown-group #'web/web-react-attrs])
 
-(defn ^:export write-gate-names
-  "The keyword rule-names of the registered per-form write gates (from the var
-   metadata) — the enumeration the unified rule catalog + its drift-guard use
-   without reaching the package-private `per-form-write-gates`."
+(defn ^:export write-gate-namespaces
+  "`{rule-key defining-ns-sym}` for the registered per-form write gates — where
+   each gate is IMPLEMENTED, which is what says who OWNS it (R6: support for an
+   app TYPE lives in a namespace named for that type, so a gate defined in
+   `slopp.edit.web` is the web app type's). The done-grain sibling reads the
+   same fact off `rules/done-advisories`' `:check` vars.
+
+   The rule KEY is the gate var's own name, which is why `write-gate-names` is
+   this map's keys rather than a second walk of the registry."
   []
-  (mapv #(keyword (:name (meta %))) per-form-write-gates))
+  (into {} (for [v per-form-write-gates
+                 :let [m (meta v)]]
+             [(keyword (:name m)) (ns-name (:ns m))])))
+
+(defn ^:export write-gate-names
+  "The keyword rule-names of the registered per-form write gates — the
+   enumeration the unified rule catalog + its drift-guard use without reaching
+   the package-private `per-form-write-gates`. The keys of
+   `write-gate-namespaces`, so a gate can never appear in one and not the
+   other."
+  []
+  (vec (keys (write-gate-namespaces))))
 
 (defn ^:export rule-applies-to-platform?
   "Whether a rule scoped to `rule-scope` (:everywhere / :clojure / :clojurescript)

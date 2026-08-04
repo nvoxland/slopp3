@@ -15,6 +15,7 @@ http.host: web.host
 http.max-body-bytes: web.max-body-bytes
 http.port: web.port
 http.static: web.static
+inline-schema-dup: web-inline-schema-dup
 reads: internal
 slopp.api.attrs: slopp.rules.keywords
 slopp.api.branch: slopp.ops.branch
@@ -62,6 +63,8 @@ slopp.store.build: slopp.build
 slopp.store.kernel: slopp.kernel.parity
 slopp.store.mine: slopp.lab.mine
 slopp.ui-api: slopp.api
+spa-consequences: web-spa-consequences
+stale-client: web-stale-client
 ui-hub: hub
 ui.hub-port: slopp.hub.port
 ui.port: slopp.api.server/derived-port

@@ -216,7 +216,7 @@
                    (first missing) ".members\" value \"…\"} defines it, or fix"
                    " the name"))))))))
 
-(defn ^:export generated-ns
+(defn ^:export web-generated-ns
   "The generated-client protection gate (D-web-contracts part 2): a form marked
   ^{:generated \"<endpoint>\"} is OUTPUT of generate_client and must not be
   hand-edited. Regeneration rewrites the whole client namespace (through

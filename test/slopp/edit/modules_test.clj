@@ -85,7 +85,7 @@
       (let [s (land s0 "(defn ^{:web/method :get :web/path \"/d\" :web/auth [:group \"ghost\"]} d \"D.\" [req] req)")]
         (is (nil? (web/web-unknown-group s 'shop.more 'd)))))))
 
-(deftest generated-ns-gate-refuses-hand-edits
+(deftest web-generated-ns-gate-refuses-hand-edits
   ;; the second duty of ^:generated (D-web-contracts part 2): a write gate
   ;; refuses HAND edits to a generated form. Regeneration rewrites the ns
   ;; wholesale through store/ingest (below the gate layer), so the generator
@@ -96,11 +96,11 @@
                                   "(defn ^{:generated \"app.orders/create-order\"} create-order! [x] x)\n\n"
                                   "(defn hand [x] x)\n")))]
     (testing "editing a ^:generated form refuses, teaching to regenerate instead"
-      (let [t (web/generated-ns st 'gc.client 'create-order!)]
+      (let [t (web/web-generated-ns st 'gc.client 'create-order!)]
         (is (string? t) (pr-str t))
         (is (re-find #"generate_client" t))))
     (testing "a normal form is untouched by the gate"
-      (is (nil? (web/generated-ns st 'gc.client 'hand))))))
+      (is (nil? (web/web-generated-ns st 'gc.client 'hand))))))
 
 (deftest client-signature-tracks-endpoint-contracts
   ;; the fingerprint behind the generated-client staleness advisory

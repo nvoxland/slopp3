@@ -21,7 +21,7 @@
   knows the shape, and would skip the parsing and the defaults on the way."
   (:require [clojure.string :as str]))
 
-(def owners
+(def ^:export owners
   "Who a capability key belongs to, keyed by its FIRST SEGMENT.
 
   **R1, generalized, and it is the whole of R6's answer for this registry.**

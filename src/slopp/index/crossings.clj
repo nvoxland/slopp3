@@ -63,8 +63,9 @@
     :leaves     "an endpoint's contract"
     :to         "generated ClojureScript nobody hand-edits"
     :markers    #{:generated}
-    :checked-by "the stale-client advisory when a contract drifts from the
-                 last generation; the generated-ns gate refuses hand edits"
+    :checked-by "the web-stale-client advisory when a contract drifts from
+                 the last generation; the web-generated-ns gate refuses hand
+                 edits"
     :blind      "generation is EXPLICIT, so between a contract change and the
                  next generate_client the two disagree by design"}
 

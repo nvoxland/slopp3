@@ -461,7 +461,7 @@
                                 "        :web/spa [\"/store\"]}\n"
                                 "  doc \"The document.\" [_] {:status 200 :body \"<html></html>\"})")
                            :prompt "the client routes /store")
-        (let [f (get-in (external/done! sess :label "spa") [:findings :spa-consequences])]
+        (let [f (get-in (external/done! sess :label "spa") [:findings :web-spa-consequences])]
           (is (some #(= 'spa.ui/doc (:form %)) f) (pr-str f))
           (is (re-find #"200" (str (:teach (first f)))) (pr-str f))
           (is (re-find #"(?i)not-found" (str (:teach (first f)))) (pr-str f))))
@@ -472,7 +472,7 @@
                                 "        :web/spa [\"/store\"]}\n"
                                 "  doc \"The document, reworded.\" [_] {:status 200 :body \"<html></html>\"})")
                            :prompt "touch the form without touching the declaration")
-        (let [f (get-in (external/done! sess :label "again") [:findings :spa-consequences])]
+        (let [f (get-in (external/done! sess :label "again") [:findings :web-spa-consequences])]
           (is (nil? f) (pr-str f))))
       (finally (ops/close! sess)))))
 

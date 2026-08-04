@@ -145,7 +145,7 @@
                 " that predicate measured 4-5 false positives out of 5; a"
                 " defmethod's dispatch value at index 2 cannot shift and is not"
                 " flagged")}
-   {:rule :spa-consequences :grain :done
+   {:rule :web-spa-consequences :grain :done
     :escape "nothing to discharge — it states a consequence once, for the episode that declared the prefix"
     :teach (str "an endpoint gained :web/spa this episode: every path under the"
                 " declared prefix now answers 200 instead of 404, and NOT-FOUND"
@@ -178,13 +178,13 @@
    {:rule :direct-http :grain :done
     :escape "call slopp.web.client/request, taking it as a PARAMETER so callers can pass client/fake-requester — or ^{:adapter \"http — why\"} on the name if this form IS the adapter (it polices itself; the value's first word names the port, so a \"postgres\" adapter is ignored rather than called stale)"
     :teach "a form reaches the network itself — a java.net.http.HttpClient, or a slurp of an http(s):// literal. Raw reaching belongs in a declared ADAPTER; everything else goes through the port and inherits its fake and its contract suite. TESTS ARE NOT EXEMPT: calling the port from a test still makes a REAL call, so an exemption would buy nothing and would carve out the one place this boilerplate breeds. Scoped to HTTP because a gate may only demand a port that EXISTS — slopp ships one for HTTP and none for files or subprocesses"}
-   {:rule :generated-ns :grain :form
-    :escape "regenerate via generate_client after changing the ENDPOINT (its :web/request/:web/response), strip the ^:generated marker to take manual ownership, or dial it down (config_file {path \"rules\" key \"generated-ns\" value \"advisory\"})"
+   {:rule :web-generated-ns :grain :form
+    :escape "regenerate via generate_client after changing the ENDPOINT (its :web/request/:web/response), strip the ^:generated marker to take manual ownership, or dial it down (config_file {path \"rules\" key \"web-generated-ns\" value \"advisory\"})"
     :teach "a ^:generated form is generate_client's output and must not be hand-edited — regeneration rewrites the whole client namespace, so a hand edit is lost on the next generate (D-web-contracts part 2)"}
-   {:rule :stale-client :grain :done
+   {:rule :web-stale-client :grain :done
     :escape "run generate_client to re-derive the client from the current endpoints, or accept the drift"
     :teach "the generated typed client is stale — an endpoint's contract changed since generate_client last ran (D-web-contracts part 2)"}
-   {:rule :inline-schema-dup :grain :done
+   {:rule :web-inline-schema-dup :grain :done
     :escape "extract the shared inline schema to a named .cljc var both endpoints reference, or accept the duplication"
     :teach "2+ endpoints declare the same inline request/response schema — a shared shape belongs in one named .cljc schema so the server and the generated client agree (D-web-contracts part 2)"}
    {:rule :shell-widening :grain :done

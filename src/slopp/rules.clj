@@ -21,7 +21,7 @@
   (:require [slopp.store :as store]
             [slopp.rules.schema :as schema]
             [slopp.rules.keywords :as attrs]
-            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.web :as web] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn- changed-qsyms
   "The qualified symbols of the CHANGED forms this episode."
@@ -350,84 +350,6 @@
                      :teach (str q " carries ^:legacy-ok but mixes no retired"
                                  " vocabulary — remove the flag")}))))
             changed)))))
-
-(defn web-public-mutation-check
-  "Done-advisory (D-web): a CHANGED endpoint whose policy is :public and
-   which declares `:web/effects` kinds — a publicly-writable surface should
-   be a decision someone made, not an omission. Fires per form with the
-   declared kinds; inert until the store opts into HTTP (web.enabled).
-   v1 reads the DECLARATION; a public endpoint mutating without declaring
-   is web-unsafe-get's (GET) or the effects-vocabulary's territory."
-  [_session st* changed]
-  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
-    (vec (keep (fn [fid]
-                 (when-let [e (store/form-by-id st* fid)]
-                   (let [m (web/web-name-meta e)]
-                     (when (and (:web/path m)
-                                (= :public (:web/auth m))
-                                (seq (:web/effects m)))
-                       {:form (symbol (str (store/ns-of-form-id st* fid))
-                                      (str (:name e)))
-                        :web/effects (vec (:web/effects m))}))))
-               changed))))
-
-(defn dangling-route-refs-check
-  "Done-advisory (D-web-html): rendered links/forms targeting a path no
-   declared route or static mount serves — the UI nil-pun: it ships and
-   404s. Fires STORE-WIDE, like dead surface, because deleting a route
-   dangles an UNCHANGED form's link. Inert until web.enabled. The
-   `^{:web/external-path \\\"why\\\"}` marker on the rendering form discharges.
-
-   Dynamic (`:unresolved`) refs ride along as `:severity :info` findings:
-   listed at done, never status-flipping. They used to be omitted entirely
-   — the only way to keep them from flipping an `:error` rule red — which
-   hid the one part of this check a human has to judge."
-  [_session st* _changed]
-  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
-    (let [{:keys [dangling unresolved]} (rules.web/dangling-route-refs st*)]
-      (vec (concat dangling
-                   (map #(assoc % :severity :info) unresolved))))))
-
-(defn client-stale-check
-  "Done-advisory (D-web-contracts part 2): the generated typed client
-   (generate_client) is STALE — an endpoint or its :web/request/:web/response
-   changed since the client was last generated. Fires only once a client has been
-   generated (a `client`/`generated-sig` is on record), so it never nags a store
-   that has not opted into a generated client. Regenerating re-records the
-   signature and clears it."
-  [_session store _changed]
-  (let [recorded (get-in store [:config "client" :values "generated-sig"])]
-    (when (and recorded (not= recorded (web/client-signature store)))
-      [{:stale-client true
-        :teach (str "the generated typed client is out of date — an endpoint or its"
-                    " :web/request/:web/response changed since generate_client last"
-                    " ran. Re-run generate_client to re-derive the wrappers.")}])))
-
-(defn inline-schema-dup-check
-  "Done-advisory (D-web-contracts part 2): 2+ endpoints declare the SAME
-   structured inline :web/request/:web/response schema — the DRY nudge toward the
-   paved road. A shared shape should be a named .cljc schema VAR so server and
-   client validate against ONE definition and a change lands in one place. Only
-   structured (vector) inline schemas count — a bare keyword like :map is too
-   trivial to extract. Fires once per duplicated shape."
-  [_session store _changed]
-  (let [inlines (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
-                      k     [:web/request :web/response]
-                      :let  [v (get meta k)]
-                      :when (vector? v)]
-                  {:endpoint (symbol (str ns) (str name)) :schema v})
-        dups    (->> inlines
-                     (group-by :schema)
-                     (keep (fn [[schema es]]
-                             (let [eps (distinct (map :endpoint es))]
-                               (when (>= (count eps) 2) [schema (vec eps)])))))]
-    (for [[schema eps] dups]
-      {:duplicate-inline-schema (pr-str schema)
-       :endpoints eps
-       :teach (str (count eps) " endpoints declare the identical inline schema "
-                   (pr-str schema) " — extract it to a named .cljc schema var so"
-                   " the server and the generated client validate against ONE"
-                   " definition and a change lands once.")})))
 
 (defn tracked-file-drift-check!
   "Done-advisory: a file on the store's manifest whose WORKING-TREE twin has
@@ -761,51 +683,6 @@
                         " store/form-symbol — the accessors exist because a wrong"
                         " index yields nil rather than throwing, so the rule that"
                         " reads it simply stops firing and looks healthy")}))))
-
-(defn spa-consequences-check
-  "Done-advisory: an endpoint gained `:web/spa` this episode — state what that
-   changed, once.
-
-   Declaring a client-routed prefix is the single biggest behavioural change
-   available in one piece of metadata, and nothing said so. Before: a bad deep
-   link under the prefix was a 404, resolved and refused by the server. After:
-   the server serves the document (it cannot know the path is bad), the client
-   fetches, gets its own 404, and renders a not-found screen. **The HTTP status
-   for every path under that prefix changed from 404 to 200.**
-
-   That is correct — it is what `:web/spa` is FOR — but it is a real semantic
-   change that only surfaced here because two existing tests happened to assert
-   the old status.
-
-   Fires only for the episode that ADDED the declaration, like
-   `shell-widening`: it asks once, while the reason is still in context, and
-   cannot decay into a standing warning to scroll past. It teaches rather than
-   checks, and the boundary inventory still reports `:spa/client-routing` as an
-   UNCHECKED exit — nothing compares the client's route table to the server's,
-   and a teach is not a check."
-  [_session st* changed]
-  (let [ds       (store/deltas st*)
-        baseline (->> ds (filter #(= :done (:op %))) last :id)
-        old-srcs (when baseline (store/sources-at st* baseline))
-        spa?     (fn [form] (when (and (seq? form) (symbol? (second form)))
-                              (:web/spa (meta (second form)))))]
-    (vec (for [fid changed
-               :let [e (store/form-by-id st* fid)]
-               :when (and e (:name e))
-               :let [new (store/form-sexpr (:node e))
-                     old (some-> (get old-srcs fid) p/parse-string store/form-sexpr)
-                     ps  (spa? new)]
-               ;; only when the declaration is NEW: either the form is new, or
-               ;; its previous version did not carry one
-               :when (and ps (not (spa? old)))]
-           {:form  (symbol (str (store/ns-of-form-id st* fid)) (str (:name e)))
-            :teach (str "every path under " (pr-str ps) " now answers 200, not 404 —"
-                        " the server serves this document for any path below the"
-                        " prefix and NOT-FOUND moves into the client. Make sure the"
-                        " client renders a not-found screen for a path its own"
-                        " router does not know, or a bad deep link shows a blank"
-                        " pane at a URL that looks valid. The prefix ROOT is not"
-                        " covered by the fallback and still needs its own route")}))))
 
 (defn- in-scope
   "`findings` filtered to those an advisory declaring `applies-to` should
@@ -1143,7 +1020,7 @@
    ;; the single biggest behavioural consequence available in one piece of
    ;; metadata, and nothing said it: declaring :web/spa turns every path under
    ;; the prefix from 404 into 200 and moves not-found into the client.
-   {:key :spa-consequences :severity :advisory :applies-to :production :check #'spa-consequences-check
+   {:key :web-spa-consequences :severity :advisory :applies-to :production :check #'rules.web/web-spa-consequences-check
     :sweep (str "states a consequence ONCE, for the episode that declared the"
                 " prefix — there is nobody to tell about a declaration that"
                 " predates the sweep")
@@ -1282,20 +1159,20 @@
                         " rules-test/tracked-file-drift-reports-a-second-copy-that-moved")}
    ;; a publicly-writable endpoint should be a decision, not an omission —
    ;; the question grade, like shell-widening: only the author knows
-   {:key :web-public-mutation :severity :advisory :applies-to :production :check #'web-public-mutation-check
+   {:key :web-public-mutation :severity :advisory :applies-to :production :check #'rules.web/web-public-mutation-check
     :sweep true
     :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by rules-test/public-mutation-asks-at-done"}
-   {:key :web-dangling-route-refs :severity :error :applies-to :production :check #'dangling-route-refs-check
+   {:key :web-dangling-route-refs :severity :error :applies-to :production :check #'rules.web/web-dangling-route-refs-check
     ;; already store-wide by construction — deleting a route dangles an
     ;; UNCHANGED form's link, which is this same friction one rule over
     :sweep true
     :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
-   {:key :stale-client :severity :advisory :applies-to :production :check #'client-stale-check
+   {:key :web-stale-client :severity :advisory :applies-to :production :check #'rules.web/web-stale-client-check
     :sweep true
     :selftest-note (str "needs a recorded client/generated-sig config (a source-only"
                         " fixture cannot carry one) — covered by rules-test/"
-                        "client-stale-advisory-fires-on-endpoint-drift")}
-   {:key :inline-schema-dup :severity :advisory :applies-to :production :check #'inline-schema-dup-check
+                        "web-stale-client-advisory-fires-on-endpoint-drift")}
+   {:key :web-inline-schema-dup :severity :advisory :applies-to :production :check #'rules.web/web-inline-schema-dup-check
     :sweep true
     :fires-on (str "(ns ds.api)\n"
                    "(defn ^{:web/method :post :web/path \"/a\" :web/request [:map [:x :int]]"

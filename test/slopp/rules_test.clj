@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates] [slopp.project.capabilities :as caps] [clojure.string :as str] [slopp.rules.web :as rules.web]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -64,6 +64,99 @@
           (is (seq (get-in r [:findings :breaking-changes])) (pr-str (:findings r)))
           (is (= :red (get-in r [:findings :test-status])) (pr-str (:findings r)))))
       (finally (ops/close! sess)))))
+
+(deftest a-rule-owned-by-an-app-type-is-named-for-it
+  ;; R6: no slopp.* surface may assume a project is a WEB project. Support for
+  ;; an app TYPE lives under that type's name, and the pattern must be
+  ;; replicable for type #2 without renaming type #1. The rule catalog is where
+  ;; that is READ — an agent meets a rule by its name long before it meets the
+  ;; code — so a web-only rule under a generic name tells every reader the
+  ;; wrong thing about which projects it can fire on.
+  ;;
+  ;; This is `capabilities/owners` one layer over, and the same shape
+  ;; deliberately: a key's first segment names its owner so no second field can
+  ;; drift from it. Here the owner is DERIVED from the implementing namespace
+  ;; rather than declared at all, which is stronger — moving a check is the
+  ;; only way to change who owns it.
+  (let [loaded    (set (map (comp str ns-name) (all-ns)))
+        ;; an app TYPE is a declared capability owner that slopp has store
+        ;; ANALYSIS for. `slopp` (the framework, RESERVED) and `app` (every
+        ;; project, whatever kind) have no `slopp.<module>.<owner>` namespace
+        ;; and are correctly not types. Derived, so app type #2 is picked up by
+        ;; existing here rather than by being added to a list.
+        app-types (set (for [t     (keys caps/owners)
+                             :when (some #(re-matches (re-pattern (str "slopp\\..+\\." t)) %) loaded)]
+                         t))
+        owner-of  (fn [ns-sym]
+                    (first (filter #(str/ends-with? (str ns-sym) (str "." %)) app-types)))
+        rules     (merge (gates/write-gate-namespaces)
+                         (into {} (for [r rules/done-advisories]
+                                    [(:key r) (ns-name (:ns (meta (:check r))))])))
+        misnamed  (sort (for [[rule ns-sym] rules
+                              :let  [o (owner-of ns-sym)]
+                              :when (and o (not (str/starts-with? (name rule) (str o "-"))))]
+                          [rule ns-sym o]))
+        misplaced (sort (for [[rule ns-sym] rules
+                              t     app-types
+                              :when (and (str/starts-with? (name rule) (str t "-"))
+                                         (not= t (owner-of ns-sym)))]
+                          [rule ns-sym t]))]
+    (testing "the derivation found a population — with no app type there is nothing to check"
+      ;; guard the guard: both assertions below are ABSENCES, and an empty
+      ;; app-types set satisfies them without looking at a single rule.
+      (is (seq app-types) (str "no app type derived from " (count loaded) " loaded namespaces"))
+      (is (seq (filter (comp owner-of val) rules))
+          "no rule resolved to an app type — the owner derivation is not reading the registries"))
+    (testing "a rule implemented under an app type's name carries that prefix"
+      (is (empty? misnamed)
+          (str "these rules are implemented by an app type and do not say so, "
+               "so an agent reading the catalog cannot tell which projects they "
+               "can fire on: " (vec misnamed))))
+    (testing "and a rule carrying the prefix is implemented there"
+      ;; the other half, and it is what stops the convention decaying into a
+      ;; naming habit: a `web-` rule living in the generic namespace means the
+      ;; generic namespace speaks web's vocabulary, which is the R6 violation
+      ;; itself rather than a spelling of it.
+      (is (empty? misplaced)
+          (str "these rules are named for an app type but implemented in a "
+               "generic namespace: " (vec misplaced))))))
+
+(deftest the-generic-rules-namespace-cannot-reach-an-app-types-analysis
+  ;; The other half of `a-rule-owned-by-an-app-type-is-named-for-it`, and the
+  ;; reason it is a separate deftest: that one grades a rule that is already in
+  ;; the right namespace, so it is blind to the failure that actually happened
+  ;; here. Five web-only checks sat in the generic `slopp.rules` — reading
+  ;; `:web/spa`, calling `edit.web/client-signature` — and no naming rule could
+  ;; see them, because a check in a generic namespace has no app type to
+  ;; disagree with. `inline-schema-dup` and `generated-ns` were missed by a
+  ;; hand audit for exactly that reason.
+  ;;
+  ;; So this guards the require, which is the moment the reach becomes
+  ;; possible: `slopp.rules` gets no route to web's store analysis, and the
+  ;; typed checks live in `slopp.rules.web` where the naming guard can grade
+  ;; them. `slopp.rules.<type>` is exempt BECAUSE it is the destination — the
+  ;; registry has to name the vars it registers.
+  ;;
+  ;; The limit, stated because a guard named without its limits reads as
+  ;; broader than it is: a check can still read `:web/…` metadata with no
+  ;; require at all, which is precisely what `spa-consequences-check` did. This
+  ;; catches the reach, not the vocabulary.
+  (let [loaded    (set (map (comp str ns-name) (all-ns)))
+        app-types (set (for [t     (keys caps/owners)
+                             :when (some #(re-matches (re-pattern (str "slopp\\..+\\." t)) %) loaded)]
+                         t))
+        reaching  (for [[_ dep] (ns-aliases (find-ns 'slopp.rules))
+                        :let    [d (str (ns-name dep))]
+                        t       app-types
+                        :when   (and (str/ends-with? d (str "." t))
+                                     (not= d (str "slopp.rules." t)))]
+                    [d t])]
+    (is (seq app-types) "no app type derived — this guard would be vacuous")
+    (is (empty? reaching)
+        (str "the generic rules namespace reaches an app type's store analysis: "
+             (vec reaching)
+             " — a rule that needs it belongs in slopp.rules.<type>, where its "
+             "name is graded against the type that owns it"))))
 
 (deftest catalog-covers-every-registered-rule
   (let [cataloged   (set (map :rule catalog/rule-catalog))
@@ -369,7 +462,7 @@
         on  (first (store/record-config-put s0 "capabilities" :manifest
                                             "web.enabled" "true"))
         ids (mapv :id (store/forms on 'pm.api))
-        f   (fn [st] (rules/web-public-mutation-check nil st ids))]
+        f   (fn [st] (rules.web/web-public-mutation-check nil st ids))]
     (testing "a public endpoint declaring effect kinds fires, naming the kinds"
       (let [r (f on)]
         (is (= 1 (count r)) (pr-str r))
@@ -378,7 +471,7 @@
     (testing "inert until web.enabled"
       (is (empty? (f s0))))))
 
-(deftest client-stale-advisory-fires-on-endpoint-drift
+(deftest web-stale-client-advisory-fires-on-endpoint-drift
   ;; the "explicit + advisory" regeneration decision's safety net: once a client
   ;; has been generated (a client/generated-sig is on record), a later contract
   ;; change makes the done-advisory nudge generate_client. It never nags a store
@@ -392,16 +485,16 @@
     (testing "a recorded sig that no longer matches the current endpoints fires the advisory"
       (let [drifted (first (store/record-config-put (mk "st.c/b") "client" :manifest
                                                     "generated-sig" old-sig))]
-        (is (seq (rules/client-stale-check nil drifted nil)))))
+        (is (seq (rules.web/web-stale-client-check nil drifted nil)))))
     (testing "a matching sig is quiet"
       (let [fresh-store (mk "st.c/b")
             fresh (first (store/record-config-put fresh-store "client" :manifest
                                                   "generated-sig" (web/client-signature fresh-store)))]
-        (is (empty? (rules/client-stale-check nil fresh nil)))))
+        (is (empty? (rules.web/web-stale-client-check nil fresh nil)))))
     (testing "never generated (no recorded sig) → never nags"
-      (is (empty? (rules/client-stale-check nil (mk "st.c/a") nil))))))
+      (is (empty? (rules.web/web-stale-client-check nil (mk "st.c/a") nil))))))
 
-(deftest inline-schema-dup-advisory-nudges-extraction
+(deftest web-inline-schema-dup-advisory-nudges-extraction
   ;; the DRY paved-road nudge (D-web-contracts part 2): 2+ endpoints declaring
   ;; the SAME structured inline schema should extract it to a named .cljc var.
   (testing "two endpoints sharing an identical inline schema fire the advisory"
@@ -412,7 +505,7 @@
                                     " :web/request [:map [:x :int]] :web/response :map} a [r] r)\n\n"
                                     "(defn ^{:web/method :post :web/path \"/b\""
                                     " :web/request [:map [:x :int]] :web/response :map} b [r] r)\n")))
-          findings (rules/inline-schema-dup-check nil st nil)]
+          findings (rules.web/web-inline-schema-dup-check nil st nil)]
       (is (seq findings))
       (is (some #(re-find #"named .cljc" (:teach %)) findings))))
   (testing "distinct inline schemas do not fire; a shared bare keyword is too trivial to nag"
@@ -423,7 +516,7 @@
                                     " :web/request [:map [:x :int]] :web/response :map} a [r] r)\n\n"
                                     "(defn ^{:web/method :post :web/path \"/b\""
                                     " :web/request [:map [:y :string]] :web/response :map} b [r] r)\n")))]
-      (is (empty? (rules/inline-schema-dup-check nil st nil))))))
+      (is (empty? (rules.web/web-inline-schema-dup-check nil st nil))))))
 
 (deftest catalog-severity-is-derived-not-restated
   (testing "no catalog row carries its own :severity — the registries own that fact"
@@ -469,7 +562,7 @@
                  "        [:a {:href (:uri req)} \"dyn\"]])\n")
         s (store/ingest (store/empty-store) 'shop.ui src)
         s (first (store/record-config-put s "capabilities" :manifest "web.enabled" "true"))
-        found (rules/dangling-route-refs-check nil s nil)
+        found (rules.web/web-dangling-route-refs-check nil s nil)
         by-sev (group-by :severity found)]
     (testing "the dangling ref is a status-affecting finding, as before"
       (is (= ["/nowhere"] (mapv :path (get by-sev nil)))))
