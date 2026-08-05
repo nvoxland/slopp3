@@ -500,7 +500,13 @@
     :inputSchema {:type "object"
                   :properties {:port {:type "integer"}
                                :stop {:type "boolean"}}}}
-{:name "compile_client"
+{:name "screen"
+    :description "LOOK AT a screen of this app, driven headlessly — no browser, no rendering engine, no test written. Opens the zero-arg fn you marked ^:web/page (a slopp.web ctx, or {:state :view}), runs an ordered `steps` script through the app's OWN handlers, and returns the resulting screen as readable text. Reach for it whenever you would otherwise open a browser to read a sentence: most view bugs ARE plain wrong sentences, and they are obvious here and invisible in a get-in. `steps`: [{visit \"/x\"} {click \"Add\"} {fill \"Filter\" value \"web\"}] — click matches an element's visible text or its href, fill matches a field's placeholder/name/id/aria-label, and each refuses with what IS clickable/fillable rather than shrugging. `region` scopes to one :data-region pane (and throws if it is absent, so a renamed pane cannot pass as an empty screen); `detail` is \"structured\" (default — headings, [/hrefs], [click] and [fill] markers, list counts, an svg censused by CLASS) or \"prose\" (sentences only, for `does it say X`, at a fraction of the tokens). There is deliberately NO session between calls: a script is the whole interaction, so the screen you looked at is one you can pin with the same steps in a test (slopp.web.screen/drive!). Runs in the VERIFICATION image, so it shows the code the store holds — not the served app, which may be behind. NOT a screenshot: wrapping and colour contrast still need eyes."
+    :inputSchema {:type "object"
+                  :properties {:steps {:type "array" :items {:type "object"}}
+                               :region {:type "string"}
+                               :detail {:type "string"}}}}
+   {:name "compile_client"
     :description "Compile the store's CLIENT namespaces (:cljc + :cljs, declared via module_platform) to JavaScript with the configured backend (default ClojureScript, compiled ON THE JVM — no Node) and record the output as a served file blob. Compile-error-as-oracle: analyzer warnings and hard errors are anchored to the owning store forms. `output` sets the served path (default public/cljs/main.js). slopp injects its OWN compiler toolchain at build time — never deps_add the compiler."
     :inputSchema {:type "object"
                   :properties {:output {:type "string"}}}}

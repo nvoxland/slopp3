@@ -63,6 +63,7 @@ slopp.store.build: slopp.build
 slopp.store.kernel: slopp.kernel.parity
 slopp.store.mine: slopp.lab.mine
 slopp.ui-api: slopp.api
+slopp.web.readout: slopp.web.screen
 spa-consequences: web-spa-consequences
 stale-client: web-stale-client
 ui-hub: hub

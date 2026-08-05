@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.ops :as ops]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph] [slopp.webdev.screen :as wscreen]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -349,7 +349,13 @@
      (text! (if (:stop a)
               {:stopped (boolean (ui/stop!))}
               (ui/serve! session (ui/preferred-port (:dir @session) (:port a))))))
-"compile_client"
+"screen"
+   (fn [session a _sym]
+     (text! (wscreen/screen! session
+                             :steps (:steps a)
+                             :region (:region a)
+                             :detail (:detail a))))
+   "compile_client"
    (fn [session a _sym]
      (text! (if (:output a)
               (cljs/compile-client! session :output (:output a))

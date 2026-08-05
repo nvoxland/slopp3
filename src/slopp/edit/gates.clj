@@ -54,7 +54,7 @@
   The web-* gates (D-web) are additionally inert until the store opts into
   HTTP (`web-enabled?`)."
   [#'modules/module-refusal #'tiers/tier-refusal #'modules/schema-refusal #'modules/namespaced-keys-refusal #'web/web-generated-ns
-   #'web/web-auth-refusal #'web/web-endpoint-schema #'web/web-route-collision #'web/web-undeclared-effect #'web/web-undeclared-context
+   #'web/web-auth-refusal #'web/web-endpoint-schema #'web/web-route-collision #'web/web-page-unreachable #'web/web-undeclared-effect #'web/web-undeclared-context
    #'web/web-unsafe-get #'web/web-unknown-group #'web/web-react-attrs])
 
 (defn ^:export write-gate-namespaces

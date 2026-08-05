@@ -630,3 +630,48 @@
       (is (nil? (get (web/static-mounts s) "enabled"))))
     (testing "a store with no mounts declares none"
       (is (empty? (web/static-mounts (store/empty-store)))))))
+
+(deftest ^:external a-page-the-jvm-cannot-open-refuses-at-the-write
+  ;; The architecture rule, enforced rather than suggested. `^:web/page` marks
+  ;; the entry the fake browser opens an app through — and in a :cljs namespace
+  ;; that entry cannot be CALLED from a JVM, so every headless test has to
+  ;; hand-build a map that RESEMBLES the app.
+  ;;
+  ;; A resemblance drifts silently, and it drifts in the one direction that
+  ;; costs the most: the lookalike keeps passing while the real screen is
+  ;; wrong. That is the whole defect the fake browser exists to remove, so
+  ;; letting it back in through the entry point is not a small compromise.
+  ;;
+  ;; A MARKER rather than a capability key, deliberately. A capability naming a
+  ;; var is an asserted relation that drifts the day the var is renamed; a
+  ;; marker cannot, because it IS the var. And a write gate needs a moment to
+  ;; fire — with a marker there is one, and it names the right form.
+  (let [sess (external/open!)]
+    (try
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (ops/ingest! sess 'ui.shell "(ns ui.shell)\n\n(defn seed \"S.\" [x] x)\n")
+      (ops/module-platform! sess "ui.shell" "cljs"
+                            :prompt "the browser shell is :cljs by nature")
+
+      (testing "a page marked in a :cljs namespace refuses, and says what it costs"
+        (let [r (ops/add-form! sess 'ui.shell
+                               "(defn ^:web/page app \"A.\" [] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "the entry, in the wrong place")]
+          (is (re-find #"(?i)cljs" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'ui.shell 'app))
+              "and the form did not land — a refusal that writes anyway teaches nothing")))
+
+      (testing "the same page in a portable namespace lands"
+        (ops/ingest! sess 'ui.app "(ns ui.app)\n\n(defn seed \"S.\" [x] x)\n")
+        (let [r (ops/add-form! sess 'ui.app
+                               "(defn ^:web/page app \"A.\" [] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "the entry, where a JVM can call it")]
+          (is (nil? (:error r)) (pr-str r))))
+
+      (testing "and an UNMARKED form in a :cljs namespace is none of the gate's business"
+        (let [r (ops/add-form! sess 'ui.shell
+                               "(defn mount \"M.\" [] :ok)"
+                               :prompt "ordinary browser code")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (ops/close! sess)))))

@@ -50,6 +50,9 @@
    {:rule :web-route-collision :grain :form
     :escape "change the path or method, or extend the existing handler (query_routes lists every claim)"
     :teach "one method+path has one owning endpoint — a duplicate route refuses at the write instead of surprising at startup (inert until web.enabled)"}
+   {:rule :web-page-unreachable :grain :form
+    :escape "move the entry — and the routing, derive and view code it reaches — to a :jvm or :cljc namespace, passing the browser-shaped parts in (:fetch, :render, a url pusher); or drop the ^:web/page marker if this app is not meant to be reviewed headlessly"
+    :teach "a ^:web/page entry may not sit in a :cljs namespace — no JVM can open the app there, so every headless test drives a hand-built lookalike instead, and a lookalike passes while the real screen is wrong. The wiring is portable; only the effects are :cljs (inert until web.enabled)"}
    {:rule :web-undeclared-effect :grain :form
     :escape "define a performer per kind ((defn ^{:web/effect <kind>} name! [ctx …] …)) or reuse an existing kind (query_routes lists the vocabulary)"
     :teach "an endpoint's :web/effects may only name kinds a marked performer provides — a typo'd kind fails at the write, not at the first request (inert until web.enabled)"}

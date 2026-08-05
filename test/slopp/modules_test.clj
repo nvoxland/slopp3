@@ -1027,30 +1027,50 @@
   ;; else to complain. The module gate states the same rule from the other side
   ;; (slopp.web declares no outgoing edges and sits at layer 0); this catches a
   ;; require that never became a declared edge.
-  (let [framework '[slopp.web slopp.web.auth slopp.web.css slopp.web.dispatch
-                    slopp.web.html slopp.web.router slopp.web.routes
-                    slopp.web.static slopp.web.server.httpkit
-                    slopp.web.server.jdk]
-        web?      #(boolean (re-matches #"slopp\.web(\..*)?" (str %)))]
-    (run! require framework)
-    (let [loaded (keep find-ns framework)
-          leaks  (for [n loaded
-                       [_ dep] (ns-aliases n)
-                       :let [d (ns-name dep)]
-                       :when (and (re-find #"^slopp\." (str d)) (not (web? d)))]
-                   [(ns-name n) d])]
-      ;; guard the guard: over an empty set "no leaks" is vacuously true, which
-      ;; is exactly the "I could not check" / "I checked and found nothing"
-      ;; conflation this codebase refuses everywhere else.
-      (is (= (count framework) (count loaded))
-          (str "every framework namespace must be loaded before it can be "
-               "checked; missing "
-               (vec (remove find-ns framework))))
-      (is (empty? leaks)
-          (str "slopp.web.* must not depend on anything outside slopp.web.* — "
-               "the slim slopp-web jar ships only slopp/web/**, so these "
-               "requires would not resolve in a user's project: "
-               (vec leaks))))))
+  ;;
+  ;; **The population is DERIVED, and it used to be a hand-kept vector of ten.**
+  ;; That list had a liveness control on it — every named namespace must load
+  ;; before it can be checked — and the control was answering a different
+  ;; question than the one that mattered. It catches a namespace that failed to
+  ;; LOAD. Nothing caught the list falling behind the CODE, so the eleventh
+  ;; framework namespace was unchecked while this test reported the rule green
+  ;; over the ten that were remembered. Same shape as the stale search PATTERN
+  ;; two waves ago: a guard whose population is authored drifts from the thing
+  ;; it guards, and the store already knows the answer.
+  ;;
+  ;; MEASURED when the derivation landed: the list held ten and the framework
+  ;; is FOURTEEN. `slopp.web.client`, `slopp.web.contract` and `slopp.web.jwks`
+  ;; had never been in it — three namespaces that ship in the slim jar, whose
+  ;; leaks would surface at a user's require time, and which this test had been
+  ;; reporting on without ever looking at. They are clean, which is luck rather
+  ;; than evidence: nothing would have said otherwise.
+  (let [web?      #(boolean (re-matches #"slopp\.web(\..*)?" (str %)))
+        framework (->> (all-ns)
+                       (map ns-name)
+                       (filter web?)
+                       (remove #(re-find #"-test$" (str %)))
+                       sort
+                       vec)
+        leaks     (for [n     framework
+                        [_ dep] (ns-aliases (find-ns n))
+                        :let  [d (ns-name dep)]
+                        :when (and (re-find #"^slopp\." (str d)) (not (web? d)))]
+                    [n d])]
+    ;; guard the guard: over an empty set "no leaks" is vacuously true, which
+    ;; is exactly the "I could not check" / "I checked and found nothing"
+    ;; conflation this codebase refuses everywhere else.
+    (is (some #{'slopp.web.html} framework)
+        (str "the scan found the framework — two empty sets agree about "
+             "everything, and a derived population can go empty in ways a "
+             "literal one cannot. Pinned on a NAMED member rather than a "
+             "count, because a count is a second hand-kept number and would "
+             "go stale in the other direction the first time a framework "
+             "namespace legitimately leaves. Found: " framework))
+    (is (empty? leaks)
+        (str "slopp.web.* must not depend on anything outside slopp.web.* — "
+             "the slim slopp-web jar ships only slopp/web/**, so these "
+             "requires would not resolve in a user's project: "
+             (vec leaks)))))
 
 (deftest ^:external cycle-refusal-judges-production-edges-not-test-fixtures
   ;; A `-test` namespace folds into its subject's module, so a fixture

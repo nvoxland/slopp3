@@ -12,7 +12,7 @@
   lands for that operation. Four gates were once hand-pasted at four write
   sites because the chokepoint was not used, and every later fix to them had
   to be applied four times."
-  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.rules.web :as rules.web] [slopp.index.refs :as refs] [slopp.image.currency :as currency] [slopp.kernel.boot :as boot] [clojure.java.io :as io]))
+  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.rules.web :as rules.web] [slopp.index.refs :as refs] [slopp.image.currency :as currency] [slopp.kernel.boot :as boot] [clojure.java.io :as io] [slopp.edit.web :as web]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -35,7 +35,7 @@
   so a coord names something only the machine that ran `slim-install` can
   resolve: portable in appearance, not in fact.
 
-  Two conditions, each load-bearing in a different direction.
+  Conditions, each load-bearing in a different direction.
 
   **USES but does not DEFINE.** slopp's own store CONTAINS `slopp.web.*`, and
   `src` is the FIRST classpath entry — so vendoring there would shadow the code
@@ -45,6 +45,19 @@
   **USES, not merely exists.** A store with no web code needs nothing, and
   writing files into every image would cost every fixture boot for nothing.
 
+  **USING is not only REQUIRING (2026-08-05).** A `^:web/page` app is opened by
+  `slopp.web.screen`, which slopp calls on the app's BEHALF — so the image
+  needs the framework even when the app's own code names none of it. That is
+  the ordinary shape for a client-state app: `{:state … :view …}` is hiccup and
+  a couple of handlers, requiring nothing.
+
+  Worth the telling, because the failure was a good impostor: it read
+  \"Could not locate slopp/web/screen.clj\", which is what a stale jar says, and
+  it survived both a rebuild AND a process restart. What ruled the jar out in
+  ONE call was `session_brief`'s `:jar {:head}` — added that same morning for
+  an unrelated reason, and the difference between a wrong diagnosis held for
+  two minutes and one held for a day.
+
   Empty or nil `files` (a checkout, a `clojure -M` run) vendors nothing rather
   than half a framework."
   [store files]
@@ -52,7 +65,10 @@
         web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
     (when (and (seq files)
                (not-any? web? nses)
-               (some (fn [n] (some web? (store/ns-require-libs store n))) nses))
+               (or (some (fn [n] (some web? (store/ns-require-libs store n))) nses)
+                   (some (fn [n] (some #(:web/page (web/web-name-meta %))
+                                       (store/forms store n)))
+                         nses)))
       files)))
 
 (defn ^:export vendor-framework!

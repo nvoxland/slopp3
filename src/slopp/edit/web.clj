@@ -365,3 +365,39 @@
                  " ONE zero-arg builder: (defn ^{:web/context true} app-context []"
                  " {…}). Anything it allocates is new each time it runs, so keep"
                  " live state outside it.")))))))
+
+(defn ^:export ^{:rule/applies-to :production} web-page-unreachable
+  "The headless-review gate (D-web): a form marked `^:web/page` — the entry the
+  fake browser opens an app through — may not live in a `:cljs` namespace,
+  because a JVM cannot call it there. Inert until `web-enabled?`. Returns a
+  teaching string, or nil when clean.
+
+  **What it costs to allow, which is why this refuses rather than advises.**
+  `slopp.web.browser` opens an app by CALLING this entry, so an entry the JVM
+  cannot reach forces every headless test to hand-build a map that RESEMBLES
+  the app. A resemblance drifts silently and in the worst direction: the
+  lookalike keeps passing while the real screen is wrong. That is the exact
+  defect the fake browser exists to remove, so letting it back in through the
+  entry point is not a small compromise — it is the whole thing, undone.
+
+  The rule generalises past this marker and is worth stating plainly: **the
+  wiring is portable, only the effects are `:cljs`.** Routing, derive and view
+  code decide what a screen SAYS and must run anywhere; `js/fetch`, mounting
+  into the DOM and pushing history are the parts that genuinely need a browser,
+  and they arrive as arguments.
+
+  A MARKER rather than a capability key, deliberately: a capability naming a
+  var is an asserted relation that goes stale the day the var is renamed, and a
+  marker cannot, because it IS the var."
+  [candidate ns-sym form-name]
+  (when (web-enabled? candidate)
+    (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
+      (when (:web/page (web-name-meta e))
+        (when (= :cljs (store/platform-for candidate (symbol (str ns-sym))))
+          (str ns-sym "/" form-name " is marked ^:web/page in a :cljs namespace,"
+               " so no JVM can open this app — and a headless test can then only"
+               " drive a hand-built lookalike, which passes while the real screen"
+               " is wrong. Move the entry (and the routing, derive and view code"
+               " it reaches) to a :jvm or :cljc namespace, and pass the browser"
+               "-shaped parts IN: :fetch, :render, a url pusher. The wiring is"
+               " portable; only the effects are :cljs."))))))
