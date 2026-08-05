@@ -90,7 +90,7 @@
    :input    [:type :name :id :placeholder :value :checked :disabled :aria-label :aria-hidden :inert]
    :textarea [:name :id :placeholder :disabled :aria-label :aria-hidden :inert]
    :select   [:name :id :disabled :aria-label :aria-hidden :inert]
-   :option   [:value :selected]
+   :option   [:value :selected :disabled]
    :button   [:type :disabled :aria-label :aria-hidden :inert]
    :form     [:action :method]
    :img      [:alt]
@@ -322,16 +322,26 @@
                                        [(str (pad depth) "</textarea>")])))))
 
       (= :select t)
-      (if prose?
-        [(str (pad depth) (or (:name a) (:id a) (:aria-label a) "select"))]
-        (let [options (filterv #(= :option (hiccup/tag %)) (hiccup/kids node))]
+      (let [options (filterv #(= :option (hiccup/tag %)) (hiccup/kids node))
+            sel?    (fn [o] (let [oa (hiccup/attrs o)]
+                              (boolean (or (:selected oa)
+                                           (and (some? (:value a))
+                                                (= (:value oa) (:value a)))))))]
+        (if prose?
+          ;; the SELECTED option's label — what a browser shows closed and a
+          ;; screen reader announces — never the tag name as page text: prose
+          ;; is unescaped, so "select" there was the v1 flaw class surviving
+          ;; exactly where <svg …> did (slopp-ui's project switcher)
+          (when-let [chosen (or (first (filter sel? options)) (first options))]
+            [(str (pad depth) (hiccup/text chosen))])
+          ;; option attrs come from kept-attrs, not a private list — the
+          ;; private list is how disabled went missing here while every other
+          ;; interactive tag rendered it
           (concat [(str (pad depth) (open-tag "select" (pairs :select [[:slopp:on note]] a) false))]
                   (for [o options]
-                    (let [oa  (hiccup/attrs o)
-                          sel (or (:selected oa)
-                                  (and (some? (:value a)) (= (:value oa) (:value a))))]
+                    (let [oa (assoc (hiccup/attrs o) :selected (sel? o))]
                       (str (pad (inc depth))
-                           (open-tag "option" [[:value (:value oa)] [:selected (boolean sel)]] false)
+                           (open-tag "option" (pairs :option nil oa) false)
                            (escape (hiccup/text o)) "</option>")))
                   [(str (pad depth) "</select>")])))
 

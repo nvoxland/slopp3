@@ -960,3 +960,28 @@
   (testing "a :boot that is not callable refuses at open"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #":boot"
                           (screen/open! {:state (atom {}) :view (fn [_] [:p "x"]) :boot 42})))))
+
+(deftest a-select-speaks-in-both-modes
+  ;; slopp-ui's pair, from their real project switcher. A: prose rendered the
+  ;; literal word "select" — the tag NAME as page text, in the one mode with
+  ;; no escaping; the v1 flaw class surviving exactly where <svg …> did. A
+  ;; browser shows the SELECTED option's label and a screen reader announces
+  ;; it, so that is what prose says (falling back to the first option). B:
+  ;; disabled did not render on <option>, so a test could not tell
+  ;; listed-and-disabled from listed-and-clickable — the select branch held a
+  ;; PRIVATE attr list instead of reading kept-attrs, the same second-producer
+  ;; shape the inline path had last round.
+  (let [v [:div [:select {:on {:change [:proj/go]}}
+                 [:option {:value "/a"} "slopp2"]
+                 [:option {:value "/b" :disabled true} "older — not running"]]]]
+    (testing "prose shows what a browser shows: the selected option's label, first by default"
+      (is (= "slopp2" (screen/of v {:detail :prose}))))
+    (testing "an explicitly selected option wins"
+      (is (= "older — not running"
+             (screen/of [:div [:select {}
+                               [:option {:value "/a"} "slopp2"]
+                               [:option {:value "/b" :selected true} "older — not running"]]]
+                        {:detail :prose}))))
+    (testing "disabled renders on an option, so listed-and-disabled is assertable"
+      (is (str/includes? (screen/of v)
+                         "<option value=\"/b\" disabled>older — not running</option>")))))
