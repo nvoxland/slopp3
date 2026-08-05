@@ -12,7 +12,7 @@
             [clojure.java.io :as io]
             [clojure.string]
             [slopp.kernel.boot :as boot]
-            [slopp.image.repl :as repl]))
+            [slopp.image.repl :as repl] [nrepl.core :as nrepl]))
 
 (deftest ^:external owned-repl-eval-and-restart
   (let [h (repl/start!)]
@@ -337,3 +337,42 @@
       (is (true? (first (repl/eval! img "(do (require 'malli.core) (some? (find-ns 'malli.core)))")))
           "and the NEXT tenant can load it again — unmapped must mean reloadable")
       (finally (repl/stop! img)))))
+
+(deftest an-eval-that-never-RAN-does-not-look-like-one-that-returned-nothing
+  ;; Reported from slopp-ui, and it cost them eight calls plus a wrong
+  ;; conclusion: `query_eval` answered `[]` for `(+ 1 1)`. No value, no error,
+  ;; nothing a (catch Throwable) could see — so every result read as "your
+  ;; expression is the problem", and they bisected their own page for an hour
+  ;; over a fault in this transport.
+  ;;
+  ;; `[]` was DOCUMENTED as "a genuine nothing", and that is the mistake. nREPL
+  ;; sends {:value "nil"} for an eval returning nil, so a successful nothing
+  ;; comes back as [nil]. An EMPTY vector means no value arrived at all, which
+  ;; no successful eval produces: the image was unresponsive.
+  ;;
+  ;; Core 1 at the transport, with the third claim this one was missing. It
+  ;; threw / it returned nothing / IT NEVER ANSWERED are three states, and two
+  ;; representations is one too few — the same shape as :host-drift's
+  ;; absent/clean/behind, one layer down.
+  (testing "a nil result is a VALUE and stays one"
+    (with-redefs [nrepl/message (fn [_ _] [{:value "nil"} {:status ["done"]}])]
+      (is (= [nil] (repl/eval! {:client nil :session nil} "(do nil)")))))
+
+  (testing "an eval that threw still reports its exception"
+    (with-redefs [nrepl/message (fn [_ _] [{:ex "java.lang.ArithmeticException"}
+                                           {:err "Divide by zero"}
+                                           {:status ["done"]}])]
+      (is (clojure.string/includes? (first (repl/eval! {:client nil :session nil} "(/ 1 0)"))
+                                    "Divide by zero"))))
+
+  (testing "no value and no error says the RUN did not happen, and what to do"
+    (with-redefs [nrepl/message (fn [_ _] [{:status ["done" "session-closed"]}])]
+      (let [r (first (repl/eval! {:client nil :session nil} "(+ 1 1)"))]
+        (is (string? r)
+            "a bare [] is indistinguishable from your expression returning nothing")
+        (is (clojure.string/includes? r "no value and no error")
+            "the sentence has to say the RUN did not happen, not that the answer was empty")
+        (is (clojure.string/includes? r "session-closed")
+            "the nREPL status is the only evidence of WHY, so it travels")
+        (is (clojure.string/includes? r "restart")
+            "and the remedy — a reader with a dead image reaches for the one verb that rebuilds it")))))

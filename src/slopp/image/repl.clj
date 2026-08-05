@@ -102,19 +102,29 @@
   when readable and left as the raw printed string otherwise (so evals that
   return unreadable objects — namespaces, functions — don't blow up).
 
-  **An eval that THREW does not come back empty.** It used to: this kept only
-  `:value`, and a throw produces no `:value` at all — the exception arrives as
-  `:err` / `:ex`, which were dropped. So `[]` meant either \"returned nothing\"
-  or \"blew up\", and every caller doing `(first …)` got nil for both. That
-  silence is what let one `:cljs` namespace hollow out the entire in-image test
-  tier: `ns-interns` threw, the throw evaporated here, and the runner's caller
-  saw a result with no summary in it and reported green. When there is no value
-  and there IS an error, the error text comes back as the single value, so the
-  next cause is diagnosable instead of invisible.
+  **Three states, three answers.** Core 1 at the transport, and it took two
+  goes to get all three.
 
-  A genuine nothing — no value, no error — still returns `[]`. Core 1 at the
-  transport: \"it threw\" and \"it returned nothing\" must not share a
-  representation.
+  **It THREW.** This once kept only `:value`, and a throw produces none — the
+  exception arrives as `:err`/`:ex`, which were dropped. So `[]` meant either
+  \"returned nothing\" or \"blew up\", and every caller doing `(first …)` got nil
+  for both. That silence is what let one `:cljs` namespace hollow out the whole
+  in-image test tier: `ns-interns` threw, the throw evaporated here, and the
+  runner's caller saw a result with no summary and reported green. The error
+  text now comes back as the single value.
+
+  **It RETURNED NOTHING.** nREPL sends `{:value \"nil\"}` for an eval whose
+  result is nil, so this is `[nil]` — a value, and it stays one.
+
+  **IT NEVER ANSWERED**, which is the state the second fix still missed. An
+  EMPTY vector cannot come from a successful eval, because a success always
+  carries a `:value` — so `[]` meant the image was unresponsive, and every
+  caller read it as the sentence above. Reported by a consumer who spent eight
+  calls and an hour bisecting their own code against `(+ 1 1)` → `[]`; the
+  surface accused their expression using a value that looks like a normal
+  answer. It now says the run did not happen, carries the nREPL `:status` —
+  the only evidence of why — and names `restart`, because a reader holding a
+  dead image reaches for the one verb that rebuilds it.
 
   `image` is an OPAQUE handle from `start!`: the caller never builds one, it
   passes back what it was given. Destructuring it here would advertise
@@ -133,7 +143,13 @@
             err (str/trim (apply str (keep :err msgs)))]
         (if (or ex (seq err))
           [(str/trim (str ex (when (and ex (seq err)) ": ") err))]
-          vals)))))
+          [(str "the image returned no value and no error for this eval, so the"
+                " RUN DID NOT HAPPEN — a successful eval always carries a value"
+                " (even nil), which makes this an unresponsive or closed image"
+                " rather than an empty answer from your expression."
+                (when-let [st (seq (distinct (mapcat :status msgs)))]
+                  (str " nREPL status: " (str/join ", " st) "."))
+                " `restart` builds a fresh image.")])))))
 
 ^:unsafe (defn- eval-outcome
   "Classify a completed nREPL eval's messages: `{:values [...]}` (plus
