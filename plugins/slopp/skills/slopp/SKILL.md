@@ -1308,15 +1308,21 @@ as a call chain:
 ```clj
 (require '[slopp.web.screen :as screen])
 
-(def s (screen/open ctx))           ; a slopp.web ctx — nothing else to declare
+(def s (screen/open! ctx))          ; a slopp.web ctx — nothing else to declare
 (screen/drive! s [{:visit "/store"} {:click "Code"}])
 (screen/text s "main")              ; ONE region — and it throws if absent
+(screen/text s nil {:within "rate"}); ONE element, addressed like a click
 ```
 
 Mark the zero-arg PUBLIC defn that builds your app `^:web/page` and the tool
 can find it; there is deliberately no session between tool calls, so a script
 is the whole interaction and the same script reproduces the same screen
-(`trace true` shows the screen after every step of one run).
+(`trace true` shows the screen after every step of one run). A page may
+declare `:boot (fn [state] state')` — its entry point's state transform — and
+`open!` runs it once, the way a browser runs an app's entry at page load: the
+loads that belong to no particular screen START headlessly too, so their
+loading states show instead of an absence nothing can distinguish from
+never-asked. (`open!` is `!`-named for exactly that reason.)
 
 **How to read a screen — one rule.** Plain text is the page's words,
 HTML-escaped, so page text can never be mistaken for markup; an UNPREFIXED tag
