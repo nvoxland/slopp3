@@ -1340,11 +1340,15 @@ like:
 
 The kept tags: controls (`a href`, `button`, `input`, `select`/`option`,
 `textarea`, `form`, `label` — with the state a browser shows: `value`,
-`checked`, `selected`, `disabled`), structure (`h1`–`h6`, `table`/`tr`, `pre`
+`checked`, `selected`, `disabled`, and the page's own not-a-control
+statements, `aria-hidden`/`inert`), structure (`h1`–`h6`, `table`/`tr`, `pre`
 verbatim, `img alt`, the `svg` class census), enumeration (`ul`/`ol`/`li` with
 `slopp:count`, and `<slopp:elided count/>` where the TOOL's 3-row cap bit —
 `drive!`/`text` in a test elide NOTHING by default, so an assertion can never
-be eaten silently). `class`/`style`/`id` never reach the output (except
+be eaten silently). The guarantee is an INVARIANT, not a property of this
+marker set: every structured-mode marker lives inside `<…>` and that alphabet
+is escaped in page text — a marker outside the escape is the v1 flaw
+returning, however harmless it looks. `class`/`style`/`id` never reach the output (except
 `class` on svg, where it is the census vocabulary), so sugar (`:h1.big`) and
 plain spellings render identically. A handler on ANY element keeps that
 element's tag so `slopp:on` has a place to ride — `slopp:on="click :save
@@ -1433,7 +1437,10 @@ typo'd `:vew` used to render a blank page, the silent worst).
   `demo.orderstatic`, one wrong word made of two correct elements. Fix it in
   the MARKUP rather than by adding spaces to the reader — a reader without CSS
   is not only a headless driver, it is also a screen reader, and the same gap
-  hits both.
+  hits both. **And assert it in PROSE**: structured mode places a tag between
+  adjacent words (`…rate</a>[kg zone]`), so word-gluing is invisible there
+  whether the markup is fixed or not — prose is where adjacency is real, and
+  the one mode this class of assertion can live in.
 - **It is NOT a screenshot.** An `<svg>` is censused by CLASS rather than
   dumped as coordinates, which catches an overlay's tints with no pixels — but
   a list that wraps over three lines and a tint invisible against white still
