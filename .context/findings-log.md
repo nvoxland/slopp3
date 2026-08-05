@@ -1218,3 +1218,30 @@ What recurred, for the pattern file more than the fix list:
 
 Format v2 (D-screen-format-v2) came out of the review's escaping finding plus
 the user's design call; the fix wave landed same-day with red tests first.
+
+## 2026-08-05/06 — consumer measurements that DECLINED features (slopp-ui, v2 evaluation round)
+
+Worth filing precisely because they are not bugs: measured answers to "should
+slopp build X", from the consumer who would use it.
+
+- **A text stripper: already exists.** `{:detail :prose}` measured against a
+  hostile page — inter-element whitespace collapses exactly as CSS renders
+  it, `<pre>` stays verbatim, alt text is text, region-scopable. Building a
+  stripper would be a second producer of one shape. "This surface is
+  complete, do not extend it" should be findable the next time it is
+  proposed.
+- **A has-text?/does-it-contain? predicate: declined.** A boolean destroys
+  the evidence channel that found `rate</a>[kg zone]` — the screen was IN the
+  failure's :actual only because the assertion took a STRING. And in
+  exploration, a predicate is an assertion offered back as if it were the
+  readout; the readout's value is showing what you did NOT think to check.
+  If a convenience is ever wanted: return the matched text or the whole
+  region on a miss, never a bare boolean.
+- **The real gap behind both asks was addressing grain**, closed as `:within`
+  (element-level scoping through the click matcher's vocabulary, widened to
+  the line-owning block). The stripper and the predicate were both attempts
+  to compensate for pane-grain scoping.
+- **Mechanism worth keeping: skill-vs-jar confirmability.** A fix landing in
+  a SKILL file is confirmable the moment it lands (`--live` reads files); a
+  fix in the JAR is invisible until a process restart, so one message's fixes
+  legitimately carry different statuses on the same day.
