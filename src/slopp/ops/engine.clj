@@ -424,10 +424,44 @@
 (defn green? [summary]
   (zero? (+ (:fail summary 0) (:error summary 0))))
 
+(defn load-all-namespaces!
+  "Load every store namespace into `image` (dependency order, red-first test
+  specs stubbed and retried), returning `[{:ns sym :why err} …]` for the ones
+  that FAILED — empty when the whole store loaded.
+
+  Collect-and-continue, never throw-on-first: the kernel HOST boot has worked
+  this way since frictions 3b/3f/19 (\"ONE namespace that no longer compiles
+  took down every tool in every process — including the edit_add_form that
+  would have put the missing form back\"), and its boot note promises the
+  store stayed open so the broken namespace can be FIXED. The ORACLE boots
+  (session open, restart) were the only loops still refusing outright — the
+  refusal parked a Throwable in :image-ready and `await-image!` rethrew it in
+  front of every non-read tool, wedging a real consumer's store with no
+  repair available from inside (slopp-ui, 2026-08-06). The wedge population
+  is code verified-good at write time and invalidated from OUTSIDE — a
+  framework rename, a dependency bump, a platform declaration stranding a
+  JVM caller; per-write verification means nothing inside a store creates it.
+
+  Callers record the result on the session as `:image-load-failures`, where
+  the write path reconciles it ([[hot-load-all!]]) and `done!` subtracts and
+  reports it."
+  [image store]
+  (vec (keep (fn [ns-sym]
+               (when-let [err (image/load-ns! image store ns-sym)]
+                 (when-not (and (stub-missing-test-vars! image store [ns-sym])
+                                (nil? (image/load-ns! image store ns-sym)))
+                   {:ns ns-sym :why err})))
+             (store/ns-dependency-order store))))
+
 (defn fresh-image!
   "Replace the image with a fresh process reloaded from the store — faithful by
   construction (the D5 backstop). With a warm spare, the swap avoids a JVM boot
-  on the critical path; the next spare starts warming immediately."
+  on the critical path; the next spare starts warming immediately.
+
+  A namespace that fails to load is RECORDED (session `:image-load-failures`,
+  via [[load-all-namespaces!]]) and the boot continues — never thrown. The
+  throw was half of a real consumer's wedge: a store invalidated from outside
+  could not restart, and the write that would fix it died at the same error."
   [session]
   (let [{:keys [image spare store]} @session
         ;; THE fix: every image this session boots gets the framework, not just
@@ -439,19 +473,15 @@
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)
-;; the new image holds NOTHING yet — carrying the old image's stamps would
+    ;; the new image holds NOTHING yet — carrying the old image's stamps would
     ;; claim it does, which is exactly the false green the registry exists to
     ;; prevent. The load loop below re-stamps everything it succeeds on, so a
     ;; namespace that fails to load stays absent rather than inheriting a
     ;; stamp from the image that just died.
     (currency/forget-all!)
-    (let [{:keys [store image]} @session]
-      (doseq [ns-sym (store/ns-dependency-order store)]    ; X3: deps first
-        (when-let [err (image/load-ns! image store ns-sym)]
-          ;; outstanding red-first stubs die with the old image — re-stub, retry
-          (when-not (and (stub-missing-test-vars! image store [ns-sym])
-                         (nil? (image/load-ns! image store ns-sym)))
-            (throw (ex-info (str "restart load failed for " ns-sym ": " err) {})))))
+    (let [{:keys [store image]} @session
+          fails (load-all-namespaces! image store)]
+      (swap! session assoc :image-load-failures (not-empty fails))
       ;; the loop above stamped every namespace it loaded, so the record is now
       ;; complete and a form without a stamp is real news. Arming only here —
       ;; never on a stamp — is what stops a half-filled registry reporting the
@@ -486,7 +516,13 @@
   are replayed from the CANDIDATE (dependency order, full load-ns! so new
   namespaces exist and are *loaded-libs*-stamped) before the retry —
   without that, a candidate that CREATES a namespace (extract_ns) dies
-  with FileNotFound when a survivor requires it."
+  with FileNotFound when a survivor requires it.
+  A touched namespace sitting in the session's `:image-load-failures` (it
+  failed the last boot) is RECONCILED on success: the candidate namespace is
+  loaded WHOLE, and when it loads it leaves the failure set — so the write
+  that fixes a boot-broken namespace verifies against the POST-edit state,
+  which is the promise the boot note makes and the sequencing used to break
+  (a real consumer's wedge, 2026-08-06)."
   [session candidate form-ids]
   (let [nses    (vec (distinct (keep #(store/ns-of-form-id candidate %) form-ids)))
         stub!   #(stub-missing-test-vars! (:image @session) candidate nses)
@@ -504,7 +540,16 @@
                                        (remove committed)
                                        (keys (:namespaces candidate)))]
                    (doseq [ns-sym (filter want (store/ns-dependency-order candidate))]
-                     (image/load-ns! (:image @session) candidate ns-sym)))]
+                     (image/load-ns! (:image @session) candidate ns-sym)))
+        reconcile! #(when-let [failed (not-empty
+                                       (set/intersection
+                                        (set (map :ns (:image-load-failures @session)))
+                                        (set nses)))]
+                      (doseq [ns-sym failed]
+                        (when (nil? (image/load-ns! (:image @session) candidate ns-sym))
+                          (swap! session update :image-load-failures
+                                 (fn [fs] (not-empty
+                                           (vec (remove (comp #{ns-sym} :ns) fs))))))))]
     (letfn [(load-all []
               (loop [ids (seq form-ids)]
                 (when ids
@@ -519,20 +564,24 @@
                         ;; the same shape as an unresolved id, so the loop recurs.
                         (hotload/hot-load-form! (:image @session) candidate (first ids)))
                       (recur (next ids))))))]
-      (when-let [err1 (load-all)]
-        (let [stubbed (stub!)]
-          (if (and (seq stubbed) (nil? (load-all)))
-            {:stubbed stubbed}
-            (do (fresh-image! session)             ; maybe the image was stale
-                (replay!)                          ; candidate truth over the committed boot
-                (let [stubbed (stub!)]             ; a fresh image loses stubs
-                  (if-let [err2 (load-all)]
-                    (do (fresh-image! session)
-                        (cond-> (merge {:err err2}
-                                       (edit/anchor-error candidate err2))
-                          (not= err1 err2) (assoc :first-err err1)))
-                    (cond-> {:healed true}
-                      (seq stubbed) (assoc :stubbed stubbed)))))))))))
+      (let [result
+            (when-let [err1 (load-all)]
+              (let [stubbed (stub!)]
+                (if (and (seq stubbed) (nil? (load-all)))
+                  {:stubbed stubbed}
+                  (do (fresh-image! session)             ; maybe the image was stale
+                      (replay!)                          ; candidate truth over the committed boot
+                      (let [stubbed (stub!)]             ; a fresh image loses stubs
+                        (if-let [err2 (load-all)]
+                          (do (fresh-image! session)
+                              (cond-> (merge {:err err2}
+                                             (edit/anchor-error candidate err2))
+                                (not= err1 err2) (assoc :first-err err1)))
+                          (cond-> {:healed true}
+                            (seq stubbed) (assoc :stubbed stubbed))))))))]
+        (when-not (:err result)
+          (reconcile!))
+        result))))
 
 (defn rebased-write!
   "Run a single-form write with an atomic rebasing commit (item 4, the

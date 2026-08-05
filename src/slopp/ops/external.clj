@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.image :as image] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers] [slopp.kernel.boot :as boot]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers] [slopp.kernel.boot :as boot]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -672,7 +672,15 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; The full ISOLATED tier is still skipped (it spawns JVMs)
                 ;; and the findings SAY so, so running it stays a visible
                 ;; choice rather than a silent omission.
-                main-ns  (vec (sort (keys (:namespaces st*))))
+                ;; minus what the ORACLE could not load: the tracer walks ns-interns,
+                ;; which throws on a namespace the image cannot hold, and "done
+                ;; means done" must not mean dying on a namespace the boot
+                ;; already reported. Excluded AND reported — the finding rides
+                ;; below as :unloadable-namespaces, the :external-pending
+                ;; pattern, never a silent skip.
+                unloadable (mapv :ns (:image-load-failures @session))
+                main-ns  (vec (sort (remove (set unloadable)
+                                            (keys (:namespaces st*)))))
                 ;; nil affected => every test in main-ns; :edited still powers
                 ;; the red :implicated correlation
                 s        (session/run-verification! session main-ns nil
@@ -765,6 +773,13 @@ client-deps (merge (:client-deps st) (:client provided))
                               :else                           :green)
            :failures    failures
            :lint-errors lint-errors
+           ;; what the oracle could not load and therefore could not judge —
+           ;; subtracted from the suite scope above, REPORTED here. A boot
+           ;; failure names a store invalidated from OUTSIDE (a framework
+           ;; rename, a dep bump, a platform declaration); the fix is one
+           ;; edit to the named namespace, which the write path now verifies
+           ;; against its POST-edit state.
+           :unloadable-namespaces (vec (:image-load-failures @session))
            ;; done runs the WHOLE in-image suite but not the full external
            ;; tier. Say so EVERY time: an unstated omission reads as coverage,
            ;; and that is how a green status comes to mean less than the agent
@@ -1275,12 +1290,15 @@ client-deps (merge (:client-deps st) (:client provided))
       ;; nothing — either way the stamps this registry already carries
       ;; describe an image that no longer exists
       (registry/forget-all!)
-      (doseq [ns-sym (store/ns-dependency-order store)]     ; X3: deps first
-        (when-let [err (image/load-ns! image store ns-sym)]
-          ;; a store carrying red-first specs still opens — stub and retry
-          (when-not (and (session/stub-missing-test-vars! image store [ns-sym])
-                         (nil? (image/load-ns! image store ns-sym)))
-            (throw (ex-info (str "image load failed for " ns-sym ": " err) {})))))
+      ;; note-and-continue, kernel-host parity: a namespace that fails to load
+      ;; is RECORDED, not thrown. The throw parked its Throwable in
+      ;; :image-ready and await-image! rethrew it in front of every non-read
+      ;; tool — including the edit that would fix the namespace (a real
+      ;; consumer's wedge, 2026-08-06). Process-level failures still throw
+      ;; through the outer catch; a per-namespace compile failure is the
+      ;; store's business, and the store stays open to fix it.
+      (let [fails (session/load-all-namespaces! image store)]
+        (swap! session assoc :image-load-failures (not-empty fails)))
       ;; ARM only now, with everything stamped: from here an unstamped form
       ;; means never-loaded rather than not-yet-looked-at. Without this the
       ;; registry stayed unarmed for a whole session and every currency

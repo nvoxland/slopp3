@@ -944,3 +944,57 @@
           (is (re-find #"capabilities" (str (:note r)))
               "the note must name the one path that IS validated")))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-store-with-a-broken-namespace-stays-editable
+  ;; slopp-ui, wedged for real (2026-08-06): the vendored framework renamed a
+  ;; var, one stored form stopped compiling, and the ORACLE boot refused on
+  ;; first failure — the Throwable parked in :image-ready, await-image!
+  ;; rethrew it in front of every non-read tool, and the edit that would fix
+  ;; the namespace was blocked by the brokenness it would fix. The kernel
+  ;; HOST boot already notes-and-continues, and its note PROMISES "the store
+  ;; stayed open on purpose so you can FIX them"; the oracle layer broke the
+  ;; promise. The wedge population (their correction, sharper than their
+  ;; report): code verified-good at write time and invalidated from OUTSIDE —
+  ;; a jar rename, a dep bump, or exactly this, a :cljs declaration stranding
+  ;; a JVM caller. Per-write verification means nothing INSIDE a store can
+  ;; produce this state.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'lib.core "(ns lib.core)\n\n(defn f \"F.\" [x] x)\n")
+      (ops/module-dep! sess "app.core" "lib.core" :prompt "consumer edge")
+      (ops/ingest! sess 'app.core
+                   "(ns app.core (:require [lib.core :as l]))\n\n(defn g \"G.\" [x] (l/f x))\n")
+      (ops/ingest! sess 'other.core "(ns other.core)\n\n(defn h \"H.\" [x] x)\n")
+      (let [r (ops/module-platform! sess "lib.core" "cljs"
+                                    :prompt "the stranding move — lib.core leaves the JVM")]
+        (is (nil? (:error r)) (pr-str r)))
+
+      (testing "a fresh oracle NOTES the failed namespace and keeps the session alive"
+        (is (some? (ops/restart! sess))
+            "restart completes instead of throwing the first load failure")
+        (is (= '[app.core] (mapv :ns (:image-load-failures @sess)))
+            "recorded where the engine can consult it — not thrown, not a parked Throwable"))
+
+      (testing "work in an unrelated namespace continues"
+        (let [r (ops/edit-replace! sess 'other.core 'h
+                                   "(defn h \"H.\" [x] (inc x))"
+                                   :prompt "unrelated work while app.core is broken")]
+          (is (nil? (:error r)) (pr-str r))))
+
+      (testing "done EXCLUDES the unloadable namespace and REPORTS it, rather than dying"
+        (let [r (external/done! sess :label "wedge check")]
+          (is (map? r) (pr-str r))
+          (is (= '[app.core] (mapv :ns (get-in r [:findings :unloadable-namespaces])))
+              "excluded-and-reported, the traced-run! :external-pending pattern — never silent")))
+
+      (testing "the edit that FIXES the broken namespace verifies against the POST-edit state"
+        (let [r (ops/edit-group! sess
+                                 [{:action :replace :ns 'app.core :name 'app.core
+                                   :source "(ns app.core)"}
+                                  {:action :replace :ns 'app.core :name 'g
+                                   :source "(defn g \"G.\" [x] x)"}]
+                                 :prompt "drop the stranded require and call — the one-edit unwedge")]
+          (is (nil? (:error r)) (pr-str r)))
+        (is (empty? (:image-load-failures @sess))
+            "a namespace that loads again leaves the failure set"))
+      (finally (ops/close! sess)))))
