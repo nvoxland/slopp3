@@ -466,3 +466,44 @@
     (testing "all three show as fillable"
       (is (= "Reagent=\"abc\" [fill]\nReplicant=\"xyz\" [fill]\nData [fill]"
              (screen/of (screen/tree b)))))))
+
+(deftest a-navigate-that-touches-its-own-atom-does-not-LIVELOCK
+  ;; The bug slopp-ui hit, and it took a measurement from them to find because
+  ;; every fixture here had a PURE :navigate. Theirs calls their SPA loop, which
+  ;; swaps the same state atom — the ordinary shape for a real app.
+  ;;
+  ;; `visit!` called the app's :navigate INSIDE (swap! state nav path). swap!
+  ;; retries its function whenever the CAS loses, so it requires a pure one: an
+  ;; inner swap! on the same atom changes the value mid-computation, the outer
+  ;; CAS fails, it retries, the inner swaps again — forever, at full CPU.
+  ;;
+  ;; It presents as a HANG, not an error. Theirs ran 127 seconds and then
+  ;; reported "the run did not happen"; query_eval answered [] because the image
+  ;; was pinned. Their own loop, measured outside the driver, is 1.4 ms.
+  ;;
+  ;; **The fixture has to CHANGE something on every pass**, and the first cut of
+  ;; this test did not — it assoc'd a constant, and `assoc` returns the
+  ;; identical map when the value is already there by identity, so the retry
+  ;; converged and the test went green over a live livelock. A real navigate
+  ;; mints something fresh each time (their nav/begin-load makes a load TOKEN),
+  ;; which is precisely why theirs never converged and mine did.
+  ;;
+  ;; The general rule, and why this is a design bug rather than a typo:
+  ;; **never call an app-supplied function inside swap!.** slopp cannot know
+  ;; what an app's fn does, and swap!'s contract says it must do nothing.
+  (let [st   (atom {:n 0})
+        page {:state    st
+              :view     (fn [s] [:p (str "at=" (:at s) " n=" (:n s))])
+              ;; a real SPA loop: mutate the atom, mint something fresh, hand
+              ;; back the new value
+              :navigate (fn [_ path]
+                          (swap! st #(-> % (update :n inc) (assoc :at path)))
+                          @st)}
+        s    (screen/open page)
+        f    (future (screen/visit! s "/store") :done)]
+    (is (= :done (deref f 3000 :TIMED-OUT))
+        "a :navigate that touches its own atom livelocked inside swap! — it presents as a hang, and a hang has no message")
+    (is (= 1 (:n @st))
+        "and it ran ONCE: a retry loop would have incremented this a great many times")
+    (is (= "at=/store n=1" (screen/of (screen/tree s)))
+        "and the navigation actually happened")))

@@ -205,7 +205,20 @@
   (let [{:keys [app]} @session]
     (cond
       (:navigate app)
-      (swap! (:state app) (:navigate app) path)
+      ;; NOT (swap! state nav path). swap! RETRIES its function whenever the
+      ;; CAS loses, so it requires a pure one — and `nav` is the app's, which
+      ;; slopp cannot know anything about. A real SPA loop swaps the same atom
+      ;; from inside it: the inner swap changes the value mid-computation, the
+      ;; outer CAS fails, it retries, forever. Measured at 64 MILLION retries in
+      ;; three seconds, and it presents as a HANG rather than an error — a
+      ;; consumer lost 127 seconds and a dead image to it, then `query_eval`
+      ;; answering [] because the image was pinned.
+      ;;
+      ;; Read, call, write. There is one thread here, so nothing is lost by
+      ;; giving up the atomicity — and an app that mutates the atom ITSELF and
+      ;; returns the new value (the ordinary adapter shape) works either way.
+      (let [st (:state app)]
+        (reset! st ((:navigate app) @st path)))
 
       (:web/routes app)
       (let [resp (dispatch/handle! app {:request-method :get :uri path})
