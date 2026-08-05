@@ -985,3 +985,29 @@
     (testing "disabled renders on an option, so listed-and-disabled is assertable"
       (is (str/includes? (screen/of v)
                          "<option value=\"/b\" disabled>older — not running</option>")))))
+
+(deftest every-page-tag-renders-through-one-attr-route
+  ;; slopp-ui counted the class: two private attr lists in two rounds, both
+  ;; found as downstream symptoms on real pages, neither by looking for the
+  ;; shape. The grep they asked for found two more sites in agreement today
+  ;; and free to drift (img, the svg class pair) plus the capability trio
+  ;; existing as two identical copies. The structural answer: page tags render
+  ;; through ONE builder — per-tag whitelist, then the cross-cutting
+  ;; capability statements (aria-label / aria-hidden / inert), then slopp:on —
+  ;; and a branch cannot hand-build page attrs at all. Pinned here on the
+  ;; tags whose private lists dropped the trio.
+  (testing "an img carries the page's not-a-control statement like every control does"
+    (is (str/includes? (screen/of [:div [:img {:alt "chart" :aria-hidden "true"}]])
+                       "<img alt=\"chart\" aria-hidden=\"true\"/>")))
+  (testing "an option carries it too — no tag is outside the rule"
+    (is (str/includes?
+         (screen/of [:div [:select {}
+                           [:option {:value "/a" :aria-hidden "true"} "ghost"]]])
+         "<option value=\"/a\" aria-hidden=\"true\">ghost</option>")))
+  (testing "the trio renders in one order everywhere — block and inline paths agree"
+    (let [block  (screen/of [:div [:div {:aria-label "card" :inert true
+                                         :on {:click [:open]}} [:p "body"]]])
+          inline (screen/of [:p "see " [:span {:aria-label "card" :inert true
+                                               :on {:click [:open]}} "this"]])]
+      (is (str/includes? block  "aria-label=\"card\" inert slopp:on=\"click :open\""))
+      (is (str/includes? inline "aria-label=\"card\" inert slopp:on=\"click :open\"")))))

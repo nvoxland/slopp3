@@ -63,38 +63,38 @@
          (if self-close? "/>" ">"))))
 
 (def kept-attrs
-  "Which attributes each kept tag shows, IN ORDER — attr order is part of the
-  format so a whole tag can be asserted as one string.
+  "Which PAGE-FACT attributes each kept tag shows, IN ORDER — attr order is
+  part of the format so a whole tag can be asserted as one string.
 
   The test for membership mirrors the tag whitelist's: an attribute survives
   when it carries something an agent acts on or asserts — an address
-  (`name`/`id`/`placeholder`/`aria-label`), a state a browser shows
+  (`name`/`id`/`placeholder`), a state a browser shows
   (`value`/`checked`/`selected`/`disabled`), a destination (`href`/`action`),
-  **or the page's own statement that this is NOT a control**
-  (`aria-hidden`/`inert`). That last clause is slopp-ui's, from a real page:
-  the whitelist admitted `<a>` for being actionable and then discarded the
-  attribute saying it was a deliberately label-less duplicate — so the reader
-  showed two identical controls where a browser has one.
+  the census vocabulary (`class`, on svg alone). The CROSS-CUTTING statements
+  — `aria-label`, `aria-hidden`, `inert` — live in [[capability-attrs]] and
+  render on every page tag after its row here; keyed per-tag they went
+  missing one tag at a time, which is how a consumer twice found a control
+  whose state the readout dropped.
 
-  `style` and `class` say how things LOOK, which a text readout cannot honour
-  and must not pretend to — `class` survives only on `<svg>`, where it is the
-  census vocabulary. Dropping class everywhere else is also what makes sugar
-  verifiable: `:h1.big` and `[:h1 {:class \"big\"}]` must render identically,
-  and they can only be seen to when class reaches no output.
+  `style` and `class` (off svg) say how things LOOK, which a text readout
+  cannot honour and must not pretend to; dropping class everywhere else is
+  also what makes sugar verifiable — `:h1.big` and `[:h1 {:class \"big\"}]`
+  must render identically, and they can only be seen to when class reaches no
+  output.
 
-  Fields keep every attr [[slopp.web.screen/fill!]] addresses by — the old
-  format showed the FIRST addressing attr and the review's lead finding was
-  its mirror (a field the screen denied while fill! drove it). All of them
-  visible means what you see is always something you can drive."
-  {:a        [:href :aria-hidden :inert]
-   :input    [:type :name :id :placeholder :value :checked :disabled :aria-label :aria-hidden :inert]
-   :textarea [:name :id :placeholder :disabled :aria-label :aria-hidden :inert]
-   :select   [:name :id :disabled :aria-label :aria-hidden :inert]
+  Fields keep every attr [[slopp.web.screen/fill!]] addresses by — what you
+  see is always something you can drive. Consumed ONLY by [[page-tag]]; a
+  branch building pairs by hand is the defect this layout exists to end."
+  {:a        [:href]
+   :input    [:type :name :id :placeholder :value :checked :disabled]
+   :textarea [:name :id :placeholder :disabled]
+   :select   [:name :id :disabled]
    :option   [:value :selected :disabled]
-   :button   [:type :disabled :aria-label :aria-hidden :inert]
+   :button   [:type :disabled]
    :form     [:action :method]
    :img      [:alt]
-   :label    [:for :aria-hidden :inert]})
+   :label    [:for]
+   :svg      [:class]})
 
 (defn handler-note
   "The `slopp:on` value for `node`, or nil — the one fact HTML has no attr
@@ -125,6 +125,41 @@
         (some->> (hiccup/handler node :change) (fmt "change"))
         (some->> (hiccup/handler node :input) (fmt "input")))))
 
+(def capability-attrs
+  "The page's cross-cutting statements about controlhood, rendered on EVERY
+  page tag after its own [[kept-attrs]] row: `:aria-label` (an address for a
+  control with no text), `:aria-hidden` and `:inert` (the page saying what is
+  NOT a control).
+
+  ONE list because it existed as two — the block and inline paths each held a
+  private copy, and when slopp-ui asked whether a third private attr site
+  existed, the copies had ALREADY drifted: the block path had lost `:inert`
+  while the inline path kept it. Cross-cutting facts keyed per-tag is how a
+  tag misses one; a list every tag appends cannot be missed per-tag."
+  [:aria-label :aria-hidden :inert])
+
+(defn- page-tag
+  "THE tag builder for an element that was ON THE PAGE — deliberately the only
+  route, so a branch cannot hand-build page attrs and drift from the
+  whitelist. Three private attr sites accumulated in one day (the inline
+  path's, the select branch's, and the block/inline capability-trio copies —
+  the last pair already drifted apart when a consumer asked whether a third
+  site existed); a sweep fixes instances, a single route fixes the shape.
+
+  Renders, in order: `tag`'s [[kept-attrs]] row (empty for an unlisted tag —
+  a `div` carries no page facts of its own), then [[capability-attrs]] (every
+  page tag), then derived `extra` pairs (`slopp:count`), then the `slopp:on`
+  `note`. Raw [[open-tag]] remains for `slopp:*` derived tags only —
+  `slopp:region`, `slopp:elided` — which have no page attrs to be wrong
+  about."
+  [tag a note extra close?]
+  (open-tag (name tag)
+            (concat (for [k (kept-attrs tag)] [k (get a k)])
+                    (for [k capability-attrs] [k (get a k)])
+                    extra
+                    [[:slopp:on note]])
+            close?))
+
 (defn- inline-str
   "An inline node as its piece of the line — escaped text for the text-only
   tags, a real `<a>` for links, a real tag wherever a handler needs its
@@ -133,9 +168,10 @@
   kept on purpose. Whitespace squeezes but edges survive: a trailing space in
   `\"docs: \"` is the markup's own gap.
 
-  Kept attrs come from [[kept-attrs]] — the one whitelist — not a private
-  list: the first cut hardcoded `href` here and dropped `aria-hidden` exactly
-  where the deliberately hidden duplicate anchor renders.
+  Tags render through [[page-tag]] — the one route. This path has been both
+  instances of the private-attr-list class: it hardcoded `href` (dropping
+  `aria-hidden` exactly where the deliberately hidden duplicate anchor
+  renders) and it held one of the two capability-trio copies that drifted.
 
   At `:prose` every tag drops away and only the words remain, unescaped —
   prose makes no structural claims, so it has nothing to be confused with."
@@ -148,18 +184,13 @@
       (vector? x)
       (let [tag   (hiccup/tag x)
             a     (hiccup/attrs x)
-            inner (str/join "" (map #(inline-str % opts) (hiccup/kids x)))
-            pairs (fn [tag-key]
-                    (concat (for [k (kept-attrs tag-key)] [k (get a k)])
-                            [[:slopp:on (handler-note x)]]))]
+            inner (str/join "" (map #(inline-str % opts) (hiccup/kids x)))]
         (cond
           prose?      inner
-          (= :a tag)  (str (open-tag "a" (pairs :a) false) inner "</a>")
+          (= :a tag)  (str (page-tag :a a (handler-note x) nil false)
+                           inner "</a>")
           (handler-note x)
-          (str (open-tag (name tag) [[:aria-label (:aria-label a)]
-                                     [:aria-hidden (:aria-hidden a)]
-                                     [:inert (:inert a)]
-                                     [:slopp:on (handler-note x)]] false)
+          (str (page-tag tag a (handler-note x) nil false)
                inner "</" (name tag) ">")
           :else inner))
       :else "")))
@@ -178,7 +209,9 @@
   the tag says nothing and the class says everything. It also makes an overlay
   legible for free — `18 module-node` becoming `1 gap-w2, 17 gap-w0` IS the
   tint check, with no pixels and no browser. `class` survives on svg alone for
-  exactly this reason: here it is capability vocabulary, not styling."
+  exactly this reason: here it is capability vocabulary, not styling — which
+  is why `:svg [:class]` is a [[kept-attrs]] row and this renders through
+  [[page-tag]] like every page tag."
   [node prose?]
   (let [a      (hiccup/attrs node)
         own    (:class a)
@@ -193,10 +226,10 @@
       ;; distinguish it from content (slopp-ui, on a real module page)
       (str "svg " (or own "—"))
       (if (seq census)
-        (str (open-tag "svg" [[:class own]] false)
+        (str (page-tag :svg a (handler-note node) nil false)
              (escape (str/join ", " (for [[c n] census] (str n " " c))))
              "</svg>")
-        (open-tag "svg" [[:class own]] true)))))
+        (page-tag :svg a (handler-note node) nil true)))))
 
 (defn emit
   "Hiccup → lines, in the v2 format: plain escaped text by default, a tag kept
@@ -205,6 +238,11 @@
   tables, `pre`, `img`, the svg census) — and the provenance rule over all of
   it: an UNPREFIXED tag or attr was really on the page, `slopp:*` is derived
   by this reader, everything else is words.
+
+  Every page tag renders through [[page-tag]] — the one attr route; a branch
+  cannot hand-build page attrs, which is how two private lists and a drifted
+  pair accumulated in one day. Raw [[open-tag]] appears below only for the
+  `slopp:*` derived tags.
 
   Containers (`div`/`p`/`section`/anything unlisted) are transparent: their
   children render at the same depth, inline runs joining one line, unless the
@@ -245,9 +283,7 @@
                 (recur (next ks) []
                        (-> out
                            (into (flush buf))
-                           (into (emit (first ks) d opts))))))))
-        pairs    (fn [tag-key extra a*]
-                   (concat (for [k (kept-attrs tag-key)] [k (get a* k)]) extra))]
+                           (into (emit (first ks) d opts))))))))]
     (cond
       (string? node) [(str (pad depth) (if prose? node (escape node)))]
       (number? node) [(str (pad depth) node)]
@@ -282,8 +318,8 @@
           (concat (mapcat #(emit % depth opts) shown)
                   (when over [(str "+" over " more")]))
           (if (zero? n)
-            [(str (pad depth) (open-tag (name t) [[:slopp:count 0] [:slopp:on note]] true))]
-            (concat [(str (pad depth) (open-tag (name t) [[:slopp:count n] [:slopp:on note]] false))]
+            [(str (pad depth) (page-tag t a note [[:slopp:count 0]] true))]
+            (concat [(str (pad depth) (page-tag t a note [[:slopp:count n]] false))]
                     (mapcat #(emit % (inc depth) opts) shown)
                     (when over [(str (pad (inc depth)) "<slopp:elided count=\"" over "\"/>")])
                     [(str (pad depth) "</" (name t) ">")]))))
@@ -292,9 +328,9 @@
       (let [ks (hiccup/kids node)]
         (cond
           prose?              (child-lines ks depth)
-          (every? inline? ks) [(str (pad depth) (open-tag "li" [[:slopp:on note]] false)
+          (every? inline? ks) [(str (pad depth) (page-tag :li a note nil false)
                                     (run ks) "</li>")]
-          :else               (concat [(str (pad depth) (open-tag "li" [[:slopp:on note]] false))]
+          :else               (concat [(str (pad depth) (page-tag :li a note nil false))]
                                       (child-lines ks (inc depth))
                                       [(str (pad depth) "</li>")])))
 
@@ -304,7 +340,7 @@
         (let [a* (-> a
                      (update :value #(or % (:default-value a)))
                      (update :type #(some-> % name)))]
-          [(str (pad depth) (open-tag "input" (pairs :input [[:slopp:on note]] a*) true))]))
+          [(str (pad depth) (page-tag :input a* note nil true))]))
 
       (= :textarea t)
       (let [content (str (or (:value a) (:default-value a)
@@ -312,14 +348,13 @@
             ls      (when (seq content) (str/split-lines content))]
         (if prose?
           [(str (pad depth) (or (:name a) (:id a) (:placeholder a) (:aria-label a) "textarea"))]
-          (let [ps (pairs :textarea [[:slopp:on note]] a)]
-            (cond
-              (empty? content) [(str (pad depth) (open-tag "textarea" ps true))]
-              (= 1 (count ls)) [(str (pad depth) (open-tag "textarea" ps false)
-                                     (escape content) "</textarea>")]
-              :else            (concat [(str (pad depth) (open-tag "textarea" ps false))]
-                                       (map escape ls)
-                                       [(str (pad depth) "</textarea>")])))))
+          (cond
+            (empty? content) [(str (pad depth) (page-tag :textarea a note nil true))]
+            (= 1 (count ls)) [(str (pad depth) (page-tag :textarea a note nil false)
+                                   (escape content) "</textarea>")]
+            :else            (concat [(str (pad depth) (page-tag :textarea a note nil false))]
+                                     (map escape ls)
+                                     [(str (pad depth) "</textarea>")]))))
 
       (= :select t)
       (let [options (filterv #(= :option (hiccup/tag %)) (hiccup/kids node))
@@ -334,14 +369,11 @@
           ;; exactly where <svg …> did (slopp-ui's project switcher)
           (when-let [chosen (or (first (filter sel? options)) (first options))]
             [(str (pad depth) (hiccup/text chosen))])
-          ;; option attrs come from kept-attrs, not a private list — the
-          ;; private list is how disabled went missing here while every other
-          ;; interactive tag rendered it
-          (concat [(str (pad depth) (open-tag "select" (pairs :select [[:slopp:on note]] a) false))]
+          (concat [(str (pad depth) (page-tag :select a note nil false))]
                   (for [o options]
                     (let [oa (assoc (hiccup/attrs o) :selected (sel? o))]
                       (str (pad (inc depth))
-                           (open-tag "option" (pairs :option nil oa) false)
+                           (page-tag :option oa nil nil false)
                            (escape (hiccup/text o)) "</option>")))
                   [(str (pad depth) "</select>")])))
 
@@ -350,7 +382,7 @@
         (if prose?
           (when (seq label) [(str (pad depth) label)])
           (let [a* (update a :type #(when (= "submit" (some-> % name)) (some-> % name)))]
-            [(str (pad depth) (open-tag "button" (pairs :button [[:slopp:on note]] a*) false)
+            [(str (pad depth) (page-tag :button a* note nil false)
                   label "</button>")])))
 
       (= :form t)
@@ -358,7 +390,7 @@
         (if prose?
           (child-lines ks depth)
           (let [a* (update a :method #(some-> % name))]
-            (concat [(str (pad depth) (open-tag "form" (pairs :form [[:slopp:on note]] a*) false))]
+            (concat [(str (pad depth) (page-tag :form a* note nil false))]
                     (child-lines ks (inc depth))
                     [(str (pad depth) "</form>")]))))
 
@@ -395,13 +427,13 @@
       (= :img t)
       (if prose?
         (when-let [alt (:alt a)] [(str (pad depth) alt)])
-        [(str (pad depth) (open-tag "img" [[:alt (:alt a)] [:slopp:on note]] true))])
+        [(str (pad depth) (page-tag :img a note nil true))])
 
       (= :label t)
       (let [content (run (hiccup/kids node))]
         (if prose?
           (when (seq content) [(str (pad depth) content)])
-          [(str (pad depth) (open-tag "label" (pairs :label [[:slopp:on note]] a) false)
+          [(str (pad depth) (page-tag :label a note nil false)
                 content "</label>")]))
 
       ;; an inline element standing at block position is its own one-line run
@@ -416,9 +448,9 @@
             nm (name (or t :div))]
         (if (and note (not prose?))
           (if (every? inline? ks)
-            [(str (pad depth) (open-tag nm [[:aria-label (:aria-label a)] [:slopp:on note]] false)
+            [(str (pad depth) (page-tag (or t :div) a note nil false)
                   (run ks) "</" nm ">")]
-            (concat [(str (pad depth) (open-tag nm [[:aria-label (:aria-label a)] [:slopp:on note]] false))]
+            (concat [(str (pad depth) (page-tag (or t :div) a note nil false))]
                     (child-lines ks (inc depth))
                     [(str (pad depth) "</" nm ">")]))
           (child-lines ks depth))))))
