@@ -287,11 +287,13 @@
                (into [:ul] (for [i (range 6)] [:li (str "row " i)]))]]]
     (testing "no region wrapper, no heading tag, no address, no census"
       ;; :list-head 3 is the TOOL's cap, passed explicitly — the test path
-      ;; defaults to every row
+      ;; defaults to every row. The svg is named in WORDS: prose is unescaped,
+      ;; so an angle-bracketed marker here would be the v1 flaw surviving in
+      ;; the one mode where nothing could distinguish it from content.
       (is (= (str "code\n"
                   "3 modules, 4 namespaces\n"
                   "Code\n"
-                  "<svg module-graph>\n"
+                  "svg module-graph\n"
                   "row 0\nrow 1\nrow 2\n"
                   "+3 more")
              (screen/of page {:detail :prose :list-head 3}))))
@@ -305,8 +307,10 @@
       (is (str/includes? (screen/of page {:detail :prose :list-head 3}) "+3 more")
           "a cap that went quiet would be a report lying about its own scope"))
 
-    (testing "an svg still marks its place, so a picture does not read as nothing"
-      (is (str/includes? (screen/of page {:detail :prose}) "<svg module-graph>")))
+    (testing "an svg still marks its place, in words, so a picture does not read as nothing"
+      (is (str/includes? (screen/of page {:detail :prose}) "svg module-graph"))
+      (is (not (str/includes? (screen/of page {:detail :prose}) "<svg"))
+          "prose is unescaped, so brackets here would be v1's flaw surviving"))
 
     (testing "and it composes with region scoping"
       (is (str/starts-with? (screen/of page {:detail :prose :region "main"}) "code")))))
@@ -835,3 +839,57 @@
     (testing "a checkbox takes its checked state as a boolean"
       (screen/fill! b "agree" true)
       (is (= [[:agree/set] true] @seen)))))
+
+(deftest the-pages-own-not-a-control-statements-are-honoured
+  ;; slopp-ui's ask A, from a real page: an outline row links the same form
+  ;; twice — the name, and a deliberately label-less skeleton anchor carrying
+  ;; aria-hidden "true" so screen readers get ONE tab stop. A browser has no
+  ;; ambiguity there: exactly one user-reachable control has that href. The
+  ;; whitelist admitted <a> for being actionable and then discarded the
+  ;; attribute saying it is not — and the refusal's suggested fix (label it)
+  ;; was the accessibility bug their comment exists to prevent.
+  (let [hits (atom [])
+        page {:state    (atom {:at "/"})
+              :navigate (fn [s p] (assoc s :at p))
+              :dispatch (fn [a _] (swap! hits conj a))
+              :view     (fn [_]
+                          [:div
+                           [:a {:href "/store/form/f1"} "rate"]
+                           [:a {:href "/store/form/f1"
+                                :aria-hidden "true" :tabindex "-1"}
+                            [:pre "(defn rate [w z] …)"]]
+                           [:button {:inert true :on {:click [:never]}} "Frozen"]])}
+        b    (screen/open page)]
+    (testing "an aria-hidden duplicate does not make a click ambiguous"
+      (screen/visit! b "/")
+      (screen/click! b "/store/form/f1")
+      (is (= "/store/form/f1" (:path @b))
+          "one user-reachable control answers, exactly as in a browser"))
+    (testing "the readout shows the statement, so a reader can tell the two apart"
+      (is (str/includes? (screen/text b nil) "aria-hidden=\"true\"")))
+    (testing "an inert control refuses like a disabled one — a browser delivers no events to it"
+      (reset! hits [])
+      (let [e (try (screen/click! b "Frozen") nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? e))
+        (is (str/includes? (ex-message e) "inert"))
+        (is (= [] @hits))))))
+
+(deftest the-options-map-is-the-last-entry-that-guessed
+  ;; slopp-ui's ask B: open validates, drive! refuses, the tool refuses — and
+  ;; text accepted anything. {:detial :prose} silently asserted against
+  ;; STRUCTURED output, and most prose assertions pass there too, so the typo
+  ;; never surfaces and the test checks something its author did not choose.
+  (let [v [:div [:main {:data-region "main"} [:p "hello"]]]]
+    (testing "an unknown option refuses, naming it and the vocabulary"
+      (let [e (try (screen/lines v {:detial :prose}) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? e) "a guessed default is a wrong answer reported as success")
+        (is (str/includes? (ex-message e) ":detial"))
+        (is (str/includes? (ex-message e) ":detail"))))
+    (testing "the removed :attrs option refuses too — it silently ignored"
+      (is (thrown? clojure.lang.ExceptionInfo (screen/lines v {:attrs #{:class}}))))
+    (testing "a :detail value outside its two words refuses"
+      (is (thrown? clojure.lang.ExceptionInfo (screen/lines v {:detail :porse}))))
+    (testing "the valid vocabulary still passes"
+      (is (= "hello" (screen/of v {:detail :prose :region "main" :list-head 3}))))))

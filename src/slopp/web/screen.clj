@@ -60,7 +60,11 @@
   (lines view {:region \"main\"})
   ```
 
-  Options:
+  Options — and an option outside this table REFUSES, because this was the
+  last entry that guessed: a typo'd `:detial` used to silently answer
+  STRUCTURED, and most prose assertions pass there too, so the test stayed
+  green while checking something its author did not choose (reported from
+  real use, the day the option vocabulary changed):
 
   | key | default | reach for it when |
   |---|---|---|
@@ -76,10 +80,30 @@
   other option and comes back at depth 0."
   ([hiccup] (lines hiccup nil))
   ([hiccup opts]
-   (let [o (merge {:list-head nil} opts)
-         t (hiccup/expand hiccup)
-         t (if-let [r (:region o)] (hiccup/region t r) t)]
-     (vec (remove nil? (render/emit t 0 o))))))
+   (let [unknown (remove #{:detail :list-head :region} (keys opts))]
+     (when (seq unknown)
+       (throw (ex-info (str "unknown option" (when (next unknown) "s") " "
+                            (str/join ", " (map str (sort-by str unknown)))
+                            " — lines/text/of speak :detail (:structured or"
+                            " :prose), :list-head (nil = every row), and"
+                            " :region. (:attrs was removed with format v2 —"
+                            " the svg census is the overlay story.) Guessing a"
+                            " default would answer a question you did not ask")
+                       {:unknown (vec unknown)})))
+     (when-let [d (:detail opts)]
+       (when-not (#{:structured :prose} d)
+         (throw (ex-info (str ":detail must be :structured or :prose — got "
+                              (pr-str d))
+                         {:detail d}))))
+     (when-let [lh (:list-head opts)]
+       (when-not (and (int? lh) (pos? lh))
+         (throw (ex-info (str ":list-head must be a positive integer, or nil"
+                              " for every row — got " (pr-str lh))
+                         {:list-head lh}))))
+     (let [o (merge {:list-head nil} opts)
+           t (hiccup/expand hiccup)
+           t (if-let [r (:region o)] (hiccup/region t r) t)]
+       (vec (remove nil? (render/emit t 0 o)))))))
 
 (defn of
   "A rendered screen as structured text — what a reader would see, at a size
@@ -397,7 +421,7 @@
   ```clj
   (screen b)                       ; the page
   (screen b \"main\")                ; one region, and THROWS if it is not there
-  (screen b \"main\" {:attrs #{:class}})
+  (screen b \"main\" {:detail :prose})
   ```
 
   `(screen b)` is `(slopp.web.screen/of (tree b))`, which is the line every
@@ -411,7 +435,11 @@
   Naming the region makes the narrow assertion the SHORTER one to write, which
   is the only kind of discipline that survives contact with a deadline. And a
   region that is not on the screen refuses rather than scoping to nothing —
-  otherwise every absence assertion downstream of it passes over a blank page."
+  otherwise every absence assertion downstream of it passes over a blank page.
+
+  Options are [[lines]]'s (`:detail`, `:list-head`, `:region`) and an option
+  outside that vocabulary REFUSES there — a typo'd `:detial` used to silently
+  answer structured, a wrong answer reported as success."
   ([session] (of (tree session)))
   ([session region] (text session region nil))
   ([session region opts]

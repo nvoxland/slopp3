@@ -221,12 +221,23 @@
   stays unsupported is hand-rolled `document.addEventListener` delegation:
   that lives in `:cljs` and never runs here.)
 
-  Four refusals, four different bugs, never one shrug:
+  **The page's own not-a-control statements are honoured.** An element with
+  `:aria-hidden \"true\"` or `:inert` is out of the user-reachable set, so a
+  deliberately label-less duplicate (an outline row linking the same form
+  twice, the skeleton copy hidden from the accessibility tree) does not make a
+  click ambiguous — a browser has exactly one reachable control there, and so
+  does this. A hidden element that is the SOLE match still clicks (a mouse
+  reaches it); an `:inert` one never does — a browser delivers no events to
+  it, so it refuses like `disabled`. Reported from a real page whose refusal
+  suggested labelling the duplicate, which was precisely the accessibility bug
+  its author had avoided on purpose.
+
+  Refusals, each a different bug, never one shrug:
 
   - nothing says it — and the message lists what IS clickable
   - it is on the screen but nothing over it handles a click
-  - more than one distinct control answers to it — picking one is a guess
-  - the control is DISABLED — a browser fires nothing, so neither does this
+  - more than one distinct REACHABLE control answers to it
+  - the control is DISABLED or INERT — a browser fires nothing
 
   Two matches that resolve to the SAME control (a label and its href, a span
   and its sibling inside one button) are one click, not an ambiguity; matches
@@ -235,6 +246,9 @@
   (let [pairs      (node-paths t)
         clickable? (fn [n] (and (vector? n)
                                 (or (handler n :click) (:href (attrs n)))))
+        hidden?    (fn [n] (let [a (attrs n)]
+                             (or (contains? #{"true" true} (:aria-hidden a))
+                                 (:inert a))))
         named?     (fn [n] (let [a (attrs n)]
                              (or (= target (text n))
                                  (= target (:href a))
@@ -242,17 +256,30 @@
         named      (filter (comp named? first) pairs)
         resolved   (distinct (keep (fn [[n ancestors]]
                                      (some #(when (clickable? %) %) (cons n ancestors)))
-                                   named))]
+                                   named))
+        ;; a hidden duplicate yields to the reachable control — but a hidden
+        ;; SOLE match stays, because a mouse reaches what a screen reader
+        ;; skips, and refusing it would make the readout deny its own page
+        reachable  (remove hidden? resolved)
+        resolved   (if (seq reachable) reachable resolved)]
     (cond
       (= 1 (count resolved))
-      (let [n (first resolved)]
-        (if (:disabled (attrs n))
+      (let [n (first resolved)
+            a (attrs n)]
+        (cond
+          (:disabled a)
           (throw (ex-info (str (pr-str target) " is disabled — a browser fires"
                                " nothing on a disabled control, so neither does"
                                " this. Whatever disables it in the app's state"
                                " is the thing to change first")
                           {:target target :disabled true}))
-          n))
+          (:inert a)
+          (throw (ex-info (str (pr-str target) " is inert — a browser delivers"
+                               " no events to an inert element, so neither does"
+                               " this. Whatever marks it inert is the thing to"
+                               " change first")
+                          {:target target :inert true}))
+          :else n))
 
       (seq resolved)
       (throw (ex-info (str (count resolved) " distinct controls answer to " (pr-str target)

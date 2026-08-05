@@ -2,11 +2,21 @@
   "Turning a hiccup tree into lines — the machinery behind
   [[slopp.web.screen/of]], and none of it API.
 
+  THE INVARIANT, stated once so it outlives the current marker set: **every
+  marker structured mode emits lives inside `<…>`, and `<` `>` `&` are escaped
+  in page text — a marker outside that escape is the v1 flaw returning.** The
+  v1 defect was never `#` or `[click]` specifically; it was a marker sharing
+  an alphabet with content. The day someone adds a marker outside the tag
+  channel, the format will still LOOK like it has the guarantee, and will not.
+  (Prose deliberately has no markers and no escaping — it makes no structural
+  claims; its one place-holder, the svg, is named in words for the same
+  reason.)
+
   Every decision here came from a real view bug that a careful reviewer's own
   assertions missed, which is why each carries its reason in place rather than
-  reading as taste: what joins a line and what starts one, why an `:href`
-  always travels, why a list is counted before it is capped, why an `<svg>` is
-  censused by CLASS and never descended.
+  reading as taste: what joins a line and what starts one, which tags survive
+  and which dissolve into text, why a list is counted before it is capped, why
+  an `<svg>` is censused by CLASS and never descended.
 
   Separate from the face so `slopp.web.screen` stays a surface a reader can
   take in — this is the largest thing in the feature and the least often looked
@@ -82,7 +92,13 @@
   The test for membership mirrors the tag whitelist's: an attribute survives
   when it carries something an agent acts on or asserts — an address
   (`name`/`id`/`placeholder`/`aria-label`), a state a browser shows
-  (`value`/`checked`/`selected`/`disabled`), a destination (`href`/`action`).
+  (`value`/`checked`/`selected`/`disabled`), a destination (`href`/`action`),
+  **or the page's own statement that this is NOT a control**
+  (`aria-hidden`/`inert`). That last clause is slopp-ui's, from a real page:
+  the whitelist admitted `<a>` for being actionable and then discarded the
+  attribute saying it was a deliberately label-less duplicate — so the reader
+  showed two identical controls where a browser has one.
+
   `style` and `class` say how things LOOK, which a text readout cannot honour
   and must not pretend to — `class` survives only on `<svg>`, where it is the
   census vocabulary. Dropping class everywhere else is also what makes sugar
@@ -93,15 +109,15 @@
   format showed the FIRST addressing attr and the review's lead finding was
   its mirror (a field the screen denied while fill! drove it). All of them
   visible means what you see is always something you can drive."
-  {:a        [:href]
-   :input    [:type :name :id :placeholder :value :checked :disabled :aria-label]
-   :textarea [:name :id :placeholder :disabled :aria-label]
-   :select   [:name :id :disabled :aria-label]
+  {:a        [:href :aria-hidden :inert]
+   :input    [:type :name :id :placeholder :value :checked :disabled :aria-label :aria-hidden :inert]
+   :textarea [:name :id :placeholder :disabled :aria-label :aria-hidden :inert]
+   :select   [:name :id :disabled :aria-label :aria-hidden :inert]
    :option   [:value :selected]
-   :button   [:type :disabled :aria-label]
+   :button   [:type :disabled :aria-label :aria-hidden :inert]
    :form     [:action :method]
    :img      [:alt]
-   :label    [:for]})
+   :label    [:for :aria-hidden :inert]})
 
 (defn handler-note
   "The `slopp:on` value for `node`, or nil — the one fact HTML has no attr
@@ -140,6 +156,10 @@
   kept on purpose. Whitespace squeezes but edges survive: a trailing space in
   `\"docs: \"` is the markup's own gap.
 
+  Kept attrs come from [[kept-attrs]] — the one whitelist — not a private
+  list: the first cut hardcoded `href` here and dropped `aria-hidden` exactly
+  where the deliberately hidden duplicate anchor renders.
+
   At `:prose` every tag drops away and only the words remain, unescaped —
   prose makes no structural claims, so it has nothing to be confused with."
   [x opts]
@@ -151,14 +171,17 @@
       (vector? x)
       (let [tag   (hiccup/tag x)
             a     (hiccup/attrs x)
-            inner (str/join "" (map #(inline-str % opts) (hiccup/kids x)))]
+            inner (str/join "" (map #(inline-str % opts) (hiccup/kids x)))
+            pairs (fn [tag-key]
+                    (concat (for [k (kept-attrs tag-key)] [k (get a k)])
+                            [[:slopp:on (handler-note x)]]))]
         (cond
           prose?      inner
-          (= :a tag)  (str (open-tag "a" [[:href (:href a)]
-                                          [:slopp:on (handler-note x)]] false)
-                           inner "</a>")
+          (= :a tag)  (str (open-tag "a" (pairs :a) false) inner "</a>")
           (handler-note x)
           (str (open-tag (name tag) [[:aria-label (:aria-label a)]
+                                     [:aria-hidden (:aria-hidden a)]
+                                     [:inert (:inert a)]
                                      [:slopp:on (handler-note x)]] false)
                inner "</" (name tag) ">")
           :else inner))
@@ -188,7 +211,10 @@
                     frequencies
                     (sort-by (juxt (comp - val) key)))]
     (if prose?
-      (str "<svg " (or own "—") ">")
+      ;; WORDS, not brackets: prose is unescaped by design, so `<svg …>` here
+      ;; was the v1 flaw surviving in the one mode where nothing could
+      ;; distinguish it from content (slopp-ui, on a real module page)
+      (str "svg " (or own "—"))
       (if (seq census)
         (str (open-tag "svg" [[:class own]] false)
              (escape (str/join ", " (for [[c n] census] (str n " " c))))
