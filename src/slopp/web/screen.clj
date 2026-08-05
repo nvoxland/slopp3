@@ -235,28 +235,50 @@
   Whatever the handler does to the app's state is simply true afterwards —
   [[tree]] re-derives, exactly as a re-render would.
 
-  An `:href` with no `:on-click` NAVIGATES, through [[visit!]] and so through
-  the page's own `:navigate`. That is the one opinion a browser holds that an
-  app cannot override, and it is a browser's opinion rather than a framework's:
+  **Three ways a handler can be written, and all three are the app's own.**
+  Checked against the libraries rather than inferred from one app:
+
+  - `{:on-click (fn [e] …)}` — Reagent. Invoked here.
+  - `{:on {:click (fn [e] …)}}` — Replicant, function form. Invoked here.
+  - `{:on {:click [:action …]}}` — Replicant, DATA form. Handed to the page's
+    `:dispatch`, which mirrors `replicant.dom/set-dispatch!`'s
+    `(event-data handler-data)` arity. The handler data arrives VERBATIM,
+    because that is what a dispatcher switches on.
+
+  An `:href` with no handler NAVIGATES, through [[visit!]] and so through the
+  page's own `:navigate`. That is the one opinion a browser holds that an app
+  cannot override, and it is a browser's opinion rather than a framework's:
   following a link is what clicking one MEANS.
 
-  **The handler is called with one argument, a click event map, unless it takes
+  **A function is called with one argument, an event map, unless it takes
   none.** Both spellings are everywhere in real code — `(fn [e] …)` and
   `#(swap! state …)` — and the arity is read off the function rather than
   discovered by catching `ArityException`, which would report a genuine arity
   bug INSIDE a handler as a signature mismatch and send the reader somewhere
-  the defect is not."
+  the defect is not.
+
+  **Data with no `:dispatch` declared REFUSES.** A click that reported success
+  and changed nothing is the worst answer available here."
   [session target]
   (let [node (hiccup/target-node (tree session) target)
         a    (hiccup/attrs node)
-        f    (:on-click a)]
-    (cond
-      f         (if (some #(and (= "invoke" (.getName ^java.lang.reflect.Method %))
-                                (= 1 (count (.getParameterTypes ^java.lang.reflect.Method %))))
-                          (.getDeclaredMethods (class f)))
-                  (f {:target target :href (:href a)})
-                  (f))
-      (:href a) (visit! session (:href a)))
+        ev   {:kind :click :target target :text (hiccup/text node) :href (:href a)}
+        [how v] (hiccup/handler node :click)]
+    (case how
+      :fn   (if (some #(and (= "invoke" (.getName ^java.lang.reflect.Method %))
+                            (= 1 (count (.getParameterTypes ^java.lang.reflect.Method %))))
+                      (.getDeclaredMethods (class v)))
+              (v ev)
+              (v))
+      :data (if-let [d (:dispatch (:app @session))]
+              (d ev v)
+              (throw (ex-info (str "clicking " (pr-str target) " carries handler DATA "
+                                   (pr-str v) " and this page declares no :dispatch,"
+                                   " so nothing would run. Add :dispatch (fn [event data] …)"
+                                   " to the page — it is the same function"
+                                   " replicant.dom/set-dispatch! takes")
+                              {:target target :handler v})))
+      (when (:href a) (visit! session (:href a))))
     session))
 
 (defn text
@@ -287,14 +309,19 @@
    (of (tree session) (assoc opts :region region))))
 
 (defn fill!
-  "Type `value` into the field `name` addresses, running the app's own
-  `:on-change`. Returns the session, so calls thread.
+  "Type `value` into the field `name` addresses, running the app's own handler.
+  Returns the session, so calls thread.
 
   `name` is the field's `:placeholder`, `:name`, `:id` or `:aria-label` —
   whichever the app happens to have written, since requiring a particular one
   would make the framework's testability someone's markup decision.
 
-  **The handler receives an EVENT MAP, and that is a convention the app's real
+  The same three handler shapes [[click!]] takes: `:on-change` as a function,
+  `:on {:input …}` / `:on {:change …}` as a function, or as DATA handed to the
+  page's `:dispatch`. Both event names are tried, because Reagent apps write
+  `:on-change` and a Replicant `:on` map usually names `:input`.
+
+  **A function receives an EVENT MAP, and that is a convention the app's real
   browser shell must match.** A ClojureScript handler reaching for
   `(-> e .-target .-value)` cannot run on a JVM at all — interop on a Clojure
   map does not resolve — so a portable handler reads `(:value e)` or
@@ -304,9 +331,19 @@
   `:cljs`. Nothing else about a browser event is invented — no bubbling, no
   default to prevent, no focus."
   [session name value]
-  (let [node (hiccup/field (tree session) name)
-        f    (:on-change (hiccup/attrs node))]
-    (f {:value value :target {:value value}})
+  (let [node    (hiccup/field (tree session) name)
+        ev      {:kind :input :field name :value value :target {:value value}}
+        [how v] (hiccup/input-handler node)]
+    (case how
+      :fn   (v ev)
+      :data (if-let [d (:dispatch (:app @session))]
+              (d ev v)
+              (throw (ex-info (str "the field " (pr-str name) " carries handler DATA "
+                                   (pr-str v) " and this page declares no :dispatch,"
+                                   " so typing would change nothing. Add"
+                                   " :dispatch (fn [event data] …) to the page")
+                              {:field name :handler v})))
+      nil)
     session))
 
 (defn ^{:unused-ok "no store form can call it: the screen tool reaches it by requiring-resolve INSIDE the verification image, where the app's vars are, and a test driving a script calls it there too"} drive!

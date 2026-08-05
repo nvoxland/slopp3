@@ -1167,6 +1167,18 @@
     ;; UNCHANGED form's link, which is this same friction one rule over
     :sweep true
     :selftest-note "gated on the store's web.enabled capability, which a source-only fixture cannot carry — covered by web-test/done-surfaces-dangling-route-refs"}
+   {:key :web-page-reach :severity :advisory :applies-to :production :check #'rules.web/web-page-reach-check
+    ;; the sweep is where this one EARNS its keep: an entry stranded by a
+    ;; platform declaration on some OTHER namespace is invisible to every
+    ;; episode-scoped done there will ever be, because no write to the entry
+    ;; ever happens
+    :sweep true
+    :selftest-note (str "needs BOTH the store's web.enabled capability and a"
+                        " :module-platform declaration, neither of which a"
+                        " source-only fixture can carry — covered by"
+                        " rules.web-test/a-page-reaching-cljs-cannot-be-opened-"
+                        "and-done-says-so, which controls on both setup steps")
+    :teach "a ^:web/page entry reaches a :cljs namespace, so no JVM can open this app — the screen tool and every headless test fall back to a hand-built lookalike, which passes while the real screen is wrong. The write gate sees only the ENTRY's namespace; this is the reach, and it can break when a namespace the entry never mentions is declared :cljs. Move the view/derive code it reaches to :jvm or :cljc and pass the browser-shaped parts in"}
    {:key :web-stale-client :severity :advisory :applies-to :production :check #'rules.web/web-stale-client-check
     :sweep true
     :selftest-note (str "needs a recorded client/generated-sig config (a source-only"

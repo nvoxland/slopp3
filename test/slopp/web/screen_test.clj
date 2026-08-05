@@ -168,7 +168,7 @@
 
     (testing "it is on the screen but nothing clickable says it"
       (is (str/includes? (msg #(screen/click! b "Save"))
-                         "carries no :on-click and no :href")
+                         "carries no :on-click, no :on {:click …} and no :href")
           "a different bug from 'not found', and it must not read as one"))
 
     (testing "two elements say it — picking one is a guess"
@@ -373,3 +373,92 @@
 
     (testing "and prose keeps the field but drops the markers"
       (is (= "Filter\nemail\nAgree\nInert\nnotes" (screen/of page {:detail :prose}))))))
+
+(deftest a-handler-runs-whichever-idiom-the-tree-uses
+  ;; CHECKED against both libraries rather than inferred from one app, because
+  ;; the first version of this supported one idiom and could not drive a real
+  ;; app at all.
+  ;;
+  ;; Reagent: `[:button {:on-click (fn [e] …)}]` — a FUNCTION in the tree.
+  ;; Replicant: `[:button {:on {:click …}}]` — a function OR DATA, and data
+  ;; goes to one global dispatcher registered with `replicant.dom/set-dispatch!`
+  ;; which receives (event-data handler-data).
+  ;;
+  ;; BOTH put the handler ON THE ELEMENT. That is why there is no `.closest`
+  ;; emulation here and no synthesised ancestor chain: the design that needed
+  ;; them was supporting a hand-rolled document-delegation pattern that neither
+  ;; library asks for.
+  (let [seen  (atom [])
+        state (atom {:n 0})
+        page  {:state    state
+               :dispatch (fn [event data] (swap! seen conj [event data]))
+               :view     (fn [_]
+                           [:div
+                            [:button {:on-click #(swap! state update :n inc)} "Reagent"]
+                            [:button {:on {:click #(swap! state update :n inc)}} "Fn"]
+                            [:button {:on {:click [:like-video 7]}} "Data"]])}
+        b     (screen/open page)]
+    (testing "a Reagent-style function on the element"
+      (screen/click! b "Reagent")
+      (is (= 1 (:n @state))))
+
+    (testing "a function under Replicant's :on map"
+      (screen/click! b "Fn")
+      (is (= 2 (:n @state))))
+
+    (testing "DATA under :on goes to the page's dispatch, second argument first-class"
+      (screen/click! b "Data")
+      (let [[event data] (last @seen)]
+        (is (= [:like-video 7] data)
+            "the handler data arrives verbatim — it is what a dispatcher switches on")
+        (is (= :click (:kind event)))
+        (is (= "Data" (:text event)) "and the event says which element was clicked")))
+
+    (testing "all three read as clickable, and the DATA form says what it will do"
+      (is (= "Reagent [click]\nFn [click]\nData [click :like-video]"
+             (screen/of (screen/tree b)))
+          "a serializable action in the tree is worth showing — it answers what a click DOES, not merely that one is possible"))
+
+    (testing "data with no :dispatch declared REFUSES, naming the gap"
+      (let [b2 (screen/open {:state (atom {})
+                             :view  (fn [_] [:button {:on {:click [:boom]}} "X"])})
+            m  (try (screen/click! b2 "X") nil
+                    (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+        (is (str/includes? m ":dispatch")
+            "silently doing nothing would be a click that reported success and changed nothing")))))
+
+(deftest typing-runs-whichever-idiom-the-field-uses
+  ;; The sibling of the click case, and it needs its own test because the two
+  ;; idioms disagree about the EVENT NAME as well as the shape: Reagent apps
+  ;; write :on-change, a Replicant :on map usually names :input. Trying one
+  ;; would leave a field inert for half the ecosystem — and inert reads as a
+  ;; bug in the app rather than in the reader.
+  (let [seen  (atom nil)
+        state (atom {:q "" :r ""})
+        page  {:state    state
+               :dispatch (fn [event data] (reset! seen [event data]))
+               :view     (fn [s]
+                           [:div
+                            [:input {:placeholder "Reagent" :value (:q s)
+                                     :on-change #(swap! state assoc :q (:value %))}]
+                            [:input {:placeholder "Replicant" :value (:r s)
+                                     :on {:input #(swap! state assoc :r (:value %))}}]
+                            [:input {:placeholder "Data" :on {:input [:search]}}]])}
+        b     (screen/open page)]
+    (testing "Reagent's :on-change"
+      (screen/fill! b "Reagent" "abc")
+      (is (= "abc" (:q @state))))
+
+    (testing "Replicant's :on {:input …} as a function"
+      (screen/fill! b "Replicant" "xyz")
+      (is (= "xyz" (:r @state))))
+
+    (testing "and as DATA, through the page's dispatch"
+      (screen/fill! b "Data" "q")
+      (let [[event data] @seen]
+        (is (= [:search] data))
+        (is (= "q" (:value event)))))
+
+    (testing "all three show as fillable"
+      (is (= "Reagent=\"abc\" [fill]\nReplicant=\"xyz\" [fill]\nData [fill]"
+             (screen/of (screen/tree b)))))))

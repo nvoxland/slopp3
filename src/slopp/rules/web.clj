@@ -548,3 +548,40 @@
                         " router does not know, or a bad deep link shows a blank"
                         " pane at a URL that looks valid. The prefix ROOT is not"
                         " covered by the fallback and still needs its own route")}))))
+
+(defn web-page-reach-check
+  "Done-advisory (D-web): a `^:web/page` entry whose namespace CLOSURE reaches
+  a `:cljs` namespace. Reports `{:form :cljs [namespaces]}`; inert until the
+  store opts into HTTP.
+
+  **The write gate is the shallow half.** `web-page-unreachable` refuses an
+  entry marked in a `:cljs` namespace, which catches the entry itself and
+  nothing it calls. An entry sitting in `:cljc` and reaching a `:cljs` view
+  passes the gate and fails the tool — and that is where a real app lands,
+  because the entry is small and the views are where the code is.
+
+  **An ADVISORY rather than a gate, and the reason is structural.** The reach
+  changes when ANOTHER form moves: declaring some namespace `:cljs` today can
+  strand an entry written last week, and no write to that entry ever happens.
+  A per-form write gate cannot see it, however it is written — the same shape
+  as every other `:grain :done` rule here.
+
+  Namespace grain, because platform is declared per namespace, so a finer
+  answer would be a proxy for one slopp does not actually have.
+
+  It names the `:cljs` namespaces rather than the entry alone. The entry is
+  usually fine; the finding is which dependency stranded it, and that is what
+  a reader has to move or split."
+  [_session st* changed]
+  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
+    (vec (keep (fn [fid]
+                 (when-let [e (store/form-by-id st* fid)]
+                   (when (:web/page (web/web-name-meta e))
+                     (let [own  (store/ns-of-form-id st* fid)
+                           cljs (->> (store/ns-closure st* own)
+                                     (filter #(= :cljs (store/platform-for st* %)))
+                                     sort vec)]
+                       (when (seq cljs)
+                         {:form (symbol (str own) (str (:name e)))
+                          :cljs cljs})))))
+               changed))))

@@ -66,24 +66,56 @@
       (str/replace #"\s+" " ")
       str/trim))
 
+(defn handler
+  "What handles `kind` (`:click`, `:input`, `:change` …) on this element —
+  `[:fn f]`, `[:data d]`, or nil.
+
+  Two idioms, both putting the handler ON THE ELEMENT, and checked against the
+  libraries rather than inferred from one app:
+
+  - **Reagent** — `{:on-click (fn [e] …)}`. A function, translated to React's
+    `onClick`.
+  - **Replicant** — `{:on {:click …}}`, where the value is a function OR DATA.
+    Data goes to one global dispatcher registered with
+    `replicant.dom/set-dispatch!`, which receives `(event-data handler-data)`.
+
+  Neither library asks for document-level delegation, and that is why nothing
+  here emulates `.closest`: an earlier design synthesised an ancestor chain to
+  support a hand-rolled delegation pattern, which turned out to be one app's
+  workaround for a problem Replicant already solves.
+
+  ONE accessor because three readers ask this question — the click-target
+  finder, the renderer that marks `[click]`, and the driver that invokes — and
+  a screen naming a button you cannot press is worse than either half."
+  [node kind]
+  (let [a (attrs node)
+        v (or (get a (keyword (str "on-" (name kind))))
+              (get (:on a) kind))]
+    (cond
+      (nil? v) nil
+      (fn? v)  [:fn v]
+      :else    [:data v])))
+
 (defn target-node
   "The one clickable element `target` names, or a THROW that says why not.
 
   `target` matches an element's visible TEXT or its `:href` — the two things a
-  person actually says when they mean \"click that\". Clickable means it has an
-  `:on-click` or an `:href`; a `[:p \"Save\"]` that merely SAYS the word is
-  reported as found-but-not-clickable rather than silently missed, because
-  those are different bugs and the second one wastes an afternoon.
+  person actually says when they mean \"click that\". Clickable means
+  [[handler]] finds a `:click` (either idiom) or the element has an `:href`; a
+  `[:p \"Save\"]` that merely SAYS the word is reported as found-but-not-clickable
+  rather than silently missed, because those are different bugs and the second
+  one wastes an afternoon.
 
   Ambiguity throws too, naming the count. Two buttons reading \"Delete\" is a
   real page and picking the first is the kind of quiet guess that makes a
   passing test mean nothing."
   [t target]
-  (let [els   (nodes t)
-        named (filter #(or (= target (text %))
-                           (= target (:href (attrs %))))
-                      els)
-        hits  (filter #(let [a (attrs %)] (or (:on-click a) (:href a))) named)]
+  (let [els        (nodes t)
+        clickable? (fn [n] (or (handler n :click) (:href (attrs n))))
+        named      (filter #(or (= target (text %))
+                                (= target (:href (attrs %))))
+                           els)
+        hits       (filter clickable? named)]
     (cond
       (= 1 (count hits)) (first hits)
 
@@ -96,17 +128,16 @@
       (seq named)
       (throw (ex-info (str (pr-str target) " is on this screen but nothing"
                            " clickable says it — the element carries no"
-                           " :on-click and no :href. Found in: "
-                           (pr-str (mapv first named)))
+                           " :on-click, no :on {:click …} and no :href."
+                           " Found in: " (pr-str (mapv first named)))
                       {:target target}))
 
       :else
       (throw (ex-info (str "nothing on this screen says " (pr-str target)
                            " — clickable text here: "
-                           (pr-str (vec (sort (distinct (keep #(let [a (attrs %)]
-                                                                 (when (or (:on-click a) (:href a))
-                                                                   (or (not-empty (text %))
-                                                                       (:href a))))
+                           (pr-str (vec (sort (distinct (keep #(when (clickable? %)
+                                                                (or (not-empty (text %))
+                                                                    (:href (attrs %))))
                                                               els))))))
                       {:target target})))))
 
@@ -148,6 +179,17 @@
                                     " its attrs"))))
                       {:region name}))))
 
+(defn input-handler
+  "What handles typing into this element — `[:fn f]`, `[:data d]`, or nil.
+
+  Two event NAMES because the libraries disagree and both are ordinary:
+  Reagent apps overwhelmingly write `:on-change`, and `:input` is the DOM event
+  that actually fires per keystroke, which is what a Replicant `:on` map
+  usually names. Trying one and not the other would make a field inert for half
+  the ecosystem, and inert reads as a bug in the app rather than in the reader."
+  [node]
+  (or (handler node :change) (handler node :input)))
+
 (defn field
   "The one input `name` addresses, or a THROW that says why not.
 
@@ -157,14 +199,15 @@
   particular attribute would make the framework's testability someone's markup
   decision.
 
+  Fillable means [[input-handler]] finds one, under either idiom.
+
   Three outcomes, never one shrug: not found (and the message lists what CAN
-  be filled), found but inert (no `:on-change` — a different bug, and the one
-  that wastes an afternoon because the field is visibly right there), or
-  ambiguous."
+  be filled), found but inert (no handler — a different bug, and the one that
+  wastes an afternoon because the field is visibly right there), or ambiguous."
   [node name]
   (let [addressed? (fn [a] (some #{name} [(:placeholder a) (:name a) (:id a) (:aria-label a)]))
         named      (filter #(addressed? (attrs %)) (nodes node))
-        fillable   (filter #(:on-change (attrs %)) named)]
+        fillable   (filter input-handler named)]
     (cond
       (= 1 (count fillable)) (first fillable)
 
@@ -175,15 +218,15 @@
 
       (seq named)
       (throw (ex-info (str (pr-str name) " is a field on this screen but has"
-                           " no :on-change, so typing into it can change"
-                           " nothing")
+                           " no :on-change and no :on {:input …}, so typing"
+                           " into it can change nothing")
                       {:field name}))
 
       :else
       (throw (ex-info (str "no field answers to " (pr-str name)
                            " — fillable here: "
                            (pr-str (vec (sort (distinct (keep #(let [a (attrs %)]
-                                                                 (when (:on-change a)
+                                                                 (when (input-handler %)
                                                                    (or (:placeholder a) (:name a)
                                                                        (:id a) (:aria-label a))))
                                                               (nodes node)))))))

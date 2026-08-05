@@ -68,8 +68,16 @@
 
         ;; a handler with no href — an :href already says "clickable" by being
         ;; one, and two markers on the same element is noise
-        (and (:on-click a) (not (:href a)) (not prose?))
-        (str " [click]")
+        ;; a handler with no href — an :href already says "clickable" by being
+        ;; one, and two markers on the same element is noise. The DATA form
+        ;; names its action, because a serializable handler answers what a
+        ;; click DOES and not merely that one is possible: `[click :like-video]`
+        ;; is the whole reason to prefer data in the tree.
+        (and (hiccup/handler x :click) (not (:href a)) (not prose?))
+        (str (let [[how v] (hiccup/handler x :click)]
+               (if (and (= :data how) (coll? v) (keyword? (first v)))
+                 (str " [click " (first v) "]")
+                 " [click]")))
 
         (and ((:attrs opts) :class) (:class a))
         (str " {" (:class a) "}")))
@@ -138,7 +146,7 @@
       (str addr
            (when (and typ (not= "text" typ)) (str " (" typ ")"))
            (when-let [v (not-empty (str (:value a)))] (str "=" (pr-str v)))
-           (when (:on-change a) " [fill]")))))
+           (when (hiccup/input-handler node) " [fill]")))))
 
 (defn emit
   "Hiccup `node` at nesting `depth` as a seq of text lines.
@@ -202,7 +210,7 @@
             ;; what made `[:button {:on-click f} "Add"]` render as bare `Add`,
             ;; identical to a paragraph. The limit, stated: a clickable element
             ;; wrapping headings and lists collapses to one line too.
-            (or (:on-click a) (:href a))
+            (or (hiccup/handler node :click) (:href a))
             (let [t (str/trim (inline-text node opts))]
               (when (seq t) [(pad depth t)]))
 

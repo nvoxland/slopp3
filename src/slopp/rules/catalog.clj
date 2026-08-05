@@ -184,6 +184,9 @@
    {:rule :web-generated-ns :grain :form
     :escape "regenerate via generate_client after changing the ENDPOINT (its :web/request/:web/response), strip the ^:generated marker to take manual ownership, or dial it down (config_file {path \"rules\" key \"web-generated-ns\" value \"advisory\"})"
     :teach "a ^:generated form is generate_client's output and must not be hand-edited — regeneration rewrites the whole client namespace, so a hand edit is lost on the next generate (D-web-contracts part 2)"}
+   {:rule :web-page-reach :grain :done
+    :escape "move the view/derive code the entry reaches into a :jvm or :cljc namespace and pass the browser-shaped parts IN (:fetch, :render, a url pusher); or drop the ^:web/page marker if this app is not meant to be reviewed headlessly"
+    :teach "a ^:web/page entry REACHES a :cljs namespace, so no JVM can open the app — the screen tool and every headless test fall back to a hand-built lookalike, which passes while the real screen is wrong. web-page-unreachable refuses the ENTRY in a :cljs namespace; this is the other half, the reach, and it can break with no write to the entry at all when some other namespace is declared :cljs (inert until web.enabled)"}
    {:rule :web-stale-client :grain :done
     :escape "run generate_client to re-derive the client from the current endpoints, or accept the drift"
     :teach "the generated typed client is stale — an endpoint's contract changed since generate_client last ran (D-web-contracts part 2)"}

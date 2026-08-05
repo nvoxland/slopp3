@@ -675,3 +675,84 @@
                                :prompt "ordinary browser code")]
           (is (nil? (:error r)) (pr-str r))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-page-marker-that-cannot-be-opened-refuses
+  ;; The gate already refuses a ^:web/page in a :cljs namespace. Two more ways
+  ;; to mark one slopp cannot open, both of which would otherwise fail LATER
+  ;; and somewhere else.
+  (let [sess (external/open!)]
+    (try
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (ops/ingest! sess 'ui.core "(ns ui.core)\n\n(defn seed \"S.\" [x] x)\n")
+
+      (testing "the entry must take NO arguments — slopp calls it, so there is nobody to pass one"
+        (let [r (ops/add-form! sess 'ui.core
+                               "(defn ^:web/page app \"A.\" [opts] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "an entry that wants configuring")]
+          (is (re-find #"takes arguments" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'ui.core 'app)))))
+
+      (testing "a zero-arg entry lands"
+        (let [r (ops/add-form! sess 'ui.core
+                               "(defn ^:web/page app \"A.\" [] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "the entry")]
+          (is (nil? (:error r)) (pr-str r))))
+
+      (testing "a SECOND marker refuses, naming the first"
+        ;; the tool scans for the marker and takes what it finds; two of them
+        ;; means it answers from whichever the scan reached first, silently,
+        ;; and a screen from the wrong app is worse than no screen
+        (let [r (ops/add-form! sess 'ui.core
+                               "(defn ^:web/page other \"O.\" [] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "a second entry")]
+          (is (re-find #"ui\.core/app" (str (:error r))) (pr-str r))
+          (is (nil? (store/form-named (:store @sess) 'ui.core 'other)))))
+      (finally (ops/close! sess)))))
+
+(deftest ^:external a-page-reaching-cljs-cannot-be-opened-and-done-says-so
+  ;; The write gate checks the entry's OWN namespace. That is the shallow half:
+  ;; an entry can sit in :cljc and reach a :cljs view, passing the gate and
+  ;; failing the tool — which is exactly where a real app lands, because the
+  ;; entry is small and the views are where the code is.
+  ;;
+  ;; An ADVISORY rather than a gate, and the reason is structural. The reach
+  ;; changes when ANOTHER form moves: declaring some namespace :cljs today can
+  ;; strand an entry written last week, and no write to that entry ever
+  ;; happens. A per-form write gate cannot see it, however it is written.
+  ;;
+  ;; Both setup steps carry a control. The first cut of this test guarded only
+  ;; the platform declaration and the step that had silently failed was the
+  ;; INGEST, a line above it — refused by the module gate, which left the
+  ;; advisory reporting nothing over a namespace that had no entry in it. Two
+  ;; assertions passed vacuously before either one was doubted.
+  (let [sess (external/open!)]
+    (try
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (ops/ingest! sess 'demo.app.views
+                   "(ns demo.app.views)\n\n(defn page-view \"V.\" [s] [:div (str s)])\n")
+      (let [i (ops/ingest! sess 'demo.app
+                           (str "(ns demo.app (:require [demo.app.views :as views]))\n\n"
+                                "(defn ^:web/page app \"A.\" []"
+                                " {:state (atom {}) :view views/page-view})\n"))]
+        (is (nil? (:error i)) (pr-str i))
+        (is (some #{'app} (map :name (store/forms (:store @sess) 'demo.app)))
+            "the entry has to EXIST before anything about its reach means anything"))
+
+      (let [ids (fn [] (mapv :id (store/forms (:store @sess) 'demo.app)))]
+        (testing "reaching only portable code is clean"
+          (is (empty? (web/web-page-reach-check sess (:store @sess) (ids)))))
+
+        (testing "declaring the VIEWS :cljs strands the entry, and the advisory names both"
+          (let [d (ops/module-platform! sess "demo.app.views" "cljs"
+                                        :prompt "someone moves the views to the client")]
+            (is (nil? (:error d)) (pr-str d))
+            (is (= :cljs (store/platform-for (:store @sess) 'demo.app.views))
+                "the fixture is only a fixture once the platform actually says :cljs"))
+          (let [r (web/web-page-reach-check sess (:store @sess) (ids))]
+            (is (seq r) "the entry is now unopenable and no write to it happened")
+            (is (= 'demo.app/app (:form (first r))))
+            (is (some #{'demo.app.views} (:cljs (first r)))
+                "naming the namespace that stranded it is the finding — the entry is fine"))))
+      (finally (ops/close! sess)))))

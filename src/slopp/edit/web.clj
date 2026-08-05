@@ -25,7 +25,7 @@
             [slopp.index.analyze :as analyze]
             [slopp.index.derive :as derive]
             [slopp.store :as store]
-            [slopp.store.render :as render]))
+            [slopp.store.render :as render] [slopp.edit.modules :as modules]))
 
 (defn web-enabled?
   "The D-web master opt-in, read off the candidate store's `capabilities`
@@ -367,18 +367,24 @@
                  " live state outside it.")))))))
 
 (defn ^:export ^{:rule/applies-to :production} web-page-unreachable
-  "The headless-review gate (D-web): a form marked `^:web/page` — the entry the
-  fake browser opens an app through — may not live in a `:cljs` namespace,
-  because a JVM cannot call it there. Inert until `web-enabled?`. Returns a
-  teaching string, or nil when clean.
+  "The headless-review gate (D-web): a `^:web/page` entry — the fn
+  `slopp.web.screen` opens an app through — must be one slopp can actually
+  call. Inert until `web-enabled?`. Returns a teaching string, or nil when
+  clean. Three ways it cannot be:
 
-  **What it costs to allow, which is why this refuses rather than advises.**
-  `slopp.web.browser` opens an app by CALLING this entry, so an entry the JVM
-  cannot reach forces every headless test to hand-build a map that RESEMBLES
-  the app. A resemblance drifts silently and in the worst direction: the
-  lookalike keeps passing while the real screen is wrong. That is the exact
-  defect the fake browser exists to remove, so letting it back in through the
-  entry point is not a small compromise — it is the whole thing, undone.
+  **In a `:cljs` namespace.** No JVM can call it there, so every headless test
+  falls back to hand-building a map that RESEMBLES the app — and a resemblance
+  drifts in the worst direction, passing while the real screen is wrong. That
+  is the defect the fake browser exists to remove, so letting it back in
+  through the entry point is the whole thing undone.
+
+  **Taking arguments.** slopp calls this with nothing, because there is nobody
+  to pass anything — a config the entry needs is config the entry should read.
+
+  **A SECOND one.** The tool finds the entry by scanning for the marker, so two
+  of them means it answers from whichever the scan reached first, silently. A
+  screen from the wrong app is worse than no screen at all, and the reader has
+  no way to tell.
 
   The rule generalises past this marker and is worth stating plainly: **the
   wiring is portable, only the effects are `:cljs`.** Routing, derive and view
@@ -393,11 +399,40 @@
   (when (web-enabled? candidate)
     (when-let [e (store/form-named candidate (symbol (str ns-sym)) (symbol (str form-name)))]
       (when (:web/page (web-name-meta e))
-        (when (= :cljs (store/platform-for candidate (symbol (str ns-sym))))
-          (str ns-sym "/" form-name " is marked ^:web/page in a :cljs namespace,"
-               " so no JVM can open this app — and a headless test can then only"
-               " drive a hand-built lookalike, which passes while the real screen"
-               " is wrong. Move the entry (and the routing, derive and view code"
-               " it reaches) to a :jvm or :cljc namespace, and pass the browser"
-               "-shaped parts IN: :fetch, :render, a url pusher. The wiring is"
-               " portable; only the effects are :cljs."))))))
+        (let [others (for [n     (keys (:namespaces candidate))
+                           f     (store/forms candidate n)
+                           :let  [nm (:name f)]
+                           :when (and nm
+                                      (:web/page (web-name-meta f))
+                                      (not (and (= n (symbol (str ns-sym)))
+                                                (= nm (symbol (str form-name))))))]
+                       (str n "/" nm))]
+          (cond
+            (= :cljs (store/platform-for candidate (symbol (str ns-sym))))
+            (str ns-sym "/" form-name " is marked ^:web/page in a :cljs namespace,"
+                 " so no JVM can open this app — and a headless test can then only"
+                 " drive a hand-built lookalike, which passes while the real screen"
+                 " is wrong. Move the entry (and the routing, derive and view code"
+                 " it reaches) to a :jvm or :cljc namespace, and pass the browser"
+                 "-shaped parts IN: :fetch, :render, a url pusher. The wiring is"
+                 " portable; only the effects are :cljs.")
+
+            ;; from the SEXPR, not from metadata: :arglists is attached by `defn` at
+            ;; EVAL time and a stored form has never been evaluated, so reading
+            ;; it here answers nil for every entry and the check passes
+            ;; vacuously — which is exactly how it first shipped green over a
+            ;; fixture built to violate it
+            (some seq (modules/fn-arglists (store/form-sexpr (:node e))))
+            (str ns-sym "/" form-name " is marked ^:web/page but takes arguments,"
+                 " and slopp opens it by calling it with none — there is nobody"
+                 " to pass them. Read what it needs from config or from the"
+                 " store instead, so the entry answers to slopp and to your own"
+                 " shell the same way.")
+
+            (seq others)
+            (str ns-sym "/" form-name " is a SECOND ^:web/page in this store —"
+                 " " (str/join ", " others) " already carries it. The tool finds"
+                 " the entry by scanning for the marker, so two of them means it"
+                 " answers from whichever it reaches first, silently, and a"
+                 " screen from the wrong app is worse than no screen. Keep one"
+                 " entry and let it branch.")))))))
