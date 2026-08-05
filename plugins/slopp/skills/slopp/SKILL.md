@@ -1125,6 +1125,16 @@ stop being the assumption once the app grows.
   UI tests need the external tier or a browser, too much logic drifted into
   `.cljs`. That is the check on the whole discipline, and it is why a view
   that returns data beats one that returns a framework's component object.
+- **The tell that you got it HALF right: every READ of your view state is
+  `.cljc` and tested, every WRITE is `.cljs` and is not.** This is the most
+  comfortable way to be wrong, because nothing looks missing — the rule
+  deciding what a reader SEES is checkable, and only the rule deciding what a
+  CLICK DOES is not. Those two have to agree or a toggle lies about its own
+  state. Measured in a real app: four handlers, one of them extracted the
+  read (`doc-open?`, `:cljc`, tested) and left the write inline
+  (`(swap! state assoc-in [:show :doc k] (not (doc-open? (:show @state) k)))`).
+  That one carried a deref-compute-swap race — nominal for a human clicking,
+  and the first thing a programmatic driver hits.
 - **Progressive enhancement beats a hard SPA when a server route exists.**
   Intercept plain left-clicks only — leave middle-clicks and cmd/ctrl/shift
   clicks to the browser, or the enhancement takes away open-in-a-new-tab. And

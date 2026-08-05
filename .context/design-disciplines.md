@@ -665,6 +665,44 @@ assertion needed. The jar's head (task #30) went the other way: a stamp the
 build writes and a reader that checks it, which is the first declared relation
 in the system with a checker attached.
 
+#### Third instance (2026-08-05): the second copy is in someone ELSE'S jar
+
+Named by slopp-ui, hours after the above, and it is the version with the
+longest reach. Their event wiring bound listeners to the DOCUMENT rather than
+to elements, and the docstring gave the reason:
+
+> Listeners are DELEGATED to the document rather than bound to elements,
+> because Replicant replaces the DOM on every render — anything bound to an
+> element would survive exactly one navigation.
+
+**True of hand-written `addEventListener` calls, and false of the library's own
+`:on` map**, which Replicant diffs across renders (`replicant/core.cljc:500`
+reads both `(:on new)` and `(:on old)`) precisely so a handler in the tree
+survives every navigation. The sentence had stood since the file was written,
+and it justified an architecture that made the app undrivable by the headless
+browser.
+
+**Nothing in this system can check it, and the reason is worth stating.**
+`stale-reference` catches prose naming something that no longer resolves. Here
+the name resolves perfectly: `Replicant` is a real library, present, working.
+What is stale is a CLAIM ABOUT ITS BEHAVIOUR — and the fact it is a claim about
+is not in this store at all.
+
+So the asserted-relation class has an outer ring: *my code is shaped this way
+because that dependency behaves like this*. The second copy is in someone
+else's jar, it changes without touching your delta log, and it was never
+plausibly derivable. The only defence measured so far is the cheap one, and it
+is worth naming as a habit rather than a mechanism: **when a docstring's
+justification is a claim about a third-party library, go read the library.**
+slopp-ui did exactly that on being told — quoting four lines of Replicant's
+source rather than accepting the correction — and that is the move.
+
+Cost of not doing it, measured on the same day: the delegation this justified
+put every WRITE to their view state in `:cljs` and untested, while every READ
+of it was `:cljc` and tested. One of those untested writes carried a
+read-compute-swap race that a human clicker would never hit and a programmatic
+driver hits first.
+
 ## Core 3 — self-hosting is a distorting lens
 
 **Root.** Dogfooding is the standing practice, so the loudest pains an agent
