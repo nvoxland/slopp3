@@ -271,12 +271,11 @@
               (v ev)
               (v))
       :data (if-let [d (:dispatch (:app @session))]
-              (d ev v)
+              (d v nil)
               (throw (ex-info (str "clicking " (pr-str target) " carries handler DATA "
                                    (pr-str v) " and this page declares no :dispatch,"
-                                   " so nothing would run. Add :dispatch (fn [event data] …)"
-                                   " to the page — it is the same function"
-                                   " replicant.dom/set-dispatch! takes")
+                                   " so nothing would run. Add"
+                                   " :dispatch (fn [action value] …) to the page")
                               {:target target :handler v})))
       (when (:href a) (visit! session (:href a))))
     session))
@@ -313,35 +312,39 @@
   Returns the session, so calls thread.
 
   `name` is the field's `:placeholder`, `:name`, `:id` or `:aria-label` —
-  whichever the app happens to have written, since requiring a particular one
-  would make the framework's testability someone's markup decision.
+  whichever the app happens to have written. Both event names are tried,
+  because Reagent apps write `:on-change` and a Replicant `:on` map usually
+  names `:input`.
 
-  The same three handler shapes [[click!]] takes: `:on-change` as a function,
-  `:on {:input …}` / `:on {:change …}` as a function, or as DATA handed to the
-  page's `:dispatch`. Both event names are tried, because Reagent apps write
-  `:on-change` and a Replicant `:on` map usually names `:input`.
+  **The DATA form is the portable one, and for an input it is the only one.**
+  It reaches `:dispatch` as `(action value)` — the action verbatim and the
+  typed text as a SCALAR. slopp invents no event, which is the whole point:
+  Replicant's real event map carries `:replicant/dom-event` and no `:value`,
+  so the typed text lives behind `(.. e -target -value)` — interop, which
+  cannot run on a JVM at all. An earlier cut of this passed
+  `{:value v :target {:value v}}`, and a handler written against it would have
+  passed every headless test and done NOTHING in a browser. A tool that
+  green-lights production breakage is worse than one that refuses.
 
-  **A function receives an EVENT MAP, and that is a convention the app's real
-  browser shell must match.** A ClojureScript handler reaching for
-  `(-> e .-target .-value)` cannot run on a JVM at all — interop on a Clojure
-  map does not resolve — so a portable handler reads `(:value e)` or
-  `(get-in e [:target :value])`, and both spellings are carried here. Turning a
-  `js/Event` into that map is the shell's job, which is exactly the boundary
-  the `^:web/page` rule already draws: the wiring is portable, the effects are
-  `:cljs`. Nothing else about a browser event is invented — no bubbling, no
-  default to prevent, no focus."
+  **A FUNCTION handler on an input cannot be portable**, and that is a fact
+  about browsers rather than a gap here: in a browser it receives a DOM event,
+  and reading a value out of one is interop. The map passed to it is a best
+  effort for an app whose own `:cljs` shell normalises to the same shape
+  DELIBERATELY — if yours does not, use the data form. The rule that makes this
+  go away: your `:cljs` dispatcher turns the event into a scalar, and your
+  `:cljc` interpreter never sees an event of any shape, so neither driver's
+  event can be right while the other is wrong."
   [session name value]
   (let [node    (hiccup/field (tree session) name)
-        ev      {:kind :input :field name :value value :target {:value value}}
         [how v] (hiccup/input-handler node)]
     (case how
-      :fn   (v ev)
+      :fn   (v {:value value :target {:value value}})
       :data (if-let [d (:dispatch (:app @session))]
-              (d ev v)
+              (d v value)
               (throw (ex-info (str "the field " (pr-str name) " carries handler DATA "
                                    (pr-str v) " and this page declares no :dispatch,"
                                    " so typing would change nothing. Add"
-                                   " :dispatch (fn [event data] …) to the page")
+                                   " :dispatch (fn [action value] …) to the page")
                               {:field name :handler v})))
       nil)
     session))

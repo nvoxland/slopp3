@@ -381,8 +381,7 @@
   ;;
   ;; Reagent: `[:button {:on-click (fn [e] …)}]` — a FUNCTION in the tree.
   ;; Replicant: `[:button {:on {:click …}}]` — a function OR DATA, and data
-  ;; goes to one global dispatcher registered with `replicant.dom/set-dispatch!`
-  ;; which receives (event-data handler-data).
+  ;; goes to one global dispatcher registered with `replicant.dom/set-dispatch!`.
   ;;
   ;; BOTH put the handler ON THE ELEMENT. That is why there is no `.closest`
   ;; emulation here and no synthesised ancestor chain: the design that needed
@@ -391,7 +390,7 @@
   (let [seen  (atom [])
         state (atom {:n 0})
         page  {:state    state
-               :dispatch (fn [event data] (swap! seen conj [event data]))
+               :dispatch (fn [action value] (swap! seen conj [action value]))
                :view     (fn [_]
                            [:div
                             [:button {:on-click #(swap! state update :n inc)} "Reagent"]
@@ -406,18 +405,21 @@
       (screen/click! b "Fn")
       (is (= 2 (:n @state))))
 
-    (testing "DATA under :on goes to the page's dispatch, second argument first-class"
+    (testing "DATA under :on reaches dispatch VERBATIM, with no event invented"
+      ;; slopp passes (action value) and nothing else. Handing over an event
+      ;; MAP was the first design and it was wrong in the worst direction:
+      ;; Replicant's real event map carries :replicant/dom-event and no :value,
+      ;; so a handler reading (:value e) would have passed here and done
+      ;; nothing in a browser. A test that green-lights production breakage is
+      ;; worse than no test.
       (screen/click! b "Data")
-      (let [[event data] (last @seen)]
-        (is (= [:like-video 7] data)
-            "the handler data arrives verbatim — it is what a dispatcher switches on")
-        (is (= :click (:kind event)))
-        (is (= "Data" (:text event)) "and the event says which element was clicked")))
+      (is (= [[:like-video 7] nil] (last @seen))
+          "the action verbatim — it is what a dispatcher switches on — and no value for a click"))
 
     (testing "all three read as clickable, and the DATA form says what it will do"
       (is (= "Reagent [click]\nFn [click]\nData [click :like-video]"
              (screen/of (screen/tree b)))
-          "a serializable action in the tree is worth showing — it answers what a click DOES, not merely that one is possible"))
+          "a serializable action is the only handler shape a readout can report"))
 
     (testing "data with no :dispatch declared REFUSES, naming the gap"
       (let [b2 (screen/open {:state (atom {})
@@ -436,7 +438,7 @@
   (let [seen  (atom nil)
         state (atom {:q "" :r ""})
         page  {:state    state
-               :dispatch (fn [event data] (reset! seen [event data]))
+               :dispatch (fn [action value] (reset! seen [action value]))
                :view     (fn [s]
                            [:div
                             [:input {:placeholder "Reagent" :value (:q s)
@@ -453,11 +455,13 @@
       (screen/fill! b "Replicant" "xyz")
       (is (= "xyz" (:r @state))))
 
-    (testing "and as DATA, through the page's dispatch"
+    (testing "and as DATA — the action verbatim, the typed text as a SCALAR"
+      ;; No event map. Replicant's real one has no :value: the typed text sits
+      ;; behind (.. e -target -value), which is interop and cannot run on a JVM.
+      ;; A handler written against an invented {:value v} would pass here and do
+      ;; nothing in a browser, and that direction is the one worth refusing.
       (screen/fill! b "Data" "q")
-      (let [[event data] @seen]
-        (is (= [:search] data))
-        (is (= "q" (:value event)))))
+      (is (= [[:search] "q"] @seen)))
 
     (testing "all three show as fillable"
       (is (= "Reagent=\"abc\" [fill]\nReplicant=\"xyz\" [fill]\nData [fill]"
