@@ -658,6 +658,24 @@ was a relation that was ASSERTED instead: *this artifact came from that head*,
 checked; `module_dep` and `module_purity` are the only declaration verbs and
 both are about a module, not a pair of forms.
 
+#### Sharpening (2026-08-06): "measured, not assumed" is a parity comment about the PAST
+
+slopp-ui's CLAUDE.md carried a paragraph explaining where the framework loads
+from — declaration-wins, ~/.m2, rebuilds do nothing — credible precisely
+because it ended *"measured, not assumed."* Every clause had been true once and
+every clause was false now: vendoring had replaced the whole mechanism, and
+nothing connected the prose to the change. The phrase that earned the trust is
+the phrase that did the damage.
+
+The general form: **provenance written in prose is a claim about the past that
+reads as a claim about the present.** A document recording HOW something was
+verified earns trust that outlives the verification — the same defect as a
+comment asserting parity with another function, one level up, and in the worst
+place (the file a fresh agent reads first). "Cite your measurement" is good
+advice that creates this exact hazard unless the citation carries its DATE and
+the thing that was run, so a reader can ask "is that still true?" instead of
+inheriting a conclusion.
+
 So the fix for an asserted relation is always the same and it is never a better
 comment: **make it derivable, or declare it somewhere a check reads.** The
 counter above was made derivable by deleting the second copy — one producer, no
