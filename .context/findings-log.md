@@ -1263,3 +1263,28 @@ and it is unreachable by an assertion-first habit by construction.
 Same letter, the mode rule worth keeping: "use prose for text facts" is the
 wrong generalisation — a control's CONTENTS are a structured fact, adjacency
 is a prose fact, and neither mode is the default answer.
+
+## 2026-08-06 — the search endpoint's agreed shape, and two rules from settling it
+
+The /api/search contract is agreed in advance of any build (slopp-ui's
+`ideas/reader-api-gaps.md` #9 holds the schema; the talk dir 2026-08-06
+07:30–08:15 holds the reasoning). Both stores hold: typed hits, slopp-side
+:rank, :matched naming why a row is listed (with `matched "source"` as a
+finding about the store, not a good result), :address shipped IN the declared
+contract so a route-scheme change is a contract change both sides see, search
+over name/doc/why as first-class corpora (never a wrapped query_search), and
+per-kind totals.
+
+Two rules that outlive the endpoint:
+
+- **"If it cannot be derived from what was RETURNED, it is not
+  presentation."** (slopp-ui) Decides schema-vs-presentation boundaries by
+  test rather than taste: per-kind totals are facts about the full result set
+  (in the schema); highlight offsets are derivable from :doc/:why (out).
+  Same test, opposite answers — which is what makes it a test.
+- **When a wave closes, diff its asks against the talk dir, not against
+  memory.** (both) The finished wave's plan recorded search as "asked for"
+  and the ask never crossed; a plan is a derived claim about FUTURE work the
+  way "measured, not assumed" was about PAST work. The habit is the cheap
+  fix; machinery for two currently-careful agents is the case already
+  declined, correctly.
