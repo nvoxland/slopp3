@@ -25,8 +25,17 @@
   **Everything NOT listed here starts a new line**, and that direction is the
   deliberate one: a tag this set has not heard of is more usefully
   over-separated than silently glued to its neighbour. Over-separation is
-  ugly and readable; gluing hides exactly the defect a reader came for."
-  #{:a :span :small :strong :em :code :b :i :abbr :time :label :sub :sup :kbd})
+  ugly and readable; gluing hides exactly the defect a reader came for.
+
+  **`:label` is NOT here, and it is the one that tests the rule.** It is
+  genuinely inline in HTML, so it belonged by the letter — and in a form it is
+  almost always a ROW. Left inline it rendered two separate toggles as
+  `private definitions · 1state variables · 0`, which is one wrong line
+  reporting two controls. Reported from a real screen by the author of this
+  set, handing back their own entry. The asymmetry decides it: gluing two
+  controls together is a misreading, and the cost of being wrong the other way
+  is a spurious newline."
+  #{:a :span :small :strong :em :code :b :i :abbr :time :sub :sup :kbd})
 
 (def heading-levels
   "Heading tag → its level, so `#`/`##` carries the structure a reader uses to
@@ -76,7 +85,18 @@
         (and (hiccup/handler x :click) (not (:href a)) (not prose?))
         (str (let [[how v] (hiccup/handler x :click)]
                (if (and (= :data how) (coll? v) (keyword? (first v)))
-                 (str " [click " (first v) "]")
+                 ;; SCALAR arguments travel; anything else is elided as `…`.
+                 ;; The kind alone rendered [:docs/all true] and
+                 ;; [:docs/all false] identically, so a rail of two controls
+                 ;; read as two of the same one. A flag, an enum or a name is
+                 ;; exactly what tells neighbouring buttons apart; an entity
+                 ;; passed whole is the noise that motivated showing only the
+                 ;; kind, and it stays hidden.
+                 (str " [click "
+                      (str/join " " (cons (first v)
+                                          (map #(if (or (coll? %) (fn? %)) "…" (pr-str %))
+                                               (rest v))))
+                      "]")
                  " [click]")))
 
         (and ((:attrs opts) :class) (:class a))

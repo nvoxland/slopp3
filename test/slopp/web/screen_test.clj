@@ -417,9 +417,9 @@
           "the action verbatim — it is what a dispatcher switches on — and no value for a click"))
 
     (testing "all three read as clickable, and the DATA form says what it will do"
-      (is (= "Reagent [click]\nFn [click]\nData [click :like-video]"
+      (is (= "Reagent [click]\nFn [click]\nData [click :like-video 7]"
              (screen/of (screen/tree b)))
-          "a serializable action is the only handler shape a readout can report"))
+          "a serializable action is the only handler shape a readout can report — scalar args included, since they are what tells two controls apart"))
 
     (testing "data with no :dispatch declared REFUSES, naming the gap"
       (let [b2 (screen/open {:state (atom {})
@@ -507,3 +507,28 @@
         "and it ran ONCE: a retry loop would have incremented this a great many times")
     (is (= "at=/store n=1" (screen/of (screen/tree s)))
         "and the navigation actually happened")))
+
+(deftest an-action-shows-the-arguments-that-DISTINGUISH-it
+  ;; Reported from a real screen: two buttons carrying [:docs/all true] and
+  ;; [:docs/all false] both rendered `[click :docs/all]`, so the readout said
+  ;; the rail had two identical controls. The kind alone is right where the
+  ;; argument is an id and noise; it is wrong where the argument IS the whole
+  ;; difference, and nothing in a tree tells you which.
+  ;;
+  ;; So: SCALARS travel, everything else is elided. An enum, a flag or a name
+  ;; is what one button has and its neighbour does not; an entity passed whole
+  ;; is the case that motivated showing only the kind, and it stays hidden.
+  (let [page {:state    (atom {})
+              :dispatch (fn [_ _])
+              :view     (fn [_]
+                          [:div
+                           [:button {:on {:click [:docs/all true]}}  "expand all"]
+                           [:button {:on {:click [:docs/all false]}} "collapse all"]
+                           [:button {:on {:click [:like-video {:id 7 :title "x"}]}} "Like"]
+                           [:button {:on {:click [:save]}} "Save"]])}]
+    (testing "scalar arguments travel, because they are what tells two controls apart"
+      (is (= (str "expand all [click :docs/all true]\n"
+                  "collapse all [click :docs/all false]\n"
+                  "Like [click :like-video …]\n"
+                  "Save [click :save]")
+             (screen/of (screen/tree (screen/open page))))))))
