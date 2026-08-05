@@ -1274,6 +1274,79 @@ already-loaded namespace). Nothing warns you when the pin is behind, so treat
 assume: `query_eval` `(.getResource (clojure.lang.RT/baseLoader)
 "slopp/web/static.clj")` names the jar actually in force.
 
+### Reviewing a UI without a browser
+
+**`slopp.web.screen` drives your app like a browser, with no rendering engine**
+— document, event dispatch, re-render, on the JVM, running your app's OWN
+client code. Reach for it the moment you want to *look at* a screen, not just
+when writing a test: opening a real browser to read a sentence is the habit
+this replaces. (It is called `screen` and not `browser` on purpose — a real
+browser is a thing you may also be testing with, and that word has to keep one
+meaning.)
+
+**To LOOK, use the `screen` tool** — no code, no test, no browser:
+
+```
+screen {steps [{visit "/store"} {fill "Filter" value "web"} {click "Add"}]
+        region "main" detail "prose"}
+```
+
+**To ASSERT, the same thing in a test.** `screen/drive!` takes the identical
+step script, so a screen you looked at is one you can pin without retyping it
+as a call chain:
+
+```clj
+(require '[slopp.web.screen :as screen])
+
+(def s (screen/open ctx))           ; a slopp.web ctx — nothing else to declare
+(screen/drive! s [{:visit "/store"} {:click "Code"}])
+(screen/text s "main")              ; ONE region — and it throws if absent
+```
+
+Mark the zero-arg fn that builds your app `^:web/page` and the tool can find
+it; there is deliberately no session between tool calls, so a script is the
+whole interaction and the same script reproduces the same screen.
+
+**A server-rendered app declares nothing.** `visit!` goes through
+`slopp.web.dispatch/handle!`, so it is a real request down the real pipeline —
+routing, auth policy, declared reads, the handler, effects. A page that 401s
+here 401s when served, which is the point of driving dispatch rather than
+calling a handler.
+
+An app with CLIENT state supplies a page instead: `{:state (atom …) :view (fn
+[state] …) :navigate (fn [state path] …)}` — `:navigate` optional, and one
+function rather than a router. An app can be both: routes for the server
+render, a `:view` to re-render after a click.
+
+- **`^:web/page` marks the entry, and it may not be `:cljs` — a write gate
+  refuses.** The wiring is portable; only the EFFECTS are `:cljs`. An entry the
+  JVM cannot call sends every headless test back to hand-building a map that
+  RESEMBLES your app, and a resemblance passes while the real screen is wrong.
+  That is the whole defect this removes.
+- **What slopp assumes, so you can tell if you're outside it:** state is an
+  atom, handlers are plain functions, the view is a pure function of state.
+  Reagent- and replicant-shaped apps fit. An app whose handlers dispatch into a
+  `:cljs`-only runtime cannot be driven here.
+- **Read the screen BEFORE asserting on it.** Most view bugs are plain wrong
+  sentences, and they are obvious in a readout and invisible in a `get-in`.
+  "Look at the UI" costing a browser is why they ship.
+- **Scope an assertion to the region it names** — `(screen/text s "main")` is
+  shorter than the whole page on purpose, and comes back DEDENTED so moving a
+  `<div>` around the region cannot break it. A whole-page `str/includes?` is
+  one keystroke from asserting nothing: a real tint check once matched its
+  pattern anywhere on the page, claimed the diagram, checked a list, and stayed
+  green with the layout torn out.
+- **A click refuses rather than shrugging** — nothing says it (and the message
+  lists what can be clicked), it is on the screen but not clickable, two
+  elements say it, or the app has no urls. Four different bugs, never one
+  silent no-op.
+- **`screen/lines` when you want to address ONE line**, e.g. the `<svg>` census
+  — assertions are easy to write here and therefore easy to write too broadly.
+- **It is NOT a screenshot.** An `<svg>` is censused by CLASS rather than
+  dumped as coordinates, which catches an overlay's tints with no pixels — but
+  a list that wraps over three lines and a tint invisible against white still
+  need eyes. Do not assert what a readout cannot see.
+
 ## Questions → the oracle
 
 Run code instead of reading callers: `query_call {sym "my.ns/f", args [X]}`
