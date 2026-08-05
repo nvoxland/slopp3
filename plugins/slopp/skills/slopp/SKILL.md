@@ -1318,15 +1318,31 @@ An app with CLIENT state supplies a page instead: `{:state (atom …) :view (fn
 function rather than a router. An app can be both: routes for the server
 render, a `:view` to re-render after a click.
 
-- **`^:web/page` marks the entry, and it may not be `:cljs` — a write gate
-  refuses.** The wiring is portable; only the EFFECTS are `:cljs`. An entry the
-  JVM cannot call sends every headless test back to hand-building a map that
-  RESEMBLES your app, and a resemblance passes while the real screen is wrong.
-  That is the whole defect this removes.
+- **Put handlers IN THE TREE — all three idioms are driven.** `:on-click (fn
+  [e] …)` (Reagent), `:on {:click (fn [e] …)}` (Replicant), and `:on {:click
+  [:action …]}` (Replicant's DATA form), which goes to a page-level
+  `:dispatch (fn [event data] …)` mirroring `replicant.dom/set-dispatch!`.
+  Typing is the same, under `:on-change` or `:on {:input …}`.
+  **Hand-rolled `js/document.addEventListener` delegation cannot be driven** —
+  it lives in `:cljs` and never runs here. You rarely need it: both libraries
+  attach handlers to elements for you, precisely so a re-render does not strand
+  them.
+- **Prefer the DATA form where you have the choice.** A serializable action is
+  the one shape the readout can report: `Like [click :like-video]` answers what
+  a click DOES, where a closure can only be marked `[click]`.
+- **Four ways slopp REFUSES a page it cannot open**, three at the write and one
+  at `done`: the entry in a `:cljs` namespace; the entry taking arguments
+  (slopp calls it with none); a SECOND `^:web/page` (the scan would answer from
+  whichever it reached first, silently); and — the one that catches real apps —
+  the entry's namespace CLOSURE reaching `:cljs`, which the `web-page-reach`
+  advisory reports. That last one can break with no write to your entry at all,
+  the day some namespace it depends on is declared `:cljs`.
 - **What slopp assumes, so you can tell if you're outside it:** state is an
-  atom, handlers are plain functions, the view is a pure function of state.
-  Reagent- and replicant-shaped apps fit. An app whose handlers dispatch into a
-  `:cljs`-only runtime cannot be driven here.
+  atom, handlers are in the tree, the view is a pure function of state. The
+  wiring is portable; only the EFFECTS are `:cljs`. An entry the JVM cannot
+  call sends every headless test back to hand-building a map that RESEMBLES
+  your app, and a resemblance passes while the real screen is wrong — which is
+  the whole defect this removes.
 - **Read the screen BEFORE asserting on it.** Most view bugs are plain wrong
   sentences, and they are obvious in a readout and invisible in a `get-in`.
   "Look at the UI" costing a browser is why they ship.
