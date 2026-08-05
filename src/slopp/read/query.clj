@@ -221,6 +221,33 @@
         (> (count reached) limit) (assoc :omitted (- (count reached) limit))))
     (edit/missing-form-error (:store @session) ns-sym nm)))
 
+(defn ^:export cause-chain
+  "An exception as `Class: message <- Class: message …`, outermost first,
+  capped at four links.
+
+  **`ex-message` alone is a lie of omission for the two exception types this
+  system produces most.** `CompilerException`'s own message IS \"Syntax error
+  compiling at (line:col)\" and `Syntax error macroexpanding at.` — the
+  sentence a reader needs is always one or more causes down. Reported when
+  `query_store` answered \"query_store threw: Syntax error compiling at (0:0).\"
+  on a form that was plainly valid: the surface accused the caller's input
+  using a message that names nothing, which is worse than saying it does not
+  know.
+
+  The class is worth stating because it recurs: **a report that carries only
+  the outermost frame has answered nothing and looks like it answered.**
+
+  A SIBLING copy lives inside `slopp.webdev.screen/drive-code`'s generated
+  source, and the two cannot be one. That code is evaluated in a USER's
+  verification image, where the only slopp on the classpath is the vendored
+  `slopp.web.*` — nothing here is reachable. A duplicate with a reason is
+  better than a false dependency, and this is the reason."
+  [^Throwable e]
+  (str/join " <- " (take 4 (map #(let [m (ex-message %)]
+                                  (cond-> (.getSimpleName (class %))
+                                    (seq (str m)) (str ": " m)))
+                                (take-while some? (iterate #(.getCause ^Throwable %) e))))))
+
 ^:unsafe (defn ^:export query-store
   "The STORE-VALUE oracle: evaluate one read-only `(fn [store] ...)` over
   the CURRENT immutable store value, in the server process where that
@@ -251,8 +278,7 @@
                   fut   (future
                           (try {:result ((eval sx) store)}
                                (catch Throwable e
-                                 {:error (str "query_store threw: "
-                                              (ex-message e))})))
+                                 {:error (str "query_store threw: " (cause-chain e))})))
                   out   (deref fut timeout-ms ::timeout)]
               (if (= ::timeout out)
                 (do (future-cancel fut)

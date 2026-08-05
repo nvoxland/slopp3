@@ -59,3 +59,29 @@
     (is (not (contains? eff 'eff.demo/pure)))
     (testing "qualified by the full namespace, which is what a caller looks up by"
       (is (every? #(= "eff.demo" (namespace %)) eff)))))
+
+(deftest a-thrown-query-carries-its-CAUSE-not-just-its-outermost-frame
+  ;; slopp-ui: `query_store` answered "query_store threw: Syntax error
+  ;; compiling at (0:0)." on a form that is plainly valid, which reads as an
+  ;; accusation against the caller's input and names nothing.
+  ;;
+  ;; It is `ex-message` on a CompilerException — that class's own message IS
+  ;; "Syntax error compiling at (line:col)", and the sentence a reader needs is
+  ;; one cause down. Same defect the screen driver had two hours earlier,
+  ;; where the outermost frame said "Syntax error macroexpanding at." and the
+  ;; cause said "Could not locate cheshire/core".
+  ;;
+  ;; A surface that reports the outer frame has answered nothing and looks like
+  ;; it answered, which is strictly worse than saying it does not know.
+  (testing "the chain travels, outermost first"
+    (let [e (ex-info "outer" {} (ex-info "middle" {} (ex-info "root cause" {})))]
+      (is (= "ExceptionInfo: outer <- ExceptionInfo: middle <- ExceptionInfo: root cause"
+             (query/cause-chain e)))))
+
+  (testing "a lone exception is just itself — no decoration for a chain of one"
+    (is (= "ArithmeticException: Divide by zero"
+           (query/cause-chain (ArithmeticException. "Divide by zero")))))
+
+  (testing "a message-less exception still names its CLASS"
+    (is (= "NullPointerException" (query/cause-chain (NullPointerException.)))
+        "the class is the only thing left, and it is more than nothing — with no trailing colon promising a message that is not coming")))

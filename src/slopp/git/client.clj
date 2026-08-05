@@ -59,6 +59,42 @@
       {:tip (or (some-> (.resolve repo (str "refs/remotes/origin/" branch)) (.name))
                 (some-> (.resolve repo (str "refs/remotes/tracking/" branch)) (.name)))})))
 
+(defn ^:export push-refusal
+  "The sentence for a rejected push, in the vocabulary of the CALLER that made
+  it. `opts`: `:dst` the destination ref, `:mirror?` when the push never left
+  this repo.
+
+  One producer, because there are two callers and they mean different things
+  by the same git status. `push-to-remote!` serves both
+  [[slopp.sync/push!]] — a genuine external remote — and
+  [[slopp.sync/publish-local!]], which pushes to `(str dir)`, THE CHECKOUT
+  ITSELF, projecting main onto the local `slopp/<line>` mirror. No remote is
+  involved in the second at any point.
+
+  So a single non-fast-forward sentence said \"the remote branch has history
+  this store doesn't build on (pull first)\" about a LOCAL ref, where pulling
+  is not unhelpful but impossible — and it ran automatically on every
+  milestone, while `git_push` answered its own case correctly. Reported by a
+  consumer who read the confident wrong cause, went looking for a remote that
+  had never existed, and nearly filed it as something else entirely.
+
+  **A vague error would have been better than that one**, which is the thing
+  worth keeping: a confident wrong diagnosis crowds out the correct one a
+  sibling surface already produces. So an unrecognised status is passed through
+  with git's own message rather than interpreted."
+  [status message {:keys [mirror? dst]}]
+  (str "push rejected (" status ")"
+       (when (seq (str message)) (str ": " message))
+       (when (= status "REJECTED_NONFASTFORWARD")
+         (if mirror?
+           (str " — the local mirror " dst " has commits this projection does"
+                " not build on. Nothing was pushed anywhere: this is one repo"
+                " talking to itself. The mirror is a PROJECTION of the store,"
+                " so it can be reset deliberately (git branch -f) once you know"
+                " what wrote it — a store revert and a second machine's"
+                " projection both land here")
+           " — the remote branch has history this store doesn't build on (pull first)"))))
+
 (defn ^:export push-to-remote!
   "Push the projection to an external git remote `url` (filesystem path or
   http(s)). `:branch` = the LOCAL projection line (default \"main\", the
@@ -71,7 +107,7 @@
 
   `ctx` is an OPAQUE handle from `git/open-ctx!` — see `git/close-ctx!`."
   [ctx url
-   & {:keys [token branch remote-branch timeout]
+   & {:keys [token branch remote-branch timeout mirror?]
       :or {branch "main" timeout 30}}]
   (let [map-conn         (:slopp.git/map-conn ctx)
         ^Repository repo (:slopp.git/repo ctx)]
@@ -97,9 +133,6 @@
                 status (str (.getStatus upd))]
             (if (contains? #{"OK" "UP_TO_DATE"} status)
               {:pushed (.name tip) :status status :remote-branch rbranch}
-              {:error (str "push rejected (" status ")"
-                           (when-let [m (.getMessage upd)] (str ": " m))
-                           (when (= status "REJECTED_NONFASTFORWARD")
-                             " — the remote branch has history this store doesn't build on (pull first)"))})))
+              {:error (push-refusal status (.getMessage upd) {:mirror? mirror? :dst dst})})))
         {:error (str "nothing to push — no " src
                      " in the projection (no milestones yet?)")}))))

@@ -500,7 +500,13 @@
                        " a live working tree")}
           (assoc (client/push-to-remote! ctx (str dir)
                                          :branch line
-                                         :remote-branch mirror)
+                                         :remote-branch mirror
+                                         ;; this push never leaves the repo —
+                                         ;; the "remote" is `dir` itself. Saying
+                                         ;; so is what stops a refusal here
+                                         ;; naming a remote nobody has and
+                                         ;; advising a pull that cannot happen
+                                         :mirror? true)
                  :branch mirror))
         (finally (git/close-ctx! ctx))))))
 

@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
-            [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external])
+            [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -113,3 +113,42 @@
         (git/close-ctx! ctx)
         (rm-rf! dir)
         (.close srv)))))
+
+(deftest a-push-refusal-speaks-the-CALLERs-vocabulary
+  ;; slopp-ui hit this and diagnosed it as "there is no remote". They were
+  ;; right that the message was false and wrong about why, which is the whole
+  ;; problem with it: `publish-local!` pushes to (str dir) — THE CHECKOUT
+  ;; ITSELF — projecting main onto the local slopp/main mirror inside one repo.
+  ;; No remote is involved at any point.
+  ;;
+  ;; So the refusal said "the remote branch has history this store doesn't
+  ;; build on (pull first)" about a LOCAL mirror ref, where pulling is not
+  ;; unhelpful but impossible — and it ran automatically on every milestone,
+  ;; while git_push answered its own case correctly. One condition, two
+  ;; surfaces, opposite answers, and the WRONG one is the automatic one.
+  ;;
+  ;; The class, in their words: a confident wrong diagnosis crowds out the
+  ;; correct one a sibling tool already produces. A VAGUE error would have sent
+  ;; them to git_push in one step.
+  (testing "an external push keeps its remedy — pulling is the right advice there"
+    (let [m (client/push-refusal "REJECTED_NONFASTFORWARD" nil
+                                 {:dst "refs/heads/main"})]
+      (is (clojure.string/includes? m "remote"))
+      (is (clojure.string/includes? m "pull"))))
+
+  (testing "a LOCAL mirror names the ref and does not suggest the impossible"
+    (let [m (client/push-refusal "REJECTED_NONFASTFORWARD" nil
+                                 {:mirror? true :dst "refs/heads/slopp/main"})]
+      (is (clojure.string/includes? m "refs/heads/slopp/main")
+          "the ref is the whole finding — a reader has to know WHICH branch diverged")
+      (is (not (clojure.string/includes? m "pull"))
+          "there is nothing to pull from: this push never left the repo")
+      (is (clojure.string/includes? m "PROJECTION")
+          "and it says the mirror is DERIVED, which makes resetting it a decision rather than data loss")))
+
+  (testing "any other status still travels verbatim rather than being interpreted"
+    (let [m (client/push-refusal "REJECTED_OTHER_REASON" "hook declined"
+                                 {:mirror? true :dst "refs/heads/slopp/main"})]
+      (is (clojure.string/includes? m "REJECTED_OTHER_REASON"))
+      (is (clojure.string/includes? m "hook declined")
+          "a status we have no sentence for must not lose the one git gave"))))
