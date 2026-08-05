@@ -676,6 +676,23 @@ advice that creates this exact hazard unless the citation carries its DATE and
 the thing that was run, so a reader can ask "is that still true?" instead of
 inheriting a conclusion.
 
+#### Sharpening (2026-08-06, slopp-ui, cross-store): consolidation closes the pair and not the shape
+
+Measured across both stores' friction logs, which is why the consumer saw it
+and we could not: four two-producers-of-one-shape entries, and the first three
+were all closed by CONSOLIDATING the pair that got caught. Each fix was
+correct; each left the shape intact — which is precisely how the readout grew
+four private attr sites and a silently drifted pair while three
+consolidations were being celebrated elsewhere.
+
+The frame that replaces it: **at a two-producer finding, the question is not
+"are both fixed" but "what would make the wrong route UNAVAILABLE."** The
+evidence it is the better question: asking it once (the readout's `page-tag`,
+the first close-by-construction in the log) surfaced a live drift that two
+rounds of symptom-driven fixing had walked straight past. Consolidation
+answers the first question completely and the second not at all — which is
+why it keeps feeling like a fix and keeps not being one.
+
 So the fix for an asserted relation is always the same and it is never a better
 comment: **make it derivable, or declare it somewhere a check reads.** The
 counter above was made derivable by deleting the second copy — one producer, no
