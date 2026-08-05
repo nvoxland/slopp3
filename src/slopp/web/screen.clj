@@ -58,6 +58,7 @@
   ```clj
   (->> (lines view) (filter #(str/starts-with? (str/triml %) \"<svg\")) first)
   (lines view {:region \"main\"})
+  (lines view {:within \"rate\"})   ; one row, addressed like a click
   ```
 
   Options — and an option outside this table REFUSES, because this was the
@@ -70,23 +71,28 @@
   |---|---|---|
   | `:detail` | `:structured` | `:prose` — sentences only, for \"does it say X\" |
   | `:list-head` | `nil` — EVERY row | the `screen` tool passes `3`; a cap emits `<slopp:elided count=\"N\"/>`, machine-visible |
-  | `:region` | none | scoping to one pane; THROWS if it is not there |
+  | `:region` | none | scoping to one `:data-region` pane; THROWS if it is not there |
+  | `:within` | none | scoping to ONE ELEMENT, a level below regions — addressed exactly as a click addresses (visible text, `:href`, `:aria-label`), resolved to the element that OWNS it (same bubbling), same refusals. One vocabulary for one document; asking about a row no longer means regexing its whole pane |
 
-  The default is the TEST path's: a test asserting a row that elision ate
-  would fail false, and a false failure costs more than the tokens the cap
-  saves. The tool is the look path, and it caps because a reader skims.
+  `:within` composes with `:region` (the pane is cut first, so the element
+  must be IN it) and can address anything on the screen — a disabled control
+  refuses a PRESS, not a look; the act-gates are the click's alone.
 
-  `:region` cuts the TREE before anything renders, so it composes with every
-  other option and comes back at depth 0."
+  The `:list-head` default is the TEST path's: a test asserting a row that
+  elision ate would fail false, and a false failure costs more than the tokens
+  the cap saves. The tool is the look path, and it caps because a reader skims.
+
+  `:region` cuts the TREE before anything renders, so everything composes and
+  comes back at depth 0."
   ([hiccup] (lines hiccup nil))
   ([hiccup opts]
-   (let [unknown (remove #{:detail :list-head :region} (keys opts))]
+   (let [unknown (remove #{:detail :list-head :region :within} (keys opts))]
      (when (seq unknown)
        (throw (ex-info (str "unknown option" (when (next unknown) "s") " "
                             (str/join ", " (map str (sort-by str unknown)))
                             " — lines/text/of speak :detail (:structured or"
-                            " :prose), :list-head (nil = every row), and"
-                            " :region. (:attrs was removed with format v2 —"
+                            " :prose), :list-head (nil = every row), :region,"
+                            " and :within. (:attrs was removed with format v2 —"
                             " the svg census is the overlay story.) Guessing a"
                             " default would answer a question you did not ask")
                        {:unknown (vec unknown)})))
@@ -102,7 +108,8 @@
                          {:list-head lh}))))
      (let [o (merge {:list-head nil} opts)
            t (hiccup/expand hiccup)
-           t (if-let [r (:region o)] (hiccup/region t r) t)]
+           t (if-let [r (:region o)] (hiccup/region t r) t)
+           t (if-let [w (:within o)] (hiccup/scope-node t w) t)]
        (vec (remove nil? (render/emit t 0 o)))))))
 
 (defn of
@@ -145,7 +152,7 @@
   ([hiccup] (of hiccup nil))
   ([hiccup opts] (str/join "\n" (lines hiccup opts))))
 
-(defn open
+(defn open!
   "Open a headless browser over `app`. Two shapes, and an app may be both.
 
   **A server-rendered slopp.web app — its own ctx, nothing added:**
@@ -166,8 +173,21 @@
   {:state (atom {:n 0})                  ; REQUIRED, the app's own state
    :view  (fn [state] …)                 ; REQUIRED, state -> hiccup
    :navigate (fn [state path] state')    ; optional, client-side routing
-   :dispatch (fn [action value] …)}      ; optional, the data-handler sink
+   :dispatch (fn [action value] …)       ; optional, the data-handler sink
+   :boot     (fn [state] state')}        ; optional, what the entry point does
   ```
+
+  **`:boot` is the page's entry point, and `open` RUNS it, once.** A browser
+  runs an app's entry point at page load, and the entry point is where every
+  app starts the loads that belong to no particular screen — which is exactly
+  the data a driven session used to show as structurally present and
+  materially empty, with nothing distinguishing \"the app never asked\" from
+  \"asked, not yet arrived\" (slopp-ui's project switcher, root-caused by
+  them). Same shape and same discipline as `:navigate`: `(fn [state] state')`,
+  applied read-call-write, never inside `swap!`. The alternative — declaring
+  loads per route — was considered and declined: it quietly makes
+  route-driven-everything the required architecture, and slopp does not force
+  architectures on apps.
 
   A page that cannot open REFUSES HERE, naming the key — required, unknown,
   or the wrong kind of thing. The review measured the alternative: a missing
@@ -198,22 +218,25 @@
                          (pr-str app))
                     {:got app})))
   (if (:web/routes app)
-    ;; a ctx owns its own shape; only a page half it carries is checked
-    (when-let [st (:state app)]
-      (when-not (instance? clojure.lang.IAtom st)
-        (throw (ex-info (str "a page's :state must be an atom — something the"
-                             " browser can read and reset! — got "
-                             (pr-str (type st)))
-                        {:state st}))))
-    (let [allowed #{:state :view :navigate :dispatch}
+    ;; a ctx owns its own shape; only the page half it carries is checked
+    (do
+      (when-let [st (:state app)]
+        (when-not (instance? clojure.lang.IAtom st)
+          (throw (ex-info (str "a page's :state must be an atom — something the"
+                               " browser can read and reset! — got "
+                               (pr-str (type st)))
+                          {:state st}))))
+      (when (and (:boot app) (not (:state app)))
+        (throw (ex-info ":boot needs :state — an entry point with no state to change has nothing to say headlessly" {}))))
+    (let [allowed #{:state :view :navigate :dispatch :boot}
           unknown (remove allowed (keys app))]
       (when (seq unknown)
         (throw (ex-info (str "unknown page key"
                              (when (next unknown) "s") " "
                              (str/join ", " (map pr-str (sort-by str unknown)))
-                             " — a page declares :state, :view, :navigate and"
-                             " :dispatch. (A typo here used to render a BLANK"
-                             " page; refusing is the favour.)")
+                             " — a page declares :state, :view, :navigate,"
+                             " :dispatch and :boot. (A typo here used to render"
+                             " a BLANK page; refusing is the favour.)")
                         {:unknown (vec unknown)})))
       (when-not (contains? app :state)
         (throw (ex-info (str "a page needs :state — the app's OWN atom, so what"
@@ -227,7 +250,17 @@
       (when-not (ifn? (:view app))
         (throw (ex-info (str "a page needs :view — (fn [state] hiccup); without"
                              " one there is no screen to read")
-                        {})))))
+                        {})))
+      (when (and (contains? app :boot) (not (ifn? (:boot app))))
+        (throw (ex-info (str ":boot must be callable — (fn [state] state'),"
+                             " the entry point's state transform — got "
+                             (pr-str (:boot app)))
+                        {:boot (:boot app)})))))
+  (when-let [b (:boot app)]
+    ;; read, call, write — never inside swap!, for navigate's reason: the
+    ;; entry point is the app's own code and swap! demands a pure fn
+    (let [st (:state app)]
+      (reset! st (b @st))))
   (atom {:app app :path nil :document nil}))
 
 (defn tree

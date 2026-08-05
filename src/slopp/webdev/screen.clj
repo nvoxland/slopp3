@@ -58,7 +58,7 @@
          ;; runtime while the body compiles at read time, so an :as here is a
          ;; "No such namespace" every time.
          "    (try"
-         "      (let [open  (requiring-resolve 'slopp.web.screen/open)"
+         "      (let [open  (requiring-resolve 'slopp.web.screen/open!)"
          "            drive (requiring-resolve 'slopp.web.screen/drive!)"
          "            text  (requiring-resolve 'slopp.web.screen/text)"
          "            steps " (pr-str (vec steps))

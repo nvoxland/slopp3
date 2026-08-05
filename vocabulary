@@ -65,6 +65,7 @@ slopp.store.mine: slopp.lab.mine
 slopp.ui-api: slopp.api
 slopp.web.browser: slopp.web.screen
 slopp.web.readout: slopp.web.screen
+slopp.web.screen/open: slopp.web.screen/open!
 spa-consequences: web-spa-consequences
 stale-client: web-stale-client
 ui-hub: hub

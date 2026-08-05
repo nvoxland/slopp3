@@ -24,29 +24,6 @@
   (:require [clojure.string :as str]
             [slopp.web.screen.hiccup :as hiccup]))
 
-(def inline-tags
-  "Tags whose content belongs on the SAME line as its neighbours.
-
-  This one set is the difference between a readable screen and a blob. The
-  naive readout — every string in tree order, joined by spaces — renders
-  `[:h1 \"code\"] [:p \"3 modules…\"]` as `code 3 modules…`, and a wrong
-  sentence in the middle of a run-on line is invisible.
-
-  **Everything NOT listed here starts a new line**, and that direction is the
-  deliberate one: a tag this set has not heard of is more usefully
-  over-separated than silently glued to its neighbour. Over-separation is
-  ugly and readable; gluing hides exactly the defect a reader came for.
-
-  **`:label` is NOT here, and it is the one that tests the rule.** It is
-  genuinely inline in HTML, so it belonged by the letter — and in a form it is
-  almost always a ROW. Left inline it rendered two separate toggles as
-  `private definitions · 1state variables · 0`, which is one wrong line
-  reporting two controls. Reported from a real screen by the author of this
-  set, handing back their own entry. The asymmetry decides it: gluing two
-  controls together is a misreading, and the cost of being wrong the other way
-  is a spurious newline."
-  #{:a :span :small :strong :em :code :b :i :abbr :time :sub :sup :kbd})
-
 (defn escape
   "Page text made inert: `&` `<` `>` escaped, HTML-style.
 
@@ -248,7 +225,7 @@
         a        (hiccup/attrs node)
         note     (handler-note node)
         inline?  (fn [x] (or (string? x) (number? x)
-                             (and (vector? x) (contains? inline-tags (hiccup/tag x)))))
+                             (and (vector? x) (contains? hiccup/inline-tags (hiccup/tag x)))))
         run      (fn [ks] (-> (str/join "" (map #(inline-str % opts) ks))
                               (str/replace #" {2,}" " ")
                               str/trim))
@@ -418,7 +395,7 @@
                 content "</label>")]))
 
       ;; an inline element standing at block position is its own one-line run
-      (contains? inline-tags t)
+      (contains? hiccup/inline-tags t)
       (let [s (str/trim (inline-str node opts))]
         (when (seq s) [(str (pad depth) s)]))
 

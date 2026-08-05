@@ -127,7 +127,7 @@
                         [:div
                          [:p (str "n=" (:n s))]
                          [:button {:on-click #(swap! state update :n inc)} "Add"]])}
-        b     (screen/open page)]
+        b     (screen/open! page)]
     (testing "the document renders from state before anything happens"
       ;; the <button> tag is the readout saying the button is a button — a
       ;; reader deciding what to do next could not otherwise tell it from a
@@ -155,7 +155,7 @@
                            [:div
                             [:h1 (:at s)]
                             [:a {:href "/store"} "Code"]])}
-        b     (screen/open page)]
+        b     (screen/open! page)]
     (testing "an href with no handler navigates through the app's own :navigate"
       (screen/click! b "Code")
       (is (= "<h1>/store</h1>\n<a href=\"/store\">Code</a>"
@@ -178,7 +178,7 @@
                         [:button {:on-click (fn [_])} "Delete"]
                         [:button {:on-click (fn [_])} "Delete"]
                         [:a {:href "/only"} "Go"]])}
-        b    (screen/open page)
+        b    (screen/open! page)
         msg  (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))]
     (testing "nothing says it — and the answer is what CAN be clicked"
       (let [m (msg #(screen/click! b "Nope"))]
@@ -193,7 +193,7 @@
 
     (testing "two distinct controls say it — picking one is a guess"
       (is (str/includes? (msg #(screen/click! b "Delete"))
-                         "a click that picks one of them is a guess")))
+                         "picking one of them is a guess")))
 
     (testing "and a page with no :navigate refuses a visit rather than rendering nothing"
       (is (str/includes? (msg #(screen/visit! b "/x"))
@@ -219,7 +219,7 @@
                 (fn [_] (page [:div [:h1 "About"]]))}
                {:method :get :path "/secret" :auth :authenticated :handler
                 (fn [_] (page [:div [:h1 "Secret"]]))}]}
-        b    (screen/open ctx)]
+        b    (screen/open! ctx)]
     (testing "visiting a mounted path renders that page"
       (screen/visit! b "/")
       (is (= "<h1>Home</h1>\n<a href=\"/about\">About</a>"
@@ -252,7 +252,7 @@
                         [:main {:data-region "main"}
                          [:h1 "code"]
                          [:svg {:class "module-graph"} [:g {:class "gap-w4"}]]]])}
-        b    (screen/open page)]
+        b    (screen/open! page)]
     (testing "the page, when the page is what you mean"
       (is (str/includes? (screen/text b) "<a href=\"/\">Review</a>")))
 
@@ -356,7 +356,7 @@
                          [:input {:placeholder "Filter"
                                   :on-change #(swap! state assoc :q (:value %))}]
                          [:p (str "showing " (:q s))]])}
-        b     (screen/open page)]
+        b     (screen/open! page)]
     (testing "the handler receives the value as DATA and the document changes"
       (screen/fill! b "Filter" "store")
       (is (str/includes? (screen/of (screen/tree b)) "showing store")))
@@ -368,7 +368,7 @@
             "the list is the answer to the question behind the mistake")))
 
     (testing "and a field with no :on-change is a different bug from a missing one"
-      (let [b2 (screen/open {:state (atom {})
+      (let [b2 (screen/open! {:state (atom {})
                              :view (fn [_] [:input {:placeholder "Inert"}])})
             m  (try (screen/fill! b2 "Inert" "x") nil
                     (catch clojure.lang.ExceptionInfo e (ex-message e)))]
@@ -428,7 +428,7 @@
                             [:button {:on-click #(swap! state update :n inc)} "Reagent"]
                             [:button {:on {:click #(swap! state update :n inc)}} "Fn"]
                             [:button {:on {:click [:like-video 7]}} "Data"]])}
-        b     (screen/open page)]
+        b     (screen/open! page)]
     (testing "a Reagent-style function on the element"
       (screen/click! b "Reagent")
       (is (= 1 (:n @state))))
@@ -456,7 +456,7 @@
           "a serializable action is the only handler shape a readout can report — scalar args included, since they are what tells two controls apart"))
 
     (testing "data with no :dispatch declared REFUSES, naming the gap"
-      (let [b2 (screen/open {:state (atom {})
+      (let [b2 (screen/open! {:state (atom {})
                              :view  (fn [_] [:button {:on {:click [:boom]}} "X"])})
             m  (try (screen/click! b2 "X") nil
                     (catch clojure.lang.ExceptionInfo e (ex-message e)))]
@@ -480,7 +480,7 @@
                             [:input {:placeholder "Replicant" :value (:r s)
                                      :on {:input #(swap! state assoc :r (:value %))}}]
                             [:input {:placeholder "Data" :on {:input [:search]}}]])}
-        b     (screen/open page)]
+        b     (screen/open! page)]
     (testing "Reagent's :on-change"
       (screen/fill! b "Reagent" "abc")
       (is (= "abc" (:q @state))))
@@ -535,7 +535,7 @@
               :navigate (fn [_ path]
                           (swap! st #(-> % (update :n inc) (assoc :at path)))
                           @st)}
-        s    (screen/open page)
+        s    (screen/open! page)
         f    (future (screen/visit! s "/store") :done)]
     (is (= :done (deref f 3000 :TIMED-OUT))
         "a :navigate that touches its own atom livelocked inside swap! — it presents as a hang, and a hang has no message")
@@ -567,7 +567,7 @@
                   "<button slopp:on=\"click :docs/all false\">collapse all</button>\n"
                   "<button slopp:on=\"click :like-video …\">Like</button>\n"
                   "<button slopp:on=\"click :save\">Save</button>")
-             (screen/of (screen/tree (screen/open page))))))))
+             (screen/of (screen/tree (screen/open! page))))))))
 
 (deftest the-structured-format-is-text-with-a-whitelisted-tag-channel
   ;; v2 contract, settled 2026-08-05: plain text stays plain; a tag keeps its
@@ -652,18 +652,18 @@
                      :dispatch (fn [a _] (swap! hits conj a))})]
     (testing "a click on text inside a handled ancestor bubbles to it"
       (reset! hits [])
-      (screen/click! (screen/open (page)) "Open")
+      (screen/click! (screen/open! (page)) "Open")
       (is (= [[:open-card]] @hits)))
     (testing "a disabled control refuses and runs nothing — production would not fire it"
       (reset! hits [])
-      (let [e (try (screen/click! (screen/open (page)) "Save") nil
+      (let [e (try (screen/click! (screen/open! (page)) "Save") nil
                    (catch clojure.lang.ExceptionInfo e e))]
         (is (some? e))
         (is (str/includes? (ex-message e) "disabled"))
         (is (= [] @hits))))
     (testing "aria-label addresses an icon-only control"
       (reset! hits [])
-      (screen/click! (screen/open (page)) "close")
+      (screen/click! (screen/open! (page)) "close")
       (is (= [[:close]] @hits)))))
 
 (deftest the-tree-is-read-the-way-the-libraries-run-it
@@ -682,7 +682,7 @@
     (is (= "hi" (screen/of [:div [(fn [_] (fn [t] [:p t])) "hi"]]))))
   (testing "sugar id is an attr, so a sugared field is addressable and shown"
     (let [got (atom nil)
-          ss  (screen/open {:state (atom {})
+          ss  (screen/open! {:state (atom {})
                             :view (fn [_] [:div [:input#q {:on {:input [:q/set]}}]])
                             :dispatch (fn [_ v] (reset! got v))})]
       (is (str/includes? (screen/text ss nil) "<input id=\"q\""))
@@ -690,7 +690,7 @@
       (is (= "web" @got))))
   (testing "the shown label IS the clickable label"
     (let [n  (atom 0)
-          ss (screen/open {:state n
+          ss (screen/open! {:state n
                            :view (fn [_] [:div [:button {:on-click (fn [_] (swap! n inc))} "foo" [:span "bar"]]])})]
       (is (str/includes? (screen/text ss nil) ">foobar</button>"))
       (screen/click! ss "foobar")
@@ -710,22 +710,22 @@
                          :dispatch (fn [a v] (swap! seen conj [a v]))})
         msg  (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))]
     (testing "a typo'd step names ITS keys and the step vocabulary"
-      (let [m (msg #(screen/drive! (screen/open (page (atom []))) [{:vist "/x"}]))]
+      (let [m (msg #(screen/drive! (screen/open! (page (atom []))) [{:vist "/x"}]))]
         (is (some? m) "a raw ClassCastException is not a refusal")
         (is (str/includes? m ":visit, :click or :fill"))
         (is (str/includes? m ":vist") "the offending step's own keys, not the script's")))
     (testing "a step naming two actions refuses — running one silently is a guess"
-      (let [m (msg #(screen/drive! (screen/open (page (atom []))) [{:visit "/a" :click "Go"}]))]
+      (let [m (msg #(screen/drive! (screen/open! (page (atom []))) [{:visit "/a" :click "Go"}]))]
         (is (str/includes? m "one action"))))
     (testing "a :fill step with no :value refuses — typing nothing is not a step"
-      (let [m (msg #(screen/drive! (screen/open (page (atom []))) [{:fill "q"}]))]
+      (let [m (msg #(screen/drive! (screen/open! (page (atom []))) [{:fill "q"}]))]
         (is (str/includes? m ":value"))))
     (testing "steps that are not maps refuse readably"
-      (let [m (msg #(screen/drive! (screen/open (page (atom []))) "hi"))]
+      (let [m (msg #(screen/drive! (screen/open! (page (atom []))) "hi"))]
         (is (str/includes? m "steps"))))
     (testing "a good script runs in order and returns the session"
       (let [seen (atom [])
-            s    (screen/drive! (screen/open (page seen))
+            s    (screen/drive! (screen/open! (page seen))
                                 [{:fill "q" :value "web"} {:click "Go"}])]
         (is (= [[[:q/set] "web"] [[:go] nil]] @seen))
         (is (some? s))))))
@@ -738,17 +738,17 @@
   ;; wired. Validation belongs at the constructor, where the mistake was made.
   (let [msg (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))]
     (testing "a page missing a required key is refused, naming it"
-      (is (str/includes? (msg #(screen/open {:view (fn [_] [:div])})) ":state"))
-      (is (str/includes? (msg #(screen/open {:state (atom {})})) ":view")))
+      (is (str/includes? (msg #(screen/open! {:view (fn [_] [:div])})) ":state"))
+      (is (str/includes? (msg #(screen/open! {:state (atom {})})) ":view")))
     (testing "an unknown page key is refused — a typo'd :view is a blank page otherwise"
-      (let [m (msg #(screen/open {:state (atom {}) :vew (fn [_] [:div])}))]
+      (let [m (msg #(screen/open! {:state (atom {}) :vew (fn [_] [:div])}))]
         (is (some? m))
         (is (str/includes? m ":vew"))))
     (testing ":state must be something deref-and-reset can drive"
-      (is (str/includes? (msg #(screen/open {:state {} :view (fn [_] [:div])})) "atom")))
+      (is (str/includes? (msg #(screen/open! {:state {} :view (fn [_] [:div])})) "atom")))
     (testing "a ctx passes through untouched — its shape is slopp.web's business"
-      (is (some? (screen/open {:web/routes []})))
-      (is (some? (screen/open {:web/routes [] :state (atom {}) :view (fn [_] [:div])}))
+      (is (some? (screen/open! {:web/routes []})))
+      (is (some? (screen/open! {:web/routes [] :state (atom {}) :view (fn [_] [:div])}))
           "an app may be both, and the ctx's other keys are not page typos"))))
 
 (deftest a-url-is-split-the-way-a-browser-sends-it
@@ -760,7 +760,7 @@
                (fn [req] {:status 200
                           :body [:div [:h1 "Search"]
                                  [:p (or (:query-string req) "none")]]})}]}
-        b   (screen/open ctx)]
+        b   (screen/open! ctx)]
     (testing "query params reach the handler as :query-string, not a 404"
       (screen/visit! b "/search?q=web")
       (let [s (screen/of (screen/tree b))]
@@ -775,7 +775,7 @@
               :view  (fn [s] [:div [:h1 (:at s)]
                               [:a {:href "https://example.com"} "Docs"]
                               [:a {:href "#top"} "Top"]])}
-        b    (screen/open page)]
+        b    (screen/open! page)]
     (testing "an external url refuses — a headless session has nowhere to go"
       (let [m (try (screen/click! b "Docs") nil
                    (catch clojure.lang.ExceptionInfo e (ex-message e)))]
@@ -793,19 +793,19 @@
   ;; signature mismatch the reflection was chosen to avoid.
   (testing "a variadic handler receives the event"
     (let [got (atom ::never)
-          b   (screen/open {:state (atom {})
+          b   (screen/open! {:state (atom {})
                             :view  (fn [_] [:button {:on-click (fn [e & _more] (reset! got e))} "Go"])})]
       (screen/click! b "Go")
       (is (map? @got))))
   (testing "a with-meta wrapped handler receives the event"
     (let [got (atom ::never)
-          b   (screen/open {:state (atom {})
+          b   (screen/open! {:state (atom {})
                             :view  (fn [_] [:button {:on-click (with-meta (fn [e] (reset! got e)) {:why "meta"})} "Go"])})]
       (screen/click! b "Go")
       (is (map? @got))))
   (testing "the zero-arg shorthand still runs"
     (let [n (atom 0)
-          b (screen/open {:state n
+          b (screen/open! {:state n
                           :view  (fn [_] [:button {:on-click #(swap! n inc)} "Go"])})]
       (screen/click! b "Go")
       (is (= 1 @n)))))
@@ -826,7 +826,7 @@
                             [:option {:value "name"} "By name"]
                             [:option {:value "age"} "By age"]]
                            [:input {:type "checkbox" :name "agree" :on {:change [:agree/set]}}]])}
-        b    (screen/open page)]
+        b    (screen/open! page)]
     (testing "choosing an option a select carries dispatches its value"
       (screen/fill! b "sort" "age")
       (is (= [[:sort/set] "age"] @seen)))
@@ -859,7 +859,7 @@
                                 :aria-hidden "true" :tabindex "-1"}
                             [:pre "(defn rate [w z] …)"]]
                            [:button {:inert true :on {:click [:never]}} "Frozen"]])}
-        b    (screen/open page)]
+        b    (screen/open! page)]
     (testing "an aria-hidden duplicate does not make a click ambiguous"
       (screen/visit! b "/")
       (screen/click! b "/store/form/f1")
@@ -893,3 +893,70 @@
       (is (thrown? clojure.lang.ExceptionInfo (screen/lines v {:detail :porse}))))
     (testing "the valid vocabulary still passes"
       (is (= "hello" (screen/of v {:detail :prose :region "main" :list-head 3}))))))
+
+(deftest within-scopes-text-to-the-element-a-click-would-own
+  ;; slopp-ui's ask: region is pane-grain, so a question about one ROW meant
+  ;; regexing the whole pane — the exact too-broad assertion the region arity
+  ;; exists to prevent, one level down. The fix is a unification, not an
+  ;; addition: `:within` addresses by the click matcher's vocabulary (visible
+  ;; text, href, aria-label) and resolves by its bubbling notion of the
+  ;; OWNING element, then renders that subtree instead of clicking it. One
+  ;; document, one addressing scheme.
+  (let [page {:state (atom {})
+              :dispatch (fn [_ _])
+              :view  (fn [_]
+                       [:main {:data-region "main"}
+                        [:ul
+                         [:li {:on {:click [:open :rate]}}
+                          [:a {:href "/store/form/f1"} "rate"] " " [:span "[kg zone]"]]
+                         [:li {:on {:click [:open :band]}}
+                          [:a {:href "/store/form/f2"} "band-for"] " " [:span "[kg]"]]]])}
+        b    (screen/open! page)]
+    (testing "the subtree of the OWNING element — the row, not just the anchor"
+      (is (= "rate [kg zone]" (screen/text b nil {:within "rate" :detail :prose}))))
+    (testing "addressable by href too, exactly like a click"
+      (is (str/includes? (screen/text b nil {:within "/store/form/f2"}) "band-for")))
+    (testing "it composes with a region, and misses refuse listing what IS addressable"
+      (is (= "rate [kg zone]" (screen/text b "main" {:within "rate" :detail :prose})))
+      (let [e (try (screen/text b nil {:within "nope"}) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? e))
+        (is (str/includes? (ex-message e) "rate")
+            "the list is the answer to the question behind the mistake"))))
+
+  (testing "a disabled control can still be LOOKED at — the act-gates are the click's, not the address's"
+    (let [b (screen/open! {:state (atom {})
+                          :view (fn [_] [:div [:button {:disabled true :on-click (fn [_])} "Save"]])})]
+      (is (str/includes? (screen/text b nil {:within "Save"}) "Save"))))
+
+  (testing "aria-hidden content STAYS in text — it hides nothing visually, and a readout shows the screen"
+    ;; decided on purpose (slopp-ui's flag): the click set and the text set
+    ;; answer different questions and are allowed to differ. A sighted reader
+    ;; sees that span; a readout claiming to show the screen must too.
+    (is (= "decorative" (screen/of [:p [:span {:aria-hidden "true"} "decorative"]] {:detail :prose})))
+    (is (str/includes? (screen/of [:div [:p "real"] [:span {:aria-hidden "true"} "decorative"]])
+                       "decorative"))))
+
+(deftest a-page-declares-what-runs-at-boot-and-open-runs-it
+  ;; slopp-ui's <ul ×0>, root-caused by them: in a browser the entry point
+  ;; runs at page load and STARTS the loads not tied to any screen; the
+  ;; driver ran routes, views and handlers but never the entry point, so
+  ;; boot-scoped data was structurally present and materially empty — with
+  ;; nothing distinguishing "the app never asked" from "asked, not arrived".
+  ;; The page contract gains :boot — (fn [state] state'), navigate's shape —
+  ;; and open runs it once. (User decision, over route-declared loads, which
+  ;; would have quietly made route-driven-everything the required
+  ;; architecture — a forcing this project already declined once.)
+  (testing "boot runs once at open, read-call-write like navigate"
+    (let [page {:state (atom {:projects {:status :absent}})
+                :boot  (fn [s] (assoc s :projects {:status :loading}))
+                :view  (fn [s] [:div [:p (name (get-in s [:projects :status]))]])}
+          b    (screen/open! page)]
+      (is (= "loading" (screen/text b nil {:detail :prose}))
+          "the screen shows the app ASKED — its loading state, not an absence")))
+  (testing "a page without :boot is unchanged"
+    (let [b (screen/open! {:state (atom {}) :view (fn [_] [:p "hi"])})]
+      (is (= "hi" (screen/text b nil {:detail :prose})))))
+  (testing "a :boot that is not callable refuses at open"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #":boot"
+                          (screen/open! {:state (atom {}) :view (fn [_] [:p "x"]) :boot 42})))))

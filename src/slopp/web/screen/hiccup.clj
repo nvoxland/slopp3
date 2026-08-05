@@ -129,6 +129,31 @@
                      [x])))
          vec)))
 
+(def inline-tags
+  "Tags whose content belongs on the SAME line as its neighbours — a fact
+  about READING hiccup, which is why it lives here and the renderer consumes
+  it: the same split decides what joins a rendered line and which element OWNS
+  a label when `:within` scopes to it.
+
+  This one set is the difference between a readable screen and a blob. The
+  naive readout — every string in tree order, joined by spaces — renders
+  `[:h1 \"code\"] [:p \"3 modules…\"]` as `code 3 modules…`, and a wrong
+  sentence in the middle of a run-on line is invisible.
+
+  **Everything NOT listed here starts a new line**, and that direction is the
+  deliberate one: a tag this set has not heard of is more usefully
+  over-separated than silently glued to its neighbour. Over-separation is
+  ugly and readable; gluing hides exactly the defect a reader came for.
+
+  **`:label` is NOT here, and it is the one that tests the rule.** It is
+  genuinely inline in HTML, so it belonged by the letter — and in a form it is
+  almost always a ROW. Left inline it rendered two separate toggles as one
+  wrong line reporting two controls. Reported from a real screen by the author
+  of this set, handing back their own entry. The asymmetry decides it: gluing
+  two controls together is a misreading, and the cost of being wrong the other
+  way is a spurious newline."
+  #{:a :span :small :strong :em :code :b :i :abbr :time :sub :sup :kbd})
+
 (defn nodes
   "Every ELEMENT in `node`, depth-first, itself included.
 
@@ -208,40 +233,19 @@
          (mapcat #(when (vector? %) (node-paths % (cons node ancestors)))
                  (kids node)))))
 
-(defn target-node
-  "The one clickable element a click on `target` would reach, or a THROW that
-  says why not.
+(defn locate
+  "The one element `target` addresses, resolved exactly as a click resolves —
+  visible TEXT, `:href`, or `:aria-label`; bubbling to the nearest ancestor
+  carrying a `:click` handler or an `:href`; hidden duplicates yielding to the
+  reachable control — or a THROW that says why not (nothing says it; more
+  than one distinct control answers).
 
-  `target` matches an element's visible TEXT, its `:href`, or its
-  `:aria-label` — the things a person says when they mean \"click that\", plus
-  the one an icon-only control has instead of text. The element that HANDLES
-  the click is resolved the way a browser resolves it: the named element
-  itself, or the nearest ancestor carrying a `:click` handler (either idiom)
-  or an `:href` — bubbling, which is DOM semantics and not delegation. (What
-  stays unsupported is hand-rolled `document.addEventListener` delegation:
-  that lives in `:cljs` and never runs here.)
-
-  **The page's own not-a-control statements are honoured.** An element with
-  `:aria-hidden \"true\"` or `:inert` is out of the user-reachable set, so a
-  deliberately label-less duplicate (an outline row linking the same form
-  twice, the skeleton copy hidden from the accessibility tree) does not make a
-  click ambiguous — a browser has exactly one reachable control there, and so
-  does this. A hidden element that is the SOLE match still clicks (a mouse
-  reaches it); an `:inert` one never does — a browser delivers no events to
-  it, so it refuses like `disabled`. Reported from a real page whose refusal
-  suggested labelling the duplicate, which was precisely the accessibility bug
-  its author had avoided on purpose.
-
-  Refusals, each a different bug, never one shrug:
-
-  - nothing says it — and the message lists what IS clickable
-  - it is on the screen but nothing over it handles a click
-  - more than one distinct REACHABLE control answers to it
-  - the control is DISABLED or INERT — a browser fires nothing
-
-  Two matches that resolve to the SAME control (a label and its href, a span
-  and its sibling inside one button) are one click, not an ambiguity; matches
-  are deduped by the resolved element."
+  This is the ADDRESSING half of [[target-node]], shared so `:within` scoping
+  speaks the same vocabulary as clicking: two addressing schemes for one
+  document was a reader's burden (slopp-ui), and the click matcher is the one
+  proven on real pages. What it deliberately does NOT apply is the click's
+  act-gates — a `disabled` or `inert` control refuses to be PRESSED, but it
+  is on the screen and can be looked at."
   [t target]
   (let [pairs      (node-paths t)
         clickable? (fn [n] (and (vector? n)
@@ -263,41 +267,34 @@
         reachable  (remove hidden? resolved)
         resolved   (if (seq reachable) reachable resolved)]
     (cond
-      (= 1 (count resolved))
-      (let [n (first resolved)
-            a (attrs n)]
-        (cond
-          (:disabled a)
-          (throw (ex-info (str (pr-str target) " is disabled — a browser fires"
-                               " nothing on a disabled control, so neither does"
-                               " this. Whatever disables it in the app's state"
-                               " is the thing to change first")
-                          {:target target :disabled true}))
-          (:inert a)
-          (throw (ex-info (str (pr-str target) " is inert — a browser delivers"
-                               " no events to an inert element, so neither does"
-                               " this. Whatever marks it inert is the thing to"
-                               " change first")
-                          {:target target :inert true}))
-          :else n))
+      (= 1 (count resolved)) (first resolved)
 
       (seq resolved)
       (throw (ex-info (str (count resolved) " distinct controls answer to " (pr-str target)
-                           " — a click that picks one of them is a guess."
+                           " — picking one of them is a guess."
                            " Name an :href instead, or make the labels differ")
                       {:target target :matches (count resolved)}))
 
+      ;; found-but-unhandled: for ADDRESSING this is the answer, not a bug —
+      ;; a plain element can be looked at. The named element itself owns the
+      ;; scope when nothing above it claims a capability.
+      ;; found-but-unhandled: for ADDRESSING this is an answer, not a bug —
+      ;; a plain element can be looked at. But two plain elements saying the
+      ;; same thing are still a guess; the first-pick this arm briefly held
+      ;; is the exact silent choice the region and click arms just lost.
       (seq named)
-      (throw (ex-info (str (pr-str target) " is on this screen but neither it nor"
-                           " anything above it handles a click — no :on-click,"
-                           " no :on {:click …}, no :href on the element or its"
-                           " ancestors. Found in: "
-                           (pr-str (mapv (comp first first) named)))
-                      {:target target}))
+      (let [bare (distinct (map first named))]
+        (if (= 1 (count bare))
+          (first bare)
+          (throw (ex-info (str (count bare) " elements say " (pr-str target)
+                               " and none of them is a control — scoping to"
+                               " one of them is a guess. Make the texts"
+                               " differ, or address an enclosing control")
+                          {:target target :matches (count bare)}))))
 
       :else
       (throw (ex-info (str "nothing on this screen says " (pr-str target)
-                           " — clickable text here: "
+                           " — addressable here: "
                            (pr-str (vec (sort (distinct (keep (fn [[n _]]
                                                                 (when (clickable? n)
                                                                   (or (not-empty (text n))
@@ -305,6 +302,73 @@
                                                                       (:href (attrs n)))))
                                                               pairs))))))
                       {:target target})))))
+
+(defn target-node
+  "The one clickable element a click on `target` would reach, or a THROW that
+  says why not.
+
+  Resolution is [[locate]]'s — one vocabulary (visible text, `:href`,
+  `:aria-label`), one bubbling notion of the owning element, hidden duplicates
+  yielding to the reachable control — shared with `:within` scoping so
+  looking and pressing cannot drift apart. What this adds is the click's
+  ACT-GATES, refusals about pressing rather than finding:
+
+  - the resolved element carries no capability — it is on the screen but
+    neither it nor anything above it handles a click
+  - the control is DISABLED or INERT — a browser fires nothing
+
+  Two matches that resolve to the SAME control (a label and its href, a span
+  and its sibling inside one button) are one click, not an ambiguity."
+  [t target]
+  (let [n (locate t target)
+        a (attrs n)]
+    (cond
+      (not (or (handler n :click) (:href a)))
+      (throw (ex-info (str (pr-str target) " is on this screen but neither it nor"
+                           " anything above it handles a click — no :on-click,"
+                           " no :on {:click …}, no :href on the element or its"
+                           " ancestors. Found in: " (pr-str [(first n)]))
+                      {:target target}))
+
+      (:disabled a)
+      (throw (ex-info (str (pr-str target) " is disabled — a browser fires"
+                           " nothing on a disabled control, so neither does"
+                           " this. Whatever disables it in the app's state"
+                           " is the thing to change first")
+                      {:target target :disabled true}))
+
+      (:inert a)
+      (throw (ex-info (str (pr-str target) " is inert — a browser delivers"
+                           " no events to an inert element, so neither does"
+                           " this. Whatever marks it inert is the thing to"
+                           " change first")
+                      {:target target :inert true}))
+
+      :else n)))
+
+(defn scope-node
+  "The subtree `:within` scopes to: [[locate]]'s element, widened to the
+  BLOCK that owns its line.
+
+  Two modes, two notions of ownership, deliberately: a CLICK bubbles to the
+  nearest element with a capability (the innermost link wins, as in a
+  browser); a LOOK widens to the nearest block-level element, because the
+  question behind `:within \"rate\"` is about the ROW that line renders as —
+  asking it of the inline anchor would answer with the one word you already
+  typed. The block/inline split is [[inline-tags]], the same fact that
+  decides what joins a rendered line, so the scope you get is exactly the
+  line-owning element you see."
+  [t target]
+  (let [n (locate t target)]
+    (if-not (contains? inline-tags (tag n))
+      n
+      (let [ancestors (some (fn [[node anc]] (when (identical? node n) anc))
+                            (node-paths t))
+            ancestors (or ancestors
+                          (some (fn [[node anc]] (when (= node n) anc))
+                                (node-paths t)))]
+        (or (first (remove #(contains? inline-tags (tag %)) ancestors))
+            n)))))
 
 (defn region
   "The subtree `name` addresses via `:data-region`, or a THROW naming the
