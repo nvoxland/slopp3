@@ -1337,9 +1337,22 @@ render, a `:view` to re-render after a click.
   it lives in `:cljs` and never runs here. You rarely need it: both libraries
   attach handlers to elements for you, precisely so a re-render does not strand
   them.
-- **Prefer the DATA form where you have the choice.** A serializable action is
-  the one shape the readout can report: `Like [click :like-video]` answers what
-  a click DOES, where a closure can only be marked `[click]`.
+- **Prefer the DATA form where you have the choice — and for an INPUT it is the
+  only portable one.** It reaches `:dispatch` as `(action value)`: the action
+  verbatim, the typed text as a SCALAR, no event map invented by anybody.
+  **Never write a handler that reads a value out of an event**
+  (`(:value e)`, `(get-in e [:target :value])`). Replicant's real event map
+  carries `:replicant/dom-event` and no `:value` — the text is behind
+  `(.. e -target -value)`, which is interop and cannot run on a JVM. A handler
+  reading an invented `:value` passes every headless test and does nothing in a
+  browser, which is the one direction of wrong that a test actively conceals.
+  **The rule that dissolves it:** your `:cljs` dispatcher normalises the event
+  to a scalar, your `:cljc` interpreter takes `(state action value)` and never
+  sees an event of any shape — so neither driver's event can be right while the
+  other is wrong.
+  The data form also pays a second dividend: a serializable action is the one
+  shape the readout can REPORT. `Like [click :like-video]` answers what a click
+  DOES, where a closure can only be marked `[click]`.
 - **Four ways slopp REFUSES a page it cannot open**, three at the write and one
   at `done`: the entry in a `:cljs` namespace; the entry taking arguments
   (slopp calls it with none); a SECOND `^:web/page` (the scan would answer from
