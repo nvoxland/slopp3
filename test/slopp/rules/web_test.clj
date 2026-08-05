@@ -14,7 +14,7 @@
   discovers."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.rules.web :as web] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.web-test :as web-test]))
+            [slopp.rules.web :as web] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.web-test :as web-test] [clojure.string :as str]))
 
 (deftest routes-derive-from-stored-nodes
   (let [src (str "(ns shop.api)\n\n"
@@ -690,7 +690,7 @@
         (let [r (ops/add-form! sess 'ui.core
                                "(defn ^:web/page app \"A.\" [opts] {:state (atom {}) :view (fn [_] [:div])})"
                                :prompt "an entry that wants configuring")]
-          (is (re-find #"takes arguments" (str (:error r))) (pr-str r))
+          (is (re-find #"no zero arity" (str (:error r))) (pr-str r))
           (is (nil? (store/form-named (:store @sess) 'ui.core 'app)))))
 
       (testing "a zero-arg entry lands"
@@ -755,4 +755,89 @@
             (is (= 'demo.app/app (:form (first r))))
             (is (some #{'demo.app.views} (:cljs (first r)))
                 "naming the namespace that stranded it is the finding — the entry is fine"))))
+      (finally (ops/close! sess)))))
+
+(deftest ^:external the-page-marker-sits-on-a-zero-arg-public-defn
+  ;; Review B-F2/F3: the gate graded the shape its author imagined. A
+  ;; `(def ^:web/page app 42)` passed ("takes arguments" cannot fire on a def)
+  ;; and CCE'd at drive time; a defmethod DISCARDS name metadata at
+  ;; macroexpansion so its marker lands on nothing; a `defn-` page passed the
+  ;; gate while being invisible to the tool's ns-publics scan — the store
+  ;; answering "no ^:web/page" while carrying a gate-approved one is a
+  ;; confident wrong answer. And the strict direction was wrong too: a
+  ;; multi-arity entry WITH a zero arity was refused for arguments slopp
+  ;; never passes.
+  (let [sess (external/open!)]
+    (try
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (ops/ingest! sess 'ui.core "(ns ui.core)\n\n(defn seed \"S.\" [x] x)\n")
+
+      (testing "a def carrier is refused — its arity cannot be read from the form"
+        (let [r (ops/add-form! sess 'ui.core "(def ^:web/page app 42)"
+                               :prompt "marker on a def")]
+          (is (re-find #"zero-arg" (str (:error r))) (pr-str r))))
+
+      (testing "a defmethod carrier is refused — the marker is discarded at macroexpansion"
+        (let [r0 (ops/add-form! sess 'ui.core "(defmulti route \"R.\" :k)"
+                                :prompt "a multi to hang the method on")
+              r  (ops/add-form! sess 'ui.core "(defmethod ^:web/page route :home [x] x)"
+                                :prompt "marker on a defmethod")]
+          (is (nil? (:error r0)) (pr-str r0))
+          (is (re-find #"defmethod" (str (:error r))) (pr-str r))))
+
+      (testing "a private page is refused — invisible to the tool's scan"
+        (let [r (ops/add-form! sess 'ui.core
+                               "(defn- ^:web/page hidden \"H.\" [] {:state (atom {}) :view (fn [_] [:div])})"
+                               :prompt "marker on a private defn")]
+          (is (re-find #"(?i)private" (str (:error r))) (pr-str r))))
+
+      (testing "a multi-arity entry WITH a zero arity lands — slopp can call it with none"
+        (let [r (ops/add-form! sess 'ui.core
+                               (str "(defn ^:web/page app \"A.\""
+                                    " ([] {:state (atom {}) :view (fn [_] [:div])})"
+                                    " ([x] x))")
+                               :prompt "zero arity exists, so the refusal's rationale does not apply")]
+          (is (nil? (:error r)) (pr-str r))))
+      (finally (ops/close! sess)))))
+
+(deftest ^:external declaring-cljs-reports-the-pages-it-strands
+  ;; Review B-F6: stranding happens with NO write to the page — declaring a
+  ;; dependency :cljs changes no form, so the page's done has nothing to hang
+  ;; the finding on, and the old prose claimed a coverage the advisory could
+  ;; not deliver. The write that does the stranding is the surface that can
+  ;; name it at the moment it happens.
+  ;;
+  ;; The fixture ASSERTS its own construction: ui.app requiring ui.views is a
+  ;; cross-MODULE require, and the first cut of this test left that ingest
+  ;; refused and unchecked — so the strand report was measured against a
+  ;; store where the page never existed, and [] looked like a bug in the
+  ;; report. A fixture that failed to build satisfies every absence assertion
+  ;; downstream of it.
+  (let [sess (external/open!)]
+    (try
+      (ops/config-file! sess "capabilities" :key "web.enabled" :value "true"
+                        :prompt "opt into HTTP")
+      (let [r1 (ops/ingest! sess 'ui.views "(ns ui.views)\n\n(defn view \"V.\" [s] [:div])\n")
+            _  (ops/module-dep! sess "ui.app" "ui.views" :prompt "the page renders the views")
+            r2 (ops/ingest! sess 'ui.app
+                            (str "(ns ui.app (:require [ui.views :as v]))\n\n"
+                                 "(defn ^:web/page page \"P.\" [] {:state (atom {}) :view v/view})\n"))]
+        (is (nil? (:error r1)) (pr-str r1))
+        (is (nil? (:error r2)) (pr-str r2)))
+
+      (testing "the declaration that strands a page says so, naming page and culprit"
+        (let [r (ops/module-platform! sess "ui.views" "cljs"
+                                      :prompt "views to the client — the stranding move")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= '[{:page ui.app/page :cljs [ui.views]}] (:stranded-pages r)) (pr-str r))
+          (is (str/includes? (str (:warning r)) "unreachable"))))
+
+      (testing "a later unrelated :cljs declaration does not re-report the standing strand"
+        (ops/ingest! sess 'ui.other "(ns ui.other)\n\n(defn f \"F.\" [x] x)\n")
+        (let [r (ops/module-platform! sess "ui.other" "cljs"
+                                      :prompt "unrelated client module")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:stranded-pages r))
+              "a standing stranding belongs to the declaration that caused it")))
       (finally (ops/close! sess)))))

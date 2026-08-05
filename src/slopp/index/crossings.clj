@@ -104,17 +104,20 @@
     :to         "slopp.web.screen's driver, which opens it on a JVM and
                  presses things"
     :markers    #{:web/page}
-    :checked-by "web-page-unreachable refuses an entry in a :cljs namespace,
-                 one taking arguments, and a SECOND entry; the web-page-reach
-                 advisory walks the entry's namespace closure for :cljs"
-    :blind      "every one of those grades REACHABILITY and none of them
-                 grades whether the app WORKS: that :view returns hiccup, that
-                 :state is an atom, that a handler does anything. And a
-                 FUNCTION handler on an input cannot be portable at all — in a
-                 browser it receives a DOM event, so one written against the
-                 map passed here runs headless and does nothing served. The
-                 data form is the only route with no such gap, and nothing
-                 makes an app take it"}
+    :checked-by "web-page-unreachable refuses an entry that is not a public
+                 zero-arity defn (def, defmethod, private, no [] arity), one
+                 in a :cljs namespace, and a SECOND entry; the web-page-reach
+                 advisory re-grades a CHANGED page's closure at done;
+                 module_platform reports the pages a :cljs declaration
+                 strands; screen/open refuses a page whose :state is not an
+                 atom or whose keys are typo'd"
+    :blind      "all of that grades whether the app OPENS and none of it
+                 grades whether the app WORKS: that :view returns hiccup,
+                 that a handler does anything. And a FUNCTION handler on an
+                 input cannot be portable at all — in a browser it receives a
+                 DOM event, so one written against the map passed here runs
+                 headless and does nothing served. The data form is the only
+                 route with no such gap, and nothing makes an app take it"}
 
    {:kind       :http/foreign-route
     :leaves     "a link to a path this store does not serve"

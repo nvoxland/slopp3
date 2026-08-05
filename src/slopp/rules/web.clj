@@ -549,6 +549,39 @@
                         " pane at a URL that looks valid. The prefix ROOT is not"
                         " covered by the fallback and still needs its own route")}))))
 
+(defn ^:export page-cljs-reach
+  "The `:cljs` namespaces `ns-sym`'s require closure reaches, sorted — empty
+  when a JVM can load the whole closure.
+
+  ONE producer on purpose: the `web-page-reach` done-advisory, the full_check
+  sweep, and `module_platform`'s stranded-page report all answer from here,
+  because a rule that refuses at one surface and a report that lists at
+  another must agree, and they only can if they are one derivation."
+  [st ns-sym]
+  (->> (store/ns-closure st ns-sym)
+       (filter #(= :cljs (store/platform-for st %)))
+       sort
+       vec))
+
+(defn ^:export stranded-pages
+  "Every `^:web/page` in `st` whose namespace closure reaches `:cljs`, as
+  `[{:page ns/name :cljs [namespaces]} …]` — empty when every page opens.
+
+  This is the whole-store face of [[page-cljs-reach]], and it exists for the
+  surface the done-advisory structurally cannot serve: declaring a namespace
+  `:cljs` strands a page WITHOUT any write to the page, so the done that
+  follows has no changed form to hang the finding on. `module_platform` is
+  the write that does the stranding, so `module_platform` is where this
+  report belongs — the reader who broke the reach is told at the moment they
+  broke it, not at the next full_check."
+  [st]
+  (vec (for [n     (keys (:namespaces st))
+             f     (store/forms st n)
+             :when (and (:name f) (:web/page (web/web-name-meta f)))
+             :let  [cljs (page-cljs-reach st n)]
+             :when (seq cljs)]
+         {:page (symbol (str n) (str (:name f))) :cljs cljs})))
+
 (defn web-page-reach-check
   "Done-advisory (D-web): a `^:web/page` entry whose namespace CLOSURE reaches
   a `:cljs` namespace. Reports `{:form :cljs [namespaces]}`; inert until the
@@ -560,11 +593,14 @@
   passes the gate and fails the tool — and that is where a real app lands,
   because the entry is small and the views are where the code is.
 
-  **An ADVISORY rather than a gate, and the reason is structural.** The reach
-  changes when ANOTHER form moves: declaring some namespace `:cljs` today can
-  strand an entry written last week, and no write to that entry ever happens.
-  A per-form write gate cannot see it, however it is written — the same shape
-  as every other `:grain :done` rule here.
+  **Its FRAME, stated honestly (the review caught the prose overstating it):**
+  at `done` this sees only pages in `changed`, so the case its class exists
+  for — declaring some OTHER namespace `:cljs`, which strands an entry nobody
+  wrote to — is silent here. Two surfaces cover that case instead:
+  `module_platform` reports [[stranded-pages]] at the write that does the
+  stranding, and the `full_check` sweep re-grades every page. The advisory
+  earns its keep on the ordinary edit-the-page path; it is not the safety
+  net, and prose claiming otherwise was teaching a false comfort.
 
   Namespace grain, because platform is declared per namespace, so a finer
   answer would be a proxy for one slopp does not actually have.
@@ -578,9 +614,7 @@
                  (when-let [e (store/form-by-id st* fid)]
                    (when (:web/page (web/web-name-meta e))
                      (let [own  (store/ns-of-form-id st* fid)
-                           cljs (->> (store/ns-closure st* own)
-                                     (filter #(= :cljs (store/platform-for st* %)))
-                                     sort vec)]
+                           cljs (page-cljs-reach st* own)]
                        (when (seq cljs)
                          {:form (symbol (str own) (str (:name e)))
                           :cljs cljs})))))

@@ -20,7 +20,7 @@
             [slopp.edit :as edit]
             [slopp.edit.refactor :as refactor]
             [slopp.index.normalize :as normalize]
-            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as project.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.kernel.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.store.db :as db] [rewrite-clj.parser :as p] [slopp.read.history :as history] [slopp.project.deps :as project.deps] [slopp.ops.engine :as session] [slopp.read.modules :as modules] [slopp.read.orient :as orient] [slopp.edit.modules :as edit.modules] [slopp.rules :as rules] [slopp.ops.done :as done] [slopp.rules.shape :as shape] [slopp.index.analyze :as analyze] [slopp.edit.lintgate :as lintgate] [slopp.project.capabilities :as capabilities] [clojure.edn :as edn] [slopp.store.fields :as fields] [slopp.index.refs :as refs] [slopp.read.telemetry :as telemetry] [slopp.store.artifacts :as artifacts] [clojure.java.io :as io] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.kernel.boot :as boot] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates] [slopp.rules.web :as rules.web]))
 
 (defn reap-idle-images!
   "Stop parked branch images idle past the session TTL (the session's reaper
@@ -639,7 +639,11 @@ recompiled (session/after-write! session ns-sym)]
                    (if-let [[st' d] (store/append-form base ns-sym node
                                                        :prompt prompt :agent agent
                                                        :before before)]
-                     (if-let [merr (when nm (gates/gate-refusal st' ns-sym nm))]
+                     ;; nameless forms too: a defmethod names its TARGET, so nm is nil
+                     ;; here — and `(when nm …)` skipped the whole chassis for
+                     ;; exactly the carrier whose ^:web/page marker can only be
+                     ;; caught by a gate's nameless arm. Named gates no-op on nil.
+                     (if-let [merr (gates/gate-refusal st' ns-sym nm)]
                        {:error merr}
                        {:store st' :delta d})
                      {:error (str "no namespace " ns-sym " (ingest it first)")})))
@@ -3278,7 +3282,13 @@ recompiled (session/after-write! session ns-sym)]
   into the JVM oracle). One :module-platform delta carrying its why (:prompt);
   last write per module wins. Namespace grain, like module_purity — the
   most-specific declaration governs. Read platforms via query_depends
-  {modules true}."
+  {modules true}.
+
+  A `:cljs` declaration additionally reports the `^:web/page` entries it
+  STRANDS (`:stranded-pages` + `:warning`): stranding happens with no write to
+  the page, so the page's own done has nothing to hang the finding on, and
+  the write that does the stranding is the one surface that can name it at
+  the moment it happens."
   [session module platform & {:keys [prompt agent remove]}]
   (let [module   (str module)
         ;; every surface spells platforms WITH the colon, and MCP/JSON carries
@@ -3314,23 +3324,46 @@ recompiled (session/after-write! session ns-sym)]
                    " only (compiled to JS, never loaded into the oracle).")}
 
       :else
-      (let [st' (session/commit-appended!
-                 session
-                 #(first (store/record-module-platform % module platform
-                                                       :prompt prompt :agent agent))
-                 [])]
+      ;; `already` is read BEFORE the commit advances the session — bound
+      ;; after it, the diff compares the new store to itself and the report
+      ;; is empty forever (caught in review of this very change).
+      (let [already  (when (= :cljs platform)
+                       (set (map :page (rules.web/stranded-pages (:store @session)))))
+            st'      (session/commit-appended!
+                      session
+                      #(first (store/record-module-platform % module platform
+                                                            :prompt prompt :agent agent))
+                      [])
+            ;; only pages THIS declaration stranded — a standing stranding
+            ;; belongs to the declaration that caused it, and re-reporting it
+            ;; on every later one buries the new fact under the old (B-F6)
+            ;; NOT clojure.core/remove — the :remove kwarg SHADOWS it here, and
+            ;; calling the shadow is an NPE on every :cljs declaration; the
+            ;; whole external tier went red on it in one theme
+            stranded (when (= :cljs platform)
+                       (seq (filter #(not (contains? already (:page %)))
+                                    (rules.web/stranded-pages st'))))]
         ;; This verb checks NOTHING about the code — it records a routing fact.
         ;; Whether a :cljc/:cljs namespace actually compiles for its declared
         ;; platform is compile_client's answer, and it can arrive much later.
         ;; An empty :verified is the honest shape (D-surface-honesty).
-        {:module module :platform platform
-         :platforms (:module-platforms st')
-         :verified []
-         :unverified [:compilation]
-         :note (str "the platform is RECORDED, not verified: nothing here checks"
-                    " that " module " compiles for :" (name platform)
-                    ". compile_client is what proves it, and its warnings anchor"
-                    " to the owning form.")}))))
+        (cond-> {:module module :platform platform
+                 :platforms (:module-platforms st')
+                 :verified []
+                 :unverified [:compilation]
+                 :note (str "the platform is RECORDED, not verified: nothing here checks"
+                            " that " module " compiles for :" (name platform)
+                            ". compile_client is what proves it, and its warnings anchor"
+                            " to the owning form.")}
+          stranded (assoc :stranded-pages (vec stranded)
+                          :warning (str "this declaration leaves "
+                                        (count stranded)
+                                        " ^:web/page entr"
+                                        (if (= 1 (count stranded)) "y" "ies")
+                                        " unreachable from a JVM — the closure now"
+                                        " reaches :cljs, so the screen tool and every"
+                                        " headless test fall back to lookalikes."
+                                        " Move or split what the page reaches.")))))))
 
 (defn- shadow-warning
   "A warning when `ns-sym` names a namespace a CLASSPATH resource already owns

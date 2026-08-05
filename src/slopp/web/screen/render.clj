@@ -37,75 +37,136 @@
   is a spurious newline."
   #{:a :span :small :strong :em :code :b :i :abbr :time :sub :sup :kbd})
 
-(def heading-levels
-  "Heading tag → its level, so `#`/`##` carries the structure a reader uses to
-  find their place on a page they cannot see."
-  {:h1 1 :h2 2 :h3 3 :h4 4 :h5 5 :h6 6})
+(defn escape
+  "Page text made inert: `&` `<` `>` escaped, HTML-style.
 
-(defn inline-node?
-  "Whether `x` joins the line in progress rather than starting one."
-  [x]
-  (or (string? x)
-      (number? x)
-      (and (vector? x) (contains? inline-tags (first x)))))
+  This is the load-bearing half of the v2 format. The old markers shared an
+  alphabet with page text, so a page containing `# xyz` or `[click]` was
+  unfalsifiable — and the first real consumer renders CLOJURE SOURCE, a domain
+  made of `#`, `[…]` and angle brackets. With every text node escaped, a raw
+  `<` in the output can only be the reader speaking, and the provenance rule
+  holds: an unprefixed tag was on the page, `slopp:*` was derived, everything
+  else is words."
+  [s]
+  (-> s
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
 
-(defn inline-text
-  "Inline node `x` as a single string.
+(defn- open-tag
+  "One tag with its kept attributes: `(open-tag \"input\" [[:name \"q\"] [:checked true]] true)`
+  → `<input name=\"q\" checked/>`.
 
-  **An `:href` always travels with its text** — at `:structured` detail. Half
-  of what anyone checks on a page is where something POINTS: that an outline
-  row links to a form and not to source, that a breadcrumb re-centres, that a
-  summary row reaches the thing it summarises. A readout that drops addresses
-  answers the easier half of every question and looks complete doing it.
+  `pairs` is ORDERED — attr order is part of the format, so assertions can
+  match a whole tag by string. A `true` value renders HTML-boolean style
+  (`checked`, `disabled`, `selected`); nil/false render nothing; every value
+  is escaped with `\"` included, because attr values live inside quotes."
+  [tag-name pairs self-close?]
+  (let [esc #(-> (str %)
+                 (str/replace "&" "&amp;")
+                 (str/replace "<" "&lt;")
+                 (str/replace ">" "&gt;")
+                 (str/replace "\"" "&quot;"))]
+    (str "<" tag-name
+         (apply str (for [[k v] pairs
+                          :when (and (some? v) (not (false? v)))]
+                      (if (true? v)
+                        (str " " (name k))
+                        (str " " (name k) "=\"" (esc v) "\""))))
+         (if self-close? "/>" ">"))))
 
-  At `:prose` it does not, because an assertion that only asks whether the page
-  SAYS something is paying for every address it will never read.
+(def kept-attrs
+  "Which attributes each kept tag shows, IN ORDER — attr order is part of the
+  format so a whole tag can be asserted as one string.
 
-  A `:class` travels only when `opts` asks. Reading a screen it is noise on
-  every element; checking an overlay it is the entire content of the check."
+  The test for membership mirrors the tag whitelist's: an attribute survives
+  when it carries something an agent acts on or asserts — an address
+  (`name`/`id`/`placeholder`/`aria-label`), a state a browser shows
+  (`value`/`checked`/`selected`/`disabled`), a destination (`href`/`action`).
+  `style` and `class` say how things LOOK, which a text readout cannot honour
+  and must not pretend to — `class` survives only on `<svg>`, where it is the
+  census vocabulary. Dropping class everywhere else is also what makes sugar
+  verifiable: `:h1.big` and `[:h1 {:class \"big\"}]` must render identically,
+  and they can only be seen to when class reaches no output.
+
+  Fields keep every attr [[slopp.web.screen/fill!]] addresses by — the old
+  format showed the FIRST addressing attr and the review's lead finding was
+  its mirror (a field the screen denied while fill! drove it). All of them
+  visible means what you see is always something you can drive."
+  {:a        [:href]
+   :input    [:type :name :id :placeholder :value :checked :disabled :aria-label]
+   :textarea [:name :id :placeholder :disabled :aria-label]
+   :select   [:name :id :disabled :aria-label]
+   :option   [:value :selected]
+   :button   [:type :disabled :aria-label]
+   :form     [:action :method]
+   :img      [:alt]
+   :label    [:for]})
+
+(defn handler-note
+  "The `slopp:on` value for `node`, or nil — the one fact HTML has no attr
+  for, which is why it carries the derived prefix: what handles an event here.
+
+  `click :orders/expand true` — the event, the action, and its SCALAR
+  arguments. Scalars travel because they are what tell two neighbouring
+  controls apart (`true`/`false` twins); an entity passed whole is elided as
+  `…`, the noise that motivated showing the kind alone. A function handler is
+  `click (fn)` — honestly opaque, and the standing argument for the data
+  idiom: a serializable action is the one shape a readout can REPORT.
+
+  Input handlers report under the event name the app wrote (`change` for
+  Reagent's `:on-change`, `input` for a Replicant `:on` map), so the
+  annotation round-trips to the code you would grep for."
+  [node]
+  (let [fmt (fn [ev [how v]]
+              (case how
+                :fn   (str ev " (fn)")
+                :data (if (and (coll? v) (keyword? (first v)))
+                        (str ev " "
+                             (str/join " " (cons (first v)
+                                                 (map #(if (or (coll? %) (fn? %)) "…" (pr-str %))
+                                                      (rest v)))))
+                        (str ev " " (pr-str v)))
+                nil))]
+    (or (some->> (hiccup/handler node :click) (fmt "click"))
+        (some->> (hiccup/handler node :change) (fmt "change"))
+        (some->> (hiccup/handler node :input) (fmt "input")))))
+
+(defn- inline-str
+  "An inline node as its piece of the line — escaped text for the text-only
+  tags, a real `<a>` for links, a real tag wherever a handler needs its
+  `slopp:on` to ride. Pieces CONCATENATE (a browser inserts nothing between
+  adjacent nodes), so spacing comes from the markup — the CSS-margin lesson,
+  kept on purpose. Whitespace squeezes but edges survive: a trailing space in
+  `\"docs: \"` is the markup's own gap.
+
+  At `:prose` every tag drops away and only the words remain, unescaped —
+  prose makes no structural claims, so it has nothing to be confused with."
   [x opts]
-  (cond
-    (string? x) x
-    (number? x) (str x)
-    (vector? x)
-    (let [a      (hiccup/attrs x)
-          prose? (= :prose (:detail opts))
-          inner  (str/join "" (map #(inline-text % opts) (hiccup/kids x)))]
-      (cond-> inner
-        (and (:href a) (not prose?))
-        (str " [" (:href a) "]")
+  (let [prose? (= :prose (:detail opts))
+        squeeze #(str/replace % #"\s+" " ")]
+    (cond
+      (string? x) (if prose? (squeeze x) (squeeze (escape x)))
+      (number? x) (str x)
+      (vector? x)
+      (let [tag   (hiccup/tag x)
+            a     (hiccup/attrs x)
+            inner (str/join "" (map #(inline-str % opts) (hiccup/kids x)))]
+        (cond
+          prose?      inner
+          (= :a tag)  (str (open-tag "a" [[:href (:href a)]
+                                          [:slopp:on (handler-note x)]] false)
+                           inner "</a>")
+          (handler-note x)
+          (str (open-tag (name tag) [[:aria-label (:aria-label a)]
+                                     [:slopp:on (handler-note x)]] false)
+               inner "</" (name tag) ">")
+          :else inner))
+      :else "")))
 
-        ;; a handler with no href — an :href already says "clickable" by being
-        ;; one, and two markers on the same element is noise
-        ;; a handler with no href — an :href already says "clickable" by being
-        ;; one, and two markers on the same element is noise. The DATA form
-        ;; names its action, because a serializable handler answers what a
-        ;; click DOES and not merely that one is possible: `[click :like-video]`
-        ;; is the whole reason to prefer data in the tree.
-        (and (hiccup/handler x :click) (not (:href a)) (not prose?))
-        (str (let [[how v] (hiccup/handler x :click)]
-               (if (and (= :data how) (coll? v) (keyword? (first v)))
-                 ;; SCALAR arguments travel; anything else is elided as `…`.
-                 ;; The kind alone rendered [:docs/all true] and
-                 ;; [:docs/all false] identically, so a rail of two controls
-                 ;; read as two of the same one. A flag, an enum or a name is
-                 ;; exactly what tells neighbouring buttons apart; an entity
-                 ;; passed whole is the noise that motivated showing only the
-                 ;; kind, and it stays hidden.
-                 (str " [click "
-                      (str/join " " (cons (first v)
-                                          (map #(if (or (coll? %) (fn? %)) "…" (pr-str %))
-                                               (rest v))))
-                      "]")
-                 " [click]")))
-
-        (and ((:attrs opts) :class) (:class a))
-        (str " {" (:class a) "}")))
-    :else ""))
-
-(defn svg-summary
-  "An `<svg>` as ONE line: its own class, then a census of what is inside it
-  BY CLASS.
+(defn- svg-line
+  "An `<svg>` as ONE line: its own class as a real attr, a census of what is
+  inside it BY CLASS as its content.
 
   A diagram is coordinates. Dumping it costs a screen of context and answers
   nothing — nobody reads `M 0 0 C 12 40, 88 60, 88 100` and learns where the
@@ -116,152 +177,235 @@
   survives: a `path` is an edge in one place and a sketched box in another, so
   the tag says nothing and the class says everything. It also makes an overlay
   legible for free — `18 module-node` becoming `1 gap-w2, 17 gap-w0` IS the
-  tint check, with no pixels and no browser."
-  [node]
-  (let [own    (:class (hiccup/attrs node))
+  tint check, with no pixels and no browser. `class` survives on svg alone for
+  exactly this reason: here it is capability vocabulary, not styling."
+  [node prose?]
+  (let [a      (hiccup/attrs node)
+        own    (:class a)
         census (->> (hiccup/nodes node)
                     (keep #(:class (hiccup/attrs %)))
                     (remove #{own})
                     frequencies
                     (sort-by (juxt (comp - val) key)))]
-    (str "<svg " (or own "—")
-         (when (seq census)
-           (str " — " (str/join ", " (for [[c n] census] (str n " " c)))))
-         ">")))
-
-(def field-tags
-  "Tags that hold a VALUE rather than children — the elements a reader types
-  into or toggles.
-
-  They have no CHILDREN, so without a case of their own they render as the
-  empty string: a screen with a search box reads as a screen without one. That
-  is the same \"renders as nothing\" failure a dropped fragment causes, and it
-  is worse than showing a field unmarked, because an agent deciding what to do
-  next concludes the app has no filter."
-  #{:input :textarea :select})
-
-(defn field-text
-  "A form field as one line: what you would call it, what it holds, and whether
-  typing can change anything.
-
-  Addressed by `:placeholder` / `:name` / `:id` / `:aria-label`, whichever the
-  app happens to have written. The relationship to [[slopp.web.screen/fill!]]
-  is not identity and the difference is deliberate: `fill!` accepts ANY of the
-  four, this shows the FIRST present. So the name a reader sees is always one
-  that fills, while a field with both a placeholder and a name can still be
-  addressed by either. What must never happen is the reverse — a screen naming
-  a field you cannot then address — and showing a subset of what is accepted is
-  what guarantees it.
-
-  `[fill]` only when an `:on-change` exists. An inert field showing WITHOUT it
-  is the finding, not a gap — a box you can type into that changes nothing is
-  exactly the defect worth seeing."
-  [node opts]
-  (let [a      (hiccup/attrs node)
-        addr   (or (:placeholder a) (:name a) (:id a) (:aria-label a)
-                   (name (first node)))
-        typ    (:type a)]
-    (if (= :prose (:detail opts))
-      addr
-      (str addr
-           (when (and typ (not= "text" typ)) (str " (" typ ")"))
-           (when-let [v (not-empty (str (:value a)))] (str "=" (pr-str v)))
-           (when (hiccup/input-handler node) " [fill]")))))
+    (if prose?
+      (str "<svg " (or own "—") ">")
+      (if (seq census)
+        (str (open-tag "svg" [[:class own]] false)
+             (escape (str/join ", " (for [[c n] census] (str n " " c))))
+             "</svg>")
+        (open-tag "svg" [[:class own]] true)))))
 
 (defn emit
-  "Hiccup `node` at nesting `depth` as a seq of text lines.
+  "Hiccup → lines, in the v2 format: plain escaped text by default, a tag kept
+  only where it carries a fact an agent acts on or asserts — interactive
+  controls, enumeration (`slopp:count`/`slopp:elided`), structure (headings,
+  tables, `pre`, `img`, the svg census) — and the provenance rule over all of
+  it: an UNPREFIXED tag or attr was really on the page, `slopp:*` is derived
+  by this reader, everything else is words.
 
-  One function rather than five, because it is one traversal and splitting it
-  would need mutual recursion for no reading benefit. The cases, in order:
+  Containers (`div`/`p`/`section`/anything unlisted) are transparent: their
+  children render at the same depth, inline runs joining one line, unless the
+  container carries a HANDLER — capability keeps a tag whatever its name, so
+  a clickable `div` shows as one.
 
-  - **inline** — a string or an inline tag, trimmed onto one line
-  - **`:svg`** — censused, never descended ([[svg-summary]])
-  - **heading** — `#`/`##` by level, so a reader can find their place
-  - **`:ul`/`:ol`** — counted, then capped at `:list-head`
-  - **anything else** — a block: a `:data-region` opens a `§` section, and
-    children are gathered so consecutive INLINE children share one line while
-    each block child starts its own
+  `:prose` drops every tag and keeps the words and line breaks, unescaped —
+  it makes no structural claims, so it has nothing to be confused with.
 
-  That last clause is the whole point, and [[inline-tags]] says why.
-
-  **`:detail :prose` drops every structure MARKER and keeps every line
-  BREAK.** No `§`, no `#`, no `<ul ×N>`, no indent, no census — because the
-  common assertion is \"does it say X\" and pays for none of that. What it must
-  never become is the naive flatten this whole namespace exists to replace, so
-  the boundaries stay: a block still owns its line, since a wrong sentence in a
-  run-on line is invisible. Two things survive on purpose — `+N more`, because
-  a truncation that goes quiet is a report lying about its own scope, and a
-  bare `<svg class>`, because a picture that renders as nothing reads as a
-  section that failed."
+  `:list-head` caps list rows (nil = everything). The TEST path defaults to
+  nil, because a test's tokens are cheap and its false failure is not; the
+  `screen` tool passes 3 and the elision is a machine-visible tag, so an
+  assertion can never be eaten silently."
   [node depth opts]
-  (let [prose? (= :prose (:detail opts))]
-    (letfn [(pad [d s] (if prose? s (str (str/join (repeat d "  ")) s)))
-            (run-lines [cs d]
-              (->> cs
-                   (partition-by inline-node?)
-                   (mapcat (fn [run]
-                             (if (inline-node? (first run))
-                               (let [t (str/trim (str/join "" (map #(inline-text % opts) run)))]
-                                 (when (seq t) [(pad d t)]))
-                               (mapcat #(emit % d opts) run))))))]
-      (cond
-        (inline-node? node)
-        (let [t (str/trim (inline-text node opts))]
-          (when (seq t) [(pad depth t)]))
+  (let [prose?   (= :prose (:detail opts))
+        pad      (fn [d] (if prose? "" (apply str (repeat (* 2 d) \space))))
+        t        (hiccup/tag node)
+        a        (hiccup/attrs node)
+        note     (handler-note node)
+        inline?  (fn [x] (or (string? x) (number? x)
+                             (and (vector? x) (contains? inline-tags (hiccup/tag x)))))
+        run      (fn [ks] (-> (str/join "" (map #(inline-str % opts) ks))
+                              (str/replace #" {2,}" " ")
+                              str/trim))
+        child-lines
+        (fn [ks d]
+          (let [flush (fn [buf] (when (seq buf)
+                                  (let [s (-> (str/join "" buf)
+                                              (str/replace #" {2,}" " ")
+                                              str/trim)]
+                                    (when (seq s) [(str (pad d) s)]))))]
+            (loop [ks (seq ks), buf [], out []]
+              (cond
+                (nil? ks) (into out (flush buf))
+                (inline? (first ks))
+                (recur (next ks) (conj buf (inline-str (first ks) opts)) out)
+                :else
+                (recur (next ks) []
+                       (-> out
+                           (into (flush buf))
+                           (into (emit (first ks) d opts))))))))
+        pairs    (fn [tag-key extra a*]
+                   (concat (for [k (kept-attrs tag-key)] [k (get a* k)]) extra))]
+    (cond
+      (string? node) [(str (pad depth) (if prose? node (escape node)))]
+      (number? node) [(str (pad depth) node)]
+      (not (vector? node)) nil
 
-        (not (vector? node)) nil
+      ;; a region wraps its element's own rendering, one level in
+      (:data-region a)
+      (let [bare  (if (map? (second node))
+                    (assoc node 1 (dissoc (second node) :data-region))
+                    node)
+            inner (emit bare (inc depth) opts)]
+        (if prose?
+          inner
+          (concat [(str (pad depth) "<slopp:region name=\"" (:data-region a) "\">")]
+                  inner
+                  [(str (pad depth) "</slopp:region>")])))
 
-        :else
-        (let [tag (first node)
-              a   (hiccup/attrs node)
-              cs  (hiccup/kids node)]
-          (cond
-            (= :svg tag)
-            [(pad depth (if prose?
-                          (str "<svg " (or (:class a) "—") ">")
-                          (svg-summary node)))]
+      (#{:h1 :h2 :h3 :h4 :h5 :h6} t)
+      (let [s (hiccup/text node)]
+        [(str (pad depth) (if prose? s (str "<" (name t) ">" (escape s) "</" (name t) ">")))])
 
-            (field-tags tag)
-            [(pad depth (field-text node opts))]
+      (= :svg t)
+      [(str (pad depth) (svg-line node prose?))]
 
-            ;; A CLICKABLE block reads as one line, marker and all. A button is
-            ;; a leaf to a reader however it is built, and descending would
-            ;; drop the very attribute that says it can be clicked — which is
-            ;; what made `[:button {:on-click f} "Add"]` render as bare `Add`,
-            ;; identical to a paragraph. The limit, stated: a clickable element
-            ;; wrapping headings and lists collapses to one line too.
-            (or (hiccup/handler node :click) (:href a))
-            (let [t (str/trim (inline-text node opts))]
-              (when (seq t) [(pad depth t)]))
+      (#{:ul :ol} t)
+      (let [rows  (filterv vector? (hiccup/kids node))
+            n     (count rows)
+            cap   (:list-head opts)
+            shown (if cap (take cap rows) rows)
+            over  (when (and cap (> n cap)) (- n cap))]
+        (if prose?
+          (concat (mapcat #(emit % depth opts) shown)
+                  (when over [(str "+" over " more")]))
+          (if (zero? n)
+            [(str (pad depth) (open-tag (name t) [[:slopp:count 0] [:slopp:on note]] true))]
+            (concat [(str (pad depth) (open-tag (name t) [[:slopp:count n] [:slopp:on note]] false))]
+                    (mapcat #(emit % (inc depth) opts) shown)
+                    (when over [(str (pad (inc depth)) "<slopp:elided count=\"" over "\"/>")])
+                    [(str (pad depth) "</" (name t) ">")]))))
 
-            (heading-levels tag)
-            (let [t (str/trim (str/join "" (map #(inline-text % opts) cs)))]
-              [(pad depth (if prose?
-                            t
-                            (str (str/join (repeat (heading-levels tag) "#")) " " t)))])
+      (= :li t)
+      (let [ks (hiccup/kids node)]
+        (cond
+          prose?              (child-lines ks depth)
+          (every? inline? ks) [(str (pad depth) (open-tag "li" [[:slopp:on note]] false)
+                                    (run ks) "</li>")]
+          :else               (concat [(str (pad depth) (open-tag "li" [[:slopp:on note]] false))]
+                                      (child-lines ks (inc depth))
+                                      [(str (pad depth) "</li>")])))
 
-            (#{:ul :ol} tag)
-            ;; The COUNT is the finding, and it survives the cap: 32 rows is a
-            ;; wall a reader skims past, `×32` is one line they cannot — and an
-            ;; abbreviated rendering still supports an exact assertion. The
-            ;; `+N more` line is what keeps the cap honest; a truncation that
-            ;; did not say so would be a report lying about its own scope.
-            (let [items (filterv vector? cs)
-                  head  (:list-head opts)
-                  shown (if head (take head items) items)
-                  left  (- (count items) (count shown))]
-              (concat
-               (when-not prose?
-                 [(pad depth (str "<" (name tag) " ×" (count items) ">"))])
-               (mapcat #(emit % (inc depth) opts) shown)
-               (when (pos? left) [(pad (inc depth) (str "+" left " more"))])))
+      (= :input t)
+      (if prose?
+        [(str (pad depth) (or (:placeholder a) (:name a) (:id a) (:aria-label a) "input"))]
+        (let [a* (-> a
+                     (update :value #(or % (:default-value a)))
+                     (update :type #(some-> % name)))]
+          [(str (pad depth) (open-tag "input" (pairs :input [[:slopp:on note]] a*) true))]))
 
-            :else
-            (let [region (:data-region a)
-                  cls    (when ((:attrs opts) :class) (:class a))
-                  header (when-not prose?
-                           (cond region (str "§ " region)
-                                 cls    (str "<" (name tag) " {" cls "}>")))
-                  d      (if header (inc depth) depth)]
-              (concat (when header [(pad depth header)])
-                      (run-lines cs d)))))))))
+      (= :textarea t)
+      (let [content (str (or (:value a) (:default-value a)
+                             (apply str (filter string? (hiccup/kids node)))))
+            ls      (when (seq content) (str/split-lines content))]
+        (if prose?
+          [(str (pad depth) (or (:name a) (:id a) (:placeholder a) (:aria-label a) "textarea"))]
+          (let [ps (pairs :textarea [[:slopp:on note]] a)]
+            (cond
+              (empty? content) [(str (pad depth) (open-tag "textarea" ps true))]
+              (= 1 (count ls)) [(str (pad depth) (open-tag "textarea" ps false)
+                                     (escape content) "</textarea>")]
+              :else            (concat [(str (pad depth) (open-tag "textarea" ps false))]
+                                       (map escape ls)
+                                       [(str (pad depth) "</textarea>")])))))
+
+      (= :select t)
+      (if prose?
+        [(str (pad depth) (or (:name a) (:id a) (:aria-label a) "select"))]
+        (let [options (filterv #(= :option (hiccup/tag %)) (hiccup/kids node))]
+          (concat [(str (pad depth) (open-tag "select" (pairs :select [[:slopp:on note]] a) false))]
+                  (for [o options]
+                    (let [oa  (hiccup/attrs o)
+                          sel (or (:selected oa)
+                                  (and (some? (:value a)) (= (:value oa) (:value a))))]
+                      (str (pad (inc depth))
+                           (open-tag "option" [[:value (:value oa)] [:selected (boolean sel)]] false)
+                           (escape (hiccup/text o)) "</option>")))
+                  [(str (pad depth) "</select>")])))
+
+      (= :button t)
+      (let [label (run (hiccup/kids node))]
+        (if prose?
+          (when (seq label) [(str (pad depth) label)])
+          (let [a* (update a :type #(when (= "submit" (some-> % name)) (some-> % name)))]
+            [(str (pad depth) (open-tag "button" (pairs :button [[:slopp:on note]] a*) false)
+                  label "</button>")])))
+
+      (= :form t)
+      (let [ks (hiccup/kids node)]
+        (if prose?
+          (child-lines ks depth)
+          (let [a* (update a :method #(some-> % name))]
+            (concat [(str (pad depth) (open-tag "form" (pairs :form [[:slopp:on note]] a*) false))]
+                    (child-lines ks (inc depth))
+                    [(str (pad depth) "</form>")]))))
+
+      (= :table t)
+      (let [trs (filter #(= :tr (hiccup/tag %)) (hiccup/nodes node))
+            row (fn [tr d]
+                  (let [cells (filter #(#{:th :td} (hiccup/tag %)) (hiccup/kids tr))]
+                    (if prose?
+                      (str (pad d) (str/join " " (map hiccup/text cells)))
+                      (str (pad d) "<tr>"
+                           (apply str (for [c cells]
+                                        (str "<" (name (hiccup/tag c)) ">"
+                                             (escape (hiccup/text c))
+                                             "</" (name (hiccup/tag c)) ">")))
+                           "</tr>"))))]
+        (if prose?
+          (map #(row % depth) trs)
+          (concat [(str (pad depth) "<table>")]
+                  (map #(row % (inc depth)) trs)
+                  [(str (pad depth) "</table>")])))
+
+      (= :pre t)
+      (let [raw (fn raw [n] (cond (string? n) n
+                                  (number? n) (str n)
+                                  (vector? n) (apply str (map raw (hiccup/kids n)))
+                                  :else ""))
+            ls  (str/split-lines (raw node))]
+        (if prose?
+          ls
+          (concat [(str (pad depth) "<pre>")]
+                  (map escape ls)
+                  [(str (pad depth) "</pre>")])))
+
+      (= :img t)
+      (if prose?
+        (when-let [alt (:alt a)] [(str (pad depth) alt)])
+        [(str (pad depth) (open-tag "img" [[:alt (:alt a)] [:slopp:on note]] true))])
+
+      (= :label t)
+      (let [content (run (hiccup/kids node))]
+        (if prose?
+          (when (seq content) [(str (pad depth) content)])
+          [(str (pad depth) (open-tag "label" (pairs :label [[:slopp:on note]] a) false)
+                content "</label>")]))
+
+      ;; an inline element standing at block position is its own one-line run
+      (contains? inline-tags t)
+      (let [s (str/trim (inline-str node opts))]
+        (when (seq s) [(str (pad depth) s)]))
+
+      ;; every other tag is a transparent container — unless a handler gives
+      ;; it a capability to carry, in which case the tag stays for slopp:on
+      :else
+      (let [ks (hiccup/kids node)
+            nm (name (or t :div))]
+        (if (and note (not prose?))
+          (if (every? inline? ks)
+            [(str (pad depth) (open-tag nm [[:aria-label (:aria-label a)] [:slopp:on note]] false)
+                  (run ks) "</" nm ">")]
+            (concat [(str (pad depth) (open-tag nm [[:aria-label (:aria-label a)] [:slopp:on note]] false))]
+                    (child-lines ks (inc depth))
+                    [(str (pad depth) "</" nm ">")]))
+          (child-lines ks depth))))))

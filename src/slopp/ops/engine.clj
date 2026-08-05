@@ -62,7 +62,14 @@
   than half a framework."
   [store files]
   (let [nses (keys (:namespaces store))
-        web? (fn [n] (str/starts-with? (str n) "slopp.web"))]
+        ;; dot boundary, or equality: "slopp.web" alone matched a user's
+        ;; slopp.website (suppressing injection — that image cannot load
+        ;; slopp.web.screen) and slopp.webhooks (injecting spuriously). The
+        ;; prefix-and-its-length class, phase 4's sub-core, measured here by
+        ;; the review.
+        web? (fn [n] (let [s (str n)]
+                       (or (= s "slopp.web")
+                           (str/starts-with? s "slopp.web."))))]
     (when (and (seq files)
                (not-any? web? nses)
                (or (some (fn [n] (some web? (store/ns-require-libs store n))) nses)

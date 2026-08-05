@@ -19,7 +19,10 @@
 
 (defn drive-code
   "The script that opens the app's declared page and drives it, as source to
-  eval INSIDE the verification image.
+  eval INSIDE the verification image. `opts`: `:region`, `:detail`,
+  `:list-head` (the tool's cap — the test path's default is nil, but a LOOK
+  is skimmed, so the tool caps and the elision is a machine-visible tag),
+  `:trace` (one screen per step).
 
   A string rather than a call, for the same reason the schema oracle is one:
   the app's code lives in that image and nowhere else, so the driving has to
@@ -32,61 +35,98 @@
   Deliberately THIN: the steps travel as EDN and
   [[slopp.web.screen/drive!]] interprets them. A generated call chain would be
   a second producer of the driving behaviour, free to drift from the one a
-  test exercises, which is the failure this whole feature exists to remove."
-  [steps region detail]
-  (str "(let [pv (first (for [n (all-ns) [_ v] (ns-publics n)"
-       "                      :when (:web/page (meta v))] v))]"
-       "  (if-not pv"
-       "    {:error \"no ^:web/page in this store — mark the zero-arg fn that"
-       " builds your app (a :web/routes ctx, or {:state :view}) and slopp can"
-       " open it; nothing else has to change\"}"
-       ;; fully qualified, NOT an alias: a `require` inside this form runs at
-       ;; runtime while the body compiles at read time, so an :as here is a
-       ;; "No such namespace" every time.
-       "    (try"
-       "      (let [open  (requiring-resolve 'slopp.web.screen/open)"
-       "            drive (requiring-resolve 'slopp.web.screen/drive!)"
-       "            text  (requiring-resolve 'slopp.web.screen/text)"
-       "            s     (drive (open ((var-get pv))) " (pr-str (vec steps)) ")]"
-       "        {:screen (text s " (pr-str region) " {:detail " (pr-str detail) "})"
-       "         :entry (str pv)})"
-       ;; the CAUSE, not just the message: opening an app loads the framework and
-       ;; then the app's own code, so the top frame is routinely "Syntax error
-       ;; macroexpanding at." while the sentence a reader needs is three causes
-       ;; down. A tool that hands back the outermost message has answered
-       ;; nothing and looks like it answered.
-       "      (catch Throwable e"
-       "        {:error (clojure.string/join \" <- \" (take 4 (map #(str (.getSimpleName (class %)) \": \" (.getMessage %))"
-       "                                              (take-while some? (iterate #(.getCause %) e)))))"
-       "         :entry (str pv)}))))"))
+  test exercises — which is why `:trace` drives ONE session one step at a
+  time through the same `drive!` rather than unrolling a loop of its own. Not
+  prefix re-drives either, deliberately: an app whose state outlives an open
+  (a def'd atom) would re-run every non-idempotent step per prefix, and the
+  trace's last screen would disagree with a plain run of the same script.
+
+  The catch renders the CAUSE CHAIN, conditional separator and all, in parity
+  with `slopp.read.query/cause-chain` — the two cannot be one fn because this
+  code runs in a user's image where the only slopp on the classpath is the
+  vendored `slopp.web.*`, but they must not drift: a message-less cause with
+  a trailing colon is how parity dies one cosmetic notch at a time."
+  [steps {:keys [region detail list-head trace]}]
+  (let [shot-opts (pr-str {:detail detail :list-head list-head})]
+    (str "(let [pv (first (for [n (all-ns) [_ v] (ns-publics n)"
+         "                      :when (:web/page (meta v))] v))]"
+         "  (if-not pv"
+         "    {:error \"no ^:web/page in this store — mark the zero-arg fn that"
+         " builds your app (a :web/routes ctx, or {:state :view}) and slopp can"
+         " open it; nothing else has to change\"}"
+         ;; fully qualified, NOT an alias: a `require` inside this form runs at
+         ;; runtime while the body compiles at read time, so an :as here is a
+         ;; "No such namespace" every time.
+         "    (try"
+         "      (let [open  (requiring-resolve 'slopp.web.screen/open)"
+         "            drive (requiring-resolve 'slopp.web.screen/drive!)"
+         "            text  (requiring-resolve 'slopp.web.screen/text)"
+         "            steps " (pr-str (vec steps))
+         "            shot  (fn [s] (text s " (pr-str region) " " shot-opts "))]"
+         (if trace
+           (str "        (let [s (open ((var-get pv)))]"
+                "          {:screens (mapv (fn [step]"
+                "                            (drive s [step])"
+                "                            {:step step :screen (shot s)})"
+                "                          steps)"
+                "           :entry (str pv)}))")
+           (str "        {:screen (shot (drive (open ((var-get pv))) steps))"
+                "         :entry (str pv)})"))
+         "      (catch Throwable e"
+         "        {:error (clojure.string/join \" <- \""
+         "                  (take 4 (map #(let [m (.getMessage %)]"
+         "                                  (cond-> (.getSimpleName (class %))"
+         "                                    (seq (str m)) (str \": \" m)))"
+         "                               (take-while some? (iterate #(.getCause %) e)))))"
+         "         :entry (str pv)}))))")))
 
 (defn ^:export screen!
   "Look at a screen of THIS store's app, driven headlessly. The `screen` tool.
 
   `steps` is an ordered script of `{:visit path}` / `{:click label}` /
   `{:fill field :value v}`; `region` scopes the answer to one pane; `detail`
-  is `\"structured\"` (default) or `\"prose\"`.
+  is `\"structured\"` (default) or `\"prose\"`; `trace` returns one screen per
+  step (prefix re-drives — cheap, and it keeps `drive!` the one interpreter).
 
   Runs in the VERIFICATION image, so what comes back is built from the code
   the store currently holds — the same oracle every write is checked against,
   and deliberately not the SERVED app, which can be behind. Looking at a
   screen to decide what to write next must show the code you are writing.
 
-  Returns `{:screen <text> :entry <the ^:web/page var>}`. The entry travels on
-  purpose: a screen is only as trustworthy as the app it came from, and a
-  store with two marked pages would otherwise answer from whichever the scan
-  reached first without ever saying which.
+  Returns `{:screen <text> :entry <the ^:web/page var>}` (`:screens [{:step
+  :screen} …]` under trace). The entry travels on purpose: a screen is only as
+  trustworthy as the app it came from, and a store with two marked pages would
+  otherwise answer from whichever the scan reached first without ever saying
+  which.
 
-  **A non-map answer comes back as `:raw` rather than as an empty screen.**
-  `eval!` hands back data when the printed value is readable and the raw
-  string when it is not, so a result carrying anything unreadable would
-  otherwise arrive as a blank page with no error — which reads as an app that
-  rendered nothing, and sends the reader to the wrong bug entirely."
-  [session & {:keys [steps region detail]}]
-  (let [d (or detail "structured")
-        r (first (repl/eval! (:image @session)
-                             (drive-code (or steps []) region (keyword d))))]
+  Input it cannot mean is refused HERE, before the image: a `detail` outside
+  its two values used to silently render structured (a wrong default reported
+  as success), and a malformed one corrupted the GENERATED code, whose read
+  failure came back blamed on the image's answer. An eval-level error string
+  now IS `:error` — it is the diagnosis, not an unreadable answer — and only a
+  genuinely unreadable non-map still lands under `:raw`."
+  [session & {:keys [steps region detail trace]}]
+  (let [d (or detail "structured")]
     (cond
-      (map? r) r
-      (nil? r) {:error "the image returned nothing for this screen"}
-      :else    {:error "the image's answer was not readable as data" :raw (str r)})))
+      (not (contains? #{"structured" "prose"} d))
+      {:error (str "detail must be \"structured\" or \"prose\" — got "
+                   (pr-str detail) ". A silent default over a typo would"
+                   " answer the wrong question confidently")}
+
+      (and steps (not (and (sequential? steps) (every? map? steps))))
+      {:error (str "steps must be an array of step objects — {visit …} /"
+                   " {click …} / {fill … value …} — got " (pr-str steps))}
+
+      :else
+      (let [r (first (repl/eval! (:image @session)
+                                 (drive-code (or steps [])
+                                             {:region    region
+                                              :detail    (keyword d)
+                                              :list-head 3
+                                              :trace     (boolean trace)})))]
+        (cond
+          (map? r)    r
+          (nil? r)    {:error "the image returned nothing for this screen"}
+          (string? r) {:error r}
+          :else       {:error "the image's answer was not readable as data"
+                       :raw (str r)})))))

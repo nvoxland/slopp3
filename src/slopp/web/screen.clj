@@ -60,21 +60,25 @@
   (lines view {:region \"main\"})
   ```
 
-  Options — every one defaulted for READING and loosened for CHECKING:
+  Options:
 
   | key | default | reach for it when |
   |---|---|---|
   | `:detail` | `:structured` | `:prose` — sentences only, for \"does it say X\" |
-  | `:list-head` | `3` | a test needs every row; `nil` removes the cap |
-  | `:attrs` | `#{}` | checking an overlay — `#{:class}` renders `{tint}` |
+  | `:list-head` | `nil` — EVERY row | the `screen` tool passes `3`; a cap emits `<slopp:elided count=\"N\"/>`, machine-visible |
   | `:region` | none | scoping to one pane; THROWS if it is not there |
+
+  The default is the TEST path's: a test asserting a row that elision ate
+  would fail false, and a false failure costs more than the tokens the cap
+  saves. The tool is the look path, and it caps because a reader skims.
 
   `:region` cuts the TREE before anything renders, so it composes with every
   other option and comes back at depth 0."
   ([hiccup] (lines hiccup nil))
   ([hiccup opts]
-   (let [o (merge {:list-head 3 :attrs #{}} opts)
-         t (if-let [r (:region o)] (hiccup/region hiccup r) hiccup)]
+   (let [o (merge {:list-head nil} opts)
+         t (hiccup/expand hiccup)
+         t (if-let [r (:region o)] (hiccup/region t r) t)]
      (vec (remove nil? (render/emit t 0 o))))))
 
 (defn of
@@ -137,13 +141,21 @@
   ```clj
   {:state (atom {:n 0})                  ; REQUIRED, the app's own state
    :view  (fn [state] …)                 ; REQUIRED, state -> hiccup
-   :navigate (fn [state path] state')}   ; optional, client-side routing
+   :navigate (fn [state path] state')    ; optional, client-side routing
+   :dispatch (fn [action value] …)}      ; optional, the data-handler sink
   ```
+
+  A page that cannot open REFUSES HERE, naming the key — required, unknown,
+  or the wrong kind of thing. The review measured the alternative: a missing
+  `:state` died a screen later as `Cannot invoke Future.get()`, and `{:vew …}`
+  rendered a BLANK PAGE, which reads as a bug in an app that was never wired.
+  The mistake was made at the constructor, so the constructor is where it is
+  named.
 
   **Both, for a mounted page that carries client-side logic** — which is
   ordinary and not an SPA. The server render arrives through the routes; the
   `:view` re-renders after an event, and finds the dispatched document in its
-  own state under `:slopp.web.browser/document`. Without a `:view` the document
+  own state under `:slopp.web.screen/document`. Without a `:view` the document
   is simply static after load, which is exactly right for a page with no client
   logic and is not something to warn about.
 
@@ -156,6 +168,42 @@
   is wrong. That is the bug this exists to kill; a design that reintroduces it
   one level up is not a fix."
   [app]
+  (when-not (map? app)
+    (throw (ex-info (str "open takes the app as a map — a slopp.web ctx"
+                         " (:web/routes) or a page ({:state :view …}) — got "
+                         (pr-str app))
+                    {:got app})))
+  (if (:web/routes app)
+    ;; a ctx owns its own shape; only a page half it carries is checked
+    (when-let [st (:state app)]
+      (when-not (instance? clojure.lang.IAtom st)
+        (throw (ex-info (str "a page's :state must be an atom — something the"
+                             " browser can read and reset! — got "
+                             (pr-str (type st)))
+                        {:state st}))))
+    (let [allowed #{:state :view :navigate :dispatch}
+          unknown (remove allowed (keys app))]
+      (when (seq unknown)
+        (throw (ex-info (str "unknown page key"
+                             (when (next unknown) "s") " "
+                             (str/join ", " (map pr-str (sort-by str unknown)))
+                             " — a page declares :state, :view, :navigate and"
+                             " :dispatch. (A typo here used to render a BLANK"
+                             " page; refusing is the favour.)")
+                        {:unknown (vec unknown)})))
+      (when-not (contains? app :state)
+        (throw (ex-info (str "a page needs :state — the app's OWN atom, so what"
+                             " a handler changes is what the view re-reads")
+                        {})))
+      (when-not (instance? clojure.lang.IAtom (:state app))
+        (throw (ex-info (str "a page's :state must be an atom — something the"
+                             " browser can read and reset! — got "
+                             (pr-str (type (:state app))))
+                        {:state (:state app)})))
+      (when-not (ifn? (:view app))
+        (throw (ex-info (str "a page needs :view — (fn [state] hiccup); without"
+                             " one there is no screen to read")
+                        {})))))
   (atom {:app app :path nil :document nil}))
 
 (defn tree
@@ -176,7 +224,7 @@
       (view @(:state app))
       document)))
 
-(defn visit! 
+(defn visit!
   "Go to `path`. Returns the session.
 
   How a url resolves depends on what the app IS, and both answers are the
@@ -184,14 +232,24 @@
 
   - **`:navigate`** — `(fn [state path] state')`, client-side routing. ONE
     function, deliberately not a router: which screen, which params, what to
-    fetch, whether anything loads at all is the app's business.
+    fetch, whether anything loads at all is the app's business. The path
+    arrives VERBATIM, query string included.
   - **`:web/routes`** — a real request through `slopp.web.dispatch/handle!`:
-    routing, auth policy, declared reads, the handler, effects. The document is
-    what a browser would have received, and the app declared nothing extra to
-    get it.
+    routing, auth policy, declared reads, the handler, effects. The url is
+    split the way a browser sends it — `:uri` never carries the `?`, the
+    query string arrives as `:query-string`, and a `#fragment` never reaches
+    the wire at all. The review measured the alternative: `/search?q=web`
+    404ing on a mounted route, so every pagination link read as a broken
+    route.
 
   `:navigate` wins where both exist, because an app that routes on the client
   is telling you a url change is a client event.
+
+  Three urls that are not navigations, each answered as a browser answers it:
+  an EXTERNAL url (`https://…`) REFUSES — a headless session has nowhere to
+  go, and handing it to a client router would be wrong for both sides; a bare
+  fragment (`#top`) is a SCROLL, so it is a no-op here; a hash ROUTE (`#/…`)
+  is client routing by convention and goes to `:navigate` like any path.
 
   **A non-hiccup body is rendered as its STATUS and its data**, never as a
   blank page. A 404 that read as an empty screen would send a reader looking
@@ -204,6 +262,18 @@
   [session path]
   (let [{:keys [app]} @session]
     (cond
+      (re-find #"^[a-z][a-z0-9+.-]*://" path)
+      (throw (ex-info (str "visiting " (pr-str path) " leaves the app — a"
+                           " headless session has nowhere else to go. The href"
+                           " is on the screen, which is usually the fact a test"
+                           " wants; following it is a real browser's business")
+                      {:path path}))
+
+      ;; a bare fragment is a scroll target; a browser changes no page state.
+      ;; #/… is the hash-ROUTING convention and falls through to :navigate.
+      (and (str/starts-with? path "#") (not (str/starts-with? path "#/")))
+      nil
+
       (:navigate app)
       ;; NOT (swap! state nav path). swap! RETRIES its function whenever the
       ;; CAS loses, so it requires a pure one — and `nav` is the app's, which
@@ -221,7 +291,10 @@
         (reset! st ((:navigate app) @st path)))
 
       (:web/routes app)
-      (let [resp (dispatch/handle! app {:request-method :get :uri path})
+      (let [base       (first (str/split path #"#" 2))
+            [uri qs]   (str/split base #"\?" 2)
+            resp (dispatch/handle! app (cond-> {:request-method :get :uri uri}
+                                         qs (assoc :query-string qs)))
             body (:body resp)
             doc  (if (vector? body)
                    body
@@ -237,15 +310,43 @@
                            ". Open it on a slopp.web ctx, or add"
                            " :navigate (fn [state path] state') to the page")
                       {:path path})))
-    (swap! session assoc :path path)
+    (when-not (and (str/starts-with? path "#") (not (str/starts-with? path "#/")))
+      (swap! session assoc :path path))
     session))
+
+(defn- unary?
+  "Whether `f` accepts exactly one argument — read off the function, never
+  discovered by catching `ArityException`, which would report a genuine arity
+  bug INSIDE a handler as a signature mismatch.
+
+  Two cases, and the review measured what missing the first one costs:
+
+  - A `RestFn` accepts one arg when its required positional count is ≤ 1.
+    `(fn [e & more])` compiles to a RestFn declaring only `doInvoke`, so a
+    declared-methods probe called it zero-arg and manufactured
+    `Wrong number of args (0)` for a perfectly valid handler. `with-meta` on
+    ANY fn wraps it in an `AFunction$1` — which IS a RestFn of requiredArity
+    0 delegating through `applyTo` — so the wrapper is the same case.
+  - Otherwise a compiled fn declares one `invoke` method per arity it
+    supports, and `getDeclaredMethods` answers directly. (`getMethods` would
+    not: `AFn` declares a throwing `invoke(Object)` for every fn, so the
+    inherited view says yes to everything.)"
+  [f]
+  (if (instance? clojure.lang.RestFn f)
+    (<= (.getRequiredArity ^clojure.lang.RestFn f) 1)
+    (boolean (some #(and (= "invoke" (.getName ^java.lang.reflect.Method %))
+                         (= 1 (count (.getParameterTypes ^java.lang.reflect.Method %))))
+                   (.getDeclaredMethods (class f))))))
 
 (defn click!
   "Click the element `target` names, running the app's own handler. Returns the
   session, so calls thread.
 
-  `target` is an element's visible text (\"Add\") or its `:href` (\"/store\").
-  Whatever the handler does to the app's state is simply true afterwards —
+  `target` is an element's visible text (\"Add\"), its `:href` (\"/store\"), or
+  its `:aria-label` — the address an icon-only control has instead of text.
+  The handling element is resolved the way a browser resolves it (bubbling —
+  see [[slopp.web.screen.hiccup/target-node]]), a disabled control refuses,
+  and whatever the handler does to the app's state is simply true afterwards —
   [[tree]] re-derives, exactly as a re-render would.
 
   **Three ways a handler can be written, and all three are the app's own.**
@@ -265,10 +366,10 @@
 
   **A function is called with one argument, an event map, unless it takes
   none.** Both spellings are everywhere in real code — `(fn [e] …)` and
-  `#(swap! state …)` — and the arity is read off the function rather than
-  discovered by catching `ArityException`, which would report a genuine arity
-  bug INSIDE a handler as a signature mismatch and send the reader somewhere
-  the defect is not.
+  `#(swap! state …)` — and the arity is read off the function ([[unary?]])
+  rather than discovered by catching `ArityException`, which would report a
+  genuine arity bug INSIDE a handler as a signature mismatch and send the
+  reader somewhere the defect is not.
 
   **Data with no `:dispatch` declared REFUSES.** A click that reported success
   and changed nothing is the worst answer available here."
@@ -278,11 +379,7 @@
         ev   {:kind :click :target target :text (hiccup/text node) :href (:href a)}
         [how v] (hiccup/handler node :click)]
     (case how
-      :fn   (if (some #(and (= "invoke" (.getName ^java.lang.reflect.Method %))
-                            (= 1 (count (.getParameterTypes ^java.lang.reflect.Method %))))
-                      (.getDeclaredMethods (class v)))
-              (v ev)
-              (v))
+      :fn   (if (unary? v) (v ev) (v))
       :data (if-let [d (:dispatch (:app @session))]
               (d v nil)
               (throw (ex-info (str "clicking " (pr-str target) " carries handler DATA "
@@ -329,6 +426,12 @@
   because Reagent apps write `:on-change` and a Replicant `:on` map usually
   names `:input`.
 
+  **A control constrains its values the way a browser does.** A `<select>`
+  only ever produces one of its options' values, so a `value` no option
+  carries REFUSES, listing the choices — a test filling a value production
+  cannot produce asserts nothing. A checkbox has no text either way: its
+  `value` here is its checked state, the boolean passed through verbatim.
+
   **The DATA form is the portable one, and for an input it is the only one.**
   It reaches `:dispatch` as `(action value)` — the action verbatim and the
   typed text as a SCALAR. slopp invents no event, which is the whole point:
@@ -350,6 +453,17 @@
   [session name value]
   (let [node    (hiccup/field (tree session) name)
         [how v] (hiccup/input-handler node)]
+    (when (= :select (hiccup/tag node))
+      (let [choices (vec (keep #(:value (hiccup/attrs %))
+                               (filter #(= :option (hiccup/tag %))
+                                       (hiccup/kids node))))]
+        (when-not (some #{value} choices)
+          (throw (ex-info (str "the select " (pr-str name) " has no option "
+                               (pr-str value) " — a browser only lets you"
+                               " choose among: " (str/join ", " (map pr-str choices))
+                               ". A test filling a value production cannot"
+                               " produce asserts nothing")
+                          {:field name :value value :options choices})))))
     (case how
       :fn   (v {:value value :target {:value value}})
       :data (if-let [d (:dispatch (:app @session))]
@@ -362,17 +476,28 @@
       nil)
     session))
 
-(defn ^{:unused-ok "no store form can call it: the screen tool reaches it by requiring-resolve INSIDE the verification image, where the app's vars are, and a test driving a script calls it there too"} drive!
+(defn drive!
   "Run an ordered `steps` script against `session`. Returns the session.
 
   ```clj
   (drive! s [{:visit \"/store\"} {:fill \"Filter\" :value \"web\"} {:click \"Go\"}])
   ```
 
-  Data rather than a call chain, so the same script can arrive from a tool, a
-  test, or a file — and so the ONE interpreter is here, testable, rather than
-  assembled as a string by whatever is driving. A generated call chain is a
-  second producer of this behaviour and would drift from it.
+  Data rather than a call chain, so the same script can arrive from a tool
+  (the `screen` tool reaches this by requiring-resolve inside the verification
+  image, where the app's vars are), a test, or a file — and so the ONE
+  interpreter is here, testable, rather than assembled as a string by whatever
+  is driving. A generated call chain is a second producer of this behaviour
+  and would drift from it.
+
+  A step runs EXACTLY one action. Naming two refuses (running one silently is
+  a guess about ordering the caller never made); naming none refuses with the
+  step's OWN keys, which is where the typo is. A `:fill` step must carry
+  `:value` — typing nothing is not a step, and clearing a field is
+  `:value \"\"`. The review found the original here reporting `(keys steps)` —
+  the whole VECTOR — so every typo'd step died as a ClassCastException; a
+  refusal that names the mistake is the entire value of an interpreter this
+  small.
 
   There is no session BETWEEN scripts on purpose. Filling a box and then
   clicking Search is one sequence or it is nothing, and a session held across
@@ -381,12 +506,34 @@
   that a screen you looked at is one you can pin, because the pin is the same
   script."
   [session steps]
-  (doseq [{:keys [visit click fill value]} steps]
-    (cond
-      visit (visit! session visit)
-      click (click! session click)
-      fill  (fill! session fill value)
-      :else (throw (ex-info (str "a step must name one of :visit, :click or"
-                                 " :fill — got " (pr-str (keys (or steps {}))))
-                            {:steps steps}))))
+  (when-not (and (sequential? steps) (every? map? steps))
+    (throw (ex-info (str "steps must be a vector of step maps — got "
+                         (pr-str steps) ". Each step names one of :visit,"
+                         " :click or :fill")
+                    {:steps steps})))
+  (doseq [step steps]
+    (let [named (filterv #(contains? step %) [:visit :click :fill])]
+      (cond
+        (< 1 (count named))
+        (throw (ex-info (str "a step runs exactly one action — this one names "
+                             (str/join " and " named)
+                             ". Split it: filling and clicking are two steps"
+                             " in a browser too")
+                        {:step step}))
+
+        (= [:visit] named) (visit! session (:visit step))
+        (= [:click] named) (click! session (:click step))
+
+        (= [:fill] named)
+        (if (contains? step :value)
+          (fill! session (:fill step) (:value step))
+          (throw (ex-info (str "a :fill step needs :value — typing nothing is"
+                               " not a step, and clearing a field is"
+                               " :value \"\"")
+                          {:step step})))
+
+        :else
+        (throw (ex-info (str "a step must name one of :visit, :click or :fill"
+                             " — this one has " (pr-str (vec (keys step))))
+                        {:step step})))))
   session)

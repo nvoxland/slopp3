@@ -13,7 +13,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
             [slopp.ops.external :as external]
-            [slopp.webdev.screen :as scr] [clojure.java.io :as io] [slopp.kernel.boot :as boot]))
+            [slopp.webdev.screen :as scr] [clojure.java.io :as io] [slopp.kernel.boot :as boot] [rewrite-clj.parser :as p]))
 
 (deftest ^:external an-agent-can-look-at-a-screen-without-writing-code
   ;; The end of the loop this feature exists to close: a real store, a real
@@ -73,13 +73,15 @@
           ;; slopp.web.screen on its behalf
           (ops/restart! sess)
 
-          (testing "a bare look renders the screen, and names the entry it used"
+          (testing "a bare look renders the v2 screen, and names the entry it used"
             (let [r (scr/screen! sess)]
               (is (nil? (:error r)) (pr-str r))
-              (is (str/includes? (str (:screen r)) "# Demo"))
-              (is (str/includes? (str (:screen r)) "Filter [fill]")
-                  "a field is VISIBLE and says typing changes something")
-              (is (str/includes? (str (:screen r)) "Add [click]")
+              (is (str/includes? (str (:screen r)) "<h1>Demo</h1>"))
+              (is (str/includes? (str (:screen r)) "<input placeholder=\"Filter\"")
+                  "a field is VISIBLE with its addressing attrs")
+              (is (str/includes? (str (:screen r)) "slopp:on=\"change (fn)\"")
+                  "and says typing changes something")
+              (is (str/includes? (str (:screen r)) "<button slopp:on=\"click (fn)\">Add</button>")
                   "and a button says it can be clicked")
               (is (str/includes? (str (:entry r)) "demo.app/page")
                   "a screen is only as trustworthy as the app it came from")))
@@ -93,8 +95,21 @@
               (is (nil? (:error r)) (pr-str r))
               (is (str/includes? (str (:screen r)) "q=web n=2")
                   "typed, clicked twice, and the state is the app's own")
-              (is (not (str/includes? (str (:screen r)) "[click]"))
+              (is (not (str/includes? (str (:screen r)) "slopp:on"))
                   "prose was asked for and prose is what came back")))
+
+          (testing "trace shows the screen after every step, from the same interpreter"
+            ;; demo.app's atom is a DEF, so it persists across tool calls — the
+            ;; script above left n=2 and the trace continues from there. That
+            ;; persistence is the app's design, not the tool's; a page that
+            ;; builds fresh state in its ^:web/page fn starts clean each open.
+            (let [r (scr/screen! sess
+                                 :steps [{:fill "Filter" :value "web"} {:click "Add"}]
+                                 :region "main" :detail "prose" :trace true)]
+              (is (nil? (:error r)) (pr-str r))
+              (is (= 2 (count (:screens r))))
+              (is (str/includes? (str (:screen (first (:screens r)))) "q=web n=2"))
+              (is (str/includes? (str (:screen (last (:screens r)))) "q=web n=3"))))
 
           (testing "a store with no marked page says what to do about it"
             (let [s2 (external/open!)]
@@ -104,3 +119,48 @@
                     "an ERROR, not an empty screen — a blank answer reads as a broken app")
                 (finally (ops/close! s2)))))
           (finally (ops/close! sess)))))))
+
+(deftest the-tool-refuses-what-it-cannot-mean
+  ;; Review B-F4: `(keyword detail)` accepted anything — a typo'd "porse"
+  ;; silently rendered structured (a wrong default reported as success), and a
+  ;; detail with a space corrupted the GENERATED CODE, whose read failure came
+  ;; back labelled "the image's answer was not readable as data" — blaming the
+  ;; answer for the input. None of these should reach the image at all.
+  (let [dummy (atom {})]
+    (testing "a detail the tool does not speak is refused, naming the choices"
+      (let [r (scr/screen! dummy :detail "porse")]
+        (is (some? (:error r)))
+        (is (str/includes? (:error r) "structured"))
+        (is (str/includes? (:error r) "porse"))))
+    (testing "steps that are not an array of step maps are refused before the image"
+      (let [r (scr/screen! dummy :steps "visit /store")]
+        (is (some? (:error r)))
+        (is (str/includes? (:error r) "steps"))))
+    (testing "the generated driver PARSES as one balanced form, in every shape"
+      ;; the parser, not str/includes? — the grep version of this test stayed
+      ;; green over generated code that hit EOF at read (a dropped close paren
+      ;; in a string-concatenated body), which the whole external tier then
+      ;; reported one seam later. The one property generated source must have
+      ;; is that it reads; asserting anything else first is theatre.
+      (doseq [opts [{:region nil :detail :structured :list-head 3 :trace false}
+                    {:region "main" :detail :prose :list-head 3 :trace true}
+                    {:region nil :detail :structured :list-head nil :trace true}]]
+        (let [code (scr/drive-code [{:visit "/x"} {:click "Go"}] opts)
+              parsed (try (p/parse-string code) (catch Throwable e e))]
+          (is (not (instance? Throwable parsed))
+              (str (pr-str opts) " — " (when (instance? Throwable parsed)
+                                         (ex-message parsed)))))))
+    (testing "the cap and the conditional cause separator ride the generated code"
+      (let [code (scr/drive-code [{:visit "/x"}]
+                                 {:region nil :detail :structured
+                                  :list-head 3 :trace false})]
+        (is (str/includes? code ":list-head 3"))
+        (is (str/includes? code "cond->")
+            "a message-less cause must not render a trailing colon — parity with read.query/cause-chain")))
+    (testing "trace drives ONE session a step at a time through the one interpreter"
+      (let [code (scr/drive-code [{:visit "/x"} {:click "Go"}]
+                                 {:region nil :detail :structured
+                                  :list-head 3 :trace true})]
+        (is (str/includes? code ":screens"))
+        (is (str/includes? code "(drive s [step])")
+            "single-step drives on one session: no second interpreter, and no re-run of non-idempotent effects")))))
