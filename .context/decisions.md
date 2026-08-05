@@ -3518,3 +3518,55 @@ rounds, downloaded by every user and usable by none. Namespaces under `src/`
 after the change: 84. `slopp.image.testmain` is deliberately NOT swept in: it
 looks like an instrument and is a built project's traced test entry point, so
 it ships on purpose.
+
+### D-screen-format-v2 (2026-08-05, user decision) — the readout speaks escaped text plus a whitelisted tag channel
+
+The first screen format was an invented marker grammar — `#` headings,
+`[click]`/`[fill]`, `§ region`, `<ul ×5>`, `+N more`. Its fatal flaw was
+measured in review the day after it shipped: **the markers shared an alphabet
+with page text**, so a page containing `# xyz` or `[click]` was unfalsifiable
+— and the first real consumer renders CLOJURE SOURCE, a domain made of `#`,
+`[…]` and angle brackets. Three other findings shared one root with it: tag
+sugar unparsed (a classed input vanished while staying fillable), form-control
+state invisible (checked/options/textarea), and elision eating assertion
+targets (`text` defaulted to the tool's cap, so a test asserting row 5 of 5
+failed while the row existed).
+
+The settled design, in one sentence each:
+
+- **Plain text stays plain, HTML-escaped** — the only raw angle brackets in
+  the output are the reader's own tag channel, so the format is falsifiable
+  over any page.
+- **A tag keeps its brackets only where it carries a fact an agent acts on or
+  asserts**: interactive controls (with the state a browser shows), structure
+  (headings, tables, pre, img alt, the svg class census), enumeration.
+- **The provenance rule**: an UNPREFIXED tag/attr was really on the page;
+  `slopp:*` is derived — `<slopp:region>`, `slopp:count`, `<slopp:elided/>`,
+  and `slopp:on` (the one fact HTML has no attr for: what handles an event).
+- **`class`/`style`/`id` never reach the output** (class survives on svg only,
+  as census vocabulary) — which is also what makes sugar verifiable: `:h1.big`
+  and `[:h1 {:class "big"}]` must render identically, and dropping class is
+  how you can see that they do.
+- **Elision splits by caller**: the tool caps at 3 with a machine-visible
+  `<slopp:elided count/>`; the test path (`drive!`/`text`/`lines`) elides
+  NOTHING by default — a test's tokens are cheap, its false failure is not.
+- **Prose mode is unchanged and unescaped** — it makes no structural claims,
+  so it has nothing to collide with.
+
+Considered and rejected: full HTML-ish rendering with structural tags for
+everything (token cost with no capability gained — the user's call: "keep
+things as purely simple text as possible"); escaping the invented markers
+(bespoke escaping doubles the teaching load and models already know HTML's);
+`id` in the attr whitelist beyond form controls (addressing is by what a
+person says — text, href, aria-label; fields keep `id` because `fill!`
+addresses by it, and what you see must always be drivable).
+
+Landed with the format: one hiccup normalizer (sugar parsed in the accessors
+both the renderer and driver read), one text function (browser-faithful
+concatenation — the shown label IS the clickable label), bubbling as DOM
+semantics, aria-label as a click address, disabled refusing, select
+constraining to its options, browser-faithful url splitting, `open`
+validating its page, `drive!` refusing in words, and `module_platform`
+reporting the `^:web/page` entries a `:cljs` declaration strands — the write
+that does the stranding being the only surface that can name it at the moment
+it happens.

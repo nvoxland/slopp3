@@ -1184,3 +1184,37 @@ tiers) without checking whether the tier had ever been declared. One
 `query_depends {modules true}` read on the next three moves settled it. This
 is the third claim in this wave that failed on contact with measurement, all
 three from trusting prose over tool output.
+
+## 2026-08-05 — adversarial review of the fake browser (d23523..d24127), day one of the feature
+
+Two slopp-reader agents attacked the browser core and the gates/tool halves;
+every finding image-verified before reporting. 24 findings + 3 from the main
+pass; the clean list mattered as much (seq children, ambiguity refusals,
+controlled inputs, the livelock fix, MCP schema↔handler honesty all held).
+
+What recurred, for the pattern file more than the fix list:
+
+- **Three of the four worst bugs were second producers of an existing
+  derivation**: sugar parsing existed in slopp.web.html and not in the screen
+  reader (a legal view rendered as NOTHING while staying fillable); two text
+  functions with different join rules made the screen name a button the click
+  refused; the drive-code cause chain drifted from read.query's on day one,
+  exactly as its own comment predicted it might.
+- **The gate graded the shape its author imagined** (defn-shaped): def /
+  defmethod / defn- carriers all passed, and the defn- case produced the
+  worst answer in the feature — the tool saying "no ^:web/page in this store"
+  over a gate-approved page. Core 2's reach tell, fifth instance.
+- **Every untested refusal path was broken; every tested one held.** drive!'s
+  refusal crashed (keys of the VECTOR) — found independently by all three
+  reviewers, in the one form with zero direct tests, whose ^:unused-ok note
+  claimed a test that did not exist.
+- **The prefix-and-its-length class again**: framework-injection's
+  "slopp.web" prefix matched slopp.website (suppressing) and slopp.webhooks
+  (spurious).
+- **A dissolved namespace was never declared in the vocabulary**
+  (slopp.web.browser), so its docstring kept telling apps to read
+  :slopp.web.browser/document — a key no code writes — and no guard could
+  fire. The declare-the-rename rule, violated by the author who wrote it up.
+
+Format v2 (D-screen-format-v2) came out of the review's escaping finding plus
+the user's design call; the fix wave landed same-day with red tests first.

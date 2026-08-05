@@ -1313,33 +1313,77 @@ as a call chain:
 (screen/text s "main")              ; ONE region — and it throws if absent
 ```
 
-Mark the zero-arg fn that builds your app `^:web/page` and the tool can find
-it; there is deliberately no session between tool calls, so a script is the
-whole interaction and the same script reproduces the same screen.
+Mark the zero-arg PUBLIC defn that builds your app `^:web/page` and the tool
+can find it; there is deliberately no session between tool calls, so a script
+is the whole interaction and the same script reproduces the same screen
+(`trace true` shows the screen after every step of one run).
+
+**How to read a screen — one rule.** Plain text is the page's words,
+HTML-escaped, so page text can never be mistaken for markup; an UNPREFIXED tag
+or attr was really on the page and survives only where it carries something
+you can act on; anything `slopp:`-prefixed the reader derived. A screen looks
+like:
+
+```
+<slopp:region name="main">
+  <h1>orders</h1>
+  3 open, 1 overdue
+  <input placeholder="filter orders" slopp:on="input :orders/filter"/>
+  <svg class="aging-chart">2 bar</svg>
+  <ul slopp:count="5">
+    <li>#101 late</li>
+    <slopp:elided count="4"/>
+  </ul>
+  <button slopp:on="click :orders/expand true">expand all</button>
+</slopp:region>
+```
+
+The kept tags: controls (`a href`, `button`, `input`, `select`/`option`,
+`textarea`, `form`, `label` — with the state a browser shows: `value`,
+`checked`, `selected`, `disabled`), structure (`h1`–`h6`, `table`/`tr`, `pre`
+verbatim, `img alt`, the `svg` class census), enumeration (`ul`/`ol`/`li` with
+`slopp:count`, and `<slopp:elided count/>` where the TOOL's 3-row cap bit —
+`drive!`/`text` in a test elide NOTHING by default, so an assertion can never
+be eaten silently). `class`/`style`/`id` never reach the output (except
+`class` on svg, where it is the census vocabulary), so sugar (`:h1.big`) and
+plain spellings render identically. A handler on ANY element keeps that
+element's tag so `slopp:on` has a place to ride — `slopp:on="click :save
+true"` says what a click DOES with its scalar args (twin buttons differ by
+them); a closure can only say `click (fn)`. `detail "prose"` drops every tag
+and keeps the words, unescaped.
 
 **A server-rendered app declares nothing.** `visit!` goes through
 `slopp.web.dispatch/handle!`, so it is a real request down the real pipeline —
 routing, auth policy, declared reads, the handler, effects. A page that 401s
 here 401s when served, which is the point of driving dispatch rather than
-calling a handler.
+calling a handler. Urls behave like a browser's: `/search?q=web` delivers a
+`:query-string`, a `#fragment` is never sent, a bare `#anchor` click is a
+scroll (no-op), `#/…` is hash routing and reaches your `:navigate`, and an
+external `https://…` link REFUSES — a headless session has nowhere else to go.
 
 An app with CLIENT state supplies a page instead: `{:state (atom …) :view (fn
 [state] …) :navigate (fn [state path] …)}` — `:navigate` optional, and one
 function rather than a router. An app can be both: routes for the server
-render, a `:view` to re-render after a click.
+render, a `:view` to re-render after a click. `open` REFUSES a page it cannot
+run — a missing `:state`/`:view`, a non-atom state, or an unknown key (a
+typo'd `:vew` used to render a blank page, the silent worst).
 
 - **Put handlers IN THE TREE — all three idioms are driven.** `:on-click (fn
   [e] …)` (Reagent), `:on {:click (fn [e] …)}` (Replicant), and `:on {:click
   [:action …]}` (Replicant's DATA form), which goes to a page-level
   `:dispatch (fn [event data] …)` mirroring `replicant.dom/set-dispatch!`.
-  Typing is the same, under `:on-change` or `:on {:input …}`.
-  **Hand-rolled `js/document.addEventListener` delegation cannot be driven** —
-  it lives in `:cljs` and never runs here. You rarely need it: both libraries
-  attach handlers to elements for you, precisely so a re-render does not strand
-  them.
+  Typing is the same, under `:on-change` or `:on {:input …}`. Clicks BUBBLE
+  as DOM semantics: text inside a handled element reaches that handler, an
+  `aria-label` addresses an icon-only control, and a `disabled` control
+  refuses. **Hand-rolled `js/document.addEventListener` delegation cannot be
+  driven** — it lives in `:cljs` and never runs here. You rarely need it: both
+  libraries attach handlers to elements for you, precisely so a re-render does
+  not strand them.
 - **Prefer the DATA form where you have the choice — and for an INPUT it is the
   only portable one.** It reaches `:dispatch` as `(action value)`: the action
-  verbatim, the typed text as a SCALAR, no event map invented by anybody.
+  verbatim, the typed text as a SCALAR, no event map invented by anybody. A
+  `<select>` fill must name one of its options (a browser only lets you
+  choose); a checkbox's value is its checked boolean.
   **Never write a handler that reads a value out of an event**
   (`(:value e)`, `(get-in e [:target :value])`). Replicant's real event map
   carries `:replicant/dom-event` and no `:value` — the text is behind
@@ -1350,16 +1394,16 @@ render, a `:view` to re-render after a click.
   to a scalar, your `:cljc` interpreter takes `(state action value)` and never
   sees an event of any shape — so neither driver's event can be right while the
   other is wrong.
-  The data form also pays a second dividend: a serializable action is the one
-  shape the readout can REPORT. `Like [click :like-video]` answers what a click
-  DOES, where a closure can only be marked `[click]`.
-- **Four ways slopp REFUSES a page it cannot open**, three at the write and one
-  at `done`: the entry in a `:cljs` namespace; the entry taking arguments
-  (slopp calls it with none); a SECOND `^:web/page` (the scan would answer from
-  whichever it reached first, silently); and — the one that catches real apps —
-  the entry's namespace CLOSURE reaching `:cljs`, which the `web-page-reach`
-  advisory reports. That last one can break with no write to your entry at all,
-  the day some namespace it depends on is declared `:cljs`.
+- **How slopp REFUSES a page it cannot open**, at the write: the marker on
+  anything but a zero-arity public `defn` (a `def`'s arity cannot be read, a
+  `defmethod` discards the marker at macroexpansion, a private page is
+  invisible to the tool's scan); the entry in a `:cljs` namespace; a SECOND
+  `^:web/page` (the scan would answer from whichever it reached first,
+  silently). And the one that catches real apps with no write to your entry at
+  all: the entry's namespace CLOSURE reaching `:cljs` — `module_platform`
+  reports the pages a `:cljs` declaration strands (`:stranded-pages`) at the
+  moment of the declaration, the `web-page-reach` advisory re-grades a page
+  you EDIT, and `full_check` re-grades every page.
 - **What slopp assumes, so you can tell if you're outside it:** state is an
   atom, handlers are in the tree, the view is a pure function of state. The
   wiring is portable; only the EFFECTS are `:cljs`. An entry the JVM cannot
@@ -1374,11 +1418,13 @@ render, a `:view` to re-render after a click.
   `<div>` around the region cannot break it. A whole-page `str/includes?` is
   one keystroke from asserting nothing: a real tint check once matched its
   pattern anywhere on the page, claimed the diagram, checked a list, and stayed
-  green with the layout torn out.
+  green with the layout torn out. In structured mode remember the text is
+  ESCAPED: assert `a &lt; b` when the page says `a < b` (prose mode is
+  unescaped).
 - **A click refuses rather than shrugging** — nothing says it (and the message
-  lists what can be clicked), it is on the screen but not clickable, two
-  elements say it, or the app has no urls. Four different bugs, never one
-  silent no-op.
+  lists what can be clicked), it is on the screen but nothing over it handles
+  a click, two distinct controls say it, it is disabled, or the app has no
+  urls. Five different bugs, never one silent no-op.
 - **`screen/lines` when you want to address ONE line**, e.g. the `<svg>` census
   — assertions are easy to write here and therefore easy to write too broadly.
 - **A readout reveals what CSS was silently supplying, and that is a whole
