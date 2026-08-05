@@ -1245,3 +1245,21 @@ slopp build X", from the consumer who would use it.
   a SKILL file is confirmable the moment it lands (`--live` reads files); a
   fix in the JAR is invisible until a process restart, so one message's fixes
   legitimately carry different statuses on the same day.
+
+## 2026-08-06 — the readout's first-week ratio, measured by its consumer
+
+Four markup defects reached slopp-ui's green suite in one week; all four were
+found by LOOKING at a screen, none by an assertion failing: `demo.orderstatic`
+(form page), `rate[kg zone]` (outline row), `web⚡1 ns` and `core2 ns` (nav
+rail heads). Two are wrong WORDS rather than missing spaces — the expensive
+kind, because the result is plausible. One instance (the rail's namespace
+rows) was invisible to every fixture they had — it renders only under an
+external module and their fixture module is :pure — and was fixed by shape
+recognition, THEN pinned by visiting a different namespace: the assertion came
+from the fix, not the fix from the assertion. That ordering is the strongest
+evidence yet for the readout's founding claim (look first, assert second),
+and it is unreachable by an assertion-first habit by construction.
+
+Same letter, the mode rule worth keeping: "use prose for text facts" is the
+wrong generalisation — a control's CONTENTS are a structured fact, adjacency
+is a prose fact, and neither mode is the default answer.
