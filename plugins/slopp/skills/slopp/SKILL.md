@@ -1381,6 +1381,13 @@ render, a `:view` to re-render after a click.
   silent no-op.
 - **`screen/lines` when you want to address ONE line**, e.g. the `<svg>` census
   — assertions are easy to write here and therefore easy to write too broadly.
+- **A readout reveals what CSS was silently supplying, and that is a whole
+  class of markup bug you get for free.** Two elements separated only by a
+  margin have NOTHING between them in the text: a real page rendered
+  `demo.orderstatic`, one wrong word made of two correct elements. Fix it in
+  the MARKUP rather than by adding spaces to the reader — a reader without CSS
+  is not only a headless driver, it is also a screen reader, and the same gap
+  hits both.
 - **It is NOT a screenshot.** An `<svg>` is censused by CLASS rather than
   dumped as coordinates, which catches an overlay's tints with no pixels — but
   a list that wraps over three lines and a tint invisible against white still
