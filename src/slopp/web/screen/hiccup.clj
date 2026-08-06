@@ -165,6 +165,21 @@
   [node]
   (filter vector? (tree-seq vector? kids node)))
 
+(defn- raw-text
+  "Every string under `node`, concatenated, with NOTHING normalized away.
+
+  Separate from [[text]] because the normalizing has to happen ONCE, at the
+  top. Folded into the recursion it trims each child on its own, and a
+  whitespace-only child — the text node between two elements, which a browser
+  keeps and renders — trims to the empty string before it can be joined to
+  anything."
+  [node]
+  (cond
+    (string? node) node
+    (number? node) (str node)
+    (vector? node) (str/join "" (map raw-text (kids node)))
+    :else          ""))
+
 (defn text
   "The visible text of `node`, the way a browser's textContent reads it —
   every string under it, concatenated, then squeezed to single spaces.
@@ -177,15 +192,22 @@
   `foo bar`, a button the screen named and refused to press. One function,
   one answer.
 
+  The mirror of that, and it shipped for a while: a whitespace-only string
+  BETWEEN two elements is a text node a browser keeps, and squeezing inside
+  the recursion trimmed it to nothing before it could be joined. `[:h4 \"quote\"
+  \" \" [:small \"demo.order\"]]` read `quotedemo.orderstatic` — the run-together
+  spelling that this project's own rule about markup spacing exists to catch,
+  invisible to the instrument that checks the rule. So the squeeze happens
+  ONCE, here, over [[raw-text]]'s concatenation. Reported by slopp-ui against
+  headings, where the RENDERER calls this; the other caller is every label
+  `locate`/`click!` match on, so `[:button \"Add\" \" \" [:span \"5\"]]` could only
+  be pressed as `Add5`.
+
   This is textContent, not a rendering: no href, no attrs, no line structure.
   The renderer is the one that renders; a click looking for the button
   labelled \"Add\" wants only what the label SAYS."
   [node]
-  (-> (cond
-        (string? node) node
-        (number? node) (str node)
-        (vector? node) (str/join "" (map text (kids node)))
-        :else "")
+  (-> (raw-text node)
       (str/replace #"\s+" " ")
       str/trim))
 

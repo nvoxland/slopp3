@@ -11,7 +11,7 @@
   its failure mode is a green suite over a blank page."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [slopp.web.screen :as screen]))
+            [slopp.web.screen :as screen] [slopp.web.screen.hiccup :as hiccup]))
 
 (deftest a-block-never-glues-to-the-text-around-it
   ;; THE founding bug, and the reason a naive flatten is not merely uglier but
@@ -1074,3 +1074,22 @@
         (is (= "/f?q=a%26b%3Dc" (:path @d))
             (str "or the app receives a query string it did not send: "
                  (pr-str (:path @d))))))))
+
+(deftest whitespace-between-two-elements-is-a-text-node-and-survives
+  ;; Reported by slopp-ui as "the screen cannot see whitespace inside a
+  ;; heading". It is not about headings: `text` is the reader, and it trimmed
+  ;; at EVERY level of its own recursion, so a `" "` child became `""` before
+  ;; it could be joined to anything. Headings are simply where the renderer
+  ;; calls `text` — the other caller is every LABEL that locate/click! match
+  ;; on, which is the half nobody had looked at.
+  (testing "the separator survives, wherever it sits"
+    (is (= "quote demo.order static"
+           (hiccup/text [:h4 "quote" " " [:small "demo.order"]
+                         [:span " " [:span "static"]]])))
+    (is (= "Add 5" (hiccup/text [:button "Add" " " [:span "5"]]))
+        "a label a human reads as two words must be pressable as two words"))
+  (testing "and the two properties that made this function what it is"
+    (is (= "ReviewCode" (hiccup/text [:div [:a "Review"] [:a "Code"]]))
+        "CONCATENATED, not space-joined: no whitespace in the markup means none in a browser, and the fix belongs in the markup")
+    (is (= "foo bar" (hiccup/text [:span "foo bar"]))
+        "the measured case behind that rule — the screen once showed foobar for a button it then refused to press")))
