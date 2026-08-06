@@ -84,6 +84,30 @@
         (let [s (try (n/sexpr node) (catch Exception _ nil))]
           (when (seq? s) s))))))
 
+(defn ^:export form-name-meta
+  "The metadata on a stored form's NAME symbol — `^:generated`, `^:export`,
+  `^:unsafe`, `:malli/schema` — or nil.
+
+  Read off the node, never eval'd: D3 keeps metadata SOURCE-only truth, so
+  what is written on the form is what analysis sees.
+
+  **The sibling of [[form-docstring]], and here for the same reason.** Both
+  are one-line reads that are wrong in the same three ways when hand-rolled:
+  the sexpr may not parse, the form may not be a LIST, and position 1 may not
+  be a symbol. `form-docstring` exists because five callers read index 2 and
+  one of them rendered a `def`'s VALUE as documentation. This one is that
+  finding's twin: `(meta (second s))` was hand-rolled at FIVE sites while the
+  one guarded reader sat in `slopp.edit.web` — correct, documented, and under
+  an APP-TYPE name that generic code cannot reach without violating R6.
+
+  Which is the shape worth naming: not a missing check, a missing HOME. Code
+  written once and correctly still grows copies if the callers who need it are
+  forbidden to look where it lives."
+  [e]
+  (let [s (some-> (:node e) form-sexpr)]
+    (when (and (seq? s) (symbol? (second s)))
+      (meta (second s)))))
+
 (defn form-docstring
   "A `def`/`defn`-family form's docstring, or nil.
 

@@ -359,9 +359,10 @@
   (when (contains? (:namespaces store) ns-sym)
     (let [es      (store/forms store ns-sym)
           named   (remove #(= (str (:name %)) (str ns-sym)) es)
-          gen?    (fn [e] (let [s (store/form-sexpr (:node e))]
-                            (boolean (and (seq? s) (symbol? (second s))
-                                          (:generated (meta (second s)))))))
+          ;; this read carried all three guards and was RIGHT, which is
+          ;; exactly why it is worth collapsing: a correct duplicate is the
+          ;; one that agrees today and drifts tomorrow
+          gen?    (fn [e] (boolean (:generated (store/form-name-meta e))))
           ns-form (first es)]
       (when (and ns-form
                  (seq named)
@@ -385,23 +386,29 @@
   [store ns-sym form-name]
   (when (and (modules-manifest store) form-name)
     (when-let [e (store/form-named store ns-sym form-name)]
-      (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+      (let [s  (try (n/sexpr (:node e)) (catch Exception _ nil))
+            ;; the name's markers through the shared accessor, exactly as the
+            ;; docstring below goes through its own. This read was
+            ;; `(meta (second s))` three times here and at four other sites —
+            ;; the same one-line-with-three-guards shape that made
+            ;; `form-docstring` necessary
+            nm (store/form-name-meta e)]
         (when (and (seq? s)
                    ;; head compared by NAME-string so this form carries no
                    ;; banned symbol literal (D4 bans defmacro even as data) and
                    ;; so stays editable
                    (contains? #{"defn" "defmacro"} (str (first s)))
                    (symbol? (second s))
-                   (not (:private (meta (second s))))
+                   (not (:private nm))
                    ;; generate_client's output documents itself; never nag it
-                   (not (:generated (meta (second s))))
+                   (not (:generated nm))
                    ;; via the shared accessor: (def x "a value") has a string at
                    ;; index 2 that is NOT a docstring, and indexing cannot tell
                    (nil? (store/form-docstring (:node e)))
                    (or (<= (count (str/split (str ns-sym) #"\.")) 2)
                        ;; only a WORLD export is public surface — a subtree
                        ;; export stays internal, no docstring nag
-                       (true? (:export (meta (second s))))))
+                       (true? (:export nm))))
           {:var (symbol (str ns-sym) (str (second s)))
            :missing-doc true})))))
 

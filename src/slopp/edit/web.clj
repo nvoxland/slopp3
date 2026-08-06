@@ -35,14 +35,21 @@
   (= "true" (get-in candidate [:config "capabilities" :values "web.enabled"])))
 
 (defn ^:export web-name-meta
-  "The metadata on a stored form's NAME symbol, read off the node — no eval
-  (D3 keeps metadata source-only truth). nil for unnamed/unparseable forms.
-  THE reader for the `:web/*` declaration vocabulary; `slopp.rules.web` and
-  the web gates both consume it."
+  "The metadata on a stored form's NAME symbol — THE reader for the `:web/*`
+  declaration vocabulary; `slopp.rules.web` and the web gates both consume it.
+
+  Delegates to [[slopp.store/form-name-meta]], which is the same read at a
+  generic address. This function was the correct one all along — no eval, D3's
+  source-only metadata, nil for unnamed or unparseable forms — and the only
+  thing wrong with it was WHERE it lived: under an app-type name that generic
+  code cannot reach without violating R6, so five other sites hand-rolled
+  `(meta (second s))` beside it, most without its guards.
+
+  Kept rather than retired because the `:web/*` vocabulary having a named
+  reader is worth something to a reader of the web gates; it is now a spelling
+  rather than a second derivation."
   [e]
-  (let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
-    (when (and (seq? s) (symbol? (second s)))
-      (meta (second s)))))
+  (store/form-name-meta e))
 
 (defn ^:export web-endpoint-rows
   "Every `:web/path` form in `store`: `{:ns :name :form-id :meta}` rows —

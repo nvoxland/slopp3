@@ -645,3 +645,37 @@
                         (store/ingest st 'd.z "(ns d.z)\n(defn f \"Says it.\" [x] x)\n")
                         'd.z 'f))))
             "and a real docstring still arrives")))))
+
+(deftest form-name-meta-is-the-one-guarded-read-of-a-name-s-metadata
+  ;; `^:generated`, `^:export`, `^:unsafe`, `:malli/schema` — slopp's markers
+  ;; live on a form's NAME symbol, and reading them is `(meta (second s))`
+  ;; with three guards nobody remembers: the sexpr may not parse, the form may
+  ;; not be a list, and position 1 may not be a symbol.
+  ;;
+  ;; Measured before this landed: FIVE sites hand-rolled it with none of the
+  ;; three — `edit.modules/namespace-purpose-warning`,
+  ;; `edit.modules/missing-doc-warning`, `ops.review/review-scan` (twice) and
+  ;; `read.modules/unused-report` — while the one correct reader was
+  ;; `edit.web/web-name-meta`, under an APP-TYPE name that generic code cannot
+  ;; reach without violating R6.
+  ;;
+  ;; That is the shape epic A keeps finding: not a missing check but a missing
+  ;; HOME. The accessor was written once, correctly, and filed where four of
+  ;; its five callers were forbidden to look.
+  (let [st (store/ingest (store/empty-store) 'nm.core
+                         (str "(ns nm.core \"D.\")\n"
+                              "(defn ^{:generated \"app.api/f\"} gen \"D.\" [x] x)\n"
+                              "(defn plain \"D.\" [x] x)\n"
+                              "(def ^:export val-with-meta \"D.\" 1)\n"))
+        of (fn [nm] (store/form-name-meta (store/form-named st 'nm.core nm)))]
+    (testing "the marker on a name, whatever defines it"
+      (is (= "app.api/f" (:generated (of 'gen))))
+      (is (nil? (:generated (of 'plain))))
+      (is (true? (:export (of 'val-with-meta)))
+          "a def's name carries markers exactly as a defn's does"))
+
+    (testing "nil, never a throw, for the shapes the hand-rolled read got wrong"
+      ;; each of these reached `(meta (second s))` at one of the five sites
+      (is (nil? (store/form-name-meta nil)))
+      (is (nil? (store/form-name-meta {})))
+      (is (nil? (store/form-name-meta {:node nil}))))))

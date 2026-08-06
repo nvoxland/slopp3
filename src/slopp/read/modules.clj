@@ -203,10 +203,11 @@
                    :when (not (clojure.string/ends-with? (str nsx) "-test"))
                    e (store/forms store nsx)
                    :when (:name e)
-                   :let [s (try (n/sexpr (:node e)) (catch Exception _ nil))]
+                   :let [s  (try (n/sexpr (:node e)) (catch Exception _ nil))
+                         nm (store/form-name-meta e)]
                    :when (and (seq? s)
                               (contains? #{'defn 'def} (first s))
-                              (not (:private (meta (second s))))
+                              (not (:private nm))
                               (not= '-main (:name e)))
                    :let [rs (get by-target [nsx (:name e)])
                          markers (disj (set (keep :marker rs)) :covers)
@@ -216,7 +217,7 @@
                 :exempt?    (boolean (or (seq markers)
                                           ;; ^:generated wrappers await FE calls —
                                           ;; available surface, not dead
-                                          (:generated (meta (second s)))))
+                                          (:generated nm)))
                 :real?      (boolean real?)})]
     {:unused (vec (sort (keep #(when-not (or (:real? %) (:exempt? %)) (:q %))
                               rows)))

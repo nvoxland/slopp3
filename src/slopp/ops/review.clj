@@ -133,7 +133,7 @@
                               (zero? callers)
                               (seq? s)
                               (contains? '#{defn def} (first s))
-                              (not (:private (meta (second s))))
+                              (not (:private (store/form-name-meta e)))
                               ;; ONE question, asked of the graph: does anything
                               ;; outside the store declare that it references
                               ;; this? Covers ^:entry-point, ^:unused-ok and the
@@ -145,7 +145,7 @@
                               ;; the two that are genuinely not graph facts:
                               ;; ^:generated is machinery awaiting front-end
                               ;; calls, and -main is a naming convention
-                              (not (:generated (meta (second s))))
+                              (not (:generated (store/form-name-meta e)))
                               (not= '-main nm))
                          ;; OUTSIDE THE ORACLE, not behind on tests. A :cljs
                          ;; namespace never loads into the JVM image, so no test
