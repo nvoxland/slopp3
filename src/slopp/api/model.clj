@@ -794,18 +794,14 @@ gaps    (gaps-by-ns st (:test-map @session))
                             ;; it again is one subject at two grains in one list
                             :when  (and (:name e) (not= (str (:name e)) (str ns-sym)))
                             :let   [sx  (store/form-sexpr (:node e))
-                                    ;; only a fn HAS arities. `fn-arglists`
-                                    ;; reads position 2+ of whatever it is
-                                    ;; handed and its contract is a `defn`
-                                    ;; sexpr, so `(def xs [1 2 3])` comes back
-                                    ;; claiming a one-arg signature. `:sig` had
-                                    ;; three producers and two shipped exactly
-                                    ;; this; guarding on the HEAD is what the
-                                    ;; other correct one does.
-                                    sig (when (and (seq? sx)
-                                                   (#{"defn" "defn-" "defmacro"}
-                                                    (str (first sx))))
-                                          (modules/fn-arglists sx))
+                                    ;; `fn-arglists` is TOTAL — nil for a form
+                                    ;; with no arities — so there is no head
+                                    ;; guard here on purpose. This form carried
+                                    ;; one for about an hour, which made it the
+                                    ;; fifth place that knew which heads define
+                                    ;; a fn; the knowledge moved to the one
+                                    ;; function that has to know.
+                                    sig (modules/fn-arglists sx)
                                     r   (row (cond-> {:kind "form"
                                                       :module (modules/module-of ns-sym)
                                                       :ns (str ns-sym)

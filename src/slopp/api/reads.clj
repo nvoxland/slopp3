@@ -102,22 +102,18 @@
   / `ns`), because a pane laid out like source states things as fact, and a
   value drawn as though it were callable is a false one.
 
-  `:sig` comes from `modules/fn-arglists`, and the `kind` guard beside the call
-  is load-bearing rather than tidy: `fn-arglists` reads position 2+ of whatever
-  it is handed, so `(def geometry [1 2 3])` comes back claiming a one-arg
-  signature. Its contract is a `defn` sexpr and the CALLER owes it that.
+  `:sig` comes from `modules/fn-arglists`, which is TOTAL — nil for a form that
+  defines no fn — so there is no head check here. There used to be one, and the
+  docstring beside it claimed the CALLEE knew a `def` has no arities. It did
+  not; this guard did. A later reader believed the claim, called `fn-arglists`
+  unguarded, and shipped `:sig`'s fourth producer with the same wrong-index
+  read the other three had. The knowledge now lives in the one function that
+  has to have it, which is why the guard is gone rather than merely correct.
 
-  Stated precisely because the imprecise version cost something. This docstring
-  used to say fn-arglists 'knows a `def` has no arities'; it does not, the
-  guard below does. A later reader took the claim at face value, called
-  `fn-arglists` unguarded, and shipped `:sig`'s FOURTH producer with the bug
-  the other three had — caught on a live listener advertising a registry's
-  value as its signature.
-
-  It is the same wrong-index read `form-doc` above had to be rescued from:
-  index 2 is a docstring in a `defn` and a VALUE in a `def`, and neither
-  mistake throws. They return something plausible, which is why the class keeps
-  surviving review.
+  That read is the same one `form-doc` above had to be rescued from: index 2 is
+  a docstring in a `defn` and a VALUE in a `def`, and neither mistake throws.
+  They return something plausible, which is why the class kept surviving
+  review.
 
   nil rather than `[]` for a missing signature, since `[]` is a real
   zero-arity. `:private?` is always a boolean: absent and public would render
@@ -127,10 +123,7 @@
         head (when (seq? s) (first s))
         kind (str head)
         nm   (when (seq? s) (second s))
-        ;; matched as TEXT rather than as quoted symbols: the dialect denylist
-        ;; reads a banned symbol anywhere in a form as a USE of it, including
-        ;; inside a set whose whole job is to RECOGNISE one.
-        args (when (#{"defn" "defn-" "defmacro"} kind) (modules/fn-arglists s))]
+        args (modules/fn-arglists s)]
     {:kind     kind
      :sig      (when (seq args) (mapv pr-str args))
      :private? (boolean (or (= "defn-" kind) (:private (meta nm))))

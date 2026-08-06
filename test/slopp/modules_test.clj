@@ -1887,3 +1887,61 @@
       (finally
         (ops/close! sess)
         (doseq [f (reverse (file-seq (clojure.java.io/file dir)))] (.delete f))))))
+
+(deftest fn-arglists-is-total-so-no-caller-owes-it-a-guard
+  ;; `:sig` has now had FOUR producers read a `def`'s VALUE as a parameter
+  ;; list. The reason it keeps happening is in the call graph rather than in
+  ;; any one of them: `fn-arglists` drops the first two elements of whatever it
+  ;; is handed and looks for a vector, so `(def geometry [1 2 3])` answers
+  ;; `[[1 2 3]]` — a plausible one-arg signature that does not throw. Its
+  ;; docstring says it takes a `defn` sexpr, which makes the check every
+  ;; caller's job: NINE production callers read it and TWO check.
+  ;;
+  ;; A guard owed by everyone and paid by two is not a discipline problem, it
+  ;; is a totality problem. So the function answers for every form, and the
+  ;; answer for a form with no arities is nil.
+  ;;
+  ;; What made it structural rather than careless: `slopp.api.reads/form-shape`
+  ;; asserted in its DOCSTRING that fn-arglists "knows a `def` has no arities".
+  ;; It did not — the head guard one line below the claim did. A reader
+  ;; believed the docstring, called the function unguarded, and shipped the
+  ;; fourth producer. A docstring asserting a property of another function is a
+  ;; parity comment: nothing runs it, and it actively licenses the bug.
+  ;;
+  ;; `defmethod` stays in the allowed set deliberately, and is NOT fixed here:
+  ;; its arg vector sits at a different position, so this answered `[]` for one
+  ;; long before today. Preserving that keeps this change about non-fn forms
+  ;; only; the defmethod read is its own finding.
+  (let [st   (store/ingest
+              (store/empty-store) 'fa.core
+              (str "(ns fa.core \"D.\")\n"
+                   "(defn one \"D.\" [x] x)\n"
+                   "(defn many \"D.\" ([x] x) ([x y] y))\n"
+                   "(defn- priv \"D.\" [x] x)\n"
+                   "(defmacro mac \"D.\" [x] x)\n"
+                   "(defn none \"D.\" [] 1)\n"
+                   "(def geometry [1 2 3])\n"
+                   "(def shaped \"D.\" {:a 1})\n"
+                   "(def registry \"D.\" [{:kind :regex} {:kind :string}])\n"
+                   "(defmulti area :shape)\n"))
+        args (fn [nm]
+               (modules/fn-arglists
+                (store/form-sexpr (:node (store/form-named st 'fa.core nm)))))]
+    (testing "a fn, every arity — unchanged, and the reason this exists"
+      (is (= '[[x]] (args 'one)))
+      (is (= '[[x] [x y]] (args 'many)))
+      (is (= '[[x]] (args 'priv)))
+      (is (= '[[x]] (args 'mac)))
+      (is (= '[[]] (args 'none))
+          "a zero-arity is a real signature and must not read as absent"))
+
+    (testing "a DEF has no arities, whatever its value happens to look like"
+      (is (nil? (args 'geometry))
+          "the measured bug: a vector VALUE read as a parameter list")
+      (is (nil? (args 'shaped)))
+      (is (nil? (args 'registry))
+          "the live instance — a registry advertising its own contents as a sig"))
+
+    (testing "nor does anything else that does not define a fn"
+      (is (nil? (args 'fa.core)) "the ns form")
+      (is (nil? (args 'area)) "a defmulti dispatches; it has no arg vector"))))

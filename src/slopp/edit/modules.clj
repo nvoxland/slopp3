@@ -253,17 +253,37 @@
            (boolean (:export (meta (second form)))))))
 
 (defn ^:export fn-arglists
-  "The arg-vectors of EVERY arity of a `defn` sexpr — single-arity `[params]` and
-   each multi-arity `([params] …)`. Skips the docstring and attr-map. The shared
-   all-arities extraction (so a boundary shape in a LATER arity isn't missed —
-   review #6)."
+  "The arg-vectors of EVERY arity of a fn-defining sexpr — single-arity
+   `[params]` and each multi-arity `([params] …)`. Skips the docstring and
+   attr-map. The shared all-arities extraction (so a boundary shape in a LATER
+   arity isn't missed — review #6).
+
+   **TOTAL: nil for a form that defines no fn.** It used to answer for whatever
+   it was handed — position 2 onward, first vector wins — so `(def geometry
+   [1 2 3])` came back `[[1 2 3]]`: a plausible one-arg signature that does not
+   throw. That made the head check every CALLER's job, and it was owed by nine
+   and paid by two. `:sig` shipped the same wrong-index read from four separate
+   producers before this moved here, which is the tell that it was a totality
+   problem and not a discipline one — the same shape as any check whose
+   population is enumerated from the items it grades.
+
+   The head is matched as TEXT rather than against quoted symbols: the dialect
+   denylist reads a banned symbol anywhere in a form as a USE of it, including
+   inside a set whose whole job is to recognise one.
+
+   `defmethod` is in the set and is NOT correct here — its arg vector sits
+   after the dispatch value, so this has always answered `[]` for one.
+   Preserved rather than fixed, so this change is about non-fn forms only and
+   no caller's behaviour moves except the one that was wrong."
   [form]
-  (let [body (drop 2 form)
-        body (cond->> body (string? (first body)) rest)
-        body (cond->> body (map? (first body)) rest)]
-    (if (vector? (first body))
-      [(first body)]
-      (vec (keep #(when (and (seq? %) (vector? (first %))) (first %)) body)))))
+  (when (and (seq? form)
+             (#{"defn" "defn-" "defmacro" "defmethod"} (str (first form))))
+    (let [body (drop 2 form)
+          body (cond->> body (string? (first body)) rest)
+          body (cond->> body (map? (first body)) rest)]
+      (if (vector? (first body))
+        [(first body)]
+        (vec (keep #(when (and (seq? %) (vector? (first %))) (first %)) body))))))
 
 (defn ^:export store-violations
   "[[module-violations]] applied to `store`'s declared relations — the
