@@ -319,3 +319,47 @@
             h   (#'edit/missing-alias-hint st2 "No such namespace: kernel" 'app.core)]
         (is (str/includes? h "some.kernel"))
         (is (str/includes? h "other.kernel"))))))
+
+(deftest a-nested-reader-conditional-is-named-as-one-not-blamed-on-read-string
+  ;; slopp-ui, 2026-08-06. `#?(:clj … :cljs …)` inside a fn body was refused
+  ;; with "denylisted symbol used — read-string" against source containing no
+  ;; such symbol. Three calls went into proving the obvious reading wrong.
+  ;;
+  ;; The cause is a gap between two correct pieces. A reader conditional
+  ;; sexprs as `(read-string "#?…")`, and `dialect-check` HAS a dedicated arm
+  ;; for exactly that — but the arm tests the form's own head, so it only ever
+  ;; fired for a form that IS a reader conditional at top level. Nobody writes
+  ;; that. Every real one is nested in a body, where it fell through to the
+  ;; denylist arm and got blamed on the synthetic head of its own expansion.
+  ;;
+  ;; **A wrong-but-actionable message is worse than an unhelpful one**: it
+  ;; reads as a finding, so the reader spends their next three calls
+  ;; disproving it rather than solving anything. That is why this is a test
+  ;; about the WORDS and not only about the refusal.
+  ;;
+  ;; The arm was written and never tested against a nested case, which is the
+  ;; only shape it would ever meet.
+  (let [msg (fn [src] (:error (edit/parse-form src)))]
+    (testing "nested in a fn body — the shape anyone actually writes"
+      (let [m (msg "(defn- probe \"P.\" [] #?(:clj \"jvm\" :cljs \"browser\"))")]
+        (is (some? m) "still refused — this test is about the reason, not the verdict")
+        (is (re-find #"(?i)reader conditional" (str m)) (pr-str m))
+        (is (not (re-find #"read-string" (str m)))
+            (str "the source contains no read-string; naming it sends the"
+                 " reader after a symbol that is not there: " (pr-str m)))))
+
+    (testing "deeper still, and in a splicing conditional"
+      (doseq [src ["(defn f \"F.\" [x] (let [y (inc x)] #?(:clj y :cljs x)))"
+                   "(defn g \"G.\" [] [1 #?@(:clj [2 3] :cljs [4])])"]]
+        (let [m (msg src)]
+          (is (some? m) src)
+          (is (not (re-find #"read-string" (str m))) (str src " → " (pr-str m))))))
+
+    (testing "the top-level shape the arm was written for still works"
+      (is (re-find #"(?i)reader conditional"
+                   (str (msg "#?(:clj 1 :cljs 2)")))))
+
+    (testing "and an ORDINARY denylist hit still names its own symbol"
+      ;; the control: the fix must not swallow the message it is narrowing
+      (let [m (msg "(defn h \"H.\" [s] (eval s))")]
+        (is (re-find #"eval" (str m)) (pr-str m))))))

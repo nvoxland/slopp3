@@ -16,7 +16,8 @@
   Local flow (fileless tree): materialize the store (the `build` MCP tool →
   target/jar-src) then `clojure -T:build uber`. CI flow (checkout of the
   published repo): `clojure -T:build uber :src src`."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]))
 
@@ -34,6 +35,61 @@
                                               (str/trim line))]
                       (when k [k v]))))
             (str/split-lines (slurp f))))))
+
+(defn- ns-requires-of
+  "Every namespace symbol `file`'s ns form requires, read as data."
+  [file]
+  (let [form (try (read-string (slurp file)) (catch Exception _ nil))]
+    (when (and (seq? form) (= 'ns (first form)))
+      (for [clause form
+            :when (and (seq? clause) (= :require (first clause)))
+            spec (rest clause)]
+        (if (vector? spec) (first spec) spec)))))
+
+(defn- lib-providing
+  "The basis lib whose resolved jars contain `ns-path` (e.g. \"garden/core.clj\"),
+  or nil. Asks the ARTIFACTS rather than mapping namespace prefixes to lib
+  names by convention — `hiccup2.core` ships in `hiccup/hiccup`, and no rule
+  over the symbol would get that right."
+  [libs ns-path]
+  (some (fn [[lib coord]]
+          (when (some (fn [p]
+                        (and (.endsWith (str p) ".jar")
+                             (.exists (io/file (str p)))
+                             (with-open [jf (java.util.jar.JarFile. (io/file (str p)))]
+                               (boolean (.getEntry jf ns-path)))))
+                      (:paths coord))
+            lib))
+        libs))
+
+(defn- framework-deps
+  "What the vendored framework needs from OUTSIDE, as {lib coord}.
+
+  Vendoring `slopp/web/**` copies source and discards the pom that used to pull
+  garden/hiccup/cheshire/http-kit in transitively. This re-derives that set from
+  the files themselves so it cannot go stale: read their requires, drop
+  `clojure.*` and `slopp.*`, and ask the basis which lib ships each remaining
+  namespace. Versions are the basis's own, so what a consumer is handed is what
+  this jar was built against."
+  [root files basis]
+  (let [libs (:libs basis)]
+    (into (sorted-map)
+          (keep (fn [nsym]
+                  (let [s (str nsym)]
+                    (when-not (or (str/starts-with? s "clojure.")
+                                  (str/starts-with? s "slopp."))
+                      (let [path (-> s (str/replace "-" "_") (str/replace "." "/"))]
+                        (when-let [lib (or (lib-providing libs (str path ".clj"))
+                                           (lib-providing libs (str path ".cljc")))]
+                          ;; :mvn/version ONLY. A resolved coord carries
+                          ;; :deps/manifest and friends, which are the
+                          ;; resolver's bookkeeping — harmless to tools.deps
+                          ;; (proven: a built app resolves and serves), but this
+                          ;; lands in a generated deps.edn that people READ and
+                          ;; hand-edit, where `:deps/manifest :mvn` in a
+                          ;; declared position only invites "what is that for?".
+                          [lib (select-keys (get libs lib) [:mvn/version])]))))))
+          (mapcat #(ns-requires-of (io/file root %)) files))))
 
 (defn- gen-launcher!
   "Write the delegating launcher ns for `main-class` under target/launcher."
@@ -79,15 +135,22 @@
                         (map #(.lastModified ^java.io.File %))
                         (reduce max 0))
             db     (io/file ".slopp" "store.db")
-            stamp  (io/file (or (.getParent srcd) ".") ".slopp-head")
+            stamp  (io/file srcd "META-INF" "slopp" "head.edn")
             fmt    #(.format (java.text.SimpleDateFormat. "HH:mm:ss") (java.util.Date. ^long %))]
         ;; NEVER be silent about what is being shipped. `build!` stamps the
         ;; materialization with the head delta it was built from; print it so a
         ;; stale jar is visible rather than inferred. (This tool runs under -T,
         ;; whose deps replace the project's, so it has no sqlite driver to read
         ;; the current head itself — comparing is the caller's one glance.)
+        ;;
+        ;; The stamp is UNDER src/, so it is the same file the jar carries and
+        ;; slopp.kernel.boot/jar-head reads back at runtime. It used to sit
+        ;; beside the tree, where this print was its only reader and the
+        ;; artifact could not answer for itself.
         (println (str "jarring a materialization of "
-                      (if (.exists stamp) (str "head " (slurp stamp)) "UNKNOWN head")
+                      (if (.exists stamp)
+                        (str "head " (:head (edn/read-string (slurp stamp))))
+                        "UNKNOWN head")
                       ", written " (fmt newest)))
         (when (and (.exists db) (> (.lastModified db) newest))
           (println (str "WARNING: .slopp/store.db changed at " (fmt (.lastModified db))
@@ -118,6 +181,65 @@
       (spit f (pr-str (into (sorted-map)
                             (map (fn [[lib coord]] [lib (dissoc coord :paths)]))
                             (:libs basis)))))
+    ;; THE FRAMEWORK slopp vendors into the stores it serves
+    ;; (D-framework-injection part 2). Two facts, both generated so neither can
+    ;; drift from what shipped:
+    ;;
+    ;;   framework-version.edn — which slopp-web this jar's slopp/web/** IS,
+    ;;     authored once in the tracked manifest. NOT a maven version any more;
+    ;;     slopp-web is never published, so this is a STAMP saying what a built
+    ;;     tree carries.
+    ;;   framework-files.edn   — the file list, because a jar cannot glob its
+    ;;     own resources and the vendoring has to enumerate them at runtime.
+    ;;     Derived from the tree being jarred rather than hand-listed: a
+    ;;     hand-list is a claim that goes stale the first time a namespace is
+    ;;     added to slopp.web.
+    ;;   framework-deps.edn    — what those files REQUIRE from outside. Vendoring
+    ;;     the source discards the pom, and the pom was what pulled garden,
+    ;;     hiccup, cheshire and http-kit onto the classpath. Found the hard way:
+    ;;     the vendored framework landed correctly and then failed INSIDE
+    ;;     slopp.web.css, which requires garden.core.
+    ;;
+    ;;     DERIVED, for the same reason the file list is: read each vendored
+    ;;     file's requires, drop clojure.*/slopp.*, and ask the BASIS which lib
+    ;;     ships each remaining namespace by looking inside the jars it resolved.
+    ;;     A hand-written vector would go stale the first time slopp.web gains a
+    ;;     require — and silently, since the coord that used to mask it is gone.
+    (when-let [v (get mf "X-Slopp-Web-Version")]
+      (let [f (io/file class-dir "META-INF" "slopp" "framework-version.edn")]
+        (io/make-parents f)
+        (spit f v)))
+    (let [root  (io/file (str src))
+          web   (io/file root "slopp" "web")
+          files (cond-> (vec (sort (for [f (file-seq web)
+                                         :when (and (.isFile f)
+                                                    (.endsWith (.getName f) ".clj"))]
+                                     (str "slopp/web/"
+                                          (subs (.getPath f)
+                                                (inc (count (.getPath web))))))))
+                  (.exists (io/file root "slopp" "web.clj"))
+                  (conj "slopp/web.clj")
+
+                  ;; slopp.lang ships with the framework because it is part of
+                  ;; the SYNTAX, not a library beside it (D3.1): the dialect
+                  ;; denies reader conditionals and owes the author the
+                  ;; portable call instead, so slopp.web.* is allowed to
+                  ;; require it — and a user's app resolves that require
+                  ;; against this jar and nothing else.
+                  ;;
+                  ;; Named explicitly rather than swept: the scan above filters
+                  ;; on `.clj`, and this one is `.cljc` because it must compile
+                  ;; to JS for a client too. Pinned by
+                  ;; modules-test/the-slim-framework-jar-carries-the-syntax-it-lets-the-framework-use,
+                  ;; which is the only thing that can see both halves — this
+                  ;; file is outside the store.
+                  (.exists (io/file root "slopp" "lang.cljc"))
+                  (conj "slopp/lang.cljc"))
+          f     (io/file class-dir "META-INF" "slopp" "framework-files.edn")]
+      (io/make-parents f)
+      (spit f (pr-str (vec (sort files))))
+      (spit (io/file class-dir "META-INF" "slopp" "framework-deps.edn")
+            (pr-str (framework-deps root files basis))))
     (when (and smain (not= main "clojure.main"))
       (gen-launcher! main smain)
       ;; the launcher dir must be ON the compile basis classpath (src-dirs
@@ -145,48 +267,3 @@
                  [java.nio.file.StandardCopyOption/ATOMIC_MOVE
                   java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
     (println "built" jar-file "Main-Class:" main)))
-
-;; ---------------------------------------------------------------------------
-;; The slim slopp-web runtime jar (D-web wave-5 tail): ONLY slopp/web/** —
-;; what a USER app deps_add's to serve declared endpoints. Deps mirror the
-;; kernel's versions. `slim-install` puts it in the local ~/.m2 so a store's
-;; deps_add resolves it without a remote (CI's native proof uses exactly that).
-
-(def slim-lib 'io.github.nvoxland/slopp-web)
-
-(def ^:private slim-deps
-  {'org.clojure/clojure {:mvn/version "1.12.5"}
-   'cheshire/cheshire   {:mvn/version "5.13.0"}
-   'http-kit/http-kit   {:mvn/version "2.8.0"}
-   'hiccup/hiccup       {:mvn/version "2.0.0"}
-   'garden/garden       {:mvn/version "1.3.10"}})
-
-(defn slim
-  "Build target/slopp-web-<version>.jar from the materialized store source
-  (`:src`, default target/jar-src/src — run the `build` MCP tool first).
-  No AOT; the jar is source + pom."
-  [{:keys [version src] :or {version "0.1.0" src "target/jar-src/src"}}]
-  (let [class-dir "target/slim-classes"
-        jar      (str "target/slopp-web-" version ".jar")
-        basis    (b/create-basis {:project {:deps slim-deps}})]
-    (b/delete {:path class-dir})
-    ;; two globs: slopp/web/** matches the DIRECTORY's contents, not the
-    ;; sibling root-facade file slopp/web.clj — both must ship
-    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
-                 :include "slopp/web.clj"})
-    (b/copy-dir {:src-dirs [(str src)] :target-dir class-dir
-                 :include "slopp/web/**"})
-    (b/write-pom {:class-dir class-dir :lib slim-lib :version version
-                  :basis basis})
-    (b/jar {:class-dir class-dir :jar-file jar})
-    (println "built" jar)
-    {:jar jar :class-dir class-dir :version version :basis basis}))
-
-(defn slim-install
-  "slim + install into the local ~/.m2 — a store can then
-  deps_add io.github.nvoxland/slopp-web {:mvn/version <version>}."
-  [{:keys [version] :or {version "0.1.0"} :as opts}]
-  (let [{:keys [jar class-dir basis]} (slim (assoc opts :version version))]
-    (b/install {:basis basis :lib slim-lib :version version
-                :jar-file jar :class-dir class-dir})
-    (println "installed" (str slim-lib) version "into ~/.m2")))

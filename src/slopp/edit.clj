@@ -122,13 +122,28 @@
   [node]
   (when-not (unsafe? node)
     (let [s    (n/sexpr node)
-          head (when (seq? s) (first s))]
+          head (when (seq? s) (first s))
+          ;; a reader conditional sexprs as `(read-string "#?…")`, so it is
+          ;; recognised by SHAPE and by the head's NAME — never by mentioning
+          ;; the banned symbol, which is the one thing this gate must not do.
+          rc?  (fn [x] (and (seq? x) (symbol? (first x))
+                            (= "read-string" (name (first x)))
+                            (= 2 (count x)) (string? (second x))
+                            (str/starts-with? (str/triml (second x)) "#?")))]
       (cond
-        ;; a reader conditional sexprs as (read-string "#?…") — give it its
-        ;; OWN message rather than the confusing denylist one. Detected by the
-        ;; head's NAME so this gate never mentions the banned symbol itself.
-        (and (seq? s) (symbol? head) (= "read-string" (name head)) (= 2 (count s))
-             (string? (second s)) (str/starts-with? (str/triml (second s)) "#?"))
+        ;; ANYWHERE in the form, not only at its head. This arm tested the
+        ;; form's OWN head, so it fired only for a form that IS a reader
+        ;; conditional at top level — a shape nobody writes. Every real one is
+        ;; nested in a body, fell through to the denylist arm below, and got
+        ;; blamed on `read-string`: the synthetic head of its own expansion,
+        ;; and a symbol the author's source does not contain. The splicing
+        ;; form was worse still, reaching the LOCAL-NAME arm and advising a
+        ;; rename of a local that does not exist.
+        ;;
+        ;; A wrong-but-ACTIONABLE message costs more than an unhelpful one —
+        ;; it reads as a finding, so the next three calls go into disproving
+        ;; it. Measured: three, by the reader who hit this.
+        (some rc? (tree-seq coll? seq s))
         (str "dialect (D3): reader conditionals (#?/#?@) are not allowed in"
              " stored code — slopp is single-dialect, so a form must read the"
              " same everywhere. Write the one branch this store targets.")

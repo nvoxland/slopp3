@@ -20,7 +20,7 @@
     arbitrary text off the network, and the answer to garbage is a page, not a
     500. A bare key is PRESENT with an empty value — present-and-empty is a
     different fact from absent, and a handler must be able to tell them apart."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str] [slopp.lang :as lang]))
 
 (defn ^{:export "slopp.rules"
         :teach "matches :uri ALONE — :query-string is a separate request key. A \"/x?y=z\" put in :uri matches no route and 404s, which looks exactly like the 404 you were testing for."}
@@ -86,24 +86,28 @@
 
   A bare key (`\"flag\"`) is PRESENT with an empty value, because present
   and empty is a different thing from absent and a handler has to be able
-  to tell them apart. A pair whose key or encoding is malformed is dropped
-  rather than thrown: a query string is arbitrary text from the network,
-  and the response to garbage is a page, not a 500.
+  to tell them apart. A pair with no key at all is dropped — there is
+  nothing to be present UNDER.
 
-  The router's other half — matching a path and reading its parameters
-  are the same question asked of the two halves of a URL. `handle!`
-  assocs the result as `:query-params` on every request."
+  Decoding goes through [[slopp.lang/decode-component]], which is portable
+  and touches no platform API. This used `java.net.URLDecoder` — correct on
+  the server and unavailable to a client router, so the framework shipped the
+  JVM half of a gap and left the browser half to whoever hit it. That is what
+  D3.1 makes slopp's problem rather than an app's.
+
+  **Malformed text is passed through as itself, never thrown and no longer
+  DROPPED.** `URLDecoder` throws on a stray `%`, and dropping the pair means
+  `?q=100%` — a real search, typed by a real person — arrives as no query at
+  all rather than as the text they typed. Garbage in a query string is data
+  from the network; the response to it is a page, and the most useful page is
+  the one that got the characters."
   [query-string]
   (if (str/blank? query-string)
     {}
-    (let [decode (fn [s]
-                   (try (java.net.URLDecoder/decode (str s) "UTF-8")
-                        (catch Exception _ nil)))]
-      (into {}
-            (keep (fn [pair]
-                    (let [[k v] (str/split pair #"=" 2)
-                          k'    (decode k)
-                          v'    (decode (or v ""))]
-                      (when (and (seq k') v')
-                        [(keyword k') v']))))
-            (str/split query-string #"&")))))
+    (into {}
+          (keep (fn [pair]
+                  (let [[k v] (str/split pair #"=" 2)
+                        k'    (lang/decode-component k)]
+                    (when (seq k')
+                      [(keyword k') (lang/decode-component (or v ""))]))))
+          (str/split query-string #"&"))))

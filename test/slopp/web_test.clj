@@ -266,7 +266,27 @@
     (is (= {:q "a/b?c"} (router/query-params "q=a%2Fb%3Fc")))
     (is (= {:ns "demo.core"} (router/query-params "ns=demo.core"))))
   (testing "malformed input is data, never a 500"
-    (is (map? (router/query-params "%%%=x&=y&&")))))
+    (is (map? (router/query-params "%%%=x&=y&&"))))
+  (testing "and malformed text ARRIVES, rather than the pair being dropped"
+    ;; changed when decoding moved to slopp.lang. URLDecoder throws on a stray
+    ;; `%`, and the old code caught that and dropped the pair — so `?q=100%`,
+    ;; a real search typed by a real person, reached the handler as no query
+    ;; at all. Losing the parameter is a worse answer than handing over the
+    ;; characters that were typed.
+    ;; MEASURED against the old implementation rather than asserted about it,
+    ;; because these landed green and a green nobody watched fail proves
+    ;; nothing. `(URLDecoder/decode "100%" "UTF-8")` throws, the old code
+    ;; caught it and returned nil, and a nil key or value dropped the pair —
+    ;; so the two assertions below returned `{}` before this change and are
+    ;; the two that discriminate. The `café` and `=y` cases passed BEFORE as
+    ;; well; they are regression guards, not evidence, and calling all four
+    ;; evidence would be the coverage theatre the advisory names.
+    (is (= {:q "100%"} (router/query-params "q=100%")))
+    (is (= {:q "a%zzb"} (router/query-params "q=a%zzb")))
+    (is (= {:q "café"} (router/query-params "q=caf%C3%A9"))
+        "and the portable decoder still does real UTF-8")
+    (is (= {} (router/query-params "=y"))
+        "a pair with no KEY is still dropped — there is nothing to be present under")))
 
 (deftest a-context-cannot-promise-reads-it-cannot-perform
   ;; Reads resolve by VOCABULARY store-wide, so an endpoint in one namespace

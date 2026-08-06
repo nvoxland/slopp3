@@ -5,7 +5,7 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
+            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates] [clojure.string :as str]))
 
 (deftest module-of-is-the-first-two-segments
   (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
@@ -1045,6 +1045,20 @@
   ;; reporting on without ever looking at. They are clean, which is luck rather
   ;; than evidence: nothing would have said otherwise.
   (let [web?      #(boolean (re-matches #"slopp\.web(\..*)?" (str %)))
+        ;; `slopp.lang` is the one permitted destination, and it is NOT a
+        ;; carve-out: it ships in this same slim jar (build.clj carries
+        ;; slopp/lang.cljc beside slopp/web.clj), so a user's app resolves a
+        ;; require of it exactly as it resolves slopp.web.html. D3.1 — the
+        ;; dialect denies reader conditionals and owes the author the portable
+        ;; call instead, which makes slopp.lang part of the SYNTAX rather than
+        ;; a library the framework happens to like.
+        ;;
+        ;; The permission is only safe because something checks the jar
+        ;; actually carries it:
+        ;; `the-slim-framework-jar-carries-the-syntax-it-lets-the-framework-use`,
+        ;; below. Permitting an edge here and forgetting the file there is the
+        ;; failure this test exists to prevent, aimed at itself.
+        ships?    #(or (web? %) (= 'slopp.lang %))
         framework (->> (all-ns)
                        (map ns-name)
                        (filter web?)
@@ -1054,7 +1068,7 @@
         leaks     (for [n     framework
                         [_ dep] (ns-aliases (find-ns n))
                         :let  [d (ns-name dep)]
-                        :when (and (re-find #"^slopp\." (str d)) (not (web? d)))]
+                        :when (and (re-find #"^slopp\." (str d)) (not (ships? d)))]
                     [n d])]
     ;; guard the guard: over an empty set "no leaks" is vacuously true, which
     ;; is exactly the "I could not check" / "I checked and found nothing"
@@ -1945,3 +1959,41 @@
     (testing "nor does anything else that does not define a fn"
       (is (nil? (args 'fa.core)) "the ns form")
       (is (nil? (args 'area)) "a defmulti dispatches; it has no arg vector"))))
+
+(deftest ^:external the-slim-framework-jar-carries-the-syntax-it-lets-the-framework-use
+  ;; `slopp.web.*` may require `slopp.lang` (D3.1 — the dialect denies reader
+  ;; conditionals and owes the author the portable call instead, which makes
+  ;; slopp.lang part of the SYNTAX rather than a library the framework happens
+  ;; to like). That permission is only safe if the file actually ships: a
+  ;; require that resolves here and not in a user's project breaks at THEIR
+  ;; require time, which is the whole reason the sibling guard exists.
+  ;;
+  ;; **`build.clj` is a file humans own, outside the store**, so this is a
+  ;; genuine cross-artifact claim with nothing else able to see both halves —
+  ;; the same shape as a milestone id asserted about somebody else's jar. The
+  ;; guard next door permits the edge; only this says the jar carries it.
+  ;;
+  ;; Checked as TEXT because that is what the artifact is. A prettier check
+  ;; would have to run a build, and a check that needs a build is a check that
+  ;; does not run.
+  (let [f (clojure.java.io/file "build.clj")]
+    (is (.exists f)
+        "build.clj is the file this test is about; without it nothing below means anything")
+    (let [src (slurp f)]
+      ;; guard the guard: prove the scan can see the file-set at all, or
+      ;; "lang is listed" and "I read the wrong file" look identical
+      (is (str/includes? src "slopp/web.clj")
+          "the slim file-set is in this file — if this fails, the build moved")
+
+      (is (str/includes? src "slopp/lang.cljc")
+          (str "slopp.lang must ship in the slim slopp-web jar. slopp.web.* is"
+               " allowed to require it, so a user's app resolves that require"
+               " against THIS jar and nothing else — omit the file and the"
+               " framework is unloadable in exactly the projects it is for."))
+
+      (testing "and the extension is load-bearing"
+        ;; the file-set's own scan filters on `.clj`, so a `.cljc` member has
+        ;; to be named explicitly — listing it as `slopp/lang.clj` would ship
+        ;; nothing and fail no test that did not know to look
+        (is (not (str/includes? src "\"slopp/lang.clj\""))
+            "slopp.lang is :cljc — it must also compile to JS for a client")))))
