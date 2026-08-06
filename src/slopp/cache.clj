@@ -36,7 +36,7 @@
   `without-caching!` takes a thunk rather than wrapping a body because the
   dialect bans user macros (D4).")
 
-(def ^:private ^:ambient-ok caches
+(def ^:private ^{:ambient-ok "the blessed cache registry itself — one visible atom is exactly what lets without-caching reset it, tests count it, and the tier gate read caching as an internal optimization rather than an effect on the world"} caches
   "Every blessed cache, `{cache-id {key value}}`.
 
   ONE atom instead of one per memo. That is the whole point: a hand-rolled
@@ -47,7 +47,7 @@
   eviction policy buried in a `swap!`."
   (atom {}))
 
-(def ^:private ^:ambient-ok bypass?
+(def ^:private ^{:ambient-ok "the dial without-caching binds, so a test can prove the computation rather than prove the cache answering from an earlier call"} bypass?
   "When true, `cached` computes every time and stores nothing.
 
   A cache can hide a bug by answering from an earlier call, so a test that

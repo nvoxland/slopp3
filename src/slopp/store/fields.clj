@@ -9,7 +9,7 @@
   every set here cannot cross a merge (merge-logs REFUSES, naming this ns)
   and full-reloads on foreign sync rather than guessing.")
 
-(defn ^:export ^:legacy-ok canonical-tier
+(defn ^:export ^{:legacy-ok "this IS the mapping that retires :reads/:effects, so the retired spellings have to appear here to be translated away — the one place naming them is not drift"} canonical-tier
   "Canonical spelling of a purity tier: the retired :reads/:effects map to
   :internal/:external (D-tiers); canonical spellings pass through. THE one
   mapping — slopp.edit.tiers/canonical-tier delegates here, and the

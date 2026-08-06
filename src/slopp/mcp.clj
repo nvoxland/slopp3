@@ -57,7 +57,7 @@
                                  f [:expected :actual :message]))
                        fs)))))
 
-(def ^:private ^:ambient-ok strict-boundary?
+(def ^:private ^{:ambient-ok "process-global TEST state with no dynamic-var alternative — binding is dialect-banned, and the flag has to reach a boundary crossed on threads other than the one that would bind it; a fixture flips it for the across-the-wire suite and it is off in production"} strict-boundary?
   "When true, the response boundary (text!) THROWS on any file/line
   coordinate leak — the invariant 'agents never think in files' made
   mechanical. On across the wire test suite (a fixture flips it), off in
@@ -1366,7 +1366,7 @@
       (finally (ops/close! session)))))
 
 ^:unsafe
-(defn ^:entry-point call-main!
+(defn ^{:entry-point "resolved by NAME from the command line — boot's --call sugar and --main slopp.mcp/call-main!, so no reference inside the store reaches it"} call-main!
   "CLI entry for boot's --call sugar (or --main slopp.mcp/call-main!):
   <dir> <tool> [args] — one tool call, result text on stdout, exit 1 on a
   tool error. args is JSON, EDN, or @file (parse-call-args)."

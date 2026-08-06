@@ -10,7 +10,7 @@
   effectfulness; mismatches are reported for the edit pipeline to flag/auto-fix."
   (:require [clj-kondo.core :as kondo] [slopp.index.derive :as derive]))
 
-(def ^:private ^:ambient-ok kondo-cache
+(def ^:private ^{:ambient-ok "a bounded process-local memo of a pure kondo pass, keyed by the source it linted — a performance record nothing branches on, and the measured reason it exists is that every write used to run kondo several times over identical source"} kondo-cache
   "source-string -> {:analysis :findings} memo (bounded). ONE kondo pass
   per unique rendered ns feeds both analyze and lint — every write used
   to run kondo several times over identical source (pre/post warnings,
@@ -19,7 +19,7 @@
   these re-runs dominating per-write time on large namespaces."
   (atom {}))
 
-(def ^:private ^:ambient-ok ns-source-hash
+(def ^:private ^{:ambient-ok "cache-invalidation state, not program state — kondo writes cross-ns facts as a side effect of every lint, so a source's findings are not a function of that source alone and memoizing on source alone would replay answers from before a callee moved"} ns-source-hash
   "ns-sym -> hash of the last source we fed kondo for it.
 
   clj-kondo reads CROSS-NS facts (arities, var existence) from
@@ -41,7 +41,7 @@
   (let [known @ns-source-hash]
     (mapv known (sort requires))))
 
-(def ^:ambient-ok kondo-cache-dir
+(def ^{:ambient-ok "process configuration that must reach every kondo call — kondo resolves its cross-ns cache from the PROCESS CWD, so pointing it at the store's own .slopp/ cannot be threaded through an argument without touching every call site"} kondo-cache-dir
   "Where kondo keeps its CROSS-NS facts (arities, var existence), or nil for
   kondo's own default.
 

@@ -659,3 +659,66 @@
       (is (= [["pv.core"]]
              (:layers (store/module-layers (modules/production-manifest with))))
           "one layer, not two — the harness was the apex"))))
+
+(deftest a-namespace-with-nothing-left-in-it-is-named
+  ;; The empty-namespace exemption asserted in
+  ;; a-namespace-has-to-say-what-it-is-for is CORRECT — a namespace someone
+  ;; just created has nothing to describe yet. It is also why
+  ;; slopp.web-rules-test survived two days and a green full_check after the
+  ;; R6 rules move carried its tests to slopp.rules.web-test.
+  ;;
+  ;; The exemption is the second reason it was invisible. The first is
+  ;; ADDRESSING: every done-advisory is handed changed FORM IDS, and
+  ;; sweep-store! builds its whole-store population the same way
+  ;; (mapcat store/forms), so a namespace with zero forms is in neither
+  ;; population and no rule can reach it however it is written. Hence a
+  ;; namespace-grained read here rather than another rule.
+  (let [husk  (store/ingest (store/empty-store) 'app.husk "(ns app.husk)\n")
+        alive (store/ingest (store/empty-store) 'app.alive
+                            "(ns app.alive \"Why it exists.\")\n\n(defn f [] 1)\n")]
+    (testing "a namespace holding only its own ns form is named"
+      (is (= '[app.husk] (modules/empty-namespaces husk))))
+    (testing "a namespace with any form at all is not"
+      ;; the unexempted case beside the exempted one, per this ns's own rule:
+      ;; a report that had stopped finding anything satisfies the first half
+      (is (= [] (modules/empty-namespaces alive))))
+    (testing "the husk is found among populated neighbours, not only alone"
+      (let [mixed (store/ingest alive 'app.gone "(ns app.gone)\n")]
+        (is (= '[app.gone] (modules/empty-namespaces mixed)))))))
+
+(deftest ^:external a-husk-is-named-by-the-whole-store-check
+  ;; The WIRING half, split from the derivation above so a future failure
+  ;; localizes — that one is the read, this one is whether anything asks it.
+  ;; `empty-namespaces` merely existing is not the fix: `module-debt` also
+  ;; existed, and being unasked is how four real violations stood through a
+  ;; green check (friction #19). A check that is never asked reads exactly
+  ;; like a check that passes.
+  ;;
+  ;; Both assertions are VALUE-shaped rather than absence-shaped, which is
+  ;; what keeps the pair honest: with the wiring removed the husk half fails
+  ;; on `nil` instead of quietly agreeing.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'fs.alive
+                   (str "(ns fs.alive \"Why it exists.\")\n\n"
+                        "(defn ^{:unused-ok \"fixture: nothing calls it\"} f\n"
+                        "  \"Doc.\"\n"
+                        "  []\n"
+                        "  1)\n"))
+      (testing "the must-NOT-flag half — a populated namespace is no husk"
+        (let [r (external/full-check! sess)]
+          (is (nil? (:empty-namespaces r)) (pr-str (:empty-namespaces r)))))
+      (ops/ingest! sess 'fs.gone "(ns fs.gone)\n")
+      (testing "a namespace holding only its ns form is named, with its remedy"
+        (let [r (external/full-check! sess)]
+          (is (= '[fs.gone] (:empty-namespaces r)) (pr-str r))
+          (is (re-find #"ns_delete" (str (:empty-namespaces-note r)))
+              (str "a finding whose remedy the reader cannot run is half a"
+                   " finding: " (pr-str (:empty-namespaces-note r))))
+          (testing "and it does NOT flip the check"
+            ;; a namespace someone just created is empty for one write, and a
+            ;; whole-store check that goes red on it is a check people stop
+            ;; running. Reported, never refused.
+            (is (= :green (:status r))
+                (pr-str (select-keys r [:status :empty-namespaces]))))))
+      (finally (ops/close! sess)))))

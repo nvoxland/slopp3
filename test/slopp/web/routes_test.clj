@@ -35,7 +35,7 @@
   [_ctx id]
   {:user/id id})
 
-(defn ^:unused-ok plain "Not an endpoint." [x] x)
+(defn ^{:unused-ok "the negative control for route discovery — it exists to be PASSED OVER by the scan, so having no caller is the property under test"} plain "Not an endpoint." [x] x)
 
 (deftest routes-derive-from-var-metadata
   (let [rows (routes/from-namespaces ['slopp.web.routes-test])]

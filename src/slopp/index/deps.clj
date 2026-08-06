@@ -30,7 +30,7 @@
       (set (remove str/blank? (str/split (str/trim (:out r)) #":")))
       (throw (ex-info (str "classpath resolution failed: " (:err r)) {})))))
 
-(def ^:private ^:ambient-ok jars-cache
+(def ^:private ^{:ambient-ok "a private process memo of an immutable answer — resolving a Maven coord shells out and is slow, and nothing branches on what is in it, so it stays invisible to a slice-limited reader"} jars-cache
   "coord -> resolved jar paths. A deliberate process-local memo: resolving a
   Maven coordinate shells out and is slow, and the answer for a given coord is
   immutable. Private and never read as state — nothing branches on what is in
@@ -86,13 +86,13 @@
                    (:local/root coord)
                    (pr-str coord))))
 
-(def ^:private ^:ambient-ok surface-cache
+(def ^:private ^{:ambient-ok "a content-addressed process memo, so its contents are identical across stores and runs and nothing can branch on which run filled it; it complements the db dep_surface cache that survives restart"} surface-cache
   "Process-level memo, coord-key → surface — content-addressed, so identical
   across stores and runs (Unison-style). Complements the db `dep_surface`
   cache (which survives restart)."
   (atom {}))
 
-^:reads (defn ^:unused-ok surface-of
+^:reads (defn ^{:unused-ok "the deps module's documented composite entry — resolve-then-analyze in one call, kept as surface for consumers outside slopp; nothing inside the store calls it, which is the point rather than an oversight"} surface-of
   "Full surface for `lib`@`coord` (resolve jars, then analyze), memoized in
   process by `coord@version`. The slow path runs once per coord."
   [lib coord]

@@ -971,6 +971,14 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; different image — and reported for the same reason: a whole-store
         ;; green is exactly the verdict someone acts on.
         app   (orient/behind st (:app-server @session))
+;; a namespace holding nothing but its own ns form. Reported HERE
+        ;; because it can be reported nowhere else: every advisory is
+        ;; addressed by changed FORM IDS and sweep-store! builds its
+        ;; whole-store population the same way, so a namespace with zero
+        ;; forms is in neither and no rule can reach it however it is
+        ;; written. slopp.web-rules-test survived two days and a green
+        ;; check here after the R6 rules move emptied it.
+        husks (modules/empty-namespaces st)
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (session/run-verification! session (vec nses) nil
@@ -1018,6 +1026,19 @@ client-deps (merge (:client-deps st) (:client provided))
                                   " reach. Drop :affected for the whole tier"))
       (seq errs)          (assoc :lint errs)
       (seq warns)         (assoc :warnings warns)
+(seq husks)         (assoc :empty-namespaces husks
+                                 :empty-namespaces-note
+                                 (str (count husks) " namespace(s) holding nothing"
+                                      " but their own ns form. A move that carries"
+                                      " a namespace's whole contents elsewhere"
+                                      " leaves one, and nothing else reports it:"
+                                      " there is no form to be dead, undocumented"
+                                      " or uncovered, and namespace-purpose exempts"
+                                      " an empty namespace because a NEWBORN one has"
+                                      " nothing to describe yet. ns_delete retires a"
+                                      " husk; adding a form is the other honest"
+                                      " answer, and it is why this is reported"
+                                      " rather than refused"))
       (seq layer)         (assoc :tier-layering layer
                                  :tier-layering-note
                                  (str (count layer) " core→shell dependency(ies):"

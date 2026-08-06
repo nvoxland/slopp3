@@ -273,7 +273,7 @@
                  (pr-str (:drift r)))))
       (finally (ops/close! sess)))))
 
-(defn ^:unused-ok src-of
+(defn src-of
   "The rendered source of `ns-sym/nm` via `query-slice`, which nests it under
   `:target`. Reading it as `(:source r)` yields nil, and nil reaches `re-find`
   as an NPE about `this.text` rather than a readable failure."

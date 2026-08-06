@@ -384,3 +384,30 @@
                             (contains? actual [m d])
                             (not (contains? (get prod m #{}) d)))]
             [m d])))))
+
+(defn ^:export empty-namespaces
+  "Namespaces holding nothing but their own `ns` form, sorted.
+
+  A HUSK is what a move leaves behind when it carries a namespace's whole
+  contents somewhere else — `slopp.web-rules-test` after the R6 rules move
+  took its tests to `slopp.rules.web-test`. It survived two days and a green
+  `full_check`, because a husk is invisible to every other check by
+  construction: there is no form to be dead, undocumented, uncovered or
+  unreachable, and `namespace-purpose` deliberately EXEMPTS an empty namespace
+  since a newborn one has nothing to describe yet.
+
+  The exemption is the second reason. The first is ADDRESSING: a done-advisory
+  is handed changed FORM IDS, and `rules/sweep-store!` builds its whole-store
+  population the same way (`mapcat store/forms`), so a namespace with zero
+  forms is in neither population and no rule can reach it however it is
+  written. That is why this is a namespace-grained read rather than another
+  rule.
+
+  Reported by `full_check`, never refused — the newborn case is real, and it
+  is discharged by the same act that ends it. `ns_delete` is the remedy for a
+  genuine husk."
+  [store]
+  (vec (sort (for [ns-sym (keys (:namespaces store))
+                   :let [es (store/forms store ns-sym)]
+                   :when (empty? (remove #(= (str (:name %)) (str ns-sym)) es))]
+               ns-sym))))
